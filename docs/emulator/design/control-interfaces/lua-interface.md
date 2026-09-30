@@ -343,8 +343,9 @@ fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_sta
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
-net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), virtual network (leases, sockets, activity); available=false without one
+net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
+ok, err = network_configure{com_port="tcp:127.0.0.1:2323", com_flavor="auto"}          -- COM port peer: none | loopback | tcp:host:port | serial:device[,baud]; com_modem_lines=true|false
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], statistics (debug mode)

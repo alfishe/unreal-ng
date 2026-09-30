@@ -80,8 +80,8 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         ownedSerializers.push_back(std::move(ide));
     }
 
-    // Network adapters (network TDD §6.3): while a card is fitted
-    if (context->pZxNetUsb)
+    // Network adapters (network TDD §6.3, §7): while a card or a COM port is fitted
+    if (context->pZxNetUsb || context->pComPort)
     {
         auto network = std::make_unique<TTDZxNetUsb>(context);
         registry.Register(PeripheralId::ZxNetUsb, network.get());

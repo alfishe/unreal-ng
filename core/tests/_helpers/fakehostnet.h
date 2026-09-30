@@ -46,6 +46,19 @@ public:
     {
         commands.push_back({"ping", socket, to, std::vector<uint8_t>(data, data + length)});
     }
+    void SerialOpen(uint16_t socket, const std::string& device, uint32_t baud) override
+    {
+        commands.push_back({"serial", socket, NetEndpoint{baud, 0}, std::vector<uint8_t>(device.begin(), device.end())});
+    }
+    void SerialConfigure(uint16_t socket, const SerialLine& line) override
+    {
+        commands.push_back({"serial-line", socket, NetEndpoint{line.baud, static_cast<uint16_t>(line.dataBits * 100 + line.stopBits)},
+                            std::vector<uint8_t>{static_cast<uint8_t>(line.parity)}});
+    }
+    void SerialModemLines(uint16_t socket, bool rts, bool dtr) override
+    {
+        commands.push_back({"serial-lines", socket, NetEndpoint{static_cast<uint32_t>((rts ? 2 : 0) | (dtr ? 1 : 0)), 0}, {}});
+    }
     void Close(uint16_t socket) override { commands.push_back({"close", socket, {}, {}}); }
     void CloseAll() override { commands.push_back({"closeall", 0, {}, {}}); }
 

@@ -29,6 +29,21 @@
 
 #include <chrono>
 
+const char* NetStatusText(NetEventStatus status)
+{
+    switch (status)
+    {
+        case NetEventStatus::Ok: return "ok";
+        case NetEventStatus::Refused: return "refused";
+        case NetEventStatus::Timeout: return "timeout";
+        case NetEventStatus::Unreachable: return "unreachable";
+        case NetEventStatus::AddressInUse: return "address-in-use";
+        case NetEventStatus::Denied: return "denied";
+        case NetEventStatus::Error: return "error";
+    }
+    return "?";
+}
+
 std::string NetIpToString(uint32_t addr)
 {
     return std::to_string((addr >> 24) & 0xFF) + "." + std::to_string((addr >> 16) & 0xFF) + "." +

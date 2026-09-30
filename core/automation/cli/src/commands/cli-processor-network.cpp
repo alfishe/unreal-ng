@@ -49,7 +49,8 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
         session.SendResponse("Usage: network [state] | network set card=zxnetusb|none host_access=on|off "
-                             "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n" +
+                             "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
+                             "com_port=none|loopback|tcp:host:port|serial:device[,baud] com_flavor=auto|evo|zxwifi com_modem_lines=on|off" +
                              std::string(NEWLINE));
         return;
     }

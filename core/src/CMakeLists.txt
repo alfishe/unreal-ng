@@ -99,6 +99,19 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
+# OS-specific implementations (src/platform/<os>/): only the host's own.
+# posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them
+if (WIN32)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/posix/" FALSE OUTVAR CPP_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/macos/" FALSE OUTVAR CPP_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/linux/" FALSE OUTVAR CPP_FILES)
+elseif (APPLE)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/windows/" FALSE OUTVAR CPP_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/linux/" FALSE OUTVAR CPP_FILES)
+else()
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/windows/" FALSE OUTVAR CPP_FILES)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/macos/" FALSE OUTVAR CPP_FILES)
+endif()
 
 # ymfm (YM2203 core for the TurboSound FM device): vendored at 3rdparty/ymfm.
 # Only the OPN family and what it links against (SSG, ADPCM) is compiled; the

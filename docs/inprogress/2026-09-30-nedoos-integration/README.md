@@ -16,6 +16,7 @@ Two linked topics, both driven by running the full NedoOS card on ZX-Evo
 | [ideas-nedoos-development.md](ideas-nedoos-development.md) | Ideas for NedoOS development: app debugger, profiling, C to optimized asm with equivalence checks, unit tests, CI/CD, app and driver certification |
 | [nedoos-bugs.md](nedoos-bugs.md) | Bugs found in NedoOS (W5300 driver, wizcfg) with proposed fixes |
 | [reference-w5300-model.md](reference-w5300-model.md) | W5300 as the ZXNETUSB card uses it: bus, registers, commands, states, FIFO and packet formats, NedoOS checks, where the Unreal_NS model deviates |
+| [reference-evo-com-port.md](reference-evo-com-port.md) | The ZX-Evo COM port (the AVR's 16550 emulation: decoding, registers, FIFOs, /WAIT timing) and the ZX-WiFi 16550, how NedoOS drives them, how the model follows |
 | [reference-wizcfg.md](reference-wizcfg.md) | `wizcfg.com` disassembled: presence check, reset, MAC / IP setup, the `#AA` chip test, DHCP exchange |
 
 Why together: NedoOS network programs (e.g. `zxdb.com`) are the main consumers

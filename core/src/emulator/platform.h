@@ -692,6 +692,14 @@ struct CONFIG
 		char forwards[256];
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
+		/// COM port peer (TDD §7.2): NONE | LOOPBACK | TCP:<a.b.c.d|localhost>:<port> |
+		/// SERIAL:<device>[,<baud>] (ComPortSpec::Parse). Empty = NONE
+		char comPort[256];
+		/// UART flavor: 0 = by machine (ZX-Evo: the AVR, others: ZX-WiFi), 1 = EVO, 2 = ZXWIFI
+		uint8_t comFlavor;
+		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
+		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
+		uint8_t comModemLines;
 	} network;
 
 	struct

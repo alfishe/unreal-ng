@@ -40,4 +40,12 @@ bool ParseQuery(const uint8_t* data, size_t length, Question& out);
 std::vector<uint8_t> BuildAnswer(const uint8_t* query, size_t length, const Question& q,
                                  const std::vector<uint32_t>& addresses, uint8_t rcode, uint32_t ttl = 60);
 
+/// A standard recursive query for the A record of `name` (the emulator's own
+/// lookups: a COM port peer given by name). Empty when the name is not valid
+std::vector<uint8_t> BuildQuery(uint16_t id, const std::string& name);
+
+/// The A records of an answer to query `id`. False when the bytes are not an
+/// answer to it; `rcode` is the answer's code (NXDOMAIN and the like)
+bool ParseAnswer(const uint8_t* data, size_t length, uint16_t id, std::vector<uint32_t>& addresses, uint8_t& rcode);
+
 } // namespace dns

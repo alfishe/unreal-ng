@@ -1713,9 +1713,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 {
                                     const Json::Value& card = value["card"];
                                     const Json::Value& net = value["virtual_network"];
-                                    out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
-                                        << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
-                                        << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
+                                    const Json::Value& com = value["com_port"];
+                                    if (card["kind"].asString() != "none")
+                                        out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
+                                            << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
+                                            << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
+                                    if (com["fitted"].asBool())
+                                        out << "\n[com] " << com["flavor"].asString() << " UART, " << com["peer"].asString()
+                                            << (com.isMember("target") ? " " + com["target"].asString() : std::string())
+                                            << (com["connected"].asBool() ? "" : " (not connected)") << ", " << com["baud"].asUInt() << " baud, rx "
+                                            << com["rx_fifo"].asInt() << " / tx " << com["tx_fifo"].asInt() << " in FIFO, in " << com["bytes_in"].asUInt64()
+                                            << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                 }
                             }
                             else if (aspect == "rtc")

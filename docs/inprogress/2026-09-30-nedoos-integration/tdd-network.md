@@ -440,7 +440,7 @@ goes and marked incomplete (logged at restore). The options considered:
 
 | Flavor | Behavior |
 |---|---|
-| **Evo AVR** (ZX-Evo BaseConf COM port) | 16-byte FIFOs, no interrupts, MCR masked to `& #1F` (no auto flow control), RTS driven by software, 8N2; each access stalls the Z80 while the AVR serves it (`Z80::AddWaitStates`; value estimated, to be measured) |
+| **Evo AVR** (ZX-Evo BaseConf COM port) | 16-byte FIFOs, no interrupts (IIR always #01), MCR masked to `& #1F` (no auto flow control, no loopback), RTS driven by software, TX ignores CTS, OE sticky until an FCR RX reset, LSR bit 7 = RX half full, RBR of an empty FIFO = #00, 8N2 until the first LCR write, divisor 0 = 345600 baud; each access stalls the Z80 while the AVR serves it (52 T, ~15 us, estimated); a Z80 reset leaves it alone. Details and sources: [reference-evo-com-port.md](reference-evo-com-port.md) |
 | **ZX-WiFi** (real 16550 card on the ZX-Bus) | 16-byte FIFOs, auto RTS/CTS when MCR bit5 is set, 1.8432 MHz clock (divider 1 = 115200) |
 
 Common: DLL/DLM, LCR, FCR, LSR (DR, THRE, TEMT, OE), MSR (CTS, DSR, DCD),
@@ -449,9 +449,20 @@ scratch register. Bytes move at the programmed baud rate in emulated time
 pulses sees real timing. Overrun sets LSR.OE when the peer sends while the
 FIFO is full and RTS allowed it, as on hardware.
 
-On the ZX-Evo, `#xxEF` is today the `ComPort` arm returning `#FF`; the UART
-claims it the same way as the W5300 claims `#AB` (low-byte observer on `#EF`).
-On TS-Conf the same ports belong to ZiFi (N5), decided by the machine.
+On the ZX-Evo the FPGA decodes only the low byte (#EF) and A10..A8 (the
+register), so #00EF..#FFEF all alias the eight registers. The UART claims
+low byte #EF as a full-decode observer (like the W5300's #AB), over the
+ATM3 decoder's `ComPort` arm, which reads #FF without it. On TS-Conf the same
+ports belong to ZiFi (N5): no COM port is fitted there.
+
+Timing: a byte takes one character time (start + data + parity + stop bits
+at the programmed baud rate) in base-clock T-states (`t_states` + the Z80's
+`t` scaled back by the turbo multiplier, so turbo does not speed up the
+line). The peer starts a byte only while RTS is asserted and the byte then
+arrives a character later whatever RTS does meanwhile: the NedoOS type 0 RTS
+pulse (`MCR 2`, `MCR 0`) gets one byte per pulse, as with a flow-controlled
+ESP. The ZX-WiFi's auto-RTS (MCR AFE) holds the peer at the FIFO trigger
+level, auto-CTS holds the transmitter.
 
 ### 7.2 Serial peers
 
@@ -476,8 +487,19 @@ public:
 | `TcpPeer` | bytes to / from a host TCP endpoint (telnet BBS, a test harness) |
 | `LoopbackPeer` | tests |
 
-The ESP modules honor RTS: they send only while the ZX allows it, as the
-real firmware does. Bytes from peers that come from outside (`HostSerialPeer`,
+Every peer honors RTS (the UART asks it only while RTS allows).
+
+A TCP peer's host is an address or a name; a name is resolved at each
+connect through the virtual network's DNS (the `Hosts=` table first, then
+the host resolver), so the answer is journaled and a replay needs no host.
+A host serial device follows the line format the ZX programs (divisor, data
+bits, parity, stop bits; rates outside the OS constants through IOSSIOSPEED
+on macOS, termios2 on Linux, the DCB on Windows). With `ComModemLines=1` the
+ZX's RTS / DTR drive the device and its CTS / DSR / RI / DCD come back as
+journaled `ModemLines` events; off by default, because USB ESP boards often
+wire RTS / DTR to the module's reset and boot pins and the NedoOS RTS pulses
+would reset it. A machine reset (ZX-Bus /RESET) resets the card and its
+sockets, not the COM port's link. Bytes from peers that come from outside (`HostSerialPeer`,
 `TcpPeer`) are journaled through the payload store; the ESP modules journal at
 their VNet boundary like the W5300 (their UART side is deterministic).
 
@@ -499,7 +521,8 @@ Machine INI:
 [NETWORK]
 Card=NONE                 ; NONE | ZXNETUSB
 HostAccess=1              ; 1 = reach the host network | 0 = internal services only
-ComPort=NONE              ; NONE | ESPNET | AT | SERIAL:<device> | TCP:<host>:<port> | LOOPBACK
+ComPort=NONE              ; NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] (ESPNET | AT: step N3)
+ComModemLines=0           ; 1: a SERIAL: device gets RTS / DTR and reports CTS / DSR / RI / DCD
 ComFlavor=AUTO            ; AUTO (by machine) | EVO | ZXWIFI
 EspChip=ESP32             ; ESP32 (8 sockets) | ESP8266 (4)
 Subnet=10.0.2.0/24
@@ -609,7 +632,7 @@ use the committed minimal card plus the few network programs they need
 | **N0** | `NetSockets`, `HostNetBridge`, `VirtualNetwork` (DHCP, DNS, gateway, forwarding), `NetEvent` / `NetLinkReset` + payload store in TTD, config, feature, "no adapter" unchanged | unit tests with fake and loopback backends; zero cost when off |
 | **N1a** | ZXNETUSB card + W5300 (TCP, UDP), status on every surface, PortDeviceId | NedoOS full card in the GUI: `wizcfg` lease, zxdb search, browser page, telnet; machine test green; replay sealed |
 | **N1b** | LISTEN / forwarding, IPRAW ping, memory-mapped mode, INT, blob (after the §6.3 decision), control on every surface | 3ws / scrnet reachable from the host browser; `ping`; TTD seek round trip |
-| **N2** | `Uart16550` (Evo, ZX-WiFi), `HostSerialPeer`, `TcpPeer`, `LoopbackPeer` | `cuart` talks to a TCP echo; a real ESP on USB works through `SERIAL:` |
+| **N2** | `Uart16550` (Evo, ZX-WiFi), `HostSerialPeer`, `TcpPeer`, `LoopbackPeer` | `cuart` talks to a TCP echo; a real ESP on USB works through `SERIAL:`. **Done** (§15): NedoOS `cuart` holds an AT dialog with a pretend ESP over TCP live; the SERIAL: path is checked on a pseudo-terminal, a real ESP not yet |
 | **N3** | `EspnetModule`, then `AtModule` | `sd_bootesp.$C` + zxdb works; Moon Rabbit `mrfue.com` and an ESPCOM app work |
 | **N4** | ATM Turbo 2+ COM port | NedoOS ATM ESP kernel on ATM710 reaches the network |
 | **N5, N6** | ZiFi (with TS-Conf), AY-UART, ATM2IOESP | per demand |
@@ -663,3 +686,29 @@ B/A of the minimum CPU time per frame: 48K fast 1.010 / 0.996, Scorpion fast
 layout, noted for the next A/B on this path. Open: the debugging views
 ([tdd-network-debugging.md](tdd-network-debugging.md)).
 
+
+### N2: COM port (2026-09-30, branch `com-port`)
+
+| Part | Where | Tests |
+|---|---|---|
+| 16550 model, both flavors (ZX-Evo AVR, ZX-WiFi 16C550 with AFE) | `core/src/emulator/io/serial/uart16550.*` | `uart16550_test.cpp` (reset values, baud the AVR's way, character timing, RTS pulses, overrun rules, auto-RTS / auto-CTS, loopback, state round trip) |
+| Peers: loopback, TCP (address or name, resolved through the virtual network's DNS) and host serial device as virtual-network streams (bytes, DNS answers and modem lines journaled as NetEvents) | `serialpeer.*`; `VirtualNetwork::ConnectSerial` / `ConfigureSerial` / `SerialModemLines`, `NetProto::Serial`, `NetEventType::ModemLines`; `dns::BuildQuery` / `ParseAnswer` | `serialpeer_test.cpp` (hosts table, host resolver, unknown name, DNS timeout, retry, line format, modem lines both ways) |
+| Host serial device (termios / Win32 COMM) on its own bridge thread: line format incl. custom rates, RTS / DTR, CTS / DSR / RI / DCD polling | `common/serial/hostserialport.h`, `platform/posix/`, `platform/macos/` + `platform/linux/` (custom baud), `platform/windows/`; `HostNetBridge::SerialOpen` / `SerialConfigure` / `SerialModemLines` | `hostnetbridge_test.cpp` (missing device; pseudo-terminal exchange and line format on POSIX) |
+| The port on the bus (#xxEF, A10..A8), AVR wait, reset rule, fitting by `[NETWORK] ComPort=` / `ComFlavor=` | `comport.*`, `comportspec.*`, `networkmanager.*`, `config.cpp` | `comport_test.cpp` (decode, wait, Z80 code echo, reset, flavor, status, TTD), `comportspec_test.cpp` |
+| TTD: the COM port in the network adapters blob (version 2): UART registers, echo queue by value, peer bytes by journal reference; the virtual network is saved without a card too | `netstate.h`, `network/ttdzxnetusb.*` | `ttdzxnetusb_test.cpp` (`TTDComPort_Test`: replay without the host, seek restores the peer's bytes) |
+| Status and settings on every surface | `com_port` in `GET /state/network` and the MCP / CLI / Lua / Python views; keys `com_port`, `com_flavor` in `POST /network/config`, `network set`, `network_configure()` | through the tests above |
+
+Checked live on the ZX-Evo:
+- `com_port=tcp:127.0.0.1:2323`, a Python echo server: Z80 code sent `HELLO`
+  through the Evo UART, the answer `hello` landed in RAM.
+- NedoOS (full card) with `com_port=tcp:localhost:2323` (the name resolved
+  through the host resolver) and a Python pretend ESP: `cuart`
+  (`src/kapps/cuart`, comType 0: RTS pulses) sent `AT` and `AT+GMR` and showed
+  `OK` and the three version lines (103 bytes, no overrun); F3 switched the
+  UART to divisor 3, 38400. Found on the way and fixed: a machine reset closed
+  the COM port's TCP link with the card's sockets, and the UART's clock did
+  not follow the machine counter restarting at a reset.
+
+Not done: a real ESP on USB through `SERIAL:` (no module at hand). The port path of a
+machine without a COM port is unchanged (the low-byte observer table stays
+empty): no A/B needed for it.

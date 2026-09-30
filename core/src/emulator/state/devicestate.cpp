@@ -1894,23 +1894,14 @@ const char* NetProtoName(NetProto p)
         case NetProto::Tcp: return "tcp";
         case NetProto::Udp: return "udp";
         case NetProto::Icmp: return "icmp";
+        case NetProto::Serial: return "serial";
     }
     return "?";
 }
 
 const char* NetStatusName(NetEventStatus s)
 {
-    switch (s)
-    {
-        case NetEventStatus::Ok: return "ok";
-        case NetEventStatus::Refused: return "refused";
-        case NetEventStatus::Timeout: return "timeout";
-        case NetEventStatus::Unreachable: return "unreachable";
-        case NetEventStatus::AddressInUse: return "address-in-use";
-        case NetEventStatus::Denied: return "denied";
-        case NetEventStatus::Error: return "error";
-    }
-    return "?";
+    return NetStatusText(s);
 }
 
 const char* W5300StateName(uint8_t ssr)
@@ -1952,15 +1943,70 @@ StateNode Network(EmulatorContext* context)
     if (!manager)
         return Unavailable("no network support in this machine");
     const NetworkManager::Status st = manager->GetStatus();
-    if (!st.fitted)
-        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE, or the network feature is off)");
+    if (!st.fitted && !st.com.fitted)
+        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE and ComPort=NONE, or the network feature is off)");
 
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["frame"] = st.frame;
 
+    // The COM port (TDD §7): the UART as the Z80 sees it and the peer
+    StateNode& com = ret["com_port"];
+    com["fitted"] = st.com.fitted;
+    if (st.com.fitted)
+    {
+        const Uart16550::View& u = st.com.uart;
+        com["flavor"] = st.com.flavor;
+        com["peer"] = st.com.peer;
+        if (!st.com.target.empty())
+            com["target"] = st.com.target;
+        com["connected"] = st.com.connected;
+        if (!st.com.phase.empty())
+            com["phase"] = st.com.phase;
+        if (!st.com.error.empty())
+            com["error"] = st.com.error;
+        com["modem_lines"] = st.com.modemLines;
+        com["baud"] = st.com.baud;
+        com["frame_bits"] = st.com.frameBits;
+        com["divisor"] = int(u.divisor);
+        com["lcr"] = StringHelper::Format("#%02X", u.lcr);
+        com["mcr"] = StringHelper::Format("#%02X", u.mcr);
+        com["lsr"] = StringHelper::Format("#%02X", u.lsr);
+        com["msr"] = StringHelper::Format("#%02X", u.msr);
+        com["ier"] = StringHelper::Format("#%02X", u.ier);
+        com["iir"] = StringHelper::Format("#%02X", u.iir);
+        com["scr"] = StringHelper::Format("#%02X", u.scr);
+        com["rts"] = (u.mcr & Uart16550::kMcrRts) != 0;
+        com["cts"] = (u.msr & Uart16550::kMsrCts) != 0;
+        com["rx_fifo"] = int(u.rxCount);
+        com["tx_fifo"] = int(u.txCount);
+        com["peer_pending"] = uint64_t(st.com.pending);
+        com["bytes_in"] = u.bytesIn;
+        com["bytes_out"] = u.bytesOut;
+        com["overruns"] = u.overruns;
+    }
+
     StateNode& card = ret["card"];
-    card["kind"] = st.card;
+    card["kind"] = st.fitted ? st.card : std::string("none");
+    if (!st.fitted)
+    {
+        ret["virtual_network"] = StateNode::Object();
+        StateNode& vnet = ret["virtual_network"];
+        vnet["host_access"] = st.hostAccess;
+        StateNode& vsockets = vnet["sockets"];
+        vsockets = StateNode::Array();
+        for (const VirtualNetwork::SocketInfo& i : st.sockets)
+        {
+            StateNode s = StateNode::Object();
+            s["id"] = int(i.id);
+            s["proto"] = NetProtoName(i.proto);
+            s["connected"] = i.connected;
+            s["bytes_in"] = i.bytesIn;
+            s["bytes_out"] = i.bytesOut;
+            vsockets.push(std::move(s));
+        }
+        return ret;
+    }
     card["port_83AB"] = StringHelper::Format("#%02X", st.control);
     card["port_82AB"] = StringHelper::Format("#%02X", st.mode);
     card["port_81AB"] = StringHelper::Format("#%02X", st.addressHigh);

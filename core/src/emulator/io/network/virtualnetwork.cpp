@@ -217,10 +217,40 @@ void VirtualNetwork::Connect(uint16_t id, const NetEndpoint& to)
         _host->TcpConnect(s->hostId, to);
 }
 
+void VirtualNetwork::ConnectSerial(uint16_t id, const std::string& device, uint32_t baud)
+{
+    Socket* s = Find(id);
+    if (!s || s->proto != NetProto::Serial)
+        return;
+    s->connected = false;
+    Note(id, s->proto, "serial-open", s->remote);
+    if (!_host)
+    {
+        Defer(id, NetEventType::ConnectFailed, NetEventStatus::Unreachable, s->remote);
+        return;
+    }
+    if (!IsReplaying())
+        _host->SerialOpen(s->hostId, device, baud);
+}
+
+void VirtualNetwork::ConfigureSerial(uint16_t id, const SerialLine& line)
+{
+    Socket* s = Find(id);
+    if (s && s->proto == NetProto::Serial && _host && !IsReplaying())
+        _host->SerialConfigure(s->hostId, line);
+}
+
+void VirtualNetwork::SerialModemLines(uint16_t id, bool rts, bool dtr)
+{
+    Socket* s = Find(id);
+    if (s && s->proto == NetProto::Serial && _host && !IsReplaying())
+        _host->SerialModemLines(s->hostId, rts, dtr);
+}
+
 void VirtualNetwork::Send(uint16_t id, const uint8_t* data, uint32_t length)
 {
     Socket* s = Find(id);
-    if (!s || s->proto != NetProto::Tcp || !data || length == 0)
+    if (!s || (s->proto != NetProto::Tcp && s->proto != NetProto::Serial) || !data || length == 0)
         return;
     s->bytesOut += length;
     if (_host && s->connected && !IsReplaying())
@@ -409,15 +439,40 @@ void VirtualNetwork::ReplaceHost(std::unique_ptr<IHostNet> host)
     _host = std::move(host);
 }
 
-void VirtualNetwork::Reset()
+void VirtualNetwork::Reset(const INetGuest* keep)
 {
+    std::map<uint16_t, Socket> kept;
+    for (const auto& [id, s] : _sockets)
+    {
+        if (keep && s.guest == keep)
+            kept[id] = s;
+    }
     if (_host)
-        _host->CloseAll();
-    _sockets.clear();
+    {
+        if (kept.empty())
+            _host->CloseAll();
+        else
+        {
+            for (const auto& [id, s] : _sockets)
+            {
+                if (!kept.count(id))
+                    _host->Close(s.hostId);
+            }
+        }
+    }
+    _sockets.swap(kept);
     _listeners.clear();
-    _deferred.clear();
+    // Answers still queued for the kept sockets stay; the others are gone
+    std::deque<Deferred> deferred;
+    for (Deferred& d : _deferred)
+    {
+        if (_sockets.count(d.id))
+            deferred.push_back(std::move(d));
+    }
+    _deferred.swap(deferred);
     _dhcp.Clear();
-    _nextId = 1;
+    if (_sockets.empty())
+        _nextId = 1;   // ids of kept sockets must not be handed out again
     _counters = Counters();
     _activity.clear();
 }
@@ -545,7 +600,8 @@ void VirtualNetwork::ApplyLinkReset()
     std::vector<uint16_t> affected;
     for (const auto& [id, s] : _sockets)
     {
-        if (s.guest && s.proto == NetProto::Tcp && (s.connected || s.remote.addr != 0))
+        const bool stream = s.proto == NetProto::Tcp || s.proto == NetProto::Serial;
+        if (s.guest && stream && (s.connected || s.remote.addr != 0 || s.proto == NetProto::Serial))
             affected.push_back(id);
     }
     for (uint16_t id : affected)
@@ -603,7 +659,7 @@ std::vector<VirtualNetwork::ListenerInfo> VirtualNetwork::Listeners() const
 // TTD state
 // ---------------------------------------------------------------------------
 
-bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out) const
+bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const INetGuest* comGuest) const
 {
     bool complete = true;
     out.nextId = _nextId;
@@ -621,7 +677,7 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out) const
         o.hostId = s.hostId;
         o.proto = static_cast<uint8_t>(s.proto);
         o.connected = s.connected ? 1 : 0;
-        o.hasGuest = s.guest ? 1 : 0;
+        o.hasGuest = s.guest ? (s.guest == comGuest && comGuest ? 2 : 1) : 0;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
         o.remotePort = s.remote.port;
@@ -695,7 +751,7 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out) const
     return complete;
 }
 
-void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* guest)
+void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, INetGuest* comGuest)
 {
     _sockets.clear();
     _listeners.clear();
@@ -710,7 +766,7 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
         s.hostId = o.hostId;
         s.proto = static_cast<NetProto>(o.proto);
         s.connected = o.connected != 0;
-        s.guest = o.hasGuest ? guest : nullptr;
+        s.guest = o.hasGuest == 2 ? comGuest : (o.hasGuest ? guest : nullptr);
         s.cookie = o.cookie;
         s.remote = {o.remoteAddr, o.remotePort};
         s.listenPort = o.listenPort;

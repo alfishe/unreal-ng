@@ -19,6 +19,7 @@
 
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
+#include "emulator/io/serial/comport.h"
 
 class EmulatorContext;
 
@@ -51,12 +52,17 @@ public:
         std::optional<std::string> hosts;     ///< "name=a.b.c.d,..."
         std::optional<std::string> forwards;  ///< "tcp:<hostport>:<guestport>,..."
         std::optional<unsigned> connectTimeoutMs;
+        std::optional<std::string> comPort;    ///< ComPort= value (ComPortSpec)
+        std::optional<uint8_t> comFlavor;      ///< 0 auto, 1 evo, 2 zxwifi
+        std::optional<bool> comModemLines;     ///< a serial device's RTS / DTR / CTS / DSR / RI / DCD
     };
     bool RequestChange(const Change& change, std::string& error);
 
     /// The one parser every interface uses: keys card (zxnetusb | none),
     /// host_access (on | off), dns_mode (host | pass), hosts, forwards,
-    /// connect_timeout_ms. Unknown keys and bad values are errors
+    /// connect_timeout_ms, com_port (ComPortSpec: none | loopback |
+    /// tcp:<host>:<port> | serial:<device>[,<baud>]), com_flavor (auto | evo |
+    /// zxwifi), com_modem_lines (on | off). Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
 
@@ -65,6 +71,7 @@ public:
 
     VirtualNetwork* Network() const { return _network.get(); }
     ZxNetUsb* Card() const { return _card.get(); }
+    ComPort* Com() const { return _com.get(); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -89,6 +96,23 @@ public:
         std::vector<VirtualNetwork::Activity> activity;
         VirtualNetworkConfig config;
         uint64_t frame = 0;               ///< frame of the snapshot
+
+        /// The COM port (TDD §7): UART registers and the peer
+        struct Com
+        {
+            bool fitted = false;
+            std::string flavor;           ///< evo (the ZX-Evo AVR) | zxwifi (a 16550 card)
+            std::string peer;             ///< loopback | tcp | serial
+            std::string target;           ///< host:port (resolved address), device,baud
+            std::string phase;            ///< idle | resolving | connecting | connected (stream peers)
+            std::string error;            ///< why the last attempt failed
+            bool modemLines = false;
+            bool connected = false;
+            Uart16550::View uart;
+            uint32_t baud = 0;
+            uint32_t frameBits = 0;
+            size_t pending = 0;           ///< bytes the peer holds for the ZX
+        } com;
     };
     Status GetStatus() const;
 
@@ -100,6 +124,10 @@ private:
     EmulatorContext* _context = nullptr;
     std::unique_ptr<VirtualNetwork> _network;
     std::unique_ptr<ZxNetUsb> _card;
+    std::unique_ptr<ComPort> _com;
+    bool CardWanted() const;
+    bool ComWanted() const;
+    void FitCom();
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;             ///< the next refit unplugs first (settings changed)
     std::mutex _changeMutex;

@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "common/network/dnsmessage.h"
+#include "common/serial/hostserialport.h"
 
 HostNetBridge::HostNetBridge() : HostNetBridge(Options())
 {
@@ -19,6 +20,7 @@ HostNetBridge::HostNetBridge(const Options& options) : _options(options)
 
 HostNetBridge::~HostNetBridge()
 {
+    CloseAllSerial();
     _stop = true;
     _dnsCv.notify_all();
     _pingCv.notify_all();
@@ -52,6 +54,8 @@ void HostNetBridge::TcpConnect(uint16_t socket, const NetEndpoint& to)
 void HostNetBridge::TcpSend(uint16_t socket, const uint8_t* data, uint32_t length)
 {
     if (!data || length == 0)
+        return;
+    if (SerialSend(socket, data, length))
         return;
     std::lock_guard<std::mutex> lock(_commandMutex);
     _commands.push_back({CommandType::Send, socket, {}, std::vector<uint8_t>(data, data + length)});
@@ -104,12 +108,14 @@ void HostNetBridge::IcmpEcho(uint16_t socket, const NetEndpoint& to, const uint8
 
 void HostNetBridge::Close(uint16_t socket)
 {
+    CloseSerial(socket);
     std::lock_guard<std::mutex> lock(_commandMutex);
     _commands.push_back({CommandType::Close, socket, {}, {}});
 }
 
 void HostNetBridge::CloseAll()
 {
+    CloseAllSerial();
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _commands.push_back({CommandType::CloseAll, 0, {}, {}});
@@ -145,6 +151,179 @@ uint16_t HostNetBridge::ListenerHostPort(uint16_t socket) const
     std::lock_guard<std::mutex> lock(_listenerPortMutex);
     auto it = _listenerPorts.find(socket);
     return it == _listenerPorts.end() ? 0 : it->second;
+}
+
+// ---------------------------------------------------------------------------
+// Serial devices
+// ---------------------------------------------------------------------------
+
+void HostNetBridge::SerialOpen(uint16_t socket, const std::string& device, uint32_t baud)
+{
+    CloseSerial(socket);
+    auto link = std::make_unique<SerialLink>();
+    SerialLink* raw = link.get();
+    std::lock_guard<std::mutex> lock(_serialMutex);
+    link->thread = std::thread(&HostNetBridge::RunSerial, this, socket, device, baud, raw);
+    _serial[socket] = std::move(link);
+}
+
+void HostNetBridge::SerialConfigure(uint16_t socket, const SerialLine& line)
+{
+    std::lock_guard<std::mutex> lock(_serialMutex);
+    auto it = _serial.find(socket);
+    if (it == _serial.end())
+        return;
+    std::lock_guard<std::mutex> linkLock(it->second->sendMutex);
+    it->second->line = line;
+    it->second->lineChanged = true;
+}
+
+void HostNetBridge::SerialModemLines(uint16_t socket, bool rts, bool dtr)
+{
+    std::lock_guard<std::mutex> lock(_serialMutex);
+    auto it = _serial.find(socket);
+    if (it == _serial.end())
+        return;
+    std::lock_guard<std::mutex> linkLock(it->second->sendMutex);
+    it->second->rts = rts;
+    it->second->dtr = dtr;
+    it->second->linesChanged = true;
+    it->second->reportLines = true;
+}
+
+bool HostNetBridge::SerialSend(uint16_t socket, const uint8_t* data, uint32_t length)
+{
+    std::lock_guard<std::mutex> lock(_serialMutex);
+    auto it = _serial.find(socket);
+    if (it == _serial.end())
+        return false;
+    std::lock_guard<std::mutex> sendLock(it->second->sendMutex);
+    if (it->second->sendQueue.size() + length <= _options.maxQueuedSendBytes)
+        it->second->sendQueue.insert(it->second->sendQueue.end(), data, data + length);
+    return true;
+}
+
+void HostNetBridge::CloseSerial(uint16_t socket)
+{
+    std::unique_ptr<SerialLink> link;
+    {
+        std::lock_guard<std::mutex> lock(_serialMutex);
+        auto it = _serial.find(socket);
+        if (it == _serial.end())
+            return;
+        link = std::move(it->second);
+        _serial.erase(it);
+    }
+    link->stop = true;
+    if (link->thread.joinable())
+        link->thread.join();
+}
+
+void HostNetBridge::CloseAllSerial()
+{
+    std::map<uint16_t, std::unique_ptr<SerialLink>> links;
+    {
+        std::lock_guard<std::mutex> lock(_serialMutex);
+        links.swap(_serial);
+    }
+    for (auto& [id, link] : links)
+    {
+        (void)id;
+        link->stop = true;
+        if (link->thread.joinable())
+            link->thread.join();
+    }
+}
+
+void HostNetBridge::RunSerial(uint16_t socket, std::string device, uint32_t baud, SerialLink* link)
+{
+    HostSerialPort port;
+    std::string error;
+    HostNetEvent opened;
+    opened.socket = socket;
+    if (!port.Open(device, baud, error))
+    {
+        opened.type = NetEventType::ConnectFailed;
+        opened.status = NetEventStatus::Unreachable;
+        opened.data.assign(error.begin(), error.end());   // the reason, for the log
+        Emit(std::move(opened));
+        return;
+    }
+    opened.type = NetEventType::Connected;
+    Emit(std::move(opened));
+
+    std::vector<uint8_t> buffer(512);
+    std::vector<uint8_t> out;
+    int lastLines = -1;
+    while (!link->stop)
+    {
+        // What the machine asked for since the last pass
+        bool applyLine = false, applyLines = false, report = false;
+        SerialLine line;
+        bool rts = false, dtr = false;
+        {
+            std::lock_guard<std::mutex> lock(link->sendMutex);
+            applyLine = link->lineChanged;
+            link->lineChanged = false;
+            line = link->line;
+            applyLines = link->linesChanged;
+            link->linesChanged = false;
+            rts = link->rts;
+            dtr = link->dtr;
+            report = link->reportLines;
+        }
+        if (applyLine)
+        {
+            std::string lineError;
+            (void)port.Configure(line, lineError);   // a rate the adapter refuses keeps the previous one
+        }
+        if (applyLines)
+            port.SetModemLines(rts, dtr);
+        if (report)
+        {
+            const int lines = port.ModemStatus();
+            if (lines >= 0 && lines != lastLines)
+            {
+                lastLines = lines;
+                HostNetEvent changed;
+                changed.type = NetEventType::ModemLines;
+                changed.socket = socket;
+                changed.data.push_back(static_cast<uint8_t>(lines));
+                Emit(std::move(changed));
+            }
+        }
+
+        const int n = port.Read(buffer.data(), buffer.size(), 10);
+        if (n < 0)
+        {
+            HostNetEvent gone;
+            gone.type = NetEventType::Reset;
+            gone.socket = socket;
+            Emit(std::move(gone));
+            return;
+        }
+        if (n > 0)
+        {
+            HostNetEvent data;
+            data.type = NetEventType::Data;
+            data.socket = socket;
+            data.data.assign(buffer.begin(), buffer.begin() + n);
+            Emit(std::move(data));
+        }
+        {
+            std::lock_guard<std::mutex> lock(link->sendMutex);
+            out.assign(link->sendQueue.begin(), link->sendQueue.end());
+            link->sendQueue.clear();
+        }
+        if (!out.empty() && !port.Write(out.data(), out.size()))
+        {
+            HostNetEvent gone;
+            gone.type = NetEventType::Reset;
+            gone.socket = socket;
+            Emit(std::move(gone));
+            return;
+        }
+    }
 }
 
 void HostNetBridge::Emit(HostNetEvent ev)

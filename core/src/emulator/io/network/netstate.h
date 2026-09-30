@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "emulator/io/serial/uart16550.h"
+
 namespace netstate
 {
 
@@ -29,6 +31,8 @@ constexpr int kMaxListeners = 8;
 constexpr int kMaxWaiting = 8;
 constexpr int kMaxPending = 8;
 constexpr int kMaxLeases = 16;
+constexpr int kMaxComBytes = 4096;      ///< COM port: loopback echo / unsent bytes kept
+constexpr int kMaxComRuns = 256;        ///< COM port: runs of received bytes by journal reference
 
 // Trivial types only (no member initializers): the blob is cleared with memset
 // and copied with memcpy
@@ -75,7 +79,7 @@ struct W5300Socket
 struct NetSocket
 {
     uint16_t id, hostId;
-    uint8_t proto, connected, hasGuest, reserved;
+    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the COM port peer
     uint32_t cookie;
     uint32_t remoteAddr;
     uint16_t remotePort, listenPort;
@@ -112,19 +116,51 @@ struct VirtualNetwork
     uint64_t counters[6];   ///< dhcpReplies, dnsLocalAnswers, dnsHostQueries, echoReplies, hostEvents, linkResets
 };
 
+/// A COM port stream peer's link (StreamPeer): phase, sockets, DNS lookup,
+/// the device's modem lines, the line format last asked of the device
+struct StreamLink
+{
+    uint8_t phase;          ///< StreamPeer::Phase
+    uint8_t closePending, connectPending, deviceLines;
+    uint8_t rts, dtr;
+    uint8_t lineDataBits, lineParity, lineStopBits;
+    uint8_t reserved[3];
+    uint16_t socket, dnsSocket, dnsId, dnsSeq;
+    uint32_t resolvedAddr, retryFrames, waitFrames, lineBaud;
+    uint64_t bytesIn, bytesOut;
+};
+
+/// The COM port (network TDD §7): the UART and its peer
+struct Com
+{
+    uint8_t present;        ///< a COM port was fitted at capture
+    uint8_t peerKind;       ///< 1 loopback, 2 tcp, 3 serial
+    uint8_t reserved[2];
+    StreamLink link;        ///< stream peers
+    Uart16550::State uart;
+    uint32_t loopbackLength;
+    uint8_t loopback[kMaxComBytes];   ///< the echo queue: bytes the ZX wrote
+    uint32_t runCount;
+    Reference runs[kMaxComRuns];      ///< stream peer: bytes waiting for the ZX, by journal reference
+    uint32_t unsentLength;
+    uint8_t unsent[kMaxComBytes];     ///< stream peer: bytes the ZX sent, not yet flushed
+};
+
 struct Adapters
 {
     uint32_t version;       ///< kVersion
     uint8_t present;        ///< a card was fitted at capture
     uint8_t incomplete;     ///< some state did not fit the limits above
     uint8_t p83, p82, p81;
-    uint8_t reserved[3];
+    uint8_t networkPresent; ///< the virtual network existed (a card or a COM stream peer)
+    uint8_t reserved[2];
     uint8_t common[256];
     W5300Socket sockets[kSockets];
     VirtualNetwork network;
+    Com com;
 };
 
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;   ///< 2: the COM port
 
 static_assert(std::is_trivial_v<Adapters>, "the network state blob is cleared and copied as bytes");
 

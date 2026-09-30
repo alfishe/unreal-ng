@@ -25,6 +25,22 @@ enum class NetEventType : uint8_t
     Datagram = 7,        ///< UDP datagram arrived (netAddr/netPort: sender, payload: data)
     EchoReply = 8,       ///< ICMP echo reply (netAddr: sender, payload: echo data)
     ListenFailed = 9,    ///< the host could not listen for a guest server
+    ModemLines = 10,     ///< a host serial device's input lines changed (payload: 1 byte, MSR layout: CTS #10, DSR #20, RI #40, DCD #80)
+};
+
+/// Line format of a serial link (a host serial device follows what the ZX
+/// programmed into its UART)
+struct SerialLine
+{
+    uint32_t baud = 115200;
+    uint8_t dataBits = 8;     ///< 5..8
+    char parity = 'N';        ///< N, O, E, M (mark), S (space)
+    uint8_t stopBits = 1;     ///< 1 or 2
+    bool operator==(const SerialLine& o) const
+    {
+        return baud == o.baud && dataBits == o.dataBits && parity == o.parity && stopBits == o.stopBits;
+    }
+    bool operator!=(const SerialLine& o) const { return !(*this == o); }
 };
 
 /// Why a network operation failed. Journaled as TTDInputEvent::netStatus.
@@ -44,6 +60,7 @@ enum class NetProto : uint8_t
     Tcp = 0,
     Udp = 1,
     Icmp = 2,
+    Serial = 3,   ///< a host serial device as a byte stream (COM port peer SERIAL:)
 };
 
 struct NetEndpoint
@@ -64,6 +81,9 @@ constexpr uint32_t NetIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 }
 
 std::string NetIpToString(uint32_t addr);
+
+/// Short name of a status: ok, refused, timeout, unreachable, address-in-use, denied, error
+const char* NetStatusText(NetEventStatus status);
 bool NetIpFromString(const std::string& text, uint32_t& addr);
 
 /// One event from the host bridge to the virtual network (bridge thread ->

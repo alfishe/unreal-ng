@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include <memory>
 #include <sstream>
 #include <string>
@@ -11,13 +13,17 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/fakehostnet.h"
+#include "common/network/dnsmessage.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/network/ttdzxnetusb.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
+#include "emulator/io/serial/comport.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/memory/memory.h"
 
 namespace
@@ -234,4 +240,176 @@ TEST_F(TTDZxNetUsb_Test, LoadedSessionReplaysTheNetworkInputs)
     _play.emulator->RunNFrames(static_cast<int>(end - before));
     ASSERT_EQ(_play.context->emulatorState.frame_counter, end);
     EXPECT_EQ(StateBlob(*_play.context->pZxNetUsb), endState);
+}
+
+/// The COM port in the same blob (network TDD §7): a TCP peer's bytes are
+/// journaled NetEvents; a replay from before them fills the UART the same way
+/// without the host
+class TTDComPort_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    ttd::TimeTravelManager* _ttd = nullptr;
+    FakeHostNet* _host = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _ttd = _context->pTimeTravelManager;
+        ASSERT_NE(_ttd, nullptr);
+        FeatureManager* features = _emulator->GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        features->setFeature(Features::kTimeTravel, true);
+        _context->pMemory->UpdateFeatureCache();
+
+        std::strcpy(_context->config.network.comPort, "TCP:127.0.0.1:2323");
+        _context->config.network.hostAccess = 0;
+        _context->pCore->ApplyNetworkConfiguration();
+        ASSERT_NE(_context->pComPort, nullptr);
+        auto fake = std::make_unique<FakeHostNet>();
+        _host = fake.get();
+        _context->pVirtualNetwork->ReplaceHost(std::move(fake));
+        auto* peer = dynamic_cast<StreamPeer*>(_context->pComPort->Peer());
+        ASSERT_NE(peer, nullptr);
+        peer->Reconnect();
+        ASSERT_NE(_host->Last("connect"), nullptr);
+        _host->Push(NetEventType::Connected, _host->Last("connect")->socket);
+        _emulator->RunNFrames(1);
+        ASSERT_TRUE(peer->Connected());
+
+        // NedoOS type 2 (ZX-WiFi): 115200 8N1, FIFO trigger 8, AFE + RTS
+        Z80* z80 = _context->pCore->GetZ80();
+        z80->out(0xFAEF, 0x87);
+        z80->out(0xFBEF, 0x03);
+        z80->out(0xFCEF, 0x2F);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    std::vector<uint8_t> Blob()
+    {
+        ttd::TTDZxNetUsb serializer(_context);
+        std::vector<uint8_t> blob(serializer.TTDStateSize());
+        serializer.TTDSaveState(blob.data());
+        return blob;
+    }
+};
+
+TEST_F(TTDComPort_Test, ReplayWithoutTheHostFillsTheUartTheSameWay)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2);
+    const uint64_t before = _context->emulatorState.frame_counter;
+    std::vector<uint8_t> text(40);
+    for (size_t i = 0; i < text.size(); ++i)
+        text[i] = static_cast<uint8_t>('a' + i % 26);
+    _host->Push(NetEventType::Data, _host->Last("connect")->socket, NetEventStatus::Ok, {}, text);
+    _emulator->RunNFrames(3);
+    const uint64_t end = _context->emulatorState.frame_counter;
+    const Uart16550::View v = _context->pComPort->Uart().GetView();
+    EXPECT_EQ(v.rxCount, 8) << "auto-RTS held the peer at the trigger level";
+    EXPECT_EQ(_context->pComPort->Peer()->Pending(), 32u);
+    const std::vector<uint8_t> endBlob = Blob();
+    _ttd->StopRecording();
+    ASSERT_EQ(_ttd->GetInputJournal().NetInputs().size(), 1u);
+
+    const size_t hostCommands = _host->commands.size();
+    ASSERT_TRUE(_ttd->SeekTo({before, 0}));
+    EXPECT_EQ(_context->pComPort->Uart().GetView().rxCount, 0);
+    EXPECT_EQ(_context->pComPort->Peer()->Pending(), 0u);
+    _emulator->RunNFrames(static_cast<int>(end - before));
+    ASSERT_EQ(_context->emulatorState.frame_counter, end);
+    EXPECT_EQ(Blob(), endBlob) << "the replay diverged";
+    EXPECT_EQ(_host->commands.size(), hostCommands) << "a replay never talks to the host";
+}
+
+TEST_F(TTDComPort_Test, SeekRestoresBytesWaitingInThePeerFromTheJournal)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(1);
+    _host->Push(NetEventType::Data, _host->Last("connect")->socket, NetEventStatus::Ok, {},
+                std::vector<uint8_t>(20, 'z'));
+    _emulator->RunNFrames(2);
+    const uint64_t mid = _context->emulatorState.frame_counter;
+    _emulator->RunNFrames(1);
+    const std::vector<uint8_t> afterMid = Blob();
+    _emulator->RunNFrames(1);
+    _ttd->StopRecording();
+
+    // The checkpoint of frame `mid` is taken before the COM port catches up
+    // at that boundary: the bytes were delivered, none has reached the FIFO
+    ASSERT_TRUE(_ttd->SeekTo({mid, 0}));
+    const Uart16550::View v = _context->pComPort->Uart().GetView();
+    EXPECT_EQ(_context->pComPort->Peer()->Pending() + v.rxCount, 19u) << "one byte on the line, 19 restored from the journal";
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Blob(), afterMid) << "the restored bytes continue as recorded";
+}
+
+/// A COM peer given by name: the DNS answer is journaled like the data, so a
+/// replay from before the lookup resolves and connects the same way without
+/// the host
+TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    std::strcpy(context->config.network.comPort, "TCP:bbs.example.org:23");
+    context->config.network.hostAccess = 0;
+    context->pCore->ApplyNetworkConfiguration();
+    ASSERT_NE(context->pComPort, nullptr);
+    auto fake = std::make_unique<FakeHostNet>();
+    FakeHostNet* host = fake.get();
+    context->pVirtualNetwork->ReplaceHost(std::move(fake));
+    auto* peer = dynamic_cast<StreamPeer*>(context->pComPort->Peer());
+    ASSERT_NE(peer, nullptr);
+
+    auto blob = [&] {
+        ttd::TTDZxNetUsb serializer(context);
+        std::vector<uint8_t> b(serializer.TTDStateSize());
+        serializer.TTDSaveState(b.data());
+        return b;
+    };
+
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(1);
+    const uint64_t before = context->emulatorState.frame_counter;
+    peer->Reconnect();   // the lookup starts inside the recording
+    const FakeHostNet::Command query = *host->Last("dns");
+    dns::Question q;
+    ASSERT_TRUE(dns::ParseQuery(query.data.data(), query.data.size(), q));
+    host->Push(NetEventType::Datagram, query.socket, NetEventStatus::Ok, query.endpoint,
+               dns::BuildAnswer(query.data.data(), query.data.size(), q, {NetIp(93, 184, 216, 34)}, dns::kRcodeNoError));
+    emulator->RunNFrames(3);
+    ASSERT_EQ(peer->ResolvedAddress(), NetIp(93, 184, 216, 34));
+    const FakeHostNet::Command connect = *host->Last("connect");
+    EXPECT_EQ(connect.endpoint.addr, NetIp(93, 184, 216, 34));
+    host->Push(NetEventType::Connected, connect.socket);
+    host->Push(NetEventType::Data, connect.socket, NetEventStatus::Ok, {}, {'W', 'e', 'l', 'c', 'o', 'm', 'e'});
+    emulator->RunNFrames(3);
+    ASSERT_TRUE(peer->Connected());
+    const uint64_t end = context->emulatorState.frame_counter;
+    const std::vector<uint8_t> endBlob = blob();
+    ttd->StopRecording();
+
+    // Reconnect() between the checkpoints is outside the journal: seek to the
+    // first frame after it and replay the rest
+    const size_t hostCommands = host->commands.size();
+    ASSERT_TRUE(ttd->SeekTo({before + 1, 0}));
+    emulator->RunNFrames(static_cast<int>(end - before - 1));
+    EXPECT_EQ(blob(), endBlob) << "the replay diverged";
+    EXPECT_TRUE(peer->Connected());
+    EXPECT_EQ(host->commands.size(), hostCommands) << "a replay never talks to the host";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

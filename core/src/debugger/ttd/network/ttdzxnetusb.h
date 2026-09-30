@@ -5,10 +5,12 @@
 /// §6.3, option A): the ZXNETUSB card ports, the W5300 registers and socket
 /// states, bytes written but not sent, and references into the TTD journal
 /// for every received byte the chip holds; plus the virtual network's
-/// guest-side tables. The loader takes the received bytes from the journal.
+/// guest-side tables; the COM port (UART registers and FIFOs, its peer's
+/// queues, received bytes by journal reference). The loader takes the
+/// received bytes from the journal.
 ///
-/// Registered for every machine while a card is fitted. Looks the card up at
-/// each call, so a refit between checkpoints is seen.
+/// Registered for every machine while a card or a COM port is fitted. Looks
+/// the devices up at each call, so a refit between checkpoints is seen.
 
 #include <memory>
 

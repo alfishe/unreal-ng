@@ -627,6 +627,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  network | net | state network - Card, W5300 sockets, virtual network (DHCP, sockets, activity)" << NEWLINE;
     oss << "  network set key=value ..     - card=zxnetusb|none host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
+    oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud] com_flavor=auto|evo|zxwifi com_modem_lines=on|off" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
