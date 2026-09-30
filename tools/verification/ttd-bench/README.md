@@ -14,7 +14,7 @@ The same emulation runs under every TTD engine (today only `v1`, the current `Ti
 
 ## Glossary
 
-- **Configuration**: a machine model plus a set of peripherals, for example `ATM3+gs512+moon+tsfm`. Some configurations also switch on the hardware turbo (`ATM710-turbo`, `SCORPION-turbo`; ZX-Evo `ATM3` boots with 2x turbo already on).
+- **Configuration**: a machine model plus a set of peripherals, for example `ATM3+gs512+moon+tsfm`. Some configurations also switch on the hardware turbo (`ATM710-turbo`); ZX-Evo `ATM3` and the Scorpions (`SCORPION`, `PROFSCORP`) boot with their 2x turbo already on, and `SCORPION-3.5MHz` switches it off.
 - **Workload**: what the machine does while it is recorded. Each workload is replayable, meaning every run produces exactly the same machine states:
   - it starts from a fixed state (cold boot, a snapshot, or an autostarted disk);
   - it runs a number of settle frames before recording starts;
@@ -71,7 +71,7 @@ Other sessions running on the same machine inflate timings. Check `uptime` befor
 | BM-6 | `bm6_restore_{cpu_chipset,devices,memory,screen}_us_p50` | Checkpoint restore time, split by component |
 | BM-7 | `bm7_file_bytes`, `bm7_file_bpf`, `bm7_{save,load}_s_per_gb`, `bm7_first_seek_ms` | Session file size, save and load speed, and time to the first seek after loading |
 | BM-8 | `bm8_capture_us_dirty{0,1,4,16,64}` | Capture time after writing 0 to 64 pieces of 4 KB each |
-| - | `turbo_shift` | The hardware turbo in effect at the end of the run: proof that the configuration really ran as named |
+| - | `turbo_ratio` | The hardware clock ratio (1 = base clock) in effect at the end of the run: proof that the configuration really ran as named |
 
 Each seek position is measured three times (`seekRepeats`) and the fastest run is kept. The spread between positions (how far the target is from its checkpoint, where it lies in the frame) stays in the data, while a single measurement slowed by the scheduler does not.
 

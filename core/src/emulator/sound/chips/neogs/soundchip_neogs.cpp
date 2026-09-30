@@ -766,8 +766,8 @@ double SoundChip_NeoGS::zxUnitsPerHostT() const
 {
     // Host T-states count at the CPU rate; the ZX tact domain has hardware
     // turbo descaled (EmulatorState::AudioTstate)
-    const int shift = _context ? _context->emulatorState.hw_turbo_shift_applied : 0;
-    return GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND) / static_cast<double>(1 << shift);
+    const unsigned ratio = _context ? _context->emulatorState.hw_turbo_ratio_applied : 1u;
+    return GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND) / static_cast<double>(ratio ? ratio : 1u);
 }
 
 void SoundChip_NeoGS::zxAddHostWait(uint32_t tStates)

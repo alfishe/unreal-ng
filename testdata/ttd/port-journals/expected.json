@@ -14,11 +14,11 @@
       "event": "key",
       "hits": [
        {
-        "frame": 75,
+        "frame": 76,
         "index": 401,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7558,
+        "tinframe": 7420,
         "value": 251
        }
       ],
@@ -37,11 +37,11 @@
       "event": "key",
       "hits": [
        {
-        "frame": 175,
+        "frame": 176,
         "index": 2001,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7449,
+        "tinframe": 9972,
         "value": 254
        }
       ],
@@ -60,11 +60,11 @@
       "event": "key",
       "hits": [
        {
-        "frame": 265,
+        "frame": 266,
         "index": 3453,
         "pc": 29362,
         "port": 63486,
-        "tinframe": 9280,
+        "tinframe": 9275,
         "value": 239
        }
       ],
@@ -83,11 +83,11 @@
       "event": "key",
       "hits": [
        {
-        "frame": 365,
+        "frame": 366,
         "index": 5054,
         "pc": 29362,
         "port": 64510,
-        "tinframe": 11430,
+        "tinframe": 11425,
         "value": 254
        }
       ],
@@ -106,11 +106,11 @@
       "event": "key",
       "hits": [
        {
-        "frame": 430,
+        "frame": 431,
         "index": 6082,
         "pc": 29362,
         "port": 32766,
-        "tinframe": 7824,
+        "tinframe": 7826,
         "value": 254
        }
       ],
@@ -142,43 +142,43 @@
       "event": "key",
       "hits": [
        {
-        "frame": 75,
+        "frame": 76,
         "index": 401,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7558,
+        "tinframe": 7420,
         "value": 251
        },
        {
-        "frame": 175,
+        "frame": 176,
         "index": 2001,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7449,
+        "tinframe": 9972,
         "value": 254
        },
        {
-        "frame": 265,
+        "frame": 266,
         "index": 3453,
         "pc": 29362,
         "port": 63486,
-        "tinframe": 9280,
+        "tinframe": 9275,
         "value": 239
        },
        {
-        "frame": 365,
+        "frame": 366,
         "index": 5054,
         "pc": 29362,
         "port": 64510,
-        "tinframe": 11430,
+        "tinframe": 11425,
         "value": 254
        },
        {
-        "frame": 430,
+        "frame": 431,
         "index": 6082,
         "pc": 29362,
         "port": 32766,
-        "tinframe": 7824,
+        "tinframe": 7826,
         "value": 254
        }
       ],
@@ -195,7 +195,7 @@
       "direction": "out",
       "event": "border",
       "hits": [],
-      "scanned": 14920,
+      "scanned": 14922,
       "truncated": false
      }
     },
@@ -210,167 +210,167 @@
       "event": "beeper",
       "hits": [
        {
-        "frame": 201,
-        "index": 4557,
-        "pc": 35337,
-        "port": 254,
-        "tinframe": 10837,
-        "value": 0
-       },
-       {
-        "frame": 201,
-        "index": 4558,
-        "pc": 35337,
-        "port": 4350,
-        "tinframe": 14839,
-        "value": 16
-       },
-       {
-        "frame": 201,
+        "frame": 202,
         "index": 4559,
         "pc": 35337,
         "port": 254,
-        "tinframe": 18841,
+        "tinframe": 13343,
         "value": 0
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4560,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 22843,
+        "tinframe": 17345,
         "value": 16
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4561,
         "pc": 35337,
         "port": 254,
-        "tinframe": 26845,
+        "tinframe": 21347,
         "value": 0
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4562,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 30847,
+        "tinframe": 25349,
         "value": 16
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4563,
         "pc": 35337,
         "port": 254,
-        "tinframe": 34849,
+        "tinframe": 29351,
         "value": 0
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4564,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 38851,
+        "tinframe": 33353,
         "value": 16
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4565,
         "pc": 35337,
         "port": 254,
-        "tinframe": 42853,
+        "tinframe": 37355,
         "value": 0
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4566,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 58764,
+        "tinframe": 41357,
         "value": 16
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4567,
         "pc": 35337,
         "port": 254,
-        "tinframe": 62638,
+        "tinframe": 45359,
         "value": 0
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4568,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 66512,
+        "tinframe": 61270,
         "value": 16
        },
        {
-        "frame": 201,
+        "frame": 202,
         "index": 4569,
         "pc": 35337,
         "port": 254,
-        "tinframe": 70386,
+        "tinframe": 65144,
         "value": 0
        },
        {
         "frame": 202,
-        "index": 4598,
+        "index": 4570,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 12624,
+        "tinframe": 69018,
         "value": 16
        },
        {
-        "frame": 202,
+        "frame": 203,
         "index": 4599,
         "pc": 35337,
         "port": 254,
-        "tinframe": 16498,
+        "tinframe": 28536,
         "value": 0
        },
        {
-        "frame": 202,
+        "frame": 203,
         "index": 4600,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 20372,
+        "tinframe": 32410,
         "value": 16
        },
        {
-        "frame": 202,
+        "frame": 203,
         "index": 4601,
         "pc": 35337,
         "port": 254,
-        "tinframe": 24246,
+        "tinframe": 36284,
         "value": 0
        },
        {
-        "frame": 202,
+        "frame": 203,
         "index": 4602,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 28120,
+        "tinframe": 40158,
         "value": 16
        },
        {
-        "frame": 202,
+        "frame": 203,
         "index": 4603,
         "pc": 35337,
         "port": 254,
-        "tinframe": 31994,
+        "tinframe": 44032,
         "value": 0
        },
        {
-        "frame": 204,
-        "index": 4660,
+        "frame": 203,
+        "index": 4604,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 26544,
+        "tinframe": 47906,
+        "value": 16
+       },
+       {
+        "frame": 203,
+        "index": 4605,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 51780,
+        "value": 0
+       },
+       {
+        "frame": 205,
+        "index": 4662,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 26559,
         "value": 16
        }
       ],
-      "scanned": 4662,
+      "scanned": 4664,
       "truncated": true
      }
     },
@@ -386,31 +386,31 @@
       "event": "beeper",
       "hits": [
        {
-        "frame": 543,
-        "index": 14891,
+        "frame": 544,
+        "index": 14893,
         "pc": 35337,
         "port": 254,
-        "tinframe": 44278,
+        "tinframe": 25052,
         "value": 0
        },
        {
-        "frame": 543,
-        "index": 14890,
+        "frame": 544,
+        "index": 14892,
         "pc": 35337,
         "port": 4350,
-        "tinframe": 44116,
+        "tinframe": 24890,
         "value": 16
        },
        {
-        "frame": 543,
-        "index": 14889,
+        "frame": 544,
+        "index": 14891,
         "pc": 35337,
         "port": 254,
-        "tinframe": 43954,
+        "tinframe": 24728,
         "value": 0
        }
       ],
-      "scanned": 14920,
+      "scanned": 14922,
       "truncated": true
      }
     },
@@ -427,92 +427,92 @@
       "hits": [
        {
         "ay_register": 7,
-        "frame": 50,
+        "frame": 51,
         "index": 12,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 9202,
-        "value": 24
-       },
-       {
-        "ay_register": 7,
-        "frame": 51,
-        "index": 42,
-        "pc": 55406,
-        "port": 48893,
-        "tinframe": 6203,
+        "tinframe": 6209,
         "value": 24
        },
        {
         "ay_register": 7,
         "frame": 52,
-        "index": 72,
+        "index": 42,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6114,
+        "tinframe": 6115,
         "value": 24
        },
        {
         "ay_register": 7,
         "frame": 53,
-        "index": 102,
+        "index": 72,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6156,
+        "tinframe": 6155,
         "value": 56
        },
        {
         "ay_register": 7,
         "frame": 54,
-        "index": 130,
+        "index": 100,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6168,
+        "tinframe": 6169,
         "value": 56
        },
        {
         "ay_register": 7,
         "frame": 55,
-        "index": 158,
+        "index": 128,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6153,
+        "tinframe": 6154,
         "value": 56
        },
        {
         "ay_register": 7,
         "frame": 56,
-        "index": 186,
+        "index": 156,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 10275,
+        "tinframe": 10280,
         "value": 21
        },
        {
         "ay_register": 7,
         "frame": 57,
-        "index": 218,
+        "index": 188,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6692,
+        "tinframe": 6681,
         "value": 21
        },
        {
         "ay_register": 7,
         "frame": 58,
-        "index": 250,
+        "index": 220,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6586,
+        "tinframe": 6581,
         "value": 21
        },
        {
         "ay_register": 7,
         "frame": 59,
+        "index": 250,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6580,
+        "value": 21
+       },
+       {
+        "ay_register": 7,
+        "frame": 60,
         "index": 280,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6579,
+        "tinframe": 6580,
         "value": 21
        }
       ],
@@ -533,93 +533,93 @@
       "hits": [
        {
         "ay_register": 8,
-        "frame": 50,
+        "frame": 51,
         "index": 10,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 9114,
-        "value": 29
-       },
-       {
-        "ay_register": 8,
-        "frame": 51,
-        "index": 40,
-        "pc": 55406,
-        "port": 48893,
-        "tinframe": 6115,
+        "tinframe": 6121,
         "value": 30
        },
        {
         "ay_register": 8,
         "frame": 52,
-        "index": 70,
+        "index": 40,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6026,
+        "tinframe": 6027,
         "value": 31
        },
        {
         "ay_register": 8,
         "frame": 53,
-        "index": 100,
+        "index": 70,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6068,
+        "tinframe": 6067,
         "value": 31
        },
        {
         "ay_register": 8,
         "frame": 54,
-        "index": 128,
+        "index": 98,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6080,
+        "tinframe": 6081,
         "value": 30
        },
        {
         "ay_register": 8,
         "frame": 55,
-        "index": 156,
+        "index": 126,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6065,
+        "tinframe": 6066,
         "value": 29
        },
        {
         "ay_register": 8,
         "frame": 56,
-        "index": 184,
+        "index": 154,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 10187,
+        "tinframe": 10192,
         "value": 13
        },
        {
         "ay_register": 8,
         "frame": 57,
-        "index": 216,
+        "index": 186,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6604,
+        "tinframe": 6593,
         "value": 12
        },
        {
         "ay_register": 8,
         "frame": 58,
-        "index": 248,
+        "index": 218,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6498,
+        "tinframe": 6493,
         "value": 7
        },
        {
         "ay_register": 8,
         "frame": 59,
+        "index": 248,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6492,
+        "value": 6
+       },
+       {
+        "ay_register": 8,
+        "frame": 60,
         "index": 278,
         "pc": 55406,
         "port": 48893,
-        "tinframe": 6491,
-        "value": 6
+        "tinframe": 6492,
+        "value": 3
        }
       ],
       "scanned": 309,
@@ -637,131 +637,131 @@
       "event": "ay-select",
       "hits": [
        {
-        "frame": 50,
+        "frame": 51,
         "index": 1,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 8742,
+        "tinframe": 5749,
         "value": 12
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 3,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 8830,
+        "tinframe": 5837,
         "value": 11
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 5,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 8918,
+        "tinframe": 5925,
         "value": 10
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 7,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9006,
+        "tinframe": 6013,
         "value": 9
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 9,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9094,
+        "tinframe": 6101,
         "value": 8
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 11,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9182,
+        "tinframe": 6189,
         "value": 7
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 13,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9270,
+        "tinframe": 6277,
         "value": 6
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 15,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9358,
+        "tinframe": 6365,
         "value": 5
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 17,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9446,
+        "tinframe": 6453,
         "value": 4
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 19,
         "pc": 55396,
         "port": 65533,
-        "tinframe": 9539,
+        "tinframe": 6546,
         "value": 2
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 21,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9579,
+        "tinframe": 6586,
         "value": 3
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 23,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9667,
+        "tinframe": 6674,
         "value": 2
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 25,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9755,
+        "tinframe": 6762,
         "value": 1
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 27,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 9843,
+        "tinframe": 6850,
         "value": 0
        },
        {
-        "frame": 51,
+        "frame": 52,
         "index": 31,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 5743,
+        "tinframe": 5655,
         "value": 12
        },
        {
-        "frame": 51,
+        "frame": 52,
         "index": 33,
         "pc": 55403,
         "port": 65533,
-        "tinframe": 5831,
+        "tinframe": 5743,
         "value": 11
        }
       ],
@@ -807,83 +807,83 @@
       "event": "in",
       "hits": [
        {
-        "frame": 50,
+        "frame": 51,
         "index": 0,
         "pc": 29362,
         "port": 49150,
-        "tinframe": 10268,
+        "tinframe": 7275,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 1,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 10494,
+        "tinframe": 7501,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 2,
         "pc": 29362,
         "port": 32766,
-        "tinframe": 10808,
+        "tinframe": 7815,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 3,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 11034,
+        "tinframe": 8041,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 4,
         "pc": 29362,
         "port": 49150,
-        "tinframe": 11348,
+        "tinframe": 8355,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 5,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 11574,
+        "tinframe": 8581,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 6,
         "pc": 29362,
         "port": 65278,
-        "tinframe": 11888,
+        "tinframe": 8895,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 7,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 12114,
+        "tinframe": 9121,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 8,
         "pc": 29362,
         "port": 65278,
-        "tinframe": 12428,
+        "tinframe": 9435,
         "value": 255
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 9,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 12654,
+        "tinframe": 9661,
         "value": 255
        }
       ],
@@ -905,19 +905,19 @@
       "event": "in",
       "hits": [
        {
-        "frame": 75,
+        "frame": 76,
         "index": 401,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7558,
+        "tinframe": 7420,
         "value": 251
        },
        {
-        "frame": 175,
+        "frame": 176,
         "index": 2001,
         "pc": 29362,
         "port": 61438,
-        "tinframe": 7449,
+        "tinframe": 9972,
         "value": 254
        }
       ],
@@ -937,47 +937,47 @@
       "event": "out",
       "hits": [
        {
-        "frame": 50,
+        "frame": 51,
         "index": 0,
         "pc": 24588,
         "port": 32765,
-        "tinframe": 163,
+        "tinframe": 164,
         "value": 17
        },
        {
-        "frame": 50,
+        "frame": 51,
         "index": 29,
         "pc": 24588,
         "port": 32765,
-        "tinframe": 9946,
-        "value": 16
-       },
-       {
-        "frame": 51,
-        "index": 30,
-        "pc": 24588,
-        "port": 32765,
-        "tinframe": 158,
-        "value": 17
-       },
-       {
-        "frame": 51,
-        "index": 59,
-        "pc": 24588,
-        "port": 32765,
-        "tinframe": 6947,
+        "tinframe": 6953,
         "value": 16
        },
        {
         "frame": 52,
+        "index": 30,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 160,
+        "value": 17
+       },
+       {
+        "frame": 52,
+        "index": 59,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 6859,
+        "value": 16
+       },
+       {
+        "frame": 53,
         "index": 60,
         "pc": 24588,
         "port": 32765,
-        "tinframe": 159,
+        "tinframe": 165,
         "value": 17
        }
       ],
-      "scanned": 90,
+      "scanned": 88,
       "truncated": true
      }
     },
@@ -997,52 +997,25 @@
        {
         "ay_register": 7,
         "frame": 200,
-        "index": 4512,
+        "index": 4486,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5692,
+        "tinframe": 4976,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 201,
-        "index": 4541,
+        "index": 4514,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4878,
+        "tinframe": 5693,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 202,
-        "index": 4582,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4877,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 203,
-        "index": 4616,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4878,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 204,
-        "index": 4644,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 5695,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 205,
-        "index": 4682,
+        "index": 4543,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4876,
@@ -1050,53 +1023,80 @@
        },
        {
         "ay_register": 7,
-        "frame": 206,
-        "index": 4710,
+        "frame": 203,
+        "index": 4583,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5047,
+        "tinframe": 4881,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 204,
+        "index": 4618,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4877,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 205,
+        "index": 4646,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5695,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 206,
+        "index": 4684,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4883,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 207,
-        "index": 4738,
+        "index": 4712,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4975,
+        "tinframe": 5050,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 208,
-        "index": 4774,
+        "index": 4740,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5847,
+        "tinframe": 4990,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 209,
-        "index": 4804,
+        "index": 4778,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4900,
+        "tinframe": 5845,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 210,
-        "index": 4832,
+        "index": 4806,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4898,
+        "tinframe": 4892,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 211,
-        "index": 4870,
+        "index": 4834,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4894,
@@ -1105,16 +1105,7 @@
        {
         "ay_register": 7,
         "frame": 212,
-        "index": 4898,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 5717,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 213,
-        "index": 4926,
+        "index": 4870,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4896,
@@ -1122,8 +1113,26 @@
        },
        {
         "ay_register": 7,
+        "frame": 213,
+        "index": 4900,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5712,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
         "frame": 214,
-        "index": 4964,
+        "index": 4928,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4892,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 215,
+        "index": 4966,
         "pc": 49526,
         "port": 48893,
         "tinframe": 5063,
@@ -1131,17 +1140,17 @@
        },
        {
         "ay_register": 7,
-        "frame": 215,
-        "index": 4992,
+        "frame": 216,
+        "index": 4994,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5005,
+        "tinframe": 4992,
         "value": 48
        },
        {
         "ay_register": 7,
-        "frame": 216,
-        "index": 5020,
+        "frame": 217,
+        "index": 5022,
         "pc": 49526,
         "port": 48893,
         "tinframe": 5709,
@@ -1149,98 +1158,89 @@
        },
        {
         "ay_register": 7,
-        "frame": 217,
-        "index": 5058,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4892,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
         "frame": 218,
-        "index": 5086,
+        "index": 5060,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4894,
+        "tinframe": 4907,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 219,
-        "index": 5114,
+        "index": 5088,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4892,
+        "tinframe": 4905,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 220,
-        "index": 5151,
+        "index": 5116,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5860,
+        "tinframe": 4895,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 221,
-        "index": 5180,
+        "index": 5154,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4919,
+        "tinframe": 5863,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 222,
-        "index": 5208,
+        "index": 5182,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5085,
+        "tinframe": 4914,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 223,
-        "index": 5246,
+        "index": 5210,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5014,
+        "tinframe": 5081,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 224,
-        "index": 5274,
+        "index": 5248,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 6294,
+        "tinframe": 5009,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 225,
-        "index": 5302,
+        "index": 5276,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4919,
+        "tinframe": 6290,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 226,
-        "index": 5340,
+        "index": 5304,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4917,
+        "tinframe": 4914,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 227,
-        "index": 5368,
+        "index": 5342,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4909,
@@ -1249,25 +1249,25 @@
        {
         "ay_register": 7,
         "frame": 228,
-        "index": 5396,
+        "index": 5370,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5729,
+        "tinframe": 4912,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 229,
-        "index": 5434,
+        "index": 5398,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4910,
+        "tinframe": 5732,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 230,
-        "index": 5462,
+        "index": 5436,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4925,
@@ -1276,16 +1276,25 @@
        {
         "ay_register": 7,
         "frame": 231,
-        "index": 5490,
+        "index": 5464,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5020,
+        "tinframe": 4920,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 232,
-        "index": 5528,
+        "index": 5492,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5023,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 233,
+        "index": 5530,
         "pc": 49526,
         "port": 48893,
         "tinframe": 6120,
@@ -1293,8 +1302,8 @@
        },
        {
         "ay_register": 7,
-        "frame": 233,
-        "index": 5556,
+        "frame": 234,
+        "index": 5558,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4930,
@@ -1302,8 +1311,17 @@
        },
        {
         "ay_register": 7,
-        "frame": 234,
-        "index": 5584,
+        "frame": 235,
+        "index": 5586,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4930,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 236,
+        "index": 5624,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4927,
@@ -1311,62 +1329,62 @@
        },
        {
         "ay_register": 7,
-        "frame": 235,
-        "index": 5622,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4939,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 236,
-        "index": 5650,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 5753,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
         "frame": 237,
-        "index": 5678,
+        "index": 5652,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4939,
+        "tinframe": 5748,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 238,
-        "index": 5716,
+        "index": 5680,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5116,
+        "tinframe": 4934,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 239,
-        "index": 5744,
+        "index": 5718,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 3163,
+        "tinframe": 5123,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 240,
-        "index": 5772,
+        "index": 5746,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 6165,
+        "tinframe": 3166,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 241,
-        "index": 5810,
+        "index": 5774,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6176,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 242,
+        "index": 5812,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4928,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 243,
+        "index": 5840,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4936,
@@ -1374,8 +1392,26 @@
        },
        {
         "ay_register": 7,
-        "frame": 242,
-        "index": 5838,
+        "frame": 244,
+        "index": 5868,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4929,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 245,
+        "index": 5906,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5755,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 246,
+        "index": 5934,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4941,
@@ -1383,71 +1419,35 @@
        },
        {
         "ay_register": 7,
-        "frame": 243,
-        "index": 5866,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4926,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 244,
-        "index": 5904,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 5744,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 245,
-        "index": 5932,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4926,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
-        "frame": 246,
-        "index": 5960,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4926,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
         "frame": 247,
-        "index": 5998,
+        "index": 5962,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5032,
+        "tinframe": 4926,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 248,
-        "index": 6026,
+        "index": 6000,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 6177,
+        "tinframe": 5030,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 249,
-        "index": 6054,
+        "index": 6028,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4940,
+        "tinframe": 6172,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 250,
-        "index": 6092,
+        "index": 6056,
         "pc": 49526,
         "port": 48893,
         "tinframe": 4935,
@@ -1456,52 +1456,61 @@
        {
         "ay_register": 7,
         "frame": 251,
-        "index": 6120,
+        "index": 6094,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4928,
+        "tinframe": 4930,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 252,
-        "index": 6148,
+        "index": 6122,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5900,
+        "tinframe": 4930,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 253,
-        "index": 6186,
+        "index": 6150,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4961,
+        "tinframe": 5895,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 254,
-        "index": 6214,
+        "index": 6188,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4943,
+        "tinframe": 4944,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 255,
-        "index": 6242,
+        "index": 6216,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 5045,
+        "tinframe": 4946,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 256,
-        "index": 6280,
+        "index": 6244,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5043,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 257,
+        "index": 6282,
         "pc": 49526,
         "port": 48893,
         "tinframe": 6003,
@@ -1509,33 +1518,24 @@
        },
        {
         "ay_register": 7,
-        "frame": 257,
-        "index": 6308,
-        "pc": 49526,
-        "port": 48893,
-        "tinframe": 4956,
-        "value": 48
-       },
-       {
-        "ay_register": 7,
         "frame": 258,
-        "index": 6336,
+        "index": 6310,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4958,
+        "tinframe": 4951,
         "value": 48
        },
        {
         "ay_register": 7,
         "frame": 259,
-        "index": 6374,
+        "index": 6338,
         "pc": 49526,
         "port": 48893,
-        "tinframe": 4954,
+        "tinframe": 4953,
         "value": 48
        }
       ],
-      "scanned": 6390,
+      "scanned": 6364,
       "truncated": false
      }
     }

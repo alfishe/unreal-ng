@@ -317,8 +317,8 @@ TEST(NeoGSZxDma_Determinism, FastAndDebugModeAgree)
     for (int debug = 0; debug < 2; debug++)
     {
         SoundCardScope gs{TestSound::GeneralSound};
-        std::srand(0x4E47); // power-on RAM is rand()-filled: the same contents in both machines
-        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+        // Zeroed power-on RAM: the same contents in both machines
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
         ASSERT_NE(emulator, nullptr);
         EmulatorContext* ctx = emulator->GetContext();
         ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
@@ -380,8 +380,7 @@ TEST(NeoGSZxDma_Determinism, LongStreamAgreesInFastAndDebugMode)
     for (int debug = 0; debug < 2; debug++)
     {
         SoundCardScope gs{TestSound::GeneralSound};
-        std::srand(0x4E47);
-        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
         ASSERT_NE(emulator, nullptr);
         EmulatorContext* ctx = emulator->GetContext();
         ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));

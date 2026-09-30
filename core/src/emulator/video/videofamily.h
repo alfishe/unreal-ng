@@ -17,6 +17,7 @@ enum class VideoFamily : uint8_t
     Alco,   ///< Pentagon 1024 / ZX-Evo AlCo 16c and hardware multicolor
     Atm,    ///< ATM Turbo 2+ / ATM3 / ZX-Evo extended modes
     Profi,  ///< Profi 512x240 hi-res
+    TsConf, ///< TS-Conf (ScreenTSConf draws every mode; no debug mapper yet)
 };
 
 constexpr VideoFamily FamilyOf(VideoModeEnum mode)
@@ -32,6 +33,11 @@ constexpr VideoFamily FamilyOf(VideoModeEnum mode)
             return VideoFamily::Atm;
         case M_PROFIHR:
             return VideoFamily::Profi;
+        case M_TS16:
+        case M_TS256:
+        case M_TSTX:
+        case M_TSZX:
+            return VideoFamily::TsConf;
         case M_P16:
         case M_PMC:
             return VideoFamily::Alco;

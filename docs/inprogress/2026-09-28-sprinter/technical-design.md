@@ -33,21 +33,24 @@ WD1793 rate check is **built** (2026-09-29) as the general WD1793 clock / data-r
 | **Write intercept** = a write-only `HostBusOverlay` (`observesReads = false`, window `#0000-#FFFF`, the callback picks the bank; `Core::AddBusOverlay`, chained with other overlays) | **built** (PLAN #60(a), 2026-09-29; replaces the per-bank flag of the first design) | video shadow writes, graphics pages, the reset page, ISA pages, accelerator write side; where the plain store must not land, the bank's `_bank_write` points to the trash page | TSConf [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.5 item 2 |
 | **Interrupt source** `IInterruptSource` + `OnReti()`; engine step hook `IMachineStepHook` | **built** (PLAN #60(a) + TSConf INF-5, 2026-09-29; `Z80::interruptSource`, `Z80::machineStepHook`) | INT position from the mode table; keyboard and Covox-Blaster interrupts (all vector `#FF`); RETI for the Z84C15 daisy chain and the accelerator re-arm | TSConf technical design §3.4, §3.8 |
 | **Memory subclass** selected in the `Core` factory | pattern exists (`ScorpionMemory`, `core/src/emulator/memory/memory.h:313`) | `SprinterMemory`: bank computation, graphics-page reads | TSConf `TsConfMemory` §3.5 |
-| **Clock ratio** (new) | decided (review round 1); PLAN #60(b), **postponed to the Sprinter program** (2026-09-28): no other machine needs it | 21 MHz = 6 × 3.5 MHz | §3 below |
+| **Clock ratio** `EmulatorState::hw_turbo_ratio` | **built** (PLAN #60(b), 2026-09-29, branch `infra-60`) | 21 MHz = 6 × 3.5 MHz | §3 below |
 | **Wait-state hook** | **built** (PLAN #60(d), 2026-09-29): `MemoryWaitOverlay` (`core/src/emulator/memory/memorywaitoverlay.h`) - per-slot flags + `ExtraClocks(kind, addr, startClock)`, a host bus overlay so machines without waits pay nothing; port waits: the decoder calls `Z80::AddWaitStates` | turbo memory and port waits | §4 below |
 | **WD1793 clock and data rate** | **built** (2026-09-29, commits `64756638`, `f304dde1`): `FdcClockPolicy::Latched` + `WD1793::SetLatchedClock(FdcClock, FdcDataRate)`; the data-rate check is always on, default DD | the `#BD` density latch (codes `#16`/`#17`) sets 1 MHz + 250 kbit/s or 2 MHz + 500 kbit/s; wired in S3a | [tdd-storage.md](tdd-storage.md) §2.3; [WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md) |
 | **CMOS core** `Ds12887` (new) | decided (review round 1); PLAN #60, with the migrations of the existing clocks | Sprinter CMOS | [tdd-storage.md](tdd-storage.md) §4 |
 
 ## 3. Clock ratio (new, shared)
 
-Today the guest CPU clock is `base × (speed_multiplier << hw_turbo_shift)`, where
-`hw_turbo_shift` is a log2 (`core/src/emulator/platform.h:960-980`, `Z80::ApplyHardwareTurboNow`
-`core/src/emulator/cpu/z80.cpp:602`). A ×6 turbo cannot be expressed.
+> **Built (PLAN #60(b), 2026-09-29, branch `infra-60`).** The guest CPU clock is now
+> `base × speed_multiplier × hw_turbo_ratio`; ATM 7.10 / ZX-Evo / Scorpion set 1, 2 or 4.
+> `HostSpeedMultiplier`, `AudioTstate` and `TtdUnitsPerTState` divide by
+> `hw_turbo_ratio_applied` and skip the division at ratio 1. Tests: `Z80ClockRatio_Test`
+> (`z80_test.cpp`: 430 080 T at ratio 6, 20.48 ms frame, boundary rule),
+> `SoundAdaptivity_Test.Beeper_ClockRatioKeepsThePitch` (ratio 3 / 6 bit-identical),
+> `TTDChipsetStateTest.CaptureRestore_ClockRatio`. The TTD corpus and the CI gate were
+> re-recorded.
 
-> **Postponed (2026-09-28):** only the Sprinter needs a ×6. ATM, Scorpion,
-> Profi, ZX-Evo and TSConf run at ×1/×2/×4, which `hw_turbo_shift` covers, so
-> this change is built as the first step of the Sprinter program rather than
-> in the shared infrastructure ahead of TSConf.
+Before: the guest CPU clock was `base × (speed_multiplier << hw_turbo_shift)`, where
+`hw_turbo_shift` was a log2, so a ×6 turbo could not be expressed.
 
 Decision (review round 1): replace `hw_turbo_shift` / `hw_turbo_shift_applied` **everywhere** by
 `hw_turbo_ratio` / `hw_turbo_ratio_applied` (`uint8_t`, 1…8, default 1).

@@ -4,6 +4,7 @@
 #include "debugger/analyzers/basic-lang/basicextractor.h"
 #include "emulator/memory/memory.h"
 #include "emulator/spectrumconstants.h"
+#include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 
@@ -912,8 +913,17 @@ protected:
         MessageCenter::DisposeDefaultMessageCenter();
 
         // Create Pentagon emulator directly - NO forced 48K reset
+        // Zeroed power-on RAM. The default noise in pages 5 and 7 comes from
+        // the global rand(), so the pattern this machine boots into would
+        // depend on how many rand() calls the preceding tests made. TR-DOS
+        // runs on a RAM stack and workspace: under --gtest_shuffle seed 14295
+        // activateTRDOS() started from an identical machine state (flags=0x02,
+        // p7FFD=0x07, PC=0x00E5) and was executing RAM at PC 0x75F5 ten frames
+        // later, with the flags and the paging latch cleared. Same hidden
+        // input as ScorpionServiceMonitor_Test; see core/tests/README.md
+        // "Power-on RAM is a hidden global input".
         auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
-            "trdos-test", "PENTAGON", LoggerLevel::LogError);
+            "trdos-test", "PENTAGON", LoggerLevel::LogError, nullptr, Config::RamPowerOnOverride(RamPowerOn::Zero));
 
         if (!emulator)
         {
@@ -922,20 +932,6 @@ protected:
 
         _emulator = emulator.get();
         _emulatorUUID = _emulator->GetUUID();
-
-        // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and
-        // 7 from the global rand(), which nothing seeds, so the pattern this
-        // machine boots into depends on how many rand() calls the preceding
-        // tests in the process made. TR-DOS runs on a RAM stack and workspace:
-        // under --gtest_shuffle seed 14295 activateTRDOS() started from an
-        // identical machine state (flags=0x02, p7FFD=0x07, PC=0x00E5) and was
-        // executing RAM at PC 0x75F5 ten frames later, with the flags and the
-        // paging latch cleared. Same hidden input as
-        // ScorpionServiceMonitor_Test; see core/tests/README.md "Power-on RAM
-        // is a hidden global input".
-        Memory* memory = _emulator->GetMemory();
-        memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
-        memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
     }
 
     void TearDown() override

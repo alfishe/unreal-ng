@@ -6,6 +6,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/video/map/videowritelog.h"
 #include "emulator/video/temporaleffects.h"
 #include "stdafx.h"
 
@@ -62,6 +63,8 @@ enum VideoModeEnum : uint8_t
     M_SCORPION,  // Scorpion ZS-256 (Sinclair-matching 312-line x 224T raster)
 
     M_PROFIHR,  // Profi 512x240 hi-res (DFFD.7): standard 312-line x 224T beam, 4 px/T in the paper window
+
+    M_TSZX,  // TS ZX mode (TS-Conf's ZX-layout graphics in its own raster and palette)
 
     M_MAX
 };
@@ -474,9 +477,14 @@ public:
         {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
+        // TS-Conf modes (ScreenTSConf; TSConf hardware-spec §4.1): one geometry for every
+        // mode - the 360x288 visible dots (dots 88-447, lines 32-319 of the 448-dot x
+        // 320-line raster) stored at 2 px per dot (TXT pixels are 14 MHz). The
+        // graphics window inside it follows V_CONFIG's geometry, the rest is border.
+        // 32 blank lines + 288 visible = 320 lines x 224 T = 71680 T
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TS16
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TS256
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TSTX
         // ATM modes: ZX-compatible 312-line PAL timing at base clock
         // Beam: 448 pixels/line = 224 T-states; 16 vSync + 8 vBlank + 288 visible = 312 lines
         // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
@@ -506,6 +514,7 @@ public:
         // above the standard one (240 lines centred on the 192-line window). Storage is wider than
         // the beam: 48 px side borders at 2 px/T.
         {608, 288, 512, 240, 48, 24, 448, 64, 32, 8, 16},  // M_PROFIHR
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},   // M_TSZX (see M_TS16)
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -527,6 +536,10 @@ protected:
     ModuleLogger* _logger;
 
     uint8_t _activeScreen;
+
+    /// Latches after every video port write of the current and previous frame (cold: port handlers only)
+    videomap::VideoWriteLog _videoWriteLog;
+    void NoteVideoWrite();
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
@@ -645,6 +658,12 @@ public:
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
+
+    /// Video debug translation (PLAN #42 phase 3): the latches the picture's
+    /// geometry and memory depend on now, and their history over the current
+    /// and the previous frame (videowritelog.h)
+    videomap::VideoLatches CaptureVideoLatches() const;
+    const videomap::VideoWriteLog& GetVideoWriteLog() const { return _videoWriteLog; }
 
     /// @brief Read-only access to the calculated raster zone boundaries
     /// (t-state ranges for blank/border/screen areas, vertical and horizontal)

@@ -251,7 +251,7 @@ protected:
         RunFrames(25);
         _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
         ASSERT_TRUE(RunUntil([&] { return ScreenHas("A>"); }, 500)) << "no TR-DOS prompt:\n" << Screen();
-        ASSERT_EQ(_context->emulatorState.hw_turbo_shift, 0) << "the CPU must run at 3.5 MHz";
+        ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 1) << "the CPU must run at 3.5 MHz";
     }
 
     /// Boots one editor of the matrix, ready to type

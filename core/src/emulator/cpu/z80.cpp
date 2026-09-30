@@ -446,7 +446,7 @@ void Z80::Z80Step(bool skipBreakpoints)
             // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
             // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
             // contention-by-machine.md section 6
-            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_shift == 0 &&
+            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
                 (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
                 cpu.tt += cpu.rate;
 
@@ -514,7 +514,8 @@ void Z80::Z80Step(bool skipBreakpoints)
 
 /// @brief Apply the queued frequency multiplier change, if any.
 ///
-/// The effective multiplier composes the host speed control (next_) with the
+/// The effective multiplier is the host speed control (next_) times the
+/// model-neutral hardware clock ratio (hw_turbo_ratio, 1..8), e.g. the
 /// Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
 /// guest code toggles it mid-frame with IN from the #7FFD / #1FFD register
 /// families, but the real GAL re-aligns the clock to a cycle boundary anyway,
@@ -528,20 +529,27 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     [[maybe_unused]] Z80& cpu = *this;
     EmulatorState& state = _context->emulatorState;
 
-    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
+    // The one place per frame the product is formed: every per-access consumer
+    // reads the composed multiplier (or the applied ratio) and pays nothing extra
+    const uint8_t ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
+    const uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier * ratio);
+
+    // Always taken over, also when the product did not change (host 2x at ratio 1
+    // -> host 1x at ratio 2): the audio descale must follow the ratio in effect
+    state.hw_turbo_ratio_applied = ratio;
+
     if (desiredMultiplier != state.current_z80_frequency_multiplier)
     {
         uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
         state.current_z80_frequency_multiplier = desiredMultiplier;
         state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
-        state.hw_turbo_shift_applied = state.hw_turbo_shift;
 
         // Reset rate to normal - counter represents actual t-states
         // Speed multipliers are handled by adjusting frame duration and timings
         cpu.rate = 256;
 
-        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_shift=%u)", oldMultiplier,
-                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, state.hw_turbo_shift);
+        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_ratio=%u)", oldMultiplier,
+                 state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, ratio);
 
         NotifyCPUFrequencyChanged();
     }
@@ -769,7 +777,8 @@ void Z80::ApplyHardwareTurboNow()
     Z80& cpu = *this;
     EmulatorState& state = _context->emulatorState;
 
-    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier << state.hw_turbo_shift);
+    const uint8_t ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
+    uint8_t desiredMultiplier = static_cast<uint8_t>(state.next_z80_frequency_multiplier * ratio);
     uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
     if (desiredMultiplier == oldMultiplier || oldMultiplier == 0)
         return;
@@ -784,7 +793,7 @@ void Z80::ApplyHardwareTurboNow()
 
     state.current_z80_frequency_multiplier = desiredMultiplier;
     state.current_z80_frequency = state.base_z80_frequency * desiredMultiplier;
-    state.hw_turbo_shift_applied = state.hw_turbo_shift;
+    state.hw_turbo_ratio_applied = ratio;
     cpu.rate = 256;
 
     // The running Z80FrameCycle loop reads these every iteration

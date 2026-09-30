@@ -33,6 +33,7 @@ void ScreenZX::SelectRangeRenderer()
     switch (FamilyOf(_mode))
     {
         case VideoFamily::None:
+        case VideoFamily::TsConf:  // ScreenTSConf overrides DrawRange
             _rangeRenderer = &ScreenZX::DrawRangeNull;
             break;
         case VideoFamily::Atm:
@@ -710,6 +711,7 @@ void ScreenZX::SetBorderColor(uint8_t color)
     }
 
     _borderColor = color & 0b0000'0111;
+    NoteVideoWrite();
 }
 
 /// Emulate ULA video signal generator

@@ -23,6 +23,7 @@ PatternCategoryMap FileManager::_extensions =
     { "td0", SupportedFileCategoriesEnum::FileDisk },
     { "mgt", SupportedFileCategoriesEnum::FileDisk },
     { "img", SupportedFileCategoriesEnum::FileDisk },
+    { "ima", SupportedFileCategoriesEnum::FileDisk },
 
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },

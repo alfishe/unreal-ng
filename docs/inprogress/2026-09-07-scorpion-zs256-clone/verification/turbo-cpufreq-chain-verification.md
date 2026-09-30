@@ -11,8 +11,8 @@ still displays 7.0 MHz.*
 
 | # | Link | Layer | Verdict | Implementation / Evidence |
 |---|------|-------|---------|---------------------------|
-| 1 | Guest `IN` strobe → decoder flip-flop | Guest ROM & Port Decoder | OK | `Z80::in()` routes every port read to `PortDecoder_Scorpion256::DecodePortIn`; `(port & 0xC023) == 0x4021` (`#7FFD` family) sets `scorpion_turbo` / `hw_turbo_shift = 1`, `== 0x0021` (`#1FFD` family) clears them to `0`. `OUT` never clocks the flip-flop (hardware-reference 13). Tests: `ScriptedInSevenFFDSetsTurbo`, `ScorpionPorts_Test`. |
-| 2 | Decoder → Z80 core application | CPU Core | OK | `DecodePortIn` calls `Z80::ApplyHardwareTurboNow()` immediately: composes `next_z80_frequency_multiplier << hw_turbo_shift`, rescales in-frame raster instant `cpu.t`, `eipos`, `haltpos`, updates `current_z80_frequency_multiplier` and `current_z80_frequency`, and calls `RecomputeFrameTiming()`. Tests: `TurboStrobeAppliesMidFrame`, `ProfRomBootDetectsSevenMhz`. |
+| 1 | Guest `IN` strobe → decoder flip-flop | Guest ROM & Port Decoder | OK | `Z80::in()` routes every port read to `PortDecoder_Scorpion256::DecodePortIn`; `(port & 0xC023) == 0x4021` (`#7FFD` family) sets `scorpion_turbo = 1` / `hw_turbo_ratio = 2`, `== 0x0021` (`#1FFD` family) resets them to `0` / `1`. `OUT` never clocks the flip-flop (hardware-reference 13). Tests: `ScriptedInSevenFFDSetsTurbo`, `ScorpionPorts_Test`. |
+| 2 | Decoder → Z80 core application | CPU Core | OK | `DecodePortIn` calls `Z80::ApplyHardwareTurboNow()` immediately: composes `next_z80_frequency_multiplier × hw_turbo_ratio`, rescales in-frame raster instant `cpu.t`, `eipos`, `haltpos`, updates `current_z80_frequency_multiplier` and `current_z80_frequency`, and calls `RecomputeFrameTiming()`. Tests: `TurboStrobeAppliesMidFrame`, `ProfRomBootDetectsSevenMhz`. |
 | 3 | Z80 core → MessageCenter | Event Bus | OK (fixed in `bf269540`) | `Z80::NotifyCPUFrequencyChanged()` posts `NC_CPU_FREQ_CHANGED` (`"CPU_FREQ_CHANGED"`) with payload `CPUFreqPayload(emulatorId, frequencyHz, multiplier)`. Shared by both `ApplyQueuedFrequencyMultiplier()` and `ApplyHardwareTurboNow()`. Regression test: `ScorpionMachine_Test.TurboStrobePostsCpuFreqChanged`. |
 | 4 | MessageCenter → Qt status bar | UI | OK | `StatusBarManager` observes `NC_CPU_FREQ_CHANGED` in `handleCPUFreqChanged()`, filters by emulator ID, and marshals to the Qt main thread via `QMetaObject::invokeMethod(..., Qt::QueuedConnection)`. Formats string (`"3.5 MHz"`) and resets orange style. Also backed by 200 ms polling in `refresh()`. |
 
@@ -107,12 +107,12 @@ The "Computer speed" menu option is **strictly a configuration staging setting**
    ▼
 [PortDecoder_Scorpion256::DecodePortIn]
    │  Masks (port & 0xC023):
-   │    0x0021 (#1FFD) -> scorpion_turbo = 0, hw_turbo_shift = 0
-   │    0x4021 (#7FFD) -> scorpion_turbo = 1, hw_turbo_shift = 1
+   │    0x0021 (#1FFD) -> scorpion_turbo = 0, hw_turbo_ratio = 1
+   │    0x4021 (#7FFD) -> scorpion_turbo = 1, hw_turbo_ratio = 2
    │  Invokes Z80::ApplyHardwareTurboNow()
    ▼
 [Z80::ApplyHardwareTurboNow]
-   │  desiredMultiplier = next_multiplier << hw_turbo_shift (e.g. 1 << 0 = 1)
+   │  desiredMultiplier = next_multiplier × hw_turbo_ratio (e.g. 1 × 1 = 1)
    │  Rescales in-frame raster instant: cpu.t = cpu.t * desired / old
    │  Rescales haltpos (eipos until 2026-09-26; the EI shadow is now boundary state)
    │  Sets current_z80_frequency_multiplier = 1, current_z80_frequency = 3'500'000 Hz

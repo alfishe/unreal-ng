@@ -44,8 +44,9 @@ public:
     static std::vector<std::string> Extensions();
 
     /// The format of the file at `path`: "trd", "scl", "fdi", "udi", "dsk",
-    /// "td0", "mgt", "hfe", "scp" or "hobeta". Signatures decide; the
-    /// extension only breaks the tie for formats without one (TRD, MGT).
+    /// "td0", "mgt", "rawpc", "hfe", "scp" or "hobeta". Signatures decide; then
+    /// the size (a raw PC floppy is 737 280 or 1 474 560 bytes); the extension
+    /// only breaks the tie for formats without either (TRD, MGT).
     /// Empty when nothing matches
     static std::string Probe(const std::string& path);
 
@@ -56,8 +57,9 @@ public:
                             std::string& format);
 
     /// Write `disk` to `path` in the format its extension names (TRD for an
-    /// unknown one). When that format cannot hold the image (TRD / SCL take
-    /// only TR-DOS tracks) and `allowRetarget` is set, the image goes to
+    /// unknown one; .img is MGT for a +D disk, else a raw PC floppy). When
+    /// that format cannot hold the image (TRD / SCL take only TR-DOS tracks,
+    /// a raw PC floppy only its regular layout) and `allowRetarget` is set, the image goes to
     /// <path without extension>.udi instead and the original file is left alone
     static FloppySaveResult Save(EmulatorContext* context, DiskImage& disk, const std::string& path, bool allowRetarget);
 

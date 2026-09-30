@@ -378,7 +378,45 @@ TEST(TTDChipsetStateTest, Capture_DetectsAllPortLatchChanges)
     // Video / palette
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.ulaplus_mode; }, 0xFF);
     EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.ulaplus_reg; }, 0xFF);
+
+    // CPU clock
+    EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.hw_turbo_ratio; }, 6);
+    EXPECT_FIELD_SEEN([](EmulatorState& s)->uint8_t& { return s.hw_turbo_ratio_applied; }, 6);
 #undef EXPECT_FIELD_SEEN
+}
+
+/// The CPU clock (hardware turbo ratio, queued and applied, and the composed
+/// multipliers) round-trips for every ratio 1..8, including the non-power-of-two
+/// ones (Sprinter 21 MHz = 6); a checkpoint carrying a zero ratio restores the
+/// base clock rather than a divide-by-zero in the audio descale
+TEST(TTDChipsetStateTest, CaptureRestore_ClockRatio)
+{
+    for (uint8_t ratio = 1; ratio <= 8; ratio++)
+    {
+        EmulatorState src = MakeCanonicalState();
+        src.hw_turbo_ratio = ratio;
+        src.hw_turbo_ratio_applied = ratio;
+        src.next_z80_frequency_multiplier = 2;
+        src.current_z80_frequency_multiplier = static_cast<uint8_t>(2 * ratio);
+
+        const TTDChipsetState captured = CaptureChipsetState(src, 0);
+        EmulatorState restored{};
+        RestoreChipsetState(captured, &restored);
+
+        EXPECT_EQ(restored.hw_turbo_ratio, ratio);
+        EXPECT_EQ(restored.hw_turbo_ratio_applied, ratio);
+        EXPECT_EQ(restored.current_z80_frequency_multiplier, 2 * ratio);
+        EXPECT_EQ(restored.next_z80_frequency_multiplier, 2);
+        EXPECT_EQ(restored.HostSpeedMultiplier(), 2) << "ratio " << int(ratio);
+    }
+
+    TTDChipsetState zero = CaptureChipsetState(MakeCanonicalState(), 0);
+    zero.hw_turbo_ratio = 0;
+    zero.hw_turbo_ratio_applied = 0;
+    EmulatorState restored{};
+    RestoreChipsetState(zero, &restored);
+    EXPECT_EQ(restored.hw_turbo_ratio, 1);
+    EXPECT_EQ(restored.hw_turbo_ratio_applied, 1);
 }
 
 TEST(TTDChipsetStateTest, CaptureRestore_PaletteArrays)

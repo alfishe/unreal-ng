@@ -1,21 +1,61 @@
 #pragma once
-#include "stdafx.h"
 
 #include "emulator/video/zx/screenzx.h"
 
-/// The TSConf renderer (PLAN #41 phase 3, TSConf technical-design §3.9): the
-/// Screen subclass VideoController::CreateScreen picks for MM_TSL (PLAN
-/// #60(e)). Until phase 3 it is the ZX renderer unchanged - TS-Conf's ZX mode
-/// is a ZX screen - so the selection path is in place and phase 3 only adds
-/// the TS modes (16C, 256C, TXT, TSU layers, the 720x288 geometry) here.
+struct TsConfState;
+
+/// TS-Conf video (TSConf technical-design §3.9, hardware-spec §4).
 ///
-/// The former skeleton of this class (a port of the ancestor's per-line
-/// renderer reading the shared `state.ts`) was never instantiated and is
-/// removed; phase 3 builds from the design and the ancestor's `tsconf.cpp`.
+/// Every TS mode renders into one 720x288 framebuffer: the 360x288 visible
+/// dots of the 448-dot x 320-line raster at 2 px per dot (TXT pixels are
+/// 14 MHz, one framebuffer pixel each). Beam-accurate per T-state: the range
+/// renderer draws the dots the beam passed since the last CPU step with the
+/// registers of that moment.
+///
+/// Raster (hs §4.1): frame T-state t -> raster tact (t / multiplier, done by
+/// GetCurrentTstate), line = tact / 224, dot = (tact % 224) * 2; lines 0-31 and
+/// dots 0-87 are blanking, so framebuffer (x, y) = ((dot - 88) * 2, line - 32).
+///
+/// Built (phase 3 + TXT from phase 4): ZX (M_TSZX), 16C, 256C and TXT graphics
+/// in the V_CONFIG geometry window with the X/Y offsets, BORDER outside it,
+/// CRAM colors through the no-VDAC PWM curve, flash. Not yet: line-latched
+/// registers (a register change takes effect at the dot the beam is on), the
+/// TSU layers (phase 4), the VDAC curves.
 class ScreenTSConf : public ScreenZX
 {
 public:
+    static constexpr uint32_t kLineTacts = 224;
+    static constexpr uint32_t kLines = 320;
+    static constexpr uint32_t kFirstVisibleLine = 32;
+    static constexpr uint32_t kFirstVisibleTact = 44;  // dot 88
+    static constexpr uint32_t kVisibleDots = 360;
+    static constexpr uint32_t kVisibleLines = 288;
+
     ScreenTSConf() = delete;
-    explicit ScreenTSConf(EmulatorContext* context) : ScreenZX(context) {}
+    explicit ScreenTSConf(EmulatorContext* context);
     ~ScreenTSConf() override = default;
+
+    /// Mode and window from TsConfState (V_CONFIG)
+    void InitRaster() override;
+    void SetVideoMode(VideoModeEnum mode) override;
+    void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
+    void SetBorderColor(uint8_t color) override;
+    void SetActiveScreen(SpectrumScreenEnum screen) override;
+    void RenderFrameBatch() override;
+    void RenderOnlyMainScreen() override;
+    void FillBorderWithColor(uint8_t color) override;
+
+    /// Framebuffer RGBA (0xAABBGGRR) of a CRAM word, no-VDAC build (hs §4.3)
+    static uint32_t CramToRgba(uint16_t cram);
+    /// Video mode of a V_CONFIG value
+    static VideoModeEnum ModeOf(uint8_t vConfig);
+
+private:
+    /// The TS-Conf state (the port decoder owns it; null before it exists)
+    const TsConfState* State();
+    /// Color index of one visible dot (dotX 0..359 in the visible line, rasterLine 0..319)
+    /// @param sub the half dot (TXT hires pixel 0 or 1)
+    uint8_t DotIndex(const TsConfState& ts, uint32_t dot, uint32_t line, uint32_t sub) const;
+
+    const TsConfState* _ts = nullptr;
 };
