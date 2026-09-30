@@ -1,7 +1,10 @@
 // WebAPI Opcode Profiler Implementation
 // Implements /profiler/opcode endpoints - 2026-01-27
 
+#include <algorithm>
+#include <filesystem>
 #include <base/featuremanager.h>
+#include <common/filehelper.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <emulator/cpu/z80.h>
@@ -752,6 +755,300 @@ void EmulatorAPI::getMemoryProfilerStatus(const HttpRequestPtr& req, std::functi
         context->pFeatureManager->isEnabled(Features::kMemoryTracking) : false;
     ret["feature_enabled"] = featureEnabled;
 
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+namespace
+{
+/// The memory access tracker of `id`, or the error reply already sent
+MemoryAccessTracker* ResolveMemoryTracker(const std::string& id,
+                                          const std::function<void(const HttpResponsePtr&)>& callback,
+                                          const std::function<void(HttpResponsePtr)>& addCors)
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    auto* context = emulator ? emulator->GetContext() : nullptr;
+    auto* tracker = context && context->pMemory ? &context->pMemory->GetAccessTracker() : nullptr;
+    if (tracker)
+        return tracker;
+
+    Json::Value error;
+    error["error"] = emulator ? "Internal Error" : "Not Found";
+    error["message"] = emulator ? "Memory access tracker not available" : "Emulator with specified ID not found";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(emulator ? HttpStatusCode::k500InternalServerError : HttpStatusCode::k404NotFound);
+    addCors(resp);
+    callback(resp);
+    return nullptr;
+}
+
+void ReplyBadRequest(const std::string& message, const std::function<void(const HttpResponsePtr&)>& callback,
+                     const std::function<void(HttpResponsePtr)>& addCors)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCors(resp);
+    callback(resp);
+}
+
+/// Decimal or 0x-prefixed hex; false on anything else
+bool ParseUnsigned(const std::string& text, unsigned long& value)
+{
+    if (text.empty())
+        return false;
+    try
+    {
+        size_t used = 0;
+        value = std::stoul(text, &used, 0);
+        return used == text.size();
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+const char* PageTypeName(uint8_t type)
+{
+    switch (type)
+    {
+        case 0: return "RAM";
+        case 1: return "ROM";
+        case 2: return "CACHE";
+        default: return "MISC";
+    }
+}
+}    // namespace
+
+/// @brief GET /api/v1/emulator/{id}/profiler/memory/pages?limit=N
+/// Per physical page totals since the session started, most active first
+void EmulatorAPI::getMemoryProfilerPages(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto addCors = [](HttpResponsePtr resp) { addCorsHeaders(resp); };
+    MemoryAccessTracker* tracker = ResolveMemoryTracker(id, callback, addCors);
+    if (!tracker)
+        return;
+
+    unsigned long limit = 0;
+    const std::string limitText = req->getParameter("limit");
+    if (!limitText.empty() && !ParseUnsigned(limitText, limit))
+    {
+        ReplyBadRequest("limit must be a number", callback, addCors);
+        return;
+    }
+
+    std::vector<PageInfo> pages = tracker->GetActivePageInfos();
+    auto total = [tracker](const PageInfo& info) {
+        return static_cast<uint64_t>(tracker->GetPageReadAccessCount(info.absPageIndex)) +
+               tracker->GetPageWriteAccessCount(info.absPageIndex) +
+               tracker->GetPageExecuteAccessCount(info.absPageIndex);
+    };
+    std::stable_sort(pages.begin(), pages.end(),
+                     [&total](const PageInfo& a, const PageInfo& b) { return total(a) > total(b); });
+    if (limit > 0 && pages.size() > limit)
+        pages.resize(limit);
+
+    Json::Value list(Json::arrayValue);
+    for (const PageInfo& info : pages)
+    {
+        Json::Value page;
+        page["page"] = info.absPageIndex;
+        page["type"] = PageTypeName(info.pageType);
+        page["number"] = info.logicalPageNum;
+        page["reads"] = tracker->GetPageReadAccessCount(info.absPageIndex);
+        page["writes"] = tracker->GetPageWriteAccessCount(info.absPageIndex);
+        page["executes"] = tracker->GetPageExecuteAccessCount(info.absPageIndex);
+        page["mapped_bank"] = info.mappedToBank;
+        list.append(page);
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["session_state"] = sessionStateToString(tracker->GetMemorySessionState());
+    ret["pages"] = list;
+    ret["count"] = static_cast<Json::UInt>(list.size());
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/profiler/memory/counters
+/// mode=z80 (default): the 64K address space as the CPU saw it; mode=physical with page=N: one
+/// 16K physical page (N = absolute page index, as /pages lists it). start/end (inclusive) narrow
+/// the window. format=dense (default) returns three arrays indexed by offset from start;
+/// format=sparse lists only touched addresses as [address, reads, writes, executes]
+void EmulatorAPI::getMemoryProfilerCounters(const HttpRequestPtr& req,
+                                            std::function<void(const HttpResponsePtr&)>&& callback,
+                                            const std::string& id) const
+{
+    auto addCors = [](HttpResponsePtr resp) { addCorsHeaders(resp); };
+    MemoryAccessTracker* tracker = ResolveMemoryTracker(id, callback, addCors);
+    if (!tracker)
+        return;
+
+    std::string mode = req->getParameter("mode");
+    if (mode.empty())
+        mode = "z80";
+    const std::string format = req->getParameter("format").empty() ? "dense" : req->getParameter("format");
+    if ((mode != "z80" && mode != "physical") || (format != "dense" && format != "sparse"))
+    {
+        ReplyBadRequest("mode must be z80 or physical, format dense or sparse", callback, addCors);
+        return;
+    }
+
+    const uint32_t* reads = nullptr;
+    const uint32_t* writes = nullptr;
+    const uint32_t* executes = nullptr;
+    unsigned long size = 0;
+    unsigned long page = 0;
+    if (mode == "z80")
+    {
+        reads = tracker->GetZ80ReadCountersPtr();
+        writes = tracker->GetZ80WriteCountersPtr();
+        executes = tracker->GetZ80ExecuteCountersPtr();
+        size = 0x10000;
+    }
+    else
+    {
+        if (!ParseUnsigned(req->getParameter("page"), page) || page >= MAX_PAGES)
+        {
+            ReplyBadRequest("physical mode needs page=N, an absolute page index below " + std::to_string(MAX_PAGES),
+                            callback, addCors);
+            return;
+        }
+        const size_t base = static_cast<size_t>(page) * PAGE_SIZE;
+        reads = tracker->GetPhysReadCountersPtr();
+        writes = tracker->GetPhysWriteCountersPtr();
+        executes = tracker->GetPhysExecuteCountersPtr();
+        if (reads && writes && executes)
+        {
+            reads += base;
+            writes += base;
+            executes += base;
+        }
+        size = PAGE_SIZE;
+    }
+    if (!reads || !writes || !executes)
+    {
+        ReplyBadRequest("no counters yet: start a session with POST .../profiler/memory/start", callback, addCors);
+        return;
+    }
+
+    unsigned long start = 0;
+    unsigned long end = size - 1;
+    if ((!req->getParameter("start").empty() && !ParseUnsigned(req->getParameter("start"), start)) ||
+        (!req->getParameter("end").empty() && !ParseUnsigned(req->getParameter("end"), end)) || start > end ||
+        end >= size)
+    {
+        ReplyBadRequest("start/end must satisfy start <= end < " + std::to_string(size), callback, addCors);
+        return;
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["mode"] = mode;
+    ret["format"] = format;
+    if (mode == "physical")
+        ret["page"] = static_cast<Json::UInt>(page);
+    ret["start"] = static_cast<Json::UInt>(start);
+    ret["end"] = static_cast<Json::UInt>(end);
+    ret["session_state"] = sessionStateToString(tracker->GetMemorySessionState());
+
+    if (format == "dense")
+    {
+        Json::Value r(Json::arrayValue), w(Json::arrayValue), x(Json::arrayValue);
+        for (unsigned long a = start; a <= end; a++)
+        {
+            r.append(reads[a]);
+            w.append(writes[a]);
+            x.append(executes[a]);
+        }
+        ret["counters"]["reads"] = r;
+        ret["counters"]["writes"] = w;
+        ret["counters"]["executes"] = x;
+    }
+    else
+    {
+        Json::Value list(Json::arrayValue);
+        for (unsigned long a = start; a <= end; a++)
+        {
+            if (reads[a] == 0 && writes[a] == 0 && executes[a] == 0)
+                continue;
+            Json::Value entry(Json::arrayValue);
+            entry.append(static_cast<Json::UInt>(a));
+            entry.append(reads[a]);
+            entry.append(writes[a]);
+            entry.append(executes[a]);
+            list.append(entry);
+        }
+        ret["addresses"] = list;
+        ret["count"] = static_cast<Json::UInt>(list.size());
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/profiler/memory/save
+/// Body: {"path": "...", "format": "yaml", "single_file": false}
+void EmulatorAPI::memoryProfilerSave(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto addCors = [](HttpResponsePtr resp) { addCorsHeaders(resp); };
+    MemoryAccessTracker* tracker = ResolveMemoryTracker(id, callback, addCors);
+    if (!tracker)
+        return;
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("path") || !(*json)["path"].isString() || (*json)["path"].asString().empty())
+    {
+        ReplyBadRequest("body needs \"path\"", callback, addCors);
+        return;
+    }
+    const std::string format = json->isMember("format") ? (*json)["format"].asString() : "yaml";
+    if (format != "yaml")
+    {
+        ReplyBadRequest("format must be yaml", callback, addCors);
+        return;
+    }
+    const bool singleFile = json->isMember("single_file") && (*json)["single_file"].asBool();
+    const std::string path = (*json)["path"].asString();
+
+    // Missing parent directories are created, as the screen capture does
+    {
+        std::error_code ec;
+        const std::filesystem::path target = FileHelper::ToFsPath(path);
+        const std::filesystem::path folder = singleFile ? target.parent_path() : target;
+        if (!folder.empty())
+            std::filesystem::create_directories(folder, ec);
+    }
+
+    const std::string saved = tracker->SaveAccessData(path, format, singleFile);
+    if (saved.empty())
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "could not write the memory access data";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["saved"] = true;
+    ret["path"] = saved;
+    ret["format"] = format;
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

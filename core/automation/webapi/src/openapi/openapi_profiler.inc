@@ -55,8 +55,7 @@
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["responses"]["200"]["description"] =
         "Memory profiler status";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "[Planned] Get per-page access summaries";
-    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "Get per-page access summaries";
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["description"] =
         "Get read/write/execute access counts aggregated per physical memory page.";
@@ -73,8 +72,7 @@
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["responses"]["200"]["description"] =
         "Per-page access summaries";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "[Planned] Get address-level access counters";
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "Get address-level access counters";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["description"] =
         "Get detailed read/write/execute counters for each address within a page or Z80 address space.";
@@ -94,6 +92,24 @@
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["description"] =
         "Address mode: z80 or physical (default: physical)";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["schema"]["type"] = "string";
+    {
+        Json::Value& params = paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"];
+        const char* const extra[][2] = {
+            {"start", "First address (z80) or page offset (physical), decimal or 0x hex; default 0"},
+            {"end", "Last address or offset, inclusive; default the end of the space or page"},
+            {"format", "dense (default): counters.reads/writes/executes arrays indexed from start; sparse: "
+                       "addresses [[address, reads, writes, executes], ...] for touched addresses only"}};
+        for (const auto& e : extra)
+        {
+            Json::Value p;
+            p["name"] = e[0];
+            p["in"] = "query";
+            p["required"] = false;
+            p["description"] = e[1];
+            p["schema"]["type"] = "string";
+            params.append(p);
+        }
+    }
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] =
         "Address-level access counters";
 
@@ -109,8 +125,7 @@
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] =
         "Monitored region statistics";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "[Planned] Save access data to file";
-    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "Save access data to file";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["description"] =
         "Save memory access profiling data to a file in the specified format.";
@@ -126,6 +141,10 @@
          ["properties"]["format"]["type"] = "string";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["format"]["description"] = "Output format (yaml)";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["single_file"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["single_file"]["description"] = "One file instead of a directory of files (default false)";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["responses"]["200"]["description"] =
         "Data saved successfully";
 
