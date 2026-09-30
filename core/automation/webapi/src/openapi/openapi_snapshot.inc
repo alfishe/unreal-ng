@@ -79,7 +79,7 @@
             "/ TSFM, Covox, General Sound / NeoGS with RAM and flash, MoonSound with wave SRAM, Kempston mouse). "
             "Refused with a per-item reason when the target cannot hold the state (pages it lacks, +2A/+3 all-RAM "
             "modes on a 128K, extended Pentagon / Scorpion paging on another family, ATM / Profi / TSConf on "
-            "another model, ZX-Poly modules). Disk and tape media are not moved. Give 'to' for an existing "
+            "another model, ZX-Poly modules). Floppies and the tape follow as the target's own in-memory copies (clean, standing for a postfixed file such as game.pentagon-1a2b3c4d.trd, so a save never overwrites the source's image), with their controllers. NOT moved: SD cards, hard disks and CDs (the target keeps its own; the report says so). A target floppy or tape with unsaved writes refuses the transfer (422). Give 'to' for an existing "
             "instance or 'model' for a new one; a new instance gets the source's sound cards.";
         op["parameters"][0]["name"] = "id";
         op["parameters"][0]["in"] = "path";

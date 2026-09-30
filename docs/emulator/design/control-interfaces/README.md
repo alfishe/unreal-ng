@@ -148,6 +148,7 @@ All interfaces (where applicable) support these command categories:
    - `ttd position` / `ttd markers` — current time point, external-event barriers
    - `ttd find-last` — reverse watchpoint (last write/read/execute matching a query)
    - `ttd dump` / `ttd load` — session serialization to / restore from `.ttd` files
+   - `ttd info <path>` — a `.ttd` file's frames, sections and recorded machine without loading it
    - `ttd step-instruction` — one Z80 instruction back/forward in history
    - `ttd reverse-step` / `ttd reverse-continue` — reverse execution
    - **GDB surface**: reverse-exec packets `bc` / `bs` + `monitor ttd` commands (see [gdb-protocol.md](./gdb-protocol.md))

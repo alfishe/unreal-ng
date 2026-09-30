@@ -746,6 +746,11 @@ local status = ttd_status()
 -- Machine
 -- status.model_id              = 0
 -- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
+-- status.machine               = { model = "PENTAGON", model_id, ram_page_bound, rom_signature = "0x...",
+--                                  peripheral_mask, peripherals = { "betadisk", ... },
+--                                  general_sound = "none"|"z80"|"lw"|"ngs", turbo_sound = "none"|"turbosound"|"tsfm" }
+--                                  -- the recorded machine; nil while there is no session
+-- status.recorded_by           = "emu-..."  -- the instance that recorded a loaded file; nil for a live one
 --
 -- Timeline
 -- status.session_start_frame   = 98
@@ -903,6 +908,16 @@ ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
 -- After a load the session is idle: use ttd_seek to position the emulator.
+
+ttd_file_info("/tmp/session.ttd")
+-- A .ttd file read without loading it (headers only, no emulator needed):
+-- --> { ok = true, path, file_bytes, schema_version, flags, captured_at_unix_ms, recorded_by,
+--       session_state, session_start_frame, session_end_frame, checkpoint_count, page_slot_count,
+--       sections = { write_journal, coverage_index, input_journal, port_journals, ... },
+--       machine = { model, general_sound, turbo_sound, peripherals, rom_signature, ... },
+--       peripherals_from_header }
+--     or { ok = false, path, error = "..." }
+-- Provision the machine it needs first: its model, its General Sound card (machine.general_sound).
 ```
 
 **Coverage index queries:**

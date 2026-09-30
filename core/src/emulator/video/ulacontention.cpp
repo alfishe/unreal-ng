@@ -251,6 +251,15 @@ bool UlaContention::FetchedByte(uint8_t& value) const
         isAttribute = (phase4 >= 2);
     }
 
+    // ULA snow: the bytes the ULA really fetched for this cell (SnowOffsets)
+    uint16_t pixelOffset = static_cast<uint16_t>(((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | cellIndex);
+    uint16_t attrOffset = static_cast<uint16_t>(AttributeCellAddress(y, cellIndex) - 0x4000);
+    if (_fetchType == ULA_FERRANTI && HasSnow() && SnowOffsets(y, cellIndex, pixelOffset, attrOffset)) [[unlikely]]
+    {
+        value = _memory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x4000 + (isAttribute ? attrOffset : pixelOffset)));
+        return true;
+    }
+
     if (isAttribute)
     {
         value = _memory->DirectReadFromZ80Memory(AttributeCellAddress(y, cellIndex));
@@ -277,6 +286,83 @@ bool UlaContention::FetchedByte(uint8_t& value) const
         value = _memory->DirectReadFromZ80Memory(pixelAddr);
         return true;
     }
+}
+
+bool UlaContention::LocatePaperFetch(uint32_t t, uint32_t& y, uint32_t& tInPaper) const
+{
+    if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)
+        return false;
+    const uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
+    const uint32_t fetchAreaStart = _raster.screenLineAreaStart - FetchLead();
+    const uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - FetchLead();
+    if (tInLine < fetchAreaStart || tInLine >= fetchAreaEnd)
+        return false;
+    y = (t - _raster.screenAreaStart) / _raster.tstatesPerLine;
+    if (y >= 192)
+        return false;
+    tInPaper = tInLine - fetchAreaStart;
+    return true;
+}
+
+uint32_t UlaContention::SnowFrameStamp() const
+{
+    return _context ? static_cast<uint32_t>(_context->emulatorState.frame_counter) : 0u;
+}
+
+void UlaContention::NoteRefresh(uint32_t t, uint8_t r)
+{
+    if (_raster.configFrameDuration == 0)
+        return;
+    uint32_t y, tInPaper;
+    if (!LocatePaperFetch(t % _raster.configFrameDuration, y, tInPaper))
+        return;
+
+    const uint32_t phase = tInPaper % 8;
+    uint32_t cell = (tInPaper / 8) * 2;
+    uint8_t kind;
+    if (phase == kSnowPhase)
+        kind = SnowMarkSnow;
+    else if (phase == kDoublePhase)
+    {
+        kind = SnowMarkDouble;
+        cell += 1;
+    }
+    else
+        return;
+    if (cell >= 32)
+        return;
+
+    const uint32_t index = y * 32 + cell;
+    const uint32_t frame = SnowFrameStamp();
+    _snowKind[index] = kind;
+    _snowR[index] = static_cast<uint8_t>(r & 0x7F);
+    _snowStamp[index] = frame;
+    _snowFrame = frame;
+}
+
+bool UlaContention::SnowOffsets(uint32_t y, uint32_t cell, uint16_t& pixelOffset, uint16_t& attrOffset) const
+{
+    if (y >= 192 || cell >= 32)
+        return false;
+    const uint32_t index = y * 32 + cell;
+    const uint32_t frame = SnowFrameStamp();
+    if (_snowStamp[index] != frame || _snowKind[index] == SnowMarkNone)
+        return false;
+
+    if (_snowKind[index] == SnowMarkDouble)
+    {
+        // The second cell shows the first cell's bytes, as the first cell was fetched (snowed or not)
+        pixelOffset = static_cast<uint16_t>(pixelOffset - 1);
+        attrOffset = static_cast<uint16_t>(attrOffset - 1);
+        SnowOffsets(y, cell - 1, pixelOffset, attrOffset);
+        return true;
+    }
+
+    // Snow: bits 6..0 of both addresses from R (bit 7 of R does not take part)
+    const uint16_t r = _snowR[index];
+    pixelOffset = static_cast<uint16_t>((pixelOffset & ~0x7F) | r);
+    attrOffset = static_cast<uint16_t>((attrOffset & ~0x7F) | r);
+    return true;
 }
 
 bool UlaContention::LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) const

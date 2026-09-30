@@ -1,10 +1,12 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
 #include "common/video/videoutils.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -138,3 +140,81 @@ TEST_F(PresentLatch_Test, CopyRejectsUndersizedDestination)
 }
 
 /// endregion </Screen presentation latch>
+
+/// region <Plane B across threads>
+
+// The zxdlss feature can change on any thread (WebAPI, UI) while the emulation
+// thread draws into plane B. Resizing the buffer from the feature callback
+// freed or reallocated it under the running renderer; the toggle now waits for
+// the next frame start on the rendering thread.
+TEST_F(PresentLatch_Test, PlaneB_FeatureToggle_AppliesAtFrameStart)
+{
+    FeatureManager* fm = _emulator->GetFeatureManager();
+    size_t count = 0;
+
+    fm->setFeature(Features::kZXDLSS, true);
+    EXPECT_FALSE(_screen->IsPlaneBEnabled()) << "toggle must not allocate on the caller's thread";
+    EXPECT_EQ(_screen->GetPlaneB(&count), nullptr);
+
+    _screen->InitFrame();
+    EXPECT_TRUE(_screen->IsPlaneBEnabled());
+    const uint16_t* live = _screen->GetPlaneB(&count);
+    ASSERT_NE(live, nullptr);
+    EXPECT_EQ(count, static_cast<size_t>(_screen->GetFramebufferDescriptor().width) *
+                         _screen->GetFramebufferDescriptor().height);
+
+    fm->setFeature(Features::kZXDLSS, false);
+    EXPECT_TRUE(_screen->IsPlaneBEnabled()) << "toggle must not free the buffer under the renderer";
+    EXPECT_EQ(_screen->GetPlaneB(&count), live);
+
+    _screen->InitFrame();
+    EXPECT_FALSE(_screen->IsPlaneBEnabled());
+    EXPECT_EQ(_screen->GetPlaneB(&count), nullptr);
+}
+
+// Other threads read the plane B latched with the presented frame, never the
+// live buffer: same slot, same delay, same tear-free property as the pixels
+TEST_F(PresentLatch_Test, PlaneB_PresentedCopyFollowsPresentedFrame)
+{
+    std::vector<uint16_t> out;
+    EXPECT_FALSE(_screen->CopyPresentedPlaneB(out)) << "plane B is off";
+
+    _emulator->GetFeatureManager()->setFeature(Features::kZXDLSS, true);
+    _screen->InitFrame();
+    size_t count = 0;
+    uint16_t* live = _screen->GetPlaneB(&count);
+    ASSERT_NE(live, nullptr);
+
+    _screen->SetPresentDelayFrames(0);
+    std::fill(live, live + count, uint16_t{0x1111});
+    _screen->LatchFramebuffer();
+    ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
+    ASSERT_EQ(out.size(), count);
+    EXPECT_EQ(out.front(), 0x1111);
+    EXPECT_EQ(out.back(), 0x1111);
+
+    std::fill(live, live + count / 2, uint16_t{0x2222});    // next frame half drawn
+    ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
+    EXPECT_EQ(out.front(), 0x1111) << "presented plane B must not show the in-progress render";
+
+    std::fill(live, live + count, uint16_t{0x2222});
+    _screen->LatchFramebuffer();
+    ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
+    EXPECT_EQ(out.front(), 0x2222);
+
+    // With a present delay the copy trails exactly like the framebuffer does
+    _screen->SetPresentDelayFrames(1);
+    std::fill(live, live + count, uint16_t{0x3333});
+    _screen->LatchFramebuffer();
+    ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
+    EXPECT_EQ(out.front(), 0x2222) << "plane B of the frame CopyPresentedFramebuffer serves";
+
+    // Off: frames latched afterwards carry no plane B
+    _screen->SetPresentDelayFrames(0);
+    _emulator->GetFeatureManager()->setFeature(Features::kZXDLSS, false);
+    _screen->InitFrame();
+    _screen->LatchFramebuffer();
+    EXPECT_FALSE(_screen->CopyPresentedPlaneB(out));
+}
+
+/// endregion </Plane B across threads>

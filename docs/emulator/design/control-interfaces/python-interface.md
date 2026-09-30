@@ -833,6 +833,11 @@ status = emu.ttd_status()
 #   # Machine the session belongs to
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
+#   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
+#                                     # the recorded machine; None while there is no session
+#   'recorded_by': None,              # the instance that recorded a loaded file
 #
 #   # Timeline
 #   'session_start_frame': 98,
@@ -1010,6 +1015,16 @@ emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)
 # After a load the session is idle: use ttd_seek to position the emulator.
+
+emu.ttd_file_info('/tmp/session.ttd')
+# A .ttd file read without loading it (headers only):
+# -> {'ok': True, 'path', 'file_bytes', 'schema_version', 'flags', 'captured_at_unix_ms', 'recorded_by',
+#     'session_state', 'session_start_frame', 'session_end_frame', 'checkpoint_count', 'page_slot_count',
+#     'sections': {'write_journal': ..., 'port_journals': ..., ...},
+#     'machine': {'model': ..., 'general_sound': ..., 'turbo_sound': ..., 'peripherals': [...], ...},
+#     'peripherals_from_header': ...}
+#    or {'ok': False, 'path': ..., 'error': '...'}
+# Provision the machine it needs first: its model, its General Sound card (machine['general_sound']).
 ```
 
 **Coverage index queries:**

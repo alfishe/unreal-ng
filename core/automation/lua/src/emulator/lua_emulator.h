@@ -28,6 +28,8 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/machinestatehash.h>
+#include <debugger/ttd/ttdfileinfo.h>
 #include <tuple>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
@@ -88,6 +90,29 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
         }
         default: return sol::make_object(lua, sol::lua_nil);
     }
+}
+
+
+/// The recorded machine of a TTD session / file as a Lua table (the same keys
+/// as the WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
+/// peripherals, general_sound, turbo_sound)
+inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRecordedMachine& m)
+{
+    sol::table t = lua.create_table();
+    t["model_id"] = static_cast<unsigned>(m.modelId);
+    if (!m.model.empty())
+        t["model"] = m.model;
+    t["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
+    if (m.romSignature != 0)
+        t["rom_signature"] = "0x" + ttd::HashToString(m.romSignature);
+    t["peripheral_mask"] = m.peripheralMask;
+    sol::table list = lua.create_table();
+    for (size_t i = 0; i < m.peripherals.size(); ++i)
+        list[i + 1] = m.peripherals[i];
+    t["peripherals"] = list;
+    t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
+    t["turbo_sound"] = m.turboSound;
+    return t;
 }
 
 class LuaEmulator
@@ -2544,8 +2569,54 @@ public:
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
             if (!si.unavailableReason.empty())
                 info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
+            if (si.checkpointCount != 0)
+                info["machine"] = TtdRecordedMachineTable(lua_view, si.machine);  // the recorded machine
+            if (!si.recordedBy.empty())
+                info["recorded_by"] = si.recordedBy;  // the instance that recorded a loaded file
             info["ttd_available"]            = true;
             return info;
+        });
+
+        // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
+        // read without loading it: {ok, error | path, file_bytes, ..., machine, sections}
+        lua.set_function("ttd_file_info", [this](const std::string& path) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table r = lua_view.create_table();
+            ttd::TTDFileInfo fi;
+            std::string err;
+            if (!ttd::ReadTTDFileInfo(path, fi, err))
+            {
+                r["ok"] = false;
+                r["path"] = path;
+                r["error"] = err;
+                return r;
+            }
+            r["ok"] = true;
+            r["path"] = fi.path;
+            r["file_bytes"] = fi.fileBytes;
+            r["schema_version"] = static_cast<unsigned>(fi.schemaVersion);
+            r["flags"] = static_cast<unsigned>(fi.flags);
+            r["captured_at_unix_ms"] = fi.capturedAtUnixMs;
+            if (!fi.emulatorId.empty())
+                r["recorded_by"] = fi.emulatorId;
+            r["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState));
+            r["session_start_frame"] = fi.startFrame;
+            r["session_end_frame"] = fi.endFrame;
+            r["checkpoint_count"] = static_cast<uint64_t>(fi.checkpointCount);
+            r["page_slot_count"] = static_cast<uint64_t>(fi.pageStoreCount);
+            sol::table sections = lua_view.create_table();
+            sections["write_journal"] = fi.hasWriteJournal;
+            sections["write_journal_complete"] = fi.writeJournalComplete;
+            sections["coverage_index"] = fi.hasCoverageIndex;
+            sections["bookmarks"] = fi.hasBookmarks;
+            sections["input_journal"] = fi.hasInputJournal;
+            sections["external_events"] = fi.hasExternalEvents;
+            sections["port_journals"] = fi.hasPortJournals;
+            sections["top_clock_time"] = fi.topClockTime;
+            r["sections"] = sections;
+            r["machine"] = TtdRecordedMachineTable(lua_view, fi.machine);
+            r["peripherals_from_header"] = fi.peripheralsFromHeader;
+            return r;
         });
 
         // ttd_start([mode]) - start recording

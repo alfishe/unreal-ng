@@ -484,6 +484,7 @@ public:
 
     // Memory access dispatching methods
     uint8_t rd(uint16_t addr, bool isExecution = false);
+    uint8_t rdM1(uint16_t addr);  // the opcode fetch: rd through the interface's MemoryReadM1
     void wd(uint16_t addr, uint8_t val);
 
     /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
@@ -513,6 +514,12 @@ public:
 
     /// The refresh address the CPU puts on the bus in internal cycles after M1 (I in the high byte, R low)
     inline uint16_t IR() const { return static_cast<uint16_t>((i << 8) | (r_low & 0x7F) | (r_hi & 0x80)); }
+
+    /// ULA snow: a refresh whose T3 starts at `t3` while I points into slow memory (the Ferranti ULA machines,
+    /// ioContention). One pointer test on every other machine (docs/inprogress/2026-09-29-ula-snow/tdd.md)
+    /// ULA snow for the refresh of an interrupt acknowledge (T3 at `t3`); the opcode fetches' refreshes are the
+    /// contended interfaces' (Memory::MemoryReadM1Snow). docs/inprogress/2026-09-29-ula-snow/tdd.md
+    void NoteAcknowledgeRefresh(uint32_t t3);
 
     /// The ULA's rule for internal cycles: set with ioContention (the same machines), null otherwise
     UlaContention* idleContention = nullptr;

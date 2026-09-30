@@ -3,7 +3,7 @@
 **Created:** 2026-09-27
 **Status:** requirements settled, ready for review (2026-09-27)
 **Roadmap:** [04-zxdlss §3.1](../2026-09-21-roadmap/04-zxdlss-semantic-layer-and-multiplayer.md) (Stage 1, Z-1..Z-4)
-**Design:** [design-analysis.md](design-analysis.md) · [design-mixers.md](design-mixers.md) · [test-plan.md](test-plan.md) · [prior-art.md](prior-art.md) · [rollout.md](rollout.md) · [optimization-ideas.md](optimization-ideas.md) · [temporal-effects-manager.md](temporal-effects-manager.md)
+**Design:** [design-analysis.md](design-analysis.md) · [design-mixers.md](design-mixers.md) · [test-plan.md](test-plan.md) · [prior-art.md](prior-art.md) · [rollout.md](rollout.md) · [optimization-ideas.md](optimization-ideas.md) · [reference-across-the-edge.md](reference-across-the-edge.md) · [temporal-effects-manager.md](temporal-effects-manager.md)
 **Depends on:** [Look-Ahead Manager](../2026-09-27-lookahead-manager/requirements.md) · [Metadata Manager](../2026-09-27-metadata-manager/requirements.md)
 
 ## Goal
