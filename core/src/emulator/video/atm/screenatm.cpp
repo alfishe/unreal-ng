@@ -24,11 +24,12 @@ ScreenAtm::ScreenAtm(EmulatorContext* context, Memory* memory) : _context(contex
 /// - except TL, which reads a dedicated page of linear 64-byte text rows.
 void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer)
 {
-    constexpr uint32_t TSTATES_PER_LINE = 224;
-    constexpr uint32_t VSYNC_VBLANK_LINES = 24;  // 16 vSync + 8 vBlank before the visible area
-    constexpr uint32_t VISIBLE_LINES = 288;
-    constexpr uint32_t SCREEN_LINES = 200;
-    constexpr uint32_t BYTES_PER_LINE = 40;
+    using namespace AtmGeometry;
+    constexpr uint32_t TSTATES_PER_LINE = kTStatesPerLine;
+    constexpr uint32_t VSYNC_VBLANK_LINES = kVSyncVBlankLines;  // 16 vSync + 8 vBlank before the visible area
+    constexpr uint32_t VISIBLE_LINES = kVisibleLines;
+    constexpr uint32_t SCREEN_LINES = kScreenLines;
+    constexpr uint32_t BYTES_PER_LINE = kBytesPerLine;
     // 320-px modes render 2 px/T inside the 160T screen window; 640-px modes
     // double the pixel clock inside the same window (4 px/T)
 
@@ -80,8 +81,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     // Video pages: 7FFD bit 3 selects the video page (7/5); plane pairs live
     // in the page 4 below it (3/1) - the reference's -4*PAGE / +0 / +0x2000
     // plane offsets relative to the video page.
-    uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
-    uint8_t altPage = videoPage - 4;
+    uint8_t videoPage = VideoPage(state.p7FFD);
+    uint8_t altPage = AltPage(videoPage);
     uint8_t* vp = _memory->RAMPageAddress(videoPage);
     uint8_t* ap = _memory->RAMPageAddress(altPage);
     const uint32_t offset = screenY * BYTES_PER_LINE; // linear plane base for this line
@@ -104,8 +105,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         uint8_t* plane = (q & 1) ? vp : ap;
         const uint8_t bt = plane[((q >> 1) << 13) + offset + j];
         const uint32_t col = rd.screenOffsetLeft + 8 * j + 2 * q;
-        framebufferARGB[rowOffset + col] = state.atmPalette[(bt & 0x07) | (bt & 0x40 ? 0x08 : 0x00)];
-        framebufferARGB[rowOffset + col + 1] = state.atmPalette[((bt >> 3) & 0x07) | (bt & 0x80 ? 0x08 : 0x00)];
+        framebufferARGB[rowOffset + col] = state.atmPalette[PairColourIndex(bt, false)];
+        framebufferARGB[rowOffset + col + 1] = state.atmPalette[PairColourIndex(bt, true)];
         return;
     }
 
@@ -121,15 +122,15 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         const uint32_t n = t / 2;      // pixel byte group 0..79 (8 px each)
         const uint32_t half = t % 2;   // 0: bits 7..4, 1: bits 3..0
         const bool fromP0 = (n % 2 == 0);
-        const uint8_t* pixPlane = fromP0 ? vp : vp + 0x2000;
-        const uint8_t* attrPlane = fromP0 ? ap : ap + 0x2000;
+        const uint8_t* pixPlane = fromP0 ? vp : vp + kPlaneHigh;
+        const uint8_t* attrPlane = fromP0 ? ap : ap + kPlaneHigh;
         const uint8_t pix = pixPlane[offset + n / 2];
         const uint8_t attr = attrPlane[offset + n / 2];
         // ATM attribute decode (xpeccy vidATMDoubleDot, shared by HWM / TX /
         // TL): bit 6 = ink bright, bit 7 = PAPER bright - there is no flash.
         // _rgbaFlashColors would misread bit 7 as the flash/paper-swap flag.
-        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
-        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
+        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -153,17 +154,17 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         // row-major [(scanline % 8)*256 + code], MSB-first (bit 7 = leftmost).
         const uint32_t n = t / 2;      // char column 0..79
         const uint32_t half = t % 2;   // 0: font bits 7..4, 1: bits 3..0
-        uint8_t* page = _memory->RAMPageAddress(videoPage == 5 ? 8 : 10);
-        const uint32_t rowBase = (screenY / 8) * 64;
+        uint8_t* page = _memory->RAMPageAddress(TextLinearPage(videoPage));
+        const uint32_t rowBase = (screenY / 8) * kTextRowStride;
         const bool evenCol = (n % 2 == 0);
-        const uint32_t codeAddr = (evenCol ? 0x01C0u : 0x11C0u) + rowBase + (n >> 1);
-        const uint32_t attrAddr = (evenCol ? 0x31C0u : 0x21C0u) + rowBase + ((n + 1) >> 1);
+        const uint32_t codeAddr = (evenCol ? kTlCodeEven : kTlCodeOdd) + rowBase + (n >> 1);
+        const uint32_t attrAddr = (evenCol ? kTlAttrEven : kTlAttrOdd) + rowBase + ((n + 1) >> 1);
         const uint8_t code = page[codeAddr];
         const uint8_t attr = page[attrAddr];
         const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
-        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
-        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
+        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -187,14 +188,14 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     {
         const uint32_t n = t / 2;      // char column 0..79
         const uint32_t half = t % 2;   // 0: font bits 7..4, 1: bits 3..0
-        const uint32_t byteIdx = 0x1C0 + 64 * (screenY / 8) + n / 2;
+        const uint32_t byteIdx = kTextBase + kTextRowStride * (screenY / 8) + n / 2;
         const bool fromP0 = (n % 2 == 0);
-        const uint8_t code = fromP0 ? vp[byteIdx] : vp[0x2000 + byteIdx];
-        const uint8_t attr = fromP0 ? ap[0x2000 + byteIdx] : ap[1 + byteIdx];
+        const uint8_t code = fromP0 ? vp[byteIdx] : vp[kPlaneHigh + byteIdx];
+        const uint8_t attr = fromP0 ? ap[kPlaneHigh + byteIdx] : ap[1 + byteIdx];
         const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
-        const uint32_t ink = state.atmPalette[(attr & 0x07) | ((attr & 0x40) >> 3)];
-        const uint32_t paper = state.atmPalette[((attr & 0x38) >> 3) | ((attr & 0x80) >> 4)];
+        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
