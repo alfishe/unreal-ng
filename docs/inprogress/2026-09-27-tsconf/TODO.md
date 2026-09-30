@@ -111,6 +111,9 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] `TsConfVideoMapper` for #42 (2026-09-30, branch `tsconf-videomap`):
   the graphics layer of every mode on `/video/*` and every automation surface
 - [x] The TSU layer in the video mapper (2026-09-30, branch `tsconf-tsumap`)
+- [x] TSU objects and CRAM for debug views on every surface (`/state/tsconf/tsu`,
+  `state tsconf tsu`, `tsconf_tsu()`, MCP aspect `tsconf_tsu`; DBG-4) - with the
+  video mapper this is what a TSU / palette debug view integrates
 - [ ] Open:
   TSU-6; VDAC curves; TIM-5; the 1.1x speed target; DBG-3 and TS docks with
   the model-first debugger

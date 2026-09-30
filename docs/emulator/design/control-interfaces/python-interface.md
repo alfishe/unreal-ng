@@ -142,6 +142,14 @@ class Emulator:
         notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
         line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
 
+    def tsconf_tsu(self) -> dict:
+        """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
+        sprite_page, tile_layers (t0 / t1: enabled, draw_tile_zero, graphics_page,
+        x_offset, y_offset, palette), sprites (all 85 SFILE descriptors decoded:
+        active, leap, layer s0 / s1 / s2, x, y, width, height, x_flip, y_flip,
+        tile, bitmap_x, bitmap_y, palette, words), active_sprites, cram (256
+        cells: value, rgb). available=False on other machines"""
+
     def network_state(self) -> dict:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""

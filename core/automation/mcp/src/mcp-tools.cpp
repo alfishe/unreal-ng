@@ -1057,7 +1057,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "network", "mouse",
-                               "ttd", "contention", "tsconf"})
+                               "ttd", "contention", "tsconf", "tsconf_tsu"})
     {
         allowed.append(aspect);
     }
@@ -1088,7 +1088,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
         "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
-        "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
+        "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
+        "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
+        "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
+        "other machines.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -1153,7 +1156,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf")
+                    aspect != "tsconf" && aspect != "tsconf_tsu")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
@@ -1418,6 +1421,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Ide via the WebAPI; 404 = no IDE board
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/ide"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "tsconf_tsu")
+                        {
+                            // Core DeviceState::TsConfTsu via the WebAPI; 404 = not a TS-Conf machine
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/tsconf/tsu"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1733,6 +1747,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                 else
                                     out << "\n[rtc] " << value["chip"].asString() << ", " << value["time"]["text"].asString()
                                         << " (" << value["time_mode"].asString() << " time), " << value["cells"].asInt() << " cells";
+                            }
+                            else if (aspect == "tsconf_tsu")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[tsconf_tsu] " << value["description"].asString();
+                                else
+                                    out << "\n[tsconf_tsu] t_config " << value["t_config"].asInt() << ", " << value["active_sprites"].asInt()
+                                        << " active sprites, sprite page " << value["sprite_page"].asInt() << ", tilemap page "
+                                        << value["tilemap_page"].asInt();
                             }
                             else if (aspect == "tsconf")
                             {

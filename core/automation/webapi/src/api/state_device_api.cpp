@@ -285,6 +285,17 @@ void EmulatorAPI::getStateTsConfActive(const HttpRequestPtr& req, std::function<
     getStateTsConf(req, std::move(callback), emulator->GetId());
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/tsconf/tsu - TSU objects and CRAM (DeviceState::TsConfTsu); 404 on other machines
+void EmulatorAPI::getStateTsConfTsu(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::TsConfTsu(emulator->GetContext()), callback);
+}
+
 
 /// region <CMOS clock>
 

@@ -4,12 +4,15 @@
 
 #include "stdafx.h"
 
+#include <cstdio>
+
 #include "emulator/state/devicestate.h"
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
+#include "emulator/video/tsconf/screentsconf.h"
 
 namespace
 {
@@ -183,6 +186,99 @@ StateNode TsConf(EmulatorContext* context)
         sd["selected"] = decoder->GetZController().IsSelected();
         ret["sd"] = sd;
     }
+    return ret;
+}
+
+StateNode TsConfTsu(EmulatorContext* context)
+{
+    auto* decoder = context ? dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return Unavailable("Not a TS-Conf machine");
+
+    const TsConfState& ts = decoder->GetState();
+    const uint8_t* r = ts.regs;
+    const uint8_t tConfig = r[TsConfReg::TConfig];
+    const uint8_t palSel = r[TsConfReg::PalSel];
+    auto hex = [](unsigned value, int digits) {
+        char text[8];
+        std::snprintf(text, sizeof(text), "%0*X", digits, value);
+        return std::string(text);
+    };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["t_config"] = int(tConfig);
+    ret["sprites_on"] = (tConfig & 0x80) != 0;
+    ret["window_360"] = (tConfig & 0x01) != 0;
+    ret["tilemap_page"] = int(r[TsConfReg::TMapPage]);
+    ret["sprite_page"] = int(r[TsConfReg::SGPage]);
+
+    // Tile layers T0 / T1 (hs §4.4): graphics page, offsets, palette bits, tile-0 drawing
+    StateNode layers = StateNode::Array();
+    for (uint32_t layer = 0; layer < 2; layer++)
+    {
+        const uint32_t x = TsConfReg::T0XOffsL + layer * 4u;
+        StateNode t = StateNode::Object();
+        t["name"] = layer ? "t1" : "t0";
+        t["enabled"] = (tConfig & (layer ? 0x40 : 0x20)) != 0;
+        t["draw_tile_zero"] = (tConfig & (layer ? 0x08 : 0x04)) != 0;
+        t["graphics_page"] = int(r[layer ? TsConfReg::T1GPage : TsConfReg::T0GPage]);
+        t["x_offset"] = int(r[x] | ((r[x + 1] & 1u) << 8));
+        t["y_offset"] = int(r[x + 2] | ((r[x + 3] & 1u) << 8));
+        t["palette"] = int((palSel >> (layer ? 6 : 4)) & 0x03);  // PAL_SEL [5:4] / [7:6]: CRAM bank bits 7:6
+        t["map_offset"] = int(layer * 128);                      // within each 256-byte map row
+        layers.items.push_back(t);
+    }
+    ret["tile_layers"] = layers;
+
+    // Sprites: every SFILE descriptor, the layer its LEAP position puts it in
+    StateNode sprites = StateNode::Array();
+    uint32_t layer = 0;
+    int active = 0;
+    for (uint32_t d = 0; d < 85; d++)
+    {
+        const uint16_t w0 = ts.sfile[d * 3];
+        const uint16_t w1 = ts.sfile[d * 3 + 1];
+        const uint16_t w2 = ts.sfile[d * 3 + 2];
+        StateNode sp = StateNode::Object();
+        sp["index"] = int(d);
+        sp["active"] = (w0 & 0x2000) != 0;
+        sp["leap"] = (w0 & 0x4000) != 0;
+        sp["layer"] = layer == 0 ? "s0" : (layer == 1 ? "s1" : "s2");
+        sp["x"] = int(w1 & 0x1FF);
+        sp["y"] = int(w0 & 0x1FF);
+        sp["width"] = int((((w1 >> 9) & 0x07) + 1) * 8);
+        sp["height"] = int((((w0 >> 9) & 0x07) + 1) * 8);
+        sp["x_flip"] = (w1 & 0x8000) != 0;
+        sp["y_flip"] = (w0 & 0x8000) != 0;
+        sp["tile"] = int(w2 & 0x0FFF);
+        sp["bitmap_x"] = int((w2 & 0x3F) * 8);   // in the 512x512 sheet at sprite_page
+        sp["bitmap_y"] = int(((w2 >> 6) & 0x3F) * 8);
+        sp["palette"] = int(w2 >> 12);           // CRAM bank bits 7:4
+        StateNode words = StateNode::Array();
+        for (uint16_t w : {w0, w1, w2})
+            words.items.push_back(StateNode(hex(w, 4)));
+        sp["words"] = words;
+        sprites.items.push_back(sp);
+        active += (w0 & 0x2000) ? 1 : 0;
+        if ((w0 & 0x4000) && layer < 2)
+            layer++;  // LEAP: the next descriptor starts the next sprite layer
+    }
+    ret["active_sprites"] = active;
+    ret["sprites"] = sprites;
+
+    // CRAM: the 256 palette cells with their colors (no-VDAC curve, as drawn)
+    StateNode cram = StateNode::Array();
+    for (uint32_t i = 0; i < 256; i++)
+    {
+        const uint32_t rgba = ScreenTSConf::CramToRgba(ts.cram[i]);
+        StateNode c = StateNode::Object();
+        c["index"] = int(i);
+        c["value"] = hex(ts.cram[i], 4);
+        c["rgb"] = "#" + hex(rgba & 0xFF, 2) + hex((rgba >> 8) & 0xFF, 2) + hex((rgba >> 16) & 0xFF, 2);
+        cram.items.push_back(c);
+    }
+    ret["cram"] = cram;
     return ret;
 }
 

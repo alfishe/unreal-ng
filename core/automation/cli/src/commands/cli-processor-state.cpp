@@ -59,6 +59,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
+        ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
@@ -82,6 +83,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
         ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
+        ss << "  state tsconf tsu     - Show the TSU objects and the palette (debug views)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
@@ -192,6 +194,13 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         std::stringstream ide;
         ide << "IDE board" << NEWLINE << "=========" << NEWLINE << DeviceState::ToText(DeviceState::Ide(context));
         session.SendResponse(ide.str());
+        return;
+    }
+    else if ((subsystem == "tsconf" || subsystem == "ts") && args.size() > 1 && args[1] == "tsu")
+    {
+        std::stringstream ts;
+        ts << "TS-Conf TSU" << NEWLINE << "===========" << NEWLINE << DeviceState::ToText(DeviceState::TsConfTsu(context));
+        session.SendResponse(ts.str());
         return;
     }
     else if (subsystem == "tsconf" || subsystem == "ts")

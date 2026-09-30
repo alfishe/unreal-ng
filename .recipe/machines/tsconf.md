@@ -29,6 +29,7 @@ emulator_manage {"action":"create","model":"TSL"}      # alias TSCONF; 4096K onl
 #     the NVRAM, after a reset it boots the default (TR-DOS)
 
 inspect_state {"aspects":["tsconf"]}
+inspect_state {"aspects":["tsconf_tsu"]}             # sprites (85 decoded), tile layers, CRAM
 #   → memory (MEM_CONFIG decoded, window pages, LCK128, lock48, DOS / vdos,
 #     cache, FM window), video (mode ZX/16C/256C/TXT, geometry, V_PAGE,
 #     PAL_SEL, BORDER, TSU enables and pages, the engine's current line),
@@ -48,6 +49,8 @@ capture_media {"type":"screenshot"}                  # 720x288 for every TS mode
 EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
       -d '{"model":"TSL"}' | jq -r .id)
 curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '.video, .memory.pages'
+curl -s "$BASE/emulator/$EMU/state/tsconf/tsu" | jq '[.sprites[] | select(.active)]'   # the visible sprites
+curl -s "$BASE/emulator/$EMU/video/pixel?layer=1&x=100&y=50" | jq '.layer, .sources'  # which TSU object drew a pixel
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \
      -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}' | jq .emulator_id
 # (from any model: switches to TSL; "switch_model":false refuses with 409)
@@ -56,8 +59,8 @@ curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: appli
      -d '{"path":"/path/to/sdcard-or-folder"}'
 ```
 
-CLI: `state tsconf`, `snapshot load x.spg [--no-switch]`; Lua / Python:
-`tsconf_state()`, `snapshot_load` / `unreal.snapshot_load`. unreal-qt: Machine
+CLI: `state tsconf`, `state tsconf tsu`, `snapshot load x.spg [--no-switch]`; Lua / Python:
+`tsconf_state()`, `tsconf_tsu()`, `snapshot_load` / `unreal.snapshot_load`. unreal-qt: Machine
 menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
 
 ### Wild Commander (the TS-Conf shell) from the SD card
