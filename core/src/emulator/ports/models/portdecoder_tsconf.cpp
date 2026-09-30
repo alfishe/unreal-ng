@@ -350,6 +350,7 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
     const PortArm arm = ClassifyPort(port);
+    ApplyExternalIoStall(port, arm);
 
     // A registered ZX-Bus card that fully decodes this low byte owns the cycle
     // (see portdecoder.h); the FDC arm passes its canonical low byte for the
@@ -436,6 +437,7 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     }
 
     const PortArm arm = ClassifyPort(port);
+    ApplyExternalIoStall(port, arm);
 
     PortDecodeDisposition claim;
     uint16_t decodedPort = (arm == PortArm::Fdc) ? static_cast<uint16_t>(port & 0x00FF) : port;
@@ -739,7 +741,8 @@ void PortDecoder_TSConf::UpdateBanks()
 }
 
 /// The M1 hook runs only while it has work: the auto-LCK128 opcode latch, an
-/// armed DOS trap (mapped mode and ROM128 = 1) or an open DOS session
+/// armed DOS trap (mapped mode and ROM128 = 1), an open DOS session or the
+/// 14 MHz DRAM waits (an M1 miss waits longer than a data read)
 void PortDecoder_TSConf::RefreshM1Hook()
 {
     Core* core = _context->pCore;
@@ -748,7 +751,8 @@ void PortDecoder_TSConf::RefreshM1Hook()
 
     const uint8_t memConfig = _ts.MemConfig();
     const bool trapArmed = !(memConfig & TsConfMemConfig::W0NoMap) && (memConfig & TsConfMemConfig::Rom128);
-    const bool needed = _ts.Lck128() == TsConfLck128::Auto || trapArmed || _ts.dos || _ts.preVdos;
+    const bool waits14 = (_ts.regs[TsConfReg::SysConfig] & 0x02) != 0;
+    const bool needed = _ts.Lck128() == TsConfLck128::Auto || trapArmed || _ts.dos || _ts.preVdos || waits14;
 
     Z80* z80 = core->GetZ80();
     if (needed)
@@ -763,6 +767,9 @@ void PortDecoder_TSConf::RefreshM1Hook()
 ///   off: fetch at >= #4000, not while vdos
 void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
 {
+    if (_tsMemory && (_ts.regs[TsConfReg::SysConfig] & 0x02))
+        _tsMemory->NoteM1Fetch();
+
     // A trapped FDC access enters vdos at the next M1 ([V] zmem.v pre_vdos)
     if (_ts.preVdos)
     {
@@ -920,6 +927,12 @@ void PortDecoder_TSConf::ApplyClock()
 {
     static constexpr uint8_t kRatio[4] = {1, 2, 4, 4};
     const uint8_t ratio = kRatio[_ts.regs[TsConfReg::SysConfig] & 0x03];
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    // 14 MHz: DRAM reads wait for the arbiter (TIM-1); the M1 hook tells the
+    // memory which read is the opcode fetch
+    if (_tsMemory)
+        _tsMemory->SetDramWaits(ratio == 4 ? z80 : nullptr);
+    RefreshM1Hook();
     if (_state->hw_turbo_ratio == ratio)
         return;
 
@@ -1076,6 +1089,19 @@ void PortDecoder_TSConf::SdSlot::SetWriteProtectSwitch(bool on)
 /// A CPU access that reached the drive (a register or the data word, not a
 /// latch) freezes the Z80 for the IDE bus cycle: +1 / +2 / +3 T at 3.5 / 7 /
 /// 14 MHz ([V] zclock.v ide_stall; hardware-spec §8.3). Off by default
+/// 14 MHz: an I/O cycle to an "external" port - the AY (#FD with A15 = 1)
+/// or the VG93 (#1F/#3F/#5F/#7F while it is open; not #FF) - freezes the CPU
+/// clock for 8 fclk = 4 T, IN and OUT alike ([V] zclock.v:76-90, zports.v:344-345;
+/// hardware-spec §11). TIM-2
+void PortDecoder_TSConf::ApplyExternalIoStall(uint16_t port, PortArm arm)
+{
+    if (!(_ts.regs[TsConfReg::SysConfig] & 0x02)) [[likely]]
+        return;
+    const bool external = arm == PortArm::Ay || (arm == PortArm::Fdc && (port & 0xFF) != 0xFF);
+    if (external && _context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->AddWaitStates(4);
+}
+
 void PortDecoder_TSConf::ApplyIdeStall()
 {
     static constexpr uint8_t kStall[4] = {1, 2, 3, 3};

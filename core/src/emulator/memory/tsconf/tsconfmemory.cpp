@@ -1,5 +1,6 @@
 #include "tsconfmemory.h"
 
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 
@@ -98,8 +99,9 @@ namespace
     }
 }
 
-uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal)
+uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal, bool& dram)
 {
+    dram = false;
     const uint8_t bank = static_cast<uint8_t>(addr >> 14);
     if (_bank_mode[bank] != BANK_RAM)
         return normal;  // ROM is never cached
@@ -116,6 +118,7 @@ uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal)
         return static_cast<uint8_t>((addr & 1) ? (word >> 8) : word);  // a hit takes no DRAM cycle
     }
     _ts->cpuAccesses++;
+    dram = true;
 
     // A DRAM read fills the whole word
     const uint8_t* even = _bank_read[bank] + (addr & 0x3FFE);
@@ -150,10 +153,50 @@ void TsConfMemory::CacheClear()
 
 /// A CPU read from RAM takes a DRAM cycle the DMA cannot use (the engine's
 /// budget, technical-design §3.8); ROM is a separate chip
-inline void TsConfMemory::CountDramRead(uint16_t addr)
+inline bool TsConfMemory::CountDramRead(uint16_t addr)
 {
-    if (_ts && _bank_mode[addr >> 14] == BANK_RAM)
-        _ts->cpuAccesses++;
+    if (!_ts || _bank_mode[addr >> 14] != BANK_RAM)
+        return false;
+    _ts->cpuAccesses++;
+    return true;
+}
+
+/// 14 MHz: a CPU read that goes to DRAM stretches by the fclk (28 MHz) count
+/// of [V] zmem.v:154-172, by the DRAM-cycle phase c0..c3 its request starts
+/// in (dram_beg, the CPU clock's falling edge in T2 = T1 + 3 fclk):
+///   M1   c3 +3, c2 +4, c1 +5, c0 +6 fclk
+///   read c3 +2, c2 +3, c1 +4, c0 +5 fclk
+/// Writes do not wait. The 14 MHz clock is not locked to the DRAM phases
+/// (zclock.v): every stall shifts it, so the phase comes from the stretched
+/// counter itself - 2 fclk per 14 MHz clock, a frame starting at c0.
+/// Not modeled: the wait for a slot while video holds the next DRAM cycle
+/// (cpu_next = 0, only in 256C / TXT fetch windows at 14 MHz).
+void TsConfMemory::DramWait(bool m1)
+{
+    const uint32_t fclkTicks = _waitCpu->rate / 2;  // a CPU clock is `rate` ticks at every speed (turbo scales the frame)
+    if (!fclkTicks)
+        return;
+    const uint32_t start = _waitCpu->tt - 3u * _waitCpu->rate;  // T1 of the access (rd charged its 3 T)
+    const uint32_t phase = (start / fclkTicks + 3u) & 3u;       // c-phase of dram_beg
+    _waitCpu->AddWaitTicks(((m1 ? 6u : 5u) - phase) * fclkTicks);
+}
+
+inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
+{
+    bool dram;
+    uint8_t value = normal;
+    if (_cacheActive) [[unlikely]]
+        value = CacheRead(addr, normal, dram);
+    else
+        dram = CountDramRead(addr);
+    if (_waitCpu) [[unlikely]]
+    {
+        const bool m1 = _nextIsM1;
+        _nextIsM1 = false;
+        if (dram)
+            DramWait(m1);
+    }
+    return value;
 }
 
 /// Cache model on the CPU read path. The normal read runs first, so access
@@ -164,20 +207,12 @@ inline void TsConfMemory::CountDramRead(uint16_t addr)
 /// cache goes off) - technical-design §3.5 item 3
 uint8_t TsConfMemory::MemoryReadFast(uint16_t addr, bool isExecution)
 {
-    const uint8_t normal = Memory::MemoryReadFast(addr, isExecution);
-    if (_cacheActive) [[unlikely]]
-        return CacheRead(addr, normal);
-    CountDramRead(addr);
-    return normal;
+    return AfterRead(addr, Memory::MemoryReadFast(addr, isExecution));
 }
 
 uint8_t TsConfMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
-    const uint8_t normal = Memory::MemoryReadDebug(addr, isExecution);
-    if (_cacheActive) [[unlikely]]
-        return CacheRead(addr, normal);
-    CountDramRead(addr);
-    return normal;
+    return AfterRead(addr, Memory::MemoryReadDebug(addr, isExecution));
 }
 
 /// endregion </CPU cache>
