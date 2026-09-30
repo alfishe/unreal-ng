@@ -16,51 +16,96 @@
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdfileinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/soundmanager.h"
 
 namespace zxdlss
 {
 
-std::string readTtd(const std::string& path, const std::string& model, uint64_t from, uint64_t to, const FrameCallback& cb,
-                    bool overscan)
+namespace
 {
-    std::ifstream in(path, std::ios::binary);
-    if (!in)
-        return "cannot open " + path;
+
+/// An emulator for the session in `path`, built as the file says it was
+/// recorded (ttd::ReadTTDFileInfo, headers only): its model and its General
+/// Sound card, fitted before the load - the loader refuses another card. The
+/// session is loaded; `model` non-empty must name the recorded model.
+std::string createSessionEmulator(const std::string& path, const std::string& model, const std::string& id,
+                                  std::shared_ptr<Emulator>& emulator)
+{
+    ttd::TTDFileInfo info;
+    std::string err;
+    if (!ttd::ReadTTDFileInfo(path, info, err))
+        return "cannot read " + path + ": " + err;
+    const std::string& recorded = info.machine.model;
+    if (recorded.empty())
+        return path + ": recorded on an unknown model (id " + std::to_string(info.machine.modelId) + ")";
+    if (!model.empty() && model != recorded)
+        return path + " was recorded on " + recorded + ", not " + model;
 
     EmulatorManager* manager = EmulatorManager::GetInstance();
-    std::string error;
-    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("zxdlss-render", model, LoggerLevel::LogError, &error);
+    emulator = manager->CreateEmulatorWithModel(id, recorded, LoggerLevel::LogError, &err);
     if (!emulator)
-        return "cannot create a " + model + " emulator: " + error;
-    struct Cleanup
-    {
-        EmulatorManager* m;
-        std::string id;
-        ~Cleanup() { m->RemoveEmulator(id); }
-    } cleanup{manager, emulator->GetId()};
+        return "cannot create a " + recorded + " emulator: " + err;
 
     // Plane B needs the per-T renderer (screenhq) and the zxdlss feature; the
     // TTD session needs time travel + debug mode (as ttdclipexport_test)
     FeatureManager* fm = emulator->GetFeatureManager();
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
-    fm->setFeature(Features::kScreenHQ, true);
-    fm->setFeature(Features::kZXDLSS, true);
+
+    if (info.machine.generalSound != GSTypeKind::NONE)
+    {
+        SoundManager* sound = emulator->GetContext()->pSoundManager;
+        if (!sound || !sound->switchGeneralSoundCard(info.machine.generalSound))
+            return std::string("cannot fit the recorded General Sound card (") +
+                   ttd::GeneralSoundName(info.machine.generalSound) + ")";
+    }
 
     ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
     if (!ttd)
         return "the emulator has no time travel manager";
-    ttd->SetSessionSourcePath(path);
-    std::string err;
+    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+    if (!in)
+        return "cannot open " + path;
     if (!ttd->DeserializeSession(in, err))
         return "cannot load " + path + ": " + err;
+    ttd->SetSessionSourcePath(path);
+    return {};
+}
+
+}  // namespace
+
+std::string readTtd(const std::string& path, const std::string& model, uint64_t from, uint64_t to, const FrameCallback& cb,
+                    bool overscan)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator;
+    struct Cleanup
+    {
+        EmulatorManager* m;
+        std::shared_ptr<Emulator>& e;
+        ~Cleanup()
+        {
+            if (e)
+                m->RemoveEmulator(e->GetId());
+        }
+    } cleanup{manager, emulator};
+    std::string err = createSessionEmulator(path, model, "zxdlss-render", emulator);
+    if (!err.empty())
+        return err;
+
+    FeatureManager* fm = emulator->GetFeatureManager();
+    fm->setFeature(Features::kScreenHQ, true);
+    fm->setFeature(Features::kZXDLSS, true);
+    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
     if (overscan && !emulator->SetOverscanMode(true) && !emulator->IsOverscanMode())
         return "overscan needs a Pentagon session";
 
@@ -120,24 +165,11 @@ struct LoadedSession
     }
     std::string load(const std::string& path, const std::string& model, const char* id)
     {
-        std::ifstream in(path, std::ios::binary);
-        if (!in)
-            return "cannot open " + path;
         manager = EmulatorManager::GetInstance();
-        std::string error;
-        emulator = manager->CreateEmulatorWithModel(id, model, LoggerLevel::LogError, &error);
-        if (!emulator)
-            return "cannot create a " + model + " emulator: " + error;
-        FeatureManager* fm = emulator->GetFeatureManager();
-        fm->setFeature(Features::kDebugMode, true);
-        fm->setFeature(Features::kTimeTravel, true);
+        const std::string err = createSessionEmulator(path, model, id, emulator);
+        if (!err.empty())
+            return err;
         ttd = emulator->GetContext()->pTimeTravelManager;
-        if (!ttd)
-            return "the emulator has no time travel manager";
-        ttd->SetSessionSourcePath(path);
-        std::string err;
-        if (!ttd->DeserializeSession(in, err))
-            return "cannot load " + path + ": " + err;
         return {};
     }
 };
@@ -238,32 +270,20 @@ std::string readTtdAudio(const std::string& path, const std::string& model, uint
     return {};
 }
 
-/// Frame range of a TTD file (loads it once).
+/// Frame range of a TTD file, from its header (no emulator).
 bool ttdRange(const std::string& path, const std::string& model, uint64_t& first, uint64_t& last, std::string& error)
 {
-    std::ifstream in(path, std::ios::binary);
-    if (!in)
+    ttd::TTDFileInfo info;
+    if (!ttd::ReadTTDFileInfo(path, info, error))
+        return false;
+    if (!model.empty() && model != info.machine.model)
     {
-        error = "cannot open " + path;
+        error = path + " was recorded on " + info.machine.model + ", not " + model;
         return false;
     }
-    EmulatorManager* manager = EmulatorManager::GetInstance();
-    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("zxdlss-range", model, LoggerLevel::LogError, &error);
-    if (!emulator)
-        return false;
-    FeatureManager* fm = emulator->GetFeatureManager();
-    fm->setFeature(Features::kDebugMode, true);
-    fm->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
-    const bool ok = ttd && ttd->DeserializeSession(in, error);
-    if (ok)
-    {
-        const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
-        first = info.sessionStartFrame;
-        last = info.currentEndFrame;
-    }
-    manager->RemoveEmulator(emulator->GetId());
-    return ok;
+    first = info.startFrame;
+    last = info.endFrame;
+    return true;
 }
 
 }  // namespace zxdlss

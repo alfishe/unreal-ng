@@ -7,7 +7,7 @@ that renders TTD recordings or exported clips through them. Phase 2 of POC 019
 | Part | What it is |
 |---|---|
 | `algo/include/zxdlss/algorithm.h` | the interface every algorithm implements (`delay()`, `process(frame) -> RGB`), the registry (`createAlgorithm(name)`) |
-| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8); `mod-tpgwaf` + flash veto, periods 2..4, detail-based scene trigger; `mod-tpgwafs` + step-aware scene render (the baseline) |
+| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8); `mod-tpgwaf` + flash veto, periods 2..4, detail-based scene trigger; `mod-tpgwafs` + step-aware scene render; `mod-tpgwafsd` + no border field seeds on stripe tiles (the baseline) |
 | `algo/src/mod_tpgw_ref.cpp` | `mod-tpgw-ref`, the literal scalar implementation of the spec |
 | `algo/src/registry.cpp` | registry, plane B decoding, `raw` (no processing) |
 | `tool/main.cpp` | `zxdlss-render`: TTD file or clip -> algorithm -> video / exact RGB dump |
@@ -46,14 +46,20 @@ zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --dump out/dump
 zxdlss-render --list          # registered algorithms
 
 # the current baseline, with the per-detector usage and the scene-stage runs
-zxdlss-render --ttd across_the_edge_full.ttd --alg mod-tpgwafs --layout raw-out --video ate.mp4 --stats
+zxdlss-render --ttd across_the_edge_full.ttd --alg mod-tpgwafsd --layout raw-out --video ate.mp4 --stats
 
 # Pentagon overscan: 352 x 304, the paper centered horizontally (the emulator's
 # Symmetric Horizontal viewport) - demos that draw into the extra border lines
-zxdlss-render --ttd across_the_edge_full.ttd --overscan --alg mod-tpgwafs --layout raw-out --video ate-osc.mp4
+zxdlss-render --ttd across_the_edge_full.ttd --overscan --alg mod-tpgwafsd --layout raw-out --video ate-osc.mp4
 ```
 
-`--model` names the machine a TTD session was recorded on (default `PENTAGON`).
+The machine comes from the file: the tool reads the session's recorded machine
+from its headers (`ttd::ReadTTDFileInfo`, the same as `ttd info <path>`) and
+creates the emulator of that model with that General Sound card fitted before
+the load - the loader refuses another card (the Pentagon model now fits NeoGS;
+Across the Edge was recorded with the classic GS). `--model` is optional: when
+given it must name the recorded model. The frame range also comes from the
+header, without an emulator.
 Frames are output for `[--from, --to]`; the input runs `delay()` frames further
 (6 for mod-tpgw), so the last 6 frames of a recording have no output.
 

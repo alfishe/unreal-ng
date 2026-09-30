@@ -2,7 +2,7 @@
 /// @brief zxdlss-render: render a TTD file or a clip through a de-flicker
 /// algorithm into a video and/or an exact RGB dump.
 ///
-///   zxdlss-render --ttd session.ttd [--model PENTAGON] --video out.mp4
+///   zxdlss-render --ttd session.ttd --video out.mp4   (machine from the file)
 ///   zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --alg mod-tpgw --layout raw-out --video spiral.mp4
 ///   zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --dump out/dump   (compare_dump.py)
 ///   zxdlss-render --list
@@ -27,7 +27,8 @@ void usage()
     std::cout << "zxdlss-render - render a TTD file or a clip through a ZX DLSS de-flicker algorithm\n\n"
                  "input (one of):\n"
                  "  --ttd FILE          TTD session (replayed through the emulator core)\n"
-                 "  --model NAME        machine of the TTD session (default PENTAGON)\n"
+                 "  --model NAME        expected machine of the TTD session (default: the one it was recorded on;\n"
+                 "                      model, General Sound card come from the file)\n"
                  "  --overscan          TTD: Pentagon overscan, 352 x 304 with the paper centered\n"
                  "                      horizontally (the UI's Symmetric Horizontal viewport)\n"
                  "  --clip DIR          clip exported with POST /ttd/export-clip (plane B)\n"
@@ -52,7 +53,7 @@ void usage()
 
 int main(int argc, char** argv)
 {
-    std::string ttd, clip, model = "PENTAGON", algName = "mod-tpgw", video, layout = "out", dump, audio;
+    std::string ttd, clip, model, algName = "mod-tpgw", video, layout = "out", dump, audio;
     long long from = -1, to = -1;
     int scale = 2;
     bool quiet = false, noAudio = false, showStats = false, overscan = false;

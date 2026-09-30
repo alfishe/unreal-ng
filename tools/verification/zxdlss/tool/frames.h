@@ -37,7 +37,8 @@ std::string readClip(const std::string& dir, uint64_t from, uint64_t to, const F
 bool clipRange(const std::string& dir, uint64_t& first, uint64_t& last, std::string& error);
 
 /// Frames [from, to] of a TTD file, replayed through the emulator core
-/// (only when built with the core; model: the machine the session was recorded on).
+/// (only when built with the core). The emulator is built as the file says it was
+/// recorded (model, General Sound card); model non-empty must name that model.
 /// overscan: Pentagon overscan (384 x 304) cropped to 352 x 304 with the paper
 /// horizontally centered (48 px each side) - the UI's Symmetric Horizontal viewport.
 std::string readTtd(const std::string& path, const std::string& model, uint64_t from, uint64_t to, const FrameCallback& cb,
