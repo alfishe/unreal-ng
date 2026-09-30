@@ -55,6 +55,7 @@
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
+#include "ttdfileinfo.h"
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdwritejournal.h"
@@ -202,6 +203,17 @@ struct TTDSessionInfo
 
     uint8_t  modelId = 0;         ///< eModel value the session belongs to
     uint16_t modelRamPages = 0;   ///< Exclusive RAM page-index bound (see TDD 6.2a)
+
+    /// The machine the session was recorded on, as a .ttd file states it
+    /// (ttdfileinfo.h): model, ROM signature (the file's when loaded, the live
+    /// ROM's otherwise), the fitted devices of the baseline checkpoint and the
+    /// General Sound / TurboSound slot devices among them. Empty (modelId 0,
+    /// no devices) while there is no session.
+    ttd::TTDRecordedMachine machine;
+
+    /// Symbolic id of the instance that recorded a loaded session (the file's
+    /// emulator_id); empty for a live recording.
+    std::string recordedBy;
 
     // --- Sections ---------------------------------------------------------
 
@@ -938,6 +950,65 @@ public:
     {
         return SeekTo(target, /*outResult=*/nullptr);
     }
+
+    // -----------------------------------------------------------------------
+    // Clip export (ZX DLSS reference material; implementation ttdclipexport.cpp)
+    // -----------------------------------------------------------------------
+
+    struct TTDClipExportOptions
+    {
+        uint64_t fromFrame = 0;
+        uint64_t toFrame = 0;
+        std::string directory;      ///< created if missing
+        uint32_t chunkFrames = 500;  ///< frames per zstd chunk
+        int zstdLevel = 3;
+    };
+
+    struct TTDClipExportResult
+    {
+        bool ok = false;
+        std::string error;
+        uint64_t frames = 0;
+        uint64_t bytesWritten = 0;
+        bool planeB = false;  ///< plane B written (feature zxdlss on)
+        uint32_t width = 0;
+        uint32_t height = 0;
+        double seconds = 0.0;
+    };
+
+    /// @brief Write every frame of [fromFrame, toFrame] as its final picture -
+    /// the same picture positioning by frame number shows - into `directory`:
+    /// rgba_NNNN.zst (RGBA8), planeb_NNNN.zst (plane B, when the zxdlss feature
+    /// is on), meta.jsonl (frame, #7FFD, displayed screen, border at the frame's
+    /// start) and clip.json (geometry, encodings). One call instead of one
+    /// seek + capture round trip per frame. Leaves the machine positioned and
+    /// displayed at toFrame. The emulator must be paused; refused while recording.
+    TTDClipExportResult ExportClip(const TTDClipExportOptions& options);
+
+    /// One composed frame handed to a VisitComposedFrames callback. The
+    /// pointers are valid only during the callback.
+    struct TTDComposedFrame
+    {
+        uint64_t frame = 0;
+        const uint8_t* rgba = nullptr;    ///< width x height RGBA8 (the framebuffer)
+        size_t rgbaBytes = 0;
+        const uint16_t* planeB = nullptr; ///< width x height plane B, nullptr when zxdlss is off
+        size_t planeBCount = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint8_t p7FFD = 0;                ///< at the frame's start
+        uint8_t activeScreen = 0;
+        uint8_t border = 0;
+    };
+    using TTDFrameVisitor = std::function<bool(const TTDComposedFrame&)>;  ///< false stops the walk
+
+    /// @brief Walk [fromFrame, toFrame] and hand every frame's final picture
+    /// (and plane B) to `visit` - the walk ExportClip writes to disk, for tools
+    /// that process the frames in memory (tools/verification/zxdlss renders
+    /// TTD files through de-flicker algorithms). Same preconditions as
+    /// ExportClip; leaves the machine displayed at the last frame visited.
+    /// @return empty on success, otherwise the reason
+    std::string VisitComposedFrames(uint64_t fromFrame, uint64_t toFrame, const TTDFrameVisitor& visit);
 
     // -----------------------------------------------------------------------
     // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)
@@ -1690,6 +1761,7 @@ private:
         /// Framebuffer pixels: a sandbox replay renders into the live
         /// framebuffer; restoring hands the caller's picture back untouched.
         std::vector<uint8_t> framebuffer;
+        std::vector<uint16_t> planeB;      ///< ZX DLSS plane B, rendered in the same pass as the pixels
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
     };
 
@@ -1791,6 +1863,8 @@ private:
     std::string _sourcePath;
     uint64_t    _capturedAtUnixMs = 0;
     uint8_t     _sessionModelId = 0;
+    uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
+    std::string _loadedRecordedBy;        ///< The loaded file's emulator_id
 
     /// Per-frame coverage sets backing reverse-search frame skipping.
     TTDCoverageIndex _coverageIndex;

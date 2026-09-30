@@ -568,11 +568,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  status        - Show emulator status" << NEWLINE;
     oss << "  list          - List managed emulator instances" << NEWLINE;
     oss << "  select <id>   - Select an emulator" << NEWLINE;
-    oss << "  start [model] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
+    oss << "  start [model] [--ram-power-on random|zero] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
+    oss << "  create [model] [--ram-power-on random|zero] - Create an emulator instance without starting it" << NEWLINE;
+    oss << "                (--ram-power-on zero: every RAM page reads 0; random: noise in the screen pages like real DRAM;" << NEWLINE;
+    oss << "                default: [MISC] RAMPowerOn of the model's unreal.ini)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
-    oss << "  zxpoly start <model> [file] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
+    oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;

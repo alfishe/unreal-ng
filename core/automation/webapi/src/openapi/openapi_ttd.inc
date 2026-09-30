@@ -119,6 +119,41 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // POST /ttd/export-clip — a frame range written to disk as a lossless clip
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["summary"] = "Export a TTD frame range as a clip";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["description"] =
+        "Writes every frame of [from, to] as its final beam-rendered picture - what positioning by frame number "
+        "shows - into the directory `path`: rgba_NNNN.zst (RGBA8 frames), planeb_NNNN.zst (ZX DLSS plane B, when "
+        "the 'zxdlss' feature is on), meta.jsonl (frame, #7FFD, displayed screen, border at the frame's start) and "
+        "clip.json (geometry, encodings). Runs inside the core in one request; the emulator is paused and left "
+        "positioned at `to`. 409 while recording.";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    {
+        Json::Value& body = paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["requestBody"];
+        body["required"] = true;
+        Json::Value& schema = body["content"]["application/json"]["schema"];
+        schema["type"] = "object";
+        schema["required"].append("from");
+        schema["required"].append("to");
+        schema["required"].append("path");
+        schema["properties"]["from"]["type"] = "integer";
+        schema["properties"]["to"]["type"] = "integer";
+        schema["properties"]["path"]["type"] = "string";
+        schema["properties"]["path"]["description"] = "Absolute output directory (created if missing)";
+        schema["properties"]["chunk"]["type"] = "integer";
+        schema["properties"]["chunk"]["description"] = "Frames per zstd chunk (default 500)";
+    }
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["responses"]["200"]["description"] =
+        "Export finished: ok, frames, bytes, planeb, width, height, seconds, path";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["responses"]["400"]["description"] =
+        "Missing fields, range outside the session or write failure (error)";
+    paths["/api/v1/emulator/{id}/ttd/export-clip"]["post"]["responses"]["409"]["description"] =
+        "Session is recording";
+
     // POST /ttd/seek — seek to (frame, tinframe)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["summary"] =

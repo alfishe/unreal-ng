@@ -118,6 +118,11 @@ namespace rzx
         /// The machine as an SZX image (a keyframe)
         bool CaptureState(std::vector<uint8_t>& out);
         bool RestoreState(const std::vector<uint8_t>& state, std::string& error);
+        /// Emulation thread: a snapshot block of the recording replaces the machine
+        bool ApplyRecordedSnapshot(const Snapshot& snapshot, uint32_t tstates, std::string& error);
+        /// A snapshot block's image (embedded, or the external file next to the RZX) and its extension
+        static bool SnapshotBytes(const Snapshot& snapshot, const std::string& sourcePath, std::string& extension,
+                                  std::vector<uint8_t>& bytes, std::string& error);
         /// Remove the hooks and restore the machine; idempotent
         void Uninstall();
         /// Emulation thread: the player left Playing

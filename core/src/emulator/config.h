@@ -165,6 +165,14 @@ public:
 	/// [HDD] Scheme: NONE / ATM / NEMO / NEMO-A8 / NEMO-DIVIDE / SMUC / PROFI / DIVIDE (any case); false when unknown
 	static bool ParseIdeScheme(const char* value, IDE_SCHEME& scheme);
 	static const char* IdeSchemeName(IDE_SCHEME scheme);
+	/// [MISC] RAMPowerOn and every automation surface's ram_power_on:
+	/// RANDOM / ZERO (any case); false when unknown
+	static bool ParseRamPowerOn(const std::string& value, RamPowerOn& mode);
+	/// "random" / "zero": the spelling every automation surface reports
+	static const char* RamPowerOnName(RamPowerOn mode);
+	/// A create-time config override (EmulatorManager::Create*) that sets
+	/// the power-on RAM mode over what the model's unreal.ini says
+	static std::function<void(CONFIG&)> RamPowerOnOverride(RamPowerOn mode);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

@@ -27,6 +27,7 @@ the quality tests still green.
 | O-15 | Border | 1-D beam-order processing; uniform-border fast path | cheap border handling | design-analysis §8 |
 | O-16 | Threads | Horizontal bands per core for classification and composition; regions crossing bands in a second pass | scales with cores | R-8 |
 | O-17 | SIMD | AVX2 paths with runtime CPU dispatch for the hottest loops | wider lanes on x86 | only if SSE measurements justify it |
+| O-18 | SIMD | Scene stage (mod-tpgwa, spec 7.8): 16-byte compares for the 7-frame constant / period-2 / dyn tests and per-tile counts | the scene features are per-pixel compares over 7 frames | measure first; the stage already runs by tile rows on threads |
 
 ---
 

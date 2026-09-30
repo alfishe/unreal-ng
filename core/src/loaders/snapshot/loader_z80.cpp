@@ -20,18 +20,18 @@ LoaderZ80::LoaderZ80(EmulatorContext* context, const std::string& path)
     _path = path;
 }
 
+LoaderZ80::LoaderZ80(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name)
+{
+    _context = context;
+    _logger = context->pModuleLogger;
+
+    _path = name;
+    _data = std::move(data);
+    _fromMemory = true;
+}
+
 LoaderZ80::~LoaderZ80()
 {
-    // validate() opens _file and leaves it open for stageLoad() to read from
-    // when called via load(); a standalone validate() call (no load()) never
-    // reaches load()'s CloseFile, so close here as a safety net - otherwise
-    // the handle outlives the object and blocks removing the file (Windows).
-    if (_file != nullptr)
-    {
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
-    }
-
     freeStagingMemory();
 }
 
@@ -47,9 +47,6 @@ bool LoaderZ80::load()
 
             result = true;
         }
-
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
     }
 
     return result;
@@ -334,14 +331,20 @@ bool LoaderZ80::validate()
 {
     bool result = false;
 
-    // 1. Check that file exists
-    if (FileHelper::FileExists(_path))
+    // 1. The snapshot bytes: given in memory, or the whole file (read once;
+    // no handle stays open)
+    bool haveData = _fromMemory;
+    if (!_fromMemory && FileHelper::FileExists(_path))
     {
-        _file = FileHelper::OpenExistingFile(_path);
-        if (_file != nullptr)
+        const size_t size = FileHelper::GetFileSize(_path);
+        _data.assign(size, 0);
+        haveData = size == 0 || FileHelper::ReadFileToBuffer(_path, _data.data(), size) == size;
+    }
+    if (haveData)
+    {
         {
             // 2. Check file has appropriate size (header + data bytes)
-            _fileSize = FileHelper::GetFileSize(_path);
+            _fileSize = _data.size();
             if (_fileSize > 0)
             {
                 size_t dataSize = _fileSize - sizeof(Z80Header_v1);
@@ -619,27 +622,21 @@ Z80SnapshotVersion LoaderZ80::getSnapshotFileVersion()
 {
     Z80SnapshotVersion result = Unknown;
 
-    if (_file != nullptr)
+    if (!_data.empty())
     {
         Z80Header_v1 header;
 
-        // Ensure we're reading from file start
-        rewind(_file);
-
         // Read Z80 common header
-        size_t headerRead = FileHelper::ReadFileToBuffer(_file, (uint8_t*)&header, sizeof(header));
-
-        if (headerRead == sizeof(header))
+        if (_data.size() >= sizeof(header))
         {
+            memcpy(&header, _data.data(), sizeof(header));
             if (header.reg_PC == 0x0000)
             {
                 // PC register is zero, indicating Z80 v2 or newer format
-                rewind(_file);
                 Z80Header_v2 headerV2;
-                headerRead = fread(&headerV2, sizeof(headerV2), 1, _file);
-
-                if (headerRead == 1)
+                if (_data.size() >= sizeof(headerV2))
                 {
+                    memcpy(&headerV2, _data.data(), sizeof(headerV2));
                     uint16_t extendedHeaderSize = headerV2.extendedHeaderLen;
 
                     switch (extendedHeaderSize)
@@ -677,14 +674,8 @@ bool LoaderZ80::loadZ80v1()
     {
         _memoryMode = Z80_48K;
 
-        auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
-        uint8_t* pBuffer = buffer.get();
-
-        // Ensure we're reading from file start
-        rewind(_file);
-
-        // Read the whole file content to temporary buffer
-        FileHelper::ReadFileToBuffer(_file, pBuffer, _fileSize);
+        // The whole snapshot is in _data (validate())
+        uint8_t* pBuffer = _data.data();
 
         // Provide access to header structure
         Z80Header_v1& headerV1 = *(Z80Header_v1*)pBuffer;
@@ -759,14 +750,8 @@ bool LoaderZ80::loadZ80v2()
 
     if (_fileValidated && _snapshotVersion == Z80v2 && _fileSize > 0)
     {
-        auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
-        uint8_t* pBuffer = buffer.get();
-
-        // Ensure we're reading from file start
-        rewind(_file);
-
-        // Read the whole file content to temporary buffer
-        FileHelper::ReadFileToBuffer(_file, pBuffer, _fileSize);
+        // The whole snapshot is in _data (validate())
+        uint8_t* pBuffer = _data.data();
 
         // Provide access to header structure
         Z80Header_v1& headerV1 = *(Z80Header_v1*)pBuffer;
@@ -886,14 +871,8 @@ bool LoaderZ80::loadZ80v3()
 
     if (_fileValidated && _snapshotVersion == Z80v3 && _fileSize > 0)
     {
-        auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
-        uint8_t* pBuffer = buffer.get();
-
-        // Ensure we're reading from file start
-        rewind(_file);
-
-        // Read the whole file content to temporary buffer
-        FileHelper::ReadFileToBuffer(_file, pBuffer, _fileSize);
+        // The whole snapshot is in _data (validate())
+        uint8_t* pBuffer = _data.data();
 
         // Provide access to header structure
         Z80Header_v1& headerV1 = *(Z80Header_v1*)pBuffer;
@@ -1024,11 +1003,10 @@ bool LoaderZ80::validateHeaderSanity(Z80SnapshotVersion version)
 {
     // Validate Z80-specific header constraints based on detected version
     // NOTE: Generic file type detection (ASCII, etc.) will be handled by a shared component
-    rewind(_file);
     Z80Header_v1 header;
-    size_t read = fread(&header, sizeof(header), 1, _file);
-    if (read != 1)
+    if (_data.size() < sizeof(header))
         return false;
+    memcpy(&header, _data.data(), sizeof(header));
 
     // Note: IFF flags are sanitized during register extraction rather than rejected
     // This allows loading of files with corrupted IFF values but still valid otherwise
@@ -1036,11 +1014,10 @@ bool LoaderZ80::validateHeaderSanity(Z80SnapshotVersion version)
     // For v2/v3, validate extended header constraints
     if (version == Z80v2 || version == Z80v3)
     {
-        rewind(_file);
         Z80Header_v2 headerV2;
-        read = fread(&headerV2, sizeof(headerV2), 1, _file);
-        if (read != 1)
+        if (_data.size() < sizeof(headerV2))
             return false;
+        memcpy(&headerV2, _data.data(), sizeof(headerV2));
 
         // Validate extended header length based on expected version
         uint16_t extLen = headerV2.extendedHeaderLen;

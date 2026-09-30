@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "common/stringhelper.h"
+#include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -82,11 +83,16 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
 
     // The new machine first: its slots decide what follows. The old one runs on
     std::string error;
+    const RamPowerOn ramPowerOn =
+        request.ramPowerOn ? *request.ramPowerOn
+                           : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
     std::shared_ptr<Emulator> created =
         request.ramKb > 0
             ? emulators.CreateEmulatorWithModelAndRAM(old->GetSymbolicId(), request.model, request.ramKb,
-                                                      LoggerLevel::LogWarning, &error)
-            : emulators.CreateEmulatorWithModel(old->GetSymbolicId(), request.model, LoggerLevel::LogWarning, &error);
+                                                      LoggerLevel::LogWarning, &error,
+                                                      Config::RamPowerOnOverride(ramPowerOn))
+            : emulators.CreateEmulatorWithModel(old->GetSymbolicId(), request.model, LoggerLevel::LogWarning, &error,
+                                                Config::RamPowerOnOverride(ramPowerOn));
     if (!created || !created->GetContext() || !created->GetContext()->pMediaManager)
     {
         if (created)

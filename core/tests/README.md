@@ -1767,7 +1767,16 @@ so speeding up an unrelated boot test can change what a later test's machine
 boots into. Both orders reproduce perfectly; this is a hidden input, not flake,
 and `--gtest_shuffle` is the only thing that finds it.
 
-If your test boots far enough for RAM contents to matter, pin them:
+If your test boots far enough for RAM contents to matter, create the machine
+with zeroed RAM (`[MISC] RAMPowerOn=ZERO`, the create-time override every
+`EmulatorManager::Create*` path takes):
+
+```cpp
+auto emulator = manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, nullptr,
+                                                 Config::RamPowerOnOverride(RamPowerOn::Zero));
+```
+
+A machine that already exists can still be pinned by hand:
 
 ```cpp
 memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);

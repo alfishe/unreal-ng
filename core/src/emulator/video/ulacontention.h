@@ -254,6 +254,32 @@ public:
     /// raster waits on this stream).
     uint8_t GetFloatingBusAttribute() const;
 
+    /// region <ULA snow (docs/inprogress/2026-09-29-ula-snow/tdd.md)>
+
+    /// The Ferranti ULA's 8-tick fetch cycle, in the floating bus's phases (FetchedByte): pixel byte 1 at 2,
+    /// attribute 1 at 3, pixel byte 2 at 4, attribute 2 at 5. A refresh whose T3 (the first refresh tick)
+    /// falls on pixel byte 1's fetch puts R on the low address bits of pixel byte 1 and attribute 1 (snow); on
+    /// pixel byte 2's fetch the second pair is not read and the first cell's bytes show again (double).
+    /// Weiv's description (zx-pk.ru thread 34737) counts the ULA's ticks one later; the tick was fixed on
+    /// Snow Hold's photos from three real 48K machines (docs/inprogress/2026-09-29-ula-snow/research.md)
+    static constexpr uint32_t kSnowPhase = 2;
+    static constexpr uint32_t kDoublePhase = 4;
+
+    /// A refresh whose T3 starts at frame T-state `t`, with the R it puts on the bus (before its increment). The caller checks that I
+    /// points into a slow slot (IsSlotContended(I >> 6)); only the Ferranti ULA machines call it (Z80's
+    /// ioContention). Marks the screen cell the ULA fetches at that tick, for this frame
+    void NoteRefresh(uint32_t t, uint8_t r);
+
+    /// True when this frame has a snow mark: the renderer and the floating bus test this before SnowOffsets
+    bool HasSnow() const { return _snowFrame == SnowFrameStamp(); }
+
+    /// The screen offsets (from the screen's start) the ULA really fetched for cell (y, cell), given the
+    /// normal ones: with a snow mark the low 7 bits come from R; with a double mark the previous cell's
+    /// (as that cell was fetched). False when the cell has no mark
+    bool SnowOffsets(uint32_t y, uint32_t cell, uint16_t& pixelOffset, uint16_t& attrOffset) const;
+
+    /// endregion </ULA snow>
+
 private:
     /// Shared computation for both memory and IO contention.
     uint8_t ComputeContentionDelay(uint32_t t) const;
@@ -262,6 +288,18 @@ private:
     /// fetched at the current T-state (with the fetch pipeline offset, FetchLead).
     /// Returns false outside the fetch area (border/blanking).
     bool LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) const;
+
+    /// The fetch position at frame T-state `t`: screen line and T-states into the line's fetch area.
+    /// False outside the fetch area (border / blanking)
+    bool LocatePaperFetch(uint32_t t, uint32_t& y, uint32_t& tInPaper) const;
+
+    enum SnowMark : uint8_t
+    {
+        SnowMarkNone = 0,
+        SnowMarkSnow = 1,
+        SnowMarkDouble = 2,
+    };
+    uint32_t SnowFrameStamp() const;
 
     /// T-states the video fetch runs ahead of the first paper pixel, as seen from the IORQ lookup (FetchedByte)
     uint32_t FetchLead() const { return _fetchType == ULA_FERRANTI ? 6u : 4u; }
@@ -290,6 +328,13 @@ private:
     UlaFetchType _fetchType = ULA_FERRANTI;
 
     ContentionRaster _raster;
+
+    /// Snow marks per screen cell, valid for the frame in _snowStamp (older entries are empty; no clearing)
+    static constexpr uint32_t kSnowCells = 192 * 32;
+    uint8_t _snowKind[kSnowCells] = {};
+    uint8_t _snowR[kSnowCells] = {};
+    uint32_t _snowStamp[kSnowCells] = {};
+    uint32_t _snowFrame = 0xFFFFFFFFu;  // the last frame with a mark
 
     ContentionCounters _statsFrame;
     ContentionCounters _statsLastFrame;

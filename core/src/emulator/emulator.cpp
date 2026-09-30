@@ -27,6 +27,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/tape/loader_tape.h"
 
@@ -1425,8 +1426,6 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return false;
     }
 
-    bool result = false;
-
     /// region <Info logging>
 
     MLOGEMPTY();
@@ -1477,6 +1476,120 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return false;
     }
 
+    // The file the user opened: a temporary image is reported as the file it came from
+    const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
+    return LoadSnapshotStaged(
+        [&](std::string& error) {
+            bool result = false;
+            if (ext == "sna")
+            {
+                /// region <Load SNA snapshot>
+                LoaderSNA loaderSna(_context, absolutePath);
+                result = loaderSna.load();
+
+                /// region <Info logging>
+                if (result)
+                {
+                    MLOGINFO("SNA file loaded successfully, executing it...");
+                }
+
+                MLOGEMPTY();
+                /// endregion </Info logging>
+
+                /// endregion </Load SNA snapshot>
+            }
+            else if (ext == "z80")
+            {
+                /// region <Load Z80 snapshot>
+                LoaderZ80 loaderZ80(_context, absolutePath);
+                result = loaderZ80.load();
+
+                /// region <Info logging>
+                if (result)
+                {
+                    MLOGINFO("Z80 file loaded successfully, executing it...");
+                }
+
+                MLOGEMPTY();
+                /// endregion </Info logging>
+
+                /// endregion </Load Z80 snapshot>
+            }
+            else if (ext == "szx")
+            {
+                /// region <Load SZX snapshot>
+                LoaderSZX loaderSzx(_context, absolutePath);
+                result = loaderSzx.load();
+                if (result)
+                    MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
+                else
+                    MLOGERROR("SZX load failed: %s", loaderSzx.GetError().c_str());
+                /// endregion </Load SZX snapshot>
+            }
+            if (!result && error.empty())
+                error = "the " + ext + " loader refused '" + absolutePath + "'";
+            return result;
+        },
+        openedPath);
+}
+
+bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::string& extension,
+                                const std::string& reportedPath)
+{
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadSnapshotData rejected - emulator is being destroyed");
+        return false;
+    }
+    const std::string ext = StringHelper::ToLower(extension);
+    if (ext != "z80" && ext != "sna" && ext != "szx")
+    {
+        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna or szx", ext.c_str());
+        if (_context)
+            MessageCenter::DefaultMessageCenter().Post(
+                NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", reportedPath, false));
+        return false;
+    }
+    MLOGINFO("Loading %s snapshot from memory (%zu bytes) for '%s'", ext.c_str(), data.size(), reportedPath.c_str());
+    return LoadSnapshotStaged([&](std::string& error) { return ApplySnapshotData(data, ext, error); }, reportedPath);
+}
+
+bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error)
+{
+    const std::string ext = StringHelper::ToLower(extension);
+    if (ext == "sna")
+    {
+        LoaderSNA loader(_context, data, "memory");
+        if (loader.load())
+            return true;
+        error = "the SNA image did not load";
+        return false;
+    }
+    if (ext == "z80")
+    {
+        LoaderZ80 loader(_context, data, "memory");
+        if (loader.load())
+            return true;
+        error = "the Z80 image did not load";
+        return false;
+    }
+    if (ext == "szx" || ext == "zxs")
+    {
+        szx::Stage stage;
+        if (!SzxReader::Parse(data.data(), data.size(), stage, error))
+            return false;
+        szx::Report report;
+        if (!LoaderSZX::Commit(_context, stage, report, error))
+            return false;
+        MLOGINFO("SZX image loaded:\n%s", report.ToText().c_str());
+        return true;
+    }
+    error = "snapshot type '" + ext + "' is not supported (sna, z80, szx)";
+    return false;
+}
+
+bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath)
+{
     // Another snapshot replaces the machine an RZX playback runs on: it ends
     // first (the playback's own start snapshot loads with the player out)
     if (IsRzxPlaying())
@@ -1514,55 +1627,10 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         }
     }
 
-    if (ext == "sna")
-    {
-        /// region <Load SNA snapshot>
-        LoaderSNA loaderSna(_context, absolutePath);
-        result = loaderSna.load();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("SNA file loaded successfully, executing it...");
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Load SNA snapshot>
-    }
-    else if (ext == "z80")
-    {
-        /// region <Load Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, absolutePath);
-        result = loaderZ80.load();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("Z80 file loaded successfully, executing it...");
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Load Z80 snapshot>
-    }
-    else if (ext == "szx")
-    {
-        /// region <Load SZX snapshot>
-        LoaderSZX loaderSzx(_context, absolutePath);
-        result = loaderSzx.load();
-        if (result)
-            MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
-        else
-            MLOGERROR("SZX load failed: %s", loaderSzx.GetError().c_str());
-        /// endregion </Load SZX snapshot>
-    }
-
-    // The file the user opened: a temporary image (RZX start snapshot) is
-    // reported as the file it came from
-    const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
+    std::string error;
+    const bool result = load(error);
+    if (!result && !error.empty())
+        MLOGERROR("Snapshot load failed: %s", error.c_str());
 
     // Store snapshot path on success
     if (result)

@@ -1259,6 +1259,45 @@ TEST_P(ZXPolyGroupModels_Test, AutomationInputReachesAllFourModules)
         ASSERT_EQ(group[f], automation[f]) << "frame " << f;
 }
 
+/// The composer draws with the renderer's own colors: a cell the classic
+/// renderer shows with ink 2 (red) has exactly the color of palette entry 2.
+/// A separate table once had R and B swapped, and every composed ZX-Poly
+/// picture showed red as blue and blue as red
+TEST_F(ZXPolyGroup_Test, ComposerPaletteMatchesTheClassicRenderer)
+{
+    std::string error;
+    std::shared_ptr<Emulator> emu =
+        EmulatorManager::GetInstance()->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, &error);
+    ASSERT_TRUE(emu) << error;
+    EmulatorContext* context = emu->GetContext();
+    Memory& memory = *context->pMemory;
+
+    // DI ; loop: JR loop - the screen stays as written
+    const uint8_t code[] = {0xF3, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(code); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    Z80& cpu = *context->pCore->GetZ80();
+    cpu.pc = 0x8000;
+    cpu.iff1 = cpu.iff2 = 0;
+    for (uint8_t ink : {uint8_t(1), uint8_t(2), uint8_t(4), uint8_t(0x42)})    // blue, red, green, bright red
+    {
+        memory.DirectWriteToZ80Memory(0x4000, 0xFF);    // cell (0,0), top line: all ink
+        memory.DirectWriteToZ80Memory(0x5800, ink);
+        emu->RunNFrames(2);
+
+        const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+        const RasterDescriptor& raster = context->pScreen->rasterDescriptors[context->pScreen->GetVideoMode()];
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        const uint32_t drawn = pixels[raster.screenOffsetTop * fb.width + raster.screenOffsetLeft];
+
+        uint32_t palette[16];
+        context->pScreen->GetRGBAPalette16(palette);
+        const uint8_t index = static_cast<uint8_t>((ink & 0x07) | ((ink & 0x40) ? 0x08 : 0x00));
+        EXPECT_EQ(palette[index], drawn) << "ink " << int(ink);
+    }
+    EmulatorManager::GetInstance()->RemoveEmulator(emu->GetUUID());
+}
+
 /// The manager is the one source every surface (WebAPI, MCP, CLI, Lua,
 /// Python, Qt) creates ZX-Poly machines from: a group of four registered by
 /// its master, described in MachineIdentity, removed as a whole

@@ -52,6 +52,28 @@
     paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["data"]["type"] = "string";
 
+    // ZX DLSS plane B (binary)
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["summary"] = "Capture ZX DLSS plane B (binary)";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["description"] =
+        "What the renderer drew for each pixel of the current frame, recorded in the same pass as the "
+        "picture (feature 'zxdlss'): width x height little-endian uint16 in framebuffer layout. Bits 0-7: "
+        "attribute byte the beam used (0 on the border); 8-11: color index 0-15; 12: ink (1) / paper (0); "
+        "13-14: role (0 not drawn, 1 screen, 2 border). Geometry in X-PlaneB-Width / X-PlaneB-Height. "
+        "After a TTD seek or step it is the plane of the displayed position, re-rendered with the picture.";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["responses"]["200"]["description"] =
+        "Raw plane B (application/octet-stream)";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["responses"]["200"]["content"]["application/octet-stream"]
+         ["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["responses"]["200"]["content"]["application/octet-stream"]
+         ["schema"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["responses"]["409"]["description"] =
+        "Feature 'zxdlss' is off";
+
     // Audio capture endpoints (sound core sample capture + DSP analysis)
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["summary"] = "Control audio capture session";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["tags"].append("Capture");

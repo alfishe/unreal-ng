@@ -26,6 +26,7 @@ struct MachineIdentity
     bool HasVideoMode = false;   ///< Whether VideoMode carries a value
     double SpeedMultiplier = 1.0; ///< Live z80 frequency multiplier (turbo)
     std::string ConfigFolder;    ///< configs/<folder> backing this machine
+    std::string RamPowerOn;      ///< "random" / "zero": RAM contents at creation (Config::RamPowerOnName)
     bool Valid = false;          ///< False while the emulator context does not exist yet
 
     /// ZX-Poly: this instance belongs to a four-module group
@@ -108,7 +109,10 @@ public:
 /// @param symbolicId Optional symbolic identifier for the emulator (if empty, a default will be used)
 /// @param level Logger level for the emulator (note: automation-created instances automatically disable all modular logging)
 /// @return Shared pointer to the created emulator, or nullptr if creation failed
-    std::shared_ptr<Emulator> CreateEmulator(const std::string& symbolicId = "", LoggerLevel level = LoggerLevel::LogWarning);
+    /// @param configOverride Optional; edits the loaded config before any subsystem initializes
+    ///        (e.g. Config::RamPowerOnOverride) - the same parameter on every create path
+    std::shared_ptr<Emulator> CreateEmulator(const std::string& symbolicId = "", LoggerLevel level = LoggerLevel::LogWarning,
+                                             std::function<void(CONFIG&)> configOverride = {});
 
     /// @brief Create a new emulator instance with a specific UUID and symbolic ID
     /// @param emulatorId The UUID to use for the emulator
@@ -126,7 +130,9 @@ public:
     /// @param outError Optional; when non-null it receives a human-readable failure reason
     ///        (unknown model, model not supported by this build, init failure) on nullptr return
     /// @return Shared pointer to the created emulator, or nullptr on failure
-    std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr);
+    /// @param configOverride Optional; edits the loaded config before any subsystem initializes.
+    ///        A ZX-Poly configuration applies it to all four modules
+    std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr, std::function<void(CONFIG&)> configOverride = {});
 
     /// @brief Create a new emulator instance with a specific model and custom RAM size
     /// @param symbolicId Optional symbolic identifier for the emulator
@@ -167,8 +173,10 @@ public:
     /// instance every surface addresses; the slaves are hidden members.
     /// The machine is created, not started. Removing the master removes the
     /// whole group
+    /// configOverride applies to all four modules (see CreateEmulatorWithModel)
     std::shared_ptr<Emulator> CreateZXPolyMachine(const std::string& symbolicId, const std::string& modelName,
-                                                  const std::string& mediaPath, std::string* outError = nullptr);
+                                                  const std::string& mediaPath, std::string* outError = nullptr,
+                                                  std::function<void(CONFIG&)> configOverride = {});
 
     /// The ZX-Poly group whose member (master or slave) has this ID; nullptr if none
     ZXPolyGroup* GetZXPolyGroup(const std::string& emulatorId);

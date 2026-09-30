@@ -175,7 +175,9 @@ types:
           DeserializeSession) is authoritative for their layouts, and a
           reader that stops after `checkpoints` gets the machine states of a
           session, without the accelerators, annotations and replay inputs.
-          Bits 9-15 reserved (must be 0).
+          Bit 9 (0x0200) = the header's last 8 bytes hold the peripheral
+          mask (see `peripheral_mask`); older files leave them zero.
+          Bits 10-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
@@ -247,9 +249,14 @@ types:
       - id: checkpoint_count
         type: u4
         doc: Number of checkpoint records following the page store.
-      - id: reserved
-        size: 8
-        doc: Reserved for future additive fields (must be zero).
+      - id: peripheral_mask
+        type: u8
+        doc: |
+          With flags bit 9: bit N set = TTD peripheral id N (TurboSound 0,
+          Beta Disk 1, ..., General Sound 5, GS LW 11, NeoGS 12, ...) has a
+          state blob in the first checkpoint - the recorded machine's device
+          set, readable without walking to the checkpoints. Without bit 9:
+          zero (formerly reserved).
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:

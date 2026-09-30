@@ -347,3 +347,113 @@ TEST(VideoFamily_Test, NullModeHasNoMapper)
     s.mode = M_NUL;
     EXPECT_FALSE(VideoMapService::MapperFor(VideoFamily::None).Layout(s).mapped);
 }
+
+/// Design §11 test 6: a mode switch in the middle of a frame. The addresses for
+/// a T before the switch come from the old mode, after it from the new one; the
+/// framebuffer is not claimed for the old mode (it is drawn in the new geometry)
+TEST(VideoMapServiceHistory_Test, MidFrameModeSwitchAnswersEachMomentInItsMode)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    context.config.mem_model = MM_ATM710;
+    context.config.ramsize = 1024;
+    context.config.frame = 69888;
+    context.config.t_line = 224;
+    Core core(&context);
+    ASSERT_TRUE(core.Init());
+    Z80* cpu = core.GetZ80();
+
+    context.emulatorState.pFF77 = FF77_16 | 0x20;
+    context.emulatorState.aFF77 = 0x0100;
+    context.pScreen->InitRaster();
+    ASSERT_EQ(context.pScreen->GetVideoMode(), M_ATM16);
+
+    cpu->t = 0;
+    context.pScreen->InitFrame();         // frame starts in ATM16
+    cpu->t = 150 * 224;                   // OUT (#FF77) at line 150: hi-res
+    context.emulatorState.pFF77 = FF77_MC | 0x20;
+    context.pScreen->InitRaster();
+    ASSERT_EQ(context.pScreen->GetVideoMode(), M_ATMHR);
+    cpu->t = 250 * 224;                   // paused later in the same frame
+
+    VideoMapService service(&context);
+    const PixelSources before = service.SourcesAtBeam(100 * 224 + 50);
+    ASSERT_TRUE(before.valid);
+    EXPECT_EQ(before.contribution.layer, "atm16") << "line 100 was drawn before the switch";
+    EXPECT_EQ(before.stateAtT, 100 * 224 + 50);
+    EXPECT_FALSE(before.renderedKnown) << "the framebuffer holds the new geometry";
+    EXPECT_FALSE(before.fromSnapshot);
+
+    const PixelSources after = service.SourcesAtBeam(200 * 224 + 50);
+    ASSERT_TRUE(after.valid);
+    EXPECT_EQ(after.contribution.layer, "atmhr");
+    EXPECT_TRUE(after.renderedKnown);
+    EXPECT_FALSE(after.statePartial);
+
+    EXPECT_EQ(service.SourcesAt(0, 0, 0).contribution.layer, "atmhr") << "without a T: the state now";
+}
+
+/// A border colour change mid-frame: the border source at each T has the colour of that moment
+TEST(VideoMapServiceHistory_Test, BorderColourFollowsTheWriteLog)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    context.config.mem_model = MM_SPECTRUM48;
+    context.config.ramsize = 48;
+    context.config.frame = 69888;
+    context.config.t_line = 224;
+    Core core(&context);
+    ASSERT_TRUE(core.Init());
+    Z80* cpu = core.GetZ80();
+    context.pScreen->InitRaster();
+
+    cpu->t = 0;
+    context.pScreen->SetBorderColor(1);
+    context.pScreen->InitFrame();
+    cpu->t = 40 * 224;
+    context.pScreen->SetBorderColor(2);
+    cpu->t = 60 * 224;
+
+    VideoMapService service(&context);
+    const PixelSources early = service.SourcesAtBeam(30 * 224 + 50);  // top border, before the write
+    const PixelSources late = service.SourcesAtBeam(50 * 224 + 50);
+    ASSERT_TRUE(early.valid && early.border);
+    ASSERT_TRUE(late.valid && late.border);
+    EXPECT_EQ(early.contribution.colourIndex, 1);
+    EXPECT_EQ(late.contribution.colourIndex, 2);
+}
+
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
+#include "emulator/emulator.h"
+
+/// Design §11 test 7: queries from another thread while the machine runs read
+/// the last completed frame (published at the frame start), never the frame the
+/// emulator thread is writing. Runs the machine in turbo for a few frames (~10 ms)
+TEST(VideoMapServiceSnapshot_Test, QueriesWhileRunningReadTheLastCompletedFrame)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->StartAsync();
+    emulator->EnableTurboMode();
+    ASSERT_TRUE(TestWait::For([&] { return context->emulatorState.frame_counter >= 3; }));
+
+    VideoMapService service(context);
+    uint64_t lastFrame = 0;
+    int answered = 0;
+    for (int i = 0; i < 300; ++i)
+    {
+        const PixelSources p = service.SourcesAtBeam(100 * 224 + 100);  // Pentagon paper
+        if (!p.valid)
+            continue;
+        answered++;
+        EXPECT_TRUE(p.fromSnapshot);
+        EXPECT_GE(p.stateAtT, 0);
+        EXPECT_GE(p.stateFrame, lastFrame) << "published frames only move forward";
+        lastFrame = p.stateFrame;
+        EXPECT_EQ(p.contribution.layer, "zx");
+    }
+    EXPECT_GT(answered, 0);
+
+    emulator->Stop();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

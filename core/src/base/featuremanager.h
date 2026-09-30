@@ -33,6 +33,7 @@ constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
 constexpr const char* const kTimeTravel = "timetravel";
 constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
+constexpr const char* const kZXDLSS = "zxdlss";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
 constexpr const char* const kFastDisk = "fastdisk";
@@ -56,6 +57,7 @@ constexpr const char* const kOpcodeProfilerAlias = "op";
 constexpr const char* const kTimeTravelAlias = "ttd";
 constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
+constexpr const char* const kZXDLSSAlias = "dlss";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
 constexpr const char* const kFastDiskAlias = "fdisk";
@@ -86,6 +88,9 @@ constexpr const char* const kOverscanDesc =
     "Pentagon overscan mode (384x304). Shows invisible border areas for demo development. Pentagon only.";
 constexpr const char* const kPortTraceDesc =
     "Structured port I/O trace recorder (ring buffer of IN/OUT events for peripheral diagnostics).";
+constexpr const char* const kZXDLSSDesc =
+    "ZX DLSS: the renderer also records what it drew (plane B: color index, ink/paper, attribute the beam used, "
+    "screen or border) for temporal video analysis. Needs ScreenHQ. Zero cost when off.";
 constexpr const char* const kFastTapeDesc =
     "Fast tape loading: serve vanilla ROM tape loads instantly via the LD-BYTES trap. Custom loaders fall back to signal emulation.";
 constexpr const char* const kTurboTapeDesc =
@@ -109,7 +114,8 @@ constexpr const char* const kGSLightweightDesc =
 
 constexpr const char* const kContentionDesc =
     "Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits "
-    "for the screen fetches. Off runs those machines uncontended, for comparison. No effect on machines without "
+    "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
+    "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
 // Categories

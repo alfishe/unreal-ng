@@ -1,6 +1,8 @@
 #pragma push_macro("slots")
 #undef slots
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdfileinfo.h"
+#include "common/filehelper.h"
 #pragma pop_macro("slots")
 
 #include "widgets/ttdwidget.h"
@@ -399,10 +401,26 @@ void TtdWidget::updateTelemetry()
     // the cause in the tooltip.
     const bool journalGap = info.writeJournalEnabled && !info.writeJournalComplete && hasHistory;
     provenanceStr += journalGap ? tr(" | Journal incomplete") : QString();
-    _statusLabel->setToolTip(journalGap
+    QString tooltip = journalGap
         ? tr("The write journal does not cover this session (%1): write/port searches replay history.")
               .arg(QString::fromStdString(info.journalGapReason))
-        : QString());
+        : QString();
+    if (hasHistory)
+    {
+        // The machine the session was recorded on: what an instance must match to load it
+        const ttd::TTDRecordedMachine& m = info.machine;
+        QStringList devices;
+        for (const std::string& d : m.peripherals)
+            devices << QString::fromStdString(d);
+        const QString machine =
+            tr("Recorded on %1 - General Sound: %2, TurboSound slot: %3\nDevices: %4")
+                .arg(QString::fromStdString(m.model.empty() ? "model id " + std::to_string(m.modelId) : m.model))
+                .arg(QString::fromUtf8(ttd::GeneralSoundName(m.generalSound)))
+                .arg(QString::fromStdString(m.turboSound))
+                .arg(devices.isEmpty() ? tr("none") : devices.join(QStringLiteral(", ")));
+        tooltip = tooltip.isEmpty() ? machine : tooltip + QStringLiteral("\n\n") + machine;
+    }
+    _statusLabel->setToolTip(tooltip);
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
 
@@ -523,16 +541,40 @@ void TtdWidget::onLoadSession()
         _activeEmulator->Pause();
     }
 
-    std::ifstream in(fileName.toStdString(), std::ios::binary);
+    // The file's recorded machine first (headers only): a session loads only into
+    // the model it was recorded on, with the same ROM set and slot cards
+    const std::string path = fileName.toUtf8().toStdString();
+    ttd::TTDFileInfo fileInfo;
     std::string err;
+    if (!ttd::ReadTTDFileInfo(path, fileInfo, err))
+    {
+        QMessageBox::warning(this, tr("TTD Load Failed"), tr("Not a readable TTD session: %1").arg(QString::fromStdString(err)));
+        return;
+    }
+    const ttd::TTDRecordedMachine& recorded = fileInfo.machine;
+    const QString recordedText =
+        tr("Recorded on %1, General Sound: %2, TurboSound slot: %3")
+            .arg(QString::fromStdString(recorded.model.empty() ? "model id " + std::to_string(recorded.modelId) : recorded.model))
+            .arg(QString::fromUtf8(ttd::GeneralSoundName(recorded.generalSound)))
+            .arg(QString::fromStdString(recorded.turboSound));
+    if (recorded.modelId != static_cast<uint8_t>(context->config.mem_model))
+    {
+        QMessageBox::warning(this, tr("TTD Load Failed"),
+                             tr("%1.\nThis machine is a different model: create a machine of the recorded model and "
+                                "load the session there.")
+                                 .arg(recordedText));
+        return;
+    }
+
+    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
     if (!in.is_open() || !ttd->DeserializeSession(in, err))
     {
         QMessageBox::warning(this, tr("TTD Load Failed"),
-                             tr("Failed to load TTD session: %1").arg(QString::fromStdString(err)));
+                             tr("Failed to load TTD session: %1\n\n%2").arg(QString::fromStdString(err), recordedText));
     }
     else
     {
-        ttd->SetSessionSourcePath(fileName.toStdString());
+        ttd->SetSessionSourcePath(path);
         ttd::TTDSessionInfo info = ttd->GetSessionInfo();
         ttd->SeekTo(ttd::TTDTimePoint{info.sessionStartFrame, 0});
         _mainWindow->refreshViewport();
