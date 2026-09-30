@@ -2,23 +2,13 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/platforms/tsconf/tsconfengine.h"
+#include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 
 namespace
 {
-    /// Graphics window per V_CONFIG[7:6] geometry, in raster dots / lines (hs §4.2)
-    struct Window
-    {
-        uint16_t x0, y0, w, h;
-    };
-    constexpr Window kWindows[4] = {
-        {140, 80, 256, 192},
-        {108, 76, 320, 200},
-        {108, 56, 320, 240},
-        {88, 32, 360, 288},
-    };
-
     /// No-VDAC build: the top 2 bits of a 5-bit channel drive a 2-bit DAC, the
     /// low 3 bits a PWM that adds one level on average (not above level 3),
     /// shown as the time average (hs §4.3)
@@ -61,7 +51,10 @@ const TsConfState* ScreenTSConf::State()
     if (!_ts && _context)
     {
         if (auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder))
+        {
             _ts = &decoder->GetState();
+            _engine = &decoder->GetEngine();
+        }
     }
     return _ts;
 }
@@ -112,12 +105,12 @@ void ScreenTSConf::FillBorderWithColor([[maybe_unused]] uint8_t color)
     // The border is part of every frame the range renderer draws
 }
 
-uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, uint32_t dot, uint32_t line, uint32_t sub) const
+uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, const TsConfLine& set, uint32_t dot, uint32_t line, uint32_t sub) const
 {
-    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint8_t vConfig = set.vConfig;
     const uint8_t mode = vConfig & 0x03;
-    const uint8_t palBank = static_cast<uint8_t>((ts.regs[TsConfReg::PalSel] & 0x0F) << 4);
-    const Window& win = kWindows[vConfig >> 6];
+    const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
 
     const bool inWindow = dot >= win.x0 && dot < static_cast<uint32_t>(win.x0 + win.w) && line >= win.y0 &&
                           line < static_cast<uint32_t>(win.y0 + win.h) && !(vConfig & 0x20);  // NOGFX
@@ -128,10 +121,10 @@ uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, uint32_t dot, uint32_t lin
         return mode == 3 ? static_cast<uint8_t>(palBank | (border & 0x0F)) : border;
     }
 
-    const uint32_t gx = (dot - win.x0 + (ts.regs[TsConfReg::GXOffsL] | ((ts.regs[TsConfReg::GXOffsH] & 1u) << 8))) & 0x1FF;
-    const uint32_t gy = (line - win.y0 + (ts.regs[TsConfReg::GYOffsL] | ((ts.regs[TsConfReg::GYOffsH] & 1u) << 8))) & 0x1FF;
+    const uint32_t gx = (dot - win.x0 + set.gxOffs) & 0x1FF;
+    const uint32_t gy = set.cntRow & 0x1FF;
     const uint8_t* ram = _context->pMemory->RAMBase();
-    const uint32_t vPage = ts.regs[TsConfReg::VPage];
+    const uint32_t vPage = set.vPage;
 
     switch (mode)
     {
@@ -171,7 +164,7 @@ uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, uint32_t dot, uint32_t lin
 void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
 {
     const TsConfState* ts = State();
-    if (!ts || !_framebuffer.memoryBuffer || _framebuffer.width != kVisibleDots * 2 ||
+    if (!ts || !_engine || !_framebuffer.memoryBuffer || _framebuffer.width != kVisibleDots * 2 ||
         _framebuffer.height != kVisibleLines)
         return;
 
@@ -182,7 +175,6 @@ void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
         toTstate = frameEnd - 1;
 
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    const bool text = (ts->regs[TsConfReg::VConfig] & 0x03) == 3;
 
     for (uint32_t t = fromTstate; t <= toTstate; t++)
     {
@@ -191,18 +183,20 @@ void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
         if (line < kFirstVisibleLine || tact < kFirstVisibleTact)
             continue;
 
+        const TsConfLine& set = _engine->Line(line);
+        const bool text = (set.vConfig & 0x03) == 3;
         uint32_t* out = fb + (line - kFirstVisibleLine) * (kVisibleDots * 2) + (tact - kFirstVisibleTact) * 4;
         for (uint32_t half = 0; half < 2; half++)
         {
             const uint32_t dot = tact * 2 + half;
             if (text)
             {
-                out[0] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 0)]);
-                out[1] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 1)]);
+                out[0] = CramToRgba(ts->cram[DotIndex(*ts, set, dot, line, 0)]);
+                out[1] = CramToRgba(ts->cram[DotIndex(*ts, set, dot, line, 1)]);
             }
             else
             {
-                out[0] = out[1] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 0)]);
+                out[0] = out[1] = CramToRgba(ts->cram[DotIndex(*ts, set, dot, line, 0)]);
             }
             out += 2;
         }

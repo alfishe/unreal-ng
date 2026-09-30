@@ -117,7 +117,27 @@ struct TsConfState
     uint32_t intLastRaster;     ///< raster tact (0..71679) the events are evaluated up to
     int32_t intFrameRaster;     ///< raster tact of the latched frame INT (its 32-clock pulse runs from there; negative after a rollover)
     uint8_t intPending;         ///< latched sources, TsConfInt bits
-    uint8_t intReserved[3];     ///< keeps the struct free of tail padding
+    uint8_t intReserved[3];     ///< keeps the struct free of padding
+    /// endregion
+
+    /// region <Line engine (§4.1, §4.2), TsConfEngine>
+    /// Line-latched copies of the registers ([V] video_ports.v: taken at the
+    /// last dot of every line, used by the next line; #7FFD writes V_PAGE here
+    /// at once)
+    uint8_t latVConfig;
+    uint8_t latVPage;
+    uint8_t latPalSel;
+    uint8_t latGXOffsL;
+    uint8_t latGXOffsH;
+    uint8_t latT0GPage;
+    uint8_t latT1GPage;
+    uint8_t latT0XOffsL;
+    uint8_t latT0XOffsH;
+    uint8_t latT1XOffsL;
+    uint8_t latT1XOffsH;
+    uint8_t yOffsPending;       ///< G_Y_OFFS written: the row counter reloads at the next line start
+    uint16_t cntRow;            ///< graphics row counter of the current line (9 bit)
+    uint16_t engNextLine;       ///< next raster line (0..320) whose start is not processed yet
     /// endregion
 
     /// Accessors
@@ -128,4 +148,4 @@ struct TsConfState
     uint16_t FmBase() const { return static_cast<uint16_t>((regs[TsConfReg::FMaps] & 0x0F) << 12); }
 };
 
-static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12, "TsConfState must stay padding-free (TTD blob)");
+static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16, "TsConfState must stay padding-free (TTD blob)");

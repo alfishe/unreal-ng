@@ -39,7 +39,7 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
             z80->machineM1Hook = nullptr;
         if (z80 && z80->GetInterruptSource() == &_interrupts)
             z80->SetInterruptSource(nullptr);
-        if (z80 && z80->GetMachineStepHook() == &_interrupts)
+        if (z80 && z80->GetMachineStepHook() == &_engine)
             z80->SetMachineStepHook(nullptr);
     }
 
@@ -111,6 +111,7 @@ void PortDecoder_TSConf::reset()
     _state->pFE = 0xFF;
     _state->border_attr = 0x07;
     _state->hw_turbo_ratio = 1;
+    _engine.Reset();
 
     // The battery-backed NVRAM comes from [EVO] NvramFile once, at power-on;
     // a Z80 reset does not touch the AVR
@@ -131,6 +132,7 @@ void PortDecoder_TSConf::reset()
 void PortDecoder_TSConf::ApplyState()
 {
     InstallInterrupts();
+    _engine.RebuildLineTable();
     UpdateBanks();
     RefreshM1Hook();
     RefreshFmWindow();
@@ -329,6 +331,7 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             PeripheralPortOut((port & 0x4000) ? PORT_FFFD : PORT_BFFD, value);
             break;
         case PortArm::KeyboardBorder:
+            FlushVideo();
             Default_Port_FE_Out(port, value, pc);
             // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the latched PAL_SEL (§3.4)
             _ts.regs[TsConfReg::Border] =
@@ -396,17 +399,20 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
     if (reg >= TsConfReg::kCount)
         return;  // not a built register
 
+    if (IsVideoRegister(reg))
+        FlushVideo();
     _ts.regs[reg] = value;
 
     switch (reg)
     {
+        case TsConfReg::GYOffsL:
+        case TsConfReg::GYOffsH:
+            _ts.yOffsPending = 1;  // the row counter reloads at the next line start (§4.2)
+            break;
         case TsConfReg::VConfig:
-            // The renderer reads V_CONFIG at every dot; the screen's mode label follows
+            // Latched at the next line start; the screen's mode label follows
             if (_context->pScreen)
-            {
-                _context->pScreen->UpdateScreen();
                 _context->pScreen->InitRaster();
-            }
             break;
         case TsConfReg::VPage:
             ApplyVideoPage();
@@ -451,6 +457,7 @@ void PortDecoder_TSConf::Write7FFD(uint8_t value)
     if (_ts.lock48)
         return;
 
+    FlushVideo();
     _state->p7FFD = value;
 
     uint8_t& memConfig = _ts.regs[TsConfReg::MemConfig];
@@ -479,6 +486,9 @@ void PortDecoder_TSConf::Write7FFD(uint8_t value)
 
     if (_ts.Lck128() != TsConfLck128::Mode1024K)
         _ts.lock48 = (value & 0x20) ? 1 : 0;
+
+    // V_PAGE bypasses the line latch ([V] video_ports.v:150-151)
+    _engine.SetLiveVideoPage(_ts.regs[TsConfReg::VPage]);
 
     ApplyVideoPage();
     UpdateBanks();
@@ -592,7 +602,25 @@ void PortDecoder_TSConf::OnMachineM1(uint16_t address)
     _ts.opcodeLatch128 = (((opcode >> 7) ^ (opcode >> 6)) & 1) ? 0 : 1;
 }
 
-/// The interrupt controller owns /INT and advances with the CPU (§5)
+bool PortDecoder_TSConf::IsVideoRegister(uint8_t reg)
+{
+    return reg <= TsConfReg::PalSel || reg == TsConfReg::Border ||
+           (reg >= TsConfReg::TMapPage && reg <= TsConfReg::SGPage) ||
+           (reg >= TsConfReg::T0XOffsL && reg <= TsConfReg::T1YOffsH);
+}
+
+void PortDecoder_TSConf::FlushVideo()
+{
+    Core* core = _context->pCore;
+    if (!core || !core->GetZ80())
+        return;
+    _engine.CatchUp(core->GetZ80()->t);
+    if (_context->pScreen)
+        _context->pScreen->UpdateScreen();
+}
+
+/// The interrupt controller owns /INT; the engine advances with the CPU and
+/// drives it (§3.8)
 void PortDecoder_TSConf::InstallInterrupts()
 {
     Core* core = _context->pCore;
@@ -602,8 +630,8 @@ void PortDecoder_TSConf::InstallInterrupts()
     Z80* z80 = core->GetZ80();
     if (z80->GetInterruptSource() != &_interrupts)
         z80->SetInterruptSource(&_interrupts);
-    if (z80->GetMachineStepHook() != &_interrupts)
-        z80->SetMachineStepHook(&_interrupts);
+    if (z80->GetMachineStepHook() != &_engine)
+        z80->SetMachineStepHook(&_engine);
 }
 
 void PortDecoder_TSConf::RefreshFmWindow()
@@ -641,6 +669,7 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
         }
         const uint8_t index = static_cast<uint8_t>(offset >> 1);
         const uint16_t word = static_cast<uint16_t>((value << 8) | ts.fmStash);
+        _owner.FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
         if (offset < 0x200)
             ts.cram[index] = word;
         else

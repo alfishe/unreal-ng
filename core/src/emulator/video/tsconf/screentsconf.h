@@ -3,6 +3,8 @@
 #include "emulator/video/zx/screenzx.h"
 
 struct TsConfState;
+struct TsConfLine;
+class TsConfEngine;
 
 /// TS-Conf video (TSConf technical-design §3.9, hardware-spec §4).
 ///
@@ -17,10 +19,12 @@ struct TsConfState;
 /// dots 0-87 are blanking, so framebuffer (x, y) = ((dot - 88) * 2, line - 32).
 ///
 /// Built (phase 3 + TXT from phase 4): ZX (M_TSZX), 16C, 256C and TXT graphics
-/// in the V_CONFIG geometry window with the X/Y offsets, BORDER outside it,
-/// CRAM colors through the no-VDAC PWM curve, flash. Not yet: line-latched
-/// registers (a register change takes effect at the dot the beam is on), the
-/// TSU layers (phase 4), the VDAC curves.
+/// in the V_CONFIG geometry window with the X offset and the graphics row
+/// counter, BORDER outside it, CRAM colors through the no-VDAC PWM curve,
+/// flash. The line-latched registers and the row counter come from the
+/// engine's line table (TsConfEngine), so the picture follows the hardware's
+/// line-start latching; BORDER and CRAM act at the dot. Not yet: the TSU
+/// layers (phase 4), the VDAC curves.
 class ScreenTSConf : public ScreenZX
 {
 public:
@@ -53,9 +57,11 @@ public:
 private:
     /// The TS-Conf state (the port decoder owns it; null before it exists)
     const TsConfState* State();
-    /// Color index of one visible dot (dotX 0..359 in the visible line, rasterLine 0..319)
+    /// Color index of one dot (raster dot 0..447) of raster line `line`
+    /// displayed with `set`
     /// @param sub the half dot (TXT hires pixel 0 or 1)
-    uint8_t DotIndex(const TsConfState& ts, uint32_t dot, uint32_t line, uint32_t sub) const;
+    uint8_t DotIndex(const TsConfState& ts, const TsConfLine& set, uint32_t dot, uint32_t line, uint32_t sub) const;
 
     const TsConfState* _ts = nullptr;
+    const TsConfEngine* _engine = nullptr;
 };

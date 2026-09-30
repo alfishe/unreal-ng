@@ -200,8 +200,29 @@ GFX-1, GFX-3, CRAM colors) and **BOOT-1 / BOOT-2** in `tsconf_boot_test.cpp`:
 blank NVRAM → TS-BIOS Setup (TXT, page #F6); ENTER saves NVRAM, reset → TR-DOS
 5.04T prompt. BOOT-2 as planned (menu → 128 BASIC) is replaced by the TR-DOS
 boot the BIOS defaults select.
-Open: the engine (ENG-1…4, per-line budget), line-latched registers (a change
-now takes effect at the dot the beam is on), VID-2 golden, VID-5…7, the TSU.
+
+**Engine and the rest of phase 3 built 2026-09-30 (branch `tsconf-phase3`).**
+`TsConfEngine` (`platforms/tsconf/tsconfengine.*`) is the step hook: at every
+line start it latches V_CONFIG, V_PAGE, G_X_OFFS, PAL_SEL, T0/T1_G_PAGE and
+T0/T1_X_OFFS, moves the graphics row counter (reload with G_Y_OFFS after line
+31 and after a G_Y_OFFS write, +1 per window line) and records the set in the
+frame's line table the screen draws from; #7FFD writes V_PAGE into the current
+line at once. The latches, the row counter and the line position are in
+`TsConfState` (TTD). The decoder brings the engine and the screen up to a
+write before any register the picture depends on changes (`FlushVideo`).
+Tests `tsconfengine_test.cpp`: ENG-2 (latched register from the next line;
+BORDER inside the line), ENG-3 (row counter reload with the written value,
+9-bit wrap, window geometry), ENG-4 (same state rendered or decimated, real
+ROM), VID-7; `screentsconf_test.cpp` VID-5; frame goldens of the Setup (TXT)
+and TR-DOS (ZX) screens in `tsconf_boot_test.cpp` (VID-2; re-record with
+`UNREALNG_DUMP_TSCONF_FRAMES=1`, which dumps the frames).
+**Other machines unchanged**: `ScreenZXFrames_Test` pins the framebuffer of
+12 classic setups (48K … ATM3, Pentagon with a border / multicolor demo) in
+both render paths (per-T and batch), recorded on master 686fd0d4 before
+TS-Conf had its own renderer; no shared hot path changed, so no A/B benchmark.
+Moved: **ENG-1** (per-line DRAM budget) to phase 4/5 with its consumers (TSU,
+DMA); **VID-6** (VDAC curves) with a `TS_VDAC` config key; BENCH-1 (TS frame
+cost) in phase 4.
 
 | ID | Asserts |
 |:--|:--|

@@ -4,6 +4,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/hostbusoverlay.h"
+#include "emulator/platforms/tsconf/tsconfengine.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -93,6 +94,13 @@ public:
     TsConfState& GetState() { return _ts; }
     const TsConfState& GetState() const { return _ts; }
     TsConfInterrupts& GetInterrupts() { return _interrupts; }
+    TsConfEngine& GetEngine() { return _engine; }
+
+    /// Registers the picture depends on (hardware-spec §3.2): a write first
+    /// brings the engine and the screen up to the write
+    static bool IsVideoRegister(uint8_t reg);
+    /// Engine line starts, then the screen, up to the current CPU T-state
+    void FlushVideo();
 
     /// Classify one I/O cycle
     PortArm ClassifyPort(uint16_t port) const;
@@ -155,6 +163,7 @@ private:
 
     TsConfState _ts{};
     TsConfInterrupts _interrupts{_context, _ts};
+    TsConfEngine _engine{_context, _ts, _interrupts};
     TsConfMemory* _tsMemory = nullptr;
     bool _poweredOn = false;
 

@@ -1,7 +1,7 @@
 # TODO — ZX-Evo TSConf machine support
 
-**Status marker:** in progress - phases 0-2 done, phase 3 video v1 done
-(2026-09-30): `TSL` is creatable and boots the real ROM (TS-BIOS, TR-DOS).
+**Status marker:** in progress - phases 0-3 done (2026-09-30): `TSL` is
+creatable and boots the real ROM (TS-BIOS, TR-DOS); next: phase 4 (TSU).
 Starts after the shared infrastructure and the move of the existing machines onto
 it (PLAN rationale 6); the interrupt source, write intercept and step hook of
 phase 0 are built (PLAN #60(a) + INF-5, [implementation-plan.md](implementation-plan.md) phase 0).
@@ -83,7 +83,9 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 
 ## Remaining
 
-- Phase 3 rest: the engine (per-line budget), line-latched registers, goldens.
+- [x] Phase 3 rest (2026-09-30, branch `tsconf-phase3`): line engine (latches,
+  row counter, line table), frame goldens, the classic machines' pictures pinned
+  (`ScreenZXFrames_Test`). The per-line DRAM budget moves to phases 4-5.
 - Phase 4: TSU (tiles, sprites); phase 5 DMA; phase 6 SD / vdos / IDE / SPG;
   phase 7 surfaces (a `TsConfVideoMapper` for #42, debugger docks); phase 8 timing.
 
