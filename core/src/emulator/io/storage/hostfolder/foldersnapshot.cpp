@@ -3,10 +3,10 @@
 #include "foldersnapshot.h"
 
 #include <algorithm>
-#include <chrono>
 #include <set>
 #include <system_error>
 
+#include "common/filemtime.h"
 #include "servicefilefilter.h"
 
 namespace
@@ -15,28 +15,6 @@ namespace
     {
         const auto text = path.u8string();
         return std::string(text.begin(), text.end());
-    }
-
-    int64_t ToUnixSeconds(std::filesystem::file_time_type time)
-    {
-#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L && (!defined(_MSC_VER) || _MSC_VER >= 1930) // VS2019 claims the macro but lacks to_sys/from_sys
-        const auto system = std::chrono::file_clock::to_sys(time);
-        return std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
-#elif defined(_MSC_VER)
-        // Older MSVC STL lacks file_clock::to_sys; its file clock epoch is 1601-01-01 (FILETIME)
-        constexpr int64_t kFileTimeToUnixSeconds = 11644473600LL;
-        return std::chrono::duration_cast<std::chrono::seconds>(time.time_since_epoch()).count() -
-               kFileTimeToUnixSeconds;
-#else
-        // Older libstdc++/libc++: derive the clock offset once from the two clocks' "now"
-        static const auto offset =
-            std::chrono::system_clock::now().time_since_epoch() -
-            std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                std::filesystem::file_time_type::clock::now().time_since_epoch());
-        const auto sinceUnix =
-            std::chrono::duration_cast<std::chrono::system_clock::duration>(time.time_since_epoch()) + offset;
-        return std::chrono::duration_cast<std::chrono::seconds>(sinceUnix).count();
-#endif
     }
 
     void Mix(uint64_t& hash, const void* data, size_t size)
@@ -85,7 +63,12 @@ namespace
                 std::string collection;
                 if (_filter.IsService(name, &collection))
                 {
-                    Skip(path, "service (" + collection + ")");
+                    // Host-OS housekeeping (Finder's .DS_Store, Thumbs.db, *~)
+                    // can land in the folder at any moment: it leaves no trace
+                    // at all, so a snapshot of the same folder stays identical
+                    // whatever the host drops into it
+                    if (!_filter.IsOsNoiseCollection(collection))
+                        Skip(path, "service (" + collection + ")");
                     continue;
                 }
                 bool excluded = false;
@@ -129,9 +112,8 @@ namespace
                 item.name = name;
                 item.hostPath = entry.path();
                 item.isDirectory = isDirectory;
-                std::error_code timeEc;
-                const auto time = entry.last_write_time(timeEc);
-                item.mtimeUtc = timeEc ? 0 : ToUnixSeconds(time);
+                if (!GetMTimeUnixSeconds(entry.path(), item.mtimeUtc))
+                    item.mtimeUtc = 0;
 
                 if (isDirectory)
                 {

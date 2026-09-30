@@ -42,6 +42,19 @@ TEST(ServiceFileFilter_Test, EveryCollectionAppliesOnEveryHost)
         EXPECT_FALSE(filter.IsService(name)) << name;
 }
 
+TEST(ServiceFileFilter_Test, OsNoiseCollectionsLeaveNoTrace)
+{
+    ServiceFileFilter filter;
+    // Host-OS housekeeping appears in a folder at any moment: a snapshot drops
+    // it without a skipped entry. Project metadata stays a reported decision
+    EXPECT_TRUE(filter.IsOsNoiseCollection("macos"));
+    EXPECT_TRUE(filter.IsOsNoiseCollection("windows"));
+    EXPECT_TRUE(filter.IsOsNoiseCollection("linux"));
+    EXPECT_FALSE(filter.IsOsNoiseCollection("vcs"));
+    EXPECT_FALSE(filter.IsOsNoiseCollection("unreal"));
+    EXPECT_FALSE(filter.IsOsNoiseCollection("no such collection"));
+}
+
 TEST(ServiceFileFilter_Test, CollectionsCanBeExtended)
 {
     ServiceFileFilter filter;

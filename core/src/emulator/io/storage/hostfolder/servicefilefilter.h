@@ -21,6 +21,10 @@ public:
     {
         std::string name;                   ///< "macos", "windows", ...
         std::vector<std::string> patterns;  ///< wildcards, matched case-insensitively
+        /// Pure host-OS housekeeping (Finder's .DS_Store, Thumbs.db, *~ ...):
+        /// it appears in a folder at any moment and must never surface in a
+        /// snapshot - not as an entry and not in the skipped report
+        bool osNoise = false;
     };
 
     /// The built-in collections: macos, windows, linux, vcs, unreal
@@ -29,6 +33,10 @@ public:
     /// True when `name` (a file or folder name, no path) is a service entry;
     /// `collection` receives the name of the collection that matched
     bool IsService(const std::string& name, std::string* collection = nullptr) const;
+
+    /// True when `collection` (a name IsService reported) is host-OS noise
+    /// that a snapshot drops without a trace
+    bool IsOsNoiseCollection(const std::string& collection) const;
 
     void AddCollection(Collection collection) { _collections.push_back(std::move(collection)); }
     const std::vector<Collection>& Collections() const { return _collections; }

@@ -412,6 +412,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
     folder.File("SD_BOOT.$C", "boot code");
     folder.File("games/Игра.trd", std::string(3000, 'g'));
     folder.File(".DS_Store", "service");
+    folder.File(".gitignore", "service");
     folder.File(".unreal-media.yaml", "label: MY CARD\ncodepage: cp1251\n");
 
     MediaManager manager(nullptr);
@@ -426,9 +427,14 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
     ASSERT_TRUE(inserted.Ok()) << inserted.message;
     EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat16");
     bool reportedService = false;
+    bool reportedOsNoise = false;
     for (const std::string& line : inserted.report)
-        reportedService = reportedService || line.find(".DS_Store: skipped, service (macos)") != std::string::npos;
+    {
+        reportedService = reportedService || line.find(".gitignore: skipped, service (vcs)") != std::string::npos;
+        reportedOsNoise = reportedOsNoise || line.find(".DS_Store") != std::string::npos;
+    }
     EXPECT_TRUE(reportedService) << "skipped entries are reported";
+    EXPECT_FALSE(reportedOsNoise) << "host-OS housekeeping is filtered without a trace";
 
     // The guest's view: an independent FAT reader over the slot's block device
     Medium* medium = slot.attached;

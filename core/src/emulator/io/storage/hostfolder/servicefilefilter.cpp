@@ -51,9 +51,11 @@ const std::vector<ServiceFileFilter::Collection>& ServiceFileFilter::DefaultColl
     static const std::vector<Collection> collections = {
         {"macos",
          {".DS_Store", "._*", ".Spotlight-V100", ".Trashes", ".fseventsd", ".TemporaryItems",
-          ".DocumentRevisions-V100", ".VolumeIcon.icns", "Icon\r", ".AppleDouble", ".AppleDB", ".AppleDesktop"}},
-        {"windows", {"Thumbs.db", "ehthumbs.db", "desktop.ini", "$RECYCLE.BIN", "System Volume Information", "*.lnk"}},
-        {"linux", {".directory", ".Trash-*", "lost+found", "*~"}},
+          ".DocumentRevisions-V100", ".VolumeIcon.icns", "Icon\r", ".AppleDouble", ".AppleDB", ".AppleDesktop"},
+         /*osNoise=*/true},
+        {"windows", {"Thumbs.db", "ehthumbs.db", "desktop.ini", "$RECYCLE.BIN", "System Volume Information", "*.lnk"},
+         /*osNoise=*/true},
+        {"linux", {".directory", ".Trash-*", "lost+found", "*~"}, /*osNoise=*/true},
         {"vcs", {".git", ".gitignore", ".gitattributes", ".gitmodules", ".svn", ".hg", ".hgignore"}},
         {"unreal", {".unreal-media.yaml", ".unreal-media.json"}},
     };
@@ -76,5 +78,13 @@ bool ServiceFileFilter::IsService(const std::string& name, std::string* collecti
             }
         }
     }
+    return false;
+}
+
+bool ServiceFileFilter::IsOsNoiseCollection(const std::string& collection) const
+{
+    for (const Collection& c : _collections)
+        if (c.name == collection)
+            return c.osNoise;
     return false;
 }

@@ -85,6 +85,7 @@ TEST_F(FolderDiskBuilder_Test, WorkedExample)
     folder.File("intro.scr", std::string(6912, '\x33'));
     folder.File("notes.txt", "never on the disk");
     folder.File(".DS_Store", "host junk");
+    folder.File(".gitignore", "host junk");
     folder.File(".unreal-media.yaml", "label: DEMO\norder: [boot.$B, intro.scr]\nexclude: [notes.txt]\n");
 
     std::unique_ptr<DiskImage> disk;
@@ -105,8 +106,9 @@ TEST_F(FolderDiskBuilder_Test, WorkedExample)
     EXPECT_EQ(files[2].entry.SizeInSectors, 160);
     EXPECT_EQ(Label(*disk), "DEMO    ");
 
-    EXPECT_TRUE(Reported(result, ".DS_Store")) << Report(result);
+    EXPECT_TRUE(Reported(result, ".gitignore")) << Report(result);
     EXPECT_TRUE(Reported(result, "notes.txt")) << Report(result);
+    EXPECT_FALSE(Reported(result, ".DS_Store")) << Report(result) << "host-OS housekeeping leaves no trace";
     EXPECT_FALSE(disk->isDirty()) << "a freshly built disk has nothing to save";
 }
 

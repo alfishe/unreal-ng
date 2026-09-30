@@ -74,10 +74,13 @@ TEST(FolderSnapshot_Test, ServiceFilesExcludesAndReasonsAreReported)
     FolderSnapshot snapshot;
     ASSERT_TRUE(FolderSnapshot::Scan(folder.Path(), options, snapshot));
 
-    EXPECT_TRUE(WasSkipped(snapshot, ".DS_Store", "service (macos)"));
-    EXPECT_TRUE(WasSkipped(snapshot, "Thumbs.db", "service (windows)"));
+    // Host-OS housekeeping is filtered without a trace: the host drops it into
+    // the folder at any moment, so it must not surface anywhere
+    EXPECT_FALSE(WasSkipped(snapshot, ".DS_Store", ""));
+    EXPECT_FALSE(WasSkipped(snapshot, "Thumbs.db", ""));
+    EXPECT_FALSE(WasSkipped(snapshot, "sub/._game.trd", ""));
+    // Project metadata stays a reported decision
     EXPECT_TRUE(WasSkipped(snapshot, ".git", "service (vcs)"));
-    EXPECT_TRUE(WasSkipped(snapshot, "sub/._game.trd", "service (macos)"));
     EXPECT_TRUE(WasSkipped(snapshot, "notes.txt", "excluded"));
     EXPECT_EQ(snapshot.EntryCount(), 2u) << "game.trd and the (now empty) sub folder";
 }

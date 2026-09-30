@@ -113,6 +113,27 @@ ninja -C cmake-build-agent-release -j "$JOBS" core-benchmarks
 ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
 
+### Default build vs test build — a stale-binary trap
+**The default target (`ninja -C cmake-build-agent-release` with no target) NEVER builds or
+updates `bin/core-tests` — even in a build dir configured with `-DTESTS=ON`.** The test
+binary is outside the default `all` target on purpose (see the opt-in above). Consequences:
+
+- After changing production code **or any header tests include** (`core/tests/_helpers/*`,
+  anything pulled in by test sources), a plain `ninja` leaves `bin/core-tests` untouched.
+- Running `./cmake-build-agent-release/bin/core-tests` then executes a **stale binary** and
+  you test yesterday's code. This really happens: a header fix once looked "flaky" for an
+  hour because every verification loop ran a two-hour-old `core-tests`.
+
+Rules of thumb:
+
+| You want | Command |
+|---|---|
+| Build / update the test binary | `ninja -C cmake-build-agent-release -j "$JOBS" core-tests` (explicit target) |
+| Build + run everything | `cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"` |
+| Run a filter after edits | rebuild via `core-tests` target **first**, then `--gtest_filter=...` |
+| Production check only | plain `ninja -C cmake-build-agent-release -j "$JOBS"` (no test binary update) |
+
+
 
 ### Parallel Test Execution (GTest Sharding)
 The `test-parallel` CMake target uses GTest's built-in sharding to split tests across 4 processes:
