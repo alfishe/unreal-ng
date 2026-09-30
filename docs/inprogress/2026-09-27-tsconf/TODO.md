@@ -119,7 +119,10 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] VDAC builds (2026-09-30, branch `tsconf-vdac`): `[MISC] TS_VDAC` /
   `TS_VDAC2` set STATUS VDAC_VER, the palette curve and BLT2; default NONE
 - [x] TIM-5 (2026-09-30, branch `tsconf-tim5`): a DMA CRAM write lands at its dot
-- [ ] Open: the 1.1x speed target; DBG-3 and TS docks with
+- [x] Speed pass 2 (2026-09-30, branch `tsconf-speed`): 1.31x → 1.16x Pentagon
+  (frame render 189 → 43.5 µs); 1.1x not met - the rest is per-step render
+  calls, backlog: lazy drawing with a watch on the displayed pages
+- [ ] Open: DBG-3 and TS docks with
   the model-first debugger
 - [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
   palette cache, pixel-identical to the old renderer (test TSO2); frame render

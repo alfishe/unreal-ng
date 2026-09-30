@@ -71,6 +71,7 @@ const TsConfState* ScreenTSConf::State()
         {
             _ts = &decoder->GetState();
             _engine = &decoder->GetEngine();
+            _decoder = decoder;
         }
     }
     return _ts;
@@ -191,12 +192,16 @@ void ScreenTSConf::SetActiveScreen(SpectrumScreenEnum screen)
 
 void ScreenTSConf::RenderFrameBatch()
 {
+    _paletteVerify = true;
     DrawRange(0, kLineTacts * kLines - 1);
+    _paletteVerify = false;
 }
 
 void ScreenTSConf::RenderOnlyMainScreen()
 {
+    _paletteVerify = true;
     DrawRange(0, kLineTacts * kLines - 1);
+    _paletteVerify = false;
 }
 
 void ScreenTSConf::FillBorderWithColor([[maybe_unused]] uint8_t color)
@@ -206,14 +211,19 @@ void ScreenTSConf::FillBorderWithColor([[maybe_unused]] uint8_t color)
 
 void ScreenTSConf::RefreshPalette(const TsConfState& ts)
 {
-    // The beam renderer calls this for every few dots: the unchanged case is
-    // one 512-byte compare
     const uint8_t vdac = _context ? _context->config.ts_vdac : 0;
     if (vdac != _paletteVdac)
     {
         _paletteVdac = vdac;
         _paletteValid = false;
     }
+    // The beam renderer calls this every few dots: unchanged CRAM costs one
+    // compare of the decoder's CRAM version; the whole-frame renders compare
+    // every cell (direct writes into the state do not move the version)
+    const uint32_t version = _decoder ? _decoder->CramVersion() : 0;
+    if (_paletteValid && !_paletteVerify && _decoder && version == _paletteVersion)
+        return;
+    _paletteVersion = version;
     if (_paletteValid && std::memcmp(ts.cram, _paletteCram, sizeof(_paletteCram)) == 0)
         return;
     for (uint32_t i = 0; i < 256; i++)
@@ -317,9 +327,144 @@ void ScreenTSConf::GraphicsSpan(const TsConfLine& set, uint32_t wx, uint32_t cou
     }
 }
 
+bool ScreenTSConf::DirectSpan(const TsConfState& ts, const TsConfLine& set, uint32_t line, uint32_t dotFrom,
+                              uint32_t dotTo, uint32_t* out) const
+{
+    const uint8_t vConfig = set.vConfig;
+    if ((set.tsu && !(vConfig & 0x10)) || (vConfig & 0x08))
+        return false;  // TSU pixels to mix, or GFXOVR (invisible dots show the border)
+
+    const bool text = (vConfig & 0x03) == 3;
+    const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+    const uint8_t border = ts.regs[TsConfReg::Border];
+    const uint32_t borderRgb = _palette[text ? static_cast<uint8_t>(palBank | (border & 0x0F)) : border];
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
+
+    uint32_t gfxFrom = dotTo;
+    uint32_t gfxTo = dotTo;
+    if (!(vConfig & 0x20) && line >= win.y0 && line < static_cast<uint32_t>(win.y0 + win.h))
+    {
+        gfxFrom = std::max<uint32_t>(dotFrom, win.x0);
+        gfxTo = std::min<uint32_t>(dotTo, static_cast<uint32_t>(win.x0 + win.w));
+        if (gfxFrom >= gfxTo)
+            gfxFrom = gfxTo = dotTo;
+    }
+
+    for (uint32_t dot = dotFrom; dot < gfxFrom; dot++, out += 2)
+        out[0] = out[1] = borderRgb;
+
+    const uint32_t count = gfxTo - gfxFrom;
+    if (count)
+    {
+        const uint32_t gy = set.cntRow & 0x1FF;
+        const uint8_t* ram = _context->pMemory->RAMBase();
+        const uint32_t vPage = set.vPage;
+        uint32_t gx = (gfxFrom - win.x0 + set.gxOffs) & 0x1FF;
+        switch (vConfig & 0x03)
+        {
+            case 0:  // ZX: ink / paper colours once per 8-dot cell
+            {
+                const uint32_t y = gy & 0xFF;
+                const uint8_t* page = ram + (vPage << 14);
+                const uint8_t* pixelRow = page + (((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2));
+                const uint8_t* attrRow = page + 0x1800 + (y >> 3) * 32;
+                const bool flashPhase = (_context->emulatorState.frame_counter >> 4) & 1;
+                uint32_t cell = ~0u;
+                uint8_t pixels = 0;
+                uint32_t ink = 0, paper = 0;
+                for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF, out += 2)
+                {
+                    const uint32_t x = gx & 0xFF;
+                    if ((x >> 3) != cell)
+                    {
+                        cell = x >> 3;
+                        const uint8_t attr = attrRow[cell];
+                        pixels = pixelRow[cell];
+                        if ((attr & 0x80) && flashPhase)
+                            pixels = static_cast<uint8_t>(~pixels);
+                        const uint8_t bright = (attr & 0x40) ? 0x08 : 0x00;
+                        ink = _palette[palBank | bright | (attr & 0x07)];
+                        paper = _palette[palBank | bright | ((attr >> 3) & 0x07)];
+                    }
+                    out[0] = out[1] = ((pixels >> (7 - (x & 7))) & 1) ? ink : paper;
+                }
+                break;
+            }
+            case 1:  // 16C
+            {
+                const uint8_t* row = ram + ((vPage & 0xF8) << 14) + (gy << 8);
+                for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF, out += 2)
+                {
+                    const uint8_t byte = row[gx >> 1];
+                    out[0] = out[1] = _palette[palBank | ((gx & 1) ? (byte & 0x0F) : (byte >> 4))];
+                }
+                break;
+            }
+            case 2:  // 256C
+            {
+                const uint8_t* row = ram + ((vPage & 0xF0) << 14) + (gy << 9);
+                for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF, out += 2)
+                    out[0] = out[1] = _palette[row[gx]];
+                break;
+            }
+            default:  // TXT: ink / paper colours once per character cell
+            {
+                const uint8_t* row = ram + (vPage << 14) + ((gy >> 3) & 0x3F) * 256;
+                const uint8_t* font = ram + ((vPage ^ 1) << 14) + (gy & 7);
+                uint32_t cell = ~0u;
+                uint8_t glyph = 0;
+                uint32_t ink = 0, paper = 0;
+                for (uint32_t i = 0; i < count;)
+                {
+                    // A whole character (4 dots = 8 pixels) at once where one starts
+                    if ((gx & 3) == 0 && count - i >= 4)
+                    {
+                        const uint32_t column = (gx >> 2) & 0x7F;
+                        const uint8_t attr = row[128 + column];
+                        const uint8_t bits = font[row[column] * 8];
+                        const uint32_t on = _palette[palBank | (attr & 0x0F)];
+                        const uint32_t off = _palette[palBank | (attr >> 4)];
+                        for (uint32_t b = 0; b < 8; b++)
+                            out[b] = ((bits >> (7 - b)) & 1) ? on : off;
+                        out += 8;
+                        i += 4;
+                        gx = (gx + 4) & 0x1FF;
+                        cell = ~0u;
+                        continue;
+                    }
+                    for (uint32_t sub = 0; sub < 2; sub++)
+                    {
+                        const uint32_t px = (gx * 2 + sub) & 0x3FF;
+                        const uint32_t column = (px >> 3) & 0x7F;
+                        if (column != cell)
+                        {
+                            cell = column;
+                            const uint8_t attr = row[128 + column];
+                            glyph = font[row[column] * 8];
+                            ink = _palette[palBank | (attr & 0x0F)];
+                            paper = _palette[palBank | (attr >> 4)];
+                        }
+                        out[sub] = ((glyph >> (7 - (px & 7))) & 1) ? ink : paper;
+                    }
+                    i++;
+                    gx = (gx + 1) & 0x1FF;
+                    out += 2;
+                }
+                break;
+            }
+        }
+    }
+
+    for (uint32_t dot = std::max(gfxTo, dotFrom); dot < dotTo; dot++, out += 2)
+        out[0] = out[1] = borderRgb;
+    return true;
+}
+
 void ScreenTSConf::DrawLineSpan(const TsConfState& ts, uint32_t line, uint32_t dotFrom, uint32_t dotTo, uint32_t* out) const
 {
     const TsConfLine& set = _engine->Line(line);
+    if (DirectSpan(ts, set, line, dotFrom, dotTo, out))
+        return;
     const uint8_t vConfig = set.vConfig;
     const bool text = (vConfig & 0x03) == 3;
     const uint8_t border = ts.regs[TsConfReg::Border];

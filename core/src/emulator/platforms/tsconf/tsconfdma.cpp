@@ -223,6 +223,7 @@ void TsConfDma::Word()
         case Cram:
             _ts.dmaData = readSource();
             _ts.cram[_ts.dmaDst & 0xFF] = _ts.dmaData;
+            _cramWrites++;
             break;
         case Sfile:
             _ts.dmaData = readSource();

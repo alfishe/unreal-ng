@@ -139,6 +139,15 @@ void TsConfEngine::AccountBudget(uint32_t raster)
     _ts.cpuAccesses = 0;
     _cpuLineRunning += cpu;
 
+    // Idle DMA: the free cycles go to nobody - only the position moves (it
+    // also marks which ts_start events have passed, TSU-6)
+    if (!_dma.Busy()) [[likely]]
+    {
+        if (raster > _ts.budgetRaster)
+            _ts.budgetRaster = raster;
+        return;
+    }
+
     uint32_t free = 0;
     for (uint32_t pos = _ts.budgetRaster; pos < raster;)
     {

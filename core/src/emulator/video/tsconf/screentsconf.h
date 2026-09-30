@@ -4,6 +4,7 @@
 #include "emulator/video/zx/screenzx.h"
 
 struct TsConfState;
+class PortDecoder_TSConf;
 struct TsConfLine;
 class TsConfEngine;
 
@@ -82,6 +83,11 @@ private:
     /// per dot): graphics in the window, the TSU mixed as the video plex does,
     /// BORDER elsewhere (TS-O2, TS-O3)
     void DrawLineSpan(const TsConfState& ts, uint32_t line, uint32_t dotFrom, uint32_t dotTo, uint32_t* out) const;
+    /// The span straight to colours when nothing mixes into it (no TSU pixels
+    /// on the line or NOTSU, no GFXOVR): the common case, one pass
+    /// @return false when the span needs the mixing path (DrawLineSpan)
+    bool DirectSpan(const TsConfState& ts, const TsConfLine& set, uint32_t line, uint32_t dotFrom, uint32_t dotTo,
+                    uint32_t* out) const;
     /// Graphics color indices of `count` dots from window x `wx` (dots from
     /// the window's left edge); `visible` = the dot counts as "visible" for
     /// GFXOVR (ZX ink after flash, 16C / 256C index != 0, TXT font bit).
@@ -95,5 +101,8 @@ private:
     uint32_t _palette[256] = {};      ///< RGBA of each CRAM entry
     uint16_t _paletteCram[256] = {};  ///< the CRAM words _palette was built from
     uint8_t _paletteVdac = 0;         ///< the DAC _palette was built for
+    uint32_t _paletteVersion = 0;     ///< the decoder's CRAM version _palette was built at
     bool _paletteValid = false;
+    bool _paletteVerify = false;      ///< compare every cell (whole-frame renders: direct CRAM writes)
+    const PortDecoder_TSConf* _decoder = nullptr;
 };

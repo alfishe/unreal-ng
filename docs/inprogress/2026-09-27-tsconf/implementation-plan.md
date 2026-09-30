@@ -302,6 +302,19 @@ phase 8 and the arbiter, minimum of 7, two runs agreeing within 5 µs):
 Pentagon frame 1614 µs, TS-Conf frame TSU off 2063 µs = **1.28x** (target
 1.1x not met), TSU at its limit 2306 µs = 1.12x TSU off (target 2x met);
 frame render alone 188 µs (TXT Setup), 217 µs (TSU at its limit).
+**Speed pass 2 (2026-09-30, branch `tsconf-speed`, load 4-12, minimum of 7):**
+the palette cache checks a CRAM version counter instead of comparing 512
+bytes per call (port / DMA writes and state loads move it; whole-frame
+renders still compare every cell), the DRAM budget skips its work while the
+DMA is idle, and a span with nothing to mix (no TSU pixels or NOTSU, no
+GFXOVR) goes straight to colours in one pass, a whole text character or 8
+ZX dots at a time. Frame render alone 189 → 43.5 µs (TXT Setup); whole
+frame TSU off 2143 → 1924 µs = **1.16x** Pentagon (was 1.31x after phase 8
+and TSU-6; target 1.1x not met), TSU on 2305 µs. What is left is fixed cost
+per CPU step: the beam renderer runs ~9000 times a frame (~20 ns each) over a
+720-wide picture. Backlog: draw lazily between video-affecting events
+(register / CRAM writes, writes into the displayed pages - needs a write
+watch on those pages), SIMD in the 16C / 256C gathers.
 
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
