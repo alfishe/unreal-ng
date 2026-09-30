@@ -37,3 +37,13 @@ TEST_F(BuildInfo_Test, BuildTypeIsNonEmpty)
     EXPECT_NE(buildinfo::kBuildType, nullptr);
     EXPECT_GT(std::strlen(buildinfo::kBuildType), 0u);
 }
+
+/// The build type names the configuration that was compiled. A build
+/// configured without -DCMAKE_BUILD_TYPE is a Release build (the CMake
+/// default) and a multi-config generator passes the configuration at build
+/// time, so the "MultiConfig" placeholder never reaches the binary
+TEST_F(BuildInfo_Test, BuildTypeNamesTheConfiguration)
+{
+    EXPECT_STRNE(buildinfo::kBuildType, "MultiConfig");
+    EXPECT_STRNE(buildinfo::kBuildType, "");
+}
