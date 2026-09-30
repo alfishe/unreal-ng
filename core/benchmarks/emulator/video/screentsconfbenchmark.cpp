@@ -11,6 +11,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
+#include "emulator/video/screen.h"
 
 /// TS-Conf frame cost (TSConf implementation-plan BENCH-1): the TS-BIOS Setup
 /// screen (TXT mode) rendered per T-state, with the TSU off and with the TSU
@@ -48,25 +49,15 @@ static void RunFrames(benchmark::State& state, const std::shared_ptr<Emulator>& 
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
 }
 
-static void BM_TsConfFrame_TsuOff(benchmark::State& state)
+/// The TSU at its limit on a booted machine (see BM_TsConfFrame_TsuOn)
+static bool LoadTsu(benchmark::State& state, const std::shared_ptr<Emulator>& emulator)
 {
-    auto emulator = BootFrameBench(state, "TSL");
-    if (emulator)
-        RunFrames(state, emulator);
-}
-
-static void BM_TsConfFrame_TsuOn(benchmark::State& state)
-{
-    auto emulator = BootFrameBench(state, "TSL");
-    if (!emulator)
-        return;
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(emulator->GetContext()->pPortDecoder);
     if (!decoder)
     {
         state.SkipWithError("not a TS-Conf decoder");
-        return;
+        return false;
     }
-
     // Graphics pages are whatever RAM holds (mostly non-zero power-on data):
     // tiles and sprites draw most of their pixels
     TsConfState& ts = decoder->GetState();
@@ -81,7 +72,50 @@ static void BM_TsConfFrame_TsuOn(benchmark::State& state)
         ts.sfile[d * 3 + 2] = static_cast<uint16_t>(((d & 15) << 12) | (d * 7));
     }
     decoder->WriteRegister(TsConfReg::TConfig, 0xE0 | 0x0C);  // sprites, T1, T0, tile 0 drawn
-    RunFrames(state, emulator);
+    return true;
+}
+
+/// The frame renderer alone (TS-O1..O3): one whole frame drawn from the
+/// engine's line table, no CPU. Read the minimum of the repetitions on a
+/// loaded machine:
+///   core-benchmarks --benchmark_filter=BM_TsConfRender --benchmark_repetitions=9
+static void RenderOnly(benchmark::State& state, const std::shared_ptr<Emulator>& emulator)
+{
+    Screen* screen = emulator->GetContext()->pScreen;
+    for (auto _ : state)
+        screen->RenderFrameBatch();
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
+static void BM_TsConfRender_Setup(benchmark::State& state)
+{
+    auto emulator = BootFrameBench(state, "TSL");
+    if (emulator)
+        RenderOnly(state, emulator);
+}
+
+static void BM_TsConfRender_Tsu(benchmark::State& state)
+{
+    auto emulator = BootFrameBench(state, "TSL");
+    if (!emulator || !LoadTsu(state, emulator))
+        return;
+    MainLoopCUT* mainLoop = reinterpret_cast<MainLoopCUT*>(emulator->GetContext()->pMainLoop);
+    mainLoop->RunFramePublic();  // the engine fills its TSU line buffers
+    RenderOnly(state, emulator);
+}
+
+static void BM_TsConfFrame_TsuOff(benchmark::State& state)
+{
+    auto emulator = BootFrameBench(state, "TSL");
+    if (emulator)
+        RunFrames(state, emulator);
+}
+
+static void BM_TsConfFrame_TsuOn(benchmark::State& state)
+{
+    auto emulator = BootFrameBench(state, "TSL");
+    if (emulator && LoadTsu(state, emulator))
+        RunFrames(state, emulator);
 }
 
 static void BM_TsConfFrame_PentagonReference(benchmark::State& state)
@@ -94,3 +128,5 @@ static void BM_TsConfFrame_PentagonReference(benchmark::State& state)
 BENCHMARK(BM_TsConfFrame_TsuOff)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TsConfFrame_TsuOn)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TsConfFrame_PentagonReference)->Iterations(300)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TsConfRender_Setup)->Iterations(300)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TsConfRender_Tsu)->Iterations(300)->Unit(benchmark::kMicrosecond);
