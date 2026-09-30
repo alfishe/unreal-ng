@@ -15,8 +15,8 @@
 
 TEST(VideoController_Test, TsConfGetsItsOwnScreenEveryOtherModelTheZxScreen)
 {
-    // TSL is not creatable yet (no port decoder): the factory is exercised
-    // with one machine's context, which is all a screen's constructor needs
+    // The factory is exercised with one machine's context, which is all a
+    // screen's constructor needs
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
 

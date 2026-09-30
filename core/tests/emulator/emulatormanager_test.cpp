@@ -563,13 +563,17 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
         EXPECT_TRUE(Config::IsModelCreatable(*modelAtm3));
     }
 
-    // Models without decoders (no factory case yet)
-    if (!PortDecoder::IsModelSupported(MM_TSL))
+    // TS-Conf (TSConf phase 1): decoder + bin/configs/ts-conf
     {
+        EXPECT_TRUE(PortDecoder::IsModelSupported(MM_TSL));
         const TMemModel* model = Config::FindModelByShortName("TSL");
         ASSERT_NE(model, nullptr);
-        EXPECT_FALSE(Config::IsModelCreatable(*model));
+        EXPECT_TRUE(Config::IsModelCreatable(*model));
     }
+
+    // Models without decoders (no factory case yet)
+    for (MEM_MODEL model : {MM_ATM450, MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
+        EXPECT_FALSE(PortDecoder::IsModelSupported(model)) << int(model);
 }
 
 TEST_F(EmulatorManager_Test, IsModelCreatableForSupportedMachines)

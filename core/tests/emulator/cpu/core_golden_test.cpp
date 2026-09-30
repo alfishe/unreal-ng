@@ -43,25 +43,25 @@ struct Golden
     uint64_t tStates;
 };
 
-// Re-recorded 2026-09-28 at the merge of master 9454993c into neogs. The rows
-// are exactly what clean master produces; they moved with master's changes
-// to the machines themselves (contention, Profi/ATM ports, ZX-Evo BaseConf),
-// not with anything NeoGS does
+// Re-recorded 2026-09-30 when the runs switched from srand(0x4E47) power-on
+// noise to zeroed power-on RAM ([MISC] RAMPowerOn=ZERO). Only the RAM hashes
+// of machines whose ROM keeps screen pages 5 / 7 moved, plus the ATM3 CPU
+// state (BaseConf reads that RAM while it boots); T-states and every other
+// CPU state are unchanged. Earlier history: rows moved with master's changes
+// to the machines themselves (contention, Profi/ATM ports, ZX-Evo BaseConf,
+// the ATM IDE board status on the #7FFD class), not with the devices tested
 const Golden kGolden[] = {
     {"48K", nullptr, 0xF6F7645FFB8D32EEull, 0x30CF0C783D0E991Full, 10483200ull},
-    {"128k", nullptr, 0x06DE8AB61A04BA77ull, 0x99282911875249E1ull, 10636200ull},
-    {"PLUS3", nullptr, 0x42083412FAC68EB5ull, 0x2A4FE2DFB3C7F009ull, 10636200ull},
-    {"PENTAGON", nullptr, 0xCE7802019C39F3DCull, 0x0AF8E05A04352BC0ull, 10752000ull},
+    {"128k", nullptr, 0xEA31963B89AC26CDull, 0x99282911875249E1ull, 10636200ull},
+    {"PLUS3", nullptr, 0x190BA788495BE1C7ull, 0x2A4FE2DFB3C7F009ull, 10636200ull},
+    {"PENTAGON", nullptr, 0xDF565E9821C0C00Eull, 0x0AF8E05A04352BC0ull, 10752000ull},
     {"PENTAGON", "testdata/loaders/sna/eyeache1.sna", 0xBE8FEFDC569D139Aull, 0xE0C7CB5F6C6AB285ull, 10752000ull},
-    {"SCORPION", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"PROFSCORP", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0xA0ACA621D375DA98ull, 10483200ull},
-    // ATM710 re-recorded 2026-09-28 (branch ide-atapi): its ROM reads the
-    // #7FFD class, which is now the ATM IDE board's status (#3F + INTRQ),
-    // as in UnrealSpeccy, instead of the floating bus
-    {"ATM710", nullptr, 0x9DCBD8315B37FC1Eull, 0xE360A9F00E0771B9ull, 10483200ull},
-    {"ATM3", nullptr, 0x2DABB9D0E2DC188Dull, 0xA177AACC9FD662A1ull, 9434880ull},
-    // TSL (TS-Conf) is not creatable with the shipped ROMs.
+    {"SCORPION", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"PROFSCORP", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"PROFI", nullptr, 0xECE6582A89C2FD05ull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE360A9F00E0771B9ull, 10483200ull},
+    {"ATM3", nullptr, 0xBAFE4D4366FEBF79ull, 0x2E7C3DA03E7B4F3Dull, 9434880ull},
+    // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 
 constexpr unsigned kFrames = 150;
@@ -75,10 +75,9 @@ struct Result
 Result run(const Golden& g, bool debug)
 {
     Result r;
-    // Power-on RAM (pages 5 and 7) is filled with rand(): seed it so every
-    // run starts from the same contents
-    std::srand(0x4E47);
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(g.model, LoggerLevel::LogError);
+    // Every run starts from the same RAM: zero instead of the power-on noise
+    // from the process-wide rand()
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(g.model, LoggerLevel::LogError, RamPowerOn::Zero);
     if (!emulator)
         return r;
     r.created = true;

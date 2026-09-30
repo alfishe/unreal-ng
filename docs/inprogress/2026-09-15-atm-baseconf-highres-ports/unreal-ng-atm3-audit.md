@@ -100,7 +100,7 @@ unreachable for ATM3 since handled above) → #EFF7 → xFF7 (unreachable) → #
 | Gluk extension regs #F0-#FF (PS/2 scancode log, versions) via CMOS | IN/OUT | — | plain RAM cells in `_cmos[]` | **Missing** | `cmos.cpp:164-166` |
 | PS/2 keyboard via Gluk reg F0 | — | — | none; host keyboard feeds the #FE matrix only; ini `ATMKBD=1` not parsed | **Missing** | `config.cpp` (key absent) |
 | COM / ZiFi #xxEF | IN/OUT | — | not decoded (IN → 0xFF) | Missing | — |
-| Turbo control | — | — | `hw_turbo_shift` = 2 if FF77.3 (14 MHz), else 0 if EFF7.4 (3.5 MHz), else 1 (7 MHz) | Impl | `portdecoder_atm3.cpp:314-328` |
+| Turbo control | — | — | `hw_turbo_ratio` = 4 if FF77.3 (14 MHz), else 1 if EFF7.4 (3.5 MHz), else 2 (7 MHz) | Impl | `portdecoder_atm3.cpp:314-328` |
 | 14 MHz wait states / contention | — | — | none | Missing (verify need) | — |
 | INT position | — | — | fixed from config (intstart 1756); BaseConf has no programmable INT | N/A | `config.cpp:916-926` |
 | DMA | — | — | BaseConf has none (TSConf td §1.1 table) | N/A | — |
@@ -135,7 +135,7 @@ unreachable for ATM3 since handled above) → #EFF7 → xFF7 (unreachable) → #
 | ROM write enable (#BF.1, verify) | ROM windows mapped read-only via `SetROMPageToBank`; no write path | **Missing** | `portdecoder_atm3.cpp:396-410` |
 | Font RAM (2 KB) write redirect (#BF.2) | none | **Missing** | docs gap #2 |
 | AtmMemSwap (A5-A7↔A8-A10) | deliberately not emulated (ini default off) | N/A | `portdecoder_atm710.cpp:520-526`; ini `AtmMemSwap=0` |
-| Boot defaults | `reset()` clears 7FFD/EFF7/palette, `hw_turbo_shift=0`; ATM3 adds pBD/pBE/pBF=0 + CMOS type Dallas; `ApplyBootROMDefaults`: RM_DOS → PEN+CPM+pen2, pFF77=0xE3, windows ROM1/RAM5/RAM2/RAM0; other modes → FF77 port 0 (PEN off → service ROM page 31). ini `RESET=128` → RM_128 → PEN off path | Impl | `portdecoder_atm710.cpp:33-93`; `portdecoder_atm3.cpp:25-38`; `memory.cpp:818-828`; ini `:22` |
+| Boot defaults | `reset()` clears 7FFD/EFF7/palette, `hw_turbo_ratio=1`; ATM3 adds pBD/pBE/pBF=0 + CMOS type Dallas; `ApplyBootROMDefaults`: RM_DOS → PEN+CPM+pen2, pFF77=0xE3, windows ROM1/RAM5/RAM2/RAM0; other modes → FF77 port 0 (PEN off → service ROM page 31). ini `RESET=128` → RM_128 → PEN off path | Impl | `portdecoder_atm710.cpp:33-93`; `portdecoder_atm3.cpp:25-38`; `memory.cpp:818-828`; ini `:22` |
 | ROM layout comment in ini: pages 24-27 RAM disk / SD / MAGIC service; page 0 = TS-BIOS (must not boot) | documentation only | — | `data/configs/atm3/unreal.ini:200-209` |
 | Memory API `total_rom_pages` reports **4 (64 KB)** for ATM3 although 32 pages are loaded | inaccurate | `core/automation/webapi/src/api/state_memory_api.cpp:352-376`; CLI `cli-processor-state.cpp:651-672` |
 

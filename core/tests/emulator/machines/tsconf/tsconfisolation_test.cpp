@@ -39,7 +39,9 @@ const std::vector<std::string> kModelIdFiles = {
     "emulator/config.h",                   // the mem_model[] row
     "emulator/config.cpp",                 // the config folder ("ts-conf")
     "emulator/video/videocontroller.cpp",  // the Screen factory (PLAN #60(e))
-    "emulator/memory/rom.cpp",             // per-model ROM path / set / size rows (phase 1 ROM-1 moves the size rule)
+    "emulator/memory/rom.cpp",             // per-model ROM path / set / size rows
+    "emulator/ports/portdecoder.cpp",      // the port decoder factory + IsModelSupported
+    "emulator/cpu/core.cpp",               // the memory factory (TsConfMemory)
 };
 
 /// Tokens of the former half-port; none may appear outside the TSConf directories

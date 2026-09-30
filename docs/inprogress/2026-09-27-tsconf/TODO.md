@@ -1,7 +1,7 @@
 # TODO — ZX-Evo TSConf machine support
 
-**Status marker:** not started (implementation). Design complete — review
-round 1 applied 2026-09-27; ready for phase 0.
+**Status marker:** in progress - phases 0-2 done, phase 3 video v1 done
+(2026-09-30): `TSL` is creatable and boots the real ROM (TS-BIOS, TR-DOS).
 Starts after the shared infrastructure and the move of the existing machines onto
 it (PLAN rationale 6); the interrupt source, write intercept and step hook of
 phase 0 are built (PLAN #60(a) + INF-5, [implementation-plan.md](implementation-plan.md) phase 0).
@@ -76,12 +76,20 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   `TSCONF` alias; INF-9 `MM_TSL` frame geometry; INF-10 `PeripheralId::TsConfPaging = 16`
   (+ `ttd.ksy`, id-table test). **Phase 0 complete.**
 
+- [x] Phases 1-2 and video v1 (2026-09-30, branch `tsconf-phase1`): decoder,
+  memory, cache, FM window, DOS trap, CMOS gating, TTD blob; interrupt
+  controller; ZX / 16C / 256C / TXT rendering. TS-BIOS Setup and TR-DOS boot
+  on `data/rom/zxevo.rom` (BOOT-1/2). Status and deviations: [implementation-plan.md](implementation-plan.md) phases 1-3
+
 ## Remaining
 
+- Phase 3 rest: the engine (per-line budget), line-latched registers, goldens.
+- Phase 4: TSU (tiles, sprites); phase 5 DMA; phase 6 SD / vdos / IDE / SPG;
+  phase 7 surfaces (a `TsConfVideoMapper` for #42, debugger docks); phase 8 timing.
+
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: PLAN #60 (built except (f), the raw PC floppy loader, which
-  TSConf does not need; the linear turbo ratio (b) is postponed - only the
-  Sprinter needs it, TSConf uses `hw_turbo_shift`); the unified media manager (#58, M1/M2/M4 on master)
+- Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the
+  linear turbo ratio (b): TSConf sets `hw_turbo_ratio` {1, 2, 4, 4}); the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs

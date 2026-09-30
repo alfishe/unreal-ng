@@ -1002,28 +1002,31 @@ struct EmulatorState
                                                 // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
                                                 // the #1FFD-family decode and by reset. Composes with the host speed
                                                 // multiplier at the frame boundary - see Z80::Z80FrameCycle()
-    uint8_t hw_turbo_shift;                     // Model-neutral HARDWARE turbo: log2 of the guest-visible CPU
-                                                // multiplier (0 = base clock, 1 = 2x e.g. Scorpion 7 MHz, 2 = 4x e.g.
-                                                // 14 MHz clones). Maintained by the model's port decoder from its own
-                                                // latch (Scorpion: scorpion_turbo; ATM/Profi: their turbo bits). The
-                                                // Z80 composes it with the host speed control; audio/video descale it
+    uint8_t hw_turbo_ratio;                     // Model-neutral HARDWARE turbo: the guest-visible CPU clock multiplier,
+                                                // 1..8 (1 = base clock, 2 = e.g. Scorpion / ATM 7 MHz, 4 = 14 MHz clones,
+                                                // 6 = Sprinter 21 MHz). Maintained by the model's port decoder from its
+                                                // own latch (Scorpion: scorpion_turbo; ATM: its turbo bits). The Z80
+                                                // multiplies it with the host speed control; audio/video descale it
 
-    uint8_t hw_turbo_shift_applied;             // hw_turbo_shift as composed into current_z80_frequency_multiplier at
-                                                // the last frame boundary. The decoder may flip hw_turbo_shift mid-frame;
-                                                // the frame that is executing still runs with the APPLIED value, so the
-                                                // audio helpers below must use this one (a mid-frame flip otherwise made
+    uint8_t hw_turbo_ratio_applied;             // hw_turbo_ratio as composed into current_z80_frequency_multiplier at
+                                                // the last frame boundary (or by Z80::ApplyHardwareTurboNow). The
+                                                // decoder may change hw_turbo_ratio mid-frame; the frame that is
+                                                // executing still runs with the APPLIED value, so the audio helpers
+                                                // below must use this one (a mid-frame flip otherwise made
                                                 // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
-                                                // accumulator expects 882")
+                                                // accumulator expects 882"). Never 0: 1 is the base clock
 
-    /// Host speed-control multiplier alone (current = host << hw_turbo_shift_applied).
+    /// Host speed-control multiplier alone (current = host x hw_turbo_ratio_applied).
     /// Audio sample budgeting must use THIS: the host control makes frames
     /// run faster in wall-clock (excess audio is dropped knowingly), whereas
-    /// the Scorpion hardware turbo keeps the 20 ms frame and only doubles the
+    /// the Scorpion hardware turbo keeps the 20 ms frame and only multiplies the
     /// CPU T-states inside it - the AY/beeper/Covox clocks are unchanged
     /// (hardware-reference 13, profrom-nmi-gaps-and-findings.md 8.5)
     uint8_t HostSpeedMultiplier() const
     {
-        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift_applied);
+        if (hw_turbo_ratio_applied <= 1) [[likely]]
+            return current_z80_frequency_multiplier;
+        return static_cast<uint8_t>(current_z80_frequency_multiplier / hw_turbo_ratio_applied);
     }
 
     /// Descale a CPU T-state position into the audio time base: under a
@@ -1032,13 +1035,16 @@ struct EmulatorState
     /// descale Screen::GetCurrentTstate applies for the ULA
     uint32_t AudioTstate(uint32_t t) const
     {
-        return t >> hw_turbo_shift_applied;
+        if (hw_turbo_ratio_applied <= 1) [[likely]]
+            return t;
+        return t / hw_turbo_ratio_applied;
     }
 
     /// TTD time units per base (1x) T-state: the least common multiple of the
     /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
-    /// 2; ZX-Evo 4; ZX Next 8). One unit is a T-state at the model's top
-    /// clock. Set once from the model's port decoder (TtdClockUnits)
+    /// 2; ZX-Evo 4; a 1x / 6x machine such as the Sprinter 6; ZX Next 8). One unit is the
+    /// shortest T-state the model can run at. Set once from the model's port
+    /// decoder (TtdClockUnits)
     uint8_t ttd_clock_units;
 
     /// TTD time units per CPU T-state at the applied clock. The in-frame
@@ -1049,10 +1055,12 @@ struct EmulatorState
     uint32_t TtdUnitsPerTState() const
     {
         // Hot path (every journaled write): units is a multiple of every ratio
-        // the model selects, and ratios are powers of two, so the division is
-        // an exact shift
+        // the model selects, so the division is exact. Machines at the base
+        // clock (every machine without a turbo) never divide
         const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
-        const uint32_t perT = units >> hw_turbo_shift_applied;
+        if (hw_turbo_ratio_applied <= 1) [[likely]]
+            return units;
+        const uint32_t perT = units / hw_turbo_ratio_applied;
         return perT ? perT : 1;
     }
 

@@ -342,10 +342,14 @@ TEST(VideoFamily_Test, NullModeHasNoMapper)
     EXPECT_EQ(FamilyOf(M_ATMTL), VideoFamily::Atm);
     EXPECT_EQ(FamilyOf(M_PROFIHR), VideoFamily::Profi);
     EXPECT_EQ(FamilyOf(M_PMC), VideoFamily::Alco);
-    EXPECT_EQ(FamilyOf(M_TS16), VideoFamily::Zx) << "drawn as ZX until TSConf has its renderer, so described as ZX";
+    for (VideoModeEnum mode : {M_TSZX, M_TS16, M_TS256, M_TSTX})
+        EXPECT_EQ(FamilyOf(mode), VideoFamily::TsConf) << "ScreenTSConf draws every TS mode";
     VideoState s;
     s.mode = M_NUL;
     EXPECT_FALSE(VideoMapService::MapperFor(VideoFamily::None).Layout(s).mapped);
+    s.mode = M_TSTX;
+    EXPECT_FALSE(VideoMapService::MapperFor(VideoFamily::TsConf).Layout(s).mapped)
+        << "no TS-Conf mapper yet: not described as another family";
 }
 
 /// Design §11 test 6: a mode switch in the middle of a frame. The addresses for

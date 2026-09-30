@@ -414,8 +414,8 @@ TEST(TtdAtmPaging_Test, SeekRestoresCpuClockAcrossTurboChange)
     // Record at 14 MHz (ATM turbo: CPU x4 inside an unchanged 20 ms frame).
     state.current_z80_frequency_multiplier = 4;
     state.next_z80_frequency_multiplier = 4;
-    state.hw_turbo_shift = 2;
-    state.hw_turbo_shift_applied = 2;
+    state.hw_turbo_ratio = 4;
+    state.hw_turbo_ratio_applied = 4;
 
     ttd->OnFrameBoundary();
     ASSERT_GE(ttd->GetCheckpointCount(), 1u);
@@ -426,8 +426,8 @@ TEST(TtdAtmPaging_Test, SeekRestoresCpuClockAcrossTurboChange)
     // Drop back to 3.5 MHz, as a guest write to #FF77/#EFF7 would.
     state.current_z80_frequency_multiplier = 1;
     state.next_z80_frequency_multiplier = 1;
-    state.hw_turbo_shift = 0;
-    state.hw_turbo_shift_applied = 0;
+    state.hw_turbo_ratio = 1;
+    state.hw_turbo_ratio_applied = 1;
 
     ttd::TTDTimePoint target;
     target.frame = frame;
@@ -435,7 +435,7 @@ TEST(TtdAtmPaging_Test, SeekRestoresCpuClockAcrossTurboChange)
     ASSERT_TRUE(ttd->SeekTo(target));
 
     EXPECT_EQ(state.current_z80_frequency_multiplier, 4) << "CPU clock not restored by the seek";
-    EXPECT_EQ(state.hw_turbo_shift_applied, 2) << "hardware turbo shift not restored";
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 4) << "hardware turbo ratio not restored";
     EXPECT_EQ(state.AudioTstate(1000u), 250u)
         << "audio descale wrong after seek - AY/beeper would be mispitched";
     EXPECT_EQ(state.HostSpeedMultiplier(), 1)

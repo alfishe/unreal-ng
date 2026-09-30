@@ -1,5 +1,7 @@
 #include "emulatortesthelper.h"
 
+#include "emulator/config.h"
+
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -58,7 +60,8 @@ namespace
 // Static member initialization
 std::unordered_map<uint32_t, BreakpointCallback> EmulatorTestHelper::_breakpointCallbacks;
 
-Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelName, LoggerLevel logLevel)
+Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelName, LoggerLevel logLevel,
+                                                     RamPowerOn ramPowerOn)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
 
@@ -66,11 +69,12 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     std::shared_ptr<Emulator> emulator;
     if (!modelName.empty())
     {
-        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel);
+        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel, nullptr,
+                                                    Config::RamPowerOnOverride(ramPowerOn));
     }
     else
     {
-        emulator = manager->CreateEmulator("test-emulator", logLevel);
+        emulator = manager->CreateEmulator("test-emulator", logLevel, Config::RamPowerOnOverride(ramPowerOn));
     }
 
     if (!emulator)

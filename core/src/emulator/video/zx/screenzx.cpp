@@ -33,6 +33,7 @@ void ScreenZX::SelectRangeRenderer()
     switch (FamilyOf(_mode))
     {
         case VideoFamily::None:
+        case VideoFamily::TsConf:  // ScreenTSConf overrides DrawRange
             _rangeRenderer = &ScreenZX::DrawRangeNull;
             break;
         case VideoFamily::Atm:

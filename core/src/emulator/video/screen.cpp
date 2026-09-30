@@ -931,6 +931,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ATMTL:   // ATM3 Linear Text
         case M_PROFI:   // Profi standard / hi-res
         case M_PROFIHR:
+        case M_TS16:    // TS-Conf (ScreenTSConf)
+        case M_TS256:
+        case M_TSTX:
+        case M_TSZX:
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -1238,6 +1242,14 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
                     static_cast<uint16_t>(ScreenAtm::SCREEN_END_T + ScreenAtm::SCREEN_START_T),
                     static_cast<uint8_t>(mode == M_ATM16 ? 2 : 4)};
 
+        // TS-Conf: the whole 360-dot visible line is the window (180 T at 4 px/T);
+        // ScreenTSConf draws the graphics window and the border inside it
+        case M_TS16:
+        case M_TS256:
+        case M_TSTX:
+        case M_TSZX:
+            return {0, 180, 180, 4};
+
         // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
         case M_PROFIHR:
         {
@@ -1449,6 +1461,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_PROFIHR:
             result = "PROFIHR";
+            break;
+        case M_TSZX:
+            result = "TSZX";
             break;
         default:
             result = "Unknown";
@@ -1980,6 +1995,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "Border only",          // M_BRD
         "Scorpion 256k",        // M_SCORPION
         "Profi 512x240",        // M_PROFIHR
+        "TSConf ZX",            // M_TSZX
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 

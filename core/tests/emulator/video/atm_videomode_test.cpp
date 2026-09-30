@@ -177,8 +177,9 @@ TEST_F(ATMVideoMode_Test, DrawCallbackArrayHasCorrectSize)
     // Tracks VideoModeEnum growth. Note this does NOT verify the callback
     // array despite the name - the real guard is the static_assert on
     // videoModeName in screen.cpp, which fails the build on a mismatch.
-    // 20 since the Scorpion merge appended M_SCORPION; 21 with the Profi hi-res mode.
-    EXPECT_EQ(M_MAX, 21);  // Update if VideoModeEnum changes
+    // 20 since the Scorpion merge appended M_SCORPION; 21 with the Profi hi-res mode;
+    // 22 with TS-Conf's ZX mode (M_TSZX).
+    EXPECT_EQ(M_MAX, 22);  // Update if VideoModeEnum changes
 }
 
 /// endregion </Callback Array Tests>
