@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/video/tsconf/tsconfvideomapper.h"
 #include "emulator/video/zx/screenzx.h"
 
 struct TsConfState;
@@ -50,6 +51,8 @@ public:
     /// The TS mode with its geometry ("TS16 320x200"), its pixel format and
     /// the RAM pages it reads (V_PAGE based)
     ScreenState DescribeScreenState() const override;
+    /// The TS state the video debug mapper reads (TsConfVideoMapper)
+    const void* VideoFamilyView() const override;
     void SetVideoMode(VideoModeEnum mode) override;
     void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
     void SetBorderColor(uint8_t color) override;
@@ -81,6 +84,7 @@ private:
 
     const TsConfState* _ts = nullptr;
     const TsConfEngine* _engine = nullptr;
+    mutable TsConfVideoView _view;
     uint32_t _palette[256] = {};      ///< RGBA of each CRAM entry
     uint16_t _paletteCram[256] = {};  ///< the CRAM words _palette was built from
     bool _paletteValid = false;

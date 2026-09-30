@@ -8,6 +8,7 @@
 #include "emulator/video/atm/atmvideomapper.h"
 #include "emulator/video/profi/profivideomapper.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/tsconf/tsconfvideomapper.h"
 #include "emulator/video/zx/zxvideomapper.h"
 
 namespace videomap
@@ -50,6 +51,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
     static const AlcoVideoMapper alco;
     static const AtmVideoMapper atm;
     static const ProfiVideoMapper profi;
+    static const TsConfVideoMapper tsconf;
     static const NullVideoMapper none;
     switch (family)
     {
@@ -57,6 +59,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
         case VideoFamily::Alco:  return alco;
         case VideoFamily::Atm:   return atm;
         case VideoFamily::Profi: return profi;
+        case VideoFamily::TsConf: return tsconf;
         default:                 return none;
     }
 }
@@ -100,6 +103,7 @@ VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
         s.ramMask = _context->pMemory->GetRamMask();
     if (screen)
     {
+        s.familyView = screen->VideoFamilyView();
         s.flashPhase = screen->_vid.flash != 0;
         if (s.mode < M_MAX)
         {

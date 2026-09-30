@@ -134,6 +134,18 @@ ScreenState ScreenTSConf::DescribeScreenState() const
     return s;
 }
 
+const void* ScreenTSConf::VideoFamilyView() const
+{
+    const TsConfState* ts = const_cast<ScreenTSConf*>(this)->State();
+    if (!ts || !_engine || !_context)
+        return nullptr;
+    _view.ts = ts;
+    _view.engine = _engine;
+    _view.state = &_context->emulatorState;
+    _view.ram = _context->pMemory ? _context->pMemory->RAMBase() : nullptr;
+    return &_view;
+}
+
 void ScreenTSConf::SetVideoMode(VideoModeEnum mode)
 {
     // The raster state and framebuffer come from the descriptor; the ZX
