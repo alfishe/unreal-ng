@@ -29,6 +29,17 @@ tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
 | `error` | The program did not finish (timeout, build failure, a crash); see `out/<emulator>/<machine>.log` |
 | `skipped` | The emulator is not installed, or has no such machine, or its runner does not do that machine yet, or the program found it cannot measure on this machine |
 
+## The compatibility matrix
+
+For the contention probe, `run-all.sh` also writes `out/matrix.html` (by [`matrix.py`](matrix.py)): a summary
+grid of every emulator and machine and, per machine, every check of the probe by emulator. A cell shows whether
+the check came out right, the whole row shifted by some ticks, or how many values differ; hovering it shows the
+measured and expected rows. `matrix.py --md <file>` also writes the summary grid as Markdown, and `matrix.py
+--out-dir <dir>` builds the matrix from the results of an earlier run.
+
+Reports kept in the repository, with each difference explained: [reports/](reports/) (latest:
+[2026-09-30](reports/2026-09-30-ctprobe-matrix.md), all eleven emulators on the same probe build).
+
 ## Emulators
 
 | Folder | Emulator | How it runs | How it is found |

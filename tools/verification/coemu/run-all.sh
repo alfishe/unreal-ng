@@ -43,3 +43,8 @@ done
 } > "$OUTROOT/summary.md"
 echo
 cat "$OUTROOT/summary.md"
+
+# The contention probe's check-by-check matrix (matrix.py): $OUTROOT/matrix.html
+if [ -z "${PROGRAM:-}" ] || [ "$(basename "$PROGRAM")" = ctprobe ]; then
+	python3 "$HERE/matrix.py" --out-dir "$OUTROOT" || echo "coemu: matrix.py failed" >&2
+fi
