@@ -19,8 +19,24 @@ namespace
 
     int64_t ToUnixSeconds(std::filesystem::file_time_type time)
     {
+#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L && (!defined(_MSC_VER) || _MSC_VER >= 1930) // VS2019 claims the macro but lacks to_sys/from_sys
         const auto system = std::chrono::file_clock::to_sys(time);
         return std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
+#elif defined(_MSC_VER)
+        // Older MSVC STL lacks file_clock::to_sys; its file clock epoch is 1601-01-01 (FILETIME)
+        constexpr int64_t kFileTimeToUnixSeconds = 11644473600LL;
+        return std::chrono::duration_cast<std::chrono::seconds>(time.time_since_epoch()).count() -
+               kFileTimeToUnixSeconds;
+#else
+        // Older libstdc++/libc++: derive the clock offset once from the two clocks' "now"
+        static const auto offset =
+            std::chrono::system_clock::now().time_since_epoch() -
+            std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                std::filesystem::file_time_type::clock::now().time_since_epoch());
+        const auto sinceUnix =
+            std::chrono::duration_cast<std::chrono::system_clock::duration>(time.time_since_epoch()) + offset;
+        return std::chrono::duration_cast<std::chrono::seconds>(sinceUnix).count();
+#endif
     }
 
     void Mix(uint64_t& hash, const void* data, size_t size)
