@@ -103,10 +103,10 @@ start on an even T-state.
 | +2A, +3 (gate array) | pages 4-7 in any slot, 1,0,7,6,5,4,3,2, memory cycles only | no | - |
 | Pentagon 128 / 512 / 1024 | no | no | - |
 | **Scorpion ZS-256** | **no** | **no** | **Even M1** on fetches from RAM (0 or 1 T), normal mode |
-| Scorpion Turbo+ at 7 MHz | a different kind: every RAM access waits for a free slot, more often during the paper | no | - |
+| Scorpion Turbo+ at 7 MHz | a different kind: every RAM access, read or write, waits for the next CPU slot (every 4 T in the paper, every 2 T in the border); an opcode fetch 1 T more | no | every I/O cycle 2 T |
 | Profi | no | no | - |
 | ATM Turbo 2+ | no | no | `IN (#FE)` waits for the keyboard controller |
-| ZX-Evo BaseConf | no in the Pentagon raster; a 48K-style pattern in its 48K / 128K rasters at 3.5 MHz | same condition | variable waits at 14 MHz |
+| ZX-Evo BaseConf | no in the Pentagon raster; a 48K-style pattern in its 48K / 128K rasters at 3.5 MHz | same condition | 14 MHz: a RAM read that misses the DRAM's two one-word caches waits 2 or 3 T; external I/O 3 T |
 | ZX Spectrum Next | only in its 48K / 128K / +3 timing modes at 3.5 MHz | 48K / 128K modes | 1 wait per memory read at 28 MHz |
 
 The research document gives the sources, the confidence of each row and more machines (Timex, Kay, Quorum,
@@ -120,9 +120,11 @@ Sprinter, Leningrad-1, Karabas-Pro).
 | Even M1 flag | `config.even_M1`, set from the memory model in `core/src/emulator/config.cpp` (Scorpion and ProfScorp) | a property of the board, not an ini choice |
 | Even M1 wait | `Z80Step` in `core/src/emulator/cpu/z80.cpp`, before an instruction's first M1 | if the fetch is from RAM (`PC >= #4000`, or RAM paged at `#0000`), the machine is not in turbo, and the current T-state is odd at the current clock rate: add one T |
 | Tests | `EvenM1_Test` in `core/tests/emulator/cpu/z80_test.cpp`; `ContentionNegative_Test.ClonesNeverWait` in `core/tests/emulator/video/contention_test.cpp` | RAM fetch on an odd T waits, ROM never, RAM at `#0000` waits, turbo does not, other machines never |
+| Turbo waits | host bus overlays (`core/src/emulator/memory/hostbusoverlay.h`), installed by the port decoder only while the machine runs in turbo, so every other machine and speed pays nothing: `EvoTurboOverlay` (`core/src/emulator/memory/atm/`, ZX-Evo at 14 MHz: the code and data cache words, the parity rule) and `ScorpionTurboOverlay` (`core/src/emulator/memory/scorpion/`, Scorpion Turbo+ at 7 MHz, the SC15.1 slot rule). The overlays tell an opcode fetch from an operand read (`onReadM1`) and see the interrupt acknowledge; the decoders add the I/O waits. Both follow the `contention` feature | the rules and their derivation: `docs/inprogress/2026-09-29-machine-waits/` |
+| Turbo wait tests | `EvoTurboOverlay_Test`, `ScorpionTurboOverlay_Test` in `core/tests/emulator/memory/` | the worked examples of the research, simulated on the RTL (ZX-Evo) and on the logic chip's equations (Scorpion) |
 | Hardware probe | `tools/verification/contention/ctprobe` | times code at every T-state and compares with the expected tables; on a Scorpion it detects Even M1 and measures in 2 T-state steps (below) |
 
-Not modeled: the Scorpion's turbo slot waits, the ZX-Evo's 14 MHz waits and its optional Sinclair rasters.
+Not modeled: the ZX-Evo's optional Sinclair rasters, the Scorpion's drop to 3.5 MHz while /INT is active in turbo, and the Scorpion's other turbo firmware (SC15.3).
 
 ### Consequences for timing tools
 

@@ -3,7 +3,7 @@
 **Status (2026-09-29):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
 probe suite, the co-emulation harness (eight runners incl. SkoolKit) and the probe's Even M1 mode, all on
 master (see Done). **Where we stopped:** the six follow-ups in "Remaining": items 1, 2, 3 and 6 done,
-item 4 (not modeled yet) next. PLAN.md row #61.
+item 4 (not modeled yet) done on branch `not-modeled-waits`, item 5 (harness) next. PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such tests: [test-writing-guide.md](test-writing-guide.md).
 
@@ -82,8 +82,12 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
    lists what only hardware settles (P-05 on the 128K, Even M1 per Scorpion board, the Even M1 start offset,
    snow on the 128K / +2 and on the +2A / +3 / clones), what to run with ctprobe and snowtest, what to send
    back. Not covered by a program: the Scorpion's turbo waits. Waiting for results from real machines.
-4. **Not modeled yet**: the Scorpion's turbo slot waits, the ZX-Evo's 14 MHz waits and its optional 48K / 128K
-   raster contention, TS-Conf cache misses.
+4. ~~**Not modeled yet**~~ - done 2026-09-29 on branch `not-modeled-waits`: the ZX-Evo's 14 MHz waits (its
+   DRAM's code and data cache words, from the RTL and a Verilator run) and the Scorpion Turbo+ slot waits (the
+   SC15.1 firmware, decoded from its fuse map) as host bus overlays installed only in turbo
+   ([2026-09-29-machine-waits](../2026-09-29-machine-waits/TODO.md)). Still open there: the ZX-Evo's 48K /
+   128K raster contention (the rasters are not modeled, PLAN #55), the Scorpion's 3.5 MHz while /INT is
+   active, SC15.3. TS-Conf cache misses belong to the TSConf machine (PLAN #41). Next: follow-up 5.
 5. **Harness follow-ups**: why MAME's `scorpio` crashed earlier (it now runs), further runners (Kozynax,
    ZX-M8XXX, spec_chum), fusetest (needs pasmo), X-04.
 6. ~~**This TODO brought up to date**~~ - done 2026-09-29.

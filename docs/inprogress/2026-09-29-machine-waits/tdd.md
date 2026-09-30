@@ -41,17 +41,22 @@ From [research-zxevo.md](research-zxevo.md) section A (clocks are 14 MHz T-state
 | any access to a ROM window | no wait; both words become invalid |
 | I/O cycle, interrupt acknowledge | both words become invalid; an external port (low byte #FD with A15 = 1, or #1F / #3F / #5F / #7F in shadow mode) takes 3 T more |
 
-- Installed by the `ATM3` port decoder (`updateTurboMode`) while the CPU runs at 14 MHz (`hw_turbo_shift` 2)
-  and the `contention` feature is on; removed otherwise. The decoder invalidates the cache and adds the external
-  port's 3 T on its own I/O path.
+- Installed by the `ATM3` port decoder (`updateTurboMode` -> `SyncTurboWaits`) while the clock select says
+  14 MHz (`hw_turbo_shift` 2), removed otherwise; it starts with an empty cache. The waits apply while the CPU
+  runs at 14 MHz (`hw_turbo_shift_applied` 2: unreal-ng applies the ATM3's clock select at the next frame, the
+  hardware at the next fetch's refresh, research C.1) and the `contention` feature is on. The cache words are
+  kept up to date either way, so switching the feature mid-run needs nothing more. The decoder invalidates the
+  cache and adds the external port's 3 T on its own I/O path (before the IDE board's ports, which are I/O
+  cycles too).
 - RAM or ROM: the window's mapping (the ATM pager can put ROM in any window), from `Memory`.
 - The frame origin: the rule's parity holds for a frame origin on the 3.5 MHz T grid; unreal-ng's clock at 14 MHz
   is the 3.5 MHz frame scaled by 4 (research A.3).
 - Not modeled (research A.6): the TR-DOS ROM entry stall (derived, not simulated) and the AVR /WAIT ports (their
   length depends on the AVR firmware).
 - TTD: the two cache words and their valid flags (6 bytes) are machine state that changes timing. They go into a
-  new TTD peripheral (`EvoTurboCache`), captured and restored with the other ATM state; a recording without it
-  starts with an empty cache.
+  new TTD peripheral (`EvoTurboCache` = 19), captured and restored with the other ATM state; a recording without
+  it starts with an empty cache. The chipset state (the clock) is restored first, as a field copy that does not
+  run the decoder, so the blob's restore also installs or removes the overlay (`SyncTurboWaits`).
 
 ## 4. Scorpion Turbo+ at 7 MHz (`ScorpionTurboOverlay`)
 
@@ -67,7 +72,9 @@ From [research-scorpion-turbo.md](research-scorpion-turbo.md), the SC15.1 firmwa
 - The slot phase comes from the pixel counter: the fetch window starts 14336 T (3.5 MHz) after INT, the same
   anchor as unreal-ng's floating bus, and the picture's slot phase is `(u + 3) mod 4` in 7 MHz edges `u` (research
   section 5). The picture area is the 128 T fetch window of each of the 192 lines; everything else is border.
-- Installed by the Scorpion port decoder while turbo is on and the `contention` feature is on.
+- Installed by the Scorpion port decoder (`SyncTurboWaits`: the turbo strobe, reset, and the TTD restore of the
+  `ScorpionProfROM` blob) while turbo is on; the waits apply with the `contention` feature on. The decoder adds
+  the I/O cycle's 2 T when the cycle starts in turbo (the strobe that turns turbo off still pays them).
 - Even M1 is already off in turbo (`Z80Step` tests `hw_turbo_shift`); the turbo M1 wait replaces it, as in the
   equations.
 - Not modeled yet: the drop to 3.5 MHz while /INT is active (the length of /INT was not traced); SC15.3's rule
@@ -77,8 +84,8 @@ From [research-scorpion-turbo.md](research-scorpion-turbo.md), the SC15.1 firmwa
 
 | Test | What |
 |:--|:--|
-| `EvoTurboWaits_Test` | the research's worked examples at 14 MHz: a NOP stream in RAM 6, 4, 6, 4; a NOP at one address 4; `LD A,(HL)` with misses 12 / 10; ROM code without waits; a write invalidates; an OUT invalidates; `OUT (C),A` to #FFFD 18 T; nothing at 3.5 / 7 MHz or with the feature off |
-| `ScorpionTurboWaits_Test` | NOP stream 8 T in the picture, 6 in the border; `LD A,(HL)` / `LD (HL),A` 12 / 10; ROM without waits; nothing at 3.5 MHz, on other machines, with the feature off |
+| `EvoTurboOverlay_Test` | the research's worked examples at 14 MHz: a NOP stream in RAM 6, 4, 6, 4; a NOP at one address 4; `LD A,(HL)` with misses 12 / 10; ROM code without waits; a write invalidates; an OUT invalidates; `OUT (C),A` to #FFFD 18 T; nothing at 3.5 / 7 MHz or with the feature off |
+| `ScorpionTurboOverlay_Test` | NOP stream 8 T in the picture, 6 in the border; `LD A,(HL)` / `LD (HL),A` 12 / 10; ROM without waits; nothing at 3.5 MHz, on other machines, with the feature off |
 | fingerprints | every model's timing fingerprint unchanged (none of them runs in turbo) |
-| TTD | a recording at 14 MHz on the ZX-Evo replays bit-exactly after a seek |
+| TTD | the blob's round trip and the overlay's sync on restore (`EvoTurboOverlay_Test`); the TTD CI gate's `ATM3/idle` case records at 14 MHz (the BIOS's clock) and seeks |
 | A/B | `BM_HostFrame_*` of the machines without the overlays (they never install one) |

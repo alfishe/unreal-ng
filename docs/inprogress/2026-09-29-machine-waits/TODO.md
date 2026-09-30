@@ -8,8 +8,13 @@
 | Research: ZX-Evo BaseConf waits (14 MHz, 48K / 128K rasters) from the RTL | done 2026-09-29: [research-zxevo.md](research-zxevo.md) (RTL + Verilator run of the released modules) |
 | Research: Scorpion turbo waits from the SC15.1 equations | done 2026-09-29: [research-scorpion-turbo.md](research-scorpion-turbo.md) (JED decoded, schematic traced, simulated) |
 | Design | done 2026-09-29: [tdd.md](tdd.md) |
-| Overlay opcode-fetch entry, interrupt acknowledge | open |
-| ZX-Evo 14 MHz waits (`EvoTurboOverlay`), TTD cache state | open |
-| Scorpion turbo waits (`ScorpionTurboOverlay`) | open |
-| Tests, A/B | open |
+| Overlay opcode-fetch entry, interrupt acknowledge | done 2026-09-29: `HostBusOverlay::onReadM1` / `onInterruptAcknowledge`, `Memory::MemoryReadOverlayM1` |
+| ZX-Evo 14 MHz waits (`EvoTurboOverlay`), TTD cache state | done 2026-09-29: TTD peripheral `EvoTurboCache` = 19 |
+| Scorpion turbo waits (`ScorpionTurboOverlay`) | done 2026-09-29: SC15.1 |
+| Tests | done 2026-09-29: `EvoTurboOverlay_Test` (11), `ScorpionTurboOverlay_Test` (6); full suite green |
+| Changed baselines | ATM3 only (its BIOS runs at 14 MHz): the `CoreGolden` row, the TTD CI gate's four exact `ATM3/idle` rows; `ScorpionTurbo_Test.TurboStrobeAppliesMidFrame` (the turbo-off `IN` pays its 2 T); `Core_Test`'s plain-interface list without ATM3 |
+| A/B performance | pending a quiet machine (load 70-90 today). Machines without the overlays run the same code except one pointer test per accepted interrupt; ATM3 at 14 MHz and a Scorpion in turbo run on the overlay interfaces by design |
+| Docs | done 2026-09-29: [contention-by-machine.md](../2026-09-28-m1-contention/contention-by-machine.md) §3, §6.5, §9.2, §12 corrected by the research; [memory-contention.md](../../emulator/design/core/memory-contention.md) |
 | ZX-Evo 48K / 128K rasters and their contention | deferred: the rasters are not modeled (PLAN #55); rule ready in the research |
+| ATM3 clock select applied at the next frame | open, not in scope: the hardware switches at the next opcode fetch's refresh (research-zxevo.md C.1); the waits follow the applied clock |
+| Scorpion: 3.5 MHz while /INT is active; SC15.3 as an option | open (tdd.md section 4) |

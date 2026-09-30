@@ -55,13 +55,13 @@ rather than of the original board; **low** = forum statements or secondary sourc
 | Leningrad-1 | disputed: ru.wikipedia says "the same CPU slowdown at #4000-#8000"; ZXMAK2 models Even M1 on all fetches instead | unknown | possibly Even M1 (emulator only) | discrete logic, details not found | low | ru.wikipedia "Клоны ZX Spectrum"; ZXMAK2 `Clone/UlaLeningrad.cs:19-29` |
 | Pentagon 128 / 512 / 1024SL | **no** | **no** | none at 3.5 MHz; 1024SL 7 MHz turbo: no wait documented | fixed interleaved slots (14 MHz master clock, CPU at 14/4) | high for "no contention", low for the slot details | Pentagon FAQ (zxspectrum.hal.varese.it/static/documenti/pentagon.txt): "128k of NOT-CONTENDED memory (no slow areas)" |
 | **Scorpion ZS-256** (yellow, green, ProfROM) | **no** | **no** | **Even M1 on opcode fetches from RAM** (0 or 1 T), not ROM, not data, not I/O | fixed slots on the H0/H1 phase counter (7 MHz); the CPU gets RAM in the RAS phase | medium-high (see §6) | EPLD equations SC15.1 (zx-pk.ru thread 940, post #40); zx-pk.ru thread 13345 post #86 |
-| Scorpion Turbo+ (7 MHz) | **yes, of a different kind:** in turbo every RAM access waits for a free slot, more often in the paper area | no | turbo on by `IN` from #7FFD, off by `IN` from #1FFD or reset | as above; in turbo the CPU slots are halved during the paper | medium | same EPLD equations; MAME `scorpion.cpp:635-640` |
+| Scorpion Turbo+ (7 MHz) | **yes, of a different kind:** in turbo every RAM access (any page, reads and writes alike) waits for the next CPU slot: every 4 T in the paper, every 2 T in the border; an opcode fetch waits 1 more | no, but every I/O cycle takes +2 T | turbo on by `IN` from #7FFD, off by `IN` from #1FFD or reset; the CPU drops to 3.5 MHz while /INT is active | as above; in turbo the CPU slots are halved during the paper | medium-high (SC15.1 fuse map decoded, simulated) | same EPLD equations; [research-scorpion-turbo.md](../2026-09-29-machine-waits/research-scorpion-turbo.md); MAME `scorpion.cpp:635-640` |
 | Scorpion GMX | no (by descent from Turbo+) | no | turbo via #7EFD bit 7 (MAME); waits not documented | as Turbo+ presumably | low | MAME `scorpion.cpp:786-789` |
 | Profi (1024) | no (original) | no | none known at 3.5 MHz; turbo in later revisions | discrete slot scheme | medium: consensus, no original schematic read | [technical-design.md](../2026-09-21-profi/technical-design.md); ZXMAK2 `Profi/UlaProfi3XX.cs` |
 | Karabas-Pro (Profi re-creation, FPGA) | only in its optional "classic" screen mode at 3.5 MHz (#4000-#7FFF and even ports, clock gated) | same condition | 14 MHz: ~400 ns WAIT on every MREQ cycle; turbo drops to 3.5 MHz after FDC access | video uses the second RAM slot of each 7 MHz cycle | high (RTL) | `karabas-pro/firmware/src/fpga/profi/rtl/karabas_pro.vhd:1200-1232`, `memory.vhd:196-210, 273-284` |
 | ATM Turbo 2+ (v7.10) | no | no | 7 MHz turbo (#77 D3); keyboard `IN (#FE)` holds WAIT until the 8031 answers | discrete interleave, not documented in detail | medium | `zx-evo-docs/ATM/atm2_arch.pdf` (port #FE section) |
 | ATM Turbo 1 (4.50) | no known | no known | 7 MHz turbo; nothing on waits found | not documented | low | none found |
-| ZX-Evo BaseConf (ATM3) | no in the Pentagon raster (default); **emulated** 48K-style contention in the 48K and 128K rasters, only at 3.5 MHz | same condition (even ports) | 14 MHz: variable waits per access (M1 +3..+6, read +2..+5 fclk), external I/O at 7 MHz; DOS switch stall; WAIT ports #BFF7 / #xxEF (AVR) | DRAM arbiter, 8-cycle blocks, video takes 1/8 or 1/4, CPU the rest | high (RTL) | `pentevo/fpga/base_trdemu/trunk/z80/zclock.v:265-282`, `video/video_sync_h.v:250-283`, `z80/zmem.v:254-305`, `dram/arbiter.v:55-86` |
+| ZX-Evo BaseConf (ATM3) | no in the Pentagon raster (default); **emulated** 48K-style contention in the 48K and 128K rasters, only at 3.5 MHz | same condition (even ports) | 14 MHz: a RAM read or M1 that misses two one-word caches (code, data) waits 2 or 3 T by the clock's parity, hits and writes never wait; external I/O (AY, VG93 in shadow) +3 T ([research-zxevo.md](../2026-09-29-machine-waits/research-zxevo.md)); DOS switch stall; WAIT ports #BFF7 / #xxEF (AVR) | DRAM arbiter, 8-cycle blocks, video takes 1/8 or 1/4, CPU the rest | high (RTL) | `pentevo/fpga/base_trdemu/trunk/z80/zclock.v:265-282`, `video/video_sync_h.v:250-283`, `z80/zmem.v:254-305`, `dram/arbiter.v:55-86` |
 | ZX-Evo TS-Conf | no | no | 14 MHz: waits on cache misses; CPU stalls when video + DMA + sprites use the whole DRAM bandwidth; CPU priority lowered for DMA | same arbiter with TS / TM / DMA clients | high (RTL) | `zx-evo-tsconf/pentevo/fpga/current/z80/zmem.v:132-208`, `dram/arbiter.v:40-50, 170-190` |
 | Kay-1024 (NEMO) | no at 3.5 MHz ("WAIT-free NORMAL mode") | no | turbo: IORQ stretched; effective RAM clock 6.3-7.0 MHz (arbitration losses); Kay-256 had waits at 3.5 MHz | discrete arbitration | medium (designer article) | zxpress.ru/article.php?id=15217 |
 | Quorum 128/1024 | no known | no known | nothing found | not documented | low | schematics exist: github.com/UncleRus/quorum-reborn |
@@ -227,10 +227,15 @@ in RAM.
   ([test-programs.md](test-programs.md) §3.7).
 - **Waits in turbo.** The CPU clock becomes 7 MHz (`CLK_CPU = CLK_7MHZ & TRB.Q # RAS_.Q & !TRB.Q`). RAM
   reads and writes now wait unless `H0 = 0` and `H1M = 0`, where `H1M = BORDER_ & H1` in turbo. During the
-  border the CPU gets twice the slots it gets during the paper. Writes go through a posted-write latch
-  (DD38 ИР22), so most of the cost is on reads and fetches. So **the turbo Scorpion is screen-contended in its
-  own way**: a pattern tied to the paper area, not the Sinclair one. Confidence: medium (our analysis of the
-  equations; no timing measurement found).
+  border the CPU gets twice the slots it gets during the paper. DD38 (ИР22) is a read latch between the DRAM
+  and the CPU, not a posted-write latch: **writes wait exactly like reads**. So **the turbo Scorpion is
+  screen-contended in its own way**: a pattern tied to the paper area, not the Sinclair one.
+- **The rule** (SC15.1 firmware, [research-scorpion-turbo.md](../2026-09-29-machine-waits/research-scorpion-turbo.md) §4): a RAM read
+  or write waits 0-3 T in the paper and 0-1 in the border, an opcode fetch from RAM 1-4 and 1-2, every I/O
+  cycle 2, ROM never. A RAM NOP stream runs at 8 T per NOP in the paper (3.5 MHz speed) and 6 in the border.
+  The other original firmware, SC15.3, has the same slots without the extra fetch wait, +1 per I/O and no Even
+  M1. Both drop the CPU to 3.5 MHz while /INT is active. Confidence: medium-high (fuse maps decoded and
+  simulated; no timing measurement found). unreal-ng models SC15.1 since 2026-09-29 (`ScorpionTurboOverlay`).
 - Not to be confused with the "TURBO" modification in Oberon #3 (1997, DR.DEATH), a cut on DD4 pin 15 that
   makes each line 228 T. It changes the frame, not the clock.
 
@@ -290,16 +295,19 @@ Read from the current released RTL (`pentevo/fpga/base_trdemu/trunk`):
   of them, spread out so the CPU gets a cycle as soon as possible. BaseConf's modes need 1/8 (ZX modes) or 1/4
   (the others) of the bandwidth (`video/video_modedecode.v:146-149`). At 3.5 and 7 MHz the CPU stalls only
   when no cycle is left in the block (`zmem.v:305`), which these bandwidths never cause in practice.
-- **Emulated Sinclair contention** (`z80/zclock.v:265-282`): in the 48K and 128K rasters (chosen in the AVR
-  setup) and **only at 3.5 MHz**, the clock is stalled with the 48K pattern
+- **Emulated Sinclair contention** (`z80/zclock.v:265-282`): in the 48K and 128K rasters (chosen with Scroll
+  Lock, kept in the AVR's NVRAM) and **only at 3.5 MHz**, the clock is stalled with the 48K pattern
   (`video/video_sync_h.v:250-283`: contended in 6 of every 8 T). The contended addresses are #4000-#7FFF, plus
   #C000-#FFFF with an odd page in the 128K raster. Even ports are contended too. The comment says "only 48k by
   now, TODO 128k pages and +2a/+3", and the +2A/+3 pattern is marked as probably incorrect. In the default
   Pentagon raster there is no contention.
-- **14 MHz**: variable waits per access, from the table in `zmem.v:254-275`. An M1 waits 3-6 fclk (28 MHz)
-  and a read 2-5 fclk, depending on the DRAM phase; writes do not wait. External I/O drops to 7 MHz
-  (`zclock.v` header: "14MHz rulez: 1. do variable stalls for memory access. 2. do fallback on 7mhz for
-  external IO accesses. 3. clock switch 14-7-3.5 only at RFSH").
+- **14 MHz** ([research-zxevo.md](../2026-09-29-machine-waits/research-zxevo.md) A, from the RTL and a Verilator run of its
+  modules; the in-source table in `zmem.v:254-275` does not match the logic): the DRAM controller keeps the
+  last word read by an opcode fetch and by a data read. A RAM read or M1 of either word takes no wait; a miss
+  waits 2 or 3 T (14 MHz), by the parity of the clock the access starts on. Writes never wait and drop the
+  matching word; any ROM access and any I/O cycle drop both. External I/O (AY `#xxFD` with A15 = 1, the VG93
+  ports in shadow mode) takes 3 T more, not a drop to 7 MHz. The video never adds a wait at these
+  bandwidths. unreal-ng models this since 2026-09-29 (`EvoTurboOverlay`).
 - **Other stalls**: a short stall when the DOS ROM switches in or out; WAIT ports #BFF7 / #BEF7 (Gluk
   clock) and #xxEF (RS-232), held until the AVR services them (`z80/zwait.v:57-79`).
 
@@ -350,10 +358,10 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 | 128K, +2 | `ula128` | - | matches |
 | +2A, +3 | `gatearray`, MREQ only, 129 T window | - | matches |
 | Pentagon (128 / 512) | `none` | - | matches |
-| **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode (since 2026-09-29) | matches the SC15.1 equations; turbo slot waits not modeled |
+| **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode; SC15.1 turbo slot waits (`ScorpionTurboOverlay`), both since 2026-09-29 | matches the SC15.1 equations; the 3.5 MHz drop while /INT is active is not modeled |
 | Profi | `none` | - | matches the original Profi. Karabas-Pro's "classic" mode is not modeled, and does not need to be |
 | ATM710 | `none` | turbo modeled as a clock rate only | matches at 3.5 / 7 MHz |
-| ATM3 (ZX-Evo BaseConf) | `none` | 14 MHz waits not modeled; the optional 48K / 128K raster contention not modeled | matches the default Pentagon raster |
+| ATM3 (ZX-Evo BaseConf) | `none` | 14 MHz cache-miss waits and external I/O (`EvoTurboOverlay`, since 2026-09-29); the optional 48K / 128K raster contention not modeled (the rasters are not) | matches the default Pentagon raster |
 | TS-Conf (`data/configs/ts-conf`) | `none` | `tsconf.h:245` has a `cache_miss` field; the 14 MHz wait is not applied | matches at 3.5 / 7 MHz |
 
 **The Even M1 path in detail** (implemented 2026-09-29; before that the Scorpion ran without it).
@@ -370,8 +378,8 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
   ```
 
   That is the circuit's rule: a fetch from RAM (RAM at `#0000` through `#1FFD` bit 0 included, ROM not)
-  that would start on an odd T-state waits one; normal mode only (turbo uses the slot waits of §6.5, not
-  modeled). The prefixed instructions' second M1 is already even, so one check covers `DD` / `FD` / `CB` /
+  that would start on an odd T-state waits one; normal mode only (turbo uses the slot waits of §6.5,
+  `ScorpionTurboOverlay` since 2026-09-29). The prefixed instructions' second M1 is already even, so one check covers `DD` / `FD` / `CB` /
   `ED`. Interrupt acknowledge does not wait. The `HALT` loop fetches from RAM when the `HALT` is in RAM, and
   each of its 4 T fetches stays even.
 - Unreal Speccy's `temp.evenM1_C0` (a mask on PC's high byte, `0xC0` = "PC >= #4000", the ZXMAK2 rule) was
