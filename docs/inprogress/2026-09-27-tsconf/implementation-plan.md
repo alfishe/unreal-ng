@@ -285,6 +285,11 @@ load ~100): frame render alone 1368 → 198 µs (TXT Setup), 1450 → 228 µs
 of the gap: TXT draws twice the pixels of a ZX frame, and the per-step line
 engine / interrupt hooks (~10% of the frame). Ideas left: SIMD in the 16C /
 256C gathers (tagged SIMD-CANDIDATE), fewer per-step hook calls.
+**BENCH-1 on a quiet machine** (2026-09-30, load 6-8, master `646c2649` with
+phase 8 and the arbiter, minimum of 7, two runs agreeing within 5 µs):
+Pentagon frame 1614 µs, TS-Conf frame TSU off 2063 µs = **1.28x** (target
+1.1x not met), TSU at its limit 2306 µs = 1.12x TSU off (target 2x met);
+frame render alone 188 µs (TXT Setup), 217 µs (TSU at its limit).
 
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
