@@ -95,7 +95,7 @@ enum class TTDInputKind : uint8_t
     // Network (network adapters TDD §6): what the host network answered, as
     // the machine's virtual network sees it. The bytes (received data) live in
     // the journal's payload store, referenced by payloadOffset / payloadLength
-    NetEvent,           ///< host network event for one virtual-network socket (net* fields + payload)
+    NetEvent,           ///< host network event for one virtual-network socket (netIndex -> TTDNetInput + payload)
     NetLinkReset        ///< every host connection of the virtual network is gone (seek / resume from the past)
 };
 
