@@ -23,8 +23,9 @@ class TsConfEngine;
 /// counter, BORDER outside it, CRAM colors through the no-VDAC PWM curve,
 /// flash. The line-latched registers and the row counter come from the
 /// engine's line table (TsConfEngine), so the picture follows the hardware's
-/// line-start latching; BORDER and CRAM act at the dot. Not yet: the TSU
-/// layers (phase 4), the VDAC curves.
+/// line-start latching; BORDER and CRAM act at the dot. The TSU pixels come
+/// from the engine's per-line buffers and are mixed as the video plex does
+/// (NOTSU / NOGFX / GFXOVR, TS window). Not yet: the VDAC curves.
 class ScreenTSConf : public ScreenZX
 {
 public:
@@ -61,6 +62,10 @@ private:
     /// displayed with `set`
     /// @param sub the half dot (TXT hires pixel 0 or 1)
     uint8_t DotIndex(const TsConfState& ts, const TsConfLine& set, uint32_t dot, uint32_t line, uint32_t sub) const;
+    /// Graphics color index of window x `wx` (dots from the window's left edge);
+    /// `visible` = the dot counts as "visible" for GFXOVR (ZX ink after flash,
+    /// 16C / 256C index != 0, TXT font bit)
+    uint8_t GraphicsIndex(const TsConfLine& set, uint32_t wx, uint32_t sub, bool& visible) const;
 
     const TsConfState* _ts = nullptr;
     const TsConfEngine* _engine = nullptr;

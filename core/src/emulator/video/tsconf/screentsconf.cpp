@@ -108,20 +108,44 @@ void ScreenTSConf::FillBorderWithColor([[maybe_unused]] uint8_t color)
 uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, const TsConfLine& set, uint32_t dot, uint32_t line, uint32_t sub) const
 {
     const uint8_t vConfig = set.vConfig;
-    const uint8_t mode = vConfig & 0x03;
+    const bool text = (vConfig & 0x03) == 3;
     const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
     const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
+    const uint8_t border = ts.regs[TsConfReg::Border];
+    const uint8_t tsu = _engine->TsuPixel(line, dot);
+    const bool tsuVisible = (tsu & 0x0F) && !(vConfig & 0x10);  // NOTSU
 
+    // Video plex ([V] video_render.v:75-82): inside the graphics window the TSU
+    // wins over graphics unless GFXOVR and the graphics dot is "visible";
+    // outside it the TSU shows inside the TS window, else the border
+    uint8_t index;
     const bool inWindow = dot >= win.x0 && dot < static_cast<uint32_t>(win.x0 + win.w) && line >= win.y0 &&
-                          line < static_cast<uint32_t>(win.y0 + win.h) && !(vConfig & 0x20);  // NOGFX
+                          line < static_cast<uint32_t>(win.y0 + win.h);
     if (!inWindow)
     {
-        const uint8_t border = ts.regs[TsConfReg::Border];
-        // TXT flattens everything to 4 bits in the PAL_SEL bank (hs §4.2)
-        return mode == 3 ? static_cast<uint8_t>(palBank | (border & 0x0F)) : border;
+        index = tsuVisible ? tsu : border;
+    }
+    else
+    {
+        const bool noGfx = vConfig & 0x20;
+        bool gfxVisible = false;
+        const uint8_t gfx = noGfx ? border : GraphicsIndex(set, dot - win.x0, sub, gfxVisible);
+        gfxVisible = gfxVisible && !noGfx;
+        if (vConfig & 0x08)  // GFXOVR
+            index = gfxVisible ? gfx : (tsuVisible ? tsu : border);
+        else
+            index = tsuVisible ? tsu : (noGfx ? border : gfx);
     }
 
-    const uint32_t gx = (dot - win.x0 + set.gxOffs) & 0x1FF;
+    // TXT is hires: every source flattens to 4 bits in the PAL_SEL bank (hs §4.2)
+    return text ? static_cast<uint8_t>(palBank | (index & 0x0F)) : index;
+}
+
+uint8_t ScreenTSConf::GraphicsIndex(const TsConfLine& set, uint32_t wx, uint32_t sub, bool& visible) const
+{
+    const uint8_t mode = set.vConfig & 0x03;
+    const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+    const uint32_t gx = (wx + set.gxOffs) & 0x1FF;
     const uint32_t gy = set.cntRow & 0x1FF;
     const uint8_t* ram = _context->pMemory->RAMBase();
     const uint32_t vPage = set.vPage;
@@ -138,16 +162,23 @@ uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, const TsConfLine& set, uin
             bool ink = (pixels >> (7 - (x & 7))) & 1;
             if ((attr & 0x80) && ((_context->emulatorState.frame_counter >> 4) & 1))
                 ink = !ink;  // flash: every 16 frames (hs §4.1)
+            visible = ink;
             const uint8_t bright = (attr & 0x40) ? 0x08 : 0x00;
             return static_cast<uint8_t>(palBank | bright | (ink ? (attr & 0x07) : ((attr >> 3) & 0x07)));
         }
         case 1:  // 16C: 4 bpp, high nibble = left pixel
         {
             const uint8_t byte = ram[((vPage & 0xF8) << 14) | (gy << 8) | (gx >> 1)];
-            return static_cast<uint8_t>(palBank | ((gx & 1) ? (byte & 0x0F) : (byte >> 4)));
+            const uint8_t nibble = (gx & 1) ? (byte & 0x0F) : (byte >> 4);
+            visible = nibble != 0;
+            return static_cast<uint8_t>(palBank | nibble);
         }
         case 2:  // 256C: 8 bpp
-            return ram[((vPage & 0xF0) << 14) | (gy << 9) | gx];
+        {
+            const uint8_t pixel = ram[((vPage & 0xF0) << 14) | (gy << 9) | gx];
+            visible = pixel != 0;
+            return pixel;
+        }
         default:  // TXT: 256-byte rows (128 characters, 128 attributes) at V_PAGE, font at V_PAGE ^ 1
         {
             const uint32_t px = (gx * 2 + sub) & 0x3FF;
@@ -156,6 +187,7 @@ uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, const TsConfLine& set, uin
             const uint8_t attr = row[128 + ((px >> 3) & 0x7F)];
             const uint8_t font = ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)];
             const bool on = (font >> (7 - (px & 7))) & 1;
+            visible = on;
             return static_cast<uint8_t>(palBank | (on ? (attr & 0x0F) : (attr >> 4)));
         }
     }
@@ -176,6 +208,9 @@ void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
 
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
 
+    // SIMD-CANDIDATE(TS-O2): per-dot calls; a per-line span renderer (border /
+    // window spans, one loop per mode, 8-pixel character spans in TXT) with the
+    // CRAM colors from a LUT (TS-O1) is the planned speed-up (BENCH-1)
     for (uint32_t t = fromTstate; t <= toTstate; t++)
     {
         const uint32_t line = t / kLineTacts;

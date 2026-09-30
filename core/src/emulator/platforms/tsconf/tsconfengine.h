@@ -21,6 +21,9 @@ struct TsConfLine
     uint16_t t0XOffs = 0;
     uint16_t t1XOffs = 0;
     uint16_t cntRow = 0;  ///< graphics row (9 bit, includes G_Y_OFFS)
+    uint16_t tsX0 = 0;    ///< TS window: first raster dot
+    uint16_t tsW = 0;     ///< TS window width in dots
+    bool tsu = false;     ///< the TSU drew something on this line
 };
 
 /// TS-Conf line engine (TSConf technical-design §3.8): advances with the CPU
@@ -67,6 +70,14 @@ public:
     const TsConfLine& Line(uint32_t line) const { return _lines[line < kLines ? line : kLines - 1]; }
     /// The raster line the beam is on at frame T-state t
     uint32_t LineAt(uint32_t t) const;
+    /// TSU pixel (CRAM index, 0 = transparent) at raster dot `dot` of line `line`
+    uint8_t TsuPixel(uint32_t line, uint32_t dot) const
+    {
+        const TsConfLine& set = Line(line);
+        if (!set.tsu || dot < set.tsX0 || dot >= static_cast<uint32_t>(set.tsX0 + set.tsW))
+            return 0;
+        return _tsu[line][dot - set.tsX0];
+    }
 
     /// region <IMachineStepHook>
     void OnMachineStep(uint32_t t) override;
@@ -76,10 +87,17 @@ public:
 private:
     uint32_t RasterAt(uint32_t t) const;
     void LineStart(uint32_t line);
+    /// TS window of the line and its TSU pixels (hs §4.4)
+    void RenderTsu(uint32_t line, TsConfLine& set);
     TsConfLine LatchedSet() const;
 
     EmulatorContext* _context;
     TsConfState& _ts;
     TsConfInterrupts& _interrupts;
     TsConfLine _lines[kLines];
+    uint8_t _tsu[kLines][360] = {};  ///< TSU line buffers of the frame (TsConfTsu::kMaxWidth)
+    /// Tilemap prefetch ring (TsConfTsu::MapRing). Not TTD state: every frame
+    /// refills it before the TS window starts (the prefetch runs from 17 lines
+    /// above the window, and the window starts at line 32 or later)
+    uint16_t _mapRing[4][64][2] = {};
 };

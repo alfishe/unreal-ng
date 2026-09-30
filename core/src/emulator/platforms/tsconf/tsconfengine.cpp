@@ -6,6 +6,8 @@
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
+#include "emulator/platforms/tsconf/tsconftsu.h"
+#include "emulator/memory/memory.h"
 
 void TsConfEngine::Reset()
 {
@@ -27,6 +29,32 @@ void TsConfEngine::RebuildLineTable()
     const TsConfLine set = LatchedSet();
     for (TsConfLine& line : _lines)
         line = set;
+    if (_ts.engNextLine > 0)
+        RenderTsu(_ts.engNextLine - 1u, _lines[_ts.engNextLine - 1u]);
+}
+
+void TsConfEngine::RenderTsu(uint32_t line, TsConfLine& set)
+{
+    // The TS window: the graphics window, or all 360x288 with T_CONFIG[0]
+    const uint8_t tConfig = _ts.regs[TsConfReg::TConfig];
+    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(set.vConfig);
+    set.tsX0 = win.x0;
+    set.tsW = win.w;
+    set.tsu = false;
+    if (!_context->pMemory)
+        return;
+    const uint8_t* ram = _context->pMemory->RAMBase();
+
+    // The hardware works on this line during the previous one: first the
+    // tilemap prefetch (window [y0 - 17, y0 + h - 9) of the previous line,
+    // for TS line + 16), then the line itself ([V] video_sync.v:229-230)
+    const uint32_t previous = line ? line - 1 : kLines - 1;
+    if (previous + 17 >= win.y0 && previous + 9 < static_cast<uint32_t>(win.y0 + win.h))
+        TsConfTsu::Prefetch(_ts, ram, (line - win.y0 + 16) & 0x1FF, _mapRing);
+
+    if (line < win.y0 || line >= static_cast<uint32_t>(win.y0 + win.h))
+        return;
+    set.tsu = TsConfTsu::RenderLine(_ts, set, ram, _mapRing, line - win.y0, win.w, _tsu[line]);
 }
 
 uint32_t TsConfEngine::RasterAt(uint32_t t) const
@@ -83,6 +111,7 @@ void TsConfEngine::LineStart(uint32_t line)
     _ts.latT1XOffsH = r[TsConfReg::T0XOffsL + 5];
 
     _lines[line] = LatchedSet();
+    RenderTsu(line, _lines[line]);
 }
 
 void TsConfEngine::CatchUp(uint32_t t)
