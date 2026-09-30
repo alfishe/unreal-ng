@@ -379,7 +379,10 @@ sprites need mid-frame SFILE rewrites.
 
 **Render timing**: the TSU renders line L+1 into one of two 512-px line buffers
 while line L is displayed (buffer cleared as it is read); rendering starts at
-`ts_start` of the previous line and is **reset at the next `ts_start`** —
+`ts_start` of the previous line (dot `hpix_beg_ts - 1`: the window start of the
+latched geometry, or dot 88 with `T_CONFIG[0]`; [V] `video_sync.v:130`,
+`video_mode.v:196`) with the tile pages, tile X offsets and `PAL_SEL` latched
+for that previous line (`video_ports.v:153-164`), and is **reset at the next `ts_start`** —
 objects not rendered in time (DRAM starvation) are dropped for that line
 ([V] `video_top.v:198-206,508`, `video_ts.v:98-121`).
 

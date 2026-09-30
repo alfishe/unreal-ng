@@ -30,8 +30,12 @@ struct TsConfLine;
 /// for that line, in the order the TSU processes them (S0, T0, S1, T1, S2),
 /// as the hardware drops what it could not render before the next ts_start.
 ///
-/// v1 model: the line is rendered at once when it starts (the hardware
-/// renders it during the previous line from ts_start - TSU-6).
+/// When (TSU-6, TsConfEngine): the hardware draws line L during line L - 1
+/// from ts_start (dot hpix_beg_ts - 1, [V] video_sync.v:130), so the engine
+/// draws it at once at that moment: T0/T1_G_PAGE, T0/T1_X_OFFS and PAL_SEL
+/// as latched for line L - 1 (video_ports.v:153-164), T_CONFIG, the pages,
+/// the Y offsets and SFILE as they are then. A write after ts_start of L - 1
+/// acts from L + 1; a tile X offset latched at L acts on the TSU from L + 1.
 class TsConfTsu
 {
 public:

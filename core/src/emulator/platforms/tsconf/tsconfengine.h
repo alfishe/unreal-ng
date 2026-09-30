@@ -96,6 +96,9 @@ public:
     /// @return false when the TSU drew nothing on that line
     bool ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Source* sources) const;
 
+    /// Tact of ts_start in the current line: where the TSU draws the next line (TSU-6)
+    uint32_t TsStartTact() const;
+
     /// The TSU line buffer of line `line` (valid for Line(line).tsX0 .. + tsW
     /// when Line(line).tsu; 0 = transparent)
     const uint8_t* TsuRow(uint32_t line) const { return _tsu[line < kLines ? line : kLines - 1]; }
@@ -109,7 +112,10 @@ private:
     uint32_t RasterAt(uint32_t t) const;
     void LineStart(uint32_t line);
     /// TS window of the line and its TSU pixels (hs §4.4)
-    void RenderTsu(uint32_t line, TsConfLine& set);
+    /// The TSU draws `line` into its buffer and line entry, with the registers
+    /// latched for `latch` (the line during which it works)
+    void RenderTsu(uint32_t line, const TsConfLine& latch);
+
     TsConfLine LatchedSet() const;
     /// Hand the DMA its share of the DRAM cycles from budgetRaster to `raster`
     void AccountBudget(uint32_t raster);
