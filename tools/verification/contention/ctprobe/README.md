@@ -255,7 +255,8 @@ test they appear on screen only as that first one; see the next section for gett
 
 ## Results so far
 
-Run by the [co-emulation harness](../../coemu/README.md), with each emulator's stock settings, 2026-09-29:
+Run by the [co-emulation harness](../../coemu/README.md), with each emulator's stock settings, 2026-09-29 (Kozynax,
+ZX-M8XXX and spec_chum 2026-09-30; each runner's README explains its differences):
 
 | Emulator | 48K | 128K | +2 | +2A / +3 | Pentagon | Scorpion |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -267,6 +268,9 @@ Run by the [co-emulation harness](../../coemu/README.md), with each emulator's s
 | SkoolKit 10.1 | floating bus (P-02) only: unused ports always read `#FF` | floating bus (P-02) only | - | - | - | - |
 | ZXMAK2 | everything 1 tick late | everything 1 tick late | - | +3: the +3 layouts and the floating bus (10 checks) | all as expected | all as expected (Even M1, no attr bus) |
 | Xpeccy (upstream) | many values differ (33 checks) | many values differ (40 checks) | as the 128K | many values differ (33 checks) | all as expected | all as expected (Even M1 off by default, no attr bus) |
+| Kozynax | everything 1 tick late (its stock ULA is the "late" one), byte-identical to ZXMAK2 | as the 48K | - | +3: the 128K's pages wait, the +3 layouts, the extra tick at the end of each line, the floating bus (10 checks) | all as expected | all as expected (Even M1, no attr bus) |
+| ZX-M8XXX 26.09.03 | internal ticks of indexed instructions, `CPIR`, `EX (SP),HL` and chained prefixes; `IN r,(C)` / block I/O port cycle placed early; floating bus 11 ticks late (14 checks) | as the 48K, and ports never wait, no floating bus (18 checks) | as the 128K | the extra tick at the end of each line, chained prefixes, `EX (SP),HL` (3 checks) | all as expected | timed as a Pentagon: no Even M1, no attr bus |
+| spec_chum 0.7.0 | internal ticks (an address on the bus, no memory access) never wait (9 checks) | as the 48K | as the 48K | the 128K's wait pattern, so the probe finds a 128K (29 checks) | all as expected (from tape) | does not load: its TR-DOS ROM stays paged in after a call through RAM |
 
 unreal-ng also runs it on the Scorpion with ProfROM, the ATM Turbo 2+, the ZX-Evo and the Profi: all as
 expected; xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, ZXMAK2 and Xpeccy on theirs and on the Scorpion with

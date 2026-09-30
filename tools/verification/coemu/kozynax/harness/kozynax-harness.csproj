@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- the headless runner; the emulator is Kozynax's own SDL build project (src/Kozynax.Sdl.csproj in
+       KOZYNAX_DIR), compiled unmodified and used as a library. Only its engine is called; no window opens. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>kozynax-harness</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TieredPGO>true</TieredPGO>
+    <!-- Kozynax targets .NET 8; run it on whatever newer runtime is installed -->
+    <RollForward>Major</RollForward>
+    <!-- Kozynax.Sdl is referenced as a library (below); its self-contained setting is for its own publish -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Kozynax.Sdl is published as a self-contained single file; as a library it is built framework-dependent.
+         Its ROM folder (src/ZXMAK2/roms) is copied next to the runner by its own Content items. -->
+    <ProjectReference Include="$(KOZYNAX_DIR)/src/Kozynax.Sdl.csproj"
+                      AdditionalProperties="SelfContained=false;PublishSingleFile=false" />
+  </ItemGroup>
+</Project>

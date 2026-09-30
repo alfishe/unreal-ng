@@ -125,7 +125,7 @@ With unreal-ng's ROMs:
 | 128K, +2 | 600 values wrong in 40 checks. In the first analysis every wrong value was the real machine's value 2 ticks earlier: MAME's 128K contends, and reads the floating bus, 2 ticks late |
 | +2A, +3 | 523 values wrong in 38 checks. In the first analysis most were the real machine's values 4 ticks earlier (the gate array's waits 4 ticks late). The +3 layout checks and the port checks did not fit a shift: MAME holds the CPU on port accesses, which the gate array does not |
 | Pentagon | ALL VALUES AS EXPECTED (from the `.trd`) |
-| Scorpion | `error`: the machine resets while the probe runs. The engine's frame-length measurement (`FRAMETIME`) got no interrupt in the window it waits for and ran into its `RST 0`. MAME's `scorpiontb` with the same probe does not |
+| Scorpion | ALL VALUES AS EXPECTED since the probe handles Even M1 (commit 3952bdc8). The first run ended in `error` (the machine restarted), see [The Scorpion restart](#the-scorpion-restart-2026-09-29) |
 | Scorpion + ProfROM | ALL VALUES AS EXPECTED (`scorpiontb`, from the `.trd`) |
 | ATM Turbo 2+ | `error`: the probe stops with "The CPU runs faster than 3.5 MHz" (the BIOS menu's stock "TURBO ON") |
 | ZX-Evo | `skipped`: no ERS ROM MAME knows (see ROMs) |
@@ -134,3 +134,54 @@ With unreal-ng's ROMs:
 The first run found a weakness of the probe: it took MAME's 128K, whose timing is off, for a +2A/+3 and ran the
 +3 layout checks, which crash a 128K. The probe now tells the two apart by the largest wait (6 on the ULA, 7 on
 the gate array), which holds whatever the offset.
+
+## The Scorpion restart (2026-09-29)
+
+**What happened.** The first run on `scorpion` (`scorpio`), with the probe of commit ab1f927c (loaded at 40000,
+`DONE` at #9C50), ended with "error: the machine reset while the program ran (disk)". `coemu.lua` saw `DONE`
+turn 2 at frame 520, about 10 frames after the probe started. `scorpiontb` passed with the same probe.
+
+**The cause: MAME's Even M1 and the measuring engine.** Nothing reset the machine. The probe jumped to address 0
+itself, and the ROM's start routine then wiped the RAM.
+
+1. MAME's `scorpio` has Even M1 turned on. `scorpion_state::machine_reset()` sets `m_is_m1_even = 1`
+   (`src/mame/sinclair/scorpion.cpp`). With it on, the M1 handlers (`beta_neutral_r`, `beta_enable_r`,
+   `beta_disable_r`) add one T-state to every opcode fetch that would start on an odd T-state.
+   `scorpiontb_state::machine_reset()` sets `m_is_m1_even = 0`, which is why `scorpiontb` passed.
+2. The engine's `DELAY` loop is `ADD HL,BC` (11 T) plus `JR C` (12 T), 23 T per pass. With Even M1 the fetch
+   after the 11 T instruction waits one T-state, so each pass takes 24 T and every delay runs about 4% long.
+3. `FRAMETIME` stage 3 (`FtStage3`) waits one frame minus a few T-states with two `DELAY` calls. It expects the
+   next interrupt to arrive during the seven `INC E` after them. Because the delay ran long, the interrupt
+   came about 2800 T-states early, inside the second `DELAY`. The IM2 handler drops the interrupted address
+   and returns to the caller, as the engine intends. Here that caller was the `INC E` chain. No interrupt was
+   left to stop the chain, so it ran through to its closing `RST 0`.
+4. `RST 0` enters the 48 BASIC ROM at 0 (`DI / XOR A / LD DE,#FFFF / JP START`). Its RAM test fills memory with
+   #02 from #FFFF downward. `DONE` became 2, and `coemu.lua` read that as a reset.
+
+It was not the turbo switch. MAME's `scorpio` has no turbo (only `scorpiontb` maps the port reads that switch
+it), `TurboOff` found the CPU at 3.5 MHz, and the probe read no port from the #1FFD / #7FFD group. It was
+not a hang misreported as a reset either: a hang ends in `timeout`, not in `DONE = 2`.
+
+**How it was confirmed.** The ab1f927c probe files (`.trd`, `.sym`, `.tap`, `-compare.py`) were copied out of git
+into a scratch folder and run with `PROGRAM=<that folder>/ctprobe` on the same `mame-zx` binary (MAME 0.289,
+source f43983b6). The result was the same "reset" at frame 520. A wrapper around `coemu.lua` added
+`install_read_tap` taps on the engine's opcode addresses and a write tap on `DONE`:
+
+```
+fetch BB85 FtStage3                   SP=9C1E BC=90EE DE=0000   stage 3 starts, frame measured as #90EE + 32768
+fetch BB90 FtStage3 INC E chain       HL=0AE5 DE=0000           entered from the IM2 handler, DELAY had ~2800 T left
+fetch BB97 FtStage3 RST 0             DE=0007                   all seven INC E ran, no interrupt
+fetch 0000 (reset vector)             (SP)=BB98                 return address: just after FtStage3's RST 0
+write DONE=02 by PC=11DE              bytes at 0000: F3 AF 11 FF FF C3   the 48K ROM's RAM fill
+```
+
+`scorpiontb` (Even M1 off) ran the same files to ALL VALUES AS EXPECTED. The current probe passes on `scorpio`
+("Machine: no contention, Even M1").
+
+**What would bring it back.** Any probe that runs the original Bobrowski / Rak engine (`FRAMETIME`, `CODETIME`,
+`DELAY` with odd-length steps) on a machine with Even M1: MAME's `scorpio`, unreal-ng's Scorpion, ZXMAK2,
+or a real Scorpion. That includes an old probe build, and a probe whose Even M1 check (`IsEvenM1`, commit
+a99126f5) is removed or misses. The engine can also end in `RST 0` from `CtTest` / `CtStage3` in the same way.
+Since commit 3952bdc8 the probe detects Even M1 and switches to `DELAYE`, which uses only instructions
+whose Even M1 lengths are known. The "503 values wrong" run in between (18:35, loaded at 36000) came from an
+unfinished build of that work, before its corrections were in.

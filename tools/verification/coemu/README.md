@@ -41,6 +41,9 @@ tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
 | `zesarux/` | ZEsarUX | headless (`--vo null`), one instance per machine; memory read over its ZRCP remote protocol | `ZESARUX_BIN`, then `zesarux` on `PATH` |
 | `skoolkit/` | SkoolKit (Z80 contention simulator, 48K and 128K only) | loads the tape with SkoolKit's simulated `LOAD ""`, runs its contention simulator until `DONE` | `SKOOLKIT_PYTHON`, then `python3`, then the interpreter of `tap2sna.py` on `PATH` (`pip install skoolkit`) |
 | `zxmak2/` | ZXMAK2 | compiles its engine, unmodified, for .NET into a command-line runner; its stock machines from `machines.config` | `ZXMAK2_DIR` (a ZXMAK2 checkout) or `ZXMAK2_BIN` (a built `zxmak2-harness.dll`); needs `dotnet` |
+| `kozynax/` | Kozynax (C# descendant of ZXMAK2) | builds its own `Kozynax.Sdl` project, unmodified, as a library into a .NET command-line runner; its stock machines from `machines.config` | `KOZYNAX_DIR` (a Kozynax checkout) or `KOZYNAX_BIN` (a built `kozynax-harness.dll`); needs `dotnet` |
+| `zx-m8xxx/` | ZX-M8XXX (JavaScript, in the browser) | headless Chrome opens it through a small local web server; a page drives its `window.zxDebug` automation interface and its own auto-loader, one machine at a time; ROMs from unreal-ng's `data/rom` | `M8XXX_DIR` (a ZX-M8XXX checkout); `CHROME_BIN`, else Chrome/Chromium on `PATH` or in `/Applications`; `M8XXX_ROMS` for ROMs |
+| `spec-chum/` | spec_chum | headless: its loopback HTTP server `spec-chum-agent` (the runner advances frames, types the loader keys, plays the tape and reads memory over HTTP); ROMs from unreal-ng's `data/rom` | `SPEC_CHUM_BIN` (a built `spec-chum-agent`) or `SPEC_CHUM_DIR` (a spec_chum checkout, built with cargo into `build/`) |
 
 Each folder has its own README with what it needs and how it loads the program.
 
