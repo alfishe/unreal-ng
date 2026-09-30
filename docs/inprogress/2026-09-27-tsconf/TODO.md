@@ -102,8 +102,12 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   mode names, MCP `unreal://machine/tsconf`, SPG opening on any machine (one
   rule on every surface and in Qt), the Qt menu entry, TTD-5 fixture (found and
   fixed DMA writes missing from TTD dirty pages), BOOT-3 (Wild Commander from SD)
-- [ ] Open: BOOT-4 (IDE fixture), IDE-5; DBG-3 and TS docks with the
-  model-first debugger; a `TsConfVideoMapper` for #42
+- [x] Review of the plan's "Open" notes (2026-09-30): INT-6, CLK-2, ENG-1
+  tested; INT-8, TSU-8, DMA-15 were done; MRG-1 and the paging latches are
+  covered by MEM / P7F and `/state/tsconf`
+- [ ] Open: BOOT-4 (IDE fixture), IDE-5; a `TsConfVideoMapper` for #42;
+  TSU-6; VDAC curves; TIM-5; the 1.1x speed target; DBG-3 and TS docks with
+  the model-first debugger
 - [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
   palette cache, pixel-identical to the old renderer (test TSO2); frame render
   6.9x faster, whole frame 1.89x → 1.26x Pentagon (1.1x target not met; the

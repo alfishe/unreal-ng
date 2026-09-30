@@ -155,3 +155,43 @@ TEST(TsConfEngineRender_Test, ENG4_SameStateRenderedOrDecimated)
     EXPECT_EQ(pcRendered, pcDecimated);
     EXPECT_EQ(std::memcmp(&rendered, &decimated, sizeof(TsConfState)), 0);
 }
+
+/// ENG-1: the per-line DRAM budget - 448 accesses; video takes its share of
+/// the window (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window dots), none on
+/// NOGFX or border lines; the CPU's reads come off the rest and the DMA gets
+/// what is left: a RAM copy (2 accesses per word) moves (448 - video - CPU) / 2
+/// words over a whole line
+TEST_F(TsConfEngine_Test, ENG1_LineBudget)
+{
+    struct Case
+    {
+        uint8_t vConfig;
+        uint16_t video;
+    };
+    for (const Case& c : {Case{0x00, 256 / 8}, Case{0x41, 320 / 4}, Case{0x42, 320 / 2}, Case{0x83, 320 / 2}, Case{0x22, 0}})
+    {
+        SCOPED_TRACE(int(c.vConfig));
+        Reg(TsConfReg::VConfig, c.vConfig);
+        NewFrame();
+        RunTo(T(100, 0));
+        EXPECT_EQ(Engine().Line(100).videoCost, c.video);
+        EXPECT_EQ(Engine().Line(10).videoCost, 0) << "a border line fetches nothing";
+
+        // A long RAM copy across line 100, the CPU reading 40 times on it
+        TsConfState& ts = _decoder->GetState();
+        Reg(TsConfReg::DmaSAl, 0);
+        Reg(TsConfReg::DmaSAh, 0);
+        Reg(TsConfReg::DmaSAx, 0x10);
+        Reg(TsConfReg::DmaDAl, 0);
+        Reg(TsConfReg::DmaDAh, 0);
+        Reg(TsConfReg::DmaDAx, 0x20);
+        Reg(TsConfReg::DmaLen, 0xFF);
+        Reg(TsConfReg::DmaNum, 0xFF);
+        Reg(TsConfReg::DmaCtrl, 0x01);
+        const uint32_t before = ts.dmaDst;
+        ts.cpuAccesses += 40;
+        RunTo(T(101, 0));
+        EXPECT_EQ(ts.dmaDst - before, (448u - c.video - 40u) / 2u) << "words moved on the line";
+        _decoder->GetDma().Reset();
+    }
+}
