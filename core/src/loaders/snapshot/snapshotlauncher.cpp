@@ -3,6 +3,7 @@
 #include "loaders/snapshot/snapshotlauncher.h"
 
 #include <algorithm>
+#include <cctype>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
