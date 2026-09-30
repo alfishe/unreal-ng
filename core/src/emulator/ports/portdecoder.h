@@ -470,6 +470,11 @@ public:
     /// region <Interface methods>
 public:
     virtual void reset() = 0;
+
+    /// Power cycle (the ZX-Evo AVR's Ctrl+Alt hard reset): the FPGA loads its
+    /// configuration again. The default is the plain reset state - decoders
+    /// with a distinct power-on state override this
+    virtual void PowerCycle() {}
     virtual uint8_t DecodePortIn(uint16_t addr, uint16_t pc);
     virtual void DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc);
 

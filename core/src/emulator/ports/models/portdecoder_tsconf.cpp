@@ -56,6 +56,19 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // that; the ZX matrix gets the translated keys as before)
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_evoAvr);
+
+    // The AVR owns the board's resets: F12 released after a short hold = the
+    // reset button, a key pressed with Ctrl+Alt held = the power cycle. The
+    // sink is resolved when a reset fires: the decoder is built before
+    // Emulator installs it
+    _evoAvr.SetResetHandler([context = _context](bool hardReset) {
+        if (!context->pSoftResetSink)
+            return;
+        if (hardReset)
+            context->pSoftResetSink->RequestHardReset();
+        else
+            context->pSoftResetSink->RequestSoftReset();
+    });
 }
 
 PortDecoder_TSConf::~PortDecoder_TSConf()

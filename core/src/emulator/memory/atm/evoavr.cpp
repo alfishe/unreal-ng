@@ -2,6 +2,7 @@
 
 #include "evoavr.h"
 
+#include <chrono>
 #include <cstring>
 #include <fstream>
 
@@ -10,6 +11,10 @@
 namespace
 {
     constexpr uint8_t kExtensionFirst = 0xF0;
+
+    /// atx.h PWROFF_KEY_TIME: F12 held longer than this is the ATX power-off
+    /// (not emulated); a shorter press-and-release soft-resets the Z80
+    constexpr auto kF12PowerOff = std::chrono::seconds(5);
 }  // namespace
 
 EvoAvr::EvoAvr() : Ds12887(256)
@@ -152,6 +157,40 @@ void EvoAvr::SetSdStatus(bool present, bool writeProtected)
 
 void EvoAvr::OnPcKey(PcKey key, bool pressed)
 {
+    // zx.c to_zu: a key pressed while Ctrl and Alt are both held never reaches
+    // the Z80 - it is the board's hard reset (FLAG_HARD_RESET). F12 included:
+    // the documented Right Alt + Ctrl + F12 "exit to Gluk boot". The modifiers
+    // are checked before this key's own bytes parse, so the Ctrl or Alt press
+    // itself never fires it
+    if (pressed && key != PcKey::None
+        && (_ps2.modifiers & (kModLeftCtrl | kModRightCtrl)) != 0
+        && (_ps2.modifiers & (kModLeftAlt | kModRightAlt)) != 0
+        && _resetHandler)
+    {
+        _resetHandler(/*hardReset=*/true);
+    }
+
+    // interrupts.c + atx.c atx_power_task: F12 only feeds the atx_counter while
+    // held, and on the release after a short hold the AVR resets the Z80 over
+    // SPI (zx_spi_send(SPI_RST_REG, 0, 0x7F)) - it never becomes a key
+    if (key == PcKey::Function12)
+    {
+        if (pressed)
+        {
+            if (!_f12Down)
+            {
+                _f12Down = true;
+                _f12Press = std::chrono::steady_clock::now();
+            }
+        }
+        else if (_f12Down)
+        {
+            _f12Down = false;
+            if (std::chrono::steady_clock::now() - _f12Press < kF12PowerOff && _resetHandler)
+                _resetHandler(/*hardReset=*/false);
+        }
+    }
+
     const size_t index = static_cast<size_t>(key);
     if (key == PcKey::None || index >= static_cast<size_t>(PcKey::Count))
         return;

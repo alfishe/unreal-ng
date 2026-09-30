@@ -55,6 +55,22 @@ namespace rzx { class RzxPlayer; }
 // void audioCallback(int16_t* samples, size_t numSamples);
 typedef void (*AudioCallback)(void* obj, int16_t*, size_t);
 
+/// A machine-level action a device needs to request. The action is
+/// Emulator-level (a reset coordinates TTD / RZX / autostart), the trigger
+/// lives in a device (the ZX-Evo AVR's F12 / Ctrl+Alt), so the device asks
+/// through this sink instead of reaching its Emulator
+class ISoftResetSink
+{
+public:
+    virtual ~ISoftResetSink() = default;
+    /// The reset button: the Z80 resets, keys the host still holds stay down
+    /// (TS-BIOS: hold Symbol Shift at reset to enter its setup)
+    virtual void RequestSoftReset() = 0;
+    /// Power cycle (the AVR's Ctrl+Alt+key): the FPGA loads its configuration
+    /// again, held keys do not survive
+    virtual void RequestHardReset() = 0;
+};
+
 class EmulatorContext
 {
     /// region <Child object references>
@@ -108,6 +124,9 @@ public:
 
 	// Model-specific port decoder
 	PortDecoder* pPortDecoder = nullptr;
+
+    // Machine-level soft reset, requested by a device (the ZX-Evo AVR's F12)
+    ISoftResetSink* pSoftResetSink = nullptr;
 
     // Tape input instance
     Tape* pTape = nullptr;

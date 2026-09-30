@@ -379,6 +379,12 @@ bool Emulator::Init()
             MLOGWARNING("Emulator::Init - media: %s", line.c_str());
     }
 
+    // Devices request machine-level actions through the context (the ZX-Evo
+    // AVR's F12 soft reset): the sink is installed before the first reset so
+    // the wiring is complete before the guest runs
+    if (result && _context)
+        _context->pSoftResetSink = this;
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
@@ -892,7 +898,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
 // region Regular workflow
 
-void Emulator::Reset()
+void Emulator::Reset(bool hardReset)
 {
     // A reset leaves the recorded path: an RZX playback ends first
     if (IsRzxPlaying())
@@ -941,7 +947,25 @@ void Emulator::Reset()
     if (_context && _context->pDiskAutostart)
         _context->pDiskAutostart->Disarm();  // A user reset cancels a pending autostart hook
 
+    // The keys the host still holds survive the reset button: on the real
+    // machine they stay down across the Z80 reset, and boot firmware reads
+    // them (TS-BIOS: hold Symbol Shift at reset to enter its setup). A power
+    // cycle is different - the FPGA reconfigures and the boot starts clean
+    const Keyboard::InputState heldKeys = !hardReset && _context && _context->pKeyboard
+        ? _context->pKeyboard->CaptureInputState()
+        : Keyboard::InputState{};
+
     _core->Reset();
+
+    if (!hardReset)
+    {
+        if (_context && _context->pKeyboard)
+            _context->pKeyboard->RestoreInputState(heldKeys);
+    }
+    else if (_context && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->PowerCycle();
+    }
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();

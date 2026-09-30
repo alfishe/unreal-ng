@@ -1025,9 +1025,10 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
-    // Screenshot of the emulator framebuffer to clipboard
+    // Screenshot of the emulator framebuffer to clipboard. No shortcut: plain
+    // F12 must reach the machine (the ZX-Evo AVR turns its short press into a
+    // Z80 reset, e.g. the TS-BIOS setup screen's "F12 - exit")
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setShortcut(QKeySequence(Qt::Key_F12));
     _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
 

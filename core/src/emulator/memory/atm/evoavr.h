@@ -2,7 +2,9 @@
 #include "stdafx.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "emulator/io/keyboard/pckey.h"
@@ -131,6 +133,16 @@ public:
     /// Bytes waiting in the log (0 in the reset state, 15 at most)
     size_t GetPs2LogCount() const;
     bool IsPs2LogOverflow() const { return _ps2.logEnd == 0xFF && _ps2.logStart != 0xFF; }
+
+    /// The resets the AVR firmware owns: F12 released after a hold shorter
+    /// than PWROFF_KEY_TIME (~5 s) is the reset button (atx.c soft reset) -
+    /// the "F12 - exit" of the TS-BIOS setup screen. A key pressed while Ctrl
+    /// and Alt are both held is the power cycle (zx.c FLAG_HARD_RESET) - the
+    /// documented Right Alt + Ctrl + F12. A F12 hold of 5 s and more is the
+    /// ATX power-off, not emulated. The hold is measured in host time: the AVR
+    /// counts its own seconds, not the Z80's
+    using ResetHandler = std::function<void(bool hardReset)>;
+    void SetResetHandler(ResetHandler handler) { _resetHandler = std::move(handler); }
     /// endregion </PS/2 keyboard>
 
     /// region <TTD>
@@ -160,4 +172,7 @@ protected:
     bool _sdPresent = false;
     bool _sdWriteProtected = false;
     Ps2State _ps2{};
+    ResetHandler _resetHandler;
+    std::chrono::steady_clock::time_point _f12Press{};
+    bool _f12Down = false;
 };

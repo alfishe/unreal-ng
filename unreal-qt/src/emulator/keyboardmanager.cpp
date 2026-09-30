@@ -99,11 +99,10 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKey(int qtKey)
     {
         result = static_cast<quint8>(_keyMap[key]);
     }
-    else
-    {
-        QString message = QString("mapQtKeyToEmulatorKey: unknown mapping for qtKey: 0x%1 (%2)").arg(qtKey, 2, 16).arg(qtKey, 2);
-        qDebug() << message;
-    }
+
+    // No matrix code is the normal answer for PS/2-only keys (F-keys, Tab,
+    // navigation cluster): createKeyboardEvent logs only when a key event has
+    // neither the ZX nor the physical code
 
     return result;
 }
@@ -227,7 +226,22 @@ KeyboardEvent* KeyboardManager::createKeyboardEvent(const QKeyEvent* event, KeyE
     const quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
     const PcKey pcKey = mapQtEventToPcKey(event);
     if (zxKey == ZXKEY_NONE && pcKey == PcKey::None)
+    {
+        qDebug() << QString("createKeyboardEvent: no ZX or physical mapping for qtKey: 0x%1 (%2)")
+                        .arg(event->key(), 0, 16)
+                        .arg(event->key());
         return nullptr;
+    }
+
+    // The AVR keymap keeps the two shifts apart (kbmap.c): left -> Caps Shift,
+    // right -> Symbol Shift. The plain map cannot tell them (Qt::Key_Shift is
+    // both), so the physical key decides - the matrix key RShift+F12 combos
+    // are built on (TS-Conf: Right Shift + F12 enters the BIOS setup)
+    quint8 matrixKey = zxKey;
+    if (pcKey == PcKey::RightShift)
+        matrixKey = ZXKEY_SYM_SHIFT;
+    else if (pcKey == PcKey::LeftShift)
+        matrixKey = ZXKEY_CAPS_SHIFT;
 
     if (pcKey != PcKey::None)
     {
@@ -237,7 +251,7 @@ KeyboardEvent* KeyboardManager::createKeyboardEvent(const QKeyEvent* event, KeyE
             _heldPcKeys.erase(static_cast<uint8_t>(pcKey));
     }
 
-    return new KeyboardEvent(zxKey, static_cast<uint8_t>(pcKey), type, targetId);
+    return new KeyboardEvent(matrixKey, static_cast<uint8_t>(pcKey), type, targetId);
 }
 
 void KeyboardManager::postHeldKeyReleases(const std::string& targetId)

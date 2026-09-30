@@ -61,7 +61,7 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 class FloppyDriveSlots;
 class TapeSlot;
 
-class Emulator
+class Emulator : public ISoftResetSink
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -158,6 +158,12 @@ public:
     explicit Emulator(const std::string& symbolicId, LoggerLevel level = LoggerLevel::LogTrace);
     virtual ~Emulator();
     /// endregion </Constructors / destructors>
+
+    /// ISoftResetSink: device-initiated resets (the ZX-Evo AVR). They run on
+    /// the trigger's thread (keyboard dispatch / WebAPI) - the same
+    /// external-thread contract as the GUI reset action
+    void RequestSoftReset() { Reset(); }
+    void RequestHardReset() { Reset(true); }
 
 private:
     void ReleaseNoGuard();
@@ -275,7 +281,7 @@ public:
     const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
     // Emulator control cycle
-    void Reset();
+    void Reset(bool hardReset = false);
 
     /// Pulse the Z80 NMI line - accepted at the next instruction boundary
     /// (11T, PC pushed, vector #0066, IFF2<-IFF1). Safe to call while running.
