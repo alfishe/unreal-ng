@@ -199,7 +199,13 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
     ApplyPaging(context, stage, report);
     ApplyCpu(context, stage, report);
 
-    // AY: all registers, then the selected one
+    // AY: all registers, then the selected one.
+    //
+    // TurboSound FM REPLACES TurboSound: on a TSFM machine (TurboSound=FM,
+    // the shipped default on most models) the AY block goes into the SSG
+    // half of YM2203 chip 1 - the same SoundChip_AY8910 class, reached through
+    // getAYChip(0) - and applies fully. This is not an approximation and must
+    // never be reported as an error. Only TurboSound=None has no AY.
     if (stage.ay)
     {
         SoundChip_AY8910* ay = context->pSoundManager ? context->pSoundManager->getAYChip(0) : nullptr;
@@ -207,12 +213,23 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
         {
             for (uint8_t reg = 0; reg < 16; reg++)
                 ay->writeRegister(reg, stage.ay->registers[reg]);
-            ay->setRegister(stage.ay->currentRegister);
-            report.Add("AY", Outcome::Applied, stage.ay->flags ? "Fuller / Melodik flags ignored" : "");
+            // Select the register through the TurboSound device's own #FFFD,
+            // so every address latch agrees: the AY's, and on TurboSound FM
+            // the YM2203's and ymfm's (the SSG half of chip 0 holds the block)
+            ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
+            if (device)
+                device->portDeviceOutMethod(0xFFFD, stage.ay->currentRegister);
+            else
+                ay->setRegister(stage.ay->currentRegister);
+            const bool fm = device && device->hasFm();
+            std::string note = fm ? "into the SSG half of YM2203 chip 1 (TurboSound FM)" : "";
+            if (stage.ay->flags)
+                note += std::string(note.empty() ? "" : "; ") + "Fuller / Melodik flags ignored";
+            report.Add("AY", Outcome::Applied, note);
         }
         else
         {
-            report.Add("AY", Outcome::Ignored, "this machine has no AY");
+            report.Add("AY", Outcome::Ignored, "no AY fitted (TurboSound=None)");
         }
     }
 
@@ -583,12 +600,25 @@ void LoaderSZX::ApplyDevices(EmulatorContext* context, const Stage& stage, Repor
 {
     SoundManager* sound = context->pSoundManager;
 
+    // NeoGS REPLACES the General Sound: a GS block on a NeoGS machine (the
+    // shipped default, GSType=NGS) is accepted, never an error. The block is
+    // the classic card's internal state (GS ROM 1.04 CPU registers, its
+    // 32 KB page map, its RAM); NeoGS runs its own firmware with its own
+    // memory map, so that state cannot be transplanted - the card keeps
+    // running and the report says why. With the classic card (GSType=Z80)
+    // the block is restored as below
     if (stage.gs)
     {
         GeneralSoundCard* card = (sound && sound->hasGeneralSound()) ? sound->getGeneralSound() : nullptr;
-        if (!card || card->implementation() != GSCardImplementation::LLE)
+        if (card && card->implementation() == GSCardImplementation::NGS)
         {
-            report.Add("GS", Outcome::Ignored, card ? "needs the classic GS card (GSType=Z80)" : "no General Sound card fitted");
+            report.Add("GS", Outcome::Approximated,
+                       "NeoGS replaces the GS: it keeps running its own firmware; the classic card's CPU and RAM "
+                       "state in the block does not map onto it");
+        }
+        else if (!card || card->implementation() != GSCardImplementation::LLE)
+        {
+            report.Add("GS", Outcome::Ignored, card ? "the lightweight GS player has no CPU state" : "no General Sound card fitted");
         }
         else
         {
@@ -640,6 +670,9 @@ void LoaderSZX::ApplyDevices(EmulatorContext* context, const Stage& stage, Repor
     {
         report.Add("GSRP", Outcome::Ignored, "no GS block");
     }
+    if (stage.gs && !stage.gsPages.empty() && sound && sound->hasGeneralSound() &&
+        sound->getGeneralSound()->implementation() == GSCardImplementation::NGS)
+        report.Add("GSRP", Outcome::Approximated, "NeoGS keeps its own RAM, as for the GS block");
 
     if (stage.covox)
     {
@@ -735,6 +768,11 @@ void LoaderSZX::CaptureDevices(EmulatorContext* context, Stage& stage)
 {
     SoundManager* sound = context->pSoundManager;
     GeneralSoundCard* card = (sound && sound->hasGeneralSound()) ? sound->getGeneralSound() : nullptr;
+    // NeoGS replaces the GS, but the SZX GS block describes the classic card
+    // (GS ROM 1.04, 32 KB pages): NeoGS state written there would load as a
+    // wrong classic card in other emulators, so it is left out, with a note
+    if (card && card->implementation() == GSCardImplementation::NGS)
+        stage.warnings.push_back("NeoGS: the SZX GS block describes the classic GS card, so the NeoGS state is not saved");
     if (card && card->implementation() == GSCardImplementation::LLE)
     {
         std::vector<uint8_t> blob(card->TTDStateSize());
