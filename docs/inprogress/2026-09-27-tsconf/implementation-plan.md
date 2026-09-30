@@ -102,8 +102,9 @@ Tests in `core/tests/emulator/machines/tsconf/` (`portdecoder_tsconf_test`,
 Deviations and open items:
 - **REG-2**: STATUS `VDAC_VER` is the constant 0 of the standard `quartus`
   build (no VDAC, Nemo IDE fitted); a `TS_VDAC` config key comes with the VDAC curves.
-- **MRG-1 deferred**: no `modelsregression_test` golden row; the bank map is
-  covered by MEM-1…6 and P7F-1…7.
+- **MRG-1 closed by MEM-1…6 and P7F-1…7** (2026-09-30 review): they pin the
+  TS-Conf bank map; a `modelsregression_test` row would need that harness to
+  learn the TS ROM layout for no extra coverage.
 - **Write-protected W0 RAM** (`W0_WE = 0`): the stores go to the trash page but
   the bank stays that RAM page for TTD (reads, execution and write cycles are
   that page's; replay re-executes) - technical-design §3.5 item 1.
@@ -111,8 +112,10 @@ Deviations and open items:
   hardware fills while it is off are not modeled (they differ from RAM only
   after DMA), and switching the cache off drops them. Invalidation is a
   write-only bus overlay installed while `CACHE_CONFIG ≠ 0`.
-- `ReadPagingLatch()` / `/state/paging` latches: not yet (the generic report
-  shows the window pages).
+- `/state/paging` latches: covered by `/state/tsconf` (phase 7a: MEM_CONFIG
+  decoded, window pages, LCK128, lock48, DOS / vdos); the generic paging report
+  shows the window pages. The `PagingLatch` table stays for EmulatorState
+  latches (portdecoder.h).
 - SD card (0x57 / 0x77), vdos, DMA: later phases; the ports answer as the board
   does with no card (0xFF / 0x00).
 
@@ -165,9 +168,11 @@ lazily up to the raster tact the CPU reached (t / multiplier), latches in
 `TsConfState` (TTD-2). Tests `tsconfinterrupts_test.cpp`: INT-1…5, INT-7, the
 frame pulse across the frame end, the last line event at the rollover, INT-8
 (gating part), TTD-2; the clock in `PortDecoder_TSConf_Test.SysConfigClock`.
-Open: INT-6 (IM1/IM0 through the CPU), INT-8 with the real vdos (phase 6),
-CLK-2, and the engine skeleton (the raster counter lives in the interrupt
-controller until the engine of phase 3 needs its own).
+Closed in the 2026-09-30 review: INT-6 (IM0 / IM1 / IM2 through the CPU,
+`TsConfInterruptsCpu_Test`), INT-8 (vdos gating, `INT8_VdosGatesWithoutLosing`
+with the real vdos of phase 6), CLK-2 (a mid-frame clock switch keeps the
+raster events, `CLK2_ClockSwitchKeepsRasterEvents`); the engine exists since
+phase 3.
 
 Engine skeleton exists from here (raster counter + interrupt source), driven
 by the step hook. Test helpers: a tiny IM2 test program counting vectors into
@@ -259,8 +264,8 @@ off 3.42 ms (1.9x, target 1.1x), TSU at its limit (both tile layers, 85
 sprites of 64x64) 4.07 ms (1.19x TSU off, target 2x met). The gap is the
 per-dot renderer: backlog TS-O1 / TS-O2 below.
 Open: TSU-6 (the line renders at its start, not during the previous line
-from `ts_start`), TSU-8 and ENG-1 (DRAM budget and starvation, with the DMA
-in phase 5), TTD-3 needs nothing extra (checkpoints are frame boundaries, the
+from `ts_start`). Closed: TSU-8 (phase 5), ENG-1 (the per-line budget with
+the DMA share, `ENG1_LineBudget`, 2026-09-30 review). TTD-3 needs nothing extra (checkpoints are frame boundaries, the
 prefetch ring refills before the window; TSU line buffers are derived).
 
 **Speed backlog (naive first, measured above):**
@@ -327,7 +332,7 @@ hits and ROM take none; **CPU writes are not counted - v1 approximation**);
 the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
 previous line and drops what does not fit (**TSU-8**).
 Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,
-TTD-4. Open: DMA-15 (IDE with a disk) with phase 6.
+TTD-4. DMA-15 (IDE with a disk) built in phase 6 (`tsconfstorage_test.cpp`).
 
 Fixture: raw physical RAM access (`RAMPageAddress`) to seed/verify; helper
 `Dma(src, dst, len, num, ctrl)` writing the registers and running until busy

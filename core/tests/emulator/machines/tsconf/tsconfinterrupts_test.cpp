@@ -4,6 +4,9 @@
 
 #include "tsconffixture.h"
 
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+
 class TsConfInterrupts_Test : public TsConfFixture
 {
 protected:
@@ -161,4 +164,61 @@ TEST_F(TsConfInterrupts_Test, TTD2_LatchesAreState)
     EXPECT_FALSE(Ints().IsIntAsserted(11));
     _decoder->GetState() = saved;
     EXPECT_TRUE(Ints().IsIntAsserted(11));
+}
+
+/// INT-6: through the CPU - IM1 ignores the vector and jumps to #0038, IM0
+/// executes the #FF on the bus (RST 38), IM2 reads the vector #FF from I;
+/// each acknowledge clears the latch it answered. A whole machine: the CPU's
+/// step needs the main loop the port-level fixture does not have
+TEST(TsConfInterruptsCpu_Test, INT6_InterruptModesThroughTheCpu)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("tsconf-int6", "TSL", 4096, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    Z80& z80 = *context->pCore->GetZ80();
+    Memory& memory = *context->pMemory;
+    decoder->WriteRegister(TsConfReg::Page2, 0x02);  // RAM at #8000
+    decoder->WriteRegister(TsConfReg::Page3, 0x03);  // RAM at #C000 (the stack and the IM2 table)
+
+    for (uint8_t mode : {uint8_t(1), uint8_t(0), uint8_t(2)})
+    {
+        SCOPED_TRACE(int(mode));
+        decoder->GetInterrupts().Reset();
+        memory.DirectWriteToZ80Memory(0x8000, 0x00);  // NOP
+        memory.DirectWriteToZ80Memory(0xC0FF, 0x34);  // IM2 table entry for vector #FF
+        memory.DirectWriteToZ80Memory(0xC100, 0x92);  // -> #9234
+        z80.i = 0xC0;
+        z80.im = mode;
+        z80.iff1 = z80.iff2 = 1;
+        z80.pc = 0x8000;
+        z80.sp = 0xF000;
+        z80.t = 5;  // inside the reset frame pulse (tacts 1..32)
+        ASSERT_TRUE(decoder->GetInterrupts().IsIntAsserted(5));
+        const Z80::StepResult result = z80.StepInstruction(true);
+        EXPECT_TRUE(result.intAccepted);
+        EXPECT_EQ(z80.pc, mode == 2 ? 0x9234 : 0x0038);
+        EXPECT_EQ(memory.DirectReadFromZ80Memory(0xEFFE), 0x00) << "return address low";
+        EXPECT_EQ(memory.DirectReadFromZ80Memory(0xEFFF), 0x80) << "return address high";
+        EXPECT_EQ(decoder->GetState().intPending & TsConfInt::Frame, 0) << "the latch was answered";
+    }
+    manager->RemoveEmulator(emulator->GetUUID());
+}
+
+/// CLK-2: a clock switch mid-frame keeps the raster events where they are -
+/// the frame INT at line 100, tact 10 asserts at that raster tact before and
+/// after 3.5 -> 14 MHz (the CPU clock count at that instant scales 4x)
+TEST_F(TsConfInterrupts_Test, CLK2_ClockSwitchKeepsRasterEvents)
+{
+    Reg(TsConfReg::VsIntL, 100);
+    Reg(TsConfReg::HsInt, 10);
+    const uint32_t tact = 100 * TsConfInterrupts::kLineTacts + 10;
+    EXPECT_FALSE(Ints().IsIntAsserted(1000));
+    Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, mid-frame
+    EXPECT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 4);
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio_applied, 4) << "audio / video descale by the applied ratio";
+    EXPECT_FALSE(Ints().IsIntAsserted(tact * 4 - 1));
+    EXPECT_TRUE(Ints().IsIntAsserted(tact * 4)) << "the same raster tact at 4 clocks per tact";
 }
