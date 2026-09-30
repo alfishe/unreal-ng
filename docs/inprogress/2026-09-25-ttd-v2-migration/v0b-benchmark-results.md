@@ -61,7 +61,7 @@ The shorter turbo runs (1,500 frames each) agree:
 | Configuration | State reached, p99 | + present p99 |
 |---|---|---|
 | ATM710 with turbo | 2.1 ms | 7.6 ms |
-| Scorpion with Turbo+ | 1.5 ms | 5.8 ms |
+| Scorpion (Turbo+, on from its firmware) | 1.5 ms | 5.8 ms |
 | Pentagon, demo (7th Reality) | 1.9 ms | 6.5 ms |
 | ATM3 | 2.5 ms | 8.6 ms |
 | ATM3 + TSFM + GS512 + MoonSound | 3.2 ms | 11.1 ms |
@@ -75,12 +75,7 @@ Why V1b would not help:
 - Replay, the only part that in-frame checkpoints would shorten, is 1.6–2.1 ms at p99 even at 2x turbo, which is already inside the limit.
 - The time above 5 ms is the *present* step. v1 draws the picture of the position by running the whole frame again (`ComposeDisplay` in `PresentPosition`). That costs one frame of emulation no matter where the checkpoint is.
 
-**Follow-up (not V1b):** making the picture appear faster is a separate optimization, recorded for V1 or a later step. Two options:
-
-- keep the rendered frame with each checkpoint;
-- cache the framebuffer of the frames around the current position.
-
-Whether PR-5 counts presentation at all should be stated in the requirements. This document reports both numbers.
+Rendering the full frame after every seek is intended: the picture always shows the complete frame of the position. It is not a task; this document reports the time to reach the machine state and the time with the picture separately.
 
 ## 4. Other findings (for V1 and later)
 
@@ -103,6 +98,6 @@ About the stored `v1-full.json`: its byte metrics are the reference, and they ma
 ## 5. Limits of this round
 
 - Only one engine exists, so the matrix measures v1 against itself. The v1-vs-v2 comparison (acceptance criterion 4) comes with V1.
-- The Scorpion firmware switches on the Turbo+ mode during boot (`turbo_shift` = 1, now metric `turbo_ratio` = 2, on plain `SCORPION` as well). As a result `SCORPION` and `SCORPION-turbo` currently record the same machine.
+- The Scorpion firmware switches its Turbo+ flip-flop on by itself while it boots: the standard ROM's service page reads `#7FFD` at `#0419`, ProfROM applies its turbo setting at `#04CE` on the way to the user program (checked 2026-09-30; the emulator follows the firmware, see the Scorpion hardware reference §13). So plain `SCORPION` and `PROFSCORP` run at 7 MHz (`turbo_ratio` = 2). The matrix first had a `SCORPION-turbo` case that recorded the same machine; it is now `SCORPION-3.5MHz`, which switches the turbo off after the boot (`IN #1FFD`).
 - The `none` peripheral set appears as `noay` in case names. The name lists only the TurboSound slot; the other devices are off too.
 - Timings on a shared host vary by 10–30% between runs. The CI gate therefore checks bytes exactly and timing only as the share of capture in the frame (budget 50%; measured 3–14% on the `ci` cases, up to 26% on the full matrix with GS512).

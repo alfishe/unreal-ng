@@ -14,7 +14,7 @@ The same emulation runs under every TTD engine (today only `v1`, the current `Ti
 
 ## Glossary
 
-- **Configuration**: a machine model plus a set of peripherals, for example `ATM3+gs512+moon+tsfm`. Some configurations also switch on the hardware turbo (`ATM710-turbo`, `SCORPION-turbo`; ZX-Evo `ATM3` boots with 2x turbo already on).
+- **Configuration**: a machine model plus a set of peripherals, for example `ATM3+gs512+moon+tsfm`. Some configurations also switch on the hardware turbo (`ATM710-turbo`); ZX-Evo `ATM3` and the Scorpions (`SCORPION`, `PROFSCORP`) boot with their 2x turbo already on, and `SCORPION-3.5MHz` switches it off.
 - **Workload**: what the machine does while it is recorded. Each workload is replayable, meaning every run produces exactly the same machine states:
   - it starts from a fixed state (cold boot, a snapshot, or an autostarted disk);
   - it runs a number of settle frames before recording starts;

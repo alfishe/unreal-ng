@@ -134,16 +134,12 @@ protected:
 
     static Emulator* CreateMachine()
     {
-        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        // Zeroed power-on RAM: instances compared against each other start
+        // from the same content, then a reset starts frame 0 from it
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
         if (emulator)
         {
             emulator->DebugOn();
-
-            // Power-on RAM is deliberately randomized (Memory::RandomizeMemoryContent,
-            // screen pages): instances compared against each other start from the
-            // same content, then a reset starts frame 0 from it
-            EmulatorContext* context = emulator->GetContext();
-            std::memset(context->pMemory->RAMBase(), 0, static_cast<size_t>(context->config.ramsize) * 1024u);
             emulator->Reset();
         }
         return emulator;

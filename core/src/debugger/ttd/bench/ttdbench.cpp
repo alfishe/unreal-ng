@@ -786,14 +786,20 @@ std::vector<Case> Matrix(const std::string& set)
     std::vector<Case> cases;
     auto add = [&cases](const Configuration& c, const Workload& w) { cases.push_back({c, w}); };
 
-    // Turbo: ATM #FF77 bit 3 (the rest of the latch as the firmware left it)
-    // and the Scorpion Turbo+ flip-flop (IN #7FFD)
+    // Turbo: ATM #FF77 bit 3 (the rest of the latch as the firmware left it).
+    // The Scorpion firmware switches its Turbo+ flip-flop on by itself while
+    // it boots (IN #7FFD: the standard ROM's service page at #0419, ProfROM's
+    // #04CE on the way to the user program), so plain SCORPION / PROFSCORP
+    // run at 7 MHz; the 3.5 MHz Scorpion clears it afterwards with IN #1FFD
     Configuration atm710Turbo = Base("ATM710-turbo", "ATM710");
     atm710Turbo.turbo = true;
     atm710Turbo.setup.push_back({SetupAction::Kind::AtmTurbo, 0, 0});
-    Configuration scorpionTurbo = Base("SCORPION-turbo", "SCORPION");
-    scorpionTurbo.turbo = true;
-    scorpionTurbo.setup.push_back({SetupAction::Kind::PortIn, 0x7FFD, 0});
+    Configuration scorpion = Base("SCORPION", "SCORPION");
+    scorpion.turbo = true;
+    Configuration profScorpion = Base("PROFSCORP", "PROFSCORP");
+    profScorpion.turbo = true;
+    Configuration scorpion35 = Base("SCORPION-3.5MHz", "SCORPION");
+    scorpion35.setup.push_back({SetupAction::Kind::PortIn, 0x1FFD, 0});
     Configuration atm3 = Base("ATM3", "ATM3");  // BaseConf boots with the 2x turbo on
     atm3.turbo = true;
 
@@ -811,7 +817,7 @@ std::vector<Case> Matrix(const std::string& set)
         add(atm3, Idle(1500));
         add(WithPeripherals(atm3, "gs512+moon+tsfm"), Idle(1500));
         add(atm710Turbo, Idle(1500));
-        add(scorpionTurbo, Idle(1500));
+        add(scorpion, Idle(1500));
         add(Base("PENTAGON", "PENTAGON"), FromSnapshot("demo", "loaders/sna/7threality.sna", 1500));
         return cases;
     }
@@ -823,9 +829,9 @@ std::vector<Case> Matrix(const std::string& set)
                                    Base("PENTAGON512", "PENTAGON", 512),
                                    Base("PENTAGON1024", "PENTAGON", 1024),
                                    Base("PLUS3", "PLUS3"),
-                                   Base("SCORPION", "SCORPION"),
-                                   scorpionTurbo,
-                                   Base("PROFSCORP", "PROFSCORP"),
+                                   scorpion,
+                                   scorpion35,
+                                   profScorpion,
                                    Base("ATM710", "ATM710"),
                                    atm710Turbo,
                                    atm3,

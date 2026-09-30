@@ -216,8 +216,7 @@ protected:
 
     void SetUp() override
     {
-        std::srand(0x4E47);
-        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
         _ttd = _context->pTimeTravelManager;
