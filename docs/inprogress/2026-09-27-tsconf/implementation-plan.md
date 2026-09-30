@@ -90,6 +90,32 @@ Exit: all INF tests green; the full suite and the benchmark gate unchanged;
 
 ## Phase 1 — Port decoder, memory, reset → creatable · L
 
+**Built 2026-09-30 (branch `tsconf-phase1`).** `TsConfState`
+(`platforms/tsconf/tsconfstate.h`, a register file indexed by register number
+plus the latches; the TTD blob is the struct), `TsConfMemory`
+(`memory/tsconf/`), `PortDecoder_TSConf` (`ports/models/portdecoder_tsconf.*`),
+the TTD serializer `TTDTsConfState` (`debugger/ttd/tsconf/`), the power-on CRAM
+table from the firmware's `video_cram.mif` (`platforms/tsconf/tsconfcraminit.h`).
+Tests in `core/tests/emulator/machines/tsconf/` (`portdecoder_tsconf_test`,
+`tsconfmemory_test`, `ttdtsconfstate_test`; fixture `tsconffixture.h`), plus
+`TSL` in `TTD_ModelPageBounds_Test` (MEM-6) and `EmulatorManager_Test`.
+Deviations and open items:
+- **REG-2**: STATUS `VDAC_VER` is the constant 0 of the standard `quartus`
+  build (no VDAC, Nemo IDE fitted); a `TS_VDAC` config key comes with the VDAC curves.
+- **MRG-1 deferred**: no `modelsregression_test` golden row; the bank map is
+  covered by MEM-1…6 and P7F-1…7.
+- **Write-protected W0 RAM** (`W0_WE = 0`): the stores go to the trash page but
+  the bank stays that RAM page for TTD (reads, execution and write cycles are
+  that page's; replay re-executes) - technical-design §3.5 item 1.
+- **Cache**: filled only while any window has the cache enabled; entries the
+  hardware fills while it is off are not modeled (they differ from RAM only
+  after DMA), and switching the cache off drops them. Invalidation is a
+  write-only bus overlay installed while `CACHE_CONFIG ≠ 0`.
+- `ReadPagingLatch()` / `/state/paging` latches: not yet (the generic report
+  shows the window pages).
+- SD card (0x57 / 0x77), vdos, DMA: later phases; the ports answer as the board
+  does with no card (0xFF / 0x00).
+
 Fixture `tsconffixture.h` (from `profifixture.h`): real `EmulatorContext` +
 `Core::Init` for `MM_TSL`, a **synthetic tagged ROM** (each 16 KB page filled
 with its page number, byte `0x3D00` = `0xC9`) and tagged RAM (page number at
@@ -133,6 +159,16 @@ mapped (full boot comes in P3 when video exists).
 
 ## Phase 2 — Interrupt controller and CPU clock · M
 
+**Built 2026-09-30.** `TsConfInterrupts` (`platforms/tsconf/tsconfinterrupts.*`)
+is the `IInterruptSource` and the `IMachineStepHook`; events are evaluated
+lazily up to the raster tact the CPU reached (t / multiplier), latches in
+`TsConfState` (TTD-2). Tests `tsconfinterrupts_test.cpp`: INT-1…5, INT-7, the
+frame pulse across the frame end, the last line event at the rollover, INT-8
+(gating part), TTD-2; the clock in `PortDecoder_TSConf_Test.SysConfigClock`.
+Open: INT-6 (IM1/IM0 through the CPU), INT-8 with the real vdos (phase 6),
+CLK-2, and the engine skeleton (the raster counter lives in the interrupt
+controller until the engine of phase 3 needs its own).
+
 Engine skeleton exists from here (raster counter + interrupt source), driven
 by the step hook. Test helpers: a tiny IM2 test program counting vectors into
 RAM (`EI; HALT` loop, handler `PUSH AF; LD A,(vec); INC; POP; EI; RETI` per
@@ -153,6 +189,19 @@ vector table entry at `I=0x80`).
 | TTD-2 | blob round-trip includes INT latches + frame-pulse counter; restore mid-pulse → same INT outcome |
 
 ## Phase 3 — Engine budget, ZX video, palette, border · L
+
+**Video v1 built 2026-09-30** (with GFX-1/2/3 of phase 4): `ScreenTSConf`
+draws ZX (new mode `M_TSZX`), 16C, 256C and TXT per T-state into one 720×288
+framebuffer, the V_CONFIG geometry window with the X/Y offsets, BORDER outside
+it, CRAM through the no-VDAC PWM curve, flash. Shared vocabulary touched:
+`M_TSZX`, the TS descriptor rows, `GetLineGeometry`, `VideoFamily::TsConf`
+(no debug mapper yet). Tests `screentsconf_test.cpp` (VID-1, VID-3, VID-4,
+GFX-1, GFX-3, CRAM colors) and **BOOT-1 / BOOT-2** in `tsconf_boot_test.cpp`:
+blank NVRAM → TS-BIOS Setup (TXT, page #F6); ENTER saves NVRAM, reset → TR-DOS
+5.04T prompt. BOOT-2 as planned (menu → 128 BASIC) is replaced by the TR-DOS
+boot the BIOS defaults select.
+Open: the engine (ENG-1…4, per-line budget), line-latched registers (a change
+now takes effect at the dot the beam is on), VID-2 golden, VID-5…7, the TSU.
 
 | ID | Asserts |
 |:--|:--|

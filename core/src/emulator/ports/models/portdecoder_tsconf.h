@@ -1,0 +1,169 @@
+#pragma once
+#include "stdafx.h"
+
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/hostbusoverlay.h"
+#include "emulator/platforms/tsconf/tsconfinterrupts.h"
+#include "emulator/platforms/tsconf/tsconfstate.h"
+#include "emulator/ports/portdecoder.h"
+
+class TsConfMemory;
+
+/// TS-Conf (ZX-Evo with the TS-Labs FPGA configuration) port decoder.
+///
+/// Design: docs/inprogress/2026-09-27-tsconf/technical-design.md §3.7;
+/// hardware facts: hardware-spec.md (sections cited in the code). Owns the
+/// machine state (TsConfState) and attaches it to TsConfMemory, which maps
+/// the windows from it.
+///
+/// Ports (every mainboard port decodes the full low byte, [V] zports.v):
+///   #xxAF     TS registers, register = A[15:8] (§3)
+///   #7FFD     A15 = 0, low byte #FD: 128K paging folded into PAGE3 / MEM_CONFIG (§2.3)
+///   #xxFD     A15 = 1: AY (BC1 = A14)
+///   #xxFE     keyboard / tape / border / beeper
+///   #xxFB     Covox (write)
+///   #1F..#FF  Beta-128 while DOS or FDD_VIRT[7]; #1F is the joystick otherwise (§8.2)
+///   #xxF7     A8 = 1: #EFF7 and the Gluk CMOS (EvoAvr, the board's AVR) (§9)
+///   #xxDF     Kempston mouse
+///   #57/#77   SD card SPI (phase 6: no card yet)
+///   #xxEF     COM port / ZiFi (not emulated: reads #FF)
+///   Nemo IDE  checked first (TryIdePortIn / TryIdePortOut)
+///
+/// M1 hook (IMachineM1Hook, installed only while needed): the DOS trap
+/// (#3Dxx fetch in mapped mode with ROM128 = 1), its exit (fetch at >= #4000)
+/// and the auto-LCK128 opcode latch.
+class PortDecoder_TSConf : public PortDecoder, public IMachineM1Hook
+{
+public:
+    /// The board function that answers one I/O cycle
+    enum class PortArm : uint8_t
+    {
+        ZxBus = 0,       ///< not a mainboard port
+        TsRegister,      ///< #xxAF
+        Paging7FFD,      ///< #FD with A15 = 0
+        Ay,              ///< #FD with A15 = 1
+        KeyboardBorder,  ///< #FE
+        Covox,           ///< #FB
+        Fdc,             ///< #1F/#3F/#5F/#7F/#FF while DOS || FDD_VIRT[7]
+        Joystick,        ///< #1F otherwise
+        Gluk,            ///< #F7 with A8 = 1
+        Mouse,           ///< #DF
+        SdData,          ///< #57
+        SdConfig,        ///< #77
+        ComPort,         ///< #EF
+    };
+
+    /// STATUS [2:0] VDAC_VER of the emulated firmware build: the standard
+    /// `quartus` build (no VDAC, Nemo IDE fitted) reports 0 (hardware-spec §0.1, §3.3)
+    static constexpr uint8_t kVdacVersion = 0;
+
+    /// region <Constructors / Destructors>
+public:
+    PortDecoder_TSConf() = delete;
+    explicit PortDecoder_TSConf(EmulatorContext* context);
+    ~PortDecoder_TSConf() override;
+    /// endregion </Constructors / Destructors>
+
+    /// region <Interface methods>
+public:
+    void reset() override;
+    uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
+    void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
+
+    /// The 7FFD lock is TSConf's own latch (§2.3)
+    bool IsPagingLocked() const override { return _ts.lock48 != 0; }
+
+    /// SYS_CONFIG selects 3.5, 7 or 14 MHz
+    uint8_t TtdClockUnits() const override { return 4; }
+
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
+    Ds12887& GetRtc() { return _evoAvr; }
+    EvoAvr& GetEvoAvr() { return _evoAvr; }
+    RtcBinding GetRtcBinding() override;
+
+    void BeforeMachineM1(uint16_t address) override;
+    void OnMachineM1(uint16_t address) override;
+    /// endregion </Interface methods>
+
+    /// region <TS-Conf state>
+public:
+    TsConfState& GetState() { return _ts; }
+    const TsConfState& GetState() const { return _ts; }
+    TsConfInterrupts& GetInterrupts() { return _interrupts; }
+
+    /// Classify one I/O cycle
+    PortArm ClassifyPort(uint16_t port) const;
+
+    /// `OUT (reg << 8 | #AF), value` - also reached through the FM window (§2.4)
+    void WriteRegister(uint8_t reg, uint8_t value);
+    /// `IN (reg << 8 | #AF)`: only 0x00, 0x12, 0x13, 0x27 are readable (§3.2)
+    uint8_t ReadRegister(uint8_t reg);
+    /// A #7FFD write (§2.3)
+    void Write7FFD(uint8_t value);
+
+    /// Re-derive everything that follows from the state (banks, hooks,
+    /// overlays, clock, screen) - after a reset and a TTD restore
+    void ApplyState();
+
+    /// Power-on values: the "not reset" registers zeroed, CRAM from the
+    /// firmware's power-on table, PWR_UP set (§10). The first reset() runs it
+    void PowerOn();
+    /// endregion </TS-Conf state>
+
+private:
+    /// FM window (§2.4): a write-only host bus overlay installed while MEN = 1
+    class FmWindow : public HostBusOverlay
+    {
+    public:
+        explicit FmWindow(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
+        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+    };
+
+    /// Cache invalidation (§2.5): a write-only overlay over the whole space,
+    /// installed while any window has the cache enabled
+    class CacheWriteSnoop : public HostBusOverlay
+    {
+    public:
+        explicit CacheWriteSnoop(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
+        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+    };
+
+    void RefreshM1Hook();
+    void InstallInterrupts();
+    void RefreshFmWindow();
+    void RefreshCache();
+    void ApplyClock();
+    void ApplyVideoPage();
+    void UpdateBanks();
+
+    uint8_t DecodeF7In(uint16_t port);
+    void DecodeF7Out(uint16_t port, uint8_t value);
+    bool CmosReachable() const;
+
+    static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port);
+
+    TsConfState _ts{};
+    TsConfInterrupts _interrupts{_context, _ts};
+    TsConfMemory* _tsMemory = nullptr;
+    bool _poweredOn = false;
+
+    FmWindow _fmWindow{*this};
+    CacheWriteSnoop _cacheSnoop{*this};
+
+    // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
+    // registers F0-FF), shared with ATM3: lives with the decoder so the
+    // contents survive Core::Reset() like the battery
+    EvoAvr _evoAvr;
+    bool _nvramLoaded = false;
+};

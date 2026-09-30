@@ -40,7 +40,7 @@ namespace
 /// docs/inprogress/2026-08-20-ttd-reverse-search-index/README.md.
 const std::vector<std::string>& CreatableModels()
 {
-    static const std::vector<std::string> models = {"48K", "128k", "PENTAGON", "SCORPION", "PROFI", "ATM710", "ATM3"};
+    static const std::vector<std::string> models = {"48K", "128k", "PENTAGON", "SCORPION", "PROFI", "ATM710", "ATM3", "TSL"};
     return models;
 }
 

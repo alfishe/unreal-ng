@@ -497,6 +497,12 @@ store through `_bank_write[bank]`. TSConf needs:
    [U] `set_banks` MM_TSL: window-0 formula, `W0_WE` → trash page
    `MAX_MISC_PAGES` for read-only ROM, vdos → RAM 0xFF) and the virtual read
    pair (cache model).
+   **Built 2026-09-30.** Write-protected W0 RAM keeps its RAM page in the TTD
+   page cache (only `_bank_write` points at the trash page): reads, execution
+   and the write cycles belong to that page, the write journal and probe record
+   bus cycles, and replay re-executes, so no phantom change can be replayed.
+   The state is attached by the decoder (`TsConfMemory::AttachState`); before
+   that the banks show the reset layout.
 2. **Write intercept = a write-only host bus overlay** (PLAN #60(a), built
    2026-09-29 on branch `tsconf-infra`; replaces the per-bank
    `_bank_write_intercept[4]` flag of v1.0). The FM window is a
@@ -666,6 +672,15 @@ converts the finished line buffers + graphics into framebuffer pixels.
 > | `video/tsconf/screentsconf.{h,cpp}` | `ScreenTSConf : ScreenZX` (constructor only); the never-instantiated skeleton that read the shared `state.ts` is deleted | the selection path is live; phase 3 adds the TS modes here |
 >
 > Tests: `core/tests/emulator/video/videocontroller_test.cpp`.
+
+> **Built 2026-09-30 (video v1, phase 3 + TXT):** `ScreenTSConf` overrides
+> `InitRaster` (mode from `V_CONFIG`, no `MM_TSL` case in `Screen::DetectVideoMode`),
+> `SetVideoMode` (no ZX tables), `DrawRange` (its own per-T renderer) and the
+> batch paths. Modes `M_TSZX` (new), `M_TS16`, `M_TS256`, `M_TSTX` share one
+> 720×288 descriptor; `GetLineGeometry` treats the whole visible line as the
+> window; `VideoFamily::TsConf` has no debug mapper yet (`NullVideoMapper`).
+> Registers are read at the dot the beam is on (no line latching yet); CRAM
+> colors are computed per dot through the no-VDAC PWM curve.
 
 - **Selection**: `VideoController::CreateScreen` builds `ScreenTSConf` for
   `MM_TSL`. It derives from `ScreenZX`, so TS-Conf's ZX mode is the ZX

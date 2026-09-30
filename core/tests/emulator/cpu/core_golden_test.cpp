@@ -61,7 +61,7 @@ const Golden kGolden[] = {
     // as in UnrealSpeccy, instead of the floating bus
     {"ATM710", nullptr, 0x9DCBD8315B37FC1Eull, 0xE360A9F00E0771B9ull, 10483200ull},
     {"ATM3", nullptr, 0x2DABB9D0E2DC188Dull, 0xA177AACC9FD662A1ull, 9434880ull},
-    // TSL (TS-Conf) is not creatable with the shipped ROMs.
+    // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 
 constexpr unsigned kFrames = 150;

@@ -14,6 +14,7 @@
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/memory/scorpion/scorpionmemory.h"
+#include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -102,9 +103,13 @@ bool Core::Init()
 
     // Create memory subsystem (allocates all RAM/ROM regions). Scorpion
     // models get the derived class that owns their latch-to-bank translation
-    // and ProfROM bus-cycle silicon; everything else stays on the generic one
+    // and ProfROM bus-cycle silicon, TS-Conf the one that maps its windows
+    // from TsConfState and models its CPU cache; everything else stays on the
+    // generic one
     if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
         _memory = new ScorpionMemory(_context);
+    else if (_config->mem_model == MM_TSL)
+        _memory = new TsConfMemory(_context);
     else
         _memory = new Memory(_context);
     if (_memory)
