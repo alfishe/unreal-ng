@@ -757,6 +757,13 @@ void Z80::NotifyMachineM1Before(uint16_t address)
     machineM1Hook->BeforeMachineM1(address);
 }
 
+void Z80::NoteAcknowledgeRefresh(uint32_t t3)
+{
+    // As Memory::MemoryReadM1Snow: R before the increment; the Ferranti ULA machines only (ioContention)
+    if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(i >> 6)))
+        ioContention->NoteRefresh(t3, static_cast<uint8_t>(r_low - 1));
+}
+
 void Z80::NotifyMachineM1(uint16_t address)
 {
     machineM1Hook->OnMachineM1(address);
@@ -795,7 +802,8 @@ uint8_t Z80::m1_cycle()
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1Before(cpu.pc);
 
-    opcode = rd(cpu.pc, true);  // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
+    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
+    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
 
     // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
     // Out of line like NotifyInstructionStart: the hot path is one pointer test
@@ -876,6 +884,20 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
     IncrementCPUCyclesCounter(3);
 
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
+}
+
+/// The opcode fetch: rd through MemoryReadM1, which on the contended interfaces also notes the refresh that
+/// follows (ULA snow); on every other interface it is the plain read, so nothing is added there
+uint8_t Z80::rdM1(uint16_t addr)
+{
+    IncrementCPUCyclesCounter(3);
+
+    uint8_t value = (_memory->*MemIf->MemoryReadM1)(addr, true);
 
     if (busTraceHook)
         busTraceHook('R', addr, value);
@@ -1212,6 +1234,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
 
         // The acknowledge M1 is a refresh cycle like any M1: R advances
         cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+        NoteAcknowledgeRefresh(cpu.t + 2);  // the opcode-fetch M1 of the restart: T3 is the third tick
 
         // NMI timing per Z80 manual: 11T (M1=5T restart fetch, M2=3T push PCH, M3=3T push PCL).
         // The accept IS the cycle for this iteration: ProcessInterrupts returns true and
@@ -1360,6 +1383,7 @@ void Z80::HandleINT(uint8_t vector)
 
     // The acknowledge M1 is a refresh cycle like any M1: R advances
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+    NoteAcknowledgeRefresh(cpu.t + 4);  // T1 T2 Tw Tw T3 T4: the refresh's T3 is the fifth tick
 
     /// region <Calculate INT duration>
 

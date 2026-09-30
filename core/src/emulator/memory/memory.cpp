@@ -233,14 +233,20 @@ void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
+// The contended overlay reads are also the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
+template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
+template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
+
 MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
 {
     if (debug && contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
-                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>);
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>);
     if (contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>,
-                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>);
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>);
     if (debug)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>);
     return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>);
