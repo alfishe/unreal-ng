@@ -503,10 +503,24 @@ has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
   counter itself (2 fclk per clock, frame start = c0; waits added in fclk
   with `Z80::AddWaitTicks`). The decoder's M1 hook marks the opcode fetch.
   ROM and cache hits never wait. Tests: a NOP run from DRAM settles at 6
-  clocks, LD A,(HL) and LD (HL),A at 10 (hand-derived from the table); no
-  waits at 3.5 / 7 MHz, from ROM or on hits. Not modeled: the extra wait for
-  a slot while video holds the next DRAM cycle (`cpu_next = 0`, 256C / TXT
-  fetch windows at 14 MHz only).
+  clocks, LD (HL),A at 10 (hand-derived from the table); no waits at 3.5 /
+  7 MHz, from ROM or on hits.
+- **TIM-1b, the arbiter** (2026-09-30, branch `tsconf-arbiter`,
+  `TsConfArbiter`): the `cpu_next = 0` case modeled from arbiter.v - blocks
+  of 8 / 4 / 2 DRAM cycles in each line's fetch window (video_go), video
+  1 / 1 / 1 / 4 per block (ZX / 16C / 256C / TXT), the CPU refused when
+  `vid_rem == blk_rem`; a refused read waits for the grant, a write or any
+  non-read cycle freezes the clock for each refused cycle (stall14_cyc);
+  writes now go through a 14 MHz-only write overlay. The same RTL reading
+  corrected the data-read table: +4..+7 fclk, not the comment's +2..+5
+  (hardware-spec §2.5); LD A,(HL) settles at 12 clocks. Checked against an
+  independent fclk-level model of arbiter.v / zmem.v / zclock.v: NOP runs
+  cost 12 fclk in every mode inside the window and out, 256C makes every
+  write lose its own cycle (LD (HL),A 20 → 24 fclk), ZX / 16C never delay
+  the CPU (`tsconfarbiter_test.cpp`). The arbiter state never crosses a
+  frame, so TTD needs nothing. Other emulators model none of it (MAME: a
+  flat 2 T per miss; Unreal: dead code; Xpeccy: nothing). The 3.5 / 7 MHz
+  stall (stall357) never fires in any mode, so it is not modeled.
 - **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
   (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
 - **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the

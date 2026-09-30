@@ -11,6 +11,7 @@
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconfengine.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
@@ -176,6 +177,19 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
+    /// 14 MHz write waits (TsConfArbiter): a write-only overlay installed
+    /// while the CPU runs at 14 MHz
+    class DramWriteWait : public HostBusOverlay
+    {
+    public:
+        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
+        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+    };
+
     void RefreshM1Hook();
     void UpdateSdStatus();
     /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
@@ -203,11 +217,13 @@ private:
     TsConfInterrupts _interrupts{_context, _ts};
     TsConfDma _dma{_ts, _interrupts};
     TsConfEngine _engine{_context, _ts, _interrupts, _dma};
+    TsConfArbiter _arbiter{_engine};
     TsConfMemory* _tsMemory = nullptr;
     bool _poweredOn = false;
 
     FmWindow _fmWindow{*this};
     CacheWriteSnoop _cacheSnoop{*this};
+    DramWriteWait _dramWriteWait{*this};
 
     // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
     // registers F0-FF), shared with ATM3: lives with the decoder so the

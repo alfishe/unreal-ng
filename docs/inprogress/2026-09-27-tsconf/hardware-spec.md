@@ -195,7 +195,14 @@ each with its own 13-bit tag `{page[7:0], A[13:9]}` + valid bit ([V] `zmem.v:210
   **DMA and video writes do not invalidate** → stale reads after DMA are
   hardware-correct (software invalidates by writing 512 bytes, `tsconf_en.md:247-256`).
 - Any write to `SYS_CONFIG` copies its bit 2 into all four `CACHE_CONFIG` bits.
-- 14 MHz miss penalty ([V] `zmem.v:153-172`): M1 +3..+6 fclk, read +2..+5, write 0.
+- 14 MHz miss penalty ([V] `zmem.v:141-207`): M1 +3..+6 fclk, data read
+  **+4..+7** (c3..c0), write 0 while the arbiter grants the next cycle. The
+  comment table at `zmem.v:153-172` says read +2..+5; the RTL releases a data
+  read at c2 of the cycle after the grant and an M1 at c1 (`zmem.v:204`), so a
+  read waits one fclk longer than an M1 (corrected 2026-09-30). When video
+  holds the next DRAM cycle (`cpu_next = 0`) a read waits for the grant and a
+  write or any non-read cycle freezes the clock - the arbiter model in
+  `platforms/tsconf/tsconfarbiter.h`.
 
 Emulator: functional behavior (hit returns cached word even if RAM changed
 underneath) is phase 1 correctness; the wait tables are phase 8 timing.
