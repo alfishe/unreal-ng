@@ -3728,52 +3728,34 @@ public:
             return results;
         });
 
-        // Raster beam position and zone at the current t-state
-        lua.set_function("beam_position", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            EmulatorContext* context = emulator->GetContext();
-            if (!context || !context->pScreen) { result["error"] = "context not initialized"; return result; }
-
-            const CONFIG& config = context->config;
-            Screen* screen = context->pScreen;
-            if (config.t_line == 0 || config.frame == 0)
-            {
-                result["error"] = "machine timing not initialized";
-                return result;
-            }
-
-            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-            const uint32_t tInFrame = tstate % config.frame;
-
-            const BeamPosition beam = screen->DescribeBeam(tInFrame);
-            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-            const uint32_t line = tInFrame / tstatesPerLine;
-
-            result["tstate"] = tstate;
-            result["tstate_in_frame"] = tInFrame;
-            result["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
-            result["line"] = line;
-            result["dot_in_line"] = tInFrame % tstatesPerLine;
-            result["beam_x"] = beam.beamX;
-            result["beam_y"] = line;
-            result["zone"] = std::string(beam.zone);
-            result["vertical_zone"] = std::string(beam.verticalZone);
-            result["horizontal_zone"] = std::string(beam.horizontalZone);
-            result["in_paper"] = beam.inPaper;
-            if (beam.inPaper)
-            {
-                sol::table paper = lua_view.create_table();
-                paper["x"] = beam.paperX;
-                paper["x_end"] = beam.paperXEnd;
-                paper["y"] = beam.paperY;
-                result["paper"] = paper;
-            }
-            return result;
+        // Beam and video debug translation (PLAN #42): the same DeviceState reports every interface returns
+        lua.set_function("beam_position", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoBeam(ctx));
+        });
+        lua.set_function("video_layout", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoLayout(ctx));
+        });
+        lua.set_function("video_pixel", [this](sol::this_state s, unsigned x, unsigned y, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixel(ctx, layer.value_or(0), x, y));
+        });
+        lua.set_function("video_pixel_at", [this](sol::this_state s, unsigned t) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixelAtBeam(ctx, t));
+        });
+        lua.set_function("video_address", [this](sol::this_state s, unsigned page, unsigned offset) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddress(ctx, page, offset));
+        });
+        lua.set_function("video_address_z80", [this](sol::this_state s, unsigned address) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddressZ80(ctx, address));
+        });
+        lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
         });
 
         // Halt/active cost of the last frame plus session averages

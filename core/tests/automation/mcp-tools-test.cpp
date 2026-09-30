@@ -1813,3 +1813,51 @@ TEST_F(McpTools_Test, TargetResolver_ExplicitId_ValidatedAgainstInstance)
     EXPECT_TRUE(ok);
     EXPECT_EQ(id, "emu-1");
 }
+
+// PLAN #42: the video_layout and video_text aspects hit /video/layout and /video/text
+// and summarize the layer windows / the text rows
+TEST_F(McpTools_Test, InspectState_VideoAspects_FetchLayoutAndText)
+{
+    Json::Value layer;
+    layer["id"] = "atm16";
+    layer["surface"]["width"] = 320;
+    layer["surface"]["height"] = 200;
+    layer["window"]["first_line"] = 68;
+    layer["window"]["line_count"] = 200;
+    layer["window"]["first_t"] = 8;
+    layer["window"]["t_count"] = 160;
+    layer["window"]["dots_per_t"] = 2;
+    Json::Value layout;
+    layout["available"] = true;
+    layout["mapped"] = true;
+    layout["family"] = "atm";
+    layout["video_mode"] = "ATM16";
+    layout["layers"].append(layer);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/layout"] = {200, layout};
+
+    Json::Value line;
+    line["text"] = "HELLO....";
+    Json::Value text;
+    text["available"] = true;
+    text["layer"] = "atmtx";
+    text["columns"] = 80;
+    text["rows"] = 25;
+    text["lines"].append(line);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/text"] = {200, text};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("video_layout");
+    aspects.append("video_text");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/layout"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/text"));
+    EXPECT_EQ(result.structured["video_layout"]["family"].asString(), "atm");
+    EXPECT_NE(result.text.find("[video_layout] ATM16, family atm"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("atm16 320x200, lines 68+200, T 8+160 at 2 dots/T"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[video_text] atmtx 80x25"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("\n  HELLO"), std::string::npos) << result.text;
+}

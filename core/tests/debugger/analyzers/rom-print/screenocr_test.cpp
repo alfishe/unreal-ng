@@ -293,3 +293,38 @@ TEST_F(ScreenOCR_Test, ScreenAddressFormula)
     EXPECT_EQ(0x4800, GetScreenAddr(8, 0, 0));
     EXPECT_EQ(0x5000, GetScreenAddr(16, 0, 0));
 }
+
+// ============================================================================
+// TEXT VIDEO MODES (PLAN #42): read exactly from the character codes
+// ============================================================================
+
+#include "_helpers/emulatortesthelper.h"
+#include "emulator/emulator.h"
+#include "emulator/video/screen.h"
+
+/// ATM Turbo 2+ text mode: the codes are in video memory, OCR reads them through the video mapper
+TEST(ScreenOCRTextMode_Test, AtmTextModeIsReadFromTheCharacterCodes)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->emulatorState.pFF77 = FF77_TX | 0x20;
+    context->emulatorState.aFF77 = 0x0100;
+    context->pScreen->InitRaster();
+    ASSERT_EQ(context->pScreen->GetVideoMode(), M_ATMTX);
+
+    // Row 0: even columns at video page 5 + 0x1C0 + n / 2, odd columns at + 0x2000
+    uint8_t* page = context->pMemory->RAMPageAddress(5);
+    for (int n = 0; n < 80; n++)
+        page[(n % 2 ? 0x2000 : 0) + 0x1C0 + n / 2] = ' ';
+    page[0x1C0] = 'H';
+    page[0x2000 + 0x1C0] = 'I';
+
+    const std::string text = ScreenOCR::ocrScreen(emulator->GetId());
+    EXPECT_EQ(text.substr(0, 2), "HI");
+    EXPECT_EQ(text.find('\n'), 80u) << "80 columns";
+    EXPECT_TRUE(ScreenOCR::containsText(emulator->GetId(), "HI"));
+    EXPECT_FALSE(ScreenOCR::containsText(emulator->GetId(), "HIX"));
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

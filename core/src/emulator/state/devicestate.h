@@ -111,6 +111,28 @@ StateNode ScreenMode(EmulatorContext* context);
 StateNode ScreenFlash(EmulatorContext* context);
 StateNode ScreenAttributes(EmulatorContext* context, int screen = -1);
 
+/// Video debug translation (PLAN #42, video-debug-translation design §6), built
+/// on VideoMapService so every interface shows the same fields (devicestatevideo.cpp):
+/// - `VideoBeam()`: the beam now (`tstate`, `line`, `dot_in_line`, `zone`, `paper{}`, ...,
+///   `frame_timing{}`, `raster{}`) plus `layers[]` - the layer pixel under the beam
+///   (`id`, `x`, `x_end`, `y`).
+/// - `VideoLayout()`: `mapped`, `family`, frame geometry, `layers[]` with `surface{}` and
+///   the beam `window{}`, and the `framebuffer{}` placement of the surface.
+/// - `VideoPixel(layer, x, y)` / `VideoPixelAtBeam(t)`: `sources[]` (`space`, `page`,
+///   `offset`, `bit_mask`, `role`, `z80[]`), `colour_index`, `rgb`, `rendered_rgb`,
+///   `state_at` / `values_at` (design §4.6); at the beam a border point reports `border`.
+/// - `VideoAddress(page, offset)` / `VideoAddressZ80(address)`: `areas[]` of every layer
+///   the byte feeds.
+/// - `VideoText(layer)`: `columns`, `rows` and `lines[]` (`text`, `codes`, `attrs`) of a
+///   text layer (ATM / ZX-Evo text modes); unavailable for bitmap layers.
+StateNode VideoBeam(EmulatorContext* context);
+StateNode VideoLayout(EmulatorContext* context);
+StateNode VideoPixel(EmulatorContext* context, unsigned layer, unsigned x, unsigned y);
+StateNode VideoPixelAtBeam(EmulatorContext* context, unsigned tInFrame);
+StateNode VideoAddress(EmulatorContext* context, unsigned page, unsigned offset);
+StateNode VideoAddressZ80(EmulatorContext* context, unsigned address);
+StateNode VideoText(EmulatorContext* context, unsigned layer = 0);
+
 /// Video memory contention (`Contention()`): the machine's rule (none / ula48 / ula128 / gatearray), whether
 /// it applies, the 'contention' switch and whether contention is in effect, the selected memory interface,
 /// the I/O rule, per slot its mapping and whether the CPU waits there, the +2A/+3 floating-bus latch, and -

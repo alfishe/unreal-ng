@@ -103,7 +103,8 @@ state sysvars           # ZX-Spectrum system variables
 find <hex-pattern>      # Search Z80 memory for a byte pattern
                         #   (--from N, --to N, --align 1|2, --max N)
 digest                  # Screen-area digest (change detection)
-beam                    # Raster beam position/zone
+beam                    # Raster beam position/zone (+ layer pixel under it)
+video layout|pixel|address|text  # What makes a pixel, which pixels a byte feeds, text modes
 frame_cost              # Frame cost stats (halt vs active)
 ```
 
@@ -281,6 +282,10 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/memory/find` | Search memory for a byte pattern |
 | GET | `/api/v1/emulator/{id}/state/screen/digest` | Screen-area digest (change detection) |
 | GET | `/api/v1/emulator/{id}/video/beam` | Raster beam position and frame timing |
+| GET | `/api/v1/emulator/{id}/video/layout` | Video mode layers, beam windows, framebuffer placement |
+| GET | `/api/v1/emulator/{id}/video/pixel` | Sources of a pixel (`x`,`y`[,`layer`] or `t`) |
+| GET | `/api/v1/emulator/{id}/video/address` | Pixels a byte feeds (`page`,`offset` or `z80`) |
+| GET | `/api/v1/emulator/{id}/video/text` | Text grid of a text mode |
 | GET | `/api/v1/emulator/{id}/frame_cost` | Frame cost stats (halt vs active) |
 
 #### Labels & Symbols
@@ -467,6 +472,7 @@ end
 - `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
+- `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load)

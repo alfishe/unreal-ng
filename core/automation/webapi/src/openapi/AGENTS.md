@@ -35,7 +35,8 @@ openapi/
 ├── openapi_rtc.inc        # CMOS clock report + cell read / write
 ├── openapi_state.inc      # State inspection (screen, audio)
 ├── openapi_stepping.inc   # Execution control (step, run)
-└── openapi_ttd.inc        # Time-Travel Debug
+├── openapi_ttd.inc        # Time-Travel Debug
+└── openapi_video.inc      # Video debug translation: layout, pixel sources, byte -> pixels, text
 ```
 
 ## Size Limits and Splitting Rules

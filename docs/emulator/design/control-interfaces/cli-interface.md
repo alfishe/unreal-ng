@@ -336,7 +336,11 @@ reference: [command-interface.md](./command-interface.md).
 | `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
 | `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
 | `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |
-| `beam` | Current raster position and beam zone. |
+| `beam` | Current raster position and beam zone, plus the layer pixel under the beam. |
+| `video layout` | The current mode's layers (surface, beam window, dots per T) and framebuffer placement. |
+| `video pixel <x> <y> [layer]` / `video pixel t <tstate>` | Memory, registers and palette cell behind a pixel (or the point under the beam, border included). |
+| `video address <page> <offset>` / `video address z80 <addr>` | Every area of the picture a byte feeds. |
+| `video text [layer]` | Exact text grid of an ATM / ZX-Evo text mode. |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
