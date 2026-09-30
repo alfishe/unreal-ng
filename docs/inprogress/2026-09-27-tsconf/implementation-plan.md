@@ -562,8 +562,12 @@ has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
 - **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
   (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
   at 3.5 / 7 MHz, and the TSU ranks below the CPU.
-- **TIM-5** deferred: CPU CRAM writes are already dot-exact (the video is
-  flushed before each); only DMA → CRAM lands at line granularity.
+- **TIM-5** done (2026-09-30, branch `tsconf-tim5`): a DMA
+  → CRAM transfer places each word in the accounted span by its share of the
+  DRAM credit and draws the picture up to there first (`TsConfEngine::SetVideoFlush`
+  → `ScreenTSConf::DrawTo`), so the write lands at its dot like a CPU write;
+  before, it landed at the start of the CPU step that ran the DMA (test
+  `TIM5_DmaCramWriteLandsAtItsDot`, which fails without the placement).
 The SDK sprite example (14 MHz) re-pinned; the TS-Conf TTD fixture re-recorded.
 
 ## 2. Traceability

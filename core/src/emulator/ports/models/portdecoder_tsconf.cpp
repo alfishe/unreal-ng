@@ -15,6 +15,7 @@
 #include "emulator/io/tape/tape.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
@@ -857,6 +858,12 @@ void PortDecoder_TSConf::InstallInterrupts()
         z80->SetInterruptSource(&_interrupts);
     if (z80->GetMachineStepHook() != &_engine)
         z80->SetMachineStepHook(&_engine);
+
+    // A DMA CRAM write draws the picture up to its moment first (TIM-5)
+    _engine.SetVideoFlush([this](uint32_t raster) {
+        if (auto* screen = dynamic_cast<ScreenTSConf*>(_context->pScreen))
+            screen->DrawTo(raster);
+    });
 }
 
 void PortDecoder_TSConf::RefreshFmWindow()

@@ -282,6 +282,11 @@ void TsConfDma::Finish()
     _interrupts.RaiseDma();
 }
 
+bool TsConfDma::WritesCram() const
+{
+    return Busy() && _ts.dmaDevice == Cram;
+}
+
 uint32_t TsConfDma::Run(uint32_t credit)
 {
     if (!_ram)

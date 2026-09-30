@@ -148,6 +148,14 @@ ScreenState ScreenTSConf::DescribeScreenState() const
     return s;
 }
 
+void ScreenTSConf::DrawTo(uint32_t raster)
+{
+    if (raster <= _prevTstate)
+        return;
+    DrawPeriod(_prevTstate, raster);
+    _prevTstate = raster;
+}
+
 const void* ScreenTSConf::VideoFamilyView() const
 {
     const TsConfState* ts = const_cast<ScreenTSConf*>(this)->State();
