@@ -8,15 +8,18 @@
 #include <QScreen>
 
 #include "mainwindow.h"
+#include "platform/childwindow.h"
 
 DockingManager::DockingManager(MainWindow* mainWindow, QObject* parent) : QObject(parent), _mainWindow(mainWindow) {}
 
-void DockingManager::addDockableWindow(QWidget* window, std::optional<Qt::Edge> initialEdge)
+void DockingManager::addDockableWindow(QWidget* window, std::optional<Qt::Edge> initialEdge,
+                                        bool useNativeChildWindow)
 {
     if (!window || _dockableWindows.contains(window))
         return;
 
     DockingInfo info;
+    info.useNativeChildWindow = useNativeChildWindow;
     if (initialEdge.has_value())
     {
         info.snappedEdge = initialEdge;
@@ -39,6 +42,8 @@ void DockingManager::addDockableWindow(QWidget* window, std::optional<Qt::Edge> 
         _dockableWindows.insert(window, info);  // Re-insert with updated info
 
         updateWindowPosition(window, _dockableWindows[window]);
+        if (window->isVisible())
+            attachNative(window, _dockableWindows[window]);
     }
 }
 
@@ -47,8 +52,25 @@ void DockingManager::removeDockableWindow(QWidget* window)
     if (window)
     {
         window->removeEventFilter(this);
+        if (_dockableWindows.contains(window))
+            detachNative(window, _dockableWindows[window]);
         _dockableWindows.remove(window);
     }
+}
+
+void DockingManager::attachNative(QWidget* window, DockingInfo& info)
+{
+    if (!info.useNativeChildWindow || info.nativeAttached || !info.snappedEdge.has_value())
+        return;
+    info.nativeAttached = ChildWindow::Attach(_mainWindow, window);
+}
+
+void DockingManager::detachNative(QWidget* window, DockingInfo& info)
+{
+    if (!info.nativeAttached)
+        return;
+    ChildWindow::Detach(_mainWindow, window);
+    info.nativeAttached = false;
 }
 
 bool DockingManager::eventFilter(QObject* watched, QEvent* event)
@@ -56,9 +78,9 @@ bool DockingManager::eventFilter(QObject* watched, QEvent* event)
     QWidget* window = qobject_cast<QWidget*>(watched);
     if (window && _dockableWindows.contains(window))
     {
+        auto& info = _dockableWindows[window];
         if (event->type() == QEvent::Move)
         {
-            auto& info = _dockableWindows[window];
             if (!info.isBeingSetByManager && !_isSnappingLocked)
             {
                 Qt::Edge edge;
@@ -77,6 +99,16 @@ bool DockingManager::eventFilter(QObject* watched, QEvent* event)
                     }
                 }
             }
+        }
+        else if (event->type() == QEvent::Show)
+        {
+            attachNative(window, info);
+        }
+        else if (event->type() == QEvent::Hide)
+        {
+            // A hidden native child window must not be brought back by the
+            // main window (e.g. when it is minimized)
+            detachNative(window, info);
         }
     }
     return QObject::eventFilter(watched, event);
@@ -107,6 +139,11 @@ void DockingManager::moveDockedWindows(const QPoint& delta)
         {
             QWidget* window = it.key();
             DockingInfo& info = it.value();
+
+            // Glued to the main window at the OS level already: it moves with
+            // it in lockstep, chasing it here would only add lag
+            if (info.nativeAttached)
+                continue;
 
             QScopedValueRollback<bool> guard(info.isBeingSetByManager, true);
             window->move(window->pos() + delta);
@@ -139,13 +176,17 @@ void DockingManager::snapWindow(QWidget* window, Qt::Edge edge)
 
     // Immediately update position to snap it cleanly.
     updateWindowPosition(window, info);
+    attachNative(window, info);
 }
 
 void DockingManager::unsnapWindow(QWidget* window)
 {
     if (_dockableWindows.contains(window))
     {
-        _dockableWindows[window].snappedEdge = std::nullopt;
+        DockingInfo& info = _dockableWindows[window];
+        // Undocked: let it move freely instead of following the main window
+        detachNative(window, info);
+        info.snappedEdge = std::nullopt;
     }
 }
 

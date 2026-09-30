@@ -230,7 +230,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
 
     _dockingManager = new DockingManager(this);
-    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
+    // Glue the docked debugger to the main window at the OS level where
+    // possible (macOS child window) so it follows without lagging behind
+    // move events while dragging
+    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge, /*useNativeChildWindow=*/true);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
     // Instantiate tape manager window (design §9.4): one instance per app
