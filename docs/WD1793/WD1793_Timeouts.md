@@ -131,6 +131,9 @@ Here's a breakdown based on your table:
 
 Two independent settings decide the FDC timing. Plain-language summary first, details after.
 
+The whole model with every machine case (standard DD, turbo VG, Sprinter HD, rate mismatch, CPU too
+slow for HD), the per-machine policy table and how to add a machine: [WD1793_Clock_And_Data_Rate.md](WD1793_Clock_And_Data_Rate.md).
+
 | Setting | What sets it | What it changes | What it does NOT change |
 |---|---|---|---|
 | **Controller clock** (`FdcClock`: 1 MHz or 2 MHz) | the machine (see policies below) | step rate, head settle (Type I `V=1`, Type II/III `E=1`), the bit rate the chip *writes* (WRITE TRACK) | index pulses, revolution time-outs (RNF after 4-5 revolutions), the byte period while reading |
@@ -161,7 +164,7 @@ Pentagon "turbo VG" magazine mods), `0` selects `Fixed1MHz`. Leave it out to kee
 
 ### Data rate and the medium
 
-A track remembers how dense it is through its length and encoding (`DiskImage::RawTrack::recordedDataRate()`):
+A track remembers how dense it is through its length and encoding (`DiskImage::RawTrack::RecordedDataRate()`):
 at 300 rpm a 250 kbit/s track holds 6250 bytes (MFM) or 3125 bytes (FM), a 500 kbit/s track holds
 12 500 or 6250. The rule is: a track is high density (HD) when it is at least 1.5 times the DD nominal
 length for its encoding (MFM >= 9375 bytes, FM >= 4688 bytes). Real DD dumps (6208..6464 bytes) stay DD.

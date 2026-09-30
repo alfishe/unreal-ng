@@ -136,7 +136,8 @@ from a column-shifted OCR; the original datasheet has no such dependence.*
 *   The step period and the verify settle follow the controller clock of the machine
     (`WD1793::FdcClock`): 6/12/20/30 ms and 30 ms settle at 1 MHz, 3/6/10/15 ms and 15 ms settle at 2 MHz.
     See [WD1793_Timeouts.md](WD1793_Timeouts.md#controller-clock-and-data-rate-in-unreal-ng) for the clock
-    policies (fixed 1 MHz, automatic "turbo VG", latched).
+    policies (fixed 1 MHz, automatic "turbo VG", latched), and
+    [WD1793_Clock_And_Data_Rate.md](WD1793_Clock_And_Data_Rate.md) for which machine uses which policy.
 *   Worked example: SEEK from track 0 to track 40 with `r1 r0 = 00` and `V = 1`.
     *   1 MHz clock: 40 steps x 6 ms + 30 ms settle = **270 ms** (945 000 T-states at 3.5 MHz).
     *   ZX-Evo "turbo VG" (the first step pulse switches the clock to 2 MHz): 40 x 3 ms + 15 ms = **135 ms**.

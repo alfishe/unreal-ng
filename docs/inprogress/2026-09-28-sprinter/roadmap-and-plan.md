@@ -12,7 +12,7 @@
 ```mermaid
 flowchart LR
     S0["S0 materials, ROM,<br/>disassembly, fixtures"] --> S1["S1 model, memory,<br/>ports, boot to BIOS"]
-    SH["Shared infrastructure (PLAN #60):<br/>clock ratio, CMOS core, wait hook,<br/>per-model Screen, raw PC floppy,<br/>WD1793 rate check, trace codes"] -.-> S1
+    SH["Shared infrastructure (PLAN #60):<br/>clock ratio, CMOS core, wait hook,<br/>per-model Screen, raw PC floppy,<br/>WD1793 rate check (built), trace codes"] -.-> S1
     TS["TSConf (PLAN #41) landed:<br/>write intercept,<br/>interrupt source"] -.-> S1
     S1 --> S2["S2 video"]
     S1 --> S3a["S3a floppy"]
@@ -41,7 +41,7 @@ earlier.
 | **S0** | Provisioning: BIOS 3.04 (+3.06) in `data/rom/sprinter/` + README entry (3.04 source: HW-2000 `fw/bios/sp2k-3.04.253.bin`, [materials.md](materials.md) §5); **disassembly of ROM pages 8 and 0 of 3.04**, cross-checked against BIOS-TT `0271ac3`, into `docs/disasm/rom/sprinter/`, symbols into `data/symbols/sprinter/`; the loader traced once to capture the exact bitstream write count (Q4); the PLD (AHDL) sources checked for the accelerator INT-suspend (Q3); DSS 1.62 floppy and DSS 1.60R files in `testdata/machines/sprinter/` + `testdata/NOTICE.md`; add BIOS-TT, Shared_Includes, DSS and the PLD sources to the local emulator corpus; reference captures from MAME (page `#40` after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port accesses of BIOS 3.04 with codes); a small script that decodes a port-table page into the table of HW §4.4 | reference files checked in; decoded table equals HW §4.4; disassembly and symbol files in place | S-M | — (can start now) |
 | **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened") | L | S0; PLAN #60; TSConf (#41) landed |
 | **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save) | L | S1 |
-| **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density wired to the `rateCheck` and `LoaderRawPcFloppy` from PLAN #60; TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD) | M | S1 |
+| **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density: the `#BD` latch (codes `#16`/`#17`) wired to the WD1793 `Latched` clock policy via `WD1793::SetLatchedClock` (built 2026-09-29, commits `64756638`, `f304dde1`), `LoaderRawPcFloppy` from PLAN #60(f); TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD) | M | S1 |
 | **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image) | S-M | S1; IDE R1-1 (PLAN #13a) |
 | **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, default off (Q3) | T-ACC-*; part of **ACC-9** | M | S2 |
@@ -55,7 +55,8 @@ Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work
 Only S0 is Sprinter-specific work that can start now. The shared items this design introduced
 (clock ratio, CMOS core and its migrations, wait-state hook, per-model `Screen` selection, raw PC
 floppy loader, WD1793 rate check, port-trace internal codes) moved to PLAN row **#60** and are
-done there, before TSConf.
+done there, before TSConf. The WD1793 rate check is already built (2026-09-29) as the general WD1793
+clock / data-rate model; the Sprinter only wires its latch in S3a.
 
 | Item | Why now |
 |---|---|
@@ -71,7 +72,7 @@ says what the Sprinter would need if one of them slipped.
 
 | Row | What the Sprinter needs from it | Phase | If it slipped |
 |---|---|---|---|
-| #60 shared infrastructure (new) | clock ratio (`hw_turbo_ratio`; postponed from #60 to the start of this program - only the Sprinter needs it), `Ds12887` CMOS core + migrations, wait-state hook, per-model `Screen` selection, `LoaderRawPcFloppy`, WD1793 `rateCheck`, port-trace internal codes | S1-S3a | the Sprinter waits: these are prerequisites, not Sprinter work |
+| #60 shared infrastructure (new) | clock ratio (`hw_turbo_ratio`; postponed from #60 to the start of this program - only the Sprinter needs it), `Ds12887` CMOS core + migrations, wait-state hook, per-model `Screen` selection, `LoaderRawPcFloppy`, port-trace internal codes (the WD1793 clock / data-rate model is built: `Latched` policy + `SetLatchedClock`) | S1-S3a | the Sprinter waits: these are prerequisites, not Sprinter work |
 | #41 TSConf | write intercept, interrupt source (with `OnReti()`); also the trigger for #59 | S1 | the Sprinter waits |
 | #13a IDE (rollout 1) | R1-1 disk core (S3b), R1-7 ATAPI (S7) | S3b, S7 | ACC-3 and ACC-6 do not need IDE |
 | #58 media manager | M1 `HostFolderFat` (+ the `BootProfile` hook), M2 floppy slots, M6 IDE slots | S4 | image files through the existing `disk` path and the IDE config keys |
@@ -85,7 +86,7 @@ Owner decision (review round 1): **the Sprinter is the last machine program.** T
 
 1. Finish the shared infrastructure: TTD v2 (#40), video mappers (#42), media manager (#58), the
    IDE core (#13a), and the generic hooks, including the new row **#60** (clock ratio, CMOS core,
-   wait-state hook, per-model `Screen` selection, raw PC floppy loader, WD1793 rate check,
+   wait-state hook, per-model `Screen` selection, raw PC floppy loader, WD1793 rate check (built),
    port-trace internal codes) plus the write intercept and the interrupt source.
 2. Migrate BaseConf (ATM3) and the other existing machines onto that infrastructure.
 3. TSConf (#41).
@@ -116,5 +117,5 @@ Shared-infrastructure decisions from the same round:
 | Clock | `hw_turbo_shift` / `hw_turbo_shift_applied` become `hw_turbo_ratio` / `hw_turbo_ratio_applied` (1-8) everywhere. No backward compatibility and no converter (there were no public releases); the TTD checkpoint fields change and the TTD fixture corpus is re-recorded | [technical-design.md](technical-design.md) §3 |
 | Wait states | the per-bank byte is only a "this bank has waits" flag; the cost comes from `SprinterWaits::ExtraClocks(kind, t)` because MAME's rule depends on the clock phase | [technical-design.md](technical-design.md) §4 |
 | CMOS | `Ds12887` becomes the shared MC146818 core, extracted from the ATM3 `CMOS`; ATM3, Profi, SMUC and the ZX-Evo AVR clock migrate onto it in a separate task before the Sprinter | [tdd-storage.md](tdd-storage.md) §4 |
-| Other hooks | accepted as designed: write intercept, interrupt source + `OnReti()`, cache pages 2 → 4, per-model `Screen`, WD1793 rate check, raw PC floppy loader, `BootProfile` in `HostFolderFat`, port trace with internal code | [technical-design.md](technical-design.md) §2 |
+| Other hooks | accepted as designed: write intercept, interrupt source + `OnReti()`, cache pages 2 → 4, per-model `Screen`, WD1793 rate check (built 2026-09-29 as the `Latched` clock policy), raw PC floppy loader, `BootProfile` in `HostFolderFat`, port trace with internal code | [technical-design.md](technical-design.md) §2 |
 | Sequencing | the Sprinter is the last machine program; PLAN row #59 (T4, trigger TSConf #41 landed); shared pieces in row #60 before TSConf | §4 |

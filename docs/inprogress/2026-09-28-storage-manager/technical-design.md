@@ -350,6 +350,9 @@ sequenceDiagram
 - **Content first.** A `.img` of 819 200 bytes with an MGT directory is a floppy; any other `.img`
   is a block image. The current rule, "`.img` is always MGT", collides with SD and HDD images
   (research §3).
+- **Floppy density is in the tracks, not in a field.** HD = raw track length >= 1.5x the DD nominal
+  (MFM 9 375 bytes); a raw 1.44 MB loader writes 12 500-byte tracks. The WD1793 reads only tracks at
+  its data-separator rate ([WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md) §4.4).
 - **Slot kind decides the ambiguity.** Inserting into a block slot never picks a floppy format.
 - **Drag-and-drop with no slot**: the probe picks the kind, then the machine's default slot for
   that kind (the first floppy drive, the first block slot, the tape).
