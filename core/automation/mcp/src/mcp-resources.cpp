@@ -290,7 +290,10 @@ With a blank CMOS the BIOS opens its Setup Utility (text mode); ENTER changes an
 ## Video
 ZX, 16C (4 bpp), 256C (8 bpp) and TXT modes in 256x192 / 320x200 / 320x240 / 360x288; the framebuffer is 720x288
 for every mode. TSU: two tile layers + 85 sprites. `inspect_state aspects:["video"]` reports e.g. `TS16C 320x200`
-with the active pages; `inspect_state aspects:["tsconf"]` decodes memory, video, TSU, interrupts, DMA and the clock.
+with the active pages; `inspect_state aspects:["tsconf"]` decodes memory, video, TSU, interrupts, DMA and the clock;
+`aspects:["tsconf_tsu"]` lists the TSU objects (tile layers, 85 sprites decoded) and the 256 CRAM cells.
+Video debug mapping (`invoke_api` /video/pixel, /video/address): layer 0 = the graphics mode, layer 1 = "tsu"
+(which sprite / tile drew a pixel, its SFILE / tilemap words, graphics byte and CRAM cell).
 
 ## Sound
 AY / TurboSound as usual. The board has ONE 8-bit DAC: Covox `#FB` and the `#FE` beeper bit share it (the beeper

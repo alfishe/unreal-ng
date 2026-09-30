@@ -1821,6 +1821,9 @@ namespace PythonBindings
             .def("tsconf_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
             }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")
+            .def("tsconf_tsu", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::TsConfTsu(self.GetContext()));
+            }, "TS-Conf TSU and palette for debug views: tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells; available=False on other machines")
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")

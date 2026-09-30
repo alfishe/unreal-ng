@@ -178,6 +178,23 @@
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["200"]["description"] = "TS-Conf machine state";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
 
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["summary"] = "Get TS-Conf TSU objects and palette";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["tags"].append("Machine State");
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["description"] =
+        "What a TSU / palette debug view needs: t_config, sprites_on, window_360, tilemap_page, sprite_page; "
+        "tile_layers[] (name t0 / t1, enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette = the CRAM "
+        "bank bits 7:6, map_offset in each 256-byte map row); sprites[] - all 85 SFILE descriptors (index, active, "
+        "leap, layer s0 / s1 / s2 by the LEAP marks, x, y, width, height, x_flip, y_flip, tile, bitmap_x, bitmap_y "
+        "in the 512x512 sheet at sprite_page, palette = CRAM bank bits 7:4, words[] raw hex); active_sprites; cram[] - "
+        "the 256 palette cells (index, value hex, rgb). The tilemap and the graphics sheets are RAM pages (memory "
+        "API); which pixels an object feeds: /video/address. 404 on other machines.";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["200"]["description"] = "TSU objects and CRAM";
+    paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
+
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["description"] =

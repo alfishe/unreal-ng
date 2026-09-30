@@ -89,6 +89,12 @@ StateNode Network(EmulatorContext* context);
 /// the SD card. Unavailable on every other machine. Built beside the TS-Conf
 /// platform code (tsconfdevicestate.cpp), so shared code names no TS-Conf type
 StateNode TsConf(EmulatorContext* context);
+/// The TS-Conf TSU and palette for debug views (TsConfTsu()): T_CONFIG, the tile
+/// layers (enabled, graphics page, offsets, palette bits, tile-0 drawing), the
+/// tilemap and sprite pages, all 85 sprite descriptors decoded (active, LEAP,
+/// layer s0 / s1 / s2, position, size, flips, tile, bitmap position, palette,
+/// raw words) and the 256 CRAM cells (value, rgb). Unavailable on other machines
+StateNode TsConfTsu(EmulatorContext* context);
 
 /// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
 /// guest access or frame run - reading it never advances the chip.

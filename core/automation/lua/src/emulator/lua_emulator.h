@@ -2146,6 +2146,11 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::TsConf(emulator->GetContext()));
         });
+        lua.set_function("tsconf_tsu", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::TsConfTsu(emulator->GetContext()));
+        });
 
         // Network adapters: the same report every interface uses (DeviceState::Network)
         lua.set_function("network_state", [this](sol::this_state s) -> sol::object {
