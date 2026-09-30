@@ -5,6 +5,7 @@
  *   szxtool convert <in.sna|z80|szx> <out>        read any snapshot, write SZX (or .z80 / .sna by extension)
  *   szxtool synth <machine> <out>                 a synthetic snapshot with known values (same output rule)
  *   szxtool dump <file>                           the state as libspectrum reads it
+ *   szxtool rzx-resnap <in.rzx> <out.rzx>         the same recording with its snapshots rewritten as SZX
  *
  * Machines for synth: 48 128 plus2 plus2a plus3 pentagon pentagon512
  * pentagon1024 scorpion. See README.md.
@@ -228,6 +229,39 @@ static int Synth(const char* name, const char* out)
     return result;
 }
 
+/* The recording as it is, its snapshots re-encoded as SZX by libspectrum
+ * (what Fuse writes): an RZX with an embedded SZX from a real session */
+static int RzxResnap(const char* in, const char* out)
+{
+    size_t length = 0;
+    unsigned char* data = ReadFile(in, &length);
+    if (!data)
+        return 1;
+    libspectrum_rzx* rzx = libspectrum_rzx_alloc();
+    if (libspectrum_rzx_read(rzx, data, length))
+        return 1;
+    libspectrum_creator* creator = libspectrum_creator_alloc();
+    libspectrum_creator_set_program(creator, "szxtool");
+    libspectrum_creator_set_major(creator, 1);
+    libspectrum_creator_set_minor(creator, 0);
+    libspectrum_byte* buffer = NULL;
+    size_t written = 0;
+    const libspectrum_error error =
+        libspectrum_rzx_write(&buffer, &written, rzx, LIBSPECTRUM_ID_SNAPSHOT_SZX, creator, 1, NULL);
+    libspectrum_creator_free(creator);
+    libspectrum_rzx_free(rzx);
+    free(data);
+    if (error)
+        return 1;
+    FILE* f = fopen(out, "wb");
+    if (!f)
+        return 1;
+    fwrite(buffer, 1, written, f);
+    fclose(f);
+    libspectrum_free(buffer);
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (libspectrum_init())
@@ -238,6 +272,8 @@ int main(int argc, char** argv)
         return Convert(argv[2], argv[3]);
     if (argc == 4 && !strcmp(argv[1], "synth"))
         return Synth(argv[2], argv[3]);
+    if (argc == 4 && !strcmp(argv[1], "rzx-resnap"))
+        return RzxResnap(argv[2], argv[3]);
     fprintf(stderr, "usage: szxtool dump <file> | convert <in> <out.szx> | synth <machine> <out.szx>\n");
     return 2;
 }

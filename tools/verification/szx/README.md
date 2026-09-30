@@ -9,6 +9,7 @@ against. Design: [docs/inprogress/2026-09-29-szx-snapshots](../../../docs/inprog
 |---|---|
 | `szxtool synth <machine> <out>` | writes a snapshot with known values: registers `#1122`..., IM 2, MEMPTR `#4321`, 12345 T-states after the INT, EI shadow and FSET set, border 5, `#7FFD = #13` (page 3 at `#C000`), page n filled with `n * 16 + offset / 1024`, AY registers `r * 3 + 1` (register 7 = `#38`), Beta 128 on Pentagon / Scorpion. Machines: `48 128 plus2 plus2a plus3 pentagon pentagon512 pentagon1024 scorpion` |
 | `szxtool convert <in> <out>` | reads any snapshot libspectrum knows (SNA, Z80, SZX, ...) and writes it as SZX, or as `.z80` / `.sna` by the output's extension |
+| `szxtool rzx-resnap <in.rzx> <out.rzx>` | the same recording with its snapshots re-written as SZX (what Fuse writes); makes `testdata/loaders/rzx/szx/` |
 | `szxtool dump <file>` | prints the state libspectrum reads: registers, flags, T-states, ports, AY, Beta 128, a CRC-32 per RAM page |
 
 ## Build
