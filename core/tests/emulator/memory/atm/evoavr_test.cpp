@@ -139,8 +139,10 @@ TEST(EvoAvr_Test, RegistersBCDFollowTheAvrFirmware)
     EXPECT_EQ(Read(avr, 0x0C) & 0x80, 0x80) << "b7 EEPROM mode";
 
     EXPECT_EQ(Read(avr, 0x0D), 0x80);
-    avr.SetModifiers(0x51);  // L Ctrl, L Shift, F12
-    EXPECT_EQ(Read(avr, 0x0D), 0xD1);
+    avr.OnPcKey(PcKey::LeftCtrl, true);
+    avr.OnPcKey(PcKey::LeftShift, true);
+    avr.OnPcKey(PcKey::Function12, true);
+    EXPECT_EQ(Read(avr, 0x0D), 0xD1) << "L Ctrl, L Shift, F12";
     Write(avr, 0x0D, 0x00);
     EXPECT_EQ(Read(avr, 0x0D), 0xD1) << "D is read-only";
 }
@@ -235,4 +237,156 @@ TEST(EvoAvr_Test, DateSetFieldByFieldWithoutSet)
     EXPECT_EQ(Read(avr, 0x07), 0x31);
     EXPECT_EQ(Read(avr, 0x08), 0x12);
     EXPECT_EQ(Read(avr, 0x09), 0x99);
+}
+
+// --- PS/2 keyboard (ps2.c ps2keyboard_parse / to_log / from_log, zx.c to_zx) ---
+
+namespace
+{
+    /// Every byte the Z80 pops from the log until it reads 0 (at most 20)
+    std::vector<uint8_t> DrainLog(EvoAvr& avr)
+    {
+        Write(avr, 0xF0, EvoAvr::kExtPs2Log);
+        std::vector<uint8_t> bytes;
+        for (int i = 0; i < 20; i++)
+        {
+            const uint8_t byte = Read(avr, 0xF0);
+            if (byte == 0)
+                break;
+            bytes.push_back(byte);
+        }
+        return bytes;
+    }
+
+    void Tap(EvoAvr& avr, PcKey key)
+    {
+        avr.OnPcKey(key, true);
+        avr.OnPcKey(key, false);
+    }
+}
+
+/// AVR-2 / PS2-2: a key's make and break bytes come out in order; an empty log reads 0
+TEST(EvoAvr_Test, Ps2LogReturnsMakeAndBreakBytes)
+{
+    EvoAvr avr;
+    EXPECT_TRUE(DrainLog(avr).empty()) << "power-on: the log is in its reset state";
+
+    Tap(avr, PcKey::A);
+    EXPECT_EQ(DrainLog(avr), (std::vector<uint8_t>{0x1C, 0xF0, 0x1C}));
+
+    Tap(avr, PcKey::Up);
+    EXPECT_EQ(DrainLog(avr), (std::vector<uint8_t>{0xE0, 0x75, 0xE0, 0xF0, 0x75})) << "extended key: E0 prefix";
+}
+
+/// A read of the log with another extension type selected does not pop it
+TEST(EvoAvr_Test, Ps2LogPopsOnlyThroughExtensionType2)
+{
+    EvoAvr avr;
+    Tap(avr, PcKey::B);
+    Write(avr, 0xF0, EvoAvr::kExtFirmwareVersion);
+    EXPECT_EQ(Read(avr, 0xF0), EvoAvr::kFirmwareVersion[0]);
+    EXPECT_EQ(avr.PeekRegister(0xF0), EvoAvr::kFirmwareVersion[0]);
+
+    Write(avr, 0xF0, EvoAvr::kExtPs2Log);
+    EXPECT_EQ(avr.PeekRegister(0xF5), 0x32) << "a peek shows the oldest byte";
+    EXPECT_EQ(avr.PeekRegister(0xF5), 0x32) << "and does not pop it";
+    EXPECT_EQ(Read(avr, 0xF5), 0x32) << "any cell of the window pops";
+    EXPECT_EQ(Read(avr, 0xF0), 0xF0);
+    EXPECT_EQ(Read(avr, 0xF0), 0x32);
+    EXPECT_EQ(Read(avr, 0xF0), 0x00);
+}
+
+/// AVR-2 / PS2-2: the ring holds 15 bytes; the 16th overflows it, the Z80 reads
+/// #FF once, then the log starts over (reads 0 until a new key starts)
+TEST(EvoAvr_Test, Ps2LogOverflowReadsFFThenResets)
+{
+    EvoAvr avr;
+    for (PcKey key : {PcKey::A, PcKey::B, PcKey::C, PcKey::D, PcKey::E})
+        Tap(avr, key);  // 5 keys x 3 bytes = 15: full, not overflowed
+    EXPECT_EQ(avr.GetPs2LogCount(), 15u);
+    EXPECT_FALSE(avr.IsPs2LogOverflow());
+
+    avr.OnPcKey(PcKey::F, true);  // the 16th byte
+    EXPECT_TRUE(avr.IsPs2LogOverflow());
+
+    Write(avr, 0xF0, EvoAvr::kExtPs2Log);
+    EXPECT_EQ(Read(avr, 0xF0), 0xFF) << "overflow";
+    EXPECT_EQ(Read(avr, 0xF0), 0x00) << "then the log is reset";
+
+    // The log takes bytes again from the next key sequence on
+    avr.OnPcKey(PcKey::F, false);
+    Tap(avr, PcKey::G);
+    EXPECT_EQ(DrainLog(avr), (std::vector<uint8_t>{0xF0, 0x2B, 0x34, 0xF0, 0x34}));
+}
+
+/// After a log reset the first byte logged must start a key sequence: the rest
+/// of a key cut in half by the reset is dropped (ps2.c:175)
+TEST(EvoAvr_Test, Ps2LogAfterResetStartsAtAKey)
+{
+    EvoAvr avr;
+    avr.ReceivePs2Byte(0xE0);  // Up: E0 ...
+    Write(avr, 0x0C, 0x01);    // log reset in between
+    avr.ReceivePs2Byte(0x75);  // ... 75: a continuation, not logged
+    EXPECT_TRUE(DrainLog(avr).empty());
+
+    Tap(avr, PcKey::A);
+    EXPECT_EQ(DrainLog(avr), (std::vector<uint8_t>{0x1C, 0xF0, 0x1C}));
+}
+
+/// Register C bit 0 = 1 clears the log (rtc.c:491-510); the Caps LED bit is kept apart
+TEST(EvoAvr_Test, Ps2LogClearedByRegisterC)
+{
+    EvoAvr avr;
+    Tap(avr, PcKey::A);
+    Write(avr, 0x0C, 0x01);
+    EXPECT_TRUE(DrainLog(avr).empty());
+    EXPECT_EQ(Read(avr, 0x0C) & 0x01, 0x00) << "bit 0 is a command, not the tape-out mode";
+}
+
+/// Pause (E1 14 77 E1 F0 14 F0 77) is never logged; protocol bytes neither
+TEST(EvoAvr_Test, Ps2PauseAndProtocolBytesNotLogged)
+{
+    EvoAvr avr;
+    Tap(avr, PcKey::Pause);
+    for (uint8_t byte : {0xFA, 0xFE, 0xEE, 0xAA})
+        avr.ReceivePs2Byte(byte);
+    Tap(avr, PcKey::A);
+    EXPECT_EQ(DrainLog(avr), (std::vector<uint8_t>{0x1C, 0xF0, 0x1C}));
+}
+
+/// PS2-3: register D follows the modifier keys' make and break (zx.c to_zx)
+TEST(EvoAvr_Test, Ps2ModifiersInRegisterD)
+{
+    EvoAvr avr;
+    const std::pair<PcKey, uint8_t> mods[] = {
+        {PcKey::LeftCtrl, EvoAvr::kModLeftCtrl},   {PcKey::RightCtrl, EvoAvr::kModRightCtrl},
+        {PcKey::LeftAlt, EvoAvr::kModLeftAlt},     {PcKey::RightAlt, EvoAvr::kModRightAlt},
+        {PcKey::LeftShift, EvoAvr::kModLeftShift}, {PcKey::RightShift, EvoAvr::kModRightShift},
+        {PcKey::Function12, EvoAvr::kModF12},
+    };
+    for (const auto& [key, mask] : mods)
+    {
+        avr.OnPcKey(key, true);
+        EXPECT_EQ(Read(avr, 0x0D), 0x80 | mask) << pckey::Name(key);
+        avr.OnPcKey(key, false);
+        EXPECT_EQ(Read(avr, 0x0D), 0x80) << pckey::Name(key) << " released";
+    }
+
+    // Print Screen's fake Left Shift (E0 12) is not a Shift
+    avr.OnPcKey(PcKey::PrintScreen, true);
+    EXPECT_EQ(Read(avr, 0x0D), 0x80);
+}
+
+/// Release-all sends the breaks of the keys held; the modifiers drop
+TEST(EvoAvr_Test, Ps2ReleaseAllSendsBreaks)
+{
+    EvoAvr avr;
+    avr.OnPcKey(PcKey::LeftShift, true);
+    avr.OnPcKey(PcKey::A, true);
+    DrainLog(avr);
+
+    avr.ReleaseAllPcKeys();
+    EXPECT_EQ(Read(avr, 0x0D), 0x80);
+    const std::vector<uint8_t> bytes = DrainLog(avr);
+    EXPECT_EQ(bytes, (std::vector<uint8_t>{0xF0, 0x1C, 0xF0, 0x12}));
 }

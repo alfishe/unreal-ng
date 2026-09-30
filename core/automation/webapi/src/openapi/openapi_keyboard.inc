@@ -73,7 +73,7 @@
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["key"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs')";
+         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs'), or a physical PC key name for a PS/2 machine such as the ZX-Evo ('f1', 'home', 'esc', 'pc.up')";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["200"]["description"] = "Key pressed";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["404"]["description"] = "Emulator not found";
@@ -91,7 +91,7 @@
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["key"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["key"]["description"] = "Key name to release";
+         ["properties"]["key"]["description"] = "Key name to release (ZX or PC key name)";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["200"]["description"] = "Key released";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/release"]["post"]["responses"]["404"]["description"] = "Emulator not found";

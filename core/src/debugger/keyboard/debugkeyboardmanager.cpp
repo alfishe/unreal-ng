@@ -65,10 +65,45 @@ bool DebugKeyboardManager::IsInputOwnedByJournal() const
 /// applied on the machine's thread at an instruction boundary and journalled there while
 /// recording. Timed operations (tap, combo, type, sequences) used to call Keyboard
 /// directly and were missing from the journal.
-bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed)
+bool DebugKeyboardManager::ApplyPcKey(PcKey key, bool pressed)
+{
+    if (key == PcKey::None || !_keyboard || !_keyboard->HasPs2Sink())
+        return false;
+
+    if (_context && _context->pTimeTravelManager)
+    {
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::PcKey;
+        ev.key = static_cast<uint8_t>(key);
+        ev.pressed = pressed;
+        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    }
+
+    _keyboard->ApplyPcKey(key, pressed);
+    return true;
+}
+
+bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed, bool derivePcKeys)
 {
     if (key == ZXKEY_NONE || !_keyboard)
         return false;
+
+    // The PS/2 controller hears the PC keys the ZX key stands for (the ZX key as
+    // given, before it is decomposed into matrix keys: Up is E0 75, not Shift + 7)
+    if (derivePcKeys && _keyboard->HasPs2Sink())
+    {
+        const std::vector<PcKey> pcKeys = pckey::FromZxKey(key);
+        if (pressed)
+        {
+            for (PcKey pc : pcKeys)
+                ApplyPcKey(pc, true);
+        }
+        else
+        {
+            for (auto it = pcKeys.rbegin(); it != pcKeys.rend(); ++it)
+                ApplyPcKey(*it, false);
+        }
+    }
 
     if (!pressed)
     {
@@ -116,7 +151,18 @@ void DebugKeyboardManager::PressKey(ZXKeysEnum key)
 
 void DebugKeyboardManager::PressKey(const std::string& keyName)
 {
-    PressKey(ResolveKeyName(keyName));
+    const ZXKeysEnum key = ResolveKeyName(keyName);
+    const PcKey pcKey = key == ZXKEY_NONE ? pckey::FromName(keyName) : PcKey::None;
+    if (pcKey != PcKey::None)
+    {
+        // A PC key with no ZX name (F1, Home, ...): only the PS/2 controller hears it
+        if (IsInputOwnedByJournal())
+            return;
+        _directPressedPcKeys.insert(pcKey);
+        ApplyPcKey(pcKey, /*pressed=*/true);
+        return;
+    }
+    PressKey(key);
 }
 
 void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
@@ -136,7 +182,17 @@ void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
 
 void DebugKeyboardManager::ReleaseKey(const std::string& keyName)
 {
-    ReleaseKey(ResolveKeyName(keyName));
+    const ZXKeysEnum key = ResolveKeyName(keyName);
+    const PcKey pcKey = key == ZXKEY_NONE ? pckey::FromName(keyName) : PcKey::None;
+    if (pcKey != PcKey::None)
+    {
+        if (IsInputOwnedByJournal())
+            return;
+        _directPressedPcKeys.erase(pcKey);
+        ApplyPcKey(pcKey, /*pressed=*/false);
+        return;
+    }
+    ReleaseKey(key);
 }
 
 void DebugKeyboardManager::TapKey(ZXKeysEnum key, uint16_t holdFrames)
@@ -154,22 +210,38 @@ void DebugKeyboardManager::TapKey(ZXKeysEnum key, uint16_t holdFrames)
 
 void DebugKeyboardManager::TapKey(const std::string& keyName, uint16_t holdFrames)
 {
-    TapKey(ResolveKeyName(keyName), holdFrames);
+    const ZXKeysEnum key = ResolveKeyName(keyName);
+    const PcKey pcKey = key == ZXKEY_NONE ? pckey::FromName(keyName) : PcKey::None;
+    if (pcKey != PcKey::None)
+    {
+        KeyboardSequence seq;
+        seq.name = "tap_single";
+        KeyboardSequenceEvent event(KeyboardSequenceEvent::Action::TAP, std::vector<ZXKeysEnum>{}, holdFrames);
+        event.pcKeys = {pcKey};
+        seq.events.push_back(event);
+        QueueSequence(seq);
+        return;
+    }
+    TapKey(key, holdFrames);
 }
 
 void DebugKeyboardManager::ReleaseAllKeys()
 {
     std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
 
-    // Clear direct pressed keys
+    // Clear direct pressed keys (the reset below releases them on the PS/2 side too)
     _directPressedKeys.clear();
+    _directPressedPcKeys.clear();
     
     // Release tap-held keys
     for (ZXKeysEnum key : _tapHeldKeys)
     {
-        ApplyKey(key, /*pressed=*/false);
+        ApplyKey(key, /*pressed=*/false, _tapDerivesPcKeys);
     }
     _tapHeldKeys.clear();
+    for (auto it = _tapHeldPcKeys.rbegin(); it != _tapHeldPcKeys.rend(); ++it)
+        ApplyPcKey(*it, /*pressed=*/false);
+    _tapHeldPcKeys.clear();
     _inTapHoldPhase = false;
     
     // Whole-matrix reset (also clears host press counters), journalled as one event so a
@@ -185,6 +257,7 @@ void DebugKeyboardManager::ReleaseAllKeys()
         else
         {
             _keyboard->Reset();
+            _keyboard->ReleaseAllPcKeys();
         }
     }
 }
@@ -327,9 +400,12 @@ void DebugKeyboardManager::AbortSequence()
     // Release any held keys
     for (ZXKeysEnum key : _tapHeldKeys)
     {
-        ApplyKey(key, /*pressed=*/false);
+        ApplyKey(key, /*pressed=*/false, _tapDerivesPcKeys);
     }
     _tapHeldKeys.clear();
+    for (auto it = _tapHeldPcKeys.rbegin(); it != _tapHeldPcKeys.rend(); ++it)
+        ApplyPcKey(*it, /*pressed=*/false);
+    _tapHeldPcKeys.clear();
     
     _frameCountdown = 0;
     _inTapHoldPhase = false;
@@ -437,20 +513,23 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
 {
     KeyboardSequence seq;
     seq.name = "type_text";
+
+    // A PS/2 keyboard (ZX-Evo) gets the PC keys that type each character, not
+    // the ones behind its ZX key combination ('&' is Symbol Shift + 6 on the ZX,
+    // Shift + 7 on a PC)
+    const bool ps2 = _keyboard && _keyboard->HasPs2Sink();
     
     for (char c : text)
     {
         std::vector<ZXKeysEnum> keys = CharToKeys(c);
-        if (!keys.empty())
+        std::vector<PcKey> pcKeys = ps2 ? pckey::FromCharacter(c) : std::vector<PcKey>{};
+        if (!keys.empty() || !pcKeys.empty())
         {
-            if (keys.size() == 1)
-            {
-                seq.events.push_back({KeyboardSequenceEvent::Action::TAP, keys, DEFAULT_HOLD_FRAMES});
-            }
-            else
-            {
-                seq.events.push_back({KeyboardSequenceEvent::Action::COMBO_TAP, keys, DEFAULT_HOLD_FRAMES});
-            }
+            const auto action = keys.size() > 1 || pcKeys.size() > 1 ? KeyboardSequenceEvent::Action::COMBO_TAP
+                                                                      : KeyboardSequenceEvent::Action::TAP;
+            KeyboardSequenceEvent event(action, keys, DEFAULT_HOLD_FRAMES);
+            event.pcKeys = std::move(pcKeys);
+            seq.events.push_back(event);
             
             if (charDelayFrames > 0)
             {
@@ -516,6 +595,11 @@ std::array<uint8_t, 8> DebugKeyboardManager::GetMatrixState() const
 
 
 /// region <Key Name Resolution>
+
+bool DebugKeyboardManager::IsKnownKeyName(const std::string& name)
+{
+    return ResolveKeyName(name) != ZXKEY_NONE || pckey::FromName(name) != PcKey::None;
+}
 
 ZXKeysEnum DebugKeyboardManager::ResolveKeyName(const std::string& name)
 {
@@ -629,16 +713,19 @@ void DebugKeyboardManager::OnFrame()
         if (_frameCountdown == 0)
         {
             // If we were in tap hold phase, release the keys
-            if (_inTapHoldPhase && !_tapHeldKeys.empty())
+            if (_inTapHoldPhase && (!_tapHeldKeys.empty() || !_tapHeldPcKeys.empty()))
             {
                 // Release in REVERSE order to avoid ghost keypresses
                 // For combo SS+P: release P first, then SS
                 // This prevents the lone P from being seen without modifier
                 for (auto it = _tapHeldKeys.rbegin(); it != _tapHeldKeys.rend(); ++it)
                 {
-                    ApplyKey(*it, /*pressed=*/false);
+                    ApplyKey(*it, /*pressed=*/false, _tapDerivesPcKeys);
                 }
                 _tapHeldKeys.clear();
+                for (auto it = _tapHeldPcKeys.rbegin(); it != _tapHeldPcKeys.rend(); ++it)
+                    ApplyPcKey(*it, /*pressed=*/false);
+                _tapHeldPcKeys.clear();
                 _inTapHoldPhase = false;
                 
                 // Add 1-frame debounce delay after release before next event
@@ -891,21 +978,34 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
 {
     if (!_keyboard)
         return;
+
+    // Explicit PC keys replace the ones derived from the ZX keys
+    const bool derive = event.pcKeys.empty();
+    auto pressPcKeys = [this, &event]() {
+        for (PcKey pc : event.pcKeys)
+            ApplyPcKey(pc, /*pressed=*/true);
+    };
+    auto releasePcKeys = [this, &event]() {
+        for (auto it = event.pcKeys.rbegin(); it != event.pcKeys.rend(); ++it)
+            ApplyPcKey(*it, /*pressed=*/false);
+    };
     
     switch (event.action)
     {
         case KeyboardSequenceEvent::Action::PRESS:
             for (ZXKeysEnum key : event.keys)
             {
-                ApplyKey(key, /*pressed=*/true);
+                ApplyKey(key, /*pressed=*/true, derive);
             }
+            pressPcKeys();
             _frameCountdown = event.frames;
             break;
             
         case KeyboardSequenceEvent::Action::RELEASE:
+            releasePcKeys();
             for (ZXKeysEnum key : event.keys)
             {
-                ApplyKey(key, /*pressed=*/false);
+                ApplyKey(key, /*pressed=*/false, derive);
             }
             _frameCountdown = event.frames;
             break;
@@ -913,11 +1013,14 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
         case KeyboardSequenceEvent::Action::TAP:
         case KeyboardSequenceEvent::Action::COMBO_TAP:
             // Press all keys
+            _tapDerivesPcKeys = derive;
             for (ZXKeysEnum key : event.keys)
             {
-                ApplyKey(key, /*pressed=*/true);
+                ApplyKey(key, /*pressed=*/true, derive);
                 _tapHeldKeys.push_back(key);
             }
+            pressPcKeys();
+            _tapHeldPcKeys = event.pcKeys;
             _inTapHoldPhase = true;
             _frameCountdown = event.frames;
             break;
@@ -925,16 +1028,18 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
         case KeyboardSequenceEvent::Action::COMBO_PRESS:
             for (ZXKeysEnum key : event.keys)
             {
-                ApplyKey(key, /*pressed=*/true);
+                ApplyKey(key, /*pressed=*/true, derive);
             }
+            pressPcKeys();
             _frameCountdown = event.frames;
             break;
             
         case KeyboardSequenceEvent::Action::COMBO_RELEASE:
             // Release in reverse order
+            releasePcKeys();
             for (auto it = event.keys.rbegin(); it != event.keys.rend(); ++it)
             {
-                ApplyKey(*it, /*pressed=*/false);
+                ApplyKey(*it, /*pressed=*/false, derive);
             }
             _frameCountdown = event.frames;
             break;
