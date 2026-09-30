@@ -121,7 +121,7 @@ void EmulatorAPI::getVideoPixel(const HttpRequestPtr& req, std::function<void(co
     Respond(callback, StateNodeToJson(DeviceState::VideoPixel(context, layer, x, y)), k200OK);
 }
 
-/// @brief GET /api/v1/emulator/{id}/video/address?page=&offset= or ?z80=
+/// @brief GET /api/v1/emulator/{id}/video/address?page=&offset= or ?z80= or ?space=&offset=
 void EmulatorAPI::getVideoAddress(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
@@ -132,6 +132,18 @@ void EmulatorAPI::getVideoAddress(const HttpRequestPtr& req, std::function<void(
     if (UIntParam(req, "z80", z80))
     {
         Respond(callback, StateNodeToJson(DeviceState::VideoAddressZ80(context, z80)), k200OK);
+        return;
+    }
+    const std::string space = req->getParameter("space");
+    if (!space.empty() && space != "ram")
+    {
+        // A sprite attribute word or a palette cell: the byte offset in that space
+        if (!UIntParam(req, "offset", offset))
+        {
+            RespondError(callback, k400BadRequest, "Bad Request", "Give offset (the byte offset in the space)");
+            return;
+        }
+        Respond(callback, StateNodeToJson(DeviceState::VideoAddressIn(context, space, 0, offset)), k200OK);
         return;
     }
     if (!UIntParam(req, "page", page) || !UIntParam(req, "offset", offset))

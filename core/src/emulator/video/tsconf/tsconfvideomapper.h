@@ -32,8 +32,24 @@ struct TsConfVideoView
 /// window is the V_CONFIG geometry (256x192 / 320x200 / 320x240 / 360x288).
 /// Per line the mapper uses the registers the engine latched for it (mode,
 /// V_PAGE, X offset, row counter, PAL_SEL), so a mid-frame split is answered
-/// line by line. Not mapped yet: the TSU tile and sprite layers and their
-/// mixing (GFXOVR / NOTSU) - a pixel's answer is its graphics layer.
+/// line by line.
+///
+/// Layer 1, "tsu" (present while T_CONFIG enables tiles or sprites): the TSU
+/// picture over the TS window (the graphics window, or all 360x288 with
+/// T_CONFIG[0]), in the same 14 MHz pixels. A pixel's answer names the object
+/// that drew it - `contribution.layer` "tsu.s0" / "tsu.t0" / "tsu.s1" /
+/// "tsu.t1" / "tsu.s2" - with the tilemap word (TileDescriptor, 2 bytes) and
+/// the graphics byte (TileGraphic) of a tile, or the three SFILE words
+/// (SpriteDescriptor, Space::SpriteRam, offset = word * 2) and the graphics
+/// byte (SpriteGraphic) of a sprite, then the CRAM cell; transparent pixels
+/// answer nothing. The line is drawn again for the answer
+/// (TsConfEngine::ProbeTsuLine): TSU registers and SFILE as they are now.
+///
+/// What the screen shows (the video plex, ScreenTSConf): inside the graphics
+/// window the TSU pixel unless NOTSU (V_CONFIG[4]) or GFXOVR (V_CONFIG[3])
+/// with a "visible" graphics dot (ZX ink, 16C / 256C index != 0, TXT font
+/// bit); outside it the TSU pixel, else BORDER. In TXT every source is
+/// flattened to 4 bits in the PAL_SEL bank.
 ///
 /// Worked example (16C 320x200, V_PAGE #10, no offsets, PAL_SEL 0): surface
 /// pixel (6, 0) is dot 3 of line 0: RAM byte #40001 = page #10 offset 1, low
@@ -52,8 +68,14 @@ public:
                 videomap::TextCell& out) const override;
 
     static const char* LayerId(uint8_t vConfig);
+    /// The TSU layer is present (T_CONFIG enables tiles or sprites)
+    static bool HasTsu(const TsConfState& ts);
 
 private:
+    /// The colour index of surface x of a line drawn with `set` (graphics layer)
+    static uint8_t GraphicsIndex(const TsConfVideoView& v, const TsConfLine& set, uint32_t x);
+    /// The TSU pixels a tilemap word, graphics byte, SFILE word or CRAM cell feeds
+    static void TsuPixelsFor(const TsConfVideoView& v, const videomap::SourceRef& ref, std::vector<videomap::SurfaceArea>& out);
     /// The line set of window row y, null when the view is missing
     static const TsConfLine* LineOf(const TsConfVideoView& v, uint8_t vConfig, uint32_t y);
 };

@@ -509,7 +509,7 @@ end
 - `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
-- `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
+- `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_in`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte, a sprite attribute word or a palette cell feeds)
 - `video_temporal`, `video_temporal_set` - ZX DLSS de-flicker status and switch (the picture and sound are delayed by the algorithm's look-ahead while it is on)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping

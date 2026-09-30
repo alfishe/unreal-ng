@@ -3989,6 +3989,10 @@ namespace PythonBindings
         .def("video_address", [](Emulator& self, unsigned page, unsigned offset) -> py::object {
             return StateNodeToPy(DeviceState::VideoAddress(self.GetContext(), page, offset));
         }, "Pixels a RAM byte (page, offset 0..0x3FFF) feeds", py::arg("page"), py::arg("offset"))
+        .def("video_address_in", [](Emulator& self, const std::string& space, unsigned offset, unsigned page) -> py::object {
+            return StateNodeToPy(DeviceState::VideoAddressIn(self.GetContext(), space, page, offset));
+        }, "Pixels a byte of a space feeds: ram (page, offset), sprite_ram (attribute word, byte offset) or "
+           "palette (16-bit cell, byte offset)", py::arg("space"), py::arg("offset"), py::arg("page") = 0)
         .def("video_address_z80", [](Emulator& self, unsigned address) -> py::object {
             return StateNodeToPy(DeviceState::VideoAddressZ80(self.GetContext(), address));
         }, "Pixels the byte at a Z80 address feeds (current paging)", py::arg("address"))

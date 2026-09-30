@@ -106,9 +106,13 @@ struct FramebufferMap
 
 struct LayerDesc
 {
-    std::string id;      ///< "zx", "atm16", "atmhr", "atmtx", "atmtl", "p16", "pmc", "profihr"
+    std::string id;      ///< "zx", "atm16", "atmhr", "atmtx", "atmtl", "p16", "pmc", "profihr", "tsu", ...
     SurfaceDesc surface;
     LayerWindow window;
+    /// A layer whose surface sits elsewhere in the framebuffer than the
+    /// layout's (TS-Conf's TSU window over the whole screen): its own origin
+    bool ownFramebufferOrigin = false;
+    uint16_t fbLeft = 0, fbTop = 0;
 };
 
 struct VideoLayout

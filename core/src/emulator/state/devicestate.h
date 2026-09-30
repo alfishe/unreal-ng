@@ -141,7 +141,9 @@ StateNode ScreenAttributes(EmulatorContext* context, int screen = -1);
 ///   `offset`, `bit_mask`, `role`, `z80[]`), `colour_index`, `rgb`, `rendered_rgb`,
 ///   `state_at` / `values_at` (design §4.6); at the beam a border point reports `border`.
 /// - `VideoAddress(page, offset)` / `VideoAddressZ80(address)`: `areas[]` of every layer
-///   the byte feeds.
+///   the byte feeds. `VideoAddressIn(space, page, offset)` asks the same of another space:
+///   "ram" (page + offset), "sprite_ram" (a sprite attribute word, byte offset - TS-Conf
+///   SFILE: word n at 2n) or "palette" (a palette cell, byte offset - 16-bit cells at 2n).
 /// - `VideoText(layer)`: `columns`, `rows` and `lines[]` (`text`, `codes`, `attrs`) of a
 ///   text layer (ATM / ZX-Evo text modes); unavailable for bitmap layers.
 StateNode VideoBeam(EmulatorContext* context);
@@ -150,6 +152,7 @@ StateNode VideoPixel(EmulatorContext* context, unsigned layer, unsigned x, unsig
 StateNode VideoPixelAtBeam(EmulatorContext* context, unsigned tInFrame);
 StateNode VideoAddress(EmulatorContext* context, unsigned page, unsigned offset);
 StateNode VideoAddressZ80(EmulatorContext* context, unsigned address);
+StateNode VideoAddressIn(EmulatorContext* context, const std::string& space, unsigned page, unsigned offset);
 StateNode VideoText(EmulatorContext* context, unsigned layer = 0);
 
 /// Video memory contention (`Contention()`): the machine's rule (none / ula48 / ula128 / gatearray), whether

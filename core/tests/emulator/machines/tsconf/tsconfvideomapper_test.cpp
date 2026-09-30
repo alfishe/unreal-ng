@@ -7,6 +7,7 @@
 #include <cstring>
 #include <vector>
 
+#include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
 #include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/video/tsconf/tsconfvideomapper.h"
@@ -195,4 +196,200 @@ TEST_F(TsConfVideoMapper_Test, MAP5_TextCellsAndBorder)
     TsConfVideoMapper().BorderSources(service.State(), border);
     EXPECT_EQ(border.layer, "border");
     EXPECT_EQ(border.colourIndex, _decoder->GetState().regs[TsConfReg::Border]);
+}
+
+namespace
+{
+    /// Random TSU setup: tiles and sprites on, random SFILE (sizes, positions, LEAP), map / graphics pages
+    void RandomTsu(TsConfFixture& f, PortDecoder_TSConf* decoder, uint32_t& seed, bool fullWindow)
+    {
+        auto next = [&seed] { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+        TsConfState& ts = decoder->GetState();
+        for (uint16_t& w : ts.sfile)
+            w = static_cast<uint16_t>(next());
+        (void)f;
+        decoder->WriteRegister(TsConfReg::TMapPage, static_cast<uint8_t>(next()));
+        decoder->WriteRegister(TsConfReg::T0GPage, static_cast<uint8_t>(next()));
+        decoder->WriteRegister(TsConfReg::T1GPage, static_cast<uint8_t>(next()));
+        decoder->WriteRegister(TsConfReg::SGPage, static_cast<uint8_t>(next()));
+        for (uint8_t r = 0x40; r < 0x48; r++)
+            decoder->WriteRegister(r, static_cast<uint8_t>(next()));
+        decoder->WriteRegister(TsConfReg::TConfig, static_cast<uint8_t>(0xE0 | (next() & 0x0C) | (fullWindow ? 1 : 0)));
+    }
+}
+
+/// MAP-6: the TSU layer's colour is the rendered one wherever the TSU shows
+/// (NOTSU and GFXOVR off: an opaque TSU pixel wins), in the graphics window
+/// and in the full 360x288 TS window (T_CONFIG[0], its own framebuffer origin)
+TEST_F(TsConfVideoMapper_Test, MAP6_TsuColourMatchesTheRenderer)
+{
+    Noise(21);
+    VideoMapService service(_context);
+    uint32_t seed = 3;
+    auto next = [&seed] { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+    for (uint8_t vConfig : {uint8_t(0x41), uint8_t(0x82), uint8_t(0x00), uint8_t(0xC1)})
+    {
+        for (bool full : {false, true})
+        {
+            SCOPED_TRACE(testing::Message() << "vConfig " << int(vConfig) << " full " << full);
+            Reg(TsConfReg::VConfig, vConfig);
+            RandomTsu(*this, _decoder, seed, full);
+            Frame();
+            const VideoLayout layout = service.Layout();
+            ASSERT_EQ(layout.layers.size(), 2u);
+            EXPECT_EQ(layout.layers[1].id, "tsu");
+            const SurfaceDesc& surface = layout.layers[1].surface;
+            int opaque = 0;
+            for (int sample = 0; sample < 600; sample++)
+            {
+                const uint32_t x = next() % surface.width;
+                const uint32_t y = next() % surface.height;
+                const PixelSources p = service.SourcesAt(1, x, y);
+                if (!p.valid)
+                    continue;
+                opaque++;
+                ASSERT_TRUE(p.renderedKnown);
+                ASSERT_EQ(p.finalRgb, p.renderedRgb) << "pixel " << x << "," << y << " " << p.contribution.layer;
+            }
+            EXPECT_GT(opaque, 50) << "the random TSU draws most pixels";
+        }
+    }
+}
+
+/// MAP-7: a known sprite and a known tile name their descriptor / map word,
+/// graphics byte and CRAM cell; PixelsFor of the SFILE word covers the sprite
+TEST_F(TsConfVideoMapper_Test, MAP7_TsuSourcesOfASpriteAndATile)
+{
+    VideoMapService service(_context);
+    TsConfState& ts = _decoder->GetState();
+    std::memset(ts.sfile, 0, sizeof(ts.sfile));
+    for (uint16_t page = 0x20; page < 0x40; page++)
+        std::memset(_memory->RAMPageAddress(page), 0, PAGE_SIZE);
+    Reg(TsConfReg::VConfig, 0x41);    // 16C 320x200: window at dot 108, line 76
+    Reg(TsConfReg::SGPage, 0x20);
+    Reg(TsConfReg::TMapPage, 0x30);
+    Reg(TsConfReg::T0GPage, 0x28);
+    // Sprite 5: at (10, 20), 8x8, tile 1 (bitmap x 8..15), palette 3; its graphics all colour 7
+    ts.sfile[5 * 3] = static_cast<uint16_t>(0x2000 | 20);
+    ts.sfile[5 * 3 + 1] = 10;
+    ts.sfile[5 * 3 + 2] = static_cast<uint16_t>((3 << 12) | 1);
+    for (uint32_t row = 0; row < 8; row++)
+        for (uint32_t b = 0; b < 4; b++)
+            Ram(0x20, row * 256 + 4 + b) = 0x77;
+    // Tile layer 0: map entry (row 0, column 3) = tile 2, palette 1; tile graphics colour 5
+    Ram(0x30, 0 * 256 + 0 * 128 + 3 * 2) = 2;
+    Ram(0x30, 0 * 256 + 0 * 128 + 3 * 2 + 1) = 0x10;
+    for (uint32_t row = 0; row < 8; row++)
+        for (uint32_t b = 0; b < 4; b++)
+            Ram(0x28, row * 256 + 8 + b) = 0x55;
+    Reg(TsConfReg::TConfig, 0xA0);   // sprites + tile layer 0
+    Frame();
+
+    // Sprite pixel: TS window x 12 (surface 24), line 22
+    PixelSources p = service.SourcesAt(1, 24, 22);
+    ASSERT_TRUE(p.valid);
+    EXPECT_EQ(p.contribution.layer, "tsu.s0");
+    ASSERT_EQ(p.contribution.sources.size(), 5u);
+    EXPECT_EQ(p.contribution.sources[0].space, Space::SpriteRam);
+    EXPECT_EQ(p.contribution.sources[0].offset, 5u * 6u);
+    EXPECT_EQ(p.contribution.sources[2].offset, 5u * 6u + 4u);
+    EXPECT_EQ(p.contribution.sources[3].role, SourceRole::SpriteGraphic);
+    EXPECT_EQ(p.contribution.sources[3].page, 0x20);
+    EXPECT_EQ(p.contribution.sources[3].offset, 2u * 256u + 5u) << "bitmap x 10 of row 2";
+    EXPECT_EQ(p.contribution.colourIndex, 0x37);
+    EXPECT_EQ(p.contribution.sources[4].offset, 0x37u * 2u);
+
+    const std::vector<SurfaceArea> sprite = service.PixelsFor({Space::SpriteRam, 0, 0, 5u * 6u, 2, 0xFFFF, SourceRole::SpriteDescriptor});
+    uint32_t pixels = 0;
+    for (const SurfaceArea& a : sprite)
+        pixels += static_cast<uint32_t>(a.width) * a.height;
+    EXPECT_EQ(pixels, 8u * 8u * 2u) << "8x8 dots, 2 surface pixels each";
+
+    // Tile pixel: column 3 = TS x 24..31, line 0 (no offsets)
+    p = service.SourcesAt(1, 2 * 26, 0);
+    ASSERT_TRUE(p.valid);
+    EXPECT_EQ(p.contribution.layer, "tsu.t0");
+    EXPECT_EQ(p.contribution.sources[0].role, SourceRole::TileDescriptor);
+    EXPECT_EQ(p.contribution.sources[0].page, 0x30);
+    EXPECT_EQ(p.contribution.sources[0].offset, 6u);
+    EXPECT_EQ(p.contribution.sources[0].width, 2);
+    EXPECT_EQ(p.contribution.sources[1].page, 0x28);
+    EXPECT_EQ(p.contribution.sources[1].offset, 9u) << "tile 2: bitmap x 16..23, x 18 of row 0";
+    EXPECT_EQ(p.contribution.colourIndex, 0x15);
+    EXPECT_FALSE(service.SourcesAt(1, 2 * 100, 150).valid) << "transparent";
+}
+
+/// MAP-8: PixelsFor of each TSU source covers the pixel it came from
+TEST_F(TsConfVideoMapper_Test, MAP8_TsuPixelsForCoversTheSourcePixel)
+{
+    Noise(33);
+    VideoMapService service(_context);
+    uint32_t seed = 17;
+    auto next = [&seed] { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+    Reg(TsConfReg::VConfig, 0x41);
+    RandomTsu(*this, _decoder, seed, false);
+    Frame();
+    const SurfaceDesc surface = service.Layout().layers[1].surface;
+    int checked = 0;
+    for (int sample = 0; sample < 200 && checked < 12; sample++)
+    {
+        const uint32_t x = next() % surface.width;
+        const uint32_t y = next() % surface.height;
+        const PixelSources p = service.SourcesAt(1, x, y);
+        if (!p.valid)
+            continue;
+        checked++;
+        for (size_t i = 0; i + 1 < p.contribution.sources.size(); i++)
+        {
+            bool covered = false;
+            for (const SurfaceArea& a : service.PixelsFor(p.contribution.sources[i]))
+                covered = covered || (a.layer == "tsu" && x >= a.x && x < static_cast<uint32_t>(a.x + a.width) && y >= a.y &&
+                                      y < static_cast<uint32_t>(a.y + a.height));
+            ASSERT_TRUE(covered) << "pixel " << x << "," << y << " source " << i << " " << p.contribution.layer;
+        }
+    }
+    EXPECT_EQ(checked, 12);
+}
+
+/// MAP-9: a CRAM cell feeds every pixel drawn with its index, in both layers;
+/// the same question on the automation surfaces (DeviceState::VideoAddressIn)
+TEST_F(TsConfVideoMapper_Test, MAP9_PaletteCellAndSpaces)
+{
+    Noise(45);
+    VideoMapService service(_context);
+    uint32_t seed = 23;
+    auto next = [&seed] { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+    Reg(TsConfReg::VConfig, 0x41);
+    RandomTsu(*this, _decoder, seed, false);
+    Frame();
+    const VideoLayout layout = service.Layout();
+    for (size_t layer = 0; layer < 2; layer++)
+    {
+        int checked = 0;
+        for (int sample = 0; sample < 200 && checked < 6; sample++)
+        {
+            const uint32_t x = next() % layout.layers[layer].surface.width;
+            const uint32_t y = next() % layout.layers[layer].surface.height;
+            const PixelSources p = service.SourcesAt(layer, x, y);
+            if (!p.valid)
+                continue;
+            checked++;
+            const SourceRef& cram = p.contribution.sources.back();
+            ASSERT_EQ(cram.space, Space::Palette);
+            bool covered = false;
+            for (const SurfaceArea& a : service.PixelsFor(cram))
+                covered = covered || (a.layer == layout.layers[layer].id && x >= a.x && x < static_cast<uint32_t>(a.x + a.width) &&
+                                      y >= a.y && y < static_cast<uint32_t>(a.y + a.height));
+            ASSERT_TRUE(covered) << "layer " << layer << " pixel " << x << "," << y;
+        }
+        EXPECT_EQ(checked, 6) << "layer " << layer;
+    }
+
+    StateNode palette = DeviceState::VideoAddressIn(_context, "palette", 0, 0x20);
+    EXPECT_TRUE(palette["available"].b);
+    EXPECT_EQ(palette["space"].s, "palette");
+    StateNode sfile = DeviceState::VideoAddressIn(_context, "sprite_ram", 0, 6);
+    EXPECT_TRUE(sfile["available"].b);
+    StateNode bad = DeviceState::VideoAddressIn(_context, "vram", 0, 0);
+    EXPECT_FALSE(bad["available"].b);
 }

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/platforms/tsconf/tsconftsu.h"
 
 class EmulatorContext;
 class TsConfDma;
@@ -85,6 +86,15 @@ public:
             return 0;
         return _tsu[line][dot - set.tsX0];
     }
+
+    /// Debug (video mapper): TS-window line of raster line `line` drawn again
+    /// with each pixel's source - the tilemap ring rebuilt as the prefetch of
+    /// the lines before built it, the budget the line actually used, the
+    /// TSU registers and SFILE as they are now (so it matches what was drawn
+    /// while they have not changed since). `indices` / `sources` take
+    /// TsConfTsu::kMaxWidth entries, x relative to Line(line).tsX0
+    /// @return false when the TSU drew nothing on that line
+    bool ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Source* sources) const;
 
     /// The TSU line buffer of line `line` (valid for Line(line).tsX0 .. + tsW
     /// when Line(line).tsu; 0 = transparent)

@@ -41,6 +41,26 @@ public:
     /// Tilemap prefetch ring: [slot][column][layer] map words
     using MapRing = uint16_t[4][64][2];
 
+    /// Where a TSU pixel came from (the debug probe, ProbeLine)
+    enum class Layer : uint8_t
+    {
+        None,
+        S0,
+        T0,
+        S1,
+        T1,
+        S2,
+    };
+    struct Source
+    {
+        Layer layer = Layer::None;
+        uint8_t descriptor = 0;      ///< sprites: SFILE descriptor 0..84
+        uint8_t mapColumn = 0;       ///< tiles: tilemap column 0..63
+        uint32_t mapAddress = 0;     ///< tiles: physical address of the map word (2 bytes)
+        uint32_t graphicAddress = 0; ///< physical address of the graphics byte
+        bool lowNibble = false;      ///< the pixel is the byte's low nibble
+    };
+
     /// Prefetch the map words of `tmLine` (= TS line + 16, 9 bit) into the ring
     /// @return DRAM accesses used
     static uint32_t Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t tmLine, MapRing& ring);
@@ -51,10 +71,22 @@ public:
     static bool RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
                            uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used);
 
+    /// RenderLine that also notes each pixel's source (debug path; `sources`
+    /// has `width` entries)
+    static bool ProbeLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                          uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
+
 private:
+    /// kProbe: note sources (ProbeLine); the render path compiles without it
+    template <bool kProbe>
+    static bool Render(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                       uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
     /// @return false when the budget ran out (the rest of the line is dropped)
+    template <bool kProbe>
     static bool DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used);
-    static bool DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t first, uint32_t end, uint32_t y,
-                            uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used);
+                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget,
+                          uint32_t& used);
+    template <bool kProbe>
+    static bool DrawSprites(const TsConfState& ts, const uint8_t* ram, Layer layer, uint32_t first, uint32_t end,
+                            uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used);
 };
