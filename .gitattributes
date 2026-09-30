@@ -53,3 +53,6 @@
 *.zip binary
 *.7z binary
 *.gz binary
+
+# NedoOS network test card: the files exactly as NedoOS ships them (net.ini is CRLF text NedoOS parses)
+testdata/machines/zxevo/nedoos/sdcard-net/** -text

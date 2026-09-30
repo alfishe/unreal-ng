@@ -283,6 +283,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateTsConfActive, "/api/v1/emulator/state/tsconf", drogon::Get);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
+    // Network adapters (implementation: api/state_device_api.cpp, core DeviceState::Network)
+    ADD_METHOD_TO(EmulatorAPI::getStateNetwork, "/api/v1/emulator/{id}/state/network", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNetworkConfig, "/api/v1/emulator/{id}/network/config", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Post);
@@ -980,6 +984,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateTsConfActive(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateNetwork(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateNetworkActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void postNetworkConfig(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtcActive(const drogon::HttpRequestPtr& req,

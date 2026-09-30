@@ -142,6 +142,15 @@ class Emulator:
         notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
         line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
 
+    def network_state(self) -> dict:
+        """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
+        sockets, guest servers, counters, recent activity); available=False without an adapter"""
+
+    def network_configure(self, **settings) -> None:
+        """Change [NETWORK] settings: card='zxnetusb'|'none', host_access=True|False, dns_mode='host'|'pass',
+        hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n. Applied at the next frame
+        boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
+
     def rtc_state(self) -> dict:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,

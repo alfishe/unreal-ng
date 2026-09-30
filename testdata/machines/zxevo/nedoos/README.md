@@ -15,3 +15,21 @@ Source: https://github.com/alfishe/NedoOS, revision `cc0c7f98`, folder `release/
 
 The kernel runs `term.com cmd.com autoexec.bat` from `bin/`; the shell then
 prints the marker and the prompt `M:/bin>`.
+
+# NedoOS SD card with network programs (`sdcard-net/`)
+
+The W5300 kernel with the programs the network tests run.
+`NetworkManager_Test.NedoOsGetsALeaseAndPingsTheGateway` inserts it with the
+ZXNETUSB card fitted: `wizcfg.com` gets a DHCP lease from the virtual network,
+then `ping -c 1 10.0.2.2` is typed.
+
+| File | Origin |
+|------|--------|
+| `sdcard-net/SD_BOOT.$C` | `release/sd_boot.$C` (ZX-Evo W5300 kernel, INETDRV=1) |
+| `sdcard-net/bin/term.com`, `cmd.com` | `release/bin/` |
+| `sdcard-net/bin/wizcfg.com`, `net.ini` | `release/bin/` (network setup; `net.ini` asks for DHCP) |
+| `sdcard-net/bin/ping.com` | `release/bin/` |
+| `sdcard-net/bin/autoexec.bat` | ours: runs `wizcfg.com`, then echoes `UNREALNGNETREADY` |
+
+Source: https://github.com/alfishe/NedoOS, revision `44049473`, folder `release/`.
+

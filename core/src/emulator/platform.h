@@ -674,6 +674,26 @@ struct CONFIG
 		uint8_t boardAnalog;
 	} moonsound;
 
+	/// [NETWORK] section - network adapters (network adapters TDD §8,
+	/// docs/inprogress/2026-09-30-nedoos-integration/tdd-network.md). All
+	/// fields are always assigned during config parsing.
+	struct
+	{
+		/// Card on the ZX-Bus: 0 = none, 1 = ZXNETUSB (W5300)
+		uint8_t card;
+		/// 1 = the virtual network reaches the host network; 0 = internal only
+		/// (DHCP, hosts table, gateway ping): hermetic tests, offline use
+		uint8_t hostAccess;
+		/// 0 = answer DNS from the host resolver, 1 = pass queries as plain UDP
+		uint8_t dnsPass;
+		/// Hosts table: "name=a.b.c.d,name=a.b.c.d" (',': ';' starts an INI comment)
+		char hosts[1024];
+		/// Guest servers: "tcp:<hostport>:<guestport>,..."
+		char forwards[256];
+		/// TCP connect timeout on the host, ms
+		unsigned connectTimeoutMs;
+	} network;
+
 	struct
 	{
 		unsigned firenum;

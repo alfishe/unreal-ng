@@ -16,6 +16,8 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/rtc/rtcaccess.h"
+#include "common/stringhelper.h"
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
@@ -1882,6 +1884,183 @@ namespace
         return buf;
     }
 }  // namespace
+
+namespace
+{
+const char* NetProtoName(NetProto p)
+{
+    switch (p)
+    {
+        case NetProto::Tcp: return "tcp";
+        case NetProto::Udp: return "udp";
+        case NetProto::Icmp: return "icmp";
+    }
+    return "?";
+}
+
+const char* NetStatusName(NetEventStatus s)
+{
+    switch (s)
+    {
+        case NetEventStatus::Ok: return "ok";
+        case NetEventStatus::Refused: return "refused";
+        case NetEventStatus::Timeout: return "timeout";
+        case NetEventStatus::Unreachable: return "unreachable";
+        case NetEventStatus::AddressInUse: return "address-in-use";
+        case NetEventStatus::Denied: return "denied";
+        case NetEventStatus::Error: return "error";
+    }
+    return "?";
+}
+
+const char* W5300StateName(uint8_t ssr)
+{
+    switch (ssr)
+    {
+        case 0x00: return "CLOSED";
+        case 0x01: return "ARP";
+        case 0x13: return "INIT";
+        case 0x14: return "LISTEN";
+        case 0x15: return "SYNSENT";
+        case 0x16: return "SYNRECV";
+        case 0x17: return "ESTABLISHED";
+        case 0x18: return "FIN_WAIT";
+        case 0x1B: return "TIME_WAIT";
+        case 0x1C: return "CLOSE_WAIT";
+        case 0x1D: return "LAST_ACK";
+        case 0x22: return "UDP";
+        case 0x32: return "IPRAW";
+        case 0x42: return "MACRAW";
+    }
+    return "?";
+}
+
+std::string Endpoint(const NetEndpoint& e)
+{
+    return NetIpToString(e.addr) + ":" + std::to_string(e.port);
+}
+
+std::string Ip4(const std::array<uint8_t, 256>& r, size_t at)
+{
+    return NetIpToString(NetIp(r[at], r[at + 1], r[at + 2], r[at + 3]));
+}
+}  // namespace
+
+StateNode Network(EmulatorContext* context)
+{
+    NetworkManager* manager = (context && context->pCore) ? context->pCore->GetNetworkManager() : nullptr;
+    if (!manager)
+        return Unavailable("no network support in this machine");
+    const NetworkManager::Status st = manager->GetStatus();
+    if (!st.fitted)
+        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE, or the network feature is off)");
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["frame"] = st.frame;
+
+    StateNode& card = ret["card"];
+    card["kind"] = st.card;
+    card["port_83AB"] = StringHelper::Format("#%02X", st.control);
+    card["port_82AB"] = StringHelper::Format("#%02X", st.mode);
+    card["port_81AB"] = StringHelper::Format("#%02X", st.addressHigh);
+    card["w5300_running"] = st.chipRunning;
+    card["w5300_in_io_space"] = (st.mode & 0x10) != 0 && (st.mode & 0x04) == 0;
+    card["mac"] = StringHelper::Format("%02X:%02X:%02X:%02X:%02X:%02X", st.common[8], st.common[9], st.common[10],
+                                        st.common[11], st.common[12], st.common[13]);
+    card["ip"] = Ip4(st.common, 0x18);
+    card["gateway"] = Ip4(st.common, 0x10);
+    card["mask"] = Ip4(st.common, 0x14);
+    StateNode& chipSockets = card["sockets"];
+    chipSockets = StateNode::Array();
+    for (size_t n = 0; n < st.chipSockets.size(); ++n)
+    {
+        const W5300::SocketView& v = st.chipSockets[n];
+        StateNode s = StateNode::Object();
+        s["n"] = int(n);
+        s["mode"] = v.mode == 1 ? "TCP" : v.mode == 2 ? "UDP" : v.mode == 3 ? "IPRAW" : v.mode == 0 ? "CLOSED" : "OTHER";
+        s["state"] = W5300StateName(v.state);
+        s["ssr"] = StringHelper::Format("#%02X", v.state);
+        s["ir"] = StringHelper::Format("#%02X", v.ir);
+        s["source_port"] = int(v.sourcePort);
+        s["destination"] = Endpoint(v.destination);
+        s["tx_free"] = v.txFree;
+        s["rx_received"] = v.rxReceived;
+        s["tcp_backlog"] = uint64_t(v.tcpBacklog);
+        s["network_socket"] = int(v.networkSocket);
+        chipSockets.push(std::move(s));
+    }
+
+    StateNode& net = ret["virtual_network"];
+    net["host_access"] = st.hostAccess;
+    net["network"] = NetIpToString(st.config.network) + "/" + NetIpToString(st.config.mask);
+    net["gateway"] = NetIpToString(st.config.gateway);
+    net["dns"] = NetIpToString(st.config.dnsServer);
+    net["dns_mode"] = st.config.dnsMode == VirtualNetworkConfig::DnsMode::Host ? "host" : "pass";
+    StateNode& hosts = net["hosts"];
+    hosts = StateNode::Object();
+    for (const auto& [name, addr] : st.config.hosts)
+        hosts[name] = NetIpToString(addr);
+    StateNode& leases = net["dhcp_leases"];
+    leases = StateNode::Array();
+    for (const auto& [mac, addr] : st.leases)
+    {
+        StateNode l = StateNode::Object();
+        l["mac"] = StringHelper::Format("%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        l["ip"] = NetIpToString(addr);
+        leases.push(std::move(l));
+    }
+    StateNode& sockets = net["sockets"];
+    sockets = StateNode::Array();
+    for (const VirtualNetwork::SocketInfo& i : st.sockets)
+    {
+        StateNode s = StateNode::Object();
+        s["id"] = int(i.id);
+        s["proto"] = NetProtoName(i.proto);
+        s["connected"] = i.connected;
+        s["remote"] = Endpoint(i.remote);
+        if (i.listenPort)
+            s["listen_port"] = int(i.listenPort);
+        s["bytes_in"] = i.bytesIn;
+        s["bytes_out"] = i.bytesOut;
+        sockets.push(std::move(s));
+    }
+    StateNode& servers = net["guest_servers"];
+    servers = StateNode::Array();
+    for (const VirtualNetwork::ListenerInfo& l : st.listeners)
+    {
+        StateNode s = StateNode::Object();
+        s["guest_port"] = int(l.guestPort);
+        s["host_port"] = int(l.hostPort);
+        s["waiting_sockets"] = uint64_t(l.waitingSockets);
+        s["pending_clients"] = uint64_t(l.pendingClients);
+        servers.push(std::move(s));
+    }
+    StateNode& counters = net["counters"];
+    counters["dhcp_replies"] = st.counters.dhcpReplies;
+    counters["dns_local_answers"] = st.counters.dnsLocalAnswers;
+    counters["dns_host_queries"] = st.counters.dnsHostQueries;
+    counters["echo_replies"] = st.counters.echoReplies;
+    counters["host_events"] = st.counters.hostEvents;
+    counters["link_resets"] = st.counters.linkResets;
+    StateNode& activity = net["recent_activity"];
+    activity = StateNode::Array();
+    for (const VirtualNetwork::Activity& a : st.activity)
+    {
+        StateNode e = StateNode::Object();
+        e["frame"] = a.frame;
+        e["socket"] = int(a.socket);
+        e["proto"] = NetProtoName(a.proto);
+        e["action"] = a.action;
+        e["remote"] = Endpoint(a.remote);
+        if (a.status != NetEventStatus::Ok)
+            e["status"] = NetStatusName(a.status);
+        if (a.bytes)
+            e["bytes"] = a.bytes;
+        activity.push(std::move(e));
+    }
+    return ret;
+}
 
 StateNode Rtc(EmulatorContext* context)
 {

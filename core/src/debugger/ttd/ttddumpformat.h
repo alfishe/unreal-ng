@@ -151,6 +151,23 @@ constexpr uint16_t kFlagsHasPortJournals = 0x0100;
 /// device set is found at the first checkpoint's blob ids.
 constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 
+/// Bit 10 of header.flags — a network-input section follows the port journals
+/// (network adapters TDD §6), written only when the session has NetEvents (a
+/// session without a network adapter keeps the older layout byte for byte).
+/// The input journal section keeps its fixed record size; NetEvents there
+/// carry only the common fields, and this section holds the rest. Layout:
+/// u32 count, then per NetEvent in journal order: u32 event_index (in the input journal), u16 socket,
+/// u8 event, u8 status, u32 addr, u16 port, u32 payload_offset,
+/// u32 payload_length; then u32 payload_size and payload_size bytes (the
+/// payload store). Every event's payload range lies inside the store.
+constexpr uint16_t kFlagsHasNetInputs = 0x0400;
+
+/// Bytes per network-input record (the layout above)
+constexpr uint32_t kNetInputRecordSize = 4 + 2 + 1 + 1 + 4 + 2 + 4 + 4;
+
+/// Cap on the payload store: the bytes a session received from the network
+constexpr uint32_t kMaxNetPayloadBytes = 1u << 30;
+
 /// Bytes per input event on disk (the field-by-field layout above).
 constexpr uint32_t kInputEventRecordSize = 8 + 4 + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
 

@@ -557,3 +557,108 @@ TEST_F(TTD_InputJournalGS_Test, RecordedStimuliReplayExactly)
     ASSERT_EQ(_context->pCore->GetZ80()->t, endT);
     EXPECT_TRUE(Observe() == recorded) << "the replayed stimuli must leave the card exactly as recorded";
 }
+
+// ---------------------------------------------------------------------------
+// Network records and payload store (network adapters TDD §6.2): NetEvent
+// fields and bytes live beside the fixed-size events
+// ---------------------------------------------------------------------------
+
+namespace
+{
+ttd::TTDInputEvent NetEventAt(uint64_t frame, uint32_t t)
+{
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::NetEvent;
+    ev.time.frame = frame;
+    ev.time.tInFrame = t;
+    return ev;
+}
+
+ttd::TTDNetInput NetRecord(uint16_t socket)
+{
+    ttd::TTDNetInput n;
+    n.socket = socket;
+    n.event = 3;
+    return n;
+}
+}  // namespace
+
+TEST(TTDInputJournalPayload_Test, EventsStayTheSameSize)
+{
+    // A machine without a network adapter must not pay for the network fields
+    EXPECT_LE(sizeof(ttd::TTDInputEvent), 32u);
+}
+
+TEST(TTDInputJournalPayload_Test, RecordKeepsTheBytesAndPointsAtThem)
+{
+    ttd::TTDInputJournal journal;
+    const uint8_t first[] = {1, 2, 3};
+    const uint8_t second[] = {9, 8};
+    journal.Record(NetEventAt(1, 10), NetRecord(1), first, 3);
+    journal.Record(NetEventAt(2, 10));
+    journal.Record(NetEventAt(3, 10), NetRecord(2), second, 2);
+
+    ASSERT_EQ(journal.Size(), 3u);
+    const auto& events = journal.Events();
+    EXPECT_EQ(journal.NetOf(events[1]), nullptr);
+    const ttd::TTDNetInput* a = journal.NetOf(events[0]);
+    const ttd::TTDNetInput* b = journal.NetOf(events[2]);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(a->socket, 1);
+    EXPECT_EQ(a->payloadLength, 3u);
+    EXPECT_EQ(b->payloadOffset, 3u);
+    const uint8_t* p = journal.PayloadOf(*b);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p[0], 9);
+    EXPECT_EQ(p[1], 8);
+    EXPECT_EQ(journal.Payload().size(), 5u);
+}
+
+TEST(TTDInputJournalPayload_Test, DropAfterCutsRecordsAndPayloadToo)
+{
+    ttd::TTDInputJournal journal;
+    const uint8_t a[] = {1, 2, 3, 4};
+    const uint8_t b[] = {5, 6};
+    journal.Record(NetEventAt(1, 0), NetRecord(1), a, 4);
+    journal.Record(NetEventAt(5, 0), NetRecord(2), b, 2);
+    journal.DropAfter(ttd::TTDTimePoint{2, 0});
+    EXPECT_EQ(journal.Size(), 1u);
+    EXPECT_EQ(journal.NetInputs().size(), 1u);
+    EXPECT_EQ(journal.Payload().size(), 4u);
+
+    journal.Record(NetEventAt(6, 0), NetRecord(3), b, 2);
+    EXPECT_EQ(journal.NetOf(journal.Events()[1])->payloadOffset, 4u) << "new bytes follow the kept ones";
+}
+
+TEST(TTDInputJournalPayload_Test, ClearAndAssign)
+{
+    ttd::TTDInputJournal journal;
+    const uint8_t a[] = {1};
+    journal.Record(NetEventAt(1, 0), NetRecord(1), a, 1);
+    journal.Clear();
+    EXPECT_TRUE(journal.Payload().empty());
+    EXPECT_TRUE(journal.NetInputs().empty());
+
+    ttd::TTDInputEvent ev = NetEventAt(1, 0);
+    ev.netIndex = 1;
+    ttd::TTDNetInput n = NetRecord(4);
+    n.payloadOffset = 1;
+    n.payloadLength = 2;
+    journal.Assign({ev}, {n}, {7, 8, 9});
+    const uint8_t* p = journal.PayloadOf(*journal.NetOf(journal.Events()[0]));
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p[0], 8);
+}
+
+TEST(TTDInputJournalPayload_Test, PayloadOutsideTheStoreIsNotReturned)
+{
+    ttd::TTDInputJournal journal;
+    ttd::TTDInputEvent ev = NetEventAt(1, 0);
+    ev.netIndex = 1;
+    ttd::TTDNetInput n = NetRecord(1);
+    n.payloadOffset = 10;
+    n.payloadLength = 5;
+    journal.Assign({ev}, {n}, {1, 2, 3});
+    EXPECT_EQ(journal.PayloadOf(*journal.NetOf(journal.Events()[0])), nullptr);
+}

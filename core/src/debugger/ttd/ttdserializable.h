@@ -63,7 +63,8 @@ enum class PeripheralId : uint8_t
     AtaChannel = 17,      // IDE board: channel, both units (task file, transfer, ATAPI sense), adapter latches; not the media
     Ds12887 = 18,         // MC146818 / DS12887 clock: cells, address latch, time base (ATM3, Profi, Scorpion SMUC; Sprinter, TSConf)
     EvoPs2 = 19,          // ZX-Evo AVR PS/2 keyboard: scan code log, parser flags, modifiers, held keys (ATM3)
-    EvoTurboCache = 20,   // ZX-Evo BaseConf at 14 MHz: the DRAM's code and data cache words (EvoTurboOverlay)
+    ZxNetUsb = 20,        // ZXNETUSB card + W5300 + the virtual network's guest-side tables; received bytes by journal reference (network TDD §6.3)
+    EvoTurboCache = 21,   // ZX-Evo BaseConf at 14 MHz: the DRAM's code and data cache words (EvoTurboOverlay)
     // Future: SAA1099, GS512, etc.
     Count
 };

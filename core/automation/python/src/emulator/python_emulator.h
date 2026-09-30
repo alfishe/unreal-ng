@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -1820,6 +1821,29 @@ namespace PythonBindings
             .def("tsconf_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
             }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")
+            .def("network_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Network(self.GetContext()));
+            }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
+            .def("network_configure", [](Emulator& self, py::kwargs settings) {
+                NetworkManager* manager = self.GetContext()->pCore ? self.GetContext()->pCore->GetNetworkManager() : nullptr;
+                if (!manager)
+                    throw py::value_error("no network support in this machine");
+                std::vector<std::pair<std::string, std::string>> kv;
+                for (auto item : settings)
+                {
+                    const std::string key = py::str(item.first);
+                    std::string text;
+                    if (py::isinstance<py::bool_>(item.second))
+                        text = item.second.cast<bool>() ? "on" : "off";
+                    else
+                        text = py::str(item.second);
+                    kv.emplace_back(key, text);
+                }
+                NetworkManager::Change change;
+                std::string error;
+                if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
+                    throw py::value_error(error);
+            }, "Change network settings: card='zxnetusb'|'none', host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n; applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")

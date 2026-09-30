@@ -762,6 +762,11 @@ public:
     /// `ev.time` is ignored: the time is stamped when the event is applied.
     bool SubmitLiveInput(const TTDInputEvent& ev);
 
+    /// @brief SubmitLiveInput for a NetEvent: its network record and bytes are
+    /// copied; the journal keeps them while recording, and the virtual network
+    /// reads them when the event is applied.
+    bool SubmitLiveInput(const TTDInputEvent& ev, const TTDNetInput& net, const uint8_t* payload, uint32_t length);
+
     /// @brief A lockstep group (the ZX-Poly master) takes live input itself, to
     /// give it to every member at one frame boundary. SubmitLiveInput hands each
     /// event to `interceptor` first; when it returns true the event is consumed
@@ -1906,7 +1911,14 @@ private:
     std::mutex _pendingInputMutex;
     std::mutex _liveInputInterceptorMutex;
     std::function<bool(const TTDInputEvent&)> _liveInputInterceptor;    // see SetLiveInputInterceptor
-    std::vector<TTDInputEvent> _pendingInput;
+    struct PendingInput
+    {
+        TTDInputEvent ev;
+        bool hasNet = false;
+        TTDNetInput net;
+        std::vector<uint8_t> payload;
+    };
+    std::vector<PendingInput> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
 
     /// Position the playback cursor at the restored machine time (events
@@ -1916,7 +1928,9 @@ private:
 
     /// Apply one live event on the machine's thread, journaling it first
     /// (stamped with the current time) while recording
-    void ApplyLiveInput(TTDInputEvent ev);
+    void ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* net = nullptr, const uint8_t* payload = nullptr,
+                        uint32_t length = 0);
+    bool SubmitLiveInputImpl(const TTDInputEvent& ev, const TTDNetInput* net, const uint8_t* payload, uint32_t length);
 
     /// Refresh EmulatorContext::kStepWorkTtdInput (the per-step gate)
     void UpdateInputWorkFlag();

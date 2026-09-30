@@ -1,4 +1,5 @@
 #include "core.h"
+#include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
 #include <array>
@@ -453,6 +454,13 @@ bool Core::Init()
         _betaDisk->attachToPorts();
     }
 
+    // Network adapters: the card claims its ports on the decoder created above
+    if (result)
+    {
+        _networkManager = new NetworkManager(_context);
+        _networkManager->ApplyConfiguration();
+    }
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -468,6 +476,10 @@ void Core::Release()
 {
     // Unregister itself from context
     _context->pCore = nullptr;
+
+    // Network adapters first: the card releases its port claim while the decoder exists
+    delete _networkManager;
+    _networkManager = nullptr;
     _context->pPortDecoder = nullptr;
 
     _context->pSoundManager = nullptr;
@@ -790,6 +802,8 @@ void Core::Reset(ROMModeEnum mode)
     if (_upd765)
         _upd765->reset();        // +3 floppy controller
     _ide->Reset();               // IDE units: the machine's reset line (IDE design §3.3)
+    if (_networkManager)
+        _networkManager->Reset();  // ZX-Bus /RESET: card registers to 0, W5300 held in reset
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
 
     // Apply the model-specific boot register defaults for the RESET= mode (port
@@ -1015,6 +1029,18 @@ void Core::AdjustFrameCounters()
 void Core::UpdateScreen()
 {
     GetZ80()->OnCPUStep();
+}
+
+void Core::ApplyNetworkConfiguration()
+{
+    if (_networkManager)
+        _networkManager->ApplyConfiguration();
+}
+
+void Core::OnNetworkFrame()
+{
+    if (_networkManager)
+        _networkManager->OnFrame();
 }
 
 void Core::RefitIde()

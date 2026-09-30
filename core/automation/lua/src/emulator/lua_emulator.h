@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
@@ -2144,6 +2145,46 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::TsConf(emulator->GetContext()));
+        });
+
+        // Network adapters: the same report every interface uses (DeviceState::Network)
+        lua.set_function("network_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
+        });
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4"} -> true | nil, err
+        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
+            sol::variadic_results out;
+            Emulator* emulator = effectiveEmulator();
+            NetworkManager* manager = (emulator && emulator->GetContext()->pCore)
+                                          ? emulator->GetContext()->pCore->GetNetworkManager()
+                                          : nullptr;
+            std::string error = emulator ? "no network support in this machine" : "No emulator selected";
+            if (manager)
+            {
+                std::vector<std::pair<std::string, std::string>> kv;
+                for (const auto& [key, value] : settings)
+                {
+                    std::string text;
+                    if (value.get_type() == sol::type::boolean)
+                        text = value.as<bool>() ? "on" : "off";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else
+                        text = value.as<std::string>();
+                    kv.emplace_back(key.as<std::string>(), text);
+                }
+                NetworkManager::Change change;
+                if (NetworkManager::ParseChange(kv, change, error) && manager->RequestChange(change, error))
+                {
+                    out.push_back(sol::make_object(s, true));
+                    return out;
+                }
+            }
+            out.push_back(sol::make_object(s, sol::lua_nil));
+            out.push_back(sol::make_object(s, error));
+            return out;
         });
 
         // CMOS clock: the same report and cell access every interface uses

@@ -1056,7 +1056,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "network", "mouse",
                                "ttd", "contention", "tsconf"})
     {
         allowed.append(aspect);
@@ -1152,7 +1152,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
@@ -1446,6 +1446,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "network")
+                        {
+                            // Core DeviceState::Network via the WebAPI; available=false without an adapter
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/network"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "contention")
                         {
                             // Core DeviceState::Contention via the WebAPI
@@ -1692,6 +1703,19 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "; last frame " << last["accesses"].asUInt64() << " contended accesses, "
                                             << last["wait_t"].asUInt64() << " T waited";
                                     }
+                                }
+                            }
+                            else if (aspect == "network")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[network] " << value["description"].asString();
+                                else
+                                {
+                                    const Json::Value& card = value["card"];
+                                    const Json::Value& net = value["virtual_network"];
+                                    out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
+                                        << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
+                                        << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
                                 }
                             }
                             else if (aspect == "rtc")

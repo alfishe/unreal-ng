@@ -20,6 +20,7 @@ class EmulatorContext;
 class GeneralSoundCard;
 class Keyboard;
 class Mouse;
+class VirtualNetwork;
 
 namespace ttd {
 
@@ -30,6 +31,7 @@ struct TTDInputDevices
     Keyboard* keyboard = nullptr;
     Mouse* mouse = nullptr;
     GeneralSoundCard* generalSound = nullptr;
+    VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)
 };
 
 /// @brief The context's input devices at this moment. Look them up per event:
@@ -37,8 +39,10 @@ struct TTDInputDevices
 /// boundary.
 TTDInputDevices InputDevicesOf(EmulatorContext* context);
 
-/// @brief Apply one event to its device.
+/// @brief Apply one event to its device. A NetEvent comes with its network
+/// record and that record's bytes (payloadLength of them); others pass nullptr.
 /// @return false when the event's device is absent (nothing changed).
-bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices);
+bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, const TTDNetInput* net = nullptr,
+                     const uint8_t* payload = nullptr);
 
 } // namespace ttd

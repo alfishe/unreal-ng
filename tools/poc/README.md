@@ -58,6 +58,7 @@ NNN-name/
 | 014 | [qt-gui](014-qt-gui/) | Qt GUI framework exploration |
 | 015 | [opl4-synthesis](015-opl4-synthesis/) | YMF278B (OPL4/MoonSound) synthesis library: dual-grid chip model, deterministic state, render layer |
 | 017 | [z80-standalone-cpu](017-z80-standalone-cpu/) | Z80 CPU extracted into a z80ex-style standalone library (full undocumented support, ZEXALL-verified, benchmarked) |
+| 020 | [nedoos-layer](020-nedoos-layer/) | NedoOS seen from outside: tasks, pages, pipes, sockets, files, kernel-busy report, kernel calls on behalf of a task, ending a stuck call (Python over the WebAPI) |
 | 018 | [tui-debuggers](018-tui-debuggers/) | Classic + TSConf debugger TUIs (FTXUI, golden-exact fork band, swappable mock/REST WebAPI backends) |
 | 019 | [zxdlss-gigascreen](019-zxdlss-gigascreen/) | ZX DLSS GigaScreen de-flicker: reference recording (Across the Edge), clip extraction/export from TTD, effect map, quality oracle; Python POC → C++ prototype → integration |
 

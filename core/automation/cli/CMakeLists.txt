@@ -29,6 +29,7 @@ set(SOURCES
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-gs.cpp
     src/commands/cli-processor-rtc.cpp
+    src/commands/cli-processor-network.cpp
     src/commands/cli-processor-ttd.cpp
     src/handlers/python-handler.cpp
     src/handlers/lua-handler.cpp

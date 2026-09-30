@@ -41,6 +41,7 @@ constexpr const char* const kTurboMode = "turbomode";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 constexpr const char* const kGSLightweight = "gs_lightweight";
+constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
 
 // Feature Aliases
@@ -65,6 +66,7 @@ constexpr const char* const kTurboModeAlias = "turbo";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 constexpr const char* const kGSLightweightAlias = "gslw";
+constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
 
 // Feature Descriptions
@@ -107,6 +109,10 @@ constexpr const char* const kHudDesc =
 
 constexpr const char* const kKempstonMouseDesc =
     "Kempston Mouse on the bus (when fitted by the machine config [INPUT] Mouse=KEMPSTON). Off: the mouse ports are not decoded.";
+
+constexpr const char* const kNetworkDesc =
+    "Network adapters on the bus (when fitted by the machine config [NETWORK] Card=, e.g. ZXNETUSB). Off: the card is "
+    "unplugged and its ports read #FF, as on a machine without it.";
 
 constexpr const char* const kGSLightweightDesc =
     "General Sound lightweight personality: fit the in-tree ProTracker player card (no coprocessor firmware needed). Off keeps the "

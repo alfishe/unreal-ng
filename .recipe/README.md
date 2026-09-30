@@ -129,6 +129,7 @@ call.
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card (branch-only): `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, clone-only policy, hiss/HiFi known issues |
 | [peripherals/turbosound.md](peripherals/turbosound.md) | TurboSound slot: `AY` pair vs TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
+| [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
 
 ### `articles/` — full workflows that combine recipes

@@ -25,7 +25,7 @@
         m["properties"]["peripherals"]["description"] =
             "Fitted devices by name, ascending id: turbosound, betadisk, tape, covox, tsfm, gs, scorpion-profrom, "
             "kempston-mouse, atm-paging, profi-paging, moonsound, gs-lw, neogs, plus3-paging, upd765, evo-sdcard, "
-            "tsconf, ata, ds12887, evo-ps2, evo-turbo-cache (idN for an id this build does not know)";
+            "tsconf, ata, ds12887, evo-ps2, zxnetusb, evo-turbo-cache (idN for an id this build does not know)";
         m["properties"]["general_sound"]["type"] = "string";
         for (const char* v : {"none", "z80", "lw", "ngs"})
             m["properties"]["general_sound"]["enum"].append(v);

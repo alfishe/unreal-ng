@@ -486,6 +486,13 @@ void MainLoop::CompleteFrame()
     {
         _context->pDebugManager->GetMouseManager()->OnFrame();
     }
+
+    // Network adapters: a pending refit, the virtual network's own answers,
+    // then the host's (journaled like the input above: after the checkpoint)
+    if (_context->pCore)
+    {
+        _context->pCore->OnNetworkFrame();
+    }
 }
 
 void MainLoop::RestartFrame()

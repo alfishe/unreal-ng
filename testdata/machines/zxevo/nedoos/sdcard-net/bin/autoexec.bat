@@ -1,0 +1,2 @@
+wizcfg.com
+echo UNREALNGNETREADY

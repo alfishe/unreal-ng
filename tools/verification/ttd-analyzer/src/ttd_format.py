@@ -88,9 +88,16 @@ FLAGS_HAS_EXTERNAL_EVENTS = 0x0080  # replay barriers (tape, disk, debugger edit
 FLAGS_HAS_PORT_JOURNALS = 0x0100
 PORT_JOURNAL_BLOCK_RECORDS = 32768
 
+# Network inputs (network adapters TDD §6): the fields and received bytes of
+# NetEvent / NetLinkReset input events, the last section of the file
+FLAGS_HAS_NET_INPUTS = 0x0400
+
 # TTDInputKind / TTDExternalEventKind names (ttdinputjournal.h, ttdexternalevents.h)
 INPUT_KIND_NAMES = ["Key", "MouseMove", "MouseButtons", "MouseWheel", "MouseCounters",
-                    "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset", "PcKey"]
+                    "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset", "PcKey",
+                    "NetEvent", "NetLinkReset"]
+NET_EVENT_NAMES = {1: "Connected", 2: "ConnectFailed", 3: "Data", 4: "PeerClosed", 5: "Reset", 6: "Accepted",
+                   7: "Datagram", 8: "EchoReply", 9: "ListenFailed"}
 EXTERNAL_EVENT_KIND_NAMES = {0: "TapeControl", 1: "DiskWrite", 2: "DebuggerEdit",
                              3: "HardwareReset", 255: "Other"}
 
@@ -214,6 +221,7 @@ PERIPHERAL_ID_NAMES = {
     17: "AtaChannel",
     18: "Ds12887",
     19: "EvoPs2",
+    20: "ZxNetUsb",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
@@ -483,6 +491,8 @@ class InputEvent:
     button_mask: int
     wheel_steps: int
     value: int
+    # NetEvent / NetLinkReset: the network-input section's fields (flag bit 10)
+    net: Optional[dict] = None
 
     @property
     def kind_name(self) -> str:
@@ -550,6 +560,8 @@ class TtdDump:
     # the live devices)
     port_reads: Optional[PortJournal] = None
     port_writes: Optional[PortJournal] = None
+    # Received network bytes (flag bit 10): the payload store of NetEvent inputs
+    net_payload: Optional[bytes] = None
     # Bytes after the last section this parser knows about (should be 0)
     trailing_bytes: int = 0
     # Lazily-decompressed sub-page cache. Keyed by slot index; populated on
@@ -1143,10 +1155,15 @@ def parse_bytes(data: bytes) -> TtdDump:
         port_reads = parse_port_journal(r, len(checkpoints), "port-read journal")
         port_writes = parse_port_journal(r, len(checkpoints), "port-write journal")
 
+    net_payload = None
+    if header.flags & FLAGS_HAS_NET_INPUTS:
+        net_payload = parse_net_input_section(r, input_events or [])
+
     return TtdDump(header=header, slots=slots, checkpoints=checkpoints,
                    journal=journal, coverage=coverage, bookmarks=bookmarks,
                    input_events=input_events, external_events=external_events,
-                   port_reads=port_reads, port_writes=port_writes, trailing_bytes=r.remaining)
+                   port_reads=port_reads, port_writes=port_writes, net_payload=net_payload,
+                   trailing_bytes=r.remaining)
 
 
 def parse_port_journal(r: _Reader, checkpoint_count: int, name: str) -> PortJournal:
@@ -1235,6 +1252,42 @@ def parse_input_journal_section(r: _Reader) -> List[InputEvent]:
             raise TtdFormatError(f"input event {i} is earlier than the one before it")
         events.append(ev)
     return events
+
+
+def parse_net_input_section(r: _Reader, events: List["InputEvent"]) -> bytes:
+    """Parse the network-input section (flag bit 10, ttddumpformat.h kFlagsHasNetInputs).
+
+    Layout: u32 count, then per network event u32 event_index, u16 socket,
+    u8 event, u8 status, u32 addr, u16 port, u32 payload_offset,
+    u32 payload_length; then u32 payload_size and the payload bytes. The
+    fields are attached to the input events (net dict); the payload is returned.
+    """
+    count = r.u32()
+    if count > len(events):
+        raise TtdFormatError(f"implausible network input count {count}")
+    last = -1
+    records = []
+    for i in range(count):
+        index = r.u32()
+        socket = r.u16()
+        event, status = r.u8(), r.u8()
+        addr = r.u32()
+        port = r.u16()
+        offset, length = r.u32(), r.u32()
+        if index >= len(events) or index <= last or events[index].kind_name not in ("NetEvent", "NetLinkReset"):
+            raise TtdFormatError(f"network input {i}: bad event index {index}")
+        last = index
+        records.append((index, dict(socket=socket, event=NET_EVENT_NAMES.get(event, str(event)), status=status,
+                                    addr=addr, port=port, payload_offset=offset, payload_length=length)))
+    size = r.u32()
+    if size > (1 << 30):
+        raise TtdFormatError(f"implausible network payload size {size}")
+    payload = r.take(size)
+    for index, net in records:
+        if net["payload_offset"] + net["payload_length"] > size:
+            raise TtdFormatError(f"network input payload outside the store (event {index})")
+        events[index].net = net
+    return payload
 
 
 def parse_external_event_section(r: _Reader) -> List[ExternalEvent]:

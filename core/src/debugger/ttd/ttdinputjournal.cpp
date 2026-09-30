@@ -16,7 +16,47 @@ namespace ttd {
 
 void TTDInputJournal::Record(TTDInputEvent ev)
 {
+    ev.netIndex = 0;
     _events.push_back(ev);
+}
+
+void TTDInputJournal::Record(TTDInputEvent ev, TTDNetInput net, const uint8_t* payload, uint32_t length)
+{
+    net.payloadOffset = static_cast<uint32_t>(_payload.size());
+    net.payloadLength = payload ? length : 0;
+    if (net.payloadLength)
+        _payload.insert(_payload.end(), payload, payload + net.payloadLength);
+    net.journalIndex = static_cast<uint32_t>(_net.size() + 1);
+    _net.push_back(net);
+    ev.netIndex = static_cast<uint32_t>(_net.size());
+    _events.push_back(ev);
+}
+
+const TTDNetInput* TTDInputJournal::NetOf(const TTDInputEvent& ev) const
+{
+    if (ev.netIndex == 0 || ev.netIndex > _net.size())
+        return nullptr;
+    return &_net[ev.netIndex - 1];
+}
+
+const uint8_t* TTDInputJournal::PayloadOf(const TTDNetInput& net) const
+{
+    if (net.payloadLength == 0)
+        return nullptr;
+    const uint64_t end = static_cast<uint64_t>(net.payloadOffset) + net.payloadLength;
+    if (end > _payload.size())
+        return nullptr;
+    return _payload.data() + net.payloadOffset;
+}
+
+void TTDInputJournal::Assign(std::vector<TTDInputEvent> events, std::vector<TTDNetInput> net,
+                             std::vector<uint8_t> payload)
+{
+    _events = std::move(events);
+    _net = std::move(net);
+    _payload = std::move(payload);
+    for (size_t i = 0; i < _net.size(); ++i)
+        _net[i].journalIndex = static_cast<uint32_t>(i + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -55,11 +95,23 @@ void TTDInputJournal::DropAfter(const TTDTimePoint& t)
     auto it = std::find_if(_events.begin(), _events.end(),
                            [&](const TTDInputEvent& ev) { return t < ev.time; });
     _events.erase(it, _events.end());
+
+    // Network records and bytes are in event order: keep them up to the last kept event's
+    uint32_t keepNet = 0;
+    for (const TTDInputEvent& ev : _events)
+        keepNet = std::max(keepNet, ev.netIndex);
+    _net.resize(std::min<size_t>(keepNet, _net.size()));
+    size_t keepBytes = 0;
+    for (const TTDNetInput& n : _net)
+        keepBytes = std::max<size_t>(keepBytes, static_cast<size_t>(n.payloadOffset) + n.payloadLength);
+    _payload.resize(std::min(keepBytes, _payload.size()));
 }
 
 void TTDInputJournal::Clear()
 {
     _events.clear();
+    _net.clear();
+    _payload.clear();
 }
 
 } // namespace ttd

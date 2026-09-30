@@ -241,6 +241,53 @@ Details:
 | M3 | Qt: `loadFile` on the plan (no machine for ISO / HDD / SD), the red refusal, media panel row validation | S-M |
 | M4 | Qt: `DropTargetOverlay` with the 1.5 s hold, File > Insert medium..., multi-file sets | M |
 
+## 10. Boot compatibility advisory (added 2026-09-30, implemented M1-slice on master)
+
+Everything above (`Classify` / `Plan`) answers "which slot kind takes this file" - a floppy image
+goes to a floppy drive, a hard-disk image to an IDE unit. It does not answer "will this specific
+file actually boot there": an ATM3 IDE hard-disk unit and a ZX-Evo SD card slot are both `Block`
+kind, both take a plausible-looking disk image, but each boots a different on-disk layout - and a
+file built for one silently fails on the other. Root cause found 2026-09-30
+(`testdata/machines/tsconf/wildcommander/README.md`): a raw FAT32-no-MBR TS-Conf SD image
+(`sd.zc` layout) mounted into ATM3's `ide0.master` reads a sector, then the CPU parks in `DI`+
+`HALT` within a couple of frames - a silent, activity-free hang, not an error. The confirmed
+working counter-example is `testdata/machines/baseconf/hdd-images/hdd_nedo.vhd`
+(MBR + FAT partitions, built by NedoOS's `hddfdisk`): real scattered `READ SECTORS` traffic, PC/R
+changing every frame.
+
+**Decision: bake this into the media manager as a non-blocking advisory, keyed by slot *tags*, not
+a per-machine-config callback.** Every IDE hard-disk unit across every machine (Pentagon, ATM710,
+ATM3, Profi, Scorpion, ...) expects the same MBR+FAT layout; every Z-Controller / NeoGS SD slot
+expects the same raw-FAT-at-sector-0 layout. That is a property of the *slot kind* (already
+expressed as `SlotDescriptor::tags`: `{"ide", ..., "hdd"}` vs `{"sd", ...}`), not of the machine as
+a whole - asking each machine config "can I offer this" would mean duplicating the same two rules
+into every machine that has an IDE board or an SD slot, for no gain over reading the tags already
+on the descriptor. If a machine ever needs a genuinely different rule, it overrides its slot's
+tags or descriptor, not this analysis.
+
+- **Mounting is never refused over this.** The insert still succeeds; the mismatch note rides the
+  media manager's existing `report` field (`MediaResult::report`, `medium->Report()` -
+  `media-control-design.md` MC-1, already used for "skipped folder entries, a format guessed from
+  the extension"). Every surface already renders `report` in the envelope, so CLI, WebAPI, MCP,
+  Lua and Python get this for free the moment `media insert` runs - no new endpoint, no per-surface
+  work (automation parity by construction, not by repetition).
+- **The check**: `core/src/emulator/media/blockadvisory.{h,cpp}`,
+  `DescribeBlockLayoutMismatch(IBlockDevice&, tags)`. Reads sector 0 once (already-open medium, no
+  extra I/O beyond one 512-byte read); recognizes a FAT12/16/32 VBR (jump opcode + `"FAT"` BPB
+  marker) and an MBR partition table (`0x55AA` signature, a plausible non-zero type/count entry at
+  446/462/478/494) well enough to tell the two apart, deliberately not a full parser. A slot whose
+  tags ask for neither (`Plan`'s `hdd`/`sdcard` classification stays the source of truth for *can
+  this file go here at all*) gets no check.
+- **Wired at one point**: `MediaManager::Insert(slotId, source, options)`, right after
+  `MediaFormatRegistry::Open` succeeds and before the medium is attached - so every entry point
+  (`media insert`, the drop targets of §4-§6 once M1 lands, `ChooseSlot`'s auto-insert) goes
+  through it without change.
+- **Not done here**: `MediaTargets::Plan` (§4.2) itself does not yet call this - `Plan` is
+  pre-insert (no medium open yet to read a sector from) and machine-agnostic by design; this
+  advisory is deliberately post-insert, informational only. A future `Classify` could read sector 0
+  too and fold the same signal into `evidence`/`kinds` before a target is even chosen, but that is
+  M1 scope, not this slice.
+
 ## 9. Decisions
 
 1. **An ISO goes only to a unit that is a CD-ROM drive** by the machine's configuration; no drop
@@ -249,3 +296,5 @@ Details:
 3. **Several targets: the user chooses** - a slot chooser menu on a quick drop, labeled drop zones
    with device icons on the hold; the floppy's drive A with autostart is the only shortcut (user,
    2026-09-29). No open questions left.
+4. **The boot-compatibility check lives in the media manager, keyed by slot tags**, not as a
+   per-machine-config callback - see §10 (user, 2026-09-30).

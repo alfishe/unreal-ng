@@ -11,6 +11,11 @@ file, used by every entry point; a Qt slot chooser (menu at the cursor, labeled 
 - [ ] M2: `media targets` on every surface; `media insert` refuses what no slot takes.
 - [ ] M3: Qt `loadFile` on the plan (no machine started for ISO / HDD / SD images), red refusal, media panel row validation.
 - [ ] M4: the slot chooser component (menu at the cursor, labeled drop zones with device icons on a 1.5 s hold, File > Insert medium... dialog), multi-file sets.
+- [x] Boot compatibility advisory (§10, decided + implemented 2026-09-30): `blockadvisory.{h,cpp}`,
+      `DescribeBlockLayoutMismatch` wired into `MediaManager::Insert`, keyed by slot tags
+      (`ide`+`hdd` vs `sd`); rides the existing `report` field, no new endpoint. Root-caused from a
+      real repro (`testdata/machines/tsconf/wildcommander/`, `testdata/machines/baseconf/hdd-images/`).
+      Still open: fold the same sector-0 signal into `Classify`/`Plan` (§10's last paragraph) once M1 lands.
 
 ## Pointers
 - Media manager: [storage-manager](../2026-09-28-storage-manager/TODO.md), user reference [media.md](../../features/media.md).

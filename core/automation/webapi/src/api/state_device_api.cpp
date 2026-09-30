@@ -9,6 +9,8 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/rtc/ds12887.h>
 #include <emulator/io/rtc/rtcaccess.h>
+#include <emulator/io/network/networkmanager.h>
+#include <emulator/cpu/core.h>
 #include <emulator/state/devicestate.h>
 #include <json/json.h>
 
@@ -369,6 +371,79 @@ void EmulatorAPI::getStateRtcActive(const HttpRequestPtr& req, std::function<voi
                              count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
     }
     getStateRtc(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/network - network adapters (DeviceState::Network); unavailable without one
+void EmulatorAPI::getStateNetwork(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Network(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateNetworkActive(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/network"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateNetwork(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief POST /api/v1/emulator/{id}/network/config - change the [NETWORK] settings at runtime
+/// (NetworkManager::ParseChange: the same keys as CLI `network set` and Lua / Python network_configure)
+void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    EmulatorContext* context = emulator->GetContext();
+    NetworkManager* manager = context->pCore ? context->pCore->GetNetworkManager() : nullptr;
+    if (!manager)
+        return ReplyNotFound("no network support in this machine", callback);
+
+    auto body = req->getJsonObject();
+    if (!body || !body->isObject())
+        return ReplyNotFound("Body must be a JSON object, e.g. {\"card\": \"zxnetusb\", \"host_access\": true}", callback,
+                             HttpStatusCode::k400BadRequest);
+    std::vector<std::pair<std::string, std::string>> settings;
+    for (const std::string& key : body->getMemberNames())
+    {
+        const Json::Value& v = (*body)[key];
+        std::string text;
+        if (v.isBool())
+            text = v.asBool() ? "on" : "off";
+        else if (v.isString())
+            text = v.asString();
+        else if (v.isIntegral())
+            text = std::to_string(v.asInt64());
+        else
+            return ReplyNotFound(key + ": a string, number or boolean", callback, HttpStatusCode::k400BadRequest);
+        settings.emplace_back(key, text);
+    }
+
+    NetworkManager::Change change;
+    std::string error;
+    if (!NetworkManager::ParseChange(settings, change, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    if (!manager->RequestChange(change, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k409Conflict);
+
+    Json::Value ret;
+    ret["status"] = "accepted";
+    ret["note"] = "applied at the next frame boundary (at once while paused); the card is fitted again, so every "
+                  "connection closes. GET /state/network shows the result";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}/rtc/cells?start=&count= - cells as the guest reads them (peeked)
