@@ -51,6 +51,9 @@ public:
     /// The TS mode with its geometry ("TS16 320x200"), its pixel format and
     /// the RAM pages it reads (V_PAGE based)
     ScreenState DescribeScreenState() const override;
+    /// Draw the beam's dots up to frame tact `raster` (not beyond what the CPU
+    /// reached): a DMA CRAM write draws what came before it first (TIM-5)
+    void DrawTo(uint32_t raster);
     /// The TS state the video debug mapper reads (TsConfVideoMapper)
     const void* VideoFamilyView() const override;
     void SetVideoMode(VideoModeEnum mode) override;

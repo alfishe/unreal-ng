@@ -68,6 +68,25 @@ public:
     /// DRAM accesses one word of the running transfer costs (0: it makes no progress)
     uint32_t WordCost() const;
 
+    /// The running transfer writes CRAM, which the picture reads at the dot (TIM-5)
+    bool WritesCram() const;
+    /// Run, calling `before(used)` ahead of each word with the accesses used so
+    /// far (the engine places each CRAM write in time)
+    template <typename Before>
+    uint32_t RunEach(uint32_t credit, Before before)
+    {
+        if (!_ram)
+            return 0;
+        uint32_t used = 0;
+        for (uint32_t cost = WordCost(); cost && used + cost <= credit; cost = WordCost())
+        {
+            before(used);
+            Word();
+            used += cost;
+        }
+        return used;
+    }
+
 private:
     enum Device : uint8_t
     {

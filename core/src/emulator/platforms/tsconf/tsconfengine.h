@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "emulator/cpu/z80.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
@@ -96,6 +97,10 @@ public:
     /// @return false when the TSU drew nothing on that line
     bool ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Source* sources) const;
 
+    /// Draw the picture up to raster tact `raster` (the screen's hook): a DMA
+    /// CRAM write draws the dots before it with the old colour (TIM-5)
+    void SetVideoFlush(std::function<void(uint32_t raster)> flush) { _videoFlush = std::move(flush); }
+
     /// Tact of ts_start in the current line: where the TSU draws the next line (TSU-6)
     uint32_t TsStartTact() const;
 
@@ -126,6 +131,7 @@ private:
     TsConfInterrupts& _interrupts;
     TsConfDma& _dma;
     uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
+    std::function<void(uint32_t)> _videoFlush;
     TsConfLine _lines[kLines];
     uint8_t _tsu[kLines][360] = {};  ///< TSU line buffers of the frame (TsConfTsu::kMaxWidth)
     /// Tilemap prefetch ring (TsConfTsu::MapRing). Not TTD state: every frame

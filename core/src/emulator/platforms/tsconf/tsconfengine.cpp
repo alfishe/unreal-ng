@@ -134,6 +134,7 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
 
 void TsConfEngine::AccountBudget(uint32_t raster)
 {
+    const uint32_t start = _ts.budgetRaster;
     const uint32_t cpu = _ts.cpuAccesses;
     _ts.cpuAccesses = 0;
     _cpuLineRunning += cpu;
@@ -160,7 +161,21 @@ void TsConfEngine::AccountBudget(uint32_t raster)
     if (_dma.Busy())
     {
         _ts.dmaCredit += free;
-        _ts.dmaCredit -= _dma.Run(_ts.dmaCredit);
+        if (_dma.WritesCram() && _videoFlush && raster > start)
+        {
+            // CRAM is read at the dot (hs §4.3): place each word in the accounted
+            // span by its share of the credit and draw the picture up to there
+            // first, so the dots before the write keep the old colour (TIM-5)
+            const uint32_t credit = _ts.dmaCredit;
+            const uint32_t span = raster - start;
+            _ts.dmaCredit -= _dma.RunEach(credit, [&](uint32_t used) {
+                _videoFlush(start + static_cast<uint32_t>(credit ? static_cast<uint64_t>(used) * span / credit : 0));
+            });
+        }
+        else
+        {
+            _ts.dmaCredit -= _dma.Run(_ts.dmaCredit);
+        }
     }
 }
 

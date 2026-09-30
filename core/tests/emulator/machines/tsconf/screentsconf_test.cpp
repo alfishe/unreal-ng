@@ -382,3 +382,60 @@ TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
     EXPECT_EQ(PixelAfterFrame(Fx(108), Fy(76)), ScreenTSConf::CramToRgba(0x8000 | (20 << 5), 3));
     _context->config.ts_vdac = 0;
 }
+
+/// TIM-5: a DMA CRAM write lands at its dot. A RAM -> CRAM transfer of 200
+/// words (all blue) starts at line 99; the picture uses CRAM 150, written
+/// about 300 DRAM accesses later - inside line 99. The dots of line 99 before
+/// that write stay red, the ones after it are blue, even within one engine
+/// step (without the placement the whole step would show the final colour)
+TEST_F(ScreenTSConf_Test, TIM5_DmaCramWriteLandsAtItsDot)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::VConfig, 0x41);   // 16C 320x200: lines 76..275, dots 108..427
+    Reg(TsConfReg::VPage, 0x10);
+    Reg(TsConfReg::PalSel, 0x09);    // bank 9: nibble 6 = CRAM 150
+    for (uint16_t page = 0x10; page < 0x18; page++)
+        std::memset(_memory->RAMPageAddress(page), 0x66, PAGE_SIZE);
+    for (uint16_t& c : ts.cram)
+        c = 0x7C00;                  // red
+    for (uint32_t w = 0; w < 200; w++)
+    {
+        Ram(0x10 + 0x10, w * 2) = 0x1F;  // page #20: blue words
+        Ram(0x10 + 0x10, w * 2 + 1) = 0x00;
+    }
+
+    TsConfEngine& engine = _decoder->GetEngine();
+    engine.OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    Screen()->InitRaster();
+    Screen()->ResetPrevTstate();
+    auto runTo = [&](uint32_t t) {
+        _z80->t = t;
+        engine.CatchUp(t);
+        Screen()->UpdateScreen();
+    };
+    runTo(99 * TsConfEngine::kLineTacts);
+    Reg(TsConfReg::DmaSAl, 0x00);
+    Reg(TsConfReg::DmaSAh, 0x00);
+    Reg(TsConfReg::DmaSAx, 0x20);
+    Reg(TsConfReg::DmaDAl, 0x00);
+    Reg(TsConfReg::DmaDAh, 0x00);
+    Reg(TsConfReg::DmaDAx, 0x00);
+    Reg(TsConfReg::DmaLen, 199);     // 200 words, one block
+    Reg(TsConfReg::DmaNum, 0);
+    Reg(TsConfReg::DmaCtrl, 0x8C);   // RAM -> CRAM
+    // One long step (the CPU's steps draw the beam every instruction anyway;
+    // within a step the write must still land at its own dot)
+    runTo(102 * TsConfEngine::kLineTacts);
+
+    uint32_t* buffer = nullptr;
+    size_t size = 0;
+    Screen()->GetFramebufferData(&buffer, &size);
+    auto at = [&](uint32_t dot, uint32_t line) { return buffer[Fy(line) * 720 + Fx(dot)]; };
+    const uint32_t red = ScreenTSConf::CramToRgba(0x7C00);
+    const uint32_t blue = ScreenTSConf::CramToRgba(0x001F);
+    EXPECT_EQ(at(120, 98), red);
+    EXPECT_EQ(at(420, 98), red);
+    EXPECT_EQ(at(120, 99), red) << "line 99 before the write";
+    EXPECT_EQ(at(420, 99), blue) << "line 99 after the write";
+    EXPECT_EQ(at(120, 100), blue);
+}
