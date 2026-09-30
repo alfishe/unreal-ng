@@ -63,6 +63,12 @@ JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1
 ninja -C cmake-build-agent-release -j "$JOBS"
 ```
 
+### Linux (gcc) build check
+CI builds on Linux with gcc, which is stricter than Apple clang (missing standard includes, deprecated
+conversions). After touching C++ that could differ by compiler, reproduce it locally with the CI image,
+natively on the host architecture: `docker/linux/build.sh --test` (see `docker/linux/README.md`).
+Output lands in `scratch/linux-*`; delete it when done.
+
 ## Writing Tests
 Full guide: [`core/tests/README.md`](../core/tests/README.md). Non-negotiables:
 
