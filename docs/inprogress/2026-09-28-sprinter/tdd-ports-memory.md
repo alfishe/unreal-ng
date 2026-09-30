@@ -13,7 +13,7 @@
 |---|---|---|
 | `PortDecoder_Sprinter : PortDecoder` | `core/src/emulator/ports/models/portdecoder_sprinter.{h,cpp}` | owns `SprinterPldState`; port lookup; code dispatch; start-up gate; configuration loader; owns the IDE adapter, CMOS, Covox-Blaster, Z84C15 package; installs the M1 hook |
 | `SprinterPldState` (POD) | `core/src/emulator/ports/models/sprinter/sprinterpldstate.h` | every PLD register; one TTD blob |
-| `SprinterMemory : Memory` | `core/src/emulator/memory/sprinter/sprintermemory.{h,cpp}` | `UpdateModelBanks()`, graphics-page reads, `OnInterceptedWrite()` |
+| `SprinterMemory : Memory` | `core/src/emulator/memory/sprinter/sprintermemory.{h,cpp}` | `UpdateModelBanks()`, graphics-page reads; owns the write-intercept overlay (`SprinterWriteIntercept : HostBusOverlay`, write-only) |
 | `SprinterPldConfig` | `core/src/emulator/ports/models/sprinter/sprinterpldconfig.{h,cpp}` | bitstream sink (count, two hashes, watchdog), module lookup, fast start |
 | `SprinterPldConfiguration` (interface) + `SprinterPldConfigurationRegistry` | `core/src/emulator/ports/models/sprinter/sprinterpldconfiguration.{h,cpp}` | the extension point for PLD configurations: descriptor, override hooks, registry lookup by hash (§6.1) |
 | `SprinterPldStandard : SprinterPldConfiguration` | `core/src/emulator/ports/models/sprinter/sprinterpldstandard.{h,cpp}` | the standard Sp2000 configuration, the first and (in v1) only module |
@@ -175,6 +175,13 @@ other banks take the base path. The graphics area of main RAM is the 16 pages `#
 256 KB block (line *y* at `#50 × 16 KB + y × 1024`).
 
 ### 5.3 Write intercept
+
+> **2026-09-29, PLAN #60(a) built:** the intercept is a write-only
+> `HostBusOverlay` (`observesReads = false`), installed with
+> `Core::AddBusOverlay` while any bank needs it; its `onWrite` runs after the
+> normal store and picks the action from a per-bank table that
+> `UpdateModelBanks` fills (the "flags" below). Other machines pay nothing
+> (TSConf technical-design §3.5 item 2).
 
 Flags set per bank in `UpdateModelBanks`:
 

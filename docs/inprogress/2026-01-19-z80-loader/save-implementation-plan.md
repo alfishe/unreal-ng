@@ -1,6 +1,6 @@
 # Z80 Snapshot Save Implementation
 
-Implement [.z80](core/tests/build-standalone/bin/testdata/loaders/z80/newbench.z80) snapshot saving with TDD approach, reusing existing automation integration (CLI, WebAPI, Python, Lua) and Qt UI wiring.
+Implement [.z80](../../../testdata/loaders/z80/newbench.z80) snapshot saving with TDD approach, reusing existing automation integration (CLI, WebAPI, Python, Lua) and Qt UI wiring.
 
 ## User Review Required
 

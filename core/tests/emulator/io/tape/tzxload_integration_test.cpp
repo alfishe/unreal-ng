@@ -110,17 +110,18 @@ TEST_F(TzxLoad_Integration_Test, LoadTapeRejectsMissingFile)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-TEST_F(TzxLoad_Integration_Test, LoadTapeRejectsWrongExtension)
+TEST_F(TzxLoad_Integration_Test, LoadTapeProbesContentNotExtension)
 {
-    // Valid TZX bytes behind an unsupported extension: rejected before any
-    // parsing — the extension gate is LoadTape's, the registry's content
-    // probe only kicks in once the file reaches EnsureImageLoaded
+    // Valid TZX bytes behind a name no loader lists: the content probe of the
+    // tape loaders decides (extension only breaks ties), as for disk images
     const std::string path = WriteScratchFile("renamed.bin", MakeProgramTzx());
 
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
 
-    EXPECT_FALSE(emulator->LoadTape(path));
+    EXPECT_TRUE(emulator->LoadTape(path));
+    ASSERT_TRUE(emulator->GetContext()->pTape->EnsureImageLoaded());
+    EXPECT_EQ(emulator->GetContext()->pTape->GetLoadedFormatId(), "tzx");
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

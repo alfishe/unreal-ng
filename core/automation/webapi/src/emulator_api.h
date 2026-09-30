@@ -58,6 +58,9 @@ public:
 
     // Switch machine model (stops current emulator, creates new one with different model)
     ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
+
+    // ZX-Poly group status (four synchronized modules; any member id)
+    ADD_METHOD_TO(EmulatorAPI::getZXPolyStatus, "/api/v1/emulator/{id}/zxpoly", drogon::Get);
     // endregion Lifecycle Management
 
     // region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -76,6 +79,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::importTapeAudio, "/api/v1/emulator/{id}/tape/import", drogon::Post);
 
     // Disk control
+    // Media: every slot of the machine (floppy, SD, later tape / IDE / CD) through MediaControl
+    // (implementation: api/media_api.cpp; media-control-design.md §3.9)
+    ADD_METHOD_TO(EmulatorAPI::getMediaList, "/api/v1/emulator/{id}/media", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMediaSlot, "/api/v1/emulator/{id}/media/{slot}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postMediaVerb, "/api/v1/emulator/{id}/media/{slot}/{verb}", drogon::Post);
+
     ADD_METHOD_TO(EmulatorAPI::insertDisk, "/api/v1/emulator/{id}/disk/{drive}/insert", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::createDisk, "/api/v1/emulator/{id}/disk/{drive}/create", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::ejectDisk, "/api/v1/emulator/{id}/disk/{drive}/eject", drogon::Post);
@@ -202,6 +211,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateScreen, "/api/v1/emulator/{id}/state/screen", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenMode, "/api/v1/emulator/{id}/state/screen/mode", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenFlash, "/api/v1/emulator/{id}/state/screen/flash", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateScreenAttributes, "/api/v1/emulator/{id}/state/screen/attributes", drogon::Get);
 
     // Deterministic screen-content digest (change detection)
     ADD_METHOD_TO(EmulatorAPI::getStateScreenDigest, "/api/v1/emulator/{id}/state/screen/digest", drogon::Get);
@@ -212,6 +222,11 @@ public:
 
     // Beam (raster) position + frame timing from the machine model
     ADD_METHOD_TO(EmulatorAPI::getBeamPosition, "/api/v1/emulator/{id}/video/beam", drogon::Get);
+    // Video debug translation (PLAN #42, api/video_map_api.cpp): layout, pixel sources, byte -> pixels, text
+    ADD_METHOD_TO(EmulatorAPI::getVideoLayout, "/api/v1/emulator/{id}/video/layout", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoPixel, "/api/v1/emulator/{id}/video/pixel", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoAddress, "/api/v1/emulator/{id}/video/address", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoText, "/api/v1/emulator/{id}/video/text", drogon::Get);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -246,7 +261,22 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateFdc, "/api/v1/emulator/{id}/state/fdc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMActive, "/api/v1/emulator/state/audio/fm", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMIndexActive, "/api/v1/emulator/state/audio/fm/{chip}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSound, "/api/v1/emulator/{id}/state/audio/moonsound", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPart, "/api/v1/emulator/{id}/state/audio/moonsound/{part}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
+    ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateIdeActive, "/api/v1/emulator/state/ide", drogon::Get);
+    // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
+    ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Post);
+    // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
+    ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
     // endregion Audio State
 
     // region Debug Commands (implementation: api/debug_api.cpp)
@@ -402,6 +432,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::portEventsTTD, "/api/v1/emulator/{id}/ttd/port-events", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
@@ -475,6 +506,10 @@ public:
     void getEmulator(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
 
+    /// GET /api/v1/emulator/{id}/zxpoly - the ZX-Poly group the instance belongs to
+    void getZXPolyStatus(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
     // Remove an emulator
     void removeEmulator(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -508,6 +543,15 @@ public:
     void switchModel(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Lifecycle Management Methods
+
+    // region Media (implementation: api/media_api.cpp)
+    void getMediaList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getMediaSlot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& slot) const;
+    void postMediaVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& slot, const std::string& verb) const;
+    // endregion Media
 
     // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
     // Tape control
@@ -775,11 +819,30 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
 
+    /// @brief GET /api/v1/emulator/{id}/state/screen/attributes — per-cell
+    /// ink/paper/bright/flash decoded from screen attribute memory
+    void getStateScreenAttributes(const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+
     /// @brief GET /api/v1/emulator/{id}/video/beam — current raster beam position
     /// (t-state, line, dot, zone) plus frame timing derived from the machine model
     void getBeamPosition(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/video/layout — the current mode's layers, beam windows and framebuffer placement
+    void getVideoLayout(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/pixel?x=&y=[&layer=] or ?t= — the memory, registers and palette cell behind a pixel
+    void getVideoPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/address?page=&offset= or ?z80= — the pixels a byte feeds
+    void getVideoAddress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/text[?layer=] — the text grid of a text mode
+    void getVideoText(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with
@@ -850,6 +913,16 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
 
     // Audio state inspection (active emulator - no ID required)
     // TurboSound FM / Beta Disk state (api/state_device_api.cpp)
+    void getStateAudioMoonSound(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateAudioMoonSoundPart(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                                    const std::string& part) const;
+    void getStateAudioMoonSoundActive(const drogon::HttpRequestPtr& req,
+                                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateAudioMoonSoundPartActive(const drogon::HttpRequestPtr& req,
+                                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                          const std::string& part) const;
     void getStateAudioFM(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateAudioFMIndex(const drogon::HttpRequestPtr& req,
@@ -864,6 +937,22 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     const std::string& chip) const;
     void getStateFdcActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateIde(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIdeActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateRtc(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateRtcActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getRtcCells(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postRtcCells(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateContention(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateContentionActive(const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     void getStateAudioAYActive(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
@@ -1213,6 +1302,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void findLastTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void portEventsTTD(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepInstructionTTD(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseStepTTD(const drogon::HttpRequestPtr& req,

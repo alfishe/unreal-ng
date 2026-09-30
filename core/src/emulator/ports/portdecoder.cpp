@@ -29,7 +29,7 @@
 #include "stdafx.h"
 
 /// region <Constructors / Destructors>
-PortDecoder::PortDecoder(EmulatorContext* context)
+PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
 {
     _context = context;
 
@@ -42,6 +42,44 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
 }
+
+/// region <IDE board>
+
+IdeAdapter::Gate PortDecoder::IdeGate()
+{
+    IdeAdapter::Gate gate;
+    gate.dosPorts = _state && (_state->flags & CF_TRDOS);
+    return gate;
+}
+
+bool PortDecoder::TryIdePortIn(uint16_t port, uint16_t pc, uint8_t& result)
+{
+    if (!_ide.Active() || !_ide.In(port, IdeGate(), result))
+        return false;
+    _lastPortDecoded = true;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortInComplete(port, result, pc, disp);
+    return true;
+}
+
+bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
+{
+    if (!_ide.Active() || !_ide.Out(port, IdeGate(), value))
+        return false;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortOutComplete(port, value, pc, disp);
+    return true;
+}
+
+/// endregion </IDE board>
 
 PortDecoder::~PortDecoder()
 {
@@ -146,6 +184,26 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 
 /// endregion </Static methods>
 
+uint64_t PortDecoder::EmulatedMicroseconds() const
+{
+    if (!_context)
+        return 0;
+
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+    const uint64_t frameMicros = config.frame_duration_us;
+    const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
+    const uint64_t frameSpan = static_cast<uint64_t>(config.frame) * units;
+
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t inFrame = z80 ? state.TtdTInFrame(z80->t) : 0;
+
+    uint64_t micros = state.frame_counter * frameMicros;
+    if (frameSpan)
+        micros += inFrame * frameMicros / frameSpan;
+    return micros;
+}
+
 /// region <Interface methods>
 
 uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
@@ -200,7 +258,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     // Port trace: this legacy path bypasses OnPortInComplete, so a Ghost-Byte double
     // read through it would otherwise be invisible. Record with viaLegacyBasePath
     // so both reads of a ghost pair are visible and distinguishable (use case 4.1)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         PortDecodeDisposition disp;
         disp.decodedPort = addr;  // Legacy path performs no decoding: identity
@@ -250,7 +308,7 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
     }
 
     // 3. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         RecordPortTrace(/*isOut=*/false, port, result, pc, disp);
     }
@@ -301,7 +359,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     }
 
     // Port trace: legacy path bypasses OnPortOutComplete — see DecodePortIn note
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         PortDecodeDisposition disp;
         disp.decodedPort = addr;  // Legacy path performs no decoding: identity
@@ -359,7 +417,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         if (_context->ttdProbe.Matches(port, ttd::TTDAccessType::Io, value, pc))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             // A port has no RAM page; the journal path reports the same.
             _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,
@@ -368,7 +427,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     }
 
     // 4. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
     }
@@ -383,21 +442,29 @@ void PortDecoder::UpdateFeatureCache()
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
     bool enabled = fm && fm->isEnabled(Features::kPortTrace);
 
+    // Feature changes arrive on several threads (UI, WebAPI, CLI, scripts), and
+    // every change of any feature lands here: serialize the lifecycle
+    std::lock_guard<std::mutex> lock(_portTraceLifecycleMutex);
+
     if (enabled && !_portTrace)
     {
-        // Feature turned on: instantiate the recorder lazily (buffer memory is
-        // allocated only now, never while the feature is off)
+        // First switch-on: instantiate the recorder lazily (buffer memory is
+        // allocated only now, never while the feature has never been on)
         _portTrace = std::make_unique<PortDiagnosticRecorder>();
+    }
+    if (enabled && !_portTraceFeatureCache.load(std::memory_order_relaxed))
+    {
         _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
     }
-    else if (!enabled && _portTrace)
+    else if (!enabled && _portTrace && _portTraceFeatureCache.load(std::memory_order_relaxed))
     {
-        // Feature turned off: stop capture and release the buffer memory
-        _portTrace->stop();
-        _portTrace.reset();
+        // Switch-off: stop capture and free the buffer memory. The recorder
+        // object stays - other threads may hold a pointer to it
+        _portTrace->releaseBuffer();
     }
 
-    _portTraceFeatureCache = enabled;
+    // Release: a thread that sees the flag set also sees the recorder
+    _portTraceFeatureCache.store(enabled, std::memory_order_release);
 }
 
 /// Build and push exactly one PortTraceEvent per Z80 I/O operation.
@@ -410,7 +477,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     // Frame-scoped counters update even without an active capture session
     _activitySummary.onEvent(frame, isOut, disp);
 
-    if (!_portTrace || !_portTrace->isCapturing())
+    if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())
         return;
 
     PortTraceEvent event;
@@ -425,7 +492,9 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.pc = pc;
     event.value = value;
     event.decodeRuleIndex = disp.decodeRuleIndex;
-    event.deviceId = PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
+    event.internalCode = disp.internalCode;
+    event.deviceId = disp.device != PortDeviceId::None ? disp.device
+                                                        : PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
     // Scorpion border latch: an OUT the gating arm steered away from the
     // (off-bus) FDC system port drives the border color — reattribute so
@@ -480,7 +549,12 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 
         switch (_context->config.mem_model)
         {
-            case MM_PENTAGON:    info.modelName = "Pentagon"; break;
+            case MM_PENTAGON:
+                // One model id for every Pentagon RAM size; the extended ones decode more ports (#EFF7)
+                info.modelName = _context->config.ramsize >= 1024 ? "Pentagon1024"
+                                 : _context->config.ramsize >= 512 ? "Pentagon512"
+                                                                   : "Pentagon";
+                break;
             case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
             case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
@@ -496,6 +570,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
     }
 
     info.decodeRules = getPortTraceDecodeRules();
+    info.codes = GetPortTraceCodeTable();
 
     return info;
 }
@@ -843,11 +918,6 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::PFFF7Window1: return state.pFFF7[1];
         case PagingLatch::PFFF7Window2: return state.pFFF7[2];
         case PagingLatch::PFFF7Window3: return state.pFFF7[3];
-        // Reserved atm-branch / TSConf members: fields exist but no decoder on
-        // master ever binds them yet, so there is nothing truthful to report
-        case PagingLatch::PBD:
-        case PagingLatch::PTS:
-        case PagingLatch::PMEM:
         case PagingLatch::None:
         default:
             return 0;
@@ -938,9 +1008,6 @@ const char* PagingLatchToString(PagingLatch latch)
         case PagingLatch::PFFF7Window1: return "pFFF7_w1";
         case PagingLatch::PFFF7Window2: return "pFFF7_w2";
         case PagingLatch::PFFF7Window3: return "pFFF7_w3";
-        case PagingLatch::PBD:    return "pBD";
-        case PagingLatch::PTS:    return "pTS";
-        case PagingLatch::PMEM:   return "pMEM";
         case PagingLatch::None:
         default:
             return nullptr;
@@ -1742,14 +1809,10 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 
 /// region <Privileged operations for snapshot loading / debug>
 
-/// Unlock port 7FFD paging for snapshot loading or debug sessions
-/// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
-/// This ensures subsequent port writes via DecodePortOut() will be accepted
+/// Unlock port 7FFD paging for snapshot loading or debug sessions: the lock is
+/// the latch's bit 5 (IsPagingLocked), so clearing it lets Port_7FFD_Out() accept writes
 void PortDecoder::UnlockPaging()
 {
-    // Clear the hardware latch so Port_7FFD_Out() will accept writes
-    _7FFD_Locked = false;
-
     if (_state)
     {
         _state->p7FFD &= ~PORT_7FFD_LOCK;
@@ -1757,13 +1820,10 @@ void PortDecoder::UnlockPaging()
     }
 }
 
-/// Lock port 7FFD paging (for emulation accuracy or testing)
-/// Sets both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
+/// Lock port 7FFD paging (for emulation accuracy or testing) by setting the
+/// latch's lock bit
 void PortDecoder::LockPaging()
 {
-    // Set the hardware latch to match the lock bit
-    _7FFD_Locked = true;
-
     if (_state)
     {
         _state->p7FFD |= PORT_7FFD_LOCK;

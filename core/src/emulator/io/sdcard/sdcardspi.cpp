@@ -63,20 +63,38 @@ bool SdCardSpi::insert(std::unique_ptr<IBlockDevice> media, WriteMode mode, Type
     {
         _media = std::move(media);
     }
+    _device = _media.get();
+    ApplyType(type);
+    powerOn();
+    return true;
+}
 
+bool SdCardSpi::attach(IBlockDevice& medium, Type type)
+{
+    close();
+    _device = &medium;
+    _blocks = medium.SectorCount();
+    _path = medium.Describe();
+    _writeMode = medium.IsWritable() ? WriteMode::Persist : WriteMode::Off;
+    ApplyType(type);
+    powerOn();
+    return true;
+}
+
+void SdCardSpi::ApplyType(Type type)
+{
     switch (type)
     {
         case Type::SDSC: _sdhc = false; break;
         case Type::SDHC: _sdhc = true; break;
         default: _sdhc = _blocks * BLOCK > SDSC_LIMIT; break;
     }
-    powerOn();
-    return true;
 }
 
 void SdCardSpi::close()
 {
     _session = nullptr;
+    _device = nullptr;
     _media.reset();
     _path.clear();
     _blocks = 0;
@@ -117,9 +135,9 @@ void SdCardSpi::truncatedByte()
 
 bool SdCardSpi::readBlock(uint64_t block, uint8_t* out)
 {
-    if (!_media || block >= _blocks)
+    if (!_device || block >= _blocks)
         return false;
-    if (!_media->ReadSector(block, out))
+    if (!_device->ReadSector(block, out))
     {
         // A host read error: the card still delivers a block (a real card
         // would answer with a data error token; no driver here handles one)
@@ -130,9 +148,9 @@ bool SdCardSpi::readBlock(uint64_t block, uint8_t* out)
 
 bool SdCardSpi::writeBlock(uint64_t block, const uint8_t* data)
 {
-    if (!_media || block >= _blocks || _writeMode == WriteMode::Off)
+    if (!_device || block >= _blocks || _writeMode == WriteMode::Off)
         return false;
-    return _media->WriteSector(block, data);
+    return _device->WriteSector(block, data);
 }
 
 uint8_t SdCardSpi::r1Flags() const
@@ -163,7 +181,7 @@ void SdCardSpi::queueBlock(uint64_t block)
 
 uint8_t SdCardSpi::exchange(uint8_t mosi)
 {
-    if (!_media || !_selected)
+    if (!_device || !_selected)
         return 0xFF;
 
     // The card shifts its next byte out while this one comes in

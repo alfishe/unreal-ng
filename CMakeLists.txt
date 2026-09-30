@@ -91,12 +91,20 @@ if (GIT_FOUND)
     endif()
 endif()
 
-# Multi-config generators (Visual Studio) have no single-configuration
-# CMAKE_BUILD_TYPE at configure time
-if (CMAKE_BUILD_TYPE)
-    set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
-else()
+# Default to Release mode. It has to come before the build type is recorded
+# below: a build configured without -DCMAKE_BUILD_TYPE is a Release build and
+# must say so. Multi-config generators (Visual Studio, Xcode, Ninja
+# Multi-Config) pick the configuration at build time, so they get it as a
+# compile definition that buildinfo.h prefers
+get_property(UNREAL_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if (NOT UNREAL_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+	set(CMAKE_BUILD_TYPE Release)
+endif ()
+if (UNREAL_MULTI_CONFIG)
     set(UNREAL_BUILD_TYPE "MultiConfig")
+    add_compile_definitions([[UNREAL_BUILD_CONFIG="$<CONFIG>"]])
+else()
+    set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 endif()
 
 configure_file(
@@ -117,11 +125,6 @@ configure_file(
 set(CMAKE_CXX_STANDARD 20 CACHE STRING "C++ standard" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "C++ standard required" FORCE)
 message(STATUS "C++ Standard: C++20")
-
-# Default to Release mode
-if (NOT CMAKE_BUILD_TYPE)
-	set(CMAKE_BUILD_TYPE Release)
-endif (NOT CMAKE_BUILD_TYPE)
 
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 

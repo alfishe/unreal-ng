@@ -52,7 +52,7 @@ public:
 
     uint8_t nextSeq()
     {
-        _seq = static_cast<uint8_t>((_seq % 15) + 1);
+        _seq = static_cast<uint8_t>((_seq % 255) + 1);  // DeZog: 1..255, 0 = notifications
         return _seq;
     }
 
@@ -111,8 +111,8 @@ public:
                 _pendingNotifications.push_back(std::move(body));
                 continue;
             }
-            resp.seq = body[0] & 0x0F;
-            resp.nak = (body[0] & dzrp::NAK_BIT) != 0;
+            resp.seq = body[0];
+            resp.nak = false;  // DZRP has no NAK; DeZog compares the whole seq byte
             resp.payload.assign(body.begin() + 1, body.end());
             resp.valid = (resp.seq == seq);
             return resp;
@@ -508,6 +508,15 @@ TEST_F(DZRPServer_test, WatchpointOverWireNotifies)
 /// endregion </Breakpoints / execution>
 
 /// region <State>
+
+TEST_F(DZRPServer_test, SequenceNumbersBeyondFifteenAreEchoed)
+{
+    // Each response must carry the command's own seqNo past the old 4-bit
+    // limit (the full 1..255 byte range is covered by DZRPProtocolTest)
+    init();
+    for (int i = 0; i < 40; ++i)
+        ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_GET_REGISTERS).valid) << "command " << i;
+}
 
 TEST_F(DZRPServer_test, ReadWriteStateOverWire)
 {

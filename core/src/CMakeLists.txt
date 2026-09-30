@@ -74,6 +74,12 @@ if (NOT TARGET gif)
     add_subdirectory(3rdparty/gif)
 endif()
 
+# miniz — zlib streams for SZX snapshots (see its CMakeLists.txt); a C
+# target of its own, so the C++ source glob below does not see it
+if (NOT TARGET miniz)
+    add_subdirectory(3rdparty/miniz)
+endif()
+
 # libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
 # 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
 # root file — so every entry point that builds core (root, unreal-qt,
@@ -121,6 +127,17 @@ endif()
 # C-style tables live in namespace Z80Lib (see 3rdparty/unreal-z80/README.md)
 file (GLOB UNREAL_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-z80/*.cpp)
 set_source_files_properties(${UNREAL_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+# rapidyaml (single-header YAML / JSON parser): its definitions compile in one
+# translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
+# -Wall -Wextra -Werror and must not be force-fed stdafx.h
+set(RYML_IMPL_CPP ${SOURCE_DIR}/3rdparty/rapidyaml/ryml_impl.cpp)
+set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if (MSVC)
+    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "/w")
+else()
+    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
@@ -202,6 +219,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # automation/lua, automation/webapi, tests). All consumers need zstd's
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
+target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
 
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)

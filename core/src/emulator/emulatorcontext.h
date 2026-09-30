@@ -23,6 +23,7 @@ class MainLoop;
 class Memory;
 class WD1793;
 class UPD765;
+class IdeController;
 class PortDecoder;
 class Screen;
 class UlaContention;
@@ -37,10 +38,11 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class MediaManager;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TTDAccessProbe; }
+namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
 
@@ -108,6 +110,10 @@ public:
     // ZX Spectrum +3 floppy controller (NEC uPD765A); nullptr on every other model
     UPD765* pUPD765 = nullptr;
 
+    // IDE board (channel, units, their media slots); owned by Core, always present
+    // (scheme NONE: no units, no slots)
+    IdeController* pIdeController = nullptr;
+
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;
     DiskAutostart* pDiskAutostart = nullptr;
@@ -167,6 +173,11 @@ public:
     // lifetime of the context). May be null on minimal builds without TTD.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
 
+    // Media manager: every storage slot and the media in them (owned by
+    // Emulator; created before Core so peripherals can register their slots,
+    // destroyed after Core so they can unregister)
+    MediaManager* pMediaManager = nullptr;
+
     // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //
     // Set by TimeTravelManager::EnterReplayMode() before any intra-frame
@@ -183,10 +194,38 @@ public:
     // checks are read from the same thread.
     bool ttdReplayActive = false;
 
-    /// TTD input work pending for the executing thread: journal playback is
-    /// armed or live input is queued (TimeTravelManager::ServiceInput). One
-    /// relaxed load per instruction when idle
-    std::atomic<bool> ttdInputWork{false};
+    /// Per-step work gate: one bit per rare job that must run around every
+    /// instruction. Z80::StepInstruction loads it once per step (relaxed); zero
+    /// keeps the step on its plain path, any bit sends it through
+    /// Z80::StepInstructionWithWork. One gate for all such jobs, so adding a
+    /// job costs a machine that does not use it nothing (see
+    /// docs/guidelines/performance-guidelines.md, "combined gate").
+    /// Bits are set and cleared atomically (SetStepWork): TTD raises its bit
+    /// from other threads, machines raise theirs on the emulation thread.
+    enum StepWorkBits : uint32_t
+    {
+        kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelManager::ServiceInput)
+        kStepWorkInterruptSource = 1u << 1,  ///< the machine owns INT (Z80::SetInterruptSource)
+        kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
+        // Next free: 1u << 3 (reserved for RZX playback, 2026-09-29-rzx-replay design §5)
+    };
+    std::atomic<uint32_t> stepWork{0};
+
+    void SetStepWork(uint32_t bits, bool on)
+    {
+        if (on)
+            stepWork.fetch_or(bits, std::memory_order_release);
+        else
+            stepWork.fetch_and(~bits, std::memory_order_release);
+    }
+    bool HasStepWork(uint32_t bits) const { return (stepWork.load(std::memory_order_acquire) & bits) != 0; }
+
+    /// TTD port journals while a session records or replays them, else null:
+    /// Z80::in hands every IN result to ttdPortReads (recorded, or replaced by
+    /// the recorded value on replay), Z80::out every OUT to ttdPortWrites
+    /// (recorded, or checked). One predictable branch per IN / OUT when null
+    ttd::TTDPortJournal* ttdPortReads = nullptr;
+    ttd::TTDPortJournal* ttdPortWrites = nullptr;
 
     // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,

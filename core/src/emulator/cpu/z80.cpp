@@ -8,6 +8,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
@@ -34,7 +35,13 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
-    MemIf = FastMemIf;  // Use fast memory access interface by default
+    FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
+    DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
+    OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
+    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true);
+    OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
+    MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
     Z80State::tt = 0;
@@ -106,6 +113,19 @@ Z80::~Z80()
         delete DbgMemIf;
         DbgMemIf = nullptr;
     }
+
+    delete FastContendedMemIf;
+    FastContendedMemIf = nullptr;
+    delete DbgContendedMemIf;
+    DbgContendedMemIf = nullptr;
+    delete OverlayFastMemIf;
+    OverlayFastMemIf = nullptr;
+    delete OverlayDbgMemIf;
+    OverlayDbgMemIf = nullptr;
+    delete OverlayFastContendedMemIf;
+    OverlayFastContendedMemIf = nullptr;
+    delete OverlayDbgContendedMemIf;
+    OverlayDbgContendedMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -391,7 +411,9 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         if (++cpu.halt_cycle == 4)
         {
-            cpu.r_low += 1;
+            // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which nothing
+            // selects today: HALT re-executes its own M1 (op_76)
+            cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
             cpu.halt_cycle = 0;
         }
     }
@@ -415,9 +437,17 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
         else
         {
-            // Some counter correction for <???>
-            if (cpu.pch & temporary.evenM1_C0)
-                cpu.tt += (cpu.tt & cpu.rate);
+            // Scorpion "Even M1" (config EvenM1): the CPU's DRAM slot is tied to one phase of the video counter,
+            // and an opcode fetch - which samples the bus half a T-state earlier than a data read - only fits it
+            // on an even T-state. The board's WAIT logic stretches an opcode fetch from RAM that would start on
+            // an odd T-state by one T-state (SC15.1 EPLD equations: M1 & RAM select & phase, normal mode only).
+            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. RAM select, not the
+            // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
+            // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
+            // contention-by-machine.md section 6
+            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_shift == 0 &&
+                (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
+                cpu.tt += cpu.rate;
 
             // Preserve previous PC register state
             cpu.prev_pc = m1_pc;
@@ -556,7 +586,7 @@ void Z80::BeginFrame()
 
     // INT interrupt handling lasts for more than 1 frame (unless the pulse was
     // already acknowledged on a machine that clears INT at the acknowledge)
-    if (_intWraps && !int_acked_in_pulse)
+    if (_intWraps && !int_acked_in_pulse && !frameIntMasked)
         int_pending = true;
 }
 
@@ -567,20 +597,19 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     if (_frameLimit == 0)
         RecomputeFrameTiming();
 
-    // Input takes effect before this instruction: recorded journal events due
-    // at or before now (TTD playback) and live input queued by other threads.
-    // An event stamped T is first visible to the instruction starting at T -
-    // the machine state AT T (a seek target, a pause) does not include it yet.
-    // One relaxed load per instruction when there is none
-    if (_context->ttdInputWork.load(std::memory_order_relaxed) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
+    // The per-step work gate (EmulatorContext::stepWork): one relaxed load and
+    // one branch per instruction for every rare job together - TTD input, a
+    // machine's own INT logic, a machine engine. With none the step below is
+    // exactly the classic machine's step
+    if (const uint32_t work = _context->stepWork.load(std::memory_order_relaxed)) [[unlikely]]
+        return StepInstructionWithWork(work, skipBreakpoints);
 
     StepResult result;
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
     // in that case the acceptance IS the "instruction" that consumes this step
     const bool nmiPending = _nmi_pending_count > 0;
-    if (ProcessInterrupts(_intWraps, _intStart, _intEnd))
+    if (ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd))
     {
         if (nmiPending)
             result.nmiAccepted = true;
@@ -597,6 +626,59 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     OnCPUStep();
 
     return result;
+}
+
+/// The step with rare work around it (StepInstruction's gate is non-zero).
+/// Out of line so the plain step stays small; the order is the contract:
+/// input first, then the interrupt decision, the instruction, the machine
+/// engine, the peripherals
+Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints)
+{
+    // Input takes effect before this instruction: recorded journal events due
+    // at or before now (TTD playback) and live input queued by other threads.
+    // An event stamped T is first visible to the instruction starting at T -
+    // the machine state AT T (a seek target, a pause) does not include it yet
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->ServiceInput();
+
+    StepResult result;
+
+    const bool nmiPending = _nmi_pending_count > 0;
+    const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
+                              ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
+                              : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
+    if (accepted)
+    {
+        if (nmiPending)
+            result.nmiAccepted = true;
+        else
+            result.intAccepted = true;
+    }
+    else
+    {
+        Z80Step(skipBreakpoints);
+    }
+
+    // The machine engine first (IMachineStepHook): the screen and the sound
+    // then see the state this step produced
+    if ((work & EmulatorContext::kStepWorkMachineStep) && _machineStepHook)
+        _machineStepHook->OnMachineStep(t);
+
+    OnCPUStep();
+
+    return result;
+}
+
+void Z80::SetInterruptSource(IInterruptSource* source)
+{
+    _interruptSource = source;
+    _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
+}
+
+void Z80::SetMachineStepHook(IMachineStepHook* hook)
+{
+    _machineStepHook = hook;
+    _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -776,7 +858,7 @@ void Z80::NotifyInstructionStart()
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
@@ -789,25 +871,11 @@ void Z80::NotifyInstructionStart()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
-    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped, on the +2A/+3 pages 4-7 in
-    // any slot) during screen rendering stalls the CPU.
-    UlaContention* ula = _context->pUlaContention;
-    const bool contended = !isExecution && ula && ula->IsAddressContended(addr);
-    if (contended)
-    {
-        uint8_t delay = ula->GetContentionDelay();
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-    }
-
+    // Video memory contention, where the machine has it, is part of the selected interface
+    // (Memory::MemoryReadContended): it waits before the access, with these 3 T already counted
     IncrementCPUCyclesCounter(3);
 
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
-
-    // The +2A/+3 gate array keeps a contended access's byte for its floating bus
-    if (contended)
-        ula->LatchContendedByte(value);
 
     if (busTraceHook)
         busTraceHook('R', addr, value);
@@ -821,17 +889,7 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention (see rd)
-    UlaContention* ula = _context->pUlaContention;
-    const bool contended = ula && ula->IsAddressContended(addr);
-    if (contended)
-    {
-        uint8_t delay = ula->GetContentionDelay();
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        ula->LatchContendedByte(val);
-    }
-
+    // Video memory contention: see rd (Memory::MemoryWriteContended)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
@@ -842,16 +900,49 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This is critical for accurate timing of raster-sync effects.
+    // TTD port journal: while a session records, every IN result is appended
+    // with its time and PC; while one replays, the CPU gets the recorded value
+    // instead of the live device's answer, so the replay depends on nothing
+    // outside the session - media files, host devices
+    // (ttd-port-read-journal.md). The devices still see the read and its side
+    // effects. Time and PC are taken at the start of the I/O cycle
+    if (ttd::TTDPortJournal* journal = _context->ttdPortReads) [[unlikely]]
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
+        const EmulatorState& st = _context->emulatorState;
+        const uint64_t frame = st.frame_counter;
+        const uint32_t tInFrame = st.TtdTInFrame(t);
+        const uint16_t pc = m1_pc;
+        return journal->OnRead(port, inFromBus(port), frame, tInFrame, pc);
+    }
+    return inFromBus(port);
+}
+
+/// The read as the bus answers it: interceptor, model decoder, observer cards,
+/// floating bus, I/O contention
+uint8_t Z80::inFromBus(uint16_t port)
+{
+    // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
+    // handler has already counted that T (IORQ is at T2), so the cycle started 1 T ago. ioContention is
+    // null on machines without it (Core::SelectMemoryInterface)
+    uint8_t ioWait = 0;
+    if (ioContention)
+    {
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
+    }
+
+    // Pre-decode interceptor (ZX-Poly platform ports): a consumed read never
+    // reaches the model decoder, the observer cards or the floating bus
+    if (portInterceptor) [[unlikely]]
+    {
+        uint8_t intercepted = 0xFF;
+        if (portInterceptor->InterceptIn(port, intercepted))
         {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
+            if (busTraceHook)
+                busTraceHook('I', port, intercepted);
+            if (ioContention)
+                IoWaitAfterIorq(port, ioWait);
+            return intercepted;
         }
     }
 
@@ -890,6 +981,7 @@ uint8_t Z80::in(uint16_t port)
     // must NOT get the floating bus override even if they return 0xFF.
     // Full-decode observer cards are real hardware too - a handled observer
     // port always has a driver on the bus, floating bus must not apply.
+    bool fromFloatingBus = false;
     if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
     {
         UlaContention* ula = _context->pUlaContention;
@@ -898,27 +990,49 @@ uint8_t Z80::in(uint16_t port)
             // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus)
             uint8_t floatVal = ula->IsGateArray() ? ula->GetGateArrayFloatingBus(port) : ula->GetFloatingBus();
             if (floatVal != 0xFF)
+            {
                 result = floatVal;
+                fromFloatingBus = true;
+            }
         }
     }
+
+    if (portInterceptor) [[unlikely]]
+        portInterceptor->OnInResult(port, result, fromFloatingBus);
+
+    if (ioContention)
+        IoWaitAfterIorq(port, ioWait);
 
     return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This must be applied BEFORE the port write so that SetBorderColor()
-    // sees the correct (delayed) t-state.
+    // TTD port journal: every OUT is logged as a fact of the machine's output
+    // while a session records, and checked against the record while it
+    // replays (ttd-port-read-journal.md)
+    if (ttd::TTDPortJournal* journal = _context->ttdPortWrites) [[unlikely]]
+        journal->OnWrite(port, val, _context->emulatorState.frame_counter, _context->emulatorState.TtdTInFrame(t),
+                         m1_pc);
+
+    // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
+    // border latch) sees the delayed T; the waits after IORQ follow the write
+    uint8_t ioWait = 0;
+    if (ioContention)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
-        {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
+    }
+
+    // Pre-decode interceptor (ZX-Poly platform ports): a consumed write never
+    // reaches the model decoder or the observer cards
+    if (portInterceptor && portInterceptor->InterceptOut(port, val)) [[unlikely]]
+    {
+        if (busTraceHook)
+            busTraceHook('O', port, val);
+        if (ioContention)
+            IoWaitAfterIorq(port, ioWait);
+        return;
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -932,6 +1046,37 @@ void Z80::out(uint16_t port, uint8_t val)
 
     if (busTraceHook)
         busTraceHook('O', port, val);
+
+    if (ioContention)
+        IoWaitAfterIorq(port, ioWait);
+}
+
+void Z80::IoWaitAfterIorq(uint16_t port, uint8_t ioWait)
+{
+    const uint8_t after = ioContention->IoWaitAfterIorq(port, t);
+    IncrementCPUCyclesCounter(after);
+    if (isDebugMode)
+        ioContention->CountAccess(CONTENTION_IO, static_cast<uint8_t>(ioWait + after));
+}
+
+/// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.
+/// Each T-state is its own check, like FUSE's contend_read_no_mreq(addr, 1)
+void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
+{
+    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    for (uint8_t i = 0; i < cycles; i++)
+    {
+        if (busTraceHook)
+            busTraceHook('N', addr, 0);
+        if (contended)
+        {
+            const uint8_t wait = idleContention->DelayAt(t);
+            IncrementCPUCyclesCounter(wait);
+            if (isDebugMode)
+                idleContention->CountAccess(CONTENTION_IDLE, wait);
+        }
+        IncrementCPUCyclesCounter(1);
+    }
 }
 
 void Z80::retn()
@@ -965,6 +1110,23 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
     *remap_addr = val;
 }
 
+void Z80::RaiseLocalInt(unsigned lengthT)
+{
+    // End position in (frame, T): the frame counter advances and t is rebased
+    // by the frame length at every frame boundary
+    const uint32_t frameLength = _frameLimit != 0 ? _frameLimit : _context->config.frame;
+    uint64_t endFrame = _context->emulatorState.frame_counter;
+    uint32_t endT = t + lengthT;
+    while (frameLength != 0 && endT >= frameLength)
+    {
+        endT -= frameLength;
+        endFrame++;
+    }
+    _localIntEndFrame = endFrame;
+    _localIntEndT = endT;
+    _localIntArmed = true;
+}
+
 /// Simulate Z80 INT pin signal raising
 /// Interrupt request will be processed before next CPU cycle in
 void Z80::RequestMaskedInterrupt()
@@ -991,8 +1153,17 @@ void Z80::RequestNonMaskedInterrupt()
 /// \param int_end
 bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
+    // Direct callers (tests, tools) get the machine's INT logic when it has one
+    return _interruptSource ? ProcessInterruptsImpl<true>(int_occurred, int_start, int_end)
+                            : ProcessInterruptsImpl<false>(int_occurred, int_start, int_end);
+}
+
+/// UseSource: the machine owns INT (IInterruptSource). A template so the
+/// classic machines' step carries no test for it (StepInstruction)
+template <bool UseSource>
+bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end)
+{
     Z80& cpu = *this;
-    VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
 
     // A pending prefix is the middle of an instruction: neither INT nor NMI
@@ -1077,9 +1248,19 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
             cpu.pc = 0x0067;
         }
 
-        video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
-
         return true;  // NMI accepted: skip Z80Step this iteration
+    }
+
+    // A machine that owns its INT logic decides the pin alone (IInterruptSource)
+    if constexpr (UseSource)
+    {
+        cpu.int_pending = _interruptSource->IsIntAsserted(cpu.t);
+        if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
+        {
+            HandleINT(_interruptSource->AcknowledgeInterrupt(cpu.t));
+            return true;
+        }
+        return false;
     }
 
     // Generate INT
@@ -1102,7 +1283,7 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
             cpu.int_acked_in_pulse = 0;
     }
 
-    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse)
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -1111,7 +1292,15 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     if (cpu.int_pending && (cpu.t >= int_end))
         cpu.int_pending = false;
 
-    video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
+    // Board-level local INT (RaiseLocalInt): held for its own length
+    if (_localIntArmed) [[unlikely]]
+    {
+        const uint64_t frame = machineState.frame_counter;
+        if (frame < _localIntEndFrame || (frame == _localIntEndFrame && cpu.t < _localIntEndT))
+            cpu.int_pending = true;
+        else
+            _localIntArmed = false;
+    }
 
     /// region <INT (Non-masked interrupt)>
 
@@ -1150,8 +1339,6 @@ bool Z80::IntClearedByAcknowledge() const
 void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
-    CONFIG& config = _context->config;
-    EmulatorState& state = _context->emulatorState;
 
     /// region <CPU is stopped on HALT (opcode 0x76) command>
 
@@ -1245,21 +1432,6 @@ void Z80::HandleINT(uint8_t vector)
     // this pulse window (ProcessInterrupts re-arms after it)
     if (IntClearedByAcknowledge())
         cpu.int_acked_in_pulse = 1;
-
-    /// region <TSConf>
-
-    // TODO: move to TSConf plugin
-    if (config.mem_model == MM_TSL)
-    {
-        if (state.ts.intctrl.frame_pend)
-            state.ts.intctrl.frame_pend = 0;
-        else if (state.ts.intctrl.line_pend)
-            state.ts.intctrl.line_pend = 0;
-        else if (state.ts.intctrl.dma_pend)
-            state.ts.intctrl.dma_pend = 0;
-    }
-
-    /// endregion </TSConf>
 }
 
 void Z80::OnCPUStep()

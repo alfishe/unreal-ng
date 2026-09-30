@@ -15,7 +15,6 @@ class PortDecoder_Scorpion256 : public PortDecoder
 {
     /// region <Fields>
 protected:
-    // _7FFD_Locked is now inherited from PortDecoder base class
 
     // SMUC (Scorpion & MOA Universal Controller) stub for the ProfROM boot
     // probes (profrom-smuc-not-found-and-driver-disassembly.md section 8):
@@ -70,15 +69,23 @@ public:
     /// Scorpion variants. Declared here because this decoder owns
     /// those latches (see PortDecoder::GetTTDModelStateIds).
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+
+    /// Turbo+ runs the CPU at 3.5 or 7 MHz
+    uint8_t TtdClockUnits() const override { return 2; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </TTD model-specific state>
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
+    RtcBinding GetRtcBinding() override;
 
     /// SMUC board presence (absent by default - see _smucEnabled)
     void SetSmucEnabled(bool enabled) { _smucEnabled = enabled; }
     bool IsSmucEnabled() const { return _smucEnabled; }
+    /// The board is on the bus: enabled by hand (tests), or the machine's IDE scheme is SMUC
+    bool IsSmucFitted() const { return _smucEnabled || _ide.Scheme() == IDE_SMUC; }
     /// endregion </Helper methods>
 
 protected:

@@ -27,7 +27,18 @@ struct MachineIdentity
     double SpeedMultiplier = 1.0; ///< Live z80 frequency multiplier (turbo)
     std::string ConfigFolder;    ///< configs/<folder> backing this machine
     bool Valid = false;          ///< False while the emulator context does not exist yet
+
+    /// ZX-Poly: this instance belongs to a four-module group
+    /// (docs/inprogress/2026-09-27-zxpoly). Module 0 is the machine every
+    /// surface shows; 1-3 are hidden members
+    bool ZXPoly = false;
+    int ZXPolyModule = -1;       ///< 0 = master, 1..3 = slave CPU module
+    std::string ZXPolyMasterId;  ///< the group's visible machine
+    bool ZXPolyLocked = false;   ///< #3D00 locked (a ZX-Poly edition runs)
+    int ZXPolyVideoMode = 0;     ///< #3D00 D2-D4
 };
+
+class ZXPolyGroup;
 
 /// @class EmulatorManager
 /// @brief Manages multiple emulator instances
@@ -48,6 +59,11 @@ protected:
 private:
     std::map<std::string, std::shared_ptr<Emulator>> _emulators;
     std::mutex _emulatorsMutex;
+
+    // ZX-Poly groups by master ID (the groups own their four instances)
+    std::map<std::string, std::shared_ptr<ZXPolyGroup>> _zxpolyGroups;  // shared_ptr: complete type not needed here
+    std::recursive_mutex _zxpolyMutex;
+    bool RemoveEmulatorInstance(const std::string& emulatorId);
     
     // Global selection state (shared across CLI, WebAPI, UI)
     std::string _selectedEmulatorId;
@@ -103,7 +119,9 @@ public:
 
     /// @brief Create a new emulator instance with a specific model configuration
     /// @param symbolicId Optional symbolic identifier for the emulator
-    /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K")
+    /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K"), or a ZX-Poly
+    ///        configuration (ZXPolyGroup::Configurations: "ZXPOLY-128K"...) - that creates the whole
+    ///        group and returns its master (CreateZXPolyMachine without media)
     /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
     /// @param outError Optional; when non-null it receives a human-readable failure reason
     ///        (unknown model, model not supported by this build, init failure) on nullptr return
@@ -118,7 +136,7 @@ public:
     /// @param outError Optional; when non-null it receives a human-readable failure reason
     ///        (unknown model, RAM size not supported, model not supported by this build, init failure) on nullptr return
     /// @return Shared pointer to the created emulator, or nullptr on failure
-    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr);
+    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr, std::function<void(CONFIG&)> configOverride = {});
 
     /// @brief Get an existing emulator by ID
     /// @param emulatorId ID of the emulator to retrieve
@@ -141,6 +159,19 @@ public:
     /// @param emulator Emulator instance to describe
     /// @return Filled MachineIdentity struct
     static MachineIdentity GetMachineIdentity(Emulator& emulator);
+
+    /// Create a ZX-Poly machine: four instances of one model, synchronized
+    /// (ZXPolyGroup). modelName: a configuration name (ZXPOLY-48K,
+    /// ZXPOLY-128K, ZXPOLY-PENTAGON) or any creatable model. mediaPath: a .zxp snapshot, a .prom ROM image or a
+    /// multiloader disk (empty: the bare machine). Returns the master - the
+    /// instance every surface addresses; the slaves are hidden members.
+    /// The machine is created, not started. Removing the master removes the
+    /// whole group
+    std::shared_ptr<Emulator> CreateZXPolyMachine(const std::string& symbolicId, const std::string& modelName,
+                                                  const std::string& mediaPath, std::string* outError = nullptr);
+
+    /// The ZX-Poly group whose member (master or slave) has this ID; nullptr if none
+    ZXPolyGroup* GetZXPolyGroup(const std::string& emulatorId);
 
     /// @brief Get all emulator IDs
     /// @return Vector of emulator IDs

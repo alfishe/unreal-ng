@@ -5,6 +5,7 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include <emulator/state/devicestate.h>
 
 namespace
 {
@@ -25,6 +27,7 @@ const char* GsTraceSideName(GSTraceSide side)
         case GSTraceSide::GsInternal: return "GS";
         case GSTraceSide::DacFetch: return "DAC";
         case GSTraceSide::Interrupt: return "INT";
+        case GSTraceSide::ZxDma: return "ZXDMA";
     }
     return "?";
 }
@@ -47,76 +50,13 @@ const char* const kGSInputRefused = "Error: GS input refused - TTD replay owns i
 
 void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg)
 {
+    (void)optionArg;  // "verbose" used to add the CPU; the shared report always carries it
     std::stringstream ss;
     ss << "General Sound Device State" << NEWLINE;
     ss << "==========================" << NEWLINE;
     ss << NEWLINE;
-
-    SoundManager* soundManager = context->pSoundManager;
-    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
-
-    if (!gs)
-    {
-        ss << "Status: Not fitted" << NEWLINE;
-        ss << NEWLINE;
-        ss << "The General Sound card is disabled on this machine." << NEWLINE;
-        ss << "Enable it with [SOUND] GSType=Z80 (plus [ROM] GSROM pointing at" << NEWLINE;
-        ss << "the 32 KB firmware) and restart the emulator." << NEWLINE;
-
-        session.SendResponse(ss.str());
-        return;
-    }
-
-    const uint8_t status = gs->getStatusRaw();
-    const bool verbose = optionArg == "--verbose" || optionArg == "verbose" || optionArg == "-v";
-
-    ss << "Device: " << (gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)") << NEWLINE;
-    ss << "ROM:    " << (gs->isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)") << NEWLINE;
-    ss << "RAM:    " << gs->getRamSizeKB() << " KB" << NEWLINE;
-    ss << "Page:   " << (int)gs->getMPAG() << " (MPAG banking latch)" << NEWLINE;
-    ss << NEWLINE;
-
-    ss << "Mailbox (host ports #B3/#BB):" << NEWLINE;
-    ss << "  Status:          0x" << std::hex << std::setw(2) << std::setfill('0') << (int)status << NEWLINE;
-    ss << "  Command Pending: " << ((status & 0x01) ? "Yes" : "No") << " (bit0)" << NEWLINE;
-    ss << "  Data Pending:    " << ((status & 0x80) ? "Yes" : "No") << " (bit7)" << NEWLINE;
-    ss << "  Command queue:   " << gs->getCommandQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
-    ss << "  Data queue:      " << gs->getDataQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
-    ss << "  Command from ZX: 0x" << std::hex << std::setw(2) << (int)gs->getCommandFromHost() << NEWLINE;
-    ss << "  Data from ZX:    0x" << std::hex << std::setw(2) << (int)gs->getDataFromHost() << NEWLINE;
-    ss << "  Data to ZX:      0x" << std::hex << std::setw(2) << (int)gs->getDataToHost() << NEWLINE;
-    ss << std::dec;
-    ss << NEWLINE;
-
-    ss << "DAC Channels:" << NEWLINE;
-    for (int i = 0; i < 4; i++)
-    {
-        ss << "  Channel " << (i + 1) << ": Sample 0x" << std::hex << std::setw(2) << (int)gs->getChannelSample(i)
-           << std::dec << "  Volume " << (int)gs->getChannelVolume(i) << "/63" << NEWLINE;
-    }
-    ss << NEWLINE;
-
-    if (!gs->hasCoprocessor())
-    {
-        ss << "Coprocessor: none (lightweight personality - no registers)" << NEWLINE;
-        ss << NEWLINE;
-    }
-    else if (verbose)
-    {
-        ss << "Coprocessor (Z80):" << NEWLINE;
-        ss << "  PC: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::PC) << NEWLINE;
-        ss << "  SP: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::SP) << NEWLINE;
-        ss << "  AF: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::AF) << NEWLINE;
-        ss << std::dec;
-        ss << "  Halted: " << (gs->isCPUHalted() ? "Yes" : "No") << NEWLINE;
-        ss << NEWLINE;
-    }
-    else
-    {
-        ss << "Use 'state audio gs --verbose' for coprocessor registers" << NEWLINE;
-    }
-
+    // One report for every interface (DeviceState::Gs)
+    ss << DeviceState::ToText(DeviceState::Gs(context));
     session.SendResponse(ss.str());
 }
 
@@ -269,8 +209,12 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs read_data                      - IN #B3 value, peeked (bit 7 not cleared)
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
-///   gs switch_personality <z80|lle|lw|lightweight> - runtime card swap
+///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - runtime card swap
 ///   gs dump_module [path]             - write the last COM30..D2 upload
+///   gs sd_insert <image> / sd_eject   - NeoGS SD card slot
+///   gs flash_save                     - NeoGS: save the reprogrammed flash
+///   gs stereo_mode <separated|gs|mono> - NeoGS: DAC channels as on the board,
+///                                       with the classic GS's 50% cross-feed, or mono
 void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -285,13 +229,14 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     if (!gs)
     {
-        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80 or LW).") + NEWLINE);
+        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80, LW or NGS).") + NEWLINE);
         return;
     }
 
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
-        "read_status|read_data|switch_personality <z80|lle|lw|lightweight>|dump_module [path]>";
+        "read_status|read_data|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
     {
@@ -361,7 +306,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     {
         if (args.size() < 2)
         {
-            ss << "Error: 'switch_personality' requires z80, lle, lw or lightweight." << NEWLINE;
+            ss << "Error: 'switch_personality' requires " << GS_PERSONALITY_NAMES << "." << NEWLINE;
         }
         else
         {
@@ -369,21 +314,18 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             std::transform(target.begin(), target.end(), target.begin(), ::tolower);
 
             GSTypeKind kind;
-            if (target == "z80" || target == "lle")
-                kind = GSTypeKind::Z80;
-            else if (target == "lw" || target == "lightweight")
-                kind = GSTypeKind::LW;
-            else
+            if (!gsParsePersonality(target, kind))
             {
-                ss << "Error: unknown personality '" << args[1] << "' (expected z80, lle, lw or lightweight)." << NEWLINE;
+                ss << "Error: unknown personality '" << args[1] << "' (expected " << GS_PERSONALITY_NAMES << ")." << NEWLINE;
                 session.SendResponse(ss.str());
                 return;
             }
 
-            if (soundManager->requestGeneralSoundCardSwitch(kind))
+            std::string refusal;
+            if (soundManager->requestGeneralSoundCardSwitch(kind, &refusal))
                 ss << "GS: personality switch to '" << target << "' requested (applied at the next frame boundary)." << NEWLINE;
             else
-                ss << "Error: personality switch request failed." << NEWLINE;
+                ss << "Error: " << (refusal.empty() ? std::string("personality switch request failed.") : refusal) << NEWLINE;
         }
     }
     else if (sub == "dump_module")
@@ -408,6 +350,31 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
                 ss << "GS: module dumped (" << bytes.size() << " bytes, playing=" << (playing ? "yes" : "no")
                    << ") -> " << path << NEWLINE;
             }
+        }
+    }
+    else if (sub == "sd_insert" || sub == "sd_eject" || sub == "flash_save")
+    {
+        // Checked here, carried out on the machine's thread (neogsmedia.h);
+        // insert / eject are refused while a TTD recording runs
+        const NeoGSMediaResult result = sub == "sd_insert" ? NeoGSRequestSdInsert(context, args.size() > 1 ? args[1] : std::string())
+                                        : sub == "sd_eject" ? NeoGSRequestSdEject(context)
+                                                            : NeoGSRequestFlashSave(context);
+        if (NeoGSMediaAccepted(result))
+            ss << "NeoGS: " << sub << " " << NeoGSMediaResultText(result) << "." << NEWLINE;
+        else
+            ss << "Error: " << sub << ": " << NeoGSMediaResultText(result) << "." << NEWLINE;
+    }
+    else if (sub == "stereo_mode")
+    {
+        NeoGSConfig::StereoMode mode = NeoGSConfig::StereoMode::Separated;
+        if (args.size() < 2)
+            ss << "NeoGS stereo mode: " << neogsStereoModeName(soundManager->neoGSStereoMode()) << NEWLINE;
+        else if (!neogsParseStereoMode(args[1], mode))
+            ss << "Error: stereo_mode: expected separated, gs or mono (got '" << args[1] << "')." << NEWLINE;
+        else
+        {
+            soundManager->setNeoGSStereoMode(mode);
+            ss << "NeoGS stereo mode: " << neogsStereoModeName(mode) << " (applied at the next frame)." << NEWLINE;
         }
     }
     else

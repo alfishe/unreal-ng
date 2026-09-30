@@ -19,9 +19,9 @@ TurboSound-capable tracker player for the ZX Spectrum.
 | [`wildplayer_bank4_unipt2.asm`](wildplayer_bank4_unipt2.asm) | UniPT2 engine (RAM bank 4, PT2-format support) |
 | [`engine_install_patches.txt`](engine_install_patches.txt) | the 204 bytes the player patches per engine instance |
 | [`WILDDISASM_NOTES.md`](WILDDISASM_NOTES.md) | terse companion notes (memory map, bank roles) |
-| [`disasm_wildplayer.py`](disasm_wildplayer.py) | rebuilds everything above from [`dumps/`](dumps) |
+| [`disasm_wildplayer.py`](disasm_wildplayer.py) | rebuilds everything above from `dumps/` |
 | [`analyze_wildplayer_ts.py`](analyze_wildplayer_ts.py) | port-trace forensics tool (chapter 10) |
-| [`dumps/`](dumps) | the raw live-memory captures this is all derived from |
+| `dumps/` | the raw live-memory captures this is all derived from |
 
 ---
 

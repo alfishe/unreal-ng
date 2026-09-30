@@ -17,6 +17,7 @@
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
+#include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -206,6 +207,45 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
+/// Overlay read: the inner access first (Fast / Debug, contended or not), so
+/// the video logic's wait, model overrides (ScorpionMemory's ProfROM strobes,
+/// virtual), the access tracker, TTD coverage and probes and read breakpoints
+/// behave exactly as without an overlay; then the overlay decides what the CPU
+/// gets for an address in its window
+template <MemoryReadCallback Inner>
+uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
+{
+    const uint8_t normal = (this->*Inner)(addr, isExecution);
+    HostBusOverlay* overlay = _busOverlay;
+    if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
+        return normal;
+    return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
+}
+
+/// Overlay write: the inner write first (contention, RAM, the ROM trash page,
+/// TTD dirty tracking, write breakpoints), then the overlay
+template <MemoryWriteCallback Inner>
+void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
+{
+    (this->*Inner)(addr, value);
+    HostBusOverlay* overlay = _busOverlay;
+    if (addr >= overlay->windowStart && addr < overlay->windowEnd)
+        overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
+}
+
+MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
+{
+    if (debug && contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>);
+    if (contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>);
+    if (debug)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>);
+    return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>);
+}
+
 /// Implementation memory read method
 /// Used from: Z80::FastMemIf
 /// \param addr 16-bit address in Z80 memory space
@@ -276,7 +316,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
@@ -389,7 +430,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
             {
                 const auto& st = _context->emulatorState;
-                const uint16_t tin = core->GetZ80()->t;
+                // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+                const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
                 const ttd::TTDTimePoint t{st.frame_counter, tin};
                 _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
             }

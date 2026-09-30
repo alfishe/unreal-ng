@@ -39,7 +39,8 @@
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models_creatable"]["items"]["type"] = "string";
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
-         ["models_creatable"]["description"] = "Model short names a create request can succeed with";
+         ["models_creatable"]["description"] =
+        "Model short names a create request can succeed with, ZX-Poly configuration names included";
 
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
@@ -73,6 +74,15 @@
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["creatable"]["description"] =
         "Whether a create request for this model is expected to succeed on this build";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["type"] = "boolean";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["description"] =
+        "Present on ZX-Poly configurations (ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON): creating one by name "
+        "starts four synchronized instances of base_model and returns the master. They carry no id and no "
+        "available_ram_sizes_kb (the RAM size is fixed)";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["base_model"]["type"] = "string";
 
     // GET /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
@@ -106,7 +116,26 @@
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["description"] =
+        "Model short name (see /api/v1/emulator/models). A ZX-Poly configuration name (ZXPOLY-48K, ZXPOLY-128K, "
+        "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    {
+        Json::Value& zxpoly = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
+                                   ["schema"]["properties"]["zxpoly"];
+        zxpoly["description"] =
+            "Start a ZX-Poly machine: four synchronized instances of `model` (a base model or a ZX-Poly "
+            "configuration name; default PENTAGON). true for the bare "
+            "machine, or {\"file\": path} with a .zxp snapshot, a .prom ZX-Poly ROM image (the Test ROM) or a "
+            "multiloader disk (.trd/.scl, needs a model with TR-DOS). The returned id is the master - the machine "
+            "every endpoint addresses; the three slaves are hidden members. The response carries the group status "
+            "under `zxpoly`. Deleting the master removes the group";
+        zxpoly["oneOf"][0]["type"] = "boolean";
+        zxpoly["oneOf"][1]["type"] = "object";
+        zxpoly["oneOf"][1]["properties"]["file"]["type"] = "string";
+        zxpoly["oneOf"][1]["properties"]["file"]["description"] = "Host path of a .zxp, .prom or disk image";
+    }
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["description"] = "Emulator created and started";
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/EmulatorInfo";
@@ -175,6 +204,47 @@
     paths["/api/v1/emulator/{id}/nmi"]["post"]["responses"]["200"]["description"] = "NMI/MNI requested";
 
     // POST /api/v1/emulator/{id}/model - Switch machine model
+    // GET /api/v1/emulator/{id}/zxpoly - ZX-Poly group status
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/zxpoly"]["get"];
+        get["tags"].append("Emulator Control");
+        get["summary"] = "ZX-Poly group status";
+        get["description"] =
+            "The ZX-Poly machine the instance belongs to (any member id): the four modules with their platform "
+            "registers R0-R3, #3D00, lock, video mode (0-3 one module, 4 16 colours, 5 512x384, 6/7 masked "
+            "modes) and the lockstep check (control state of every slave against the master)";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& schema = get["responses"]["200"]["content"]["application/json"]["schema"];
+        get["responses"]["200"]["description"] = "Group status";
+        schema["type"] = "object";
+        schema["properties"]["master_id"]["type"] = "string";
+        schema["properties"]["locked"]["type"] = "boolean";
+        schema["properties"]["slaves_running"]["type"] = "boolean";
+        schema["properties"]["parallel_slaves"]["type"] = "boolean";
+        schema["properties"]["parallel_slaves"]["description"] =
+            "Locked slaves run their frame on worker threads, at the same time";
+        schema["properties"]["pipelined_slaves"]["type"] = "boolean";
+        schema["properties"]["pipelined_slaves"]["description"] =
+            "The slaves' frame overlaps the master's next one (unlimited speed only; the state at every frame "
+            "boundary is the same)";
+        schema["properties"]["port_3d00"]["type"] = "integer";
+        schema["properties"]["video_mode"]["type"] = "integer";
+        schema["properties"]["modules"]["type"] = "array";
+        schema["properties"]["modules"]["items"]["type"] = "object";
+        schema["properties"]["modules"]["items"]["properties"]["module"]["type"] = "integer";
+        schema["properties"]["modules"]["items"]["properties"]["id"]["type"] = "string";
+        schema["properties"]["modules"]["items"]["properties"]["registers"]["type"] = "array";
+        schema["properties"]["modules"]["items"]["properties"]["registers"]["items"]["type"] = "integer";
+        schema["properties"]["divergence"]["type"] = "object";
+        schema["properties"]["divergence"]["properties"]["diverged"]["type"] = "boolean";
+        schema["properties"]["divergence"]["properties"]["module"]["type"] = "integer";
+        schema["properties"]["divergence"]["properties"]["what"]["type"] = "string";
+        get["responses"]["404"]["description"] = "No such emulator, or it is not a ZX-Poly machine";
+    }
+
     paths["/api/v1/emulator/{id}/model"]["post"]["summary"] = "Switch machine model";
     paths["/api/v1/emulator/{id}/model"]["post"]["description"] =
         "Switch the emulator to a different ZX Spectrum machine model. "
@@ -182,7 +252,11 @@
         "(unknown model / unsupported RAM / not creatable on this build) returns 400 and "
         "leaves the current emulator running untouched. A successful switch stops and "
         "destroys the current emulator, creates a new one with the requested model, and "
-        "starts it. The new emulator will have a different ID.";
+        "starts it. The new emulator will have a different ID. The media follow: each medium goes into the "
+        "slot with the same id on the new machine, unsaved writes included (media.attached). A medium the new "
+        "model has no slot for is closed when it has nothing unsaved (media.closed); with unsaved writes the "
+        "switch answers 409 and lists them in 'stranded', unless 'stranded' says save, discard or keep "
+        "(keep: detached media on the new machine, media.detached).";
     paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
@@ -200,6 +274,15 @@
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["description"] = "Optional RAM size in KB";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["stranded"]["type"] = "string";
+    for (const char* value : {"refuse", "save", "discard", "keep"})
+        paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+             ["stranded"]["enum"].append(value);
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["stranded"]["description"] =
+        "Unsaved writes on media the new model has no slot for: refuse (default, 409), save (into their own "
+        "files), discard, keep (detached media on the new machine)";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["description"] = "Model switched successfully";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
@@ -210,6 +293,12 @@
          ["new_emulator_id"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["media"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["media"]["description"] = "Slot ids: attached (followed), detached (kept with unsaved writes), closed";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["409"]["description"] =
+        "Unsaved writes on media the new model has no slot for (code 'dirty', list in 'stranded'); nothing changed";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] =
         "Unknown model / unsupported RAM / not creatable on this build; the current instance is left untouched. "
         "Body carries message, requested_model and available_models_endpoint";

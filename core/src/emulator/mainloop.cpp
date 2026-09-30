@@ -19,6 +19,7 @@
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/media/mediamanager.h"
 #include "stdafx.h"
 
 #include <cmath>
@@ -450,6 +451,11 @@ void MainLoop::CompleteFrame()
     // is off (the cached bool in Memory gates the dirty hook). Cost when
     // idle: one predictable branch. Cost when recording: dirty pages get
     // a 16 KB Intern each, clean pages get a cheap AddRef.
+    // Media inserts / ejects requested during the frame reach their slots here,
+    // before the frame's checkpoint (technical design §3)
+    if (_context->pMediaManager)
+        _context->pMediaManager->ApplyPending();
+
     if (_context->pTimeTravelManager)
     {
         try
@@ -615,8 +621,15 @@ void MainLoop::OnFrameEnd()
         // display at an arbitrary moment, not a frame boundary). The replay
         // engine restores the correct visible frame itself after
         // ExitReplayMode, so the real present-slot ring must not move here.
+        if (_frameEndHook && !_context->ttdReplayActive)
+            _frameEndHook(true);
+
         if (!_context->ttdReplayActive)
             _context->pScreen->LatchFramebuffer();
+    }
+    else if (_frameEndHook && !_context->ttdReplayActive)
+    {
+        _frameEndHook(false);
     }
 
     // Basic sanity check for context corruption

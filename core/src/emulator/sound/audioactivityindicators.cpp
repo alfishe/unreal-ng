@@ -1,13 +1,20 @@
 #include "audioactivityindicators.h"
 
+#include <algorithm>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
-static_assert(static_cast<int>(AudioSource::MoonPCM) + 1 == 9, "HUD_SOURCES must cover every AudioSource");
+static_assert(static_cast<int>(AudioSource::NeoGSTransfer) + 1 == 13, "HUD_SOURCES must cover every AudioSource");
 
-void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices)
+void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices,
+                                       bool neoGSFitted, bool neoGSDma, bool neoGSTransfer)
 {
+    // Not mixer sources: the card's data movement, held the same second
+    _framesSinceNeoGSDma = neoGSDma ? 0 : std::min(_framesSinceNeoGSDma + 1, HOLD_FRAMES);
+    _framesSinceNeoGSTransfer = neoGSTransfer ? 0 : std::min(_framesSinceNeoGSTransfer + 1, HOLD_FRAMES);
+
     for (const AudioDeviceInfo& d : devices)
     {
         int& frames = _framesSinceSound[static_cast<int>(d.type)];
@@ -23,7 +30,10 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
     on[static_cast<int>(AudioSource::AY)] = held(AudioSourceType::AY1_All) && !held(AudioSourceType::AY2_All);
     on[static_cast<int>(AudioSource::TurboSound)] = held(AudioSourceType::AY2_All);
     on[static_cast<int>(AudioSource::FM)] = held(AudioSourceType::FM1) || held(AudioSourceType::FM2);
-    on[static_cast<int>(AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);
+    on[static_cast<int>(neoGSFitted ? AudioSource::NeoGS : AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);
+    on[static_cast<int>(AudioSource::NeoGSMp3)] = held(AudioSourceType::GeneralSoundMp3);
+    on[static_cast<int>(AudioSource::NeoGSDma)] = _framesSinceNeoGSDma < HOLD_FRAMES;
+    on[static_cast<int>(AudioSource::NeoGSTransfer)] = _framesSinceNeoGSTransfer < HOLD_FRAMES;
     on[static_cast<int>(AudioSource::MoonFM)] = held(AudioSourceType::Moonsound_FM);
     on[static_cast<int>(AudioSource::MoonPCM)] = held(AudioSourceType::Moonsound_PCM);
 
@@ -43,6 +53,8 @@ void AudioActivityIndicators::reset()
 {
     for (int& frames : _framesSinceSound)
         frames = HOLD_FRAMES;
+    _framesSinceNeoGSDma = HOLD_FRAMES;
+    _framesSinceNeoGSTransfer = HOLD_FRAMES;
     for (bool& posted : _posted)
         posted = false;
 }

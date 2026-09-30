@@ -389,7 +389,10 @@ TEST_F(TTD_InputJournal_Capture_Test, InvalidateSession_ClearsJournal)
 class TTD_InputJournalGS_Test : public ::testing::Test
 {
 protected:
-    // Keep the General Sound card the ATM710 config fits (GSType=Z80)
+    // Keep the General Sound card the ATM710 config fits. The shipped config
+    // fits NeoGS (GSType=NGS); SetUp switches the slot to the classic card:
+    // NeoGS card memory is not in TTD v1 checkpoints, so its replay after a
+    // seek waits for TTD v2 memory regions
     SoundCardScope _soundCards{TestSound::GeneralSound};
 
     Emulator* _emulator = nullptr;
@@ -404,6 +407,8 @@ protected:
         _ttd = _context->pTimeTravelManager;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(Card(), nullptr) << "ATM710 must fit a GS card by default";
+        ASSERT_TRUE(_context->pSoundManager->switchGeneralSoundCard(GSTypeKind::Z80));
+        ASSERT_EQ(Card()->implementation(), GSCardImplementation::LLE);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
@@ -475,7 +480,8 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_AppliesAndJournalsWhileRecording
     EXPECT_EQ(events[0].kind, ttd::TTDInputKind::GSData);
     EXPECT_EQ(events[0].value, 0x42);
     EXPECT_EQ(events[0].time.frame, _context->emulatorState.frame_counter);
-    EXPECT_EQ(events[0].time.tInFrame, _context->pCore->GetZ80()->t);
+    // TTD time: T-states at the model's top clock (B4), not the raw z80.t
+    EXPECT_EQ(events[0].time.tInFrame, _context->emulatorState.TtdTInFrame(_context->pCore->GetZ80()->t));
     _ttd->StopRecording();
 }
 
@@ -506,11 +512,11 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_FromAnotherThreadIsAppliedByTheL
     const uint64_t writesBefore = Card()->getActivityCounters().hostDataWritten;
 
     ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x6B)));
-    EXPECT_TRUE(_context->ttdInputWork.load()) << "queued for the loop thread";
+    EXPECT_TRUE(_context->HasStepWork(EmulatorContext::kStepWorkTtdInput)) << "queued for the loop thread";
     EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore) << "applied while the machine was parked";
 
     _emulator->Resume();
-    ASSERT_TRUE(TestWait::For([this] { return !_context->ttdInputWork.load(); }));
+    ASSERT_TRUE(TestWait::For([this] { return !_context->HasStepWork(EmulatorContext::kStepWorkTtdInput); }));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
 

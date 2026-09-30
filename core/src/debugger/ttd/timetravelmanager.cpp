@@ -12,6 +12,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,10 +25,14 @@
 #include "ttdcompression.h"    // codec::Compress / Decompress / Crc32C
 
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
+#include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
+#include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
+#include "emulator/io/ide/idecontroller.h"
 
 // Pull in the actual struct definitions for the capture call sites.
 #include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
+#include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
 #include "emulator/emulator.h"           // Emulator::RunTStates (seek engine)
@@ -39,6 +44,7 @@
 #include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
 #include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
@@ -66,6 +72,15 @@ namespace
 } // anonymous namespace
 
 namespace ttd {
+
+namespace
+{
+/// Session time point of an absolute t-state (frame length frameT)
+TTDTimePoint TimePointOf(uint64_t globalT, uint32_t frameT)
+{
+    return TTDTimePoint{globalT / frameT, static_cast<uint32_t>(globalT % frameT)};
+}
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Public helpers
@@ -102,6 +117,11 @@ TimeTravelManager::TimeTravelManager(EmulatorContext* context)
 
 TimeTravelManager::~TimeTravelManager()
 {
+    if (_context && _context->ttdPortReads == &_portReads)
+        _context->ttdPortReads = nullptr;
+    if (_context && _context->ttdPortWrites == &_portWrites)
+        _context->ttdPortWrites = nullptr;
+
     // Release all page-store refs held by the timeline before the page store
     // itself goes away (it's a member, destroyed right after this dtor body).
     for (auto& cp : _timeline)
@@ -114,10 +134,23 @@ TimeTravelManager::~TimeTravelManager()
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
+void TimeTravelManager::SetUnavailableReason(const std::string& reason)
+{
+    if (!reason.empty() && _state != TTDSessionState::Idle)
+        InvalidateSession(reason.c_str());
+    _unavailableReason = reason;
+}
+
 bool TimeTravelManager::StartRecording()
 {
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+
+    if (!_unavailableReason.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StartRecording — refused: %s", _unavailableReason.c_str());
+        return false;
+    }
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
@@ -156,7 +189,7 @@ bool TimeTravelManager::StartRecording()
     //     flag is true, so the dirty-tracker call is not skipped.
     // If either is OFF, flip it ON and remember that we did so StopRecording
     // can restore the prior state. setFeature cascades through
-    // FeatureManager::onFeatureChanged -> UseDebugMemoryInterface +
+    // FeatureManager::onFeatureChanged -> SelectMemoryInterface +
     // Memory::UpdateFeatureCache, so the gating cache is coherent before
     // we capture the baseline.
     FeatureManager* fm = _context->pFeatureManager;
@@ -213,6 +246,9 @@ bool TimeTravelManager::StartRecording()
         if (_writeJournal)
             _writeJournal->Clear();  // Phase 4 — drop any prior write records
     }
+    // A fresh session: coverage of an earlier one (live or loaded) describes a
+    // different timeline, and a stale "never touched" would prune a hit
+    _coverageIndex.Clear();
 
     // Lazy-allocate write journal on first recording if enabled.
     // Use async allocation to avoid blocking the emulator thread.
@@ -229,7 +265,13 @@ bool TimeTravelManager::StartRecording()
         if (!_writeJournal->IsEmpty())
             _writeJournal->Clear();  // it must hold this session's writes only
     }
+    ClearJournalGap();
     _journalGapless = _enableWriteJournal && _writeJournal != nullptr;
+    if (!_journalGapless)
+    {
+        _journalGapless = true;  // so the gap below is recorded
+        MarkJournalGap("recorded without the write journal");
+    }
 
     _modelRamPages = ResolveModelRamPages();
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
@@ -244,6 +286,24 @@ bool TimeTravelManager::StartRecording()
     // first checkpoint already holds the 1x machine; SetState below is then a no-op
     EngageRecordingLock();
 
+    // Port-read journal: a fresh session records every IN from its baseline
+    // on - on configurations whose outside world reaches the CPU through IN
+    // alone (ttd-port-read-journal.md §2)
+    _portReads.Clear();
+    _portWrites.Clear();
+    if (const char* reason = PortJournalUnsupportedReason())
+    {
+        _portJournalValid = false;
+        _portJournalOffReason = reason;
+    }
+    else
+    {
+        _portJournalValid = true;
+        _portJournalOffReason.clear();
+        _portReads.StartRecording();
+        _portWrites.StartRecording();
+    }
+
     // Capture the baseline checkpoint so the timeline always has at least
     // one entry. This is the only place we pay the full model-RAM copy cost
     // up front (v1 strategy — see the header doc for the v2 fast-path plan).
@@ -254,9 +314,11 @@ bool TimeTravelManager::StartRecording()
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
+    SyncPortJournalHook();
 
     // This is live capture now, not the file it may have replaced.
     _loadedFromFile   = false;
+    _inputHistoryComplete = true;
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
 
@@ -284,9 +346,13 @@ void TimeTravelManager::StopRecording()
     if (_context)
     {
         const TTDTimePoint stoppedAt = CurrentPosition();
-        _recordingStoppedAtT = stoppedAt.frame * _context->config.frame + stoppedAt.tInFrame;
+        _recordingStoppedAtT = GlobalT(stoppedAt);
     }
     SetState(TTDSessionState::Idle);
+    // The machine runs on unrecorded from here: I/O passes through
+    _portReads.Stop();
+    _portWrites.Stop();
+    SyncPortJournalHook();
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
@@ -378,6 +444,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
+    _lastDropReason = reason ? reason : "";
 
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
@@ -392,15 +459,22 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _journalGapless = false;
+    ClearJournalGap();
     _modelRamPages = 0;
     _dirtyPageOverflowReported = false;
     _loadedFromFile = false;
+    _inputHistoryComplete = true;
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _coverageIndex.Clear();
     if (_context)
         _context->ttdCoverageActive = false;
+    _portReads.Clear();
+    _portWrites.Clear();
+    _portJournalValid = false;
+    _portJournalOffReason.clear();
+    SyncPortJournalHook();
     SetState(TTDSessionState::Idle);
 
     // Reset Phase 5 codec state.
@@ -480,6 +554,10 @@ void TimeTravelManager::EngageRecordingLock()
     // Turbo mode off, turbo mode / fast tape / turbo tape / fast disk refused
     if (_context->pFeatureManager)
         _context->pFeatureManager->onTtdRecordingStarted();
+
+    // Devices with a host-time dependence (the RTC) switch to emulated time
+    // here, before StartRecording captures its baseline
+    _peripherals.NotifyRecording(true);
 }
 
 void TimeTravelManager::ReleaseRecordingLock()
@@ -487,6 +565,8 @@ void TimeTravelManager::ReleaseRecordingLock()
     if (!_recordingLockEngaged || !_context)
         return;
     _recordingLockEngaged = false;
+
+    _peripherals.NotifyRecording(false);
 
     // Lifts the FeatureManager gate first: the speed restore below is checked by it
     if (_context->pFeatureManager)
@@ -514,7 +594,8 @@ void TimeTravelManager::UpdateFeatureCache()
     // Recording: nothing is journaled when Idle or Detached, and StopRecording
     // and step-over switch debug mode back in exactly those states.
     if (_state == TTDSessionState::Recording && (!ttdEnabled || !fm->isEnabled(Features::kDebugMode)))
-        _journalGapless = false;
+        MarkJournalGap(!ttdEnabled ? "time travel switched off during the recording"
+                                   : "debug mode switched off during the recording");
 
     // Pre-allocate write journal when TTD is enabled (async, non-blocking).
     // This way allocation completes before StartRecording() is called.
@@ -580,6 +661,21 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
                                _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
 
     info.bookmarkCount = _bookmarks.Size();
+    info.inputEventCount = _inputJournal.Size();
+    info.externalEventCount = _externalEvents.Size();
+    info.inputHistoryComplete = _inputHistoryComplete;
+    info.portJournalActive = _portJournalValid;
+    info.portJournalOffReason = _portJournalOffReason;
+    if (_portJournalValid)
+    {
+        info.portReadCount = _portReads.Size();
+        info.portWriteCount = _portWrites.Size();
+        info.portJournalBytes = _portReads.SerializedBytes() + _portWrites.SerializedBytes();
+    }
+    info.portReplayValueMismatches = _portReads.ValueMismatches();
+    info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
+    info.lastDropReason = _lastDropReason;
+    info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -604,19 +700,69 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     }
 
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
+    info.writeJournalComplete = _journalGapless && _writeJournal != nullptr;
+    info.writeJournalWrapped = _writeJournal != nullptr && _writeJournal->HasEvictedRecords();
+    info.journalGapReason = _journalGapReason;
+    info.journalGapHasPosition = _journalGapHasPosition;
+    info.journalGapAt = _journalGapAt;
 
     return info;
 }
 
+bool TimeTravelManager::SetEnableWriteJournal(bool enable)
+{
+    if (enable == _enableWriteJournal)
+        return true;
+    if (!RecordingGuard(TTDGuardedAction::ChangeWriteJournal).empty())
+        return false;
+    if (!_timeline.empty())
+        MarkJournalGap(enable ? "write journal switched on during the session"
+                              : "write journal switched off during the session");
+    _enableWriteJournal = enable;
+
+    // Nothing to answer for and nothing to record into: give back the 64 MB
+    // the feature pre-allocated. A retained session keeps its journal.
+    if (!enable && _state == TTDSessionState::Idle && _timeline.empty() && _writeJournal)
+    {
+        _writeJournal->WaitReady();
+        _writeJournal.reset();
+    }
+    return true;
+}
+
+void TimeTravelManager::MarkJournalGap(const char* reason, bool hasPosition)
+{
+    if (!_journalGapless)
+        return;  // already incomplete: keep the first cause
+    _journalGapless = false;
+    _journalGapReason = reason ? reason : "";
+    _journalGapHasPosition = hasPosition && !_timeline.empty();
+    _journalGapAt = _journalGapHasPosition ? CurrentPosition() : TTDTimePoint{};
+    if (_journalGapHasPosition)
+        MLOGWARNING("TimeTravelManager — the write journal no longer covers the session (%s, at frame %llu "
+                    "t=%u): write/port find-last replays instead of answering from it",
+                    _journalGapReason.c_str(), static_cast<unsigned long long>(_journalGapAt.frame),
+                    static_cast<unsigned>(_journalGapAt.tInFrame));
+    else
+        MLOGWARNING("TimeTravelManager — the write journal does not cover the session (%s): "
+                    "write/port find-last replays instead of answering from it",
+                    _journalGapReason.c_str());
+}
+
+void TimeTravelManager::ClearJournalGap()
+{
+    _journalGapReason.clear();
+    _journalGapHasPosition = false;
+    _journalGapAt = TTDTimePoint{};
+}
+
 size_t TimeTravelManager::EstimateSessionHeapBytes() const
 {
-    // Page store: count the allocated vector backing. The COW store grows
-    // by one slot per Intern-that-can't-reuse and never shrinks until
-    // Reset, so capacity is the right measure of "what the process is
-    // consuming right now" even though some of those slots are on the
-    // free list. GetCapacityBytes returns _pages.size() which is exactly
-    // the backing vector's byte size.
-    size_t total = _pageStore.GetCapacityBytes();
+    // Page store: slot table plus every compressed payload allocation (the
+    // payloads are separate heap blocks; the slot table alone left out the
+    // pages themselves - B7). Allocated, not live: free-list slots keep
+    // their capacity until reused.
+    size_t total = _pageStore.HeapBytes();
 
     // Per-checkpoint: the struct itself + every vector's allocated backing
     // (capacity, not size — capacity is what's actually on the heap).
@@ -641,12 +787,68 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
     // once because there's only one).
     total += _dirtyScratch.capacity() * sizeof(uint16_t);
 
+    // Write journal (committed ring chunks, not the nominal 64 MB), coverage
+    // index and the decoded-frame cache hold the session's data; without a
+    // session what they keep reserved is not the session's (zero, as before)
+    if (!_timeline.empty())
+    {
+        if (_writeJournal)
+            total += _writeJournal->HeapBytes();
+        total += _coverageIndex.HeapBytes();
+        total += _portReads.HeapBytes() + _portWrites.HeapBytes();
+        if (_frameCache)
+            total += _frameCache->Bytes();
+    }
+
     return total;
 }
 
 // ---------------------------------------------------------------------------
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
+
+std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
+{
+    // Only a recording the user started is protected. A debugger's live history
+    // (DebuggerLive, DeZog) is a rolling background history: any outside change
+    // drops it and the debugger restarts it on the next resume or step.
+    if (!IsRecording() || IsDebuggerLive())
+        return {};
+
+    switch (action)
+    {
+        case TTDGuardedAction::LoadSnapshot:
+            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
+                   "the recorded history. Stop the recording first.";
+        case TTDGuardedAction::LoadTape:
+            return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadDisk:
+            return "Cannot insert a disk while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::CreateDisk:
+            return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadRom:
+            return "Cannot load a ROM while TTD is recording: the recorded history relies on the current ROM and would "
+                   "be dropped. Stop the recording first.";
+        case TTDGuardedAction::Invalidate:
+            return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
+        case TTDGuardedAction::DisableTimeTravel:
+            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
+                   "and the recorded history would be corrupt. Stop the recording first.";
+        case TTDGuardedAction::DisableDebugMode:
+            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
+                   "recorded history, which would then be corrupt. Stop the recording first.";
+        case TTDGuardedAction::ChangeWriteJournal:
+            return "Cannot change the write journal mode while TTD is recording: a recording keeps the mode it "
+                   "started with. Choose it when starting, or stop the recording first.";
+        case TTDGuardedAction::SwitchGsCard:
+            return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
+                   "the current card's state, which the other card type cannot take back. Stop the recording first.";
+    }
+    return "This action is not allowed while TTD is recording. Stop the recording first.";
+}
 
 void TimeTravelManager::RequestInvalidation(const char* reason)
 {
@@ -699,6 +901,7 @@ void TimeTravelManager::OnFrameBoundary()
         // Sealing under frame_counter shifted every coverage set one frame into
         // the future, which made reverse search look in the wrong frame and
         // report no match for a PC that had plainly executed.
+        const auto captureStart = std::chrono::steady_clock::now();
         const uint64_t endedFrame = _context->emulatorState.frame_counter;
         if (_enableCoverageIndex && endedFrame > 0)
             _coverageIndex.SealFrame(endedFrame - 1);
@@ -706,6 +909,8 @@ void TimeTravelManager::OnFrameBoundary()
         TTDCheckpoint cp;
         CaptureNow(cp);
         _timeline.push_back(std::move(cp));
+        _perf.lastCaptureNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
         return;
     }
 
@@ -781,6 +986,11 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // the registry.
     //
     _peripherals.CaptureAll(out.peripheralBlobs);
+
+    // --- Port-read journal position: the reads before it happened before
+    // this point, so a replay from here starts handing out records at it ---
+    out.portReadCursor = _portJournalValid ? _portReads.Size() : 0;
+    out.portWriteCursor = _portJournalValid ? _portWrites.Size() : 0;
 
     // --- RAM pages ---
     // First capture of a session: Intern every model-RAM page as the baseline
@@ -1160,94 +1370,9 @@ uint64_t TimeTravelManager::ComputeRomSignature() const
 
 bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
-    // Idempotent: a restart must not stack duplicate serializers.
-    ReleaseModelPeripherals();
-
-    if (!_context)
-        return true;
-
-    // Core devices, present (or absent) independently of the model. They are
-    // owned by the emulator, not by us, so they are registered by raw pointer
-    // and simply dropped on release. A device that is absent on this model
-    // leaves no entry at all, which is the whole point of a registry: a
-    // checkpoint carries blobs only for what is actually connected.
-    if (_context->pSoundManager)
-    {
-        // TurboSound slot: register under the live device's own peripheral
-        // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
-        // device cannot load on the other (design §8.2). An empty slot
-        // (TurboSound = None) registers nothing, same as an absent Covox.
-        if (ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound())
-            _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
-        _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
-        // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
-        // the config did not fit one - the registry then simply carries no
-        // blob for it, same as Covox above. Registered under the live card's
-        // own peripheral id, same pattern as the TurboSound slot just above -
-        // LLE (GeneralSound) and LW (GeneralSoundLightweight) are different
-        // slots, so a session recorded on one personality cannot silently
-        // restore into the other.
-        if (GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound())
-            _peripherals.Register(gs->TTDPeripheralId(), gs);
-#ifdef UNREALNG_HAVE_OPL4
-        // MoonSound registers only when the config flag built it; a null
-        // pointer leaves no entry, so a session from a MoonSound machine
-        // loads on a MoonSound-less build as a visible missingBlob (R7).
-        _peripherals.Register(PeripheralId::MoonSound, _context->pSoundManager->getMoonSound());
-#endif
-    }
-    _peripherals.Register(PeripheralId::Tape, _context->pTape);
-    // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
-    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
-    _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
-
-    // --- Model-specific state (TDD 6.4) ---
-    // The framework names no machine. The port decoder owns the model's
-    // latches, so it declares what extra state exists and supplies the
-    // serializers; we only check that the two agree.
-    PortDecoder* decoder = _context->pPortDecoder;
-    if (!decoder)
-        return true;
-
-    for (auto& serializer : decoder->CreateTTDSerializers())
-    {
-        if (!serializer)
-            continue;
-
-        _peripherals.Register(serializer->TTDPeripheralId(), serializer.get());
-        _ownedPeripherals.push_back(std::move(serializer));
-    }
-
-    // A declared id with no serializer behind it means this model's state
-    // would be dropped silently - a recording that looks correct and restores
-    // wrong. Refuse instead, naming what is missing.
-    for (PeripheralId id : decoder->GetTTDModelStateIds())
-    {
-        if (_peripherals.IsRegistered(id))
-            continue;
-
-        const std::string message =
-            "model (mem_model=" + std::to_string(static_cast<unsigned>(_context->config.mem_model)) +
-            ") declares TTD state id " + std::to_string(static_cast<unsigned>(id)) +
-            " but its port decoder supplied no serializer for it - recording would "
-            "silently drop that state. Implement CreateTTDSerializers() for this model.";
-
-        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", message.c_str());
-        if (err)
-            *err = message;
-
-        ReleaseModelPeripherals();
-        return false;
-    }
-
-    if (_peripherals.Count() > 0)
-    {
-        MLOGINFO("TimeTravelManager::RegisterModelPeripherals - %zu serializer(s) registered for mem_model=%u",
-                 _peripherals.Count(),
-                 static_cast<unsigned>(_context->config.mem_model));
-    }
-
-    return true;
+    // The device set is enumerated in one place (ttdmachineperipherals.cpp),
+    // shared with MachineStateTransfer. On failure the registry is left empty.
+    return RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err);
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
@@ -1273,6 +1398,12 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // Host-side fields (MemIf pointers, trace cursors, isDebugMode,
     // prev_pc/m1_pc/last_branch/nextpc) are preserved by RestoreCpuState —
     // they remain valid because we're not tearing down the emulator.
+    using PerfClock = std::chrono::steady_clock;
+    auto elapsedNs = [](PerfClock::time_point from, PerfClock::time_point to) {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count());
+    };
+    const PerfClock::time_point restoreStart = PerfClock::now();
+
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
@@ -1301,7 +1432,16 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // feed the paging chain (on Scorpion the ProfROM plane and the #1FFD
     // service/RAM0 bits), so rebuilding banks first would page from stale
     // values and then never re-derive.
-    _peripherals.RestoreAll(cp.peripheralBlobs);
+    // A device set that differs from the checkpoint's (FR-4) leaves devices
+    // in the live machine's state; say so instead of restoring silently
+    const PerfClock::time_point devicesStart = PerfClock::now();
+    const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
+    const PerfClock::time_point devicesEnd = PerfClock::now();
+    if (!devices.Complete())
+        MLOGWARNING("TimeTravelManager::RestoreCheckpoint — frame %llu: device set differs from the checkpoint "
+                    "(%zu restored, %zu without state, %zu size mismatches, %zu unclaimed)",
+                    static_cast<unsigned long long>(cp.time.frame), devices.restored, devices.missingBlobs,
+                    devices.sizeMismatches, devices.unclaimedBlobs);
 
     // --- Step 2b: Rebuild memory banking from restored port latches ---
     // Memory::UpdateZ80Banks reads the latches we just wrote and rebuilds
@@ -1315,6 +1455,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // already matches is deferred (TDD §8.1 "often a handful of pages";
     // restore is rare, not a per-frame hot path).
     RestoreRamPages(cp.ramPages);
+    const PerfClock::time_point memoryEnd = PerfClock::now();
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
     // The screen renderer caches derived state (active screen bank from
@@ -1324,6 +1465,11 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // uses the same pattern for the same reason). Pixels are not touched:
     // what a position shows is decided by ComposeDisplay alone.
     ResyncScreenState();
+
+    _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, devicesStart);
+    _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
+    _perf.lastRestoreMemoryNs = elapsedNs(devicesEnd, memoryEnd);
+    _perf.lastRestoreScreenNs = elapsedNs(memoryEnd, PerfClock::now());
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
 }
@@ -1452,7 +1598,7 @@ void TimeTravelManager::EnterReplayMode()
     {
         _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
         core->GetZ80()->isDebugMode = true;
-        core->UseDebugMemoryInterface();
+        core->SelectMemoryInterface();  // the debug path, contended where the machine is
     }
     if (_memory)
         _memory->UpdateFeatureCache();
@@ -1478,10 +1624,7 @@ void TimeTravelManager::ExitReplayMode()
     if (Core* core = _context->pCore)
     {
         core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
-        if (_debugModeBeforeReplay)
-            core->UseDebugMemoryInterface();
-        else
-            core->UseFastMemoryInterface();
+        core->SelectMemoryInterface();
     }
     if (_memory)
         _memory->UpdateFeatureCache();
@@ -1527,7 +1670,7 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
 
     TTDInputEvent ev;
     ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     ev.kind          = TTDInputKind::Key;
     ev.key           = key;
     ev.pressed       = pressed;
@@ -1541,7 +1684,7 @@ static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
     const EmulatorState& st = context->emulatorState;
     Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
     time.frame    = st.frame_counter;
-    time.tInFrame = z80 ? z80->t : 0;
+    time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     return time;
 }
 
@@ -1621,10 +1764,22 @@ bool TimeTravelManager::OwnsInput() const
     return _context->emulatorState.frame_counter <= _timeline.back().time.frame;
 }
 
+void TimeTravelManager::SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor)
+{
+    std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+    _liveInputInterceptor = std::move(interceptor);
+}
+
 bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
 {
     if (!_context || OwnsInput())
         return false;
+
+    {
+        std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+        if (_liveInputInterceptor && _liveInputInterceptor(ev))
+            return true;
+    }
 
     // The machine lives on the emulator loop's thread: while the loop runs,
     // only that thread mutates input state - queue for its next instruction
@@ -1639,12 +1794,34 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingInput.push_back(ev);
         }
-        _context->ttdInputWork.store(true, std::memory_order_release);
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return true;
     }
 
     ApplyLiveInput(ev);
     return true;
+}
+
+TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::function<void()> task)
+{
+    if (!_context || !task || OwnsInput())
+        return MachineTaskResult::Refused;
+
+    // The same hand-off as SubmitLiveInput
+    const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
+    const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
+    if (loopRunning && !onLoopThread)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            _pendingTasks.push_back(std::move(task));
+        }
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
+        return MachineTaskResult::Queued;
+    }
+
+    task();
+    return MachineTaskResult::RanNow;
 }
 
 void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
@@ -1690,6 +1867,19 @@ void TimeTravelManager::ServiceInput()
             ApplyLiveInput(ev);
     }
 
+    // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
+    //    like live input when the journal took over while they waited
+    std::vector<std::function<void()>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        tasks.swap(_pendingTasks);
+    }
+    if (!tasks.empty() && !OwnsInput())
+    {
+        for (auto& task : tasks)
+            task();
+    }
+
     UpdateInputWorkFlag();
 }
 
@@ -1701,9 +1891,9 @@ void TimeTravelManager::UpdateInputWorkFlag()
     bool pending;
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending = !_pendingInput.empty();
+        pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
-    _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
+    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending);
 }
 
 void TimeTravelManager::ArmInputPlayback()
@@ -1729,6 +1919,13 @@ void TimeTravelManager::DisarmInputPlayback()
 void TimeTravelManager::OnMachineReset()
 {
     DisarmInputPlayback();
+    if (_portReads.GetMode() == TTDPortJournal::Mode::Play || _portWrites.GetMode() == TTDPortJournal::Mode::Play)
+    {
+        // Off the recorded history: I/O is live again
+        _portReads.Stop();
+        _portWrites.Stop();
+        SyncPortJournalHook();
+    }
     if (_state == TTDSessionState::Detached)
     {
         // The machine no longer sits on the recorded timeline (which is
@@ -1741,6 +1938,104 @@ void TimeTravelManager::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
 {
     RestoreCheckpoint(cp);
     ArmInputPlayback();
+
+    // The CPU replays the recorded IN results from here; the live devices
+    // still answer, and a differing answer is counted, not used
+    if (_portJournalValid)
+    {
+        _portReads.StartPlayback(cp.portReadCursor);
+        _portWrites.StartPlayback(cp.portWriteCursor);
+    }
+    else
+    {
+        _portReads.Stop();
+        _portWrites.Stop();
+    }
+    SyncPortJournalHook();
+}
+
+const char* TimeTravelManager::PortJournalUnsupportedReason() const
+{
+    if (!_context)
+        return "no emulator context";
+
+    // The first version isolates machines whose outside world reaches the CPU
+    // through IN alone. DMA writes memory without the CPU reading anything,
+    // so these configurations still replay against the live devices
+    // (ttd-port-read-journal.md §2)
+    switch (_context->config.mem_model)
+    {
+        case MM_NEXT:
+            return "ZX Next: its DMA moves data into RAM without IN (not isolated by the first version)";
+        default:
+            break;
+    }
+    if (_context->pSoundManager)
+    {
+        const GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound();
+        if (gs && gs->implementation() == GSCardImplementation::NGS)
+            return "NeoGS: its ZX-DMA serves host memory reads without IN (not isolated by the first version)";
+    }
+    // A machine that owns its INT logic (IInterruptSource) may put the IM2
+    // vector on the bus from a device - a read the journals do not record
+    // (TTD v2 FR-21). The classic machines leave it to the floating bus
+    if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        if (z80->GetInterruptSource())
+            return "the machine's interrupt source supplies the IM2 vector, which the first version does not record";
+        // A model engine stepped with the CPU (IMachineStepHook: TSConf's DMA
+        // and TSU) changes what the program sees without an IN
+        if (z80->GetMachineStepHook())
+            return "a machine engine stepped with the CPU (DMA) changes memory without IN (not isolated by the "
+                   "first version)";
+    }
+    return nullptr;
+}
+
+void TimeTravelManager::DropPortJournal(const char* reason)
+{
+    if (!_portJournalValid)
+        return;
+    MLOGWARNING("TimeTravelManager — port-read journal dropped: %s; replay reads the live devices again", reason);
+    _portReads.Clear();
+    _portWrites.Clear();
+    _portJournalValid = false;
+    _portJournalOffReason = reason;
+    for (TTDCheckpoint& cp : _timeline)
+    {
+        cp.portReadCursor = 0;
+        cp.portWriteCursor = 0;
+    }
+    SyncPortJournalHook();
+}
+
+void TimeTravelManager::SyncPortJournalHook()
+{
+    if (!_context)
+        return;
+    _context->ttdPortReads = _portReads.GetMode() == TTDPortJournal::Mode::Off ? nullptr : &_portReads;
+    _context->ttdPortWrites = _portWrites.GetMode() == TTDPortJournal::Mode::Off ? nullptr : &_portWrites;
+}
+
+TTDPortSearchResult TimeTravelManager::SearchPortEvents(const TTDPortQuery& q) const
+{
+    if (!_portJournalValid)
+    {
+        TTDPortSearchResult result;
+        result.error = "the session has no port journal" +
+                       (_portJournalOffReason.empty() ? std::string() : " (" + _portJournalOffReason + ")");
+        return result;
+    }
+    // A recording that is running appends to the journals from the emulation
+    // thread; paused (or replaying) they only grow on that thread's next step
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    if (_state == TTDSessionState::Recording && emu && emu->IsRunning() && !emu->IsPaused())
+    {
+        TTDPortSearchResult result;
+        result.error = "the recording is running and still writing the journals: pause or stop it first";
+        return result;
+    }
+    return ttd::SearchPortEvents(_portReads, _portWrites, q);
 }
 
 // ---------------------------------------------------------------------------
@@ -1764,7 +2059,7 @@ void TimeTravelManager::RecordExternalEvent(TTDExternalEventKind kind, const cha
 
     TTDExternalEvent ev;
     ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     ev.kind          = kind;
 
     // Truncate-and-copy the reason string into the inline buffer. strncpy
@@ -1808,9 +2103,40 @@ TTDTimePoint TimeTravelManager::CurrentPosition() const
     // (MainLoop::OnFrameEnd does `t_states += config.frame`), so its modulo
     // is always 0. z80.t is the per-frame counter that AdjustFrameCounters
     // resets at each boundary.
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    pos.tInFrame = z80 ? z80->t : 0;
+    pos.tInFrame = TInFrameNow();
     return pos;
+}
+
+uint32_t TimeTravelManager::TInFrameNow() const
+{
+    if (!_context)
+        return 0;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return z80 ? _context->emulatorState.TtdTInFrame(z80->t) : 0;
+}
+
+uint32_t TimeTravelManager::FrameSpan() const
+{
+    if (!_context)
+        return 69888;
+    const uint8_t units = _context->emulatorState.ttd_clock_units;
+    return _context->config.frame * (units ? units : 1);
+}
+
+void TimeTravelManager::RunToTInFrame(uint32_t targetTInFrame)
+{
+    if (!_context || !_context->pEmulator)
+        return;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    for (uint32_t now = TInFrameNow(); _context->emulatorState.frame_counter == frame && now < targetTInFrame;)
+    {
+        const uint32_t perT = _context->emulatorState.TtdUnitsPerTState();
+        _context->pEmulator->RunTStates((targetTInFrame - now + perT - 1) / perT, /*skipBreakpoints=*/true);
+        const uint32_t next = TInFrameNow();
+        if (_context->emulatorState.frame_counter == frame && next <= now)
+            break;  // no progress - never spin
+        now = next;
+    }
 }
 
 TTDTimePoint TimeTravelManager::SessionEndPosition() const
@@ -1992,6 +2318,9 @@ void TimeTravelManager::PublishSeekedFrame()
 
 bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    _perf.lastReplayNs = 0;
+    _perf.lastPresentNs = 0;
+
     // ------------------------------------------------------------------
     // Default the out-result to a failure state. Every return path below
     // either leaves this default (false / OutOfRange) or overwrites it
@@ -2097,6 +2426,8 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // instead.
     const Z80* restoredZ80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     const uint32_t restoredTInFrame = restoredZ80 ? static_cast<uint32_t>(restoredZ80->t) : 0;
+    // The seek ends on the checkpoint itself unless it replays past it
+    _seekLandedOnCheckpoint = !(target.tInFrame > restoredTInFrame);
 
     // ------------------------------------------------------------------
     // Step 3: intra-frame silent replay if target.tInFrame is past where
@@ -2163,6 +2494,18 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
 
 void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame)
 {
+    const auto replayStart = std::chrono::steady_clock::now();
+    struct ReplayTimer
+    {
+        std::chrono::steady_clock::time_point start;
+        uint64_t& sink;
+        ~ReplayTimer()
+        {
+            sink = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        }
+    } replayTimer{replayStart, _perf.lastReplayNs};
+
     // Emulator must be available. The PageStore/Capture path doesn't need
     // it, but RunTStates does.
     if (!_context || !_context->pEmulator)
@@ -2174,17 +2517,16 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
         return;
     }
 
-    // Defensive: clamp targetTInFrame to the per-frame budget. If a caller
-    // hands us something larger we'd loop forever inside RunTStates' frame
-    // boundary handler.
-    const uint32_t frameT = _context->config.frame;
-    if (targetTInFrame > frameT)
+    // Defensive: clamp targetTInFrame to the frame (in TTD time units: the
+    // frame at the model's top clock, whatever turbo runs now - B4).
+    const uint32_t frameSpan = FrameSpan();
+    if (targetTInFrame > frameSpan)
     {
         MLOGWARNING("TimeTravelManager::ReplayWithinFrame — targetTInFrame=%u > "
-                    "config.frame=%u, clamping",
+                    "frame span=%u, clamping",
                     static_cast<unsigned>(targetTInFrame),
-                    static_cast<unsigned>(frameT));
-        targetTInFrame = frameT;
+                    static_cast<unsigned>(frameSpan));
+        targetTInFrame = frameSpan;
     }
 
     // ------------------------------------------------------------------
@@ -2201,11 +2543,7 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     // was recorded at - the same path a Detached forward run uses.
     // ------------------------------------------------------------------
     // The CPU resumes at the checkpoint's overshoot, not at 0
-    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t currentTInFrame = z80 ? static_cast<uint32_t>(z80->t) : 0;
-
-    if (currentTInFrame < targetTInFrame)
-        _context->pEmulator->RunTStates(targetTInFrame - currentTInFrame, /*skipBreakpoints=*/true);
+    RunToTInFrame(targetTInFrame);
 
     ExitReplayMode();
 }
@@ -2235,7 +2573,7 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
         return;
 
     const uint64_t frame = _context->emulatorState.frame_counter;
-    const uint32_t tInFrame = static_cast<uint32_t>(z80->t);
+    const uint32_t tInFrame = TInFrameNow();
 
     // Last checkpoint at or before `f`; nullptr when `f` precedes the session.
     auto checkpointAtOrBefore = [this](uint64_t f) -> const TTDCheckpoint* {
@@ -2309,8 +2647,8 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
         }
 
         // Then what the beam draws in frame f up to the position.
-        if (_context->emulatorState.frame_counter == frame && z80->t < tInFrame)
-            _context->pEmulator->RunTStates(tInFrame - static_cast<uint32_t>(z80->t), /*skipBreakpoints=*/true);
+        if (_context->emulatorState.frame_counter == frame)
+            RunToTInFrame(tInFrame);
         _context->pScreen->UpdateScreen();
     }
 
@@ -2343,8 +2681,11 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
 
 void TimeTravelManager::PresentPosition(bool frameTarget)
 {
+    const auto start = std::chrono::steady_clock::now();
     ComposeDisplay(frameTarget);
     PublishSeekedFrame();
+    _perf.lastPresentNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 bool TimeTravelManager::StepBackFrame()
@@ -2499,13 +2840,28 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     _externalEvents.DropAfter(cut);  // Phase 2 Item 6 — markers past the resume point are dead future
     _bookmarks.DropAfter(cut);  // TD-4 — bookmarks past the resume point are dead future
 
+    // Coverage of the discarded future must go too, or reverse search prunes
+    // frames of the new history by the old one. Frames before the resume
+    // frame stay indexed; the resume frame itself is re-collected only from
+    // the resume point on, so unless the machine stands exactly at that
+    // frame's checkpoint it becomes a hole (queries replay it)
+    const bool atCheckpoint = _seekLandedOnCheckpoint && !_timeline.empty() &&
+                              _timeline.back().time.frame == cut.frame;
+    _coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
+
+    // Port reads past the resume point are dead future: the seek left the
+    // journal positioned at the first read after it
+    if (_portJournalValid)
+    {
+        _portReads.TruncateTo(_portReads.Cursor());
+        _portWrites.TruncateTo(_portWrites.Cursor());
+    }
+
     // Phase 4 — write journal: convert the resume point to a globalT and
     // drop records strictly past it. Records exactly at it are kept.
     if (_writeJournal)
     {
-        const uint32_t frameT = _context ? _context->config.frame : 69888;
-        const uint64_t globalT = cut.frame * frameT + cut.tInFrame;
-        _writeJournal->DropAfter(globalT);
+        _writeJournal->DropAfter(GlobalT(cut));
     }
 
     // ------------------------------------------------------------------
@@ -2516,9 +2872,17 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     EngageCaptureFeatures();
     if (!_enableWriteJournal)
-        _journalGapless = false;  // the writes from here on are not journaled
+        MarkJournalGap("recording resumed with the write journal off");  // the writes from here on are not journaled
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
+    // A loaded session had collection switched off; the new history is live
+    _context->ttdCoverageActive = _enableCoverageIndex;
+    if (_portJournalValid)
+    {
+        _portReads.StartRecording();
+        _portWrites.StartRecording();
+    }
+    SyncPortJournalHook();
 
     MLOGINFO("TimeTravelManager::ResumeRecordingFrom — resumed at "
              "(frame=%llu, tInFrame=%u); timeline %zu→%zu checkpoints, "
@@ -2594,12 +2958,25 @@ bool TimeTravelManager::ResumeRecordingLive()
 
     // Instructions executed since the stop (within this frame) wrote nothing
     // to the journal: from here on it cannot vouch for the whole session
-    if (present.frame * _context->config.frame + present.tInFrame != _recordingStoppedAtT || !_enableWriteJournal)
-        _journalGapless = false;
+    if (!_enableWriteJournal)
+        MarkJournalGap("recording resumed with the write journal off");
+    else if (GlobalT(present) != _recordingStoppedAtT)
+        MarkJournalGap("the machine ran unrecorded between the stop and the resume");
+
+    // The port-read journal has no room for a gap: a replay across the reads
+    // made while stopped would hand out every later record one read early
+    if (GlobalT(present) != _recordingStoppedAtT)
+        DropPortJournal("the machine ran unrecorded between the stop and the resume");
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
+    if (_portJournalValid)
+    {
+        _portReads.StartRecording();
+        _portWrites.StartRecording();
+    }
+    SyncPortJournalHook();
 
     MLOGINFO("TimeTravelManager::ResumeRecordingLive — resumed at (frame=%llu, tInFrame=%u); "
              "timeline keeps %zu checkpoints, appending after (frame=%llu, tInFrame=%u)",
@@ -2711,8 +3088,15 @@ bool ReadPod(std::istream& in, Pod& value, std::string& err)
 }
 
 /// @brief Write a length-prefixed byte vector (size as u32, then raw bytes).
+/// Refuses a blob over the reader's cap: a file that saves must load.
 bool WriteBlob(std::ostream& out, const std::vector<uint8_t>& blob, std::string& err)
 {
+    if (blob.size() > ttd::dump::kMaxPeripheralBlobBytes)
+    {
+        err = "device blob of " + std::to_string(blob.size()) + " bytes exceeds the " +
+              std::to_string(ttd::dump::kMaxPeripheralBlobBytes) + "-byte limit";
+        return false;
+    }
     const uint32_t sz = static_cast<uint32_t>(blob.size());
     if (!WritePod(out, sz, err))
         return false;
@@ -2734,9 +3118,9 @@ bool ReadBlob(std::istream& in, std::vector<uint8_t>& blob, std::string& err)
     uint32_t sz = 0;
     if (!ReadPod(in, sz, err))
         return false;
-    // Defensive sanity cap — individual peripheral blobs are tiny (AY=64,
-    // FDC=~200, Tape=16, Covox=4). A claim of >1 MB is certainly corruption.
-    if (sz > (1u << 20))
+    // Sanity cap shared with the writer (ttddumpformat.h): a bigger claim is
+    // corruption, never a blob this build wrote
+    if (sz > ttd::dump::kMaxPeripheralBlobBytes)
     {
         err = "implausible peripheral blob size " + std::to_string(sz);
         return false;
@@ -2750,6 +3134,165 @@ bool ReadBlob(std::istream& in, std::vector<uint8_t>& blob, std::string& err)
             err = "stream read failed (blob body)";
             return false;
         }
+    }
+    return true;
+}
+
+/// @brief Input-journal section (header bit 6): u32 count, then per event the
+/// fields of TTDInputEvent one by one (ttddumpformat.h, kFlagsHasInputJournal).
+/// Field-by-field, never the struct: no padding byte reaches the file, and the
+/// layout does not depend on the compiler.
+bool WriteInputJournalSection(std::ostream& out, const std::vector<TTDInputEvent>& events, std::string& err)
+{
+    const uint32_t count = static_cast<uint32_t>(events.size());
+    if (!WritePod(out, count, err)) return false;
+    for (const TTDInputEvent& ev : events)
+    {
+        const uint8_t kind = static_cast<uint8_t>(ev.kind);
+        const uint8_t pressed = ev.pressed ? 1 : 0;
+        if (!WritePod(out, ev.time.frame, err) || !WritePod(out, ev.time.tInFrame, err) ||
+            !WritePod(out, kind, err) || !WritePod(out, ev.key, err) || !WritePod(out, pressed, err) ||
+            !WritePod(out, ev.dx, err) || !WritePod(out, ev.dy, err) || !WritePod(out, ev.buttonMask, err) ||
+            !WritePod(out, ev.wheelSteps, err) || !WritePod(out, ev.value, err))
+        {
+            err = "stream write failed (input journal section)";
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @brief Read the input-journal section. Refuses what a healthy writer cannot
+/// produce: a count over the cap, an unknown kind, a pressed byte other than
+/// 0 / 1, events out of time order.
+bool ReadInputJournalSection(std::istream& in, std::vector<TTDInputEvent>& events, std::string& err)
+{
+    uint32_t count = 0;
+    if (!ReadPod(in, count, err))
+    {
+        err = "stream read failed (input journal count)";
+        return false;
+    }
+    if (count > ttd::dump::kMaxInputEvents)
+    {
+        err = "implausible input event count " + std::to_string(count);
+        return false;
+    }
+    // No reserve from the claimed count: a corrupt count must not allocate
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        TTDInputEvent ev;
+        uint8_t kind = 0;
+        uint8_t pressed = 0;
+        if (!ReadPod(in, ev.time.frame, err) || !ReadPod(in, ev.time.tInFrame, err) ||
+            !ReadPod(in, kind, err) || !ReadPod(in, ev.key, err) || !ReadPod(in, pressed, err) ||
+            !ReadPod(in, ev.dx, err) || !ReadPod(in, ev.dy, err) || !ReadPod(in, ev.buttonMask, err) ||
+            !ReadPod(in, ev.wheelSteps, err) || !ReadPod(in, ev.value, err))
+        {
+            err = "stream read failed (input event " + std::to_string(i) + ")";
+            return false;
+        }
+        if (kind > static_cast<uint8_t>(TTDInputKind::GSReset))
+        {
+            err = "input event " + std::to_string(i) + ": unknown kind " + std::to_string(kind);
+            return false;
+        }
+        if (pressed > 1)
+        {
+            err = "input event " + std::to_string(i) + ": invalid pressed byte " + std::to_string(pressed);
+            return false;
+        }
+        ev.kind = static_cast<TTDInputKind>(kind);
+        ev.pressed = pressed != 0;
+        if (!events.empty() && ev.time < events.back().time)
+        {
+            err = "input event " + std::to_string(i) + " is earlier than the one before it";
+            return false;
+        }
+        events.push_back(ev);
+    }
+    return true;
+}
+
+/// @brief External-event section (header bit 7): u32 count, then per marker
+/// u64 frame, u32 tInFrame, u8 kind, u8 reason_len, reason bytes.
+bool WriteExternalEventSection(std::ostream& out, const std::vector<TTDExternalEvent>& events, std::string& err)
+{
+    const uint32_t count = static_cast<uint32_t>(events.size());
+    if (!WritePod(out, count, err)) return false;
+    for (const TTDExternalEvent& ev : events)
+    {
+        const uint8_t kind = static_cast<uint8_t>(ev.kind);
+        const size_t len = strnlen(ev.reason, sizeof(ev.reason));
+        const uint8_t reasonLen =
+            static_cast<uint8_t>(std::min<size_t>(len, ttd::dump::kMaxExternalEventReason));
+        if (!WritePod(out, ev.time.frame, err) || !WritePod(out, ev.time.tInFrame, err) ||
+            !WritePod(out, kind, err) || !WritePod(out, reasonLen, err))
+        {
+            err = "stream write failed (external event section)";
+            return false;
+        }
+        if (reasonLen != 0)
+        {
+            out.write(ev.reason, reasonLen);
+            if (!out)
+            {
+                err = "stream write failed (external event reason)";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/// @brief Read the external-event section. Unknown kinds are kept (a marker
+/// is a barrier whatever its kind; a newer writer may add kinds).
+bool ReadExternalEventSection(std::istream& in, std::vector<TTDExternalEvent>& events, std::string& err)
+{
+    uint32_t count = 0;
+    if (!ReadPod(in, count, err))
+    {
+        err = "stream read failed (external event count)";
+        return false;
+    }
+    if (count > ttd::dump::kMaxExternalEvents)
+    {
+        err = "implausible external event count " + std::to_string(count);
+        return false;
+    }
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        TTDExternalEvent ev;
+        uint8_t kind = 0;
+        uint8_t reasonLen = 0;
+        if (!ReadPod(in, ev.time.frame, err) || !ReadPod(in, ev.time.tInFrame, err) ||
+            !ReadPod(in, kind, err) || !ReadPod(in, reasonLen, err))
+        {
+            err = "stream read failed (external event " + std::to_string(i) + ")";
+            return false;
+        }
+        if (reasonLen > ttd::dump::kMaxExternalEventReason)
+        {
+            err = "external event " + std::to_string(i) + ": implausible reason length " + std::to_string(reasonLen);
+            return false;
+        }
+        if (reasonLen != 0)
+        {
+            in.read(ev.reason, reasonLen);
+            if (!in)
+            {
+                err = "stream read failed (external event " + std::to_string(i) + " reason)";
+                return false;
+            }
+        }
+        ev.reason[reasonLen] = '\0';
+        ev.kind = static_cast<TTDExternalEventKind>(kind);
+        if (!events.empty() && ev.time < events.back().time)
+        {
+            err = "external event " + std::to_string(i) + " is earlier than the one before it";
+            return false;
+        }
+        events.push_back(ev);
     }
     return true;
 }
@@ -2797,13 +3340,47 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // whose refcount > 0. The map translates from the in-memory storeIndex
     // used by checkpoints to the on-disk slot index. NEVER_TOUCHED refs pass
     // through unchanged (they're never looked up in the map on read).
+    //
+    // The on-disk order puts every XorPrev slot after the slot it XORs
+    // against: the reader rebuilds the store in file order and requires
+    // prev_slot < index. In-memory index order does not guarantee that - a
+    // resume from the past frees slots and the store reuses them newest
+    // first, so a later delta can sit at a lower index than its base. Each
+    // live slot is emitted after its chain of not-yet-emitted predecessors.
     std::unordered_map<uint32_t, uint32_t> slotRemap;
+    std::vector<uint32_t> slotOrder;
     slotRemap.reserve(_pageStore.GetCapacity());
-    for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
     {
-        if (_pageStore.GetRefCount(idx) > 0)
+        std::vector<uint32_t> chain;
+        for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
         {
-            slotRemap.emplace(idx, static_cast<uint32_t>(slotRemap.size()));
+            if (_pageStore.GetRefCount(idx) == 0 || slotRemap.count(idx) != 0)
+                continue;
+            // Walk down to the first predecessor already placed (or a chain root)
+            chain.clear();
+            uint32_t cur = idx;
+            while (true)
+            {
+                chain.push_back(cur);
+                if (_pageStore.GetEncoding(cur) != TTDCodecPageStore::Encoding::XorPrev)
+                    break;
+                const uint32_t prev = _pageStore.GetPrevSlot(cur);
+                if (slotRemap.count(prev) != 0)
+                    break;
+                if (prev >= _pageStore.GetCapacity() || _pageStore.GetRefCount(prev) == 0 ||
+                    chain.size() > _pageStore.GetCapacity())
+                {
+                    err = "slot " + std::to_string(cur) + " has prev_slot " + std::to_string(prev) +
+                          " which is not a live slot (corrupt store?)";
+                    return false;
+                }
+                cur = prev;
+            }
+            for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+            {
+                slotRemap.emplace(*it, static_cast<uint32_t>(slotOrder.size()));
+                slotOrder.push_back(*it);
+            }
         }
     }
     const uint32_t liveSlotCount = static_cast<uint32_t>(slotRemap.size());
@@ -2817,7 +3394,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
 
     // Only set journal flag if we actually have journal entries to write
     const bool hasJournalData = _enableWriteJournal && _writeJournal && !_writeJournal->IsEmpty();
-    uint16_t flags = ttd::dump::kFlagsLittleEndian;
+    uint16_t flags = ttd::dump::kFlagsLittleEndian | ttd::dump::kFlagsTopClockTime;
     if (hasJournalData)
         flags |= ttd::dump::kFlagsHasWriteJournal;
     if (hasJournalData && _journalGapless && !_writeJournal->HasEvictedRecords())
@@ -2836,6 +3413,11 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     const bool hasBookmarks = !_bookmarks.IsEmpty();
     if (hasBookmarks)
         flags |= ttd::dump::kFlagsHasBookmarks;
+    // Replay inputs: always written, empty or not (see kFlagsHasInputJournal)
+    flags |= ttd::dump::kFlagsHasInputJournal | ttd::dump::kFlagsHasExternalEvents;
+    // Port-read journal: only a session that holds every IN of its history
+    if (_portJournalValid)
+        flags |= ttd::dump::kFlagsHasPortJournals;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -2893,11 +3475,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     //
     // The stored payload and CRC are written as they are (GetPayload /
     // GetCrc32C): no decompress/recompress on serialize.
-    for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
+    for (const uint32_t idx : slotOrder)
     {
-        if (_pageStore.GetRefCount(idx) == 0)
-            continue;
-
         const auto encoding = _pageStore.GetEncoding(idx);
         const uint8_t encByte = static_cast<uint8_t>(encoding);
         if (!WritePod(out, encByte, err)) return false;
@@ -3079,6 +3658,30 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         }
     }
 
+    // --- Replay inputs (bits 6 and 7), after every older section so a reader
+    // that knows only the older layout stops before them ---
+    if (!WriteInputJournalSection(out, _inputJournal.Events(), err))
+        return false;
+    if (!WriteExternalEventSection(out, _externalEvents.SnapshotEvents(), err))
+        return false;
+
+    // --- Port journals (bit 8): the IN journal, then the OUT journal; each
+    // is its records, then one cursor per checkpoint in timeline order ---
+    if (_portJournalValid)
+    {
+        std::vector<uint64_t> readCursors;
+        std::vector<uint64_t> writeCursors;
+        readCursors.reserve(_timeline.size());
+        writeCursors.reserve(_timeline.size());
+        for (const TTDCheckpoint& cp : _timeline)
+        {
+            readCursors.push_back(cp.portReadCursor);
+            writeCursors.push_back(cp.portWriteCursor);
+        }
+        if (!_portReads.Serialize(out, readCursors, err) || !_portWrites.Serialize(out, writeCursors, err))
+            return false;
+    }
+
     return true;
 }
 
@@ -3108,6 +3711,38 @@ bool TimeTravelManager::TurboSoundSessionKindMatches(
 }
 
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
+{
+    // A machine where time travel is not available at all (a ZX-Poly member)
+    // loads no session; a file search (SearchPortEventsInFile) does not load
+    // one, so it is not refused
+    if (!_unavailableReason.empty())
+    {
+        err = _unavailableReason;
+        return false;
+    }
+    return DeserializeSessionImpl(in, err, nullptr);
+}
+
+TTDPortSearchResult TimeTravelManager::SearchPortEventsInFile(const std::string& path, const TTDPortQuery& q)
+{
+    TTDPortSearchResult result;
+    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+    if (!in)
+    {
+        result.error = "cannot open " + path;
+        return result;
+    }
+    FilePortJournals journals;
+    std::string err;
+    if (!DeserializeSessionImpl(in, err, &journals))
+    {
+        result.error = path + ": " + err;
+        return result;
+    }
+    return ttd::SearchPortEvents(journals.reads, journals.writes, q);
+}
+
+bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& err, FilePortJournals* journalsOnly)
 {
     // --- Read + validate header ---
     char magic[4];
@@ -3157,7 +3792,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // image it was recorded against. Files written before the signature
     // existed, or by a writer with no Memory attached, carry the "unknown"
     // sentinel and skip the check rather than becoming unloadable.
-    if (romSignature != ttd::dump::kRomSignatureUnknown)
+    if (!journalsOnly && romSignature != ttd::dump::kRomSignatureUnknown)
     {
         const uint64_t currentSignature = ComputeRomSignature();
         if (currentSignature != ttd::dump::kRomSignatureUnknown &&
@@ -3178,7 +3813,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // silent - a seek that "works" and produces a corrupt machine - so refuse
     // here and let the caller provision the right model (Emulator::Init()
     // applies SetPreferredModel() before any model-dependent subsystem starts).
-    if (_context)
+    if (_context && !journalsOnly)
     {
         const uint8_t currentModel = static_cast<uint8_t>(_context->config.mem_model);
         if (modelId != currentModel)
@@ -3186,6 +3821,12 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             err = "model mismatch: file was recorded on model id " + std::to_string(modelId) +
                   ", this emulator is model id " + std::to_string(currentModel) +
                   " - load it into an instance of the recorded model";
+            return false;
+        }
+        if (_context->emulatorState.ttd_clock_units > 1 && (flags & ttd::dump::kFlagsTopClockTime) == 0)
+        {
+            err = "this session was recorded before TTD time counted at the top CPU clock: on a model with a "
+                  "hardware turbo its positions are ambiguous - record it again";
             return false;
         }
     }
@@ -3425,7 +4066,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // with no trail back to this decision. The baseline checkpoint's blob
     // map speaks for the whole session: one device occupies the slot for the
     // instance's lifetime (design §3.1 - no runtime switching).
-    if (!stagedTimeline.empty() && _context && _context->pSoundManager)
+    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
     {
         if (ITurboSoundDevice* slotDevice = _context->pSoundManager->getTurboSound())
         {
@@ -3460,6 +4101,51 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             {
                 err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
                       "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
+                return false;
+            }
+        }
+    }
+
+    // General Sound slot guard (neogs-tdd.md §7.4): a session recorded with one
+    // GS-slot personality (classic GS, lightweight player, NeoGS) is refused
+    // on an instance fitted with another - RestoreAll would restore neither,
+    // leaving the live card's state behind silently. The baseline checkpoint
+    // names the personality at the start of the recording; switches inside
+    // the session are replayed by UpdatePeripheral. An instance with no GS
+    // card keeps the missing-blob report (RestoreAll) rather than a refusal.
+    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
+    {
+        if (GeneralSoundCard* liveGs = _context->pSoundManager->getGeneralSound())
+        {
+            static const struct
+            {
+                PeripheralId id;
+                const char* name;
+            } kGsSlot[] = {{PeripheralId::GeneralSound, "GS"},
+                           {PeripheralId::GeneralSoundLightweight, "GS lightweight"},
+                           {PeripheralId::NeoGS, "NeoGS"}};
+            const auto& blobs = stagedTimeline.front().peripheralBlobs;
+            const char* recorded = nullptr;
+            PeripheralId recordedId = PeripheralId::Count;
+            for (const auto& slot : kGsSlot)
+            {
+                if (blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
+                {
+                    recorded = slot.name;
+                    recordedId = slot.id;
+                    break;
+                }
+            }
+            if (recorded && recordedId != liveGs->TTDPeripheralId())
+            {
+                const char* fitted = "another card";
+                for (const auto& slot : kGsSlot)
+                {
+                    if (slot.id == liveGs->TTDPeripheralId())
+                        fitted = slot.name;
+                }
+                err = std::string("General Sound slot mismatch: recorded with ") + recorded + ", fitted: " + fitted +
+                      " - set [SOUND] GSType to the recorded card and restart";
                 return false;
             }
         }
@@ -3565,11 +4251,61 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 
         if (!bookmarksOk)
         {
+            // Advisory, but only while nothing follows it: behind a failed
+            // read the stream position is unknown, so the replay-input
+            // sections after it cannot be found
+            if (flags & (ttd::dump::kFlagsHasInputJournal | ttd::dump::kFlagsHasExternalEvents))
+            {
+                err = "bookmarks section could not be read (" + err +
+                      ") and the input journal after it cannot be located";
+                return false;
+            }
             stagedBookmarks.Clear();
             MLOGWARNING("TimeTravelManager::DeserializeSession — bookmarks section "
                         "could not be read (%s); session loads without bookmarks",
                         err.c_str());
         }
+    }
+
+    // --- Replay inputs (bits 6 and 7) ---
+    // Replay data, not annotations: a section that fails to read fails the
+    // load (the live session is untouched, nothing is committed yet). A file
+    // without them predates the sections; it loads, and the session reports
+    // its input history incomplete
+    std::vector<TTDInputEvent> stagedInputs;
+    std::vector<TTDExternalEvent> stagedMarkers;
+    const bool hasInputJournal = (flags & ttd::dump::kFlagsHasInputJournal) != 0;
+    const bool hasExternalEvents = (flags & ttd::dump::kFlagsHasExternalEvents) != 0;
+    if (hasInputJournal && !ReadInputJournalSection(in, stagedInputs, err))
+        return false;
+    if (hasExternalEvents && !ReadExternalEventSection(in, stagedMarkers, err))
+        return false;
+
+    // --- Port journals (bit 8): replay data like the inputs; every block is
+    // decompressed and CRC-checked here, so a damaged journal fails the load
+    // instead of a replay much later ---
+    TTDPortJournal stagedReads(TTDPortJournal::Direction::Read);
+    TTDPortJournal stagedWrites(TTDPortJournal::Direction::Write);
+    std::vector<uint64_t> stagedReadCursors;
+    std::vector<uint64_t> stagedWriteCursors;
+    const bool hasPortJournal = (flags & ttd::dump::kFlagsHasPortJournals) != 0;
+    const uint32_t timelineCount = static_cast<uint32_t>(stagedTimeline.size());
+    if (hasPortJournal && (!stagedReads.Deserialize(in, timelineCount, stagedReadCursors, err) ||
+                           !stagedWrites.Deserialize(in, timelineCount, stagedWriteCursors, err)))
+        return false;
+
+    // A search of the file: hand the journals out, commit nothing
+    if (journalsOnly)
+    {
+        if (!hasPortJournal)
+        {
+            err = "the file has no port journals (recorded on TSConf, ZX Next or with NeoGS, before the journals "
+                  "existed, or resumed after the machine ran unrecorded)";
+            return false;
+        }
+        journalsOnly->reads = std::move(stagedReads);
+        journalsOnly->writes = std::move(stagedWrites);
+        return true;
     }
 
     // --- Commit ---
@@ -3579,8 +4315,27 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _pageStore     = std::move(stagedStore);
     _modelRamPages = modelRamPages;
     _inputJournal.Clear();
+    for (const TTDInputEvent& ev : stagedInputs)
+        _inputJournal.Record(ev);
     DisarmInputPlayback();
     _externalEvents.Clear();
+    for (const TTDExternalEvent& marker : stagedMarkers)
+        _externalEvents.Record(marker);
+    _inputHistoryComplete = hasInputJournal && hasExternalEvents;
+    _portReads = std::move(stagedReads);
+    _portWrites = std::move(stagedWrites);
+    _portJournalValid = hasPortJournal;
+    _portJournalOffReason = hasPortJournal ? std::string() : std::string("the loaded file has no port journal");
+    for (size_t i = 0; i < _timeline.size(); ++i)
+    {
+        _timeline[i].portReadCursor = hasPortJournal ? stagedReadCursors[i] : 0;
+        _timeline[i].portWriteCursor = hasPortJournal ? stagedWriteCursors[i] : 0;
+    }
+    SyncPortJournalHook();
+    if (!_inputHistoryComplete)
+        MLOGWARNING("TimeTravelManager::DeserializeSession — the file predates saved input and "
+                    "external events: replay inside a frame runs without the recorded input and "
+                    "may differ from the recording; checkpoint restores stay exact");
     _bookmarks.Clear();
     for (const TTDBookmark& bookmark : stagedBookmarks.Snapshot())
         _bookmarks.Add(bookmark);
@@ -3596,7 +4351,15 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // not answer find-last from the previous live recording's writes
     // The journal answers reverse queries only when the writer vouched that it
     // holds every write of the session (current-state B3); otherwise replay
+    ClearJournalGap();
     _journalGapless = stagedJournal && (flags & ttd::dump::kFlagsWriteJournalComplete) != 0;
+    if (!_journalGapless)
+    {
+        _journalGapless = true;  // so the gap below is recorded
+        MarkJournalGap(stagedJournal ? "the loaded file's write journal is incomplete"
+                                     : "the loaded file has no write journal",
+                       /*hasPosition=*/false);
+    }
     if (stagedJournal)
     {
         _writeJournal = std::move(stagedJournal);
@@ -3749,12 +4512,8 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     if (!_enableWriteJournal)
         return;
 
-    const uint32_t frameT = _context->config.frame;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t tInFrame = z80 ? z80->t : 0;
-
     TTDWriteRecord rec{};
-    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
     rec.addr     = addr;
     rec.isIo     = 0;
     rec.m1pc     = m1pc;
@@ -3784,12 +4543,8 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
     if (!_context || !_writeJournal)
         return;
 
-    const uint32_t frameT = _context->config.frame;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t tInFrame = z80 ? z80->t : 0;
-
     TTDWriteRecord rec{};
-    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
     rec.addr     = port;
     rec.isIo     = 1;
     rec.m1pc     = m1pc;
@@ -3801,7 +4556,8 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
 
 std::optional<TTDSearchResult>
 TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
-                                  TTDExternalEvent* outBlockingMarker)
+                                  TTDExternalEvent* outBlockingMarker,
+                                  TTDSearchWindow* outWindow)
 {
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
@@ -3825,7 +4581,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         return std::nullopt;
     }
 
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
 
     // ------------------------------------------------------------------
     // Step 1: resolve beforeGlobalT → absolute t-state coordinate.
@@ -3837,6 +4593,20 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         const TTDTimePoint now = CurrentPosition();
         beforeGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
     }
+
+    // TD-8: every answer below also says which part of history it covered -
+    // the search walks back from `to` and ends at the match, at a barrier it
+    // cannot replay across, or at the session start.
+    const TTDTimePoint sessionStart = _timeline.front().time;
+    auto reportWindow = [outWindow](const TTDTimePoint& from, const TTDTimePoint& to)
+    {
+        if (outWindow)
+        {
+            outWindow->searched = true;
+            outWindow->from = from;
+            outWindow->to = to;
+        }
+    };
 
     // ------------------------------------------------------------------
     // Step 2: Journal fast path (Write / Io access types only).
@@ -3875,12 +4645,18 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             result.value   = found->value;
             result.physPage = found->isIo ? kPhysPageNone : PhysPage{found->physPage};
             result.access   = found->isIo ? TTDAccessType::Io : TTDAccessType::Write;
+            reportWindow(result.time, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
             return result;
         }
 
         // No match: final when the ring still holds the session's first write
         if (!_writeJournal->HasEvictedRecords())
+        {
+            // The journal is ground truth for the whole session; markers do
+            // not limit it
+            reportWindow(sessionStart, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
             return std::nullopt;
+        }
 
         // Ring wrapped — older records were lost. Fall through to replay.
         MLOGINFO("TimeTravelManager::FindLastAccess — journal wrapped (oldest=%llu), "
@@ -3922,12 +4698,14 @@ replay_fallback:
     if (upperIt == _timeline.begin())
     {
         // Target precedes the first checkpoint — nothing to scan.
+        reportWindow(targetTime, targetTime);
         return std::nullopt;
     }
     const size_t targetCpIdx = static_cast<size_t>((upperIt - _timeline.begin()) - 1);
 
     TTDSearchResult answer;
     bool found = false;
+    bool blocked = false;
 
     // Walk backward from the target checkpoint to the beginning.
     for (size_t i = targetCpIdx + 1; i-- > 0; )
@@ -3960,6 +4738,8 @@ replay_fallback:
                      i);
             if (outBlockingMarker)
                 *outBlockingMarker = *barrier;
+            reportWindow(barrier->time, targetTime);
+            blocked = true;
             break;  // Can't replay past a marker — stop searching.
         }
 
@@ -4012,7 +4792,13 @@ replay_fallback:
     }
 
     if (!found)
+    {
+        if (!blocked)
+            reportWindow(sessionStart, targetTime);  // examined everything back to the start
         return std::nullopt;
+    }
+
+    reportWindow(answer.time, targetTime);
 
     // Position the emulator at the answer.
     SeekTo(answer.time);
@@ -4043,7 +4829,7 @@ bool TimeTravelManager::StepBackInstruction()
     // Find the most recent Execute (M1) access strictly before the current
     // position. That is the previous instruction boundary.
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
     // Refuse at position (0, 0) — no prior instruction exists.
@@ -4156,7 +4942,7 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
         return result;
     }
 
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t sessionEndGlobalT =
         static_cast<uint64_t>(_timeline.back().time.frame) * frameT
         + _timeline.back().time.tInFrame;
@@ -4340,7 +5126,7 @@ bool TimeTravelManager::ReverseStepInstructions(uint32_t n)
 
     // Strategy B: M1 enumeration + index Nth-from-end.
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
@@ -4427,7 +5213,7 @@ bool TimeTravelManager::ReverseStepTStates(uint64_t n)
     }
 
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
@@ -4509,9 +5295,19 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     }
 
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
+
+    // TD-8: the scan walks back from `now` and ends at the match, at a barrier
+    // it cannot replay across, or at the session start.
+    const TTDTimePoint sessionStart = _timeline.front().time;
+    auto reportWindow = [&result, &now](const TTDTimePoint& from)
+    {
+        result.window.searched = true;
+        result.window.from = from;
+        result.window.to = now;
+    };
 
     // ------------------------------------------------------------------
     // Fast path: let the coverage index nominate candidate frames.
@@ -4595,6 +5391,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 result.pc      = hit->pc;
                 result.arrivedAt.frame    = hit->globalT / frameT;
                 result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                reportWindow(result.arrivedAt);
                 if (frameBarrier.reason[0] != '\0')
                     result.blockingMarker = frameBarrier;
 
@@ -4603,6 +5400,24 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                     MLOGWARNING("TimeTravelManager::ReverseContinue — SeekTo(arrivedAt) failed");
                     result.matched = false;
                 }
+                return result;
+            }
+
+            if (frameBarrier.reason[0] != '\0')
+            {
+                // The index says a breakpoint PC ran in this frame, but a marker
+                // keeps the frame from being replayed. A run there would be later
+                // than anything an older frame holds, so the scan must stop here
+                // - like the unindexed scan - instead of answering with an older
+                // hit. (Frames the index rules out are skipped even across
+                // markers: the index was captured live, not by replay.)
+                result.blockingMarker = frameBarrier;
+                reportWindow(frameBarrier.time);
+                MLOGINFO("TimeTravelManager::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) "
+                         "blocks candidate frame %llu",
+                         static_cast<unsigned long long>(frameBarrier.time.frame),
+                         static_cast<unsigned>(frameBarrier.time.tInFrame),
+                         static_cast<unsigned long long>(frame));
                 return result;
             }
 
@@ -4637,6 +5452,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 result.pc      = hit->pc;
                 result.arrivedAt.frame    = hit->globalT / frameT;
                 result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                reportWindow(result.arrivedAt);
                 if (prefixBarrier.reason[0] != '\0')
                     result.blockingMarker = prefixBarrier;
 
@@ -4647,8 +5463,16 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 }
                 return result;
             }
+
+            if (prefixBarrier.reason[0] != '\0')
+            {
+                result.blockingMarker = prefixBarrier;
+                reportWindow(prefixBarrier.time);
+                return result;
+            }
         }
 
+            reportWindow(sessionStart);
             MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in the indexed range "
                      "nor in the unindexed prefix");
             return result;
@@ -4678,6 +5502,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
         });
     if (it == m1s.rend())
     {
+        reportWindow(barrierStorage.reason[0] != '\0' ? barrierStorage.time : sessionStart);
         MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in %zu M1s",
                  m1s.size());
         return result;
@@ -4687,6 +5512,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     result.pc         = it->pc;
     result.arrivedAt.frame    = it->globalT / frameT;
     result.arrivedAt.tInFrame = static_cast<uint32_t>(it->globalT % frameT);
+    reportWindow(result.arrivedAt);
 
     if (!SeekTo(result.arrivedAt))
     {
@@ -4724,7 +5550,7 @@ void TimeTravelManager::CaptureM1(uint16_t pc)
         return;
 
     TTDFrameCacheEntry e;
-    e.tInFrame = z80->t;
+    e.tInFrame = _context->emulatorState.TtdTInFrame(z80->t);
     e.pc  = pc;
     e.sp  = z80->sp;
     e.af  = z80->af;
@@ -4838,6 +5664,10 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     _peripherals.CaptureAll(out.peripheralBlobs);
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
+    out.portReadMode = _portReads.GetMode();
+    out.portReadCursor = _portReads.Cursor();
+    out.portWriteMode = _portWrites.GetMode();
+    out.portWriteCursor = _portWrites.Cursor();
 
     out.hasKeyboard = _context->pKeyboard != nullptr;
     if (out.hasKeyboard)
@@ -4920,6 +5750,9 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
     _inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
     UpdateInputWorkFlag();
+    _portReads.RestorePosition(snap.portReadMode, snap.portReadCursor);
+    _portWrites.RestorePosition(snap.portWriteMode, snap.portWriteCursor);
+    SyncPortJournalHook();
 
     if (snap.hasKeyboard && _context->pKeyboard)
         _context->pKeyboard->RestoreInputState(snap.keyboard);

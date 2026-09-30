@@ -8,6 +8,8 @@
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/zxpoly/zxpolygroup.h>
+#include <emulator/media/modelswitch.h>
 #include <emulator/platform.h>
 #include <json/json.h>
 
@@ -52,6 +54,54 @@ void AddIdentityFields(Json::Value& target, Emulator& emulator)
     target["video_mode"] = identity.HasVideoMode ? Json::Value(identity.VideoMode) : Json::Value();
     target["speed_multiplier"] = identity.SpeedMultiplier;
     target["config_folder"] = identity.ConfigFolder;
+
+    // ZX-Poly: the instance is a module of a four-CPU group
+    if (identity.ZXPoly)
+    {
+        Json::Value zxpoly;
+        zxpoly["module"] = identity.ZXPolyModule;
+        zxpoly["master_id"] = identity.ZXPolyMasterId;
+        zxpoly["locked"] = identity.ZXPolyLocked;
+        zxpoly["video_mode"] = identity.ZXPolyVideoMode;
+        target["zxpoly"] = zxpoly;
+    }
+}
+
+/// ZXPolyGroup::Status as JSON (GET .../zxpoly, the start response)
+Json::Value ZXPolyStatusJson(const ZXPolyGroup::Status& status)
+{
+    Json::Value out;
+    out["master_id"] = status.memberIds[0];
+    out["locked"] = status.locked;
+    out["slaves_running"] = status.slavesRunning;
+    out["parallel_slaves"] = status.parallelSlaves;
+    out["pipelined_slaves"] = status.pipelinedSlaves;
+    out["port_3d00"] = static_cast<Json::UInt>(status.port3D00);
+    out["video_mode"] = static_cast<Json::UInt>(status.videoMode);
+
+    Json::Value modules(Json::arrayValue);
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        Json::Value module;
+        module["module"] = static_cast<Json::UInt>(m);
+        module["id"] = status.memberIds[m];
+        Json::Value registers(Json::arrayValue);
+        for (uint8_t value : status.registers[m])
+            registers.append(static_cast<Json::UInt>(value));
+        module["registers"] = registers;
+        modules.append(module);
+    }
+    out["modules"] = modules;
+
+    Json::Value divergence;
+    divergence["diverged"] = status.divergence.diverged;
+    if (status.divergence.diverged)
+    {
+        divergence["module"] = static_cast<Json::UInt>(status.divergence.module);
+        divergence["what"] = status.divergence.what;
+    }
+    out["divergence"] = divergence;
+    return out;
 }
 }
 
@@ -140,6 +190,21 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             modelsArray.append(modelInfo);
         }
 
+        // ZX-Poly configurations: four synchronized instances of a base model,
+        // created by name like any model
+        for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+        {
+            const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+            Json::Value modelInfo;
+            modelInfo["name"] = std::string(configuration.name);
+            modelInfo["full_name"] = std::string(configuration.title);
+            modelInfo["zxpoly"] = true;
+            modelInfo["base_model"] = std::string(configuration.baseModel);
+            modelInfo["default_ram_kb"] = base ? base->defaultRAM : 0;
+            modelInfo["creatable"] = base != nullptr && Config::IsModelCreatable(*base);
+            modelsArray.append(modelInfo);
+        }
+
         ret["models"] = modelsArray;
         ret["count"] = static_cast<Json::UInt>(modelsArray.size());
 
@@ -207,6 +272,12 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
         {
             creatableModels.append(std::string(model.ShortName));
         }
+    }
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base != nullptr && Config::IsModelCreatable(*base))
+            creatableModels.append(std::string(configuration.name));
     }
     ret["models_creatable"] = creatableModels;
 
@@ -334,6 +405,33 @@ void EmulatorAPI::getEmulator(const HttpRequestPtr& req, std::function<void(cons
     callback(resp);
 }
 
+/// @brief GET /api/v1/emulator/{id}/zxpoly
+/// @details The ZX-Poly group of any member: modules, platform registers,
+/// lock, video mode and the lockstep check
+void EmulatorAPI::getZXPolyStatus(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) const
+{
+    (void)req;
+    auto manager = EmulatorManager::GetInstance();
+    ZXPolyGroup* group = manager->GetZXPolyGroup(id);
+    if (!group)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = manager->GetEmulator(id) ? "The emulator is not a ZX-Poly machine"
+                                                    : "Emulator with specified ID not found";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ZXPolyStatusJson(group->GetStatus()));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief DELETE /api/v1/emulator/{id}
 /// @brief Remove an emulator
 void EmulatorAPI::removeEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -398,6 +496,11 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::string modelName = json ? (*json)["model"].asString() : "";
     uint32_t ramSize = json && json->isMember("ram_size") ? (*json)["ram_size"].asUInt() : 0;
 
+    // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
+    const bool zxpoly = json && json->isMember("zxpoly") &&
+                        ((*json)["zxpoly"].isBool() ? (*json)["zxpoly"].asBool() : (*json)["zxpoly"].isObject());
+    const std::string zxpolyFile = zxpoly && (*json)["zxpoly"].isObject() ? (*json)["zxpoly"]["file"].asString() : "";
+
     try
     {
         std::shared_ptr<Emulator> emulator;
@@ -406,7 +509,13 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         // Create emulator with specified parameters - strict: a requested
         // model that cannot be created on this build fails with 400 + reason
         // instead of falling back to a default machine
-        if (!modelName.empty() && ramSize > 0)
+        if (zxpoly)
+        {
+            // Four synchronized instances; the master is the machine returned
+            emulator = manager->CreateZXPolyMachine(symbolicId, modelName.empty() ? "PENTAGON" : modelName,
+                                                    zxpolyFile, &createError);
+        }
+        else if (!modelName.empty() && ramSize > 0)
         {
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
                                                               LoggerLevel::LogWarning, &createError);
@@ -454,6 +563,8 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         ret["state"] = stateToString(emulator->GetState());
         ret["started"] = started;
         ret["message"] = started ? "Emulator created and started" : "Emulator created but failed to start";
+        if (ZXPolyGroup* group = manager->GetZXPolyGroup(emulatorId))
+            ret["zxpoly"] = ZXPolyStatusJson(group->GetStatus());
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(HttpStatusCode::k201Created);
@@ -945,71 +1056,71 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
+    // What happens to unsaved writes on media the new model has no slot for
+    StrandedMedia stranded = StrandedMedia::Refuse;
+    if (body->isMember("stranded") && !ModelSwitch::ParseStranded((*body)["stranded"].asString(), stranded))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "stranded '" + (*body)["stranded"].asString() + "': expected refuse, save, discard or keep";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
-        // Stop the current emulator
-        auto currentEmulator = manager->GetEmulator(id);
-        if (currentEmulator && currentEmulator->IsRunning())
-        {
-            currentEmulator->Stop();
-        }
+        // The media follow the switch (docs/features/media.md, "Model switch")
+        ModelSwitchRequest request;
+        request.emulatorId = id;
+        request.model = modelName;
+        request.ramKb = ramSize;
+        request.stranded = stranded;
+        const ModelSwitchResult switched = ModelSwitch::Run(request);
 
-        // Store symbolic ID if any
-        std::string symbolicId;
-        if (currentEmulator)
-        {
-            symbolicId = currentEmulator->GetSymbolicId();
-        }
+        auto mediaJson = [&switched]() {
+            Json::Value media;
+            media["attached"] = Json::arrayValue;
+            media["detached"] = Json::arrayValue;
+            media["closed"] = Json::arrayValue;
+            for (const std::string& slot : switched.media.attached)
+                media["attached"].append(slot);
+            for (const std::string& slot : switched.media.detached)
+                media["detached"].append(slot);
+            for (const std::string& slot : switched.media.closed)
+                media["closed"].append(slot);
+            return media;
+        };
 
-        // Remove the old emulator
-        manager->RemoveEmulator(id);
-
-        // Create a new emulator with the requested model
-        std::shared_ptr<Emulator> newEmulator;
-        std::string createError;
-        if (ramSize > 0)
-        {
-            newEmulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
-                                                                 LoggerLevel::LogWarning, &createError);
-        }
-        else
-        {
-            newEmulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
-        }
-
-        if (!newEmulator)
+        if (!switched.result.Ok())
         {
             Json::Value error;
-            error["error"] = "Failed to create emulator";
-            error["message"] = !createError.empty()
-                                   ? createError
-                                   : ("Could not create emulator with model '" + modelName + "'");
+            error["error"] = switched.result.error == MediaError::Dirty ? "Conflict" : "Failed to switch model";
+            error["code"] = MediaErrorCode(switched.result.error);
+            error["message"] = switched.result.message;
             error["requested_model"] = modelName;
-            error["available_models_endpoint"] = "/api/v1/emulator/models";
+            error["stranded"] = Json::arrayValue;
+            for (const SlotInfo& info : switched.stranded)
+            {
+                Json::Value medium;
+                medium["slot"] = info.descriptor.id;
+                medium["source"] = info.source;
+                medium["changes"] = info.changes;
+                error["stranded"].append(medium);
+            }
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            resp->setStatusCode(switched.result.error == MediaError::Dirty ? HttpStatusCode::k409Conflict
+                                                                            : HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
 
-        // Initialize and start the new emulator
-        bool initSuccess = newEmulator->Init();
-        if (!initSuccess)
-        {
-            Json::Value error;
-            error["error"] = "Initialization failed";
-            error["message"] = "Emulator created but failed to initialize";
-            error["new_emulator_id"] = newEmulator->GetId();
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-
+        std::shared_ptr<Emulator> newEmulator = switched.emulator;
         newEmulator->Start();
 
         Json::Value ret;
@@ -1018,6 +1129,7 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         ret["old_emulator_id"] = id;
         ret["new_emulator_id"] = newEmulator->GetId();
         ret["state"] = stateToString(newEmulator->GetState());
+        ret["media"] = mediaJson();
         AddIdentityFields(ret, *newEmulator);
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);

@@ -14,6 +14,7 @@
 #include "base/featuremanager.h"
 #include "diskfastload.h"
 #include "flakysectoremulator.h"
+#include "floppydriveslot.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
@@ -166,6 +167,13 @@ void WD1793::internalReset()
     _verifySeek = false;
     _steppingMotorRate = 6;
     _stepDirectionIn = false;
+
+    // The turbo VG phase restarts at 1 MHz. The policy, the latched clock and the separator rate are machine
+    // configuration: a chip reset (Beta 128 #FF bit 2) does not touch them
+    if (_clockPolicy == FdcClockPolicy::AutoStepTurbo)
+    {
+        _fdcClock = FdcClock::Clock1MHz;
+    }
     _stepCounter = 0;
     _headLoaded = false;
 
@@ -359,6 +367,17 @@ void WD1793::processBeta128(uint8_t value)
     }
 
     notifyFDDStateChanged();
+}
+
+void WD1793::RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
+                                      bool stepIn)
+{
+    processBeta128(system);
+    _trackRegister = track;
+    _sectorRegister = sector;
+    _dataRegister = data;
+    _statusRegister = static_cast<uint8_t>(status & ~(WDS_BUSY | WDS_DRQ));
+    _stepDirectionIn = stepIn ? 1 : 0;
 }
 
 /// Current floppy state (selected drive, head position, registers, motor, media)
@@ -1231,10 +1250,129 @@ void WD1793::processWD93Command(uint8_t value)
 uint8_t WD1793::getPositioningRateForType1CommandMs(uint8_t command)
 {
     uint8_t rateIndex = command & 0b0000'0011;
-    uint8_t result = STEP_TIMINGS_MS_1MHZ[rateIndex];
+    uint8_t result = (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex] : STEP_TIMINGS_MS_1MHZ[rateIndex];
 
     return result;
 }
+
+/// region <Controller clock and data rate>
+
+void WD1793::SetClockPolicy(FdcClockPolicy policy)
+{
+    _clockPolicy = policy;
+    if (policy != FdcClockPolicy::Latched)
+    {
+        _fdcClock = FdcClock::Clock1MHz;
+    }
+}
+
+bool WD1793::SetLatchedClock(FdcClock clock, FdcDataRate rate)
+{
+    if (_clockPolicy != FdcClockPolicy::Latched)
+    {
+        return false;
+    }
+
+    _fdcClock = clock;
+    _dataRate = rate;
+    return true;
+}
+
+FdcClockPolicy WD1793::ResolveClockPolicy(FdcClockPolicy machineDefault, int turboVgOverride)
+{
+    if (turboVgOverride < 0 || machineDefault == FdcClockPolicy::Latched)
+    {
+        return machineDefault;
+    }
+
+    return turboVgOverride == 0 ? FdcClockPolicy::Fixed1MHz : FdcClockPolicy::AutoStepTurbo;
+}
+
+const char* WD1793::ClockPolicyName(FdcClockPolicy policy)
+{
+    switch (policy)
+    {
+        case FdcClockPolicy::Fixed1MHz:
+            return "Fixed1MHz";
+        case FdcClockPolicy::AutoStepTurbo:
+            return "AutoStepTurbo";
+        case FdcClockPolicy::Latched:
+            return "Latched";
+    }
+    return "Unknown";
+}
+
+size_t WD1793::StepPeriodTStates(uint8_t rateIndex) const
+{
+    rateIndex &= 0b0000'0011;
+    const size_t ms = (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex] : STEP_TIMINGS_MS_1MHZ[rateIndex];
+    return ms * TSTATES_PER_MS;
+}
+
+size_t WD1793::HeadSettleTStates() const
+{
+    const size_t ms = (_fdcClock == FdcClock::Clock2MHz) ? HEAD_SETTLE_MS_2MHZ : HEAD_SETTLE_MS_1MHZ;
+    return ms * TSTATES_PER_MS;
+}
+
+void WD1793::ScheduleStep()
+{
+    // The chip issues the step pulse and then waits one step period. On a turbo VG board the pulse itself
+    // switches CLK to 2 MHz, so the period that follows (and the verify settle) already run at 2 MHz
+    if (_clockPolicy == FdcClockPolicy::AutoStepTurbo)
+    {
+        _fdcClock = FdcClock::Clock2MHz;
+    }
+
+    _steppingMotorRate = getPositioningRateForType1CommandMs(_commandRegister);
+    transitionFSMWithDelay(WDSTATE::S_STEP, StepPeriodTStates(_commandRegister));
+}
+
+uint32_t WD1793::NoiseSeed(size_t cylinder, uint8_t side)
+{
+    return 0x9E3779B9u ^ static_cast<uint32_t>(cylinder * 2 + side);
+}
+
+void WD1793::FillReadTrackNoise(uint32_t seed, size_t length)
+{
+    // Deterministic (the same track reads the same noise every time: replay / TTD stay exact). xorshift32;
+    // the MFM sync values A1 / C2 and the address mark bytes are moved off so nothing in it looks like a mark
+    _readTrackNoise.resize(length);
+    uint32_t x = seed ? seed : 1u;
+    for (size_t i = 0; i < length; i++)
+    {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint8_t b = static_cast<uint8_t>(x >> 24);
+        switch (b)
+        {
+            case 0xA1: case 0xC2: case 0xF8: case 0xFB: case 0xFC: case 0xFE:
+                b ^= 0x10;
+                break;
+            default:
+                break;
+        }
+        _readTrackNoise[i] = b;
+    }
+}
+
+void WD1793::ContinueAfterHeadSettle(WDSTATE nextState)
+{
+    // Datasheet p.6: "There is also a 15 ms head settling time if the E flag is set in any Type II or III
+    // command" - 30 ms at 1 MHz (flowchart footnote: "If TEST = 1 AND CLK = 1 MHZ 30 MS DELAY")
+    if (_commandRegister & CMD_DELAY)
+    {
+        MLOGINFO("E-flag set: head settle delay %zu T-states", HeadSettleTStates());
+        transitionFSMWithDelay(nextState, HeadSettleTStates());
+    }
+    else
+    {
+        transitionFSM(nextState);
+    }
+}
+
+/// endregion </Controller clock and data rate>
 
 /// Restore (Seek track 0)
 /// @param value
@@ -1263,7 +1401,7 @@ void WD1793::cmdRestore(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+    ScheduleStep();
 }
 
 /// This command assumes that Track Register contains the track number of the current position
@@ -1287,7 +1425,9 @@ void WD1793::cmdSeek(uint8_t value)
     // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_trackRegister == _dataRegister)
     {
-        _selectedDrive->setTrack(_trackRegister);
+        // No step pulses: the head stays where it is. The track register is
+        // the controller's belief, not the head position (TR-DOS relies on
+        // this for 40-track disks in an 80-track drive: TR = n, head = 2n)
         type1CommandVerify();
         return;
     }
@@ -1296,7 +1436,7 @@ void WD1793::cmdSeek(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> ... -> S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+    ScheduleStep();
 }
 
 /// Performs single head step movement remaining previously set direction
@@ -1311,7 +1451,7 @@ void WD1793::cmdStep(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+    ScheduleStep();
 }
 
 void WD1793::cmdStepIn(uint8_t value)
@@ -1327,7 +1467,7 @@ void WD1793::cmdStepIn(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+    ScheduleStep();
 }
 
 void WD1793::cmdStepOut(uint8_t value)
@@ -1343,7 +1483,7 @@ void WD1793::cmdStepOut(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+    ScheduleStep();
 }
 
 /// Executes the Read Sector command (Type II command)
@@ -1408,7 +1548,7 @@ void WD1793::cmdReadSector(uint8_t value)
         }
 
         // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
         if (!track)
         {
             this->_statusRegister |= WDS_NOTFOUND;
@@ -1436,20 +1576,8 @@ void WD1793::cmdReadSector(uint8_t value)
     });
     _operationFIFO.push(readSector);
 
-    // Start FSM playback using FIFO queue
-    // Apply E-flag delay (15ms @ 2MHz) if E=1 in command byte
-    if (_commandRegister & CMD_DELAY)
-    {
-        // Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is 
-        // sampled after a 15 ms delay."
-        constexpr size_t HEAD_SETTLE_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms in t-states
-        transitionFSMWithDelay(WDSTATE::S_FETCH_FIFO, HEAD_SETTLE_DELAY_TSTATES);
-        MLOGINFO("E-flag set: adding 15ms head settle delay");
-    }
-    else
-    {
-        transitionFSM(WDSTATE::S_FETCH_FIFO);
-    }
+    // Start FSM playback using FIFO queue, after the head settle (30 ms @ 1 MHz, 15 ms @ 2 MHz) when E=1
+    ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
 }
 
 void WD1793::cmdWriteSector(uint8_t value)
@@ -1484,7 +1612,7 @@ void WD1793::cmdWriteSector(uint8_t value)
     //
     // Hooked *after* the WP early-return so the marker only fires when the
     // write actually starts. No-op unless the TTD session is Recording.
-    if (_context && _context->pTimeTravelManager)
+    // The media manager keeps one barrier per drive per frame
     {
         char reason[64];
         std::snprintf(reason, sizeof(reason),
@@ -1492,8 +1620,7 @@ void WD1793::cmdWriteSector(uint8_t value)
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sectorRegister),
                       static_cast<unsigned>(_sideUp));
-        _context->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DiskWrite, reason);
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
     }
 
     // Decode command bits:
@@ -1536,7 +1663,7 @@ void WD1793::cmdWriteSector(uint8_t value)
         }
 
         // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
         if (!track)
         {
             this->_statusRegister |= WDS_NOTFOUND;
@@ -1564,20 +1691,8 @@ void WD1793::cmdWriteSector(uint8_t value)
     });
     _operationFIFO.push(writeSector);
 
-    // Start FSM playback using FIFO queue
-    // Apply E-flag delay (15ms @ 2MHz) if E=1 in command byte
-    if (_commandRegister & CMD_DELAY)
-    {
-        // Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is 
-        // sampled after a 15 ms delay."
-        constexpr size_t HEAD_SETTLE_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms in t-states
-        transitionFSMWithDelay(WDSTATE::S_FETCH_FIFO, HEAD_SETTLE_DELAY_TSTATES);
-        MLOGINFO("E-flag set: adding 15ms head settle delay");
-    }
-    else
-    {
-        transitionFSM(WDSTATE::S_FETCH_FIFO);
-    }
+    // Start FSM playback using FIFO queue, after the head settle (30 ms @ 1 MHz, 15 ms @ 2 MHz) when E=1
+    ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
 }
 
 /// Upon receipt of the Read Address command, the head is loaded and the Busy Status bit is set.
@@ -1612,8 +1727,8 @@ void WD1793::cmdReadAddress(uint8_t value)
     });
     _operationFIFO.push(readIDAM);
 
-    // Start FSM playback using FIFO queue
-    transitionFSM(WDSTATE::S_FETCH_FIFO);
+    // Start FSM playback using FIFO queue (after the head settle when E=1)
+    ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
 }
 
 void WD1793::cmdReadTrack(uint8_t value)
@@ -1637,7 +1752,7 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp);
+    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
     if (!track)
     {
         _statusRegister |= WDS_NOTFOUND;
@@ -1648,15 +1763,13 @@ void WD1793::cmdReadTrack(uint8_t value)
     // Phase 2 Item 6 - record a disk-write marker for the format command.
     // Write Track reformats an entire track, which is heavily destructive
     // to replay fidelity.
-    if (_context && _context->pTimeTravelManager)
     {
         char reason[64];
         std::snprintf(reason, sizeof(reason),
                       "Write Track (format) trk=%u side=%u",
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sideUp));
-        _context->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DiskWrite, reason);
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
     }
 
     if (!track->rawData() || track->rawSize() == 0)
@@ -1685,10 +1798,23 @@ void WD1793::cmdReadTrack(uint8_t value)
                            }
 
                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
                            if (!track)
                            {
                                this->_statusRegister |= WDS_NOTFOUND;
+                               return;
+                           }
+
+                           if (!DataRateMatches(*track))
+                           {
+                               // Separator at the other rate: it never locks, so one revolution of bytes
+                               // assembled at its own rate comes out as noise, with no address mark in it
+                               const size_t cylinder = selectedDrive->getTrack();
+                               FillReadTrackNoise(NoiseSeed(cylinder, sideUp ? 1 : 0),
+                                                  DiskImage::RawTrack::NominalTrackSize(controllerEncoding(), _dataRate));
+                               _bytesToRead = static_cast<int32_t>(_readTrackNoise.size());
+                               _rawDataBuffer = _readTrackNoise.data();
+                               _tstatesPerByte = DISK_ROTATION_PERIOD_TSTATES / _readTrackNoise.size();
                                return;
                            }
 
@@ -1703,8 +1829,8 @@ void WD1793::cmdReadTrack(uint8_t value)
     // Store the target state in _state2 for processWaitIndex to use
     _state2 = S_READ_TRACK;
     
-    // Transition to wait for index pulse
-    transitionFSM(WDSTATE::S_WAIT_INDEX);
+    // Transition to wait for index pulse (after the head settle when E=1)
+    ContinueAfterHeadSettle(WDSTATE::S_WAIT_INDEX);
 }
 
 void WD1793::cmdWriteTrack(uint8_t value)
@@ -1737,7 +1863,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp);
+    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
     if (!track)
     {
         _statusRegister |= WDS_NOTFOUND;
@@ -1745,7 +1871,10 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    // Set DRQ to request first byte from host (per datasheet: "wait for DRQ service")
+    // Set DRQ to request first byte from host (per datasheet: "The Data Request is activated immediately upon
+    // receiving the command"). The byte must be loaded before the index pulse, so the service flag starts false
+    // (startType3Command() pre-sets it for the read commands)
+    _drq_served = false;
     raiseDrq();
 
     // Capture values into the lambda to avoid dangling pointer issues
@@ -1766,21 +1895,24 @@ void WD1793::cmdWriteTrack(uint8_t value)
                             }
 
                             // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
                             if (!track)
                             {
                                 this->_statusRegister |= WDS_NOTFOUND;
                                 return;
                             }
 
-                            // The track takes the density the host selected: re-formatting in the other density
-                            // replaces the stream with a blank track of that density's nominal length
+                            // The track takes the density the host selected and the bit rate of the controller
+                            // clock (the write rate is CLK-derived, datasheet p.19): re-formatting in the other
+                            // encoding or at the other rate replaces the stream with a blank track of the nominal
+                            // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
                             const DiskImage::Encoding encoding = controllerEncoding();
-                            if (track->encoding() != encoding)
+                            const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
+                            if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
                             {
                                 const bool mfm = (encoding == DiskImage::Encoding::MFM);
-                                track->resizeRaw(mfm ? DiskImage::RawTrack::DEFAULT_TRACK_SIZE_MFM : DiskImage::RawTrack::DEFAULT_TRACK_SIZE_FM,
-                                                 encoding, mfm ? 0x4E : 0xFF);
+                                track->resizeRaw(DiskImage::RawTrack::NominalTrackSize(encoding, writeRate), encoding,
+                                                 mfm ? 0x4E : 0xFF);
                             }
                             _writeTrackEncoding = encoding;
                             _tstatesPerByte = byteCellTStates(*track);
@@ -1798,8 +1930,8 @@ void WD1793::cmdWriteTrack(uint8_t value)
     // Store the target state in _state2 for processWaitIndex to use
     _state2 = S_WRITE_TRACK;
 
-    // Transition to wait for index pulse
-    transitionFSM(WDSTATE::S_WAIT_INDEX);
+    // Transition to wait for index pulse (after the head settle when E=1)
+    ContinueAfterHeadSettle(WDSTATE::S_WAIT_INDEX);
 }
 
 /// Execute Force Interrupt command
@@ -2113,7 +2245,8 @@ void WD1793::type1CommandVerify()
         loadHead();
 
         // Transition to FSM S_VERIFY state after the delay
-        transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
+        // Head settle: 30 ms @ 1 MHz, 15 ms @ 2 MHz (after a turbo VG step run the clock is at 2 MHz here)
+        transitionFSMWithDelay(WDSTATE::S_VERIFY, HeadSettleTStates());
     }
     else
     {
@@ -2239,7 +2372,7 @@ void WD1793::processStep()
     // SEEK: Check if already at target track (trackRegister == dataRegister)
     if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister == _dataRegister)
     {
-        _selectedDrive->setTrack(_trackRegister);
+        // Already there: no step pulse, the head does not move
         notifyFDDStateChanged();
         type1CommandVerify();
         return;
@@ -2275,8 +2408,8 @@ void WD1793::processStep()
     }
     else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)  // SEEK command finished
     {
-        // Apply track change to selected FDD
-        _selectedDrive->setTrack(_trackRegister);
+        // The head moved one position per step pulse above; it is not
+        // re-synced to the track register
 
         // Check if position verification was requested
         type1CommandVerify();
@@ -2287,7 +2420,7 @@ void WD1793::processStep()
         if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK)
         {
             // Schedule next step according currently selected stepping motor rate
-            transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
+            ScheduleStep();
         }
         else if (_lastDecodedCmd == WD_CMD_STEP || _lastDecodedCmd == WD_CMD_STEP_IN ||
                  _lastDecodedCmd == WD_CMD_STEP_OUT)
@@ -2319,9 +2452,72 @@ void WD1793::processVerify()
         _headLoaded = true;
     }
 
-    // TODO: implement VERIFY
-    // Currently just end command
-    transitionFSM(WD1793::S_END_COMMAND);
+    // Datasheet Type I flowchart (after the settle): until 5 index holes have passed, read each ID field that
+    // passes under the head. Its track address must equal the Track Register (the side is not compared). A match
+    // with a CRC error sets CRC ERROR and the search goes on; a match with a good CRC resets CRC ERROR and ends
+    // the command. No match by the fifth index hole: Seek Error.
+    // The IDs are visited in rotation order from the current head position; one revolution sees all of them, so
+    // the answer is known now and only the time until it happens on the disk is scheduled.
+    DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
+    DiskImage::Track* track = diskImage ? _selectedDrive->trackUnderHead(_sideUp ? 1 : 0) : nullptr;
+
+    // Unformatted / other encoding / other data rate / between two 48 tpi tracks: no ID field is recognised
+    const bool readable = track && track->encoding() == controllerEncoding() && DataRateMatches(*track);
+
+    const size_t head = readable ? headByteOffset(*track) : 0;
+    const DiskImage::Sector* match = nullptr;
+    size_t matchBytes = SIZE_MAX;
+    bool crcErrorSeen = false;
+    if (readable)
+    {
+        for (const DiskImage::Sector& sector : track->sectors())
+        {
+            if (sector.cylinder() != _trackRegister)
+                continue;
+
+            const size_t bytes = track->bytesUntil(sector, head);
+            if (!sector.idCrcValid)
+            {
+                crcErrorSeen = true;  // a bad-CRC match passes under the head before or after the good one
+                continue;
+            }
+            if (bytes < matchBytes)
+            {
+                matchBytes = bytes;
+                match = &sector;
+            }
+        }
+    }
+
+    if (match)
+    {
+        // The good ID ends the search: mark (1) + C H R N (4) + CRC (2) = 7 byte cells after reaching it.
+        // A bad-CRC match that came first set CRC ERROR on the way, but success resets it (flowchart)
+        _crc_error = false;
+        _seek_error = false;
+        size_t delay = (matchBytes + 7) * byteCellTStates(*track);
+        if (isFastDiskArmed())
+        {
+            delay = std::min<size_t>(delay, 100);  // rotation teleport, as for the Type II ID search
+        }
+        MLOGDEBUG("Verify: ID C=%u found after %zu byte cells", _trackRegister, matchBytes);
+        transitionFSMWithDelay(WD1793::S_END_COMMAND, delay);
+        return;
+    }
+
+    // No acceptable ID: the chip keeps looking until the fifth index hole from now
+    MLOGDEBUG("Verify: no ID field with C=%u%s - Seek Error", _trackRegister, crcErrorSeen ? " (CRC error)" : "");
+    if (crcErrorSeen)
+    {
+        _crc_error = true;
+        _statusRegister |= WDS_CRCERR;
+    }
+    _seek_error = true;
+    _statusRegister |= WDS_SEEKERR;
+    const size_t phase = _time % DISK_ROTATION_PERIOD_TSTATES;
+    const size_t untilFifthIndex = (DISK_ROTATION_PERIOD_TSTATES - phase) +
+                                   (WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH - 1) * DISK_ROTATION_PERIOD_TSTATES;
+    transitionFSMWithDelay(WD1793::S_END_COMMAND, untilFifthIndex);
 }
 
 /// Locate the sector addressed by a Type II command on the given track (see header)
@@ -2337,6 +2533,15 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
     {
         MLOGDEBUG("Type II: density mismatch (controller %s, track %s) - no ID field recognised",
                   isDoubleDensity() ? "MFM" : "FM", track->encoding() == DiskImage::Encoding::MFM ? "MFM" : "FM");
+        return nullptr;
+    }
+
+    // A track recorded at the other data rate: the separator never locks, no address mark is recognised
+    if (!DataRateMatches(*track))
+    {
+        MLOGDEBUG("Type II: data rate mismatch (separator %s, track %s) - no ID field recognised",
+                  _dataRate == FdcDataRate::Rate500Kbps ? "500k" : "250k",
+                  track->RecordedDataRate() == FdcDataRate::Rate500Kbps ? "500k" : "250k");
         return nullptr;
     }
 
@@ -2368,7 +2573,7 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
 bool WD1793::hasSectorOnCurrentTrack(uint8_t sectorNo)
 {
     DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-    DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp) : nullptr;
+    DiskImage::Track* track = diskImage ? _selectedDrive->trackUnderHead(_sideUp) : nullptr;
 
     if (!track)
     {
@@ -2387,11 +2592,11 @@ void WD1793::processSearchID()
     DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
 
     // Use the current FDD track, not WD1793 track register!
-    DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp ? 1 : 0) : nullptr;
+    DiskImage::Track* track = diskImage ? _selectedDrive->trackUnderHead(_sideUp ? 1 : 0) : nullptr;
 
     DiskImage::Sector* sector = nullptr;
     size_t headPosition = 0;
-    if (track != nullptr && track->encoding() == controllerEncoding())
+    if (track != nullptr && track->encoding() == controllerEncoding() && DataRateMatches(*track))
     {
         headPosition = headByteOffset(*track);
         sector = track->nextSector(headPosition);
@@ -2483,7 +2688,7 @@ void WD1793::processReadSector()
 
             // Re-position to new sector
             DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(this->_selectedDrive->getTrack(), this->_sideUp) : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
             DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
 
             if (sector)
@@ -2669,7 +2874,7 @@ void WD1793::processWriteSector()
 
             // Re-position to new sector
             DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(this->_selectedDrive->getTrack(), this->_sideUp) : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
             DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
 
             if (sector)
@@ -2723,17 +2928,25 @@ void WD1793::processWriteSector()
 
 void WD1793::processWriteByte()
 {
-    // Lost Data detection: if host didn't provide data in time, set error and terminate
-    // Per WD1793 datasheet: If DRQ is not serviced in time, data is lost
+    // Lost Data detection (datasheet p.12):
+    // - first byte of the data field not loaded: "the command is terminated and the Lost Data status bit is set"
+    // - a later byte not loaded: "the Lost Data Status Bit is set and a byte of zeros is written on the disk.
+    //   The command is not terminated."
+    bool lostByte = false;
     if (_drq_out && !_drq_served)
     {
-        // Data was not provided by CPU to Data Register in time
-        // Set LOST_DATA error and terminate
-        MLOGWARNING("Write Sector: Lost Data - DRQ not serviced in time");
         _statusRegister |= WDS_LOSTDATA;
         raiseLostData();
-        transitionFSM(WDSTATE::S_END_COMMAND);
-        return;
+
+        if (_bytesToWrite == static_cast<int32_t>(_sectorSize))
+        {
+            MLOGWARNING("Write Sector: Lost Data - first DRQ not serviced, command terminated");
+            transitionFSM(WDSTATE::S_END_COMMAND);
+            return;
+        }
+
+        MLOGWARNING("Write Sector: Lost Data - DRQ not serviced in time, zero byte written");
+        lostByte = true;
     }
 
     if (_rawDataBuffer)
@@ -2741,8 +2954,8 @@ void WD1793::processWriteByte()
         // Reset Data Register access flag
         _drq_served = false;
 
-        // Put the next byte to write from the Data Register
-        *(_rawDataBuffer++) = _dataRegister;
+        // Put the next byte to write from the Data Register (zeros when the host missed it)
+        *(_rawDataBuffer++) = lostByte ? 0x00 : _dataRegister;
         _bytesToWrite--;
 
         if (_bytesToWrite > 0)
@@ -2825,21 +3038,17 @@ void WD1793::processWriteTrack()
     /// The WD1793 WRITE TRACK command uses DRQ (Data Request) to synchronize data
     /// transfer between the FDC and the host CPU. The timing works as follows:
     ///
-    /// FIRST BYTE (special case - _rawDataBufferIndex == 0):
-    ///   - DRQ was raised in cmdWriteTrack() when the command was issued
-    ///   - The CPU has NOT YET had time to respond to this DRQ
-    ///   - We SKIP the Lost Data check on first entry to allow CPU time to respond
-    ///   - This is essential because processWriteTrack() is called immediately after
-    ///     the index pulse is detected, before any CPU instruction cycles have elapsed
+    /// FIRST BYTE (_rawDataBufferIndex == 0):
+    ///   - DRQ was raised in cmdWriteTrack() when the command was accepted
+    ///   - This handler first runs at the index pulse; the host had the whole wait for the index
+    ///     to load the Data Register. If it did not, the command ends with Lost Data (datasheet p.14)
     ///
     /// SUBSEQUENT BYTES (_rawDataBufferIndex > 0):
     ///   - After each byte is written, we raise DRQ for the next byte
-    ///   - We then transition with a delay (WD93_TSTATES_PER_FDC_BYTE ≈ 114 T-states)
+    ///   - We then transition with a delay of one byte cell (112 T-states on a 6250-byte track)
     ///   - On the next call, we check if the CPU has responded (_drq_served == true)
-    ///   - If DRQ is still pending and not served, it's a Lost Data error
+    ///   - If not, a byte of zeros is written, Lost Data is set and writing continues
     ///
-    /// Per WD1793 datasheet: The host must respond within one byte interval (~32µs at
-    /// 250kbps MFM) or the FDC sets Lost Data and terminates the operation.
     /// ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -2854,16 +3063,26 @@ void WD1793::processWriteTrack()
         return;
     }
 
-    // Lost Data check - only applicable AFTER at least one byte has been written
-    // First byte: DRQ was raised in cmdWriteTrack(), CPU hasn't had time to respond yet
-    // Subsequent bytes: Check if CPU responded to DRQ within the byte interval delay
-    if (_drq_out && !_drq_served && _rawDataBufferIndex > 0)
+    // Lost Data (datasheet p.14):
+    // - first byte: DRQ went up when the command was accepted; "If the DR has not been loaded by the time the
+    //   index pulse is encountered the operation is terminated [...] the Lost Data Status Bit is set"
+    // - later bytes: "If a byte is not present in the DR when needed, a byte of zeros is substituted"
+    bool lostByte = false;
+    if (_drq_out && !_drq_served)
     {
-        // Host didn't provide data within the byte interval - Lost Data error
         _statusRegister |= WDS_LOSTDATA;
-        MLOGWARNING("Write Track: Lost Data - DRQ not serviced at byte %zu", _rawDataBufferIndex);
-        transitionFSM(S_END_COMMAND);
-        return;
+        raiseLostData();
+
+        if (_rawDataBufferIndex == 0)
+        {
+            MLOGWARNING("Write Track: Lost Data - first byte not loaded by the index pulse, command terminated");
+            _writeTrackTarget = nullptr;  // nothing was written
+            transitionFSM(S_END_COMMAND);
+            return;
+        }
+
+        MLOGWARNING("Write Track: Lost Data - DRQ not serviced at byte %zu, zero byte written", _rawDataBufferIndex);
+        lostByte = true;
     }
 
     // Check if we've written all bytes (one revolution: 6250 for a standard MFM track)
@@ -2883,8 +3102,8 @@ void WD1793::processWriteTrack()
         return;
     }
 
-    // Get the byte from data register
-    uint8_t dataByte = _dataRegister;
+    // Get the byte from data register (a missed byte is written as plain zeros: 0x00 is no control byte)
+    uint8_t dataByte = lostByte ? 0x00 : _dataRegister;
     uint8_t byteToWrite = dataByte;
     bool clockMark = false;  // True when the byte is written with a missing-clock pattern (A1 / C2)
 
@@ -3629,6 +3848,9 @@ std::string WD1793::dumpFullState()
     ss << StringHelper::Format("State: %s", WDSTATEToString(_state)) << std::endl;
     ss << StringHelper::Format("State2: %s", WDSTATEToString(_state2)) << std::endl;
     ss << StringHelper::Format("DRQ served: %s", _drq_served ? "YES" : "NO") << std::endl;
+    ss << StringHelper::Format("Clock: %d MHz (%s), data rate: %s", static_cast<int>(_fdcClock), ClockPolicyName(_clockPolicy),
+                               _dataRate == FdcDataRate::Rate500Kbps ? "500 kbit/s" : "250 kbit/s")
+       << std::endl;
     ss << StringHelper::Format("DRQ out: %s", _drq_out ? "YES" : "NO") << std::endl;
     ss << StringHelper::Format("INTRQ out: %s", _intrq_out ? "YES" : "NO") << std::endl;
     ss << _bytesToRead << " bytes to read" << std::endl;
@@ -3743,7 +3965,10 @@ std::string WD1793::dumpIndexStrobeData(bool skipNoTransitions)
 /// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 4)>
 //
 // Cursor-packed layout:
-//   Controller proper (143 bytes) + 4×FDD (4 × 27 bytes) = 251 bytes total.
+//   Controller proper (146 bytes) + 4×FDD (4 × 27 bytes) = 254 bytes total.
+//   (251 before 2026-09-29: the three clock / data-rate bytes at 143..145 were added.
+//    Recordings with the 251-byte blob report a size mismatch for this device and
+//    leave the FDC unrestored - re-record the TTD fixture corpus.)
 //
 // Controller layout:
 //    0   1   _commandRegister
@@ -3797,12 +4022,15 @@ std::string WD1793::dumpIndexStrobeData(bool skipNoTransitions)
 //  133   1   _sleeping
 //  134   8   _wakeTimestamp (uint64)
 //  142   1   _operationFIFO.size() at save (diagnostic; cleared on load)
-//         --- controller subtotal: 143 bytes ---
-//  143  27   FDD[0] (see fdd.cpp kFddStateSize)
-//  170  27   FDD[1]
-//  197  27   FDD[2]
-//  224  27   FDD[3]
-//         --- total: 251 bytes ---
+//  143   1   _clockPolicy (FdcClockPolicy: 0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched)
+//  144   1   _fdcClock (FdcClock: 1 = 1 MHz, 2 = 2 MHz; the turbo VG phase / latch)
+//  145   1   _dataRate (FdcDataRate: 0 = 250 kbit/s, 1 = 500 kbit/s)
+//         --- controller subtotal: 146 bytes ---
+//  146  27   FDD[0] (see fdd.cpp kFddStateSize)
+//  173  27   FDD[1]
+//  200  27   FDD[2]
+//  227  27   FDD[3]
+//         --- total: 254 bytes ---
 
 namespace
 {
@@ -3821,10 +4049,10 @@ inline int32_t  get_i32(const uint8_t*& cur)        { int32_t v; std::memcpy(&v,
 inline int64_t  get_i64(const uint8_t*& cur)        { int64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 } // anonymous namespace
 
-static constexpr size_t kControllerStateSize = 143;
-static constexpr size_t kFdcSubsystemStateSize = kControllerStateSize + 4 * 27;  // = 251 (4×FDD @ 27 B each)
-static_assert(kFdcSubsystemStateSize == 251, "FDC subsystem state size drift");
-static_assert(kControllerStateSize == 143, "FDC controller state size drift");
+static constexpr size_t kControllerStateSize = 146;
+static constexpr size_t kFdcSubsystemStateSize = kControllerStateSize + 4 * 27;  // = 254 (4×FDD @ 27 B each)
+static_assert(kFdcSubsystemStateSize == 254, "FDC subsystem state size drift");
+static_assert(kControllerStateSize == 146, "FDC controller state size drift");
 
 size_t WD1793::TTDStateSize() const
 {
@@ -3913,6 +4141,11 @@ void WD1793::TTDSaveState(uint8_t* dst) const
     uint8_t fifoDepth = static_cast<uint8_t>(
         std::min<size_t>(_operationFIFO.size(), 255u));
     put_u8 (cur, fifoDepth);
+
+    // Controller clock and data separator
+    put_u8 (cur, static_cast<uint8_t>(_clockPolicy));
+    put_u8 (cur, static_cast<uint8_t>(_fdcClock));
+    put_u8 (cur, static_cast<uint8_t>(_dataRate));
 
     // --- 4 FDDs ---
     // The FDDs live in coreState.diskDrives[]. If a slot is null (shouldn't
@@ -4022,6 +4255,16 @@ void WD1793::TTDLoadState(const uint8_t* src)
     (void)get_u8(cur);  // fifoDepth diagnostic — discard
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
+
+    // Controller clock and data separator (out-of-range values fall back to the defaults)
+    const uint8_t policy = get_u8(cur);
+    const uint8_t clock = get_u8(cur);
+    const uint8_t rate = get_u8(cur);
+    _clockPolicy = policy <= static_cast<uint8_t>(FdcClockPolicy::Latched) ? static_cast<FdcClockPolicy>(policy)
+                                                                            : FdcClockPolicy::Fixed1MHz;
+    _fdcClock = clock == static_cast<uint8_t>(FdcClock::Clock2MHz) ? FdcClock::Clock2MHz : FdcClock::Clock1MHz;
+    _dataRate = rate == static_cast<uint8_t>(FdcDataRate::Rate500Kbps) ? FdcDataRate::Rate500Kbps
+                                                                        : FdcDataRate::Rate250Kbps;
 
     // --- 4 FDDs ---
     if (_context)

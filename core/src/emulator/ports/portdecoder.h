@@ -2,11 +2,15 @@
 #include "stdafx.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/io/fdc/fdc.h"
+#include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
@@ -25,6 +29,7 @@ class SoundManager;
 class Keyboard;
 class Mouse;
 class PortDevice;
+class Ds12887;
 
 /// region <Constants>
 
@@ -186,8 +191,9 @@ enum class PagingLatch : uint8_t
     P7FFD, P1FFD, PDFFD, PFDFD, P7EFD, PEFF7, PFF77,
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
-    PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PBD, PTS, PMEM                  // TSConf (reserved)
+    PFFF7Window2, PFFF7Window3      // (reserved until the decoders land)
+    // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
+    // its decoder reports them itself, they are not EmulatorState fields
 };
 
 /// region <Tag / latch serialization - single source for every automation surface>
@@ -369,12 +375,6 @@ protected:
     SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
-    // Paging lock latch (hardware emulation of port 7FFD bit 5)
-    // When true, subsequent writes to port 7FFD are ignored by the hardware
-    // This is the actual hardware latch, separate from the emulatorState.p7FFD bit 5
-    // which is just a cached copy of the last written value
-    bool _7FFD_Locked = false;
-
     // Set by DecodePortIn/PeripheralPortIn to indicate whether a real hardware device
     // actually responded to the port read. When false, the port is unmapped and the
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
@@ -383,6 +383,9 @@ protected:
 
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
+
+    // The machine's IDE board ([HDD] Scheme): its latches; the channel is IdeController's
+    IdeAdapter _ide;
 
     // Full-decode observer devices (raw Z80 port address). Real bus cards
     // (e.g. ZXM-MoonSound) decode the whole 16-bit address and observe every
@@ -433,14 +436,21 @@ protected:
 
     /// region <Port trace (runtime feature "porttrace")>
 
-    // Cached FeatureManager state (kPortTrace). Written only from the control path
-    // (UpdateFeatureCache), read on the emulator thread in the I/O hooks. When false
-    // the hooks cost a single bool test + never-taken branch and _portTrace is null.
-    bool _portTraceFeatureCache = false;
+    // Cached FeatureManager state (kPortTrace). Written from the control path
+    // (UpdateFeatureCache, any thread) with release, read on the emulator thread
+    // in the I/O hooks - a relaxed load there (a plain load on x86 and ARM64),
+    // acquire before the recorder is touched. When false the hooks cost one
+    // test + a never-taken branch.
+    std::atomic<bool> _portTraceFeatureCache{false};
 
-    // Recorder instance; allocated lazily when the porttrace feature turns on,
-    // released (buffer memory freed) when it turns off
+    // Recorder instance: created once, when the porttrace feature first turns on,
+    // and kept until the decoder goes. Turning the feature off stops capture and
+    // frees the buffer memory (PortDiagnosticRecorder::releaseBuffer) but never
+    // deletes the object: the emulator thread and automation handlers hold
+    // pointers to it, and feature changes arrive on any thread (deleting and
+    // re-creating it here was a use-after-free found by ASan)
     std::unique_ptr<PortDiagnosticRecorder> _portTrace;
+    std::mutex _portTraceLifecycleMutex;  // UpdateFeatureCache runs on several threads
 
     // Frame-scoped rolling counters (debugger status panel); updated only while
     // the porttrace feature is on
@@ -465,6 +475,9 @@ public:
 
     virtual void SetRAMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
     virtual void SetROMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
+
+    /// The IDE board's latches (TTD, the state report, tests)
+    IdeAdapter& GetIdeAdapter() { return _ide; }
 
     /// Apply model-specific register defaults for the RESET= boot mode (port of the
     /// original reset(mode) model blocks: e.g. ATM installs the FF77/pFFF7
@@ -539,7 +552,11 @@ public:
     void UpdateFeatureCache();
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
-    PortDiagnosticRecorder* getPortTraceRecorder() { return _portTrace.get(); }
+    /// Once returned the pointer stays valid for the decoder's lifetime
+    PortDiagnosticRecorder* getPortTraceRecorder()
+    {
+        return _portTraceFeatureCache.load(std::memory_order_acquire) ? _portTrace.get() : nullptr;
+    }
 
     /// Frame-scoped I/O counters (valid while the porttrace feature is on)
     const PortActivitySummary& getActivitySummary() const { return _activitySummary; }
@@ -547,6 +564,13 @@ public:
     /// Model decode table for self-describing trace exports. If-chain decoders
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
+
+    /// Internal port codes this decoder resolves addresses to, with their names
+    /// (PLAN #60(g)): a table-driven decoder maps the address to a code first
+    /// (ZX-Evo: the BaseConf decode arm; Sprinter / TSConf: the port-table code),
+    /// and the trace records the code so an access stays readable when the map
+    /// changes. Empty for decoders without codes
+    virtual std::vector<PortTraceCodeName> GetPortTraceCodeTable() const { return {}; }
 
     /// Static port map for introspection ("which devices respond to which ports
     /// on this machine"). Single per-model switch over config.mem_model, mirroring
@@ -617,6 +641,35 @@ public:
     /// Model-specific state this machine carries beyond TTDChipsetState.
     virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
 
+    /// TTD time units per base T-state: the least common multiple of every
+    /// hardware CPU clock ratio the model can select (EmulatorState::
+    /// ttd_clock_units). 1 for models without a hardware turbo
+    virtual uint8_t TtdClockUnits() const { return 1; }
+
+    /// How the board clocks its WD1793 (docs/WD1793/WD1793_Timeouts.md, "Controller clock and data rate").
+    /// Every standard Beta 128 style interface runs the chip at a fixed 1 MHz; boards with automatic
+    /// "turbo VG" hardware override this. The [Beta128] TurboVG= option can override it again (Core::Init)
+    virtual FdcClockPolicy DefaultFdcClockPolicy() const { return FdcClockPolicy::Fixed1MHz; }
+
+    /// The machine's clock chip as the automation interfaces reach it
+    /// (RtcAccess, DeviceState::Rtc). `chip` is null when the machine has no
+    /// clock the guest can reach; `absentReason` then says why
+    struct RtcBinding
+    {
+        Ds12887* chip = nullptr;
+        std::string ports;          ///< how the Z80 reaches it
+        std::string nvramFile;      ///< battery-backed image, empty = session only
+        std::string absentReason;
+    };
+    virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
+
+    /// Emulated machine time in microseconds: whole frames at the model's
+    /// frame duration plus the position in the current frame (TTD time units,
+    /// so a hardware turbo switch mid-frame does not move it). Restored with
+    /// the frame counter by a TTD seek, which makes it the time base of
+    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    uint64_t EmulatedMicroseconds() const;
+
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
@@ -632,6 +685,15 @@ public:
     /// endregion </Port trace>
 
 protected:
+    /// The IDE board decodes before the model's own ports (UnrealSpeccy io.cpp
+    /// order). A model calls these first in DecodePortIn / DecodePortOut: when
+    /// they return true the I/O is done, trace and breakpoints included
+    bool TryIdePortIn(uint16_t port, uint16_t pc, uint8_t& result);
+    bool TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// The bus state the board's gate looks at: TR-DOS ports on (CF_TRDOS) by
+    /// default; Profi adds its EXT mode, ATM its DOS-ports rule
+    virtual IdeAdapter::Gate IdeGate();
+
     /// Called by subclasses AFTER hardware I/O completes.
     /// Handles: breakpoints, port access tracking, port trace capture, analyzer notifications.
     /// @param port The RAW port address as seen by the Z80 (breakpoints match on raw)
@@ -780,13 +842,20 @@ public:
     bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
     bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
     
-    /// Unlock port 7FFD paging for snapshot loading or debug sessions
-    /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
-    /// This ensures subsequent port writes via DecodePortOut() will be accepted
+    /// Unlock port 7FFD paging for snapshot loading or debug sessions: clears the
+    /// p7FFD lock bit, so subsequent port writes via DecodePortOut() are accepted
     void UnlockPaging();
     
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
     void LockPaging();
+
+    /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
+    /// every later write, screen bit included, and keeps the value that locked
+    /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the
+    /// lock is a function of the latches alone: whatever restores them (TTD, a
+    /// snapshot, a reset) restores the lock too. Models whose extension frees
+    /// bit 5 override this.
+    virtual bool IsPagingLocked() const { return _state && (_state->p7FFD & PORT_7FFD_LOCK) != 0; }
 
     /// endregion </Interaction with peripherals>
 

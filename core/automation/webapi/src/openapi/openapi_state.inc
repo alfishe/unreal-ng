@@ -67,6 +67,25 @@
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["responses"]["200"]["description"] =
         "Flash state information";
 
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["summary"] = "Get decoded screen attributes";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["tags"].append("Screen State");
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["name"] = "screen";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["description"] =
+        "Which screen to read: 0 forces page 5, 1 forces page 7 (shadow-capable models only). Omitted reads both "
+        "screens on shadow-capable models, else just the one.";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["responses"]["200"]["description"] =
+        "Per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout (offset 0x1800 "
+        "within a RAM page, read directly off the RAM page, not the Z80 bank mapping). Returns available, model, "
+        "cols (32), rows (24), and screens: an array of {screen, ram_page, cells}, where cells is a row-major "
+        "array of 768 {ink, paper, bright, flash} objects (bits 0-2 ink, 3-5 paper, 6 bright, 7 flash).";
+
     // Audio state endpoints
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");
@@ -125,6 +144,32 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
 
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =
+        "The machine's IDE board ([HDD] Scheme: NEMO, NEMO-A8, NEMO-DIVIDE, ATM, SMUC, PROFI, DIVIDE) and the gate it answers in, "
+        "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ, and per unit "
+        "(master, slave): kind (disk / cdrom), media slot, medium (description, sectors, writable), CHS translation, "
+        "the task file with status / error / device control bits decoded, the command in progress (name, phase, LBA, "
+        "sectors left, buffer position), and on a CD drive the disc, unit attention, byte count limit, sense key / ASC / "
+        "ASCQ and the last packet. 404 on machines without an IDE board.";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["200"]["description"] = "IDE board state";
+    paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["404"]["description"] = "No IDE board on this machine";
+
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["description"] =
+        "Where the CPU waits for the video logic: the machine's rule (none, ula48, ula128, gatearray), whether it applies, the 'contention' feature switch and whether contention is in effect, the selected memory interface (fast, debug, fast_contended, debug_contended), the I/O contention rule, per 16K slot its mapping and whether accesses there wait, the +2A/+3 floating-bus latch, and - while debug mode is on - contended accesses and wait T-states per kind (fetch, read, write, io) for the current frame, the last frame and in total.";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["responses"]["200"]["description"] = "Memory contention state";
+
 
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["summary"] =
         "Get AY chip register details";
@@ -160,14 +205,26 @@
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["summary"] = "Get General Sound state";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["description"] =
-        "General Sound card (dedicated 12 MHz Z80 coprocessor + 4 x 8-bit DAC, requires [SOUND] GSType=Z80): "
+        "General Sound card (classic GS, lightweight or NeoGS; [SOUND] GSType=Z80, LW or NGS). One report for every "
+        "interface (DeviceState::Gs; CLI state audio gs, Lua/Python gs_state, MCP audio_gs): device, implementation, "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
-        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. 404 when the machine "
-        "has no GS card fitted.";
+        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
+        "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
+        "view of ZX-DMA: mode (off | watch | divert), overlay_installed, read_latch (the byte the next host read "
+        "gets), pending (none | read | write) and pending_address, bytes_read / bytes_written / bytes_dropped, "
+        "wait_tstates, late_starts and late_start_ticks (starts no watch window saw, in 120 MHz card ticks), "
+        "watch_setting (selected | always), watch_frames and watch_frames_left (-1: closed). 404 when the "
+        "machine has no GS card fitted.";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["name"] = "ram";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["description"] =
+        "1: add fixed_window_hex, the card CPU's #4000-#7FFF window (peeked, no side effects)";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["200"]["description"] = "GS state";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["404"]["description"] =
         "Emulator or GS card not found";
@@ -178,10 +235,16 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
-        "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
-        "next frame boundary), dump_module (writes the last completed COM30..D2 module upload to a file - "
-        "'path' optional, defaults to 'gs-module-dump.mod'; 404 when no upload has completed yet).";
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
+        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
+        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
+        "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
+        "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
+        "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
+        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording). "
+        "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -215,6 +278,24 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["personality"]["enum"].append("lw");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("ngs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_insert");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_eject");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("flash_save");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("stereo_mode");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("separated");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("gs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("mono");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
@@ -225,14 +306,28 @@
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
+        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
+        "or any of them while a TTD replay owns the machine";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
+        "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
 
-    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox / SoundDrive state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["description"] =
+        "Covox or SoundDrive DAC. One report for every interface (DeviceState::Covox; CLI state audio covox, "
+        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB or quad SoundDrive), the ports this "
+        "model's decoder routes to it (from its port map: port, mask, match, decode, gate), shared_with_beta128 "
+        "(Beta-128 registers a DAC row also decodes, with shared_port_rule), the four DAC latches with mute state, "
+        "the last left/right amplitude, sound_last_frame, dc_removal and synthesis_suppressed.";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["responses"]["200"]["description"] = "Covox state";
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["responses"]["404"]["description"] =
+        "Emulator not found, or no Covox fitted ([SOUND] CovoxFB / SD)";
 
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["summary"] = "Get audio channels overview";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["tags"].append("Audio State");
@@ -259,6 +354,10 @@
     paths["/api/v1/emulator/state/fdc"]["get"]["summary"] = "Get Beta Disk WD1793 state (active emulator)";
     paths["/api/v1/emulator/state/fdc"]["get"]["tags"].append("Disk State (Active)");
     paths["/api/v1/emulator/state/fdc"]["get"]["responses"]["200"]["description"] = "WD1793 state";
+
+    paths["/api/v1/emulator/state/contention"]["get"]["summary"] = "Get memory contention state (active emulator)";
+    paths["/api/v1/emulator/state/contention"]["get"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/state/contention"]["get"]["responses"]["200"]["description"] = "Memory contention state";
 
     paths["/api/v1/emulator/state/audio/ay"]["get"]["summary"] = "Get AY chips overview (active emulator)";
     paths["/api/v1/emulator/state/audio/ay"]["get"]["tags"].append("Audio State (Active)");

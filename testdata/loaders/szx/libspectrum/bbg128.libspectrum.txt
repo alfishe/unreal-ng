@@ -1,0 +1,17 @@
+machine=Spectrum 128K
+a=223 f=73 bc=0 de=23777 hl=0
+a_=0 f_=68 bc_=5921 de_=13979 hl_=10072
+ix=980 iy=23610 sp=65342 pc=56 i=63 r=23
+iff1=0 iff2=0 im=1 memptr=0 tstates=69664
+halted=0 ei=0 setf=0
+ula=0 p7ffd=48 p1ffd=8
+ay_port=14 ay=0,0,0,0,0,0,0,255,0,0,0,0,0,0,255,0
+beta_active=0 beta_paged=0 beta_system=0
+page0=651aa28f
+page1=ab54d286
+page2=ab54d286
+page3=ab54d286
+page4=ab54d286
+page5=66f71afa
+page6=ab54d286
+page7=8c264ac0

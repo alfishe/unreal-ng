@@ -42,7 +42,9 @@ significant — is missing.
 - **Emulation reference:** Fuse `machines/scorpion.c` (paging, trap gating, port masks)
 - **Heritage reference:** original UnrealSpeccy by S. Zonov — this codebase is its direct
   descendant; several Scorpion-specific fields survive in `platform.h` (`p1FFD`,
-  `evenM1_C0`, `border_add/border_and` for the 4T border update) but are unused.
+  `border_add/border_and` for the 4T border update) but are unused. Its `evenM1_C0` was replaced by the
+  Even M1 rule of the circuit (see
+  [contention-by-machine.md](../2026-09-28-m1-contention/contention-by-machine.md) §12).
 
 ## Document map
 

@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include "emulator/media/modelswitch.h"
+
 #include <QWindow>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -23,6 +25,7 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QStandardPaths>
 #include <QDir>
 #include <QDateTime>
@@ -63,17 +66,26 @@
 #include "emulator/io/fdc/wd1793.h"
 
 #define signals Q_SIGNALS
-#include "loaders/disk/loader_scl.h"
-#include "loaders/disk/loader_trd.h"
 #include "loaders/disk/loader_fdi.h"
-#include "loaders/disk/loader_udi.h"
+#include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 namespace
 {
+// B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
+bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+{
+    const std::string refusal = emulator.RecordingGuard(action);
+    if (refusal.empty())
+        return false;
+    QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
+    return true;
+}
+
 // Convert std::vector<std::string> to QStringList
 QStringList toQStringList(const std::vector<std::string>& v)
 {
@@ -225,12 +237,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    mediaPanelWindow = new MediaPanelWindow();
+    mediaPanelWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
+    connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
@@ -252,6 +270,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
+    connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
@@ -260,6 +279,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
+    connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
+    connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -270,6 +291,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
+    connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
+            &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -499,6 +522,13 @@ MainWindow::~MainWindow()
         delete tapeManagerWindow;
     }
 
+    if (mediaPanelWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -622,6 +652,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
         _screenWrapper->prepareForShutdown();
     }
 
+    // A ZX-Poly group: stop the master's loop and remove the four instances
+    releaseZXPolyGroup();
+
     // Also notify EmulatorManager to block automation requests
     _emulatorManager->PrepareForShutdown();
 
@@ -675,6 +708,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         tapeManagerWindow->hide();
         delete tapeManagerWindow;
         tapeManagerWindow = nullptr;
+    }
+    if (mediaPanelWindow)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+        mediaPanelWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -1762,6 +1802,10 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
             if (!context || !context->pScreen)
                 return;
 
+            // A ZX-Poly master is shown through its group's display frame
+            if (attachScreenToZXPolyDisplay())
+                return;
+
             auto& fb = context->pScreen->GetFramebufferDescriptor();
             _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
 
@@ -1873,14 +1917,151 @@ void MainWindow::openSnapshotDialog()
     }
 }
 
+void MainWindow::openZXPolyDialog()
+{
+    QString filter = tr("ZX-Poly (*.zxp *.prom *.trd *.scl)") + ";;" + tr("All Files (*)");
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open ZX-Poly"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        startZXPoly(filePath);
+    }
+}
+
+void MainWindow::releaseZXPolyGroup()
+{
+    // A ZX-Poly machine goes as a whole: removing its master (EmulatorManager)
+    // unhooks the group and removes the three slaves with it
+    if (!_emulator)
+        return;
+    ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId());
+    if (group && group->GetMaster() == _emulator)
+        releaseEmulator();
+}
+
+void MainWindow::openFromCommandLine(const QString& filePath, const QString& zxpolyModel)
+{
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    const bool isZXPolyFile = suffix == QStringLiteral("zxp") || suffix == QStringLiteral("prom");
+    if (isZXPolyFile || !zxpolyModel.isEmpty())
+        startZXPoly(filePath, zxpolyModel);
+    else
+        loadFile(filePath);
+}
+
+bool MainWindow::attachScreenToZXPolyDisplay()
+{
+    // The ZX-Poly master's window shows the group's double-resolution display
+    // frame (mode 5 is 512 x 384) instead of the master's own framebuffer
+    if (!_screenWrapper || !_emulator)
+        return false;
+    ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId());
+    if (!group || group->GetMaster() != _emulator)
+        return false;
+
+    _screenWrapper->init(static_cast<uint16_t>(group->GetDisplayWidth()),
+                         static_cast<uint16_t>(group->GetDisplayHeight()),
+                         const_cast<uint32_t*>(group->GetDisplayBuffer()));
+    _screenWrapper->clearDisplayViewport();
+    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize) { return group->CopyDisplay(dst, dstSize); });
+    return true;
+}
+
+void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)
+{
+    // Every module of the four is the same stock model: pick a configuration.
+    // An edition (.zxp, .prom, multiloader disk) needs a 128K-class one
+    QString model = requestedModel;
+    if (model.isEmpty())
+    {
+        QStringList titles;
+        QStringList names;
+        for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+        {
+            if (!filePath.isEmpty() && std::string(configuration.baseModel) == "48K")
+                continue;
+            titles << QString::fromUtf8(configuration.title);
+            names << QString::fromUtf8(configuration.name);
+        }
+        const int pentagon = static_cast<int>(names.indexOf(QStringLiteral("ZXPOLY-PENTAGON")));
+        bool accepted = false;
+        const QString title = QInputDialog::getItem(this, tr("ZX-Poly"), tr("Machine configuration:"), titles,
+                                                    pentagon >= 0 ? pentagon : 0, false, &accepted);
+        if (!accepted)
+            return;
+        model = names.value(titles.indexOf(title));
+    }
+
+    QApplication::processEvents();
+    _switchingModel = true;
+
+    // Release whatever runs now (a previous ZX-Poly group or a single machine)
+    releaseZXPolyGroup();
+    if (_emulator)
+    {
+        if (_emulator->IsRunning())
+        {
+            _emulator->Pause(false);
+            _emulator->Stop();
+        }
+        releaseEmulator();
+    }
+
+    std::string error;
+    std::shared_ptr<Emulator> master =
+        _emulatorManager->CreateZXPolyMachine("", model.toStdString(), filePath.toStdString(), &error);
+    if (!master)
+    {
+        _switchingModel = false;
+        const QString reason = QString::fromStdString(error);
+        QMessageBox::critical(this, tr("ZX-Poly"),
+                              filePath.isEmpty() ? tr("Cannot start ZX-Poly %1:\n%2").arg(model, reason)
+                                                 : tr("Cannot start ZX-Poly from %1:\n%2").arg(filePath, reason));
+        if (_menuManager)
+            _menuManager->updateMachineModelSelection(_emulator);
+        return;
+    }
+
+    adoptEmulator(master, EmulatorOrigin::CreatedByGui);
+    attachScreenToZXPolyDisplay();
+    master->StartAsync();
+
+    if (!filePath.isEmpty())
+        _lastDirectory = QFileInfo(filePath).absolutePath();
+    _switchingModel = false;
+
+    qInfo() << "MainWindow::startZXPoly() - ZX-Poly running from" << filePath << "on" << model;
+}
+
+void MainWindow::handleZXPolyConfigurationRequested(const QString& configurationName)
+{
+    const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(configurationName.toStdString());
+    if (configuration == nullptr)
+        return;
+
+    const QString title = QString::fromUtf8(configuration->title);
+    const QMessageBox::StandardButton reply = QMessageBox::question(
+        this, tr("Switch Machine Model"),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.")
+            .arg(title),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes)
+    {
+        if (_menuManager)
+            _menuManager->updateMachineModelSelection(_emulator);
+        return;
+    }
+
+    // The bare machine: the master runs its ROM, the slaves wait
+    startZXPoly(QString(), configurationName);
+}
+
 void MainWindow::openTapeDialog()
 {
     QStringList exts = toQStringList(Emulator::SupportedTapeExtensions());
     QString filter = buildFilterGroup(tr("Tape Files"), exts) + ";;" +
                      buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
                      buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
-                     buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
-                     buildFilterGroup(tr("WAV Audio"), {"wav"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Tape"), _lastDirectory, filter);
@@ -1917,6 +2098,14 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
     // Save directory to settings
     saveLastDirectory(filePath);
 
+    // A ZX-Poly snapshot or ROM image is a four-machine group, not a file for this one
+    const QString zxpolySuffix = QFileInfo(filePath).suffix().toLower();
+    if (zxpolySuffix == QStringLiteral("zxp") || zxpolySuffix == QStringLiteral("prom"))
+    {
+        startZXPoly(filePath);
+        return;
+    }
+
     // Determine file type
     QString filePathCopy = filePath;
     SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
@@ -1943,6 +2132,30 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
+                break;
+            // An SZX file names its machine: another model is replaced by that one
+            // first (as the Machine menu does, media follow), the same one just loads
+            if (_emulator && filePath.toLower().endsWith(".szx"))
+            {
+                szx::Machine machine;
+                std::string error;
+                if (!LoaderSZX::ProbeMachine(file, machine, error))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
+                    break;
+                }
+                const CONFIG& running = _emulator->GetContext()->config;
+                if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
+                {
+                    const TMemModel* target = Config::FindModelByEnum(machine.model);
+                    qInfo() << "SZX saved on" << QString::fromStdString(szx::DescribeModel(machine.model, machine.ramKb))
+                            << "- replacing the running"
+                            << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
+                    if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
+                        break;
+                }
+            }
             if (_emulator)
             {
                 bool result = _emulator->LoadSnapshot(file);
@@ -1958,6 +2171,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileTape:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadTape(file);
@@ -1970,6 +2185,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileDisk:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
+                break;
             if (_emulator)
             {
                 // Quick reset into TR-DOS only while the machine is running; paused or stopped machines just mount
@@ -2011,15 +2228,25 @@ void MainWindow::saveFileDialog()
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
-                                                    tr("SNA Snapshots (*.sna);;All Files (*)"));
+    // The format follows the extension; SZX keeps the most state (MEMPTR, the
+    // frame position, AY, Beta 128)
+    QString selectedFilter;
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.szx",
+                                                    tr("SZX Snapshots (*.szx);;Z80 Snapshots (*.z80);;SNA Snapshots (*.sna)"),
+                                                    &selectedFilter);
 
     if (!filePath.isEmpty())
     {
-        // Ensure .sna extension
-        if (!filePath.toLower().endsWith(".sna"))
+        // No known extension: take the one of the chosen filter
+        const QString lower = filePath.toLower();
+        if (!lower.endsWith(".szx") && !lower.endsWith(".z80") && !lower.endsWith(".sna"))
         {
-            filePath += ".sna";
+            if (selectedFilter.contains("*.z80"))
+                filePath += ".z80";
+            else if (selectedFilter.contains("*.sna"))
+                filePath += ".sna";
+            else
+                filePath += ".szx";
         }
 
         // Save directory to settings (separate from open directory)
@@ -2196,16 +2423,15 @@ void MainWindow::saveDiskAsUDIDialog()
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-    std::string file = filePath.toStdString();
-    LoaderUDI loader(context, file);
-    loader.setImage(diskImage);
-    if (loader.writeImage())
+    // Through the media manager: the drive's disk now stands for this file
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
+    if (result.saved)
     {
         qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
         QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
@@ -2263,20 +2489,19 @@ void MainWindow::saveDiskAsTRDDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using TRD format
-        std::string file = filePath.toStdString();
-        LoaderTRD loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for TRD; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as TRD successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as TRD:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2335,20 +2560,19 @@ void MainWindow::saveDiskAsSCLDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using SCL format
-        std::string file = filePath.toStdString();
-        LoaderSCL loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for SCL; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as SCL successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as SCL:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2519,6 +2743,18 @@ void MainWindow::handleFastDiskToggled(bool enabled)
     }
 }
 
+void MainWindow::handleContentionToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager && !featureManager->setFeature(Features::kContention, enabled))
+            qDebug() << "Memory contention switch refused (TTD timeline bound)";
+    }
+    _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
+}
+
 void MainWindow::handleAutostartDisksToggled(bool enabled)
 {
     _autostartDisks = enabled;
@@ -2588,6 +2824,12 @@ void MainWindow::handleLogWindowToggled(bool visible)
     }
 }
 
+void MainWindow::handleMediaPanelToggled(bool visible)
+{
+    if (mediaPanelWindow)
+        mediaPanelWindow->setVisible(visible);
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -2602,6 +2844,8 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            return;
         if (_emulator)
         {
             if (!_emulator->LoadTape(path.toStdString()))
@@ -2812,50 +3056,94 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     QMessageBox::StandardButton reply = QMessageBox::question(
         this,
         tr("Switch Machine Model"),
-        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.").arg(displayName),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance; its machine state is lost.\n"
+           "Disks, tapes and cards go with it, unsaved writes included.").arg(displayName),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No
     );
 
-    if (reply != QMessageBox::Yes)
-    {
-        // User cancelled - restore menu selection to current model
+    auto restoreMenu = [this]() {
         if (_menuManager)
-        {
             _menuManager->updateMachineModelSelection(_emulator);
-        }
+    };
+    if (reply != QMessageBox::Yes || !_emulator)
+    {
+        restoreMenu();  // User cancelled - restore menu selection to current model
         return;
     }
 
     // Process events to ensure dialog is fully closed before heavy operations
     QApplication::processEvents();
 
+    if (!switchMachineModel(modelName, ramSize))
+        restoreMenu();
+}
+
+bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSize)
+{
+    if (!_emulator || !_emulatorManager)
+        return false;
+    const QString displayName = QString("%1 %2K").arg(QString::fromStdString(modelName)).arg(ramSize);
+
     // Set flag to prevent notification handler from interfering
     _switchingModel = true;
 
-    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+    qInfo() << "MainWindow::switchMachineModel() - Switching to model:" << displayName;
 
-    // Pause, stop and release current emulator
-    if (_emulator)
+    // The media follow the switch (ModelSwitch, docs/features/media.md). A
+    // medium with unsaved writes the new model has no slot for needs a decision
+    ModelSwitchRequest request;
+    request.emulatorId = _emulator->GetId();
+    request.model = modelName;
+    request.ramKb = ramSize;
+    request.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
+    ModelSwitchResult switched = ModelSwitch::Run(request);
+
+    if (switched.result.error == MediaError::Dirty)
     {
-        if (_emulator->IsRunning())
+        QStringList media;
+        for (const SlotInfo& info : switched.stranded)
+            media << QString("%1: %2 (%3)")
+                         .arg(QString::fromStdString(info.descriptor.id), QString::fromStdString(info.source),
+                              QString::fromStdString(info.changes));
+
+        QMessageBox box(QMessageBox::Warning, tr("Switch Machine Model"),
+                        tr("%1 has no slot for these media, and they have unsaved writes:\n\n%2")
+                            .arg(displayName, media.join("\n")),
+                        QMessageBox::NoButton, this);
+        QPushButton* save = box.addButton(tr("Save"), QMessageBox::AcceptRole);
+        QPushButton* discard = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+        QPushButton* keep = box.addButton(tr("Keep Detached"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+
+        if (box.clickedButton() == save)
+            request.stranded = StrandedMedia::Save;
+        else if (box.clickedButton() == discard)
+            request.stranded = StrandedMedia::Discard;
+        else if (box.clickedButton() == keep)
+            request.stranded = StrandedMedia::Keep;
+        if (request.stranded != StrandedMedia::Refuse)
+            switched = ModelSwitch::Run(request);
+    }
+
+    if (!switched.result.Ok() || !switched.emulator)
+    {
+        _switchingModel = false;
+        if (switched.result.error != MediaError::Dirty)  // Cancel: nothing to report
         {
-            _emulator->Pause(false);  // Pause first to stop frame generation
-            _emulator->Stop();        // Then stop before destroying
+            qWarning() << "switchMachineModel: switch to" << displayName << "failed:"
+                       << QString::fromStdString(switched.result.message);
+            QMessageBox::critical(this, tr("Error"),
+                                  tr("Failed to switch to %1:\n%2")
+                                      .arg(displayName, QString::fromStdString(switched.result.message)));
         }
-        releaseEmulator();
+        return false;
     }
 
-    // Create new emulator with requested model and RAM size
-    std::shared_ptr<Emulator> newEmulator = _emulatorManager->CreateEmulatorWithModelAndRAM("", modelName, ramSize);
-    if (!newEmulator)
-    {
-        qWarning() << "handleMachineModelChangeRequested: Failed to create emulator with model" << displayName;
-        QMessageBox::critical(this, tr("Error"), tr("Failed to create emulator with model %1").arg(displayName));
-        return;
-    }
+    std::shared_ptr<Emulator> newEmulator = switched.emulator;
 
-    // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
+    // Adopt the new emulator (already initialized by ModelSwitch)
     adoptEmulator(newEmulator, EmulatorOrigin::CreatedByGui);
     qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
 
@@ -2867,7 +3155,18 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
 
     _switchingModel = false;
 
-    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
+    // Media that could not follow are worth a word
+    if (!switched.media.detached.empty() || !switched.media.closed.empty())
+    {
+        QStringList lines;
+        for (const std::string& line : switched.media.lines)
+            lines << QString::fromStdString(line);
+        QMessageBox::information(this, tr("Switch Machine Model"),
+                                 tr("Media on %1:\n\n%2").arg(displayName, lines.join("\n")));
+    }
+
+    qInfo() << "MainWindow::switchMachineModel() - Successfully switched to model:" << displayName;
+    return true;
 }
 
 #ifdef ENABLE_RECORDING
@@ -3323,6 +3622,12 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
         {
             std::string destroyedId = payload->_payloadText;
 
+            // Remember the removal for adoptions still queued for this instance
+            {
+                std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+                _destroyedEmulatorIds.insert(destroyedId);
+            }
+
             // Check if this was our active emulator
             bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
 
@@ -3656,11 +3961,36 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     qDebug() << "MainWindow::bindEmulatorAudio() - Only this emulator will have audio/video callbacks active";
 }
 
+/// An instance the manager removed (or is removing): released, announced as
+/// destroyed, or no longer registered. Binding the UI to it would leave every
+/// widget and the next unbind calling into a context that is gone
+bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
+{
+    if (!emulator || emulator->IsReleased())
+        return true;
+    {
+        std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+        if (_destroyedEmulatorIds.count(emulator->GetId()))
+            return true;
+    }
+    return _emulatorManager && !_emulatorManager->GetEmulator(emulator->GetId());
+}
+
 void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin)
 {
     if (!emulator)
     {
         qWarning() << "MainWindow::adoptEmulator() - Called with null emulator";
+        return;
+    }
+
+    // An adoption queued (selection change, creation) before the instance was
+    // removed can run after the removal: refuse it rather than bind a released
+    // instance
+    if (isEmulatorGone(emulator))
+    {
+        qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(emulator->GetId())
+                 << "was removed before the adoption ran; skipping";
         return;
     }
 
@@ -3749,6 +4079,10 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
                 }
                 return true;
             });
+
+            // A ZX-Poly master (started here or through automation) shows its
+            // group's double-resolution display frame instead
+            attachScreenToZXPolyDisplay();
         }
         catch (const std::exception& e)
         {
@@ -3880,8 +4214,9 @@ void MainWindow::unbindFromEmulator()
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
-    // 7. Audio cleanup
-    _emulator->ClearAudioCallback();
+    // 7. Audio cleanup (a released instance has none left)
+    if (!_emulator->IsReleased())
+        _emulator->ClearAudioCallback();
 
     // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;

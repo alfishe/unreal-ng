@@ -49,9 +49,15 @@ struct PortTraceEvent
     //   bit 6:    viaLegacyBasePath  (event captured on the legacy base-class DecodePortIn/Out
     //                                 path, if that path survives the audit — see implementation_plan.md;
     //                                 distinguishes the two reads of a Ghost-Byte pair)
-    //   bit 7:    reserved
+    //   bit 7:    fullDecodeClaimed  (low byte claimed by a full-decode card)
+
+    // ── Internal port code (PLAN #60(g), 2026-09-29) ──
+    uint16_t internalCode;      // What the address meant under the decoder's port map at that moment
+                                // (ZX-Evo: the BaseConf decode arm; later the Sprinter / TSConf
+                                // port-table code); 0xFFFF = the decoder has none. Names come from
+                                // PortDecoder::GetPortTraceCodeTable and travel in every export
 };
-// sizeof = 22 bytes (padded to 24 for alignment)
+// sizeof = 24 bytes (the code took the former padding; PTRC v2 / PTR2 v3)
 // Default capacity 1,048,576 events = 24 MB (configurable; overflow mode ring / stop-when-full)
 ```
 

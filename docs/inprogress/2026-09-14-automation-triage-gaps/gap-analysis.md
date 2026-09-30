@@ -218,6 +218,15 @@ confusion (see recommendations P0-4).
 
 ### C-2. Porttrace decode rules exist only for Pentagon128
 
+> **Done 2026-09-28** (PLAN #8, retired): per-arm attribution in the ATM710 and
+> ZX-Evo decoders, ATM device ids, Pentagon 1024 rule row and session name.
+>
+> **Re-scoped 2026-09-28** (PLAN #8): the session names landed (ATM710,
+> ZXEvoBaseConf, Profi). What remains is attribution, not a rule table: the
+> ATM710 and ZX-Evo decoders call `OnPortIn/OutComplete` without a
+> `PortDecodeDisposition`, so their events carry decoded port #0000 and no
+> device; the if-chain decoders report `kNoTable` like 128K/Scorpion/Profi/+3.
+
 `getPortTraceDecodeRules()` is virtual with an empty default
 ([portdecoder.h:233](../../../core/src/emulator/ports/portdecoder.h)); the
 only override is `PortDecoder_Pentagon128`. Without rules, trace events carry
@@ -310,6 +319,14 @@ repro step" pattern that makes `inspect_state` effective, and sets the
 precedent that new peripherals (MoonSound) also won't get aspects.
 
 ### D-3. Audio device state coverage is 2 of N; MoonSound has nothing
+
+> **Done 2026-09-28**: `DeviceState::Gs()`, `Covox()` (PLAN #20 retired) and
+> `MoonSound()` / `MoonSoundFm()` / `MoonSoundPcm()` (PLAN #11) rendered by every surface.
+>
+> **Re-scoped 2026-09-28** (PLAN #20, #11): the GS report now exists (with
+> NeoGS) but is built separately by each surface with diverging fields; Covox
+> is still a stub; MoonSound still has nothing. Target: `DeviceState::Gs()`,
+> `Covox()`, `MoonSound()` rendered by every surface.
 
 - `DeviceState::Fm/FmChip/Fdc` ([state_device_api.cpp:74-107](../../../core/automation/webapi/src/api/state_device_api.cpp))
   are the right pattern: full chip decode (registers, timers, operators,
@@ -416,11 +433,11 @@ nothing encodes what the 2026-09-10 session learned procedurally.
 | B-3 | Renderer stubs (master) define state-only triage | Context | atm branch | Open — atm branch |
 | B-4 | Digest pages 5/7 hardcoded | Medium | Small | ✅ Done — P1-3 (`mode=active`); parity on CLI/Lua/Python 2026-09-15 |
 | C-1 | No build fingerprint; machines non-creatable on master | Medium | Small | ✅ Fingerprint done — P0-4, `cab13b99`; creatability open (atm branch) |
-| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium | Open — P1-4 |
+| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium | ✅ Done 2026-09-28 (P1-4, PLAN #8) |
 | C-3 | No port-map introspection (incl. mouse Q4) | High | Medium | ✅ Done — P1-5 (`GET /ports`); parity `ports`/`ports_map()` 2026-09-15 |
 | D-1 | Mouse routing not reported | High (mouse scenario) | Small-Medium | ✅ Done — P2-1 (`routing` field); parity 2026-09-15 |
 | D-2 | No `mouse` aspect | Low | Trivial | ✅ Done — P2-1 |
-| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | Open — P2-2/P2-4 |
+| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | ✅ Done 2026-09-28 (P2-2 reports, P2-4) |
 | E-1 | Bank reporting 7FFD-centric | High | Medium | Open — P1-2 |
 | E-2 | No ROM identification | Medium | Medium | Open — P3-2 (paging-surface half designed: §5.2) |
 | F-1 | No per-machine resources | Medium | Small | Open — P3-1 |

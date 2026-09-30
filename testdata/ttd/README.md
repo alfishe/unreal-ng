@@ -31,6 +31,36 @@ Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
 add or change a fixture, edit that list and this table together.
 
+## Port-journal fixtures (`port-journals/`)
+
+Two real sessions with their port journals (every IN and OUT with its time
+and PC, ttd-port-read-journal.md) and the emulator's answers to a set of
+"when did the program ..." questions:
+
+| Fixture | Model | Session | Journals |
+|---|---|---|---|
+| `dizzyx.ttd` | Pentagon 128K, classic GS | `testdata/loaders/z80/dizzyx.z80` (Dizzy X, AY music); keys 8, 0, 5, Q, SPACE pressed; 495 frames | 7,905 IN, 14,920 OUT, 16.8 KB of a 2.1 MB file |
+| `greenberet-load.ttd` | 128K, classic GS | `testdata/loaders/tap/greenberet.tap` loaded by the 128K menu's Tape Loader; 1,010 frames (20 s) of loading | 722,025 IN, 28,859 OUT, 156 KB of a 1.2 MB file |
+| `expected.json` | | the WebAPI's answers (`POST /ttd/port-events`) to 27 questions, asked of the live session and of the saved file (checked equal) | |
+
+They are read by the C++ test `TimeTravelManager_PortJournalFixture_Test`
+(`core/tests/debugger/ttd/timetravelmanager_portjournal_test.cpp`: the
+emulator's file search must answer every question the same) and by the
+analyzer's `tests/test_port_search.py` (its `search` must too). They are not
+in the checkpoint corpus above (`TTD_Corpus_Test` reads `testdata/ttd/*.ttd`
+only).
+
+Re-record them (the app with the WebAPI on port 8090, as below) with
+
+```bash
+python3 tools/verification/ttd-analyzer/scripts/record_port_journal_fixtures.py
+```
+
+Every step runs an exact number of frames on a stopped machine, so the
+recording depends only on the build. The General Sound slot is switched to the
+classic card: NeoGS's ZX-DMA is not isolated by the port journals, which are off
+with it.
+
 ## Re-recording (after a format change)
 
 1. Build, then start the desktop app with the WebAPI on port 8090. You don't
@@ -79,6 +109,12 @@ machine or on what ran before:
   depends on the output rate and the decimator mode, so a replay is exact
   only with the same rate and mode as the recording. `TTD_Corpus_Test` runs
   with these same settings.
+- **The classic GS card in the GS slot.** The corpus was recorded while the
+  shipped PENTAGON config had `GSType=Z80`; the shipped configs fit NeoGS
+  since 2026-09-28, and a session loads only into the card it was recorded
+  with, so `TTD_Corpus_Test` fits the classic card before loading. Re-record
+  with `[SOUND] GSType=Z80` (a NeoGS checkpoint carries the whole card,
+  several MB, in every checkpoint).
 - **Length in emulated frames, not wall-clock time.** Settling and recording
   both use `run_frames`, because the emulator doesn't run at 50 Hz. Unthrottled
   it once ran ~9x realtime and turned a nominal 6-second recording into 2714
@@ -129,6 +165,10 @@ write journal has no checksum of its own, so a corrupt zstd frame is caught
 but a flipped byte that still decodes is not.
 
 ## Status
+
+Re-recorded 2026-09-28 (all five) with the IDE board the shipped PENTAGON
+config now fits (`[HDD] Scheme=NEMO`, no disks): every checkpoint carries the
+`AtaChannel` blob (id 17: both IDE units, the adapter latches).
 
 Re-recorded 2026-09-27 (all five) after the General Sound fixed window
 `0x4000-0x7FFF` moved to the upper half of MPAG 1 (RAM page 1, was page 3):

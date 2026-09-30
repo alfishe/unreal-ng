@@ -15,15 +15,15 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 
 ## Current Status
 
-✅ **Coverage** - 206 of 217 registered paths documented (porttrace routes pending; see verification script)  
-✅ **Modular Organization** - 22 domain-specific `.inc` files  
+✅ **Coverage** - 239 of 239 registered paths documented (100%, verification script)  
+✅ **Modular Organization** - 26 domain-specific `.inc` files  
 ✅ **Complete Schemas** - 30+ response schemas defined  
 ✅ **Organized Tags** - 23 feature-based categories  
 ✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-09-12  
-**Registered Routes:** 238 `ADD_METHOD_TO` registrations, 217 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
-**OpenAPI Paths:** 211 (includes 5 planned profiler endpoints)
+**Last Updated:** 2026-09-28  
+**Registered Routes:** 261 `ADD_METHOD_TO` registrations, 239 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 244 (includes 5 planned profiler endpoints, marked `[Planned]` and `x-planned: true`)
 
 ## Code Organization
 
@@ -36,6 +36,8 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_interpreter.inc` | Interpreter Control | Python/Lua exec, status, stop |
 | `openapi_lifecycle.inc` | Emulator Management | Create, start, stop, pause, resume, reset |
 | `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
+| `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}`, `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
+| `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium` |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
@@ -44,6 +46,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_settings.inc` | Settings Management | Get/set emulator settings |
 | `openapi_features.inc` | Feature Management | Get/set runtime features |
 | `openapi_state.inc` | State Inspection | Memory, screen, audio state + memory read/write |
+| `openapi_gsporttrace.inc` | Audio State | General Sound activity counters and port trace |
 | `openapi_analyzers.inc` | Analyzer Management | Analyzer control, events, sessions |
 | `openapi_debug.inc` | Debug Commands | Stepping, breakpoints, registers, disassembly |
 | `openapi_profiler.inc` | Profilers | Memory, call trace, opcode, unified profiler |
@@ -90,7 +93,9 @@ python3 tools/verification/webapi/verify_openapi_coverage.py --strict
 
 The script compares:
 - **Source of truth**: `ADD_METHOD_TO` declarations in `emulator_api.h` and `interpreter_api.h`
-- **Documentation**: `paths["/api/v1/..."]` entries in `src/openapi/*.inc` files
+- **Documentation**: every `"/api/v1/..."` string literal in `src/openapi/*.inc` files: `paths["..."]` entries
+  and paths passed to helpers (`addSimplePost("/api/v1/...", ...)`). Keep paths as literals, never built from
+  variables, so the script sees them
 
 Exit code 0 = all routes covered. Exit code 1 = missing documentation.
 

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Engine/**/*.cs" />
+    <ProjectReference Include="ZipLib.csproj" />
+    <ProjectReference Include="ZXMAK2.Crc.csproj" />
+    <ProjectReference Include="ZXMAK2.Dependency.csproj" />
+    <ProjectReference Include="ZXMAK2.Engine.Cpu.csproj" />
+    <ProjectReference Include="ZXMAK2.Host.csproj" />
+    <ProjectReference Include="ZXMAK2.Logging.csproj" />
+    <ProjectReference Include="ZXMAK2.Model.Disk.csproj" />
+    <ProjectReference Include="ZXMAK2.Model.Tape.csproj" />
+    <ProjectReference Include="ZXMAK2.Mvvm.csproj" />
+    <ProjectReference Include="ZXMAK2.Resources.csproj" />
+  </ItemGroup>
+</Project>

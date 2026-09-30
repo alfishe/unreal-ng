@@ -48,6 +48,13 @@ Performs the full workflow: creating the RAM disk, copying the project, building
 
 ---
 
+### TTD Benchmark Matrix
+
+#### `ttd-bench/ttd_bench_compare.py`
+Compares and summarizes TTD benchmark matrix runs (`TTDMatrix/*` in core-benchmarks) and exports the stored baselines, including the byte baseline for the core-tests CI gate. A byte difference fails the comparison; a timing change is reported as a percent. See [`ttd-bench/README.md`](ttd-bench/README.md).
+
+---
+
 ### Tape Fixture Vetting
 
 Tools live in per-format subfolders — `tape/tzx/` and `tape/tap/` (CSW joins when P3 lands).
@@ -108,6 +115,43 @@ checks the C++ output against the Python reference on the golden scenes.
 *   **Build:** `cmake -DBUILD_ZXDLSS_TOOLS=ON` then `ninja zxdlss-render zxdlss-bench`.
 *   **Usage:** `zxdlss-render --ttd session.ttd --layout raw-out --video out.mp4`
 *   **Details:** [zxdlss/README.md](zxdlss/README.md).
+
+---
+
+### Memory Contention Probe
+
+`contention/ctprobe/` is a ZX Spectrum program (`.tap` / `.trd`) that measures, to a single clock tick, how the
+machine slows the CPU down when it touches screen memory, and prints `OK` / `BAD` per check against the real
+hardware's behavior. It runs on unreal-ng, other emulators and real machines.
+
+*   **Use-case:** checking contention timing of unreal-ng or another emulator on the 48K, 128K, +2, +2A/+3,
+    Pentagon and Scorpion.
+*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make coemu`; see
+    [contention/ctprobe/README.md](contention/ctprobe/README.md).
+
+---
+
+### SZX reference files and interop check
+
+Located in `szx/`. `szxtool.c` uses libspectrum (the library Fuse reads and
+writes SZX with) to make the reference files in `testdata/loaders/szx/` and to
+dump what libspectrum reads from any snapshot. `check-interop.sh` has
+unreal-ng load each reference file and save it again, then compares what
+libspectrum reads from our file with the reference. See `szx/README.md`.
+
+*   **Usage:** `tools/verification/szx/check-interop.sh [build-dir]`
+*   **Needs:** libspectrum (`brew install libspectrum`, `apt install libspectrum-dev`) and a built `core-tests`.
+
+---
+
+### Co-emulation harness
+
+`coemu/` runs one test program on every emulator it finds (unreal-ng, xpeccy-plus, and whatever else has a
+runner), on each of their machines, loading it as a user would, and prints one table of the results. Each
+emulator has a folder with a `run.sh` that follows a small contract, so adding one is a single folder.
+
+*   **Use-case:** comparing emulators check by check on the same program.
+*   **Usage:** `coemu/run-all.sh [machine...]`; see [coemu/README.md](coemu/README.md).
 
 ---
 

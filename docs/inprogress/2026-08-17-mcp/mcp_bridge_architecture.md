@@ -79,7 +79,7 @@ Estimated time for full 64KB dump:      45.54 ms
 ```
 
 > [!NOTE]
-> **Encoding Discrepancy**: The OpenAPI spec documents this endpoint as returning "base64 encoded" data, but the actual C++ implementation ([state_memory_api.cpp:L648](../../core/automation/webapi/src/api/state_memory_api.cpp)) builds a `Json::arrayValue` of integers (`[0,0,255,12,...]`), producing 2.96× bloat. Had it used proper base64 encoding, the bloat would be only ~1.33×, and total latency would drop to roughly ~15ms for a 64KB dump. Fixing the encoding to base64 is a worthwhile optimization regardless of whether gRPC is adopted.
+> **Encoding Discrepancy**: The OpenAPI spec documents this endpoint as returning "base64 encoded" data, but the actual C++ implementation ([state_memory_api.cpp:L648](../../../core/automation/webapi/src/api/state_memory_api.cpp)) builds a `Json::arrayValue` of integers (`[0,0,255,12,...]`), producing 2.96× bloat. Had it used proper base64 encoding, the bloat would be only ~1.33×, and total latency would drop to roughly ~15ms for a 64KB dump. Fixing the encoding to base64 is a worthwhile optimization regardless of whether gRPC is adopted.
 
 **The Real-Time Failure**: The ZX Spectrum runs at 50 FPS, yielding a hard compute budget of **20ms per frame**. Over the WebAPI, extracting a full 64KB frame of memory takes ~45.5ms just to serialize and cross the IPC boundary. This makes cycle-accurate, real-time AI frame diffing physically impossible over REST JSON.
 

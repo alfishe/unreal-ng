@@ -408,6 +408,6 @@ Reads entire raw track data.
 
 ## Related Documents
 
-- [Gap Analysis](../reviews/wd1793-test-gap-analysis.md)
-- [TR-DOS Track Structure](../design/io/fdc/trdos-format-track-structure.md)
-- [WD1793 Datasheet](../../datasheets/wd1793.pdf)
+- Gap Analysis
+- [TR-DOS Track Structure](../../emulator/design/io/fdc/trdos-format-track-structure.md)
+- WD1793 Datasheet

@@ -11,6 +11,9 @@
 #include <emulator/video/screencapture.h>
 #include <json/json.h>
 
+#include <algorithm>
+#include <sstream>
+
 #include "../emulator_api.h"
 
 using namespace drogon;
@@ -78,17 +81,20 @@ void EmulatorAPI::captureOcr(const HttpRequestPtr& req, std::function<void(const
     // Build response with screen text as array of lines
     Json::Value ret;
     ret["status"] = "success";
-    ret["rows"] = 24;
-    ret["cols"] = 32;
-    
-    // Split text into lines array
+
+    // Split text into lines array; the grid is 32x24 on the ZX screen, the text
+    // mode's own size (80x25) when the mode has a text layer
     Json::Value lines(Json::arrayValue);
     std::istringstream iss(screenText);
     std::string line;
+    size_t cols = 0;
     while (std::getline(iss, line))
     {
+        cols = std::max(cols, line.size());
         lines.append(line);
     }
+    ret["rows"] = lines.size();
+    ret["cols"] = static_cast<Json::UInt>(cols);
     ret["lines"] = lines;
     ret["text"] = screenText;
 

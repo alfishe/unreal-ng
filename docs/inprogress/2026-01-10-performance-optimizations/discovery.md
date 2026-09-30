@@ -324,7 +324,7 @@ Before implementing fixes, the following requirements should be clarified:
 
 ## References
 
-- [RecordingManager implementation](core/src/emulator/recording/recordingmanager.cpp)
+- [RecordingManager implementation](../../../core/recording/src/recordingmanager.cpp)
 - [Recording System Architecture](../../emulator/design/recording/recording-system.md)
 - [Feature Management System](../../emulator/design/core/feature-management.md)
 - [FeatureManager implementation](../../../core/src/base/featuremanager.cpp)

@@ -71,7 +71,30 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/porttrace/filter" \
 ```
 
 Condition keys: `port` (decoded, hex string), `raw` (raw 16-bit port),
-`device`, `direction` `in|out`, `pc` range, `value` range, `unmapped: true`.
+`device`, `direction` `in|out`, `pc` range, `value` range, `unmapped: true`,
+`code` (the decoder's internal port code, hex string - see below).
+
+### Internal port codes (ZX-Evo today; Sprinter / TSConf later)
+
+Some decoders turn the address into a code first - what the port means under
+the current port map - and every event carries it as `code` + `code_name`. On
+the ZX-Evo (`ATM3`) the code is the BaseConf decode arm; `status` lists them:
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/status" | jq -c '.session.codes[:6]'
+# [{"code":"0x0000","name":"ZxBus"},{"code":"0x0001","name":"KeyboardBorder"}, ... {"code":"0x0005","name":"Eff7Gluk"}]
+
+# Only the #EFF7 / Gluk clock arm (#DFF7, #BFF7, #EFF7 and friends):
+curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/porttrace/filter" \
+     -H 'Content-Type: application/json' -d '{"include": [{"code": "Eff7Gluk"}]}' | jq '.filter'
+# the same by number: {"code": "0x0005"}
+```
+
+CLI: `port-trace codes`, `port-trace include code eff7gluk` (a name or hex).
+Lua: `porttrace_codes()`, `porttrace_include({code = "Eff7Gluk"})`. Python:
+`emu.porttrace_codes()`, `emu.porttrace_include(code="Eff7Gluk")`. Decoders
+without codes (Pentagon, 128K, Scorpion, Profi, ...) return an empty list and
+events carry no `code`.
 
 ### Capture
 

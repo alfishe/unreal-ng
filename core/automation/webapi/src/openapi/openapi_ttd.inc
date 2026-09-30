@@ -113,6 +113,8 @@
          ["$ref"] = "#/components/schemas/TTDInvalidateResponse";
     paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["409"]["description"] =
+        "A recording is running: stop it first, then discard the session";
     paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
 
@@ -494,6 +496,39 @@
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/port-events — "when did the program ..." over the port journals
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["summary"] =
+        "Find when the program saw a key, the tape signal, or accessed the AY, border, a port";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["description"] =
+        "Searches the session's port journals - every IN result and every OUT of the "
+        "main CPU with its time and PC - for a named event: 'key' [key name] (the "
+        "program saw a key down; a named key counts only in reads of its half-row "
+        "alone), 'ear' (the program saw the tape signal change), 'ay-read' / "
+        "'ay-write' [register] (the register selection is followed through the OUT "
+        "journal), 'ay-select', 'border', 'beeper', or 'in' / 'out' narrowed with the "
+        "raw filters. Nothing is replayed: it answers the same on a loaded .ttd file. "
+        "409 when the session has no port journal (TSConf, ZX Next, NeoGS, a file "
+        "without it) or while a recording is running. With 'file' it searches a .ttd on "
+        "disk instead, without loading it (400 when the file cannot be read or has no journals).";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDPortEventsRequest";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["200"]["description"] = "Hits in time order (newest first with 'newest')";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDPortEventsResponse";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["400"]["description"] = "Unknown event, bad argument or option";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["404"]["description"] = "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["409"]["description"] =
+        "No port journal in the session, or a recording is running (pause or stop it)";
+    paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["responses"]["501"]["description"] = "TTD engine not available in this build";
 
     // =====================================================================
     // POST /ttd/step-instruction — step one instruction back or forward (Phase 4)

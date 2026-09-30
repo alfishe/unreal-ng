@@ -243,6 +243,12 @@ public:
         _drq_out = true;
         // _drq_served is NOT reset here - processReadByte sets it false before
         // calling raiseDrq, so the flag state is preserved correctly.
+
+        // Turbo VG (ZX-Evo BaseConf vg93.v): the DRQ rising edge ends the 2 MHz positioning phase
+        if (_clockPolicy == FdcClockPolicy::AutoStepTurbo)
+        {
+            _fdcClock = FdcClock::Clock1MHz;
+        }
     }
 
     /// @brief Clear DRQ signal
@@ -580,9 +586,11 @@ public:
     /// reached 255 limit - FDD is broken
     static constexpr const size_t WD93_STEPS_MAX = 255;
 
-    /// After the last directional step an additional 15 milliseconds of head settling time takes place if the Verify
-    /// flag is set in Type I commands
-    static constexpr const size_t WD93_VERIFY_DELAY_MS = 15;
+    /// Head settle: after the last step of a Type I command with V=1, and before a Type II/III command with E=1.
+    /// Datasheet p.6: "an additional 15 milliseconds of head settling time [...] this time doubles to 30 ms for a
+    /// 1 MHz clock". Every standard Spectrum interface clocks the chip at 1 MHz, so 30 ms is the normal value.
+    static constexpr const size_t HEAD_SETTLE_MS_1MHZ = 30;
+    static constexpr const size_t HEAD_SETTLE_MS_2MHZ = 15;
 
     /// How many WD1793 commands we support (used for array/table allocations)
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
@@ -682,8 +690,13 @@ protected:
     bool _verifySeek =
         false;  // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
     uint8_t _steppingMotorRate =
-        6;  // Positioning speed rate. Value is resolved from Type1 command via STEP_TIMINGS_MS_1MHZ and
-            // STEP_TIMINGS_MS_2MHZ arrays depending on WD1793 clock speed
+        6;  // Step period in ms of the current Type I command: STEP_TIMINGS_MS_1MHZ / STEP_TIMINGS_MS_2MHZ
+            // by the r1r0 bits and the controller clock at the time of the step pulse
+
+    // Controller clock and data separator (see fdc.h). Machine configuration: kept across a chip reset
+    FdcClockPolicy _clockPolicy = FdcClockPolicy::Fixed1MHz;  // Who drives the clock (set by the machine)
+    FdcClock _fdcClock = FdcClock::Clock1MHz;                  // Clock on CLK now (turbo VG phase / latch)
+    FdcDataRate _dataRate = FdcDataRate::Rate250Kbps;          // Rate the data separator reads at
 
     // Internal state for Type1 commands
     int8_t _stepDirectionIn = false;  // Head step direction. True - move head towards center cut (Step In). False -
@@ -807,6 +820,17 @@ public:
     {
         return _beta128Register;
     }
+    /// Head step direction of the last step: true = in (toward the center)
+    bool isStepDirectionIn() const
+    {
+        return _stepDirectionIn != 0;
+    }
+    /// Snapshot restore (SZX B128): the system register through its normal
+    /// path (drive, side, reset), then the task registers as saved. No command
+    /// is started, so BUSY and DRQ are dropped from the status (the format
+    /// holds no command in flight)
+    void RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
+                                  bool stepIn);
     /// Current state-machine state (DeviceState::Fdc report)
     WDSTATE getFSMState() const
     {
@@ -844,6 +868,34 @@ public:
     // Stateless command byte decoder - public so FDCStatePayload consumers can map
     // the raw _command snapshot byte to a WD_COMMANDS value
     static WD_COMMANDS decodeWD93Command(uint8_t value);
+
+    /// region <Controller clock and data rate>
+    /// Select how the machine drives the clock. Fixed1MHz and AutoStepTurbo restart at 1 MHz; Latched keeps the
+    /// current clock until the machine writes its latch (SetLatchedClock). The data rate is left unchanged.
+    void SetClockPolicy(FdcClockPolicy policy);
+    FdcClockPolicy GetClockPolicy() const { return _clockPolicy; }
+    /// Clock on the CLK input right now (changes with the turbo VG phase or the latch)
+    FdcClock GetClock() const { return _fdcClock; }
+    /// Rate of the data separator: only tracks recorded at this rate can be read
+    FdcDataRate GetDataRate() const { return _dataRate; }
+    void SetDataRate(FdcDataRate rate) { _dataRate = rate; }
+    /// Machine latch (Latched policy only): clock and separator rate switch together, e.g. Sprinter
+    /// OUT (#BD),#21 = 2 MHz + 500 kbit/s. Returns false (and changes nothing) under any other policy
+    bool SetLatchedClock(FdcClock clock, FdcDataRate rate);
+    /// Rate the chip writes at: derived from its clock (datasheet p.19, "all times double when CLK = 1 MHz")
+    static FdcDataRate WriteRateForClock(FdcClock clock)
+    {
+        return clock == FdcClock::Clock2MHz ? FdcDataRate::Rate500Kbps : FdcDataRate::Rate250Kbps;
+    }
+    /// Machine default combined with the [Beta128] TurboVG= override (-1 = machine default, 0 = off, 1 = on).
+    /// A Latched machine keeps its latch whatever the override says
+    static FdcClockPolicy ResolveClockPolicy(FdcClockPolicy machineDefault, int turboVgOverride);
+    static const char* ClockPolicyName(FdcClockPolicy policy);
+    /// Step period in T-states for r1r0 at the current clock (6/12/20/30 ms at 1 MHz, 3/6/10/15 ms at 2 MHz)
+    size_t StepPeriodTStates(uint8_t rateIndex) const;
+    /// Head settle in T-states at the current clock (30 ms at 1 MHz, 15 ms at 2 MHz)
+    size_t HeadSettleTStates() const;
+    /// endregion </Controller clock and data rate>
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -928,6 +980,16 @@ protected:
 
     void type1CommandVerify();
 
+    /// Issue a step pulse and schedule the head movement one step period later (turbo VG switches the clock here)
+    void ScheduleStep();
+    /// Type II/III: continue to nextState, after the head settle delay when E=1
+    void ContinueAfterHeadSettle(WDSTATE nextState);
+
+    /// READ TRACK at a mismatched data rate: one revolution of deterministic noise
+    std::vector<uint8_t> _readTrackNoise;
+    static uint32_t NoiseSeed(size_t cylinder, uint8_t side);
+    void FillReadTrackNoise(uint32_t seed, size_t length);
+
     /// endregion </Command handling>
 
     /// region <State machine handlers>
@@ -946,6 +1008,13 @@ protected:
     DiskImage::Encoding controllerEncoding() const
     {
         return isDoubleDensity() ? DiskImage::Encoding::MFM : DiskImage::Encoding::FM;
+    }
+
+    /// The data separator locks only onto a track recorded at its own rate; any other track shows no address
+    /// marks at all (Record Not Found / Seek Error after the revolution limit)
+    bool DataRateMatches(const DiskImage::Track& track) const
+    {
+        return track.RecordedDataRate() == _dataRate;
     }
 
     /// Byte cell duration for the given track: one revolution (200 ms) spread over its bytes.
@@ -1366,6 +1435,13 @@ public:
     // Read Track / Wait Index regression test fields and methods
     using WD1793::_waitIndexPulseCount;
     using WD1793::processWaitIndex;
+
+    // Controller clock / data rate
+    using WD1793::_clockPolicy;
+    using WD1793::_fdcClock;
+    using WD1793::_dataRate;
+    using WD1793::_verifySeek;
+    using WD1793::internalReset;
 };
 
 #endif  // _CODE_UNDER_TEST

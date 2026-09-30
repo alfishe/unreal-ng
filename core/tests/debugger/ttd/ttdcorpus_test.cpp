@@ -4,12 +4,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -31,9 +33,11 @@
 ///   - seeking to a checkpoint restores every device exactly: each device
 ///     re-serializes to the recorded blob, byte for byte (the TSFM blob is
 ///     the 2008-byte v5 payload);
+///   - seeking also restores RAM: every 4 KB sub-page a checkpoint holds
+///     matches live memory after the seek;
 ///   - replay is deterministic: from a restored checkpoint, running forward
 ///     reproduces the recorded checkpoints - CPU, chipset (including the
-///     in-frame T-state) and every device blob.
+///     in-frame T-state), every device blob and the RAM they hold.
 /// A format change that is not followed by a re-recording fails here first.
 /// Over the 50 ms budget (~1 s): five multi-megabyte sessions, each loaded,
 /// restored at four points and replayed; this is the corpus's only C++ gate.
@@ -94,6 +98,10 @@ protected:
         features->setFeature(Features::kScreenHQ, true);
         _context->pMemory->UpdateFeatureCache();
         _context->pSoundManager->UpdateFeatureCache();
+        // The corpus was recorded while the shipped PENTAGON config fitted the
+        // classic GS card; the shipped configs now fit NeoGS, and a session
+        // loads only into the card it was recorded with
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, GSTypeKind::Z80));
     }
 
     void TearDown() override
@@ -132,6 +140,64 @@ protected:
     static MachineState StateOf(const ttd::TTDCheckpoint& cp)
     {
         return {cp.cpu, cp.chipset, Decoded(cp.peripheralBlobs)};
+    }
+
+    /// RAM as hashes of 4 KB sub-pages, keyed (page << 2) | sub-page
+    using RamImage = std::map<uint32_t, uint64_t>;
+    static constexpr size_t kSubPage = 4096;
+
+    static uint64_t Fnv1a(const uint8_t* data, size_t size)
+    {
+        uint64_t h = 14695981039346656037ull;
+        for (size_t i = 0; i < size; ++i)
+            h = (h ^ data[i]) * 1099511628211ull;
+        return h;
+    }
+
+    /// A checkpoint's RAM as the page store decodes it. Sub-pages the session
+    /// never touched have no slot and are left out, exactly as restore leaves
+    /// them alone.
+    RamImage RamOf(const ttd::TTDCheckpoint& cp) const
+    {
+        RamImage image;
+        std::vector<uint8_t> buf(kSubPage);
+        for (size_t page = 0; page < cp.ramPages.size(); ++page)
+            for (uint32_t sub = 0; sub < 4; ++sub)
+            {
+                const uint32_t slot = cp.ramPages[page].pageSlots[sub];
+                if (slot == ttd::TTDPageRef::kNeverTouched)
+                    continue;
+                EXPECT_TRUE(_ttd->GetPageStore().GetPage(slot, buf.data()))
+                    << "page store slot " << slot << " failed to decode (page " << page << ")";
+                image[static_cast<uint32_t>(page << 2) | sub] = Fnv1a(buf.data(), kSubPage);
+            }
+        return image;
+    }
+
+    /// Live RAM over the same sub-pages as @p keys
+    RamImage LiveRamOver(const RamImage& keys) const
+    {
+        RamImage image;
+        for (const auto& [key, hash] : keys)
+        {
+            const uint8_t* page = _context->pMemory->RAMPageAddress(static_cast<uint16_t>(key >> 2));
+            if (page)
+                image[key] = Fnv1a(page + (key & 3) * kSubPage, kSubPage);
+        }
+        return image;
+    }
+
+    /// Every sub-page @p expected holds must be present in @p actual and equal
+    static void ExpectSameRam(const RamImage& actual, const RamImage& expected, const std::string& where)
+    {
+        for (const auto& [key, hash] : expected)
+        {
+            const auto it = actual.find(key);
+            ASSERT_NE(it, actual.end()) << where << ": RAM page " << (key >> 2) << " sub-page " << (key & 3)
+                                        << " missing";
+            ASSERT_EQ(it->second, hash) << where << ": RAM page " << (key >> 2) << " sub-page " << (key & 3)
+                                        << " differs";
+        }
     }
 
     /// The live machine as a checkpoint would capture it
@@ -202,6 +268,9 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
             ASSERT_NE(cp, nullptr);
             ASSERT_TRUE(_ttd->SeekTo({cp->time.frame, 0})) << "seek to checkpoint " << idx;
             ExpectSame(LiveState(), StateOf(*cp), "restore of checkpoint " + std::to_string(idx));
+            const RamImage recorded = RamOf(*cp);
+            ASSERT_FALSE(recorded.empty()) << "checkpoint " << idx << " holds no RAM";
+            ExpectSameRam(LiveRamOver(recorded), recorded, "RAM after restore of checkpoint " + std::to_string(idx));
         }
 
         // Replay: from a restored delta frame, record forward and compare the
@@ -210,8 +279,12 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         const size_t from = 37;
         constexpr size_t kReplay = 25;
         std::vector<MachineState> expected;
+        std::vector<RamImage> expectedRam;  // decoded now: resuming drops these checkpoints
         for (size_t step = 1; step <= kReplay; step++)
+        {
             expected.push_back(StateOf(*_ttd->GetCheckpoint(from + step)));
+            expectedRam.push_back(RamOf(*_ttd->GetCheckpoint(from + step)));
+        }
         const ttd::TTDTimePoint start{_ttd->GetCheckpoint(from)->time.frame, 0};
         ASSERT_TRUE(_ttd->SeekTo(start));
         ASSERT_TRUE(_ttd->ResumeRecordingFrom(start));
@@ -222,6 +295,8 @@ TEST_F(TTD_Corpus_Test, EveryFixtureLoadsRestoresAndReplaysExactly)
         {
             ExpectSame(StateOf(*_ttd->GetCheckpoint(from + step)), expected[step - 1],
                        "replay " + std::to_string(from) + " + " + std::to_string(step));
+            ExpectSameRam(RamOf(*_ttd->GetCheckpoint(from + step)), expectedRam[step - 1],
+                          "RAM of replay " + std::to_string(from) + " + " + std::to_string(step));
             if (HasFailure())
                 break;  // the first divergence is the useful one
         }

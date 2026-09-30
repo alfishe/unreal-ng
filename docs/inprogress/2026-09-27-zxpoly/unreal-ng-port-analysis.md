@@ -51,7 +51,7 @@ multi-CPU infrastructure that hardens the GS precedent).
 | GS coprocessor precedent (2nd CPU, private banks, frame stepping, TTD blob) | `SoundChip_GeneralSound` (`soundchip_gs.cpp`) | **Exists** as pattern, but lazy-sync; lockstep needs instruction interleaving |
 | 512K shared heap + sliding per-CPU windows (`REG0 & 7` × 64K) | `Memory` arena scales to 4 MB / 256 pages, but has a single `_bank_*[4]` window set | **Extend**: per-CPU bank tables (GS pattern) or a `MemoryZXPoly` override of `UpdateModelBanks()` |
 | Per-module `#7FFD`, `#3D00`, module regs `#x0FF–#x3FF` | `PortDecoder::GetPortDecoderForModel` factory + `core/src/emulator/ports/models/` | **Exists as pattern** → new `PortDecoder_ZXPoly` |
-| `VideoController` modes 0–7, 4-bit plane combining | `VideoController::GetScreenForMode` + `ScreenZX`; hi-res precedent `ScreenAtm` sampling arbitrary `RAMPageAddress()` pages | **Exists as pattern** → new `ScreenZXPoly` (composition like ScreenAtm) |
+| `VideoController` modes 0–7, 4-bit plane combining | `VideoController::CreateScreen` + `ScreenZX`; hi-res precedent `ScreenAtm` sampling arbitrary `RAMPageAddress()` pages | **Exists as pattern** → new `ScreenZXPoly` (composition like ScreenAtm) |
 | TimingProfile (69888/70908/71680 T, contention, even-M1) | `Config::ApplyModelTimingDefaults`, `UlaContention`, per-model intstart/intlen | **Exists** — reuse 128K/Pentagon profiles; contention must apply per-CPU at access T |
 | `.zxp` 4-CPU snapshot | `core/src/loaders/snapshot/` (sna/z80 classes, extension dispatch in `Emulator::LoadSnapshot`) | **Exists as pattern** → `LoaderZXP`; GS TTD serializer shows 4× `Z80CpuRegisters` persistence |
 | Divergence triggers (`TRIGGER_DIFF_*`) | WebAPI debugger + TTD + port trace + breakpoints | **Superset exists** — needs a "compare across CPUs" condition type |
@@ -203,7 +203,9 @@ Spec256 too ≈ 12–14. Roughly 3.5–5 K new LOC plus ~0.5–1 K modified.
 
 1. **Exclusive content, day one.** Eight adapted games
    (Atw2, FlyShark, ZxWord, OFC, Summer Santa, Comando Quatro, Alien 8,
-   Buratino) plus the Test ROM exist as `.zxp`/`.trd` today. No other modern
+   Buratino) plus the Test ROM exist as `.zxp`/`.trd` today, and an
+   unexported After The War 1 project (`.sze`) would make a ninth. All of it
+   is collected in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md). No other modern
    C++ emulator runs them. That is immediate, demonstrable differentiation for
    unreal-ng — and a ready-made regression corpus (golden frames from the Java
    reference).

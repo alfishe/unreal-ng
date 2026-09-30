@@ -52,7 +52,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | 512x240 hi-res (DS80), palette `OUT #xx7E` (9-bit), `#FE` read bit 7 (GX0) | implemented |
 | NMI (magic button) → DOS latch while DS80 is off | implemented |
 | TTD: `#DFFD` + palette as `PeripheralId::ProfiPaging` | implemented |
-| IDE (`#xx8B/AB/CB/EB`) | **not implemented** — design: `docs/inprogress/2026-09-21-profi/2026-09-25-ide-hdd-design.md` |
+| IDE (`[HDD] Scheme=PROFI`, answers in EXT mode): slots `ide0.master` / `ide0.slave`; the SYS ROM boots from a hard disk image; geometry from the disk's ProfiHiDD header (16 x 16 without one) | implemented — see [Hard disk](#hard-disk-ide) |
 | Kempston joystick, extended keyboard, Covox extended-mode aliases | not implemented |
 | BIOS menu entries (CP/M, TR-DOS, Sinclair 48/128) | main menu reached; entries not yet verified |
 
@@ -73,6 +73,22 @@ curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq .
 curl -s "$BASE/emulator/$EMU_ID/state/screen/mode" | jq .     # PROFI / PROFIHR
 curl -s "$BASE/emulator/$EMU_ID/ports" | jq '.entries[] | {port, device}'
 ```
+
+## Hard disk (IDE)
+
+The Profi ships with its IDE board on (`[HDD] Scheme=PROFI`). Put a hard disk
+image on the master with the media verbs
+([use-media-slots.md](../media/use-media-slots.md), reference
+[docs/features/media.md](../../docs/features/media.md)):
+
+```text
+media {"action":"insert","slot":"hd","path":"/home/me/zx/profi.hdd"}   # hd = ide0.master
+inspect_state {"aspects":["ide"]}                                          # board, units, task file
+```
+
+A hard disk is inserted and ejected while the machine is paused. The SYS ROM
+boots from the disk; the geometry comes from the disk's ProfiHiDD header
+(16 x 16 from the SYS ROM, 16 x 63 from Karabas), a disk without one gets 16 x 16.
 
 TTD on Profi follows the standard recipes —
 [recording](../analysis/ttd-recording.md),

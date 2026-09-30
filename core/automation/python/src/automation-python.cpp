@@ -367,13 +367,19 @@ static void registerEmulatorBindings()
     py::module_ main = py::module_::import("__main__");
 
     // Register EmulatorManager functions
+    // Both return a raw pointer with the reference policy, like the module's
+    // emu_get / emu_get_selected: the manager owns every instance. Returning the
+    // shared_ptr made pybind11 wrap it in the class's default unique_ptr holder,
+    // so the Python object's collection deleted an instance the manager still
+    // held (the app aborted with "pointer being freed was not allocated")
     main.def(
         "emulator_manager_create",
-        [](const std::string& id = "") { return EmulatorManager::GetInstance()->CreateEmulator(id); },
+        [](const std::string& id = "") -> Emulator* { return EmulatorManager::GetInstance()->CreateEmulator(id).get(); },
         py::arg("symbolic_id") = "", py::return_value_policy::reference);
 
     main.def(
-        "emulator_manager_get_most_recent", []() { return EmulatorManager::GetInstance()->GetMostRecentEmulator(); },
+        "emulator_manager_get_most_recent",
+        []() -> Emulator* { return EmulatorManager::GetInstance()->GetMostRecentEmulator().get(); },
         py::return_value_policy::reference);
 
     main.def("emulator_manager_list", []() { return EmulatorManager::GetInstance()->GetEmulatorIds(); });

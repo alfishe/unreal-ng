@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Model.Disk/**/*.cs" />
+    <ProjectReference Include="ZXMAK2.Crc.csproj" />
+  </ItemGroup>
+</Project>

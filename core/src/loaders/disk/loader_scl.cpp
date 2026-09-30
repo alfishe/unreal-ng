@@ -203,16 +203,6 @@ bool LoaderSCL::writeImage(const std::string& path)
             // Mark disk as clean after successful save
             _diskImage->markClean();
             
-            // Emit notification that disk was saved
-            if (_context && _context->pEmulator)
-            {
-                std::string emulatorId = _context->pEmulator->GetId();
-                // Note: We don't know which drive this disk is in from the loader context
-                // Use drive 0 as default - the receiver can check all drives if needed
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                messageCenter.Post(NC_FDD_DISK_WRITTEN, 
-                    new FDDDiskPayload(emulatorId, 0, path), true);
-            }
             
             // Update stored file path
             _diskImage->setFilePath(path);

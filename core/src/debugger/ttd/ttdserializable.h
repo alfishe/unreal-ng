@@ -55,9 +55,13 @@ enum class PeripheralId : uint8_t
     ProfiPaging = 9,      // Profi 1024: #DFFD latch, hi-res palette
     MoonSound  = 10,      // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     GeneralSoundLightweight = 11, // GS lightweight personality (in-tree mod player, no coprocessor)
-    NeoGS = 12,           // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
+    NeoGS = 12,           // NeoGS card (neogs-tdd.md §7.4): registers and devices; RAM and flash wait for TTD v2 regions
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
+    EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)
+    TsConfPaging = 16,    // TSConf (PLAN #41): its whole machine state - registers, paging, CRAM, SFILE, INT, DMA, TSU (technical-design §3.13)
+    AtaChannel = 17,      // IDE board: channel, both units (task file, transfer, ATAPI sense), adapter latches; not the media
+    Ds12887 = 18,         // MC146818 / DS12887 clock: cells, address latch, time base (ATM3, Profi, Scorpion SMUC; Sprinter, TSConf)
     // Future: SAA1099, GS512, etc.
     Count
 };
@@ -108,6 +112,13 @@ public:
     /// Default returns 0 (no contribution). Override for devices with state
     /// that affects determinism (e.g., Scorpion ProfROM quadrant).
     virtual uint64_t TTDHashState() const { return 0; }
+
+    /// Recording starts / returns to idle (TimeTravelManager's recording lock).
+    /// Called before the baseline checkpoint is captured, so a device that
+    /// switches to a deterministic time base here has the switch in its first
+    /// blob. Default: nothing (most devices have no host-time dependence)
+    virtual void TTDRecordingStarted() {}
+    virtual void TTDRecordingStopped() {}
 };
 
 } // namespace ttd

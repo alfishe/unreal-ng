@@ -26,7 +26,7 @@ gifAnimationHelper.WriteFrame(buffer, size);
 ```
 
 ### GIFAnimationHelper Implementation
-**File:** [gifanimationhelper.cpp](core/src/common/image/gifanimationhelper.cpp)
+**File:** gifanimationhelper.cpp
 
 Uses 3rd party `gif.h` library for LZW encoding.
 

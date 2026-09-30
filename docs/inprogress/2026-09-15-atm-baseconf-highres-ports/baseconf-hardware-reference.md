@@ -1050,7 +1050,7 @@ This image is assembled at ORG 0 as a 16K image of RAM page #FE. It is unpacked 
 **CD boot** (`CDBOOT`, `menu_execute.a80:318-324` → `CDBOOTGO`, `hdd_cd_boot.a80:118-360`):
 
 1. ATAPI device on **slave (#B0)** (`device EQU #B0`, `:137`).
-2. Reset #08, IDENTIFY #EC, then check the ATAPI signature `#EB14` in the byte-count registers (`:205-219`).
+2. Reset #08, IDENTIFY #EC, then check the ATAPI signature `#EB14` in the byte-count registers (`:240-259`).
 3. Send packets and `READTOC`. Load the session start (ISO9660 volume descriptors, `#8800` bytes) and the root directory, then search for **`AUTORUN.ZX`** (`:572-574`).
 4. Load the file to #6000 and enter it with:
    - `A=#B0` (device);

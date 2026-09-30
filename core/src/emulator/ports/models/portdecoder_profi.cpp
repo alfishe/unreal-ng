@@ -5,6 +5,7 @@
 #include "portdecoder_profi.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
+#include "debugger/ttd/ttdds12887.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
@@ -34,12 +35,16 @@ namespace
 
 PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
-    _cmos.SetCMOSType(Dallas);
+    _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
+    // Battery-backed state outlives the machine ([PROFI] NvramFile)
+    const char* nvramPath = _context->config.profi_nvram_path;
+    if (_nvramLoaded && nvramPath[0] != '\0' && !_rtc.SaveNvram(nvramPath))
+        MLOGWARNING("PortDecoder_Profi: cannot save the RTC NVRAM to '%s'", nvramPath);
+
     MLOGDEBUG("PortDecoder_Profi::~PortDecoder_Profi()");
 }
 /// endregion </Constructors / Destructors>
@@ -59,9 +64,18 @@ void PortDecoder_Profi::reset()
 
     ResetPalette();
 
+    // The RTC's battery-backed cells come from [PROFI] NvramFile once, at
+    // power-on; a Z80 reset does not touch the chip
+    if (!_nvramLoaded)
+    {
+        _nvramLoaded = true;
+        const char* nvramPath = _context->config.profi_nvram_path;
+        if (nvramPath[0] != '\0' && !_rtc.LoadNvram(nvramPath))
+            MLOGINFO("PortDecoder_Profi: no RTC NVRAM at '%s' yet, starting blank", nvramPath);
+    }
+
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
-    _7FFD_Locked = false;
     _covoxWasReachable = false;  // DOS latch is on right after reset (see below): a plain TR-DOS
                                   // session, not NORMAL mode and not CP/M-extended mode either
 
@@ -72,8 +86,19 @@ void PortDecoder_Profi::reset()
     memory.SetROMMode(RM_SYS);
 }
 
+IdeAdapter::Gate PortDecoder_Profi::IdeGate()
+{
+    IdeAdapter::Gate gate = PortDecoder::IdeGate();
+    gate.profiExt = IsExtMode();
+    return gate;
+}
+
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -121,7 +146,7 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         // Only the data ports (#9F/#DF, bit 5 = 0) return real data; the address
         // strobe (#BF/#FF) is write-only and reads as floating bus.
         if ((port & 0x20) == 0)
-            result = _cmos.ReadCMOS();
+            result = _rtc.ReadData();
         _lastPortDecoded = true;
         disp.decodedPort = port & 0xFF;
     }
@@ -153,7 +178,9 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else
+    // The VG93's registered keys (#1F..#FF) must not answer outside the DOS / CP/M port set: the gated FDC
+    // arm above already declined them, so they stay undecoded (floating bus) instead of reaching the controller
+    else if (!IsBeta128Port(port))
     {
         result = PeripheralPortIn(port);
         // Identity decode: mark decoded only when a device actually responded
@@ -169,6 +196,10 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     // Port trace decode attribution (if-chain decoder: no mask/match table)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -239,9 +270,9 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     {
         // Bit 5 set (#BF/#FF) latches the register address; clear (#9F/#DF) writes data.
         if (port & 0x20)
-            _cmos.SetCMOSAddress(value);
+            _rtc.WriteAddress(value);
         else
-            _cmos.WriteCMOS(value);
+            _rtc.WriteData(value);
         disp.decodedPort = port & 0xFF;
         disp.wasDecoded = true;
     }
@@ -375,15 +406,25 @@ void PortDecoder_Profi::UpdateModelMemoryBanks()
         _state->flags |= CF_DOSPORTS;
 }
 
+PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
+{
+    RtcBinding binding;
+    binding.chip = &_rtc;
+    binding.ports = "#BF / #FF address, #9F / #DF data, extended mode only (CP/M + ROM14)";
+    binding.nvramFile = _context->config.profi_nvram_path;
+    return binding;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::ProfiPaging};
+    return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
     return serializers;
 }
 
@@ -492,11 +533,10 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     // Lock (bit 5) blocks every bit of the write, including the screen bit,
     // unless DFFD.4 (WOROM) lifts it (UnrealSpeccy io.cpp; all reviewed emulators agree)
-    if ((_state->p7FFD & 0x20) && !(_state->pDFFD & 0x10))
+    if (IsPagingLocked())
         return;
 
     _state->p7FFD = value;
-    _7FFD_Locked = (value & 0x20) != 0;
 
     _screen->SetActiveScreen((value & 0x08) ? SCREEN_SHADOW : SCREEN_NORMAL);
 

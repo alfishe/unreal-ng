@@ -394,6 +394,6 @@ core/src/emulator/recording/
 
 ## See Also
 
-- [Recording System](./recording-system.md) - High-level recording overview
-- [Video+Audio Encoding](./video-audio-encoding.md) - Codec details
-- [GIF Encoder](./encoders/gif-encoder.md) - GIF implementation details
+- [Recording System](../recording-system.md) - High-level recording overview
+- [Video+Audio Encoding](../video-audio-encoding.md) - Codec details
+- [GIF Encoder](gif-encoder.md) - GIF implementation details

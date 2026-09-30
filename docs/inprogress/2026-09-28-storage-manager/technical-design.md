@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed (two rounds, 2026-09-28), ready for M1. Nothing implemented beyond the E5 storage seam (`io/storage`) |
+| **Status** | Reviewed (two rounds, 2026-09-28). **M1 and M2 implemented** (2026-09-28); differences from this design: [TODO.md](TODO.md) "M1 as built", "M2 as built" |
 | **Requirements** | [requirements.md](requirements.md) (FR-*, NFR-*, ACC-*) |
 | **Research** | [research.md](research.md) |
 | **Media history** | [media-history-design.md](media-history-design.md): immutable source + versioned change layer, file and block views, export, tracking, snapshots and TTD |
@@ -75,6 +75,82 @@ flowchart TB
     TAP -.- TD
     Manager -- "NC_MEDIA_*" --> GUI
 ```
+
+### 1.1 Layers: from the guest's port to the medium
+
+Every storage peripheral is built from the same four layers. Only the lowest one is specific to a
+machine; the higher a layer, the more machines share it. Two paths cross them:
+
+- **the data path** (solid arrows): a guest `IN` / `OUT` goes down through the layers to the
+  medium's contents, sector by sector, on the emulation thread, with no lock and no manager call;
+- **the control path** (dashed arrows): insert, eject, save and export come from a surface,
+  through `MediaControl` and the `MediaManager`, into the peripheral's **slot**, which plugs the
+  medium into layer 3. The layers report back through the slot: a guest write
+  (`NoteWrite`, the TTD barrier) and signals such as card-detect.
+
+```mermaid
+flowchart TB
+    Z80["Guest Z80: IN / OUT"]
+
+    subgraph L1["1 · Machine port decoder (platform-specific)"]
+        D1["PortDecoder_ATM3 (ZX-Evo)<br/>TSConf decoder · NeoGS GS-side ports<br/>Beta 128 interface · +3 decoder · IDE boards"]
+    end
+    subgraph L2["2 · Port adapter (bus glue, shared by machines)"]
+        A1["ZControllerSpi (#77 / #57)<br/>TSConf DMA to SPI<br/>IDE latch / adapter (M6)<br/>WD1793 / uPD765 register ports"]
+    end
+    subgraph L3["3 · Device protocol (shared by every machine with it)"]
+        C1["SdCardSpi (SD commands, SDSC / SDHC)<br/>AtaDisk / AtapiCdrom (M6)<br/>WD1793 · uPD765 + FDD mechanics<br/>tape player"]
+    end
+    subgraph L4["4 · Medium contents (owned by the MediaManager)"]
+        M1["IBlockDevice stack:<br/>SessionWriteMap | ReadOnlyGuard<br/>→ RawImage | HostFolderFat | MemoryDisk"]
+        M2["DiskImage (floppy)"]
+        M3["tape image (M3)"]
+    end
+
+    Z80 --> D1 --> A1 --> C1
+    C1 -- "ReadSector / WriteSector" --> M1
+    C1 -- "tracks / sectors" --> M2
+    C1 -- "pulses" --> M3
+
+    subgraph CTRL["Control"]
+        SURF["Surfaces: Qt, WebAPI, CLI,<br/>MCP, Lua, Python, config"]
+        MC["MediaControl (selectors, options,<br/>dispositions, results)"]
+        MM["MediaManager (slots, queue,<br/>registry, rules)"]
+        SLOT["Slot (IMediaSlot)<br/>owned by layer 1 or 3:<br/>EvoSdSlot, FloppyDriveSlot, ..."]
+    end
+    SURF -.-> MC -.-> MM
+    MM -. "owns" .-> M1
+    MM -. "owns" .-> M2
+    MM -. "owns" .-> M3
+    MM -. "Attach / Detach<br/>(frame boundary)" .-> SLOT
+    SLOT -. "attach(medium)" .-> C1
+    SLOT -. "NoteWrite (TTD barrier)<br/>card-detect, WP" .-> MM
+```
+
+| Layer | Knows | Does not know | Example classes |
+|---|---|---|---|
+| 1 · Machine port decoder | which port numbers the machine decodes, shadow / DOS rules, what else sits on the bus | the SD / ATA / floppy protocol | `PortDecoder_ATM3`, the TSConf decoder, `PortDecoder_Pentagon128` (Beta ports), the +3 decoder |
+| 2 · Port adapter | how a port write becomes a device operation: the SPI byte exchange and chip select, a DMA burst, the IDE high-byte latch, the controller's register file | the machine; the medium | `ZControllerSpi`, TSConf DMA SPI path, IDE adapters (M6) |
+| 3 · Device protocol | the device's commands and state (`CMD17`, ATA `READ SECTORS`, WD1793 `WRITE TRACK`), timing, its TTD blob | ports; formats; paths; where the medium came from | `SdCardSpi`, `AtaDisk`, `WD1793`, `UPD765` + `FDD` |
+| 4 · Medium contents | sectors / tracks / pulses, and whether writes are allowed (access mode) | the device reading it | `IBlockDevice` stack, `DiskImage`, tape image |
+| Slot | how to plug a medium into its device and which signals to raise | formats (the registry built the medium) | `PortDecoder_ATM3::EvoSdSlot`, `FloppyDriveSlot` |
+| `MediaManager` | slots, media, the queue, the rules (in-use, dirty, recording), the registry | ports and protocols | — |
+
+The same chain for each peripheral:
+
+| Peripheral | 1 · Decoder | 2 · Adapter | 3 · Device | 4 · Medium | Slot |
+|---|---|---|---|---|---|
+| ZX-Evo SD | `PortDecoder_ATM3` | `ZControllerSpi` | `SdCardSpi` | block stack | `sd.zc` (`EvoSdSlot`) |
+| TSConf SD | TSConf decoder | `ZControllerSpi` + DMA path | `SdCardSpi` | block stack | `sd.zc`, `sd.zc2` |
+| NeoGS SD | GS-side ports | NeoGS SPI glue | `SdCardSpi` | block stack | `sd.ngs` |
+| Beta 128 floppy | the model's decoder | WD1793 register ports | `WD1793` + `FDD` | `DiskImage` | `fdd.a`-`fdd.d` (`FloppyDriveSlot`) |
+| +3 floppy | +3 decoder | uPD765 ports | `UPD765` + `FDD` | `DiskImage` | `fdd.a`, `fdd.b` |
+| IDE / CD (M6) | board decoder (Nemo, SMUC, ATM, Profi) | IDE adapter | `AtaDisk`, `AtapiCdrom` | block stack / ISO | `ide0.master` … |
+| Tape (M3) | port `#FE` | — | tape player | tape image | `tape` |
+
+A new machine therefore writes layer 1 (and a layer 2 adapter only when its bus glue is new); a new
+storage device writes layer 3 once for every machine; a new format or folder builder is layer 4;
+and no surface changes for any of them.
 
 Rules taken from WinUAE (research §1.1) and the problems found here (research §3):
 
@@ -398,7 +474,7 @@ LRU of 8 open host handles serves the read, and bytes past the snapshotted size 
 |---|---|---|
 | Partitioning | MBR, one partition at LBA 2048; `Superfloppy` option (no MBR) | xpeccy-plus, SD cards as shipped; ChaN FatFs and the ERS handle MBRs best |
 | FAT type | **FAT16 by default for every slot**; FAT32 by parameter when the medium is created (`fs=fat32`: config `<slot>.fs`, `media insert --fs`). If the folder does not fit FAT16 (2 GiB with 32 KiB clusters) the insert fails with an error that names `fs=fat32`; it never switches silently | FAT16 is read by every target driver (ERS, NedoOS, NeoGS, Next, Sprinter DSS); FAT32 when asked |
-| Cluster size | FAT16: the count stays well inside 4 085 … 65 524. FAT32: 4 KiB, and **always ≥ 65 526 clusters**: the layout shrinks the cluster or grows the volume. ChaN FatFs decides the type by cluster count, and `tbblue.fw` (ZX Next) uses it: 65 525 or fewer is FAT16, 4 085 or fewer FAT12 (gitlab.com/thesmog358/tbblue `src/firmware/app/src/ff/ff.c:3144-3146`), so a FAT32-shaped volume below the minimum is rejected (`jnext/src/core/fat32_image.h:8-17`). Likewise a FAT16 volume has ≥ 4 086 clusters | formatter tables; the FatFs oracle test checks every generated size |
+| Cluster size | FAT16: the count stays well inside 4 085 … 65 524. FAT32: 4 KiB, and **always ≥ 65 526 clusters**: the layout shrinks the cluster or grows the volume. ChaN FatFs decides the type by cluster count, and `tbblue.fw` (ZX Next) uses it: 65 525 or fewer is FAT16, 4 085 or fewer FAT12 (gitlab.com/thesmog358/tbblue `src/firmware/app/src/ff/ff.c:3144-3146`), so a FAT32-shaped volume below the minimum is rejected (`jnext/src/core/fat32_image.h:8-17`). Likewise a FAT16 volume has ≥ 4 086 clusters | formatter tables; the oracle test checks every generated size |
 | Per-slot default | FAT16 for every slot; a slot may declare another default if its firmware requires one. None does: the ZX Next firmware and NextZXOS read FAT16 and FAT32 ([integration-next.md](integration-next.md)), Sprinter's DSS reads FAT12 / FAT16 only | the parameter always overrides |
 | Volume size | files + `FolderFree=` (default 256 MiB), rounded to 1 MiB, then raised to the FAT type's minimum; data is never stored, so size costs nothing | room for guest writes; card capacity reported through CSD / IDENTIFY |
 | Order | within a directory: subdirectories first, then files, each byte-wise UTF-8 sorted. Clusters: every directory (breadth-first), then every file (directories in the same order) | deterministic on every host (NFR-1); directories stay together at the start |
@@ -499,8 +575,9 @@ The live medium objects move between the two managers, session writes included, 
 re-read from disk and nothing is lost. The same **parking** handles add-on cards (NeoGS, SMUC, a
 Z-Controller add-on, divMMC): a card that is removed unregisters its slot, the manager parks the
 medium, and it is offered back when the slot returns. A medium whose slot id does not exist on the new model is
-kept in the transfer until the user decides: it is re-offered on the next switch, or dropped when
-the GUI closes, after a prompt if it is dirty.
+closed when it has nothing unsaved; with unsaved writes the switch is refused unless the request
+says save, discard or keep, and a kept one is a detached medium of the new machine. As built:
+`ModelSwitch` ([TODO.md](TODO.md), "M5 as built"); user reference [media.md](../../features/media.md#model-switch).
 
 ## 9. Notifications, activity, TTD
 
@@ -539,11 +616,10 @@ core/src/emulator/io/storage/
   readonlyguard.h               new
   hostfolder/foldersnapshot.{h,cpp}
   hostfolder/fatnamemapper.{h,cpp}
-  hostfolder/fatlayout.{h,cpp}
-  hostfolder/hostfolderfat.{h,cpp}
+  hostfolder/hostfolderfat.{h,cpp}   the layout is computed in Build (no separate FatLayout)
+  fat/fatvolumereader.{h,cpp}   independent FAT12/16/32 reader: the test oracle, later the H3 file view
 core/tests/emulator/media/…     mediamanager_test.cpp, mediaformatregistry_test.cpp, mediaconfig_test.cpp
 core/tests/emulator/io/storage/hostfolder/…  one *_test.cpp per source file
-core/tests/3rdparty/fatfs/      ChaN FatFs (read-only build) as the independent oracle
 ```
 
 `EmulatorContext::pMediaManager` is created before the peripherals and destroyed after them, so a
@@ -555,8 +631,8 @@ peripheral can register in its constructor and unregister in its destructor.
 |---|---|
 | Name mapper | table-driven: ASCII, lossy, case-only, Cyrillic → CP866, collisions `~1…~9`, `~10`, tail never stacked, LFN checksum |
 | Layout | FAT type thresholds and cluster counts; region table covers every LBA exactly once; the same snapshot gives the same bytes; empty folder; a 0-byte file; > 512 entries in one directory; depth |
-| Folder volume | an **independent FAT reader** (ChaN FatFs, read-only build) mounts the volume: same tree, names, sizes, contents, timestamps, for FAT16 and FAT32 |
-| Session over folder | writes read back; the folder unchanged (tree hash); export → FatFs reads the new file; rescan refused while dirty |
+| Folder volume | an **independent FAT reader** (`FatVolumeReader`, written from the specification, no third-party code) mounts the volume: same tree, names, sizes, contents, timestamps, for FAT16 and FAT32 |
+| Session over folder | writes read back; the folder unchanged (tree hash); export → the independent reader finds the new file; rescan refused while dirty |
 | Manager | register / unregister; insert kinds and access rules; queue applied on `ApplyPending`; swap delay; `IsBusy` retry; errors; media set transfer keeps session writes; notifications fire once |
 | Registry | content before extension (`.img` floppy vs block); one extension list per kind; unknown format → error naming the kinds tried |
 | Config | `[MEDIA]` keys, legacy mapping, relative paths |
@@ -581,7 +657,7 @@ flowchart LR
 
 | Phase | Content | Acceptance | Size |
 |---|---|---|---|
-| **M1** | `MediaManager` core (slots, queue, results, notifications), `ReadOnlyGuard`, registry (block), the folder pipeline (`FolderSnapshot`, `ServiceFileFilter`, `FolderManifest`) and `HostFolderFat` (FAT16 default, FAT32 by parameter), FatFs oracle, `[MEDIA]` + `[ZC]`, ZX-Evo `sd.zc`; the TTD common rule for `sd.zc` | ACC-1…ACC-4 | L |
+| **M1** | `MediaManager` core (slots, queue, results, notifications), `ReadOnlyGuard`, registry (block), the folder pipeline (`FolderSnapshot`, `ServiceFileFilter`, `FolderManifest`) and `HostFolderFat` (FAT16 default, FAT32 by parameter), `FatVolumeReader` oracle, `[MEDIA]` + `[ZC]`, ZX-Evo `sd.zc`; the TTD common rule for `sd.zc` | ACC-1…ACC-4 | L |
 | **M2** | floppy slots (WD1793 A-D, uPD765 A-B); `LoadDisk` / `SaveDisk` / eject / create move into the manager and the registry; the listed bugs fixed; `FolderDiskBuilder` (TRD: one folder, only files that fit, compatible names, manifest order) | ACC-7 | M |
 | **M3** | tape slot; `TapeLoaderRegistry` folded into the registry; eject / notifications; `FolderTapeBuilder` (TZX from a folder, capacity one side of a C90 cassette) | ACC-8 | M |
 | **M4** | `media` verbs on WebAPI / CLI / MCP / Lua / Python; Qt media panel; drag-and-drop by the registry; recent media | ACC-6 | M |
@@ -589,6 +665,6 @@ flowchart LR
 | **M6** | IDE master / slave and CD slots (with IDE rollout 1) | IDE acceptance | S (manager side) |
 | **H1** | `MediaChangeLayer`: versions, COW reference tables, truncation, labels, on the shared `PieceStore` (extracted from the TTD page store) | [media-history-design.md](media-history-design.md) §9 | M |
 | **H2** | spill to disk, budgets, crash recovery | §9 | M |
-| **H3** | file views (FAT via FatFs, TR-DOS, tape blocks), change sets between versions, folder export at a version | §9 | M |
+| **H3** | file views (FAT via `FatVolumeReader`, TR-DOS, tape blocks), change sets between versions, folder export at a version | §9 | M |
 | **H4** | tracking verbs (`versions`, `changes`, `read-block`, `read-file`, `history`, `diff`, `bookmark`, `revert`) on every surface | §6 | S–M |
 | **H5** | UNS media section and TTD v2 version references (with PLAN #40) | §7 | S (media side) |

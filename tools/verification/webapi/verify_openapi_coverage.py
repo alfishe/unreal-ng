@@ -78,7 +78,9 @@ def extract_openapi_paths(project_root):
     for inc in sorted(glob.glob(os.path.join(inc_dir, "*.inc"))):
         with open(inc) as f:
             content = f.read()
-        for m in re.finditer(r'paths\["(/api/v1/[^"]*)"\]', content):
+        # paths["/api/v1/..."] and the helpers that take the path as a string
+        # literal (addSimplePost("/api/v1/...", ...) in openapi_porttrace.inc)
+        for m in re.finditer(r'"(/api/v1/[^"\s]*)"', content):
             paths.add(m.group(1))
     return paths
 

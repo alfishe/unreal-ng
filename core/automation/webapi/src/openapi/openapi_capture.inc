@@ -3,7 +3,7 @@
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["tags"].append("Capture");
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] =
         "Extract text from screen using ROM font bitmap matching (OCR). "
-        "Returns 24 lines x 32 characters. Uses ZX Spectrum ROM font patterns.";
+        "Returns 24 lines x 32 characters matched against the ZX Spectrum ROM font; in a text video mode (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL) the exact 80x25 text from the character codes. rows / cols give the size.";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["required"] = true;

@@ -102,6 +102,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
+                        {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
+                        {"cmos", &CLIProcessor::HandleRtc},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
@@ -145,6 +147,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"ports", &CLIProcessor::HandlePorts},                // Static port map + live routing flags
                         {"paging", &CLIProcessor::HandlePaging},              // Tagged paging latches + bank table (P1-2)
                         {"beam", &CLIProcessor::HandleBeam},                  // Raster beam position/zone
+                        {"video", &CLIProcessor::HandleVideo},                // Video debug translation (layout/pixel/address/text)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
@@ -185,12 +188,17 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stop", &CLIProcessor::HandleStop},
                         {"remove", &CLIProcessor::HandleStop},  // Alias for stop (stop also removes the instance)
                         {"models", &CLIProcessor::HandleModels},
+                        {"zxpoly", &CLIProcessor::HandleZXPoly},
+                        {"model", &CLIProcessor::HandleModel},
 
                         // Tape control commands
                         {"tape", &CLIProcessor::HandleTape},
 
                         // Disk control commands
                         {"disk", &CLIProcessor::HandleDisk},
+
+                        // Media: every slot (floppy, SD, later tape / IDE / CD)
+                        {"media", &CLIProcessor::HandleMedia},
 
 
                         // Memory aliases
@@ -561,6 +569,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
+    oss << "  zxpoly start <model> [file] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
+    oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
@@ -597,7 +607,13 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  state screen verbose         - Show screen configuration (detailed)" << NEWLINE;
     oss << "  state screen mode            - Show video mode details" << NEWLINE;
     oss << "  state screen flash           - Show flash state and counter" << NEWLINE;
+    oss << "  state screen attributes      - Show decoded per-cell ink/paper/bright/flash" << NEWLINE;
     oss << "  state audio gs [--verbose]   - General Sound card state" << NEWLINE;
+    oss << NEWLINE;
+    oss << "CMOS clock (ATM3 / ZX-Evo, Profi, Scorpion with SMUC):" << NEWLINE;
+    oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
+    oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
+    oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
@@ -640,6 +656,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  ports                   - Port map: which devices answer which I/O ports" << NEWLINE;
     oss << "  paging                 - Paging state: latches + bank table" << NEWLINE;
     oss << "  beam                   - Raster beam position and zone" << NEWLINE;
+    oss << "  video layout|pixel|address|text [args] - What makes a pixel, which pixels a byte feeds" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
@@ -657,6 +674,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  analyzer status [name] - Show analyzer status" << NEWLINE;
     oss << "  analyzer <name> events - Get captured events" << NEWLINE;
     oss << NEWLINE;
+    oss << "Media Commands (every slot: floppy drives, SD card, ...):" << NEWLINE;
+    oss << "  media list             - Every slot, its medium and state" << NEWLINE;
+    oss << "  media insert <slot|auto> <path> - Insert a file or folder (A, B, sd, fdd.b, ...)" << NEWLINE;
+    oss << "  media eject <slot> [--save|--export <path>|--discard]" << NEWLINE;
+    oss << "  media help             - All verbs and options" << NEWLINE;
+    oss << NEWLINE;
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;
     oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
@@ -665,8 +688,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
-    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
-    oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx)" << NEWLINE;
+    oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
     oss << NEWLINE;
     oss << "Capture Commands:" << NEWLINE;

@@ -1,4 +1,5 @@
 #include <base/featuremanager.h>
+#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/tape/tapecatalog.h>
@@ -288,16 +289,22 @@ void CLIProcessor::HandleTapeLoad(const ClientSession& session, std::shared_ptr<
 
     std::string filepath = args[1];
 
-    // Use existing LoadTape method (already handles file loading)
-    bool success = emulator->LoadTape(filepath);
+    // TTD refuses a tape insert while recording (it would drop the history)
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    {
+        session.SendResponse("Error: " + refusal + NEWLINE);
+        return;
+    }
 
-    if (success)
+    // A tape file of any format the tape loaders read, or a folder
+    std::string reason;
+    if (emulator->LoadTape(filepath, &reason))
     {
         session.SendResponse(std::string("Tape loaded: ") + filepath + NEWLINE);
     }
     else
     {
-        session.SendResponse(std::string("Error: Failed to load tape: ") + filepath + NEWLINE);
+        session.SendResponse(std::string("Error: Failed to load tape: ") + filepath + " (" + reason + ")" + NEWLINE);
     }
 }
 
@@ -310,11 +317,13 @@ void CLIProcessor::HandleTapeEject(const ClientSession& session, std::shared_ptr
         return;
     }
 
-    EmulatorPauseBracket bracket(emulator);
-
-    // Stop tape and clear filepath
-    context->pTape->stopTape();
-    context->coreState.tapeFilePath.clear();
+    // The tape slot of the media manager (pauses the emulator itself)
+    std::string reason;
+    if (!emulator->EjectTape(&reason))
+    {
+        session.SendResponse("Error: " + reason + NEWLINE);
+        return;
+    }
 
     session.SendResponse(std::string("Tape ejected") + NEWLINE);
 }

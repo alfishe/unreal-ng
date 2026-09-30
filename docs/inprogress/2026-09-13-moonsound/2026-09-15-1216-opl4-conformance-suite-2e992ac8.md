@@ -27,11 +27,11 @@ Added to the existing `opl4tests` executable (`tools/poc/015-opl4-synthesis/CMak
 
 FM families (13): `FmTlLadderSweep` (TL 0-127, adjacent step −0.75 dB exact), `FmMultSweep` (MULT 0-15 zero-crossing ratios 0.5/1-15), `FmKslSweep` (KSL 0-3 × block 0-7 onset thresholds), `FmEnvStageSweep` (AR/DR/SL/RR 0-15 staged grid; rate-15 instant; sustain = SL; release slope), `FmFeedbackSweep` (FB 0-7 growth), `Fm4OpConnections` (3 topologies + connection-select bits), `FmRhythmSweep` (all 5 voices via 0xBD), `FmWaveformSweep` (OPL3 waves 0-7: DC/symmetry/peak), `FmAmVibDepthMatrix` (AM/VIB × depth bits), `FmRoutingMatrix` (CHA/CHB/CHC/CHD 16 combos → L/R matrix), `FmTimerSweep` (T1/T2 + IRQ flags/mask/reset), `FmKonMomentary` (B0 kon edge-only), `FmEnvelopeRatesVsYmfm` (ratios on both backends where map-agnostic).
 
-PCM families (11): `PcmWaveNumberBoundary` (wave <384/≥384 × waveTblHdr 0-7 banking), `PcmWidthDecodeSweep` (8/12/16-bit incl. −FS), `PcmStepSweep` (OCT −8..+7 × FNUM grid, CalcStep = 2^oct·fn/1024 exact), `PcmLoopEdgeMatrix` (E=0 one-shot, S-complement ends, overrun, 1-sample loop), `PcmTlLadderSweep` (TL bits + LD immediate-vs-interp 27/13.5 cadence + 0x7F→0xFF special, per [`opl4pcm.cpp:211-219`](tools/poc/015-opl4-synthesis/src/opl4pcm.cpp#L211-L219)), `PcmEnvRateMatrix` (AR/D1R/D2R/RR 0-15 × rate-scaling octaves, DL 0-15), `PcmDampPrvbMatrix`, `PcmPanSweep` (16 pan values + 0x10 DO1-silence), `PcmLfoMatrix` (LFO freq × depths × per-slot vibrato), `PcmInterpMatrix` (on/off × fractional positions), `MixFieldMatrix` + `MemoryAccessSweep` (0xF8/0xF9 fields; regs 0x03-0x06 auto-increment + LD window).
+PCM families (11): `PcmWaveNumberBoundary` (wave <384/≥384 × waveTblHdr 0-7 banking), `PcmWidthDecodeSweep` (8/12/16-bit incl. −FS), `PcmStepSweep` (OCT −8..+7 × FNUM grid, CalcStep = 2^oct·fn/1024 exact), `PcmLoopEdgeMatrix` (E=0 one-shot, S-complement ends, overrun, 1-sample loop), `PcmTlLadderSweep` (TL bits + LD immediate-vs-interp 27/13.5 cadence + 0x7F→0xFF special, per `opl4pcm.cpp:211-219`), `PcmEnvRateMatrix` (AR/D1R/D2R/RR 0-15 × rate-scaling octaves, DL 0-15), `PcmDampPrvbMatrix`, `PcmPanSweep` (16 pan values + 0x10 DO1-silence), `PcmLfoMatrix` (LFO freq × depths × per-slot vibrato), `PcmInterpMatrix` (on/off × fractional positions), `MixFieldMatrix` + `MemoryAccessSweep` (0xF8/0xF9 fields; regs 0x03-0x06 auto-increment + LD window).
 
 In-tree-map-specific FM sweeps carry `#if !defined(OPL4_FM_YMFM)` guards (existing vector pattern); PCM families run on both backends.
 
-### Tier 2 — Golden digest expansion: [`cosim/cosim-oracle.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-oracle.cpp)
+### Tier 2 — Golden digest expansion: [`cosim/cosim-oracle.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-oracle.cpp)
 
 One digest per sweep family over a representative sub-sweep: ~40 new cases, `golden/oracle.txt` 15 → ~55. Generated via `golden/generate.py` policy; the **existing 15 digests must remain byte-identical** (only appends allowed) — that is the regression fence during development.
 
@@ -39,7 +39,7 @@ One digest per sweep family over a representative sub-sweep: ~40 new cases, `gol
 
 In `opl4sweep.cpp`: 64-128 LCG-seeded random FM+PCM register streams with timestamps; assert no crash, no NaN/denormal, replay-determinism; failing seeds become permanent vectors.
 
-### Tier 4 — Core GTest canaries: extend [`core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp`](core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp)
+### Tier 4 — Core GTest canaries: extend [`core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp`](../../../core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp)
 
 6-8 thin tests (<50 ms each, no turbo — they assert on rendered audio), reusing the existing port helpers (`KeyOnFmChannelThroughPorts`, `KeyOnPcmSlotThroughPorts`, `UploadSquareToneThroughPorts`): FM TL ladder row, FM envelope stage row, waveform symmetry, PCM loop E=0 wrap, PCM pan row, PCM TL 0x7F special, block-mix field row, SRAM access round-trip.
 
@@ -54,7 +54,7 @@ In `opl4sweep.cpp`: 64-128 LCG-seeded random FM+PCM register streams with timest
 7. Fuzz tier.
 8. cosim-oracle new cases + digest generation (verify old 15 unchanged, new all match; `cosim-ymfm` stays 6/6).
 9. Core canaries + core suite run.
-10. Docs: [`2026-09-13-0217-opl4-core-tdd.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`2026-09-13-0217-opl4-unreal-ng-integration.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
+10. Docs: [`2026-09-13-0217-opl4-core-tdd.md`](2026-09-13-0217-opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`2026-09-13-0217-opl4-unreal-ng-integration.md`](2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
 
 ## Verification
 

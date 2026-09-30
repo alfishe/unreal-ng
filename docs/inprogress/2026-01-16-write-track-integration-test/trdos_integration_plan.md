@@ -55,7 +55,7 @@ Create `BasicEncoder` class to:
 #### Implementation
 - **Files**: `basicencoder.h`, `basicencoder.cpp`, `basicencoder_test.cpp`
 - **Dependencies**: Complements existing `BasicExtractor` class
-- **Details**: See [basicencoder_plan.md](docs/inprogress/2026-01-16-write-track-integration-test/basicencoder_plan.md)
+- **Details**: See [basicencoder_plan.md](../2026-01-17-basic%20injection/basicencoder_plan.md)
 
 #### Status
 - [x] Implementation plan created

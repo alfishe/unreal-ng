@@ -42,6 +42,7 @@ public:
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
+    void setMediaPanelChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
@@ -86,6 +87,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
@@ -106,6 +108,7 @@ signals:
     // Machine control signals
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
+    void contentionToggled(bool enabled);
 
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
@@ -126,6 +129,7 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
+    void mediaPanelToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
@@ -133,6 +137,7 @@ signals:
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
+    void zxpolyConfigurationRequested(const QString& configurationName);  // Machine -> ZXPoly-48k / 128k / Pentagon
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
     void mniRequested();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
@@ -182,6 +187,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _openZXPolyAction;
     QAction* _importAudioTapeAction;
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
@@ -209,6 +215,7 @@ private:
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
+    QAction* _mediaPanelAction = nullptr;
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
     std::vector<QAction*> _scaleActions;
@@ -240,12 +247,14 @@ private:
     // Machine Menu Actions
     QActionGroup* _machineModelGroup;
     std::vector<QAction*> _machineModelActions;
+    std::vector<QAction*> _zxpolyConfigurationActions;  // data: the configuration name (ZXPolyGroup::Configurations)
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;
     QAction* _turboTapeAction;
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
+    QAction* _contentionAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Dependency/Argument.cs" />
+    <Compile Include="$(ZxSrc)/ZXMAK2.Dependency/IResolver.cs" />
+    <Compile Include="stubs/Locator.cs" />
+    <ProjectReference Include="ZXMAK2.Logging.csproj" />
+  </ItemGroup>
+</Project>

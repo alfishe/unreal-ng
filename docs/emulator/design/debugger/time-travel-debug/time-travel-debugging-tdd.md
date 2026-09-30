@@ -6,7 +6,8 @@
 | **Version** | 2.2 |
 | **Last updated** | 2026-09-10 |
 | **Scope** | UnrealSpeccy-NG core + Qt debugger UI |
-| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema) |
+| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema) |
+| **As-built reference** | [ttd-v1-architecture-and-format.md](./ttd-v1-architecture-and-format.md) — TTD v1 architecture, data streams and `.ttd` file format as implemented |
 
 ---
 
@@ -244,7 +245,9 @@ A point in time is identified by:
 struct TTDTimePoint
 {
     uint64_t frame;      // EmulatorState::frame_counter value
-    uint32_t tInFrame;   // Z80 t counter within frame [0, config.frame * multiplier)
+    uint32_t tInFrame;   // T-states within the frame at the model's TOP CPU clock,
+                         // [0, config.frame * ttd_clock_units); plain T-states on
+                         // models without a hardware turbo
                          // Granularity: instruction boundary (identical to RunTStates)
 
     bool operator<(const TTDTimePoint& o) const
@@ -256,9 +259,9 @@ struct TTDTimePoint
 
 Notes:
 
-- `config.frame` is t-states per frame (71680 for Pentagon). With the speed multiplier the intra-frame limit is `config.frame * current_z80_frequency_multiplier` — matching the logic already present in `Emulator::RunTStates`.
+- `config.frame` is t-states per frame (71680 for Pentagon). The CPU's own counter `z80.t` counts at the clock running now and is rescaled when a hardware turbo switches mid-frame (the instant is kept, the number changes), so after a switch down it repeats values of the same frame. TTD time therefore counts at the model's top clock: `tInFrame = z80.t * ttd_clock_units / hardware ratio`, where `ttd_clock_units` is the LCM of the model's hardware CPU clock ratios (1 without turbo; Scorpion and ATM 7.10 2; ZX-Evo 4; ZX Next 8). One instant has one value, time only grows, and a frame is always `config.frame * ttd_clock_units` units (B4). Co-processors with their own clock (GS, NeoGS) are outside this unit: their stimuli are journaled at main-CPU time and the card converts.
 - **Granularity is one Z80 instruction**, not one t-state. This is the same resolution as every existing stepping facility and is sufficient: no observable state changes mid-instruction from the debugger's point of view. (ULA beam position within an instruction is derivable from `t`.)
-- The global monotonic key used for indexes is `globalT = frame * tStatesPerFrame + tInFrame` stored as `uint64_t`. At 3.5 MHz this wraps after ~167,000 years.
+- The global monotonic key used for indexes is `globalT = frame * config.frame * ttd_clock_units + tInFrame` (`TimeTravelManager::GlobalT`), stored as `uint64_t`; the write journal packs it in 40 bits, which lasts ~90 h of recording at 1 unit per T-state and ~10 h at 8.
 
 ### 4.2 Recording Session
 
@@ -270,6 +273,7 @@ A recording session is the unit of history validity:
   - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
   - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
+- **A running recording refuses the host-side invalidators (B9).** While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `TimeTravelManager::RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
 - The session records `sessionStartTime` (TTDTimePoint) and monotonically grows `sessionEndTime` = "now".
 - **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock, and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
   - the host speed control is forced to 1x before the baseline is captured, and 2x..16x is refused (`Core::SetSpeedMultiplier` returns false). The emulated machine's own hardware turbo (ATM, Scorpion) is guest behavior and is left alone;
@@ -290,7 +294,7 @@ stateDiagram-v2
     Recording --> Detached : SeekTo(T < end)<br/>(emulator paused in the past)
     Detached --> Recording : Resume() at T —<br/>history truncated to T,<br/>recording continues from T
     Detached --> Recording : SeekTo(end)<br/>(back to the present)
-    Recording --> Idle : InvalidateSession()<br/>reset / load / config change
+    Recording --> Idle : StopRecording() / reset (history kept)<br/>guest invalidation (SD card)
     Detached --> Idle : InvalidateSession()
 ```
 
@@ -1481,9 +1485,9 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead?
 4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
-6. **CMOS / NVRAM contents are not captured** — both `Cmos` (ATM/ZX-Evo, `core/src/emulator/memory/atm/cmos.h`) and `SmucNvram` (Scorpion SMUC, `core/src/emulator/io/rtc/smucnvram.h`) hold `_cmos[0x100]` + `_nvram[0x800]`. Only the *address latch* (`cmos_addr`, in the ATM paging blob) is checkpointed; the 2304 bytes of contents are not. The argument for leaving them out: they are battery-backed **configuration**, changed on the order of once a session, and capturing them costs 2.3 KB in *every* checkpoint — the largest single line item after the RAM pages, for data that is almost always byte-identical to the previous checkpoint. The argument against: a guest that writes CMOS mid-recording (a setup screen, or ZX-Evo BaseConf firmware that uses NVRAM as scratch) will replay against post-write contents no matter where you seek, so the machine silently diverges from what actually happened. **Open:** does BaseConf write NVRAM often enough during normal operation for this to bite? Needs measurement — instrument the writes over a boot + a few minutes of a real BaseConf session before deciding.
-7. **If capture is needed, capture the delta, not the array** — the obvious fix is a `TTDSerializable` per device carrying the full 2304 bytes, which is also the wasteful one. Cheaper shapes, in order of preference: (a) a CMOS/NVRAM **write journal** replayed on seek, since the write rate is the thing that makes capture necessary in the first place and a journal costs exactly what that rate costs; (b) a dirty-flag + full blob only in checkpoints where a write occurred; (c) unconditional full capture. Pick after (6) is measured — the measurement decides the shape, not just the yes/no.
-8. **Neither device participates in the divergence hash** — a consequence of (6): a replay that corrupts CMOS is not detected by the corpus tests. If (6) resolves to "capture", `TTDHashState()` must be implemented alongside, or the capture goes untested in exactly the scenario that motivated it.
+6. **CMOS contents** — resolved 2026-09-28 (PLAN #60(c)): the clock chip of every machine is the shared `Ds12887` (`core/src/emulator/io/rtc/ds12887.h`), captured whole as `PeripheralId::Ds12887` (id 18, `core/src/debugger/ttd/ttdds12887.h`): 256 cells, the address latch, the C flags and the time base, 336 bytes per checkpoint before compression. While a session records the chip runs on emulated time (`TTDSerializable::TTDRecordingStarted`, called before the baseline capture), so the blob carries no host-clock dependence. Still not captured: the ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 serial EEPROM (the guest writes them only when it saves configuration).
+7. **Delta capture for the EEPROMs** — if the two EEPROMs above ever need capture, a write journal replayed on seek costs exactly the write rate; the clock chip itself is small enough to capture whole.
+8. **Divergence hash** — the `Ds12887` blob participates (`TTDDs12887::TTDHashState`); the EEPROMs do not.
 
 ---
 

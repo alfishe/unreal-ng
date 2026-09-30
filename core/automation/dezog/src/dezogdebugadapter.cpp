@@ -807,7 +807,8 @@ void DezogDebugAdapter::restoreState(const std::vector<uint8_t>& state)
     leaveHistory(*emulator);
 
     if (!restoreSnapshotBytes(*emulator, state))
-        std::cerr << "[DZRP] restoreState: LoadSnapshot failed\n";
+        std::cerr << "[DZRP] restoreState: LoadSnapshot failed "
+                  << emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot) << "\n";
 
     // LoadSnapshot invalidates the TTD session - start a fresh history from here
     ensureHistoryRecording(*emulator);
@@ -1015,7 +1016,8 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
     // would wipe the timeline on every browse exit (reverse-debugging.md
     // §6.2). Idempotent - safe to call while browsing.
     if (!mgr->BeginDebuggerLiveHistory())
-        std::cerr << "[DZRP] TTD BeginDebuggerLiveHistory failed - instruction history unavailable\n";
+        std::cerr << "[DZRP] TTD BeginDebuggerLiveHistory failed - instruction history unavailable"
+                  << (mgr->GetUnavailableReason().empty() ? "" : ": " + mgr->GetUnavailableReason()) << "\n";
 }
 
 void DezogDebugAdapter::onDebuggerEdit(Emulator& emulator, const char* what)

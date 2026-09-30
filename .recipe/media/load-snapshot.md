@@ -1,6 +1,6 @@
 # Recipe: Load / Save Snapshots
 
-Goal: restore a machine state from a `.sna`/`.z80` file, save states back out,
+Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file, save states back out,
 and verify a snapshot actually took effect.
 
 Snapshots are the cheapest way to reach a known state — much faster than
@@ -68,6 +68,19 @@ Snapshot format notes:
   reconstructed; some snapshots carry 128K extensions.
 - `.z80` — carries model + paging info natively; the emulator applies what it
   recognizes and starts the machine paused or running per snapshot flags.
+- `.szx` (ZX-State, the format Fuse and Spectaculator write) — the machine id,
+  the exact CPU state (MEMPTR, Q, the EI shadow, HALT) and the position in the
+  frame, AY registers, the Beta 128 registers and TR-DOS paging. Through the API the
+  snapshot's model must be the running one (48K, 128K, +2, +2A, +3, Pentagon
+  128 / 512 / 1024, Scorpion); another model is refused with both names, e.g.
+  "the snapshot was saved on a Pentagon 512K, the running machine is a
+  ZX-Spectrum 128k: create a Pentagon 512K to load it". In the Qt window
+  (drag and drop, File > Open, a file on the command line) an SZX for another
+  model replaces the running machine by that model first, as the Machine menu
+  does (media follow), then loads. The log
+  lists what each block did (applied, approximated, ignored). Saving picks the
+  format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
+  and cannot be saved as `.szx` yet.
 
 ### Save a snapshot
 
@@ -109,7 +122,13 @@ DIGEST_B=$(curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest)
   `POST /ttd/start` after a snapshot load (details in
   [ttd-recording.md](../analysis/ttd-recording.md)).
 - **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
-  after loading if the program expects it.
+  after loading if the program expects it. `.szx` does: saving links the
+  file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with
+  its current block; loading finds a linked image next to the snapshot first,
+  then at the stored path, and inserts it with Session access (the linked
+  file is never written). Images embedded in an `.szx` from another emulator
+  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot loaded into a 48K instance (or vice
   versa) either fails cleanly or drops extension state; create the right
   model first ([setup.md](../_common/setup.md) §3).

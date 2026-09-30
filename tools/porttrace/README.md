@@ -101,7 +101,7 @@ Runs a complete session against a live emulator:
 | `--capacity N` | Ring buffer capacity in events. Default: **auto-sized** — `duration × 250k events/s × 1.5` headroom for `--duration`, 4M for `--wait-key`, clamped to 1M–8M (24 bytes/event: 1M = 24 MB, 8M = 192 MB) |
 | `--overflow ring\|stop` | `ring` = evict oldest (default); `stop` = auto-stop when full, keeping the **start** of the run |
 | `-o BASE` | Output base path; the extension is added per format (default `porttrace`) |
-| `--to LIST` | Comma-separated formats: `json,csv,text,markdown,bin,binz` (default `json`; `binz` = compressed PTR2 v2, typically 50–100× smaller than `bin`) |
+| `--to LIST` | Comma-separated formats: `json,csv,text,markdown,bin,binz` (default `json`; `binz` = compressed PTR2 v3, typically 50–100× smaller than `bin`) |
 | `--summary` | Print the trace summary after conversion |
 | `--no-enable` | Do not auto-enable the feature (fail if it is off) |
 
@@ -141,6 +141,7 @@ raw=FEFD               raw bus address (hex)
 device=AY_FFFD         device attribution (see table in §6)
 direction=in|out
 pc=3D00-3FFF           PC range (hex, inclusive)
+code=Eff7Gluk          internal port code: a name from status 'codes', or 0x.. / #.. hex
 unmapped               only events that decoded to nothing
 ```
 
@@ -150,6 +151,7 @@ Examples:
 --include port=FFFD,direction=out            # AY register-select/chip-select writes only
 --include unmapped,pc=0000-3FFF              # unmapped accesses from ROM code
 --exclude device=WD1793_Data                 # drop FDC data-register noise
+--include code=Eff7Gluk                      # ZX-Evo: only the #EFF7 / Gluk clock decode arm
 ```
 
 ### Capacity planning
@@ -197,10 +199,12 @@ CSV, otherwise JSON.
 | `--filter-direction in\|out` | Keep one direction |
 | `--filter-pc LO-HI` | Keep events with PC in the hex range |
 | `--filter-unmapped` | Keep only unmapped events (decoded=0x0000, not gated) |
+| `--filter-code NAME\|HEX` | Keep one internal port code: a name from the trace's code table (`Eff7Gluk`, case-insensitive) or hex |
 
 ### `--summary`
 
-Direction and device histograms, decoded-port ranking, unmapped raw addresses,
+Direction and device histograms, the internal-code histogram (decoders with
+codes, e.g. the ZX-Evo), decoded-port ranking, unmapped raw addresses,
 Beta128-gated count, and the decode-rule distribution (rule names resolved from
 the table embedded in the trace).
 
@@ -232,9 +236,19 @@ are verified against.
 
 ## 5. Trace file formats
 
-All three formats carry the same events; JSON and binary also embed the session
-metadata and the model's **decode-rule table** (`{mask, match, port}` per rule),
-so `decodeRuleIndex` values resolve offline without hardcoding per-model masks.
+All formats carry the same events; they also embed the session metadata, the
+model's **decode-rule table** (`{mask, match, port}` per rule), so
+`decodeRuleIndex` values resolve offline without hardcoding per-model masks, and
+the decoder's **internal port codes** with their names.
+
+**Internal port code** (PLAN #60(g)): a table-driven decoder first turns the
+address into a code - what the port means under the current port map - and the
+event records it. On the ZX-Evo (`ATM3`) the code is the BaseConf decode arm
+(`Eff7Gluk`, `Pager`, `Ay`, `SdData`, ...); the Sprinter and TSConf will record
+their port-table codes. Decoders without codes record `0xFFFF` (none), and every
+format leaves the code out for such events. Worked example: on the ZX-Evo,
+`OUT (#DFF7)` and `OUT (#EFF7)` are both code `Eff7Gluk` (the #F7 arm outside
+the pager), and `--filter-code eff7gluk` keeps exactly those accesses.
 
 ### JSON (`unreal-ng-porttrace-v1`)
 
@@ -245,44 +259,55 @@ so `decodeRuleIndex` values resolve offline without hardcoding per-model masks.
                "filter": "All ports", "capacity": 1048576,
                "total_captured": 1984, "total_evicted": 0, "total_filtered": 0 },
   "decode_rules": [ {"index": 0, "mask": 49154, "match": 49152, "port": 65533}, ... ],
+  "code_map": { "4": "Ay", "5": "Eff7Gluk", ... },
   "device_map": { "4": "AY_FFFD", ... },
   "events": [ {"ts": 73830874, "frame": 1030, "raw": 65533, "dec": 65533,
-               "rule": 0, "val": 7, "pc": 14472, "dev": 4, "flags": 7}, ... ]
+               "rule": 0, "val": 7, "pc": 14472, "dev": 4, "flags": 7, "code": 4}, ... ]
 }
 ```
 
+`code_map` is empty and `"code"` absent on decoders without internal codes.
+
 ### CSV
 
-`#`-prefixed metadata comments (model, tStates/frame, filter, decode rules)
-followed by one row per event with hex ports/values and unpacked flag columns.
+`#`-prefixed metadata comments (model, tStates/frame, filter, decode rules,
+`# Code 0x0005: Eff7Gluk` lines) followed by one row per event with hex
+ports/values, unpacked flag columns, and `code` / `code_name` (empty without a
+code).
 
-### Binary (`PTRC` v1, little-endian)
+### Binary (`PTRC` v2, little-endian)
 
 ```text
 [Header: 32 bytes]
   0   magic     "PTRC"
-  4   version   u16 = 1
+  4   version   u16 = 2
   6   count     u32
   10  capacity  u32
   14  tpf       u32   (tStatesPerFrame)
   18  ruleCount u16
-  20  reserved  12 bytes
+  20  codeCount u16
+  22  reserved  10 bytes
 [Decode rules: ruleCount x 6 bytes]   u16 mask, u16 match, u16 port
-[Events: count x 24 bytes]            Python struct "<QIHHHBBBBxx":
+[Codes: codeCount entries]            u16 code, u8 name length, name bytes
+[Events: count x 24 bytes]            Python struct "<QIHHHBBBBH":
   u64 timestamp, u32 frame, u16 rawPort, u16 decodedPort, u16 pc,
-  u8 value, u8 decodeRuleIndex, u8 deviceId, u8 flags, 2 pad
+  u8 value, u8 decodeRuleIndex, u8 deviceId, u8 flags, u16 internalCode
 ```
+
+Version 1 files (no code table, bytes 22-23 of each event were padding) still
+load: their events read as "no code".
 
 The C++ side `static_assert`s this exact layout
 (`core/src/emulator/ports/portdiagrecorder.cpp`), so the formats cannot drift
 silently. Binary carries no model/emulator-id strings — use JSON when you need
 them.
 
-### Compressed binary (`PTR2` v2, `.binz`)
+### Compressed binary (`PTR2` v3, `.binz`)
 
-Same 32-byte header shape (magic `PTR2`, version 2, `compressedSize` u64 at
-offset 20) and uncompressed decode-rule table, followed by **one zstd frame**
-containing a columnar delta/xor payload (22 bytes/event before compression):
+Same 32-byte header shape (magic `PTR2`, version 3, `compressedSize` u64 at
+offset 20, `codeCount` u16 at offset 28), uncompressed decode-rule table and
+code table, followed by **one zstd frame** containing a columnar delta/xor
+payload (24 bytes/event before compression):
 
 ```text
 u64 tsDelta[n]     d[0]=ts[0]; d[i]=ts[i]-ts[i-1]   (wrapping)
@@ -291,7 +316,10 @@ u16 rawXor[n]      x[0]=raw[0]; x[i]=raw[i]^raw[i-1]
 u16 decXor[n]
 u16 pcXor[n]
 u8  value[n], rule[n], dev[n], flags[n]
+u16 codeXor[n]     the internal port code
 ```
+
+Version 2 files (22 bytes/event, no code column or table) still load.
 
 Timestamps dominate the raw stream's entropy and their deltas are
 near-constant, so real traces compress **50–100×** vs `bin` (measured live:

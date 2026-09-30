@@ -16,7 +16,7 @@ This set captures the directions discussed on 2026-09-20/21, turned into descrip
 | 02 | [Capability registry and trigger engine](02-capability-registry-and-triggers.md) | Registry of observables/events/actions, generalized conditional breakpoints → triggers, determinism contract, execution tiers, live + retroactive backends, Lua state in checkpoints, schema-generated automation surface |
 | 03 | [LLM analysis loop](03-llm-analysis-loop.md) | MCP work cycles, recipes and their regression, oracles and differential testing, batch corpus runner, title knowledge base, emulator-initiated LLM tasks (delegate actions), hypothesis verification via TTD |
 | 04 | [ZXDLSS, semantic game layer, mods and multiplayer](04-zxdlss-semantic-layer-and-multiplayer.md) | Game manifest, GigaScreen de-flicker, sprite/clash processing, draw-call recovery, asset packs, reconstructed rendering, audio remastering, UX features, rollback netplay, ghosts, grafted multiplayer |
-| — | [Developer toolchain](unreal-ng-developer-toolchain-design.md) (delivered earlier) | Core/daemon boundary, `unreal-devd`, LSP/DAP, VS Code extension, source-level debugging, NedoOS/system development |
+| — | [Developer toolchain](../2026-09-21-devtools-roadmap/unreal-ng-developer-toolchain-design.md) (delivered earlier) | Core/daemon boundary, `unreal-devd`, LSP/DAP, VS Code extension, source-level debugging, NedoOS/system development |
 
 ## Dependency map
 

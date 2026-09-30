@@ -9,7 +9,7 @@
 > instruction), which needs no frame adjustment or rescaling; the `eipos`
 > field stays only as a layout slot. The `eipos` rows below are historical.
 
-**Parent:** [Analyzer Architecture](./analyzer-architecture.md)
+**Parent:** [Analyzer Architecture](../2026-01-14-analyzers/analyzer-architecture.md)
 
 ---
 
@@ -19,7 +19,7 @@ During porting from the original UnrealSpeccy codebase, the T-state management b
 
 ### 1.1 Original Design (Clean)
 
-From [build/unrealspeccy/architecture/emulator/t-state-management.md](../../../build/unrealspeccy/architecture/emulator/t-state-management.md):
+From build/unrealspeccy/architecture/emulator/t-state-management.md:
 
 | Counter | Type | Purpose |
 |---------|------|---------|
@@ -537,7 +537,7 @@ Before removing `clock_count`, verify tape timing still works:
 
 ## References
 
-- [build/unrealspeccy/architecture/emulator/t-state-management.md](../../../build/unrealspeccy/architecture/emulator/t-state-management.md)
+- build/unrealspeccy/architecture/emulator/t-state-management.md
 - [emulator/cpu/z80.h](../../../core/src/emulator/cpu/z80.h)
 - [emulator/cpu/z80.cpp](../../../core/src/emulator/cpu/z80.cpp)
 - [emulator/cpu/core.cpp](../../../core/src/emulator/cpu/core.cpp)

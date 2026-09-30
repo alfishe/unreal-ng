@@ -118,6 +118,23 @@ poke a distinctive byte via `PUT /emulator/{id}/memory/ram/{page}/{offset}`
 at the address the formula predicts for a known screen column, advance one
 frame, and check whether the predicted pixel changed.
 
+### Hard disk and CD (ZX-Evo)
+
+Both models have an IDE board: `ATM3` the NemoIDE (`[HDD] Scheme=NEMO-DIVIDE`), `ATM710`
+its own ATM IDE (`Scheme=ATM`). The units are the media slots `ide0.master`
+(alias `hd`) and `ide0.slave`; ZX-Evo ships a CD drive on the slave (`CD1=1`,
+alias `cd`). In the ERS menu, "B. HDD boot" boots the hard disk and "D. CD
+boot" runs the disc's `AUTORUN.ZX`; with the drive empty it keeps retrying until
+a disc is inserted. Verbs and formats:
+[use-media-slots.md](../media/use-media-slots.md),
+[docs/features/media.md](../../docs/features/media.md).
+
+```text
+media {"action":"insert","slot":"hd","path":"/home/me/zx/nedoos.img"}  # hard disk (insert while paused)
+media {"action":"insert","slot":"cd","path":"/home/me/zx/disc.iso"}    # CLI: media insert cd <iso>
+inspect_state {"aspects":["ide"]}                                         # board, latches, units, sense data
+```
+
 ### CP/M mode
 
 `#FF77` bit 9 switches the machine into CP/M memory layout. The natural way

@@ -30,12 +30,14 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["413"]["description"] =
         "File too large (max 4 MB)";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
 
     // POST /api/v1/emulator/{id}/snapshot/save - Save snapshot file
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["tags"].append("Snapshot Control");
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["description"] =
-        "Save current emulator state to a snapshot file (.sna format)";
+        "Save current emulator state to a snapshot file (.sna, .z80 or .szx, chosen by the extension)";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["required"] = true;
@@ -43,7 +45,7 @@
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["path"]["description"] = "Path to save snapshot file (.sna)";
+         ["properties"]["path"]["description"] = "Path to save snapshot file (.sna, .z80, .szx)";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["force"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]

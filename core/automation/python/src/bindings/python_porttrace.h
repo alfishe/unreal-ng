@@ -44,7 +44,34 @@ inline PortDiagnosticRecorder* requireRecorder(Emulator& self, PortDecoder** out
     return recorder;
 }
 
-inline pybind11::dict eventToDict(const PortTraceEvent& e)
+/// The decoder's internal port codes (PLAN #60(g)); empty when it has none
+inline std::vector<PortTraceCodeName> codeTable(Emulator& self)
+{
+    auto* context = self.GetContext();
+    return context && context->pPortDecoder ? context->pPortDecoder->GetPortTraceCodeTable()
+                                            : std::vector<PortTraceCodeName>{};
+}
+
+/// Internal code from None, an int or a name from porttrace_codes()
+inline std::optional<uint16_t> codeFromObject(const pybind11::object& code, const std::vector<PortTraceCodeName>& codes)
+{
+    if (code.is_none())
+        return std::nullopt;
+    if (pybind11::isinstance<pybind11::int_>(code))
+    {
+        const long value = code.cast<long>();
+        if (value < 0 || value > 0xFFFF)
+            throw std::invalid_argument("code must be 0..0xFFFF");
+        return static_cast<uint16_t>(value);
+    }
+    const std::string name = code.cast<std::string>();
+    for (const auto& entry : codes)
+        if (entry.name == name)
+            return entry.code;
+    throw std::invalid_argument("Unknown code: " + name);
+}
+
+inline pybind11::dict eventToDict(const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes)
 {
     pybind11::dict d;
     d["timestamp"] = e.timestamp;
@@ -63,6 +90,13 @@ inline pybind11::dict eventToDict(const PortTraceEvent& e)
     d["cf_trdos"] = e.cfTrdosActive();
     d["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
     d["full_decode_claim"] = e.wasFullDecodeClaimed();
+    if (e.hasInternalCode())
+    {
+        d["code"] = e.internalCode;
+        for (const auto& entry : codes)
+            if (entry.code == e.internalCode)
+                d["code_name"] = entry.name;
+    }
     return d;
 }
 
@@ -79,7 +113,7 @@ inline PortTraceFilterRule buildRule(std::optional<uint16_t> port, std::optional
     if (device)
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
+        for (int id = 0; id <= static_cast<int>(kPortDeviceIdLast); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {
@@ -122,6 +156,8 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
 {
     namespace py = pybind11;
     using porttrace_detail::buildRule;
+    using porttrace_detail::codeFromObject;
+    using porttrace_detail::codeTable;
     using porttrace_detail::eventToDict;
     using porttrace_detail::requireRecorder;
 
@@ -189,25 +225,28 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
              [](Emulator& self, std::optional<uint16_t> port, std::optional<uint16_t> raw,
                 std::optional<std::string> device, std::optional<std::string> direction,
                 std::optional<std::pair<uint16_t, uint16_t>> pc,
-                std::optional<std::pair<uint16_t, uint16_t>> value, bool unmapped) {
-                 requireRecorder(self)->addIncludeRule(
-                     buildRule(port, raw, device, direction, pc, value, unmapped));
+                std::optional<std::pair<uint16_t, uint16_t>> value, bool unmapped, const py::object& code) {
+                 PortTraceFilterRule rule = buildRule(port, raw, device, direction, pc, value, unmapped);
+                 rule.internalCode = codeFromObject(code, codeTable(self));
+                 requireRecorder(self)->addIncludeRule(rule);
              },
              "Add compound include rule (all given kwargs must match; separate calls OR together)",
              py::arg("port") = py::none(), py::arg("raw") = py::none(), py::arg("device") = py::none(),
              py::arg("direction") = py::none(), py::arg("pc") = py::none(), py::arg("value") = py::none(),
-             py::arg("unmapped") = false)
+             py::arg("unmapped") = false, py::arg("code") = py::none())
         .def("porttrace_exclude",
              [](Emulator& self, std::optional<uint16_t> port, std::optional<uint16_t> raw,
                 std::optional<std::string> device, std::optional<std::string> direction,
                 std::optional<std::pair<uint16_t, uint16_t>> pc,
-                std::optional<std::pair<uint16_t, uint16_t>> value, bool unmapped) {
-                 requireRecorder(self)->addExcludeRule(
-                     buildRule(port, raw, device, direction, pc, value, unmapped));
+                std::optional<std::pair<uint16_t, uint16_t>> value, bool unmapped, const py::object& code) {
+                 PortTraceFilterRule rule = buildRule(port, raw, device, direction, pc, value, unmapped);
+                 rule.internalCode = codeFromObject(code, codeTable(self));
+                 requireRecorder(self)->addExcludeRule(rule);
              },
              "Add compound exclude rule (exclude always wins over include)", py::arg("port") = py::none(),
              py::arg("raw") = py::none(), py::arg("device") = py::none(), py::arg("direction") = py::none(),
-             py::arg("pc") = py::none(), py::arg("value") = py::none(), py::arg("unmapped") = false)
+             py::arg("pc") = py::none(), py::arg("value") = py::none(), py::arg("unmapped") = false,
+             py::arg("code") = py::none())
         .def("porttrace_filter_clear",
              [](Emulator& self, const std::string& what) {
                  auto* recorder = requireRecorder(self);
@@ -239,28 +278,45 @@ inline void registerPortTraceBindings(EmulatorClass& emulatorClass)
              },
              "Apply filter preset: all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped", py::arg("name"))
 
+        .def("porttrace_codes",
+             [](Emulator& self) -> py::list {
+                 py::list result;
+                 for (const auto& entry : codeTable(self))
+                 {
+                     py::dict code;
+                     code["code"] = entry.code;
+                     code["name"] = entry.name;
+                     result.append(code);
+                 }
+                 return result;
+             },
+             "Internal port codes of the machine's decoder (ZX-Evo: decode arms): [{'code', 'name'}]; [] when none")
+
         // ── Retrieval ──
         .def("porttrace_events",
              [](Emulator& self) -> py::list {
                  py::list result;
+                 const auto codes = codeTable(self);
                  for (const auto& e : requireRecorder(self)->getAll())
-                     result.append(eventToDict(e));
+                     result.append(eventToDict(e, codes));
                  return result;
              },
              "All buffered events as list of dicts")
         .def("porttrace_events_last",
              [](Emulator& self, size_t count) -> py::list {
                  py::list result;
+                 const auto codes = codeTable(self);
                  for (const auto& e : requireRecorder(self)->getLast(count))
-                     result.append(eventToDict(e));
+                     result.append(eventToDict(e, codes));
                  return result;
              },
              "Last N buffered events", py::arg("count"))
         .def("porttrace_events_since",
              [](Emulator& self, uint64_t timestamp) -> py::list {
                  py::list result;
+                 const auto codes = codeTable(self);
                  for (const auto& e : requireRecorder(self)->getSince(timestamp))
-                     result.append(eventToDict(e));
+                     result.append(eventToDict(e, codes));
                  return result;
              },
              "Events with timestamp >= given absolute T-state", py::arg("timestamp"))

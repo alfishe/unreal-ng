@@ -88,7 +88,23 @@ PortDiagnosticRecorder* getRecorder(const std::string& id, PortDecoder** outDeco
     return recorder;
 }
 
-Json::Value eventToJson(const PortTraceEvent& e, size_t index)
+/// Internal port code of an event: "code" (hex) and "code_name" when the decoder has one (PLAN #60(g))
+void codeToJson(Json::Value& v, uint16_t code, const std::vector<PortTraceCodeName>& codes)
+{
+    if (code == PortTraceCode::kNone)
+        return;
+    char buf[8];
+    snprintf(buf, sizeof(buf), "0x%04X", code);
+    v["code"] = buf;
+    for (const auto& entry : codes)
+        if (entry.code == code)
+        {
+            v["code_name"] = entry.name;
+            break;
+        }
+}
+
+Json::Value eventToJson(const PortTraceEvent& e, size_t index, const std::vector<PortTraceCodeName>& codes)
 {
     char buf[8];
     Json::Value v;
@@ -113,6 +129,7 @@ Json::Value eventToJson(const PortTraceEvent& e, size_t index)
     v["cf_trdos"] = e.cfTrdosActive();
     v["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
     v["full_decode_claim"] = e.wasFullDecodeClaimed();
+    codeToJson(v, e.internalCode, codes);
     return v;
 }
 
@@ -138,6 +155,18 @@ Json::Value statusToJson(PortDiagnosticRecorder* recorder, PortDecoder* decoder)
     session["auto_stopped"] = recorder->wasAutoStopped();
     session["overflow"] = recorder->overflowMode() == PortTraceOverflowMode::Ring ? "ring" : "stop-when-full";
     session["filter"] = recorder->describeFilter();
+    // The decoder's internal port codes (filter values for "code"); empty when it has none
+    session["codes"] = Json::Value(Json::arrayValue);
+    if (decoder)
+        for (const auto& entry : decoder->GetPortTraceCodeTable())
+        {
+            Json::Value code;
+            char buf[8];
+            snprintf(buf, sizeof(buf), "0x%04X", entry.code);
+            code["code"] = buf;
+            code["name"] = entry.name;
+            session["codes"].append(code);
+        }
 
     const PortActivitySummary& summary = decoder->getActivitySummary();
     Json::Value activity;
@@ -154,7 +183,8 @@ Json::Value statusToJson(PortDiagnosticRecorder* recorder, PortDecoder* decoder)
 
 /// Parse one rule object {"port": "0xFFFD", "direction": "out", ...} into a
 /// compound filter rule. Returns false with outError on invalid input.
-bool ruleFromJson(const Json::Value& spec, PortTraceFilterRule& rule, std::string& outError)
+bool ruleFromJson(const Json::Value& spec, PortTraceFilterRule& rule, std::string& outError,
+                  const std::vector<PortTraceCodeName>& codes)
 {
     auto parsePortField = [&](const char* field, std::optional<uint16_t>& target) -> bool {
         if (!spec.isMember(field))
@@ -180,12 +210,19 @@ bool ruleFromJson(const Json::Value& spec, PortTraceFilterRule& rule, std::strin
         return false;
     if (!parsePortField("raw", rule.rawPort))
         return false;
+    // Internal port code: a name from status 'codes' (e.g. "Eff7Gluk") or a number
+    if (spec.isMember("code") && spec["code"].isString())
+        for (const auto& entry : codes)
+            if (entry.name == spec["code"].asString())
+                rule.internalCode = entry.code;
+    if (!rule.internalCode && !parsePortField("code", rule.internalCode))
+        return false;
 
     if (spec.isMember("device"))
     {
         std::string name = spec["device"].asString();
         bool found = false;
-        for (int devId = 0; devId <= static_cast<int>(PortDeviceId::FullDecodeClaim); devId++)
+        for (int devId = 0; devId <= static_cast<int>(kPortDeviceIdLast); devId++)
         {
             if (name == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(devId)))
             {
@@ -353,8 +390,9 @@ void EmulatorAPI::getPortTraceEvents(const HttpRequestPtr& req,
     Json::Value body;
     body["session"] = statusToJson(recorder, decoder);
     body["events"] = Json::Value(Json::arrayValue);
+    const std::vector<PortTraceCodeName> codes = decoder ? decoder->GetPortTraceCodeTable() : std::vector<PortTraceCodeName>{};
     for (size_t i = 0; i < events.size(); i++)
-        body["events"].append(eventToJson(events[i], i));
+        body["events"].append(eventToJson(events[i], i, codes));
 
     sendJson(callback, body);
 }
@@ -381,9 +419,11 @@ void EmulatorAPI::setPortTraceFilter(const HttpRequestPtr& req,
                                      std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const
 {
-    auto* recorder = getRecorder(id, nullptr, callback);
+    PortDecoder* decoder = nullptr;
+    auto* recorder = getRecorder(id, &decoder, callback);
     if (!recorder)
         return;
+    const std::vector<PortTraceCodeName> codes = decoder ? decoder->GetPortTraceCodeTable() : std::vector<PortTraceCodeName>{};
 
     auto json = req->getJsonObject();
     if (!json)
@@ -423,7 +463,7 @@ void EmulatorAPI::setPortTraceFilter(const HttpRequestPtr& req,
             for (const Json::Value& spec : (*json)[section])
             {
                 PortTraceFilterRule rule;
-                if (!ruleFromJson(spec, rule, error))
+                if (!ruleFromJson(spec, rule, error, codes))
                 {
                     sendError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
                     return;
@@ -596,6 +636,9 @@ void EmulatorAPI::readPortTraceFile(const HttpRequestPtr& req,
         rule["port"] = info.decodeRules[i].port;
         body["decode_rules"].append(rule);
     }
+    body["code_map"] = Json::Value(Json::objectValue);
+    for (const auto& entry : info.codes)
+        body["code_map"][std::to_string(entry.code)] = entry.name;
 
     size_t emitCount = (limit > 0 && limit < events.size()) ? limit : events.size();
     body["events"] = Json::Value(Json::arrayValue);
@@ -613,6 +656,8 @@ void EmulatorAPI::readPortTraceFile(const HttpRequestPtr& req,
         v["pc"] = e.pc;
         v["dev"] = static_cast<Json::UInt>(e.deviceId);
         v["flags"] = e.flags;
+        if (e.hasInternalCode())
+            v["code"] = e.internalCode;
         body["events"].append(v);
     }
 

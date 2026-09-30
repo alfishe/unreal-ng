@@ -181,7 +181,7 @@ private:
         // itself, and CONFIG{} leaves config.frame at 0. Screen requires it:
         // InitRaster asserts config.frame >= the raster's own frame length
         // (#ifdef _DEBUG), and SetVideoMode pushes the value into
-        // UlaContention, where GetIOContentionDelay computes
+        // UlaContention, where the floating-bus lookups compute
         // `t % configFrameDuration` - a modulo by zero on any model whose
         // contention is enabled. Go through ApplyModelTimingDefaults rather
         // than a literal so the fixture cannot drift from the model.

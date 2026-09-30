@@ -172,7 +172,15 @@ protected:
     Z80Registers _z80Registers = {};
     uint8_t _port7FFD = 0x00;
     uint8_t _portFFFD = 0x00;
+    uint8_t _port1FFD = 0x00;     ///< v3 byte 86 (extended header of 55 bytes): +2A / +3 / Scorpion paging
+    bool _hasPort1FFD = false;
+    uint8_t _modelCode = 0;       ///< the header's model byte (v2 or v3 numbering)
+    /// v3 bytes 55-57: T-states since the frame's INT (as libspectrum / Fuse count them)
+    uint32_t _tstatesFromInt = 0;
+    bool _hasTStates = false;
     uint8_t _borderColor = 0x00;
+    uint8_t _ayRegisters[16] = {};
+    bool _hasAyRegisters = false;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -206,7 +214,8 @@ protected:
     Z80Registers getZ80Registers(const Z80Header_v1& header, uint16_t pc);
     Z80MemoryMode getMemoryModeV2(uint8_t model);
     Z80MemoryMode getMemoryModeV3(uint8_t model);
-    void applyPeripheralState(const Z80Header_v2& header);
+    void stagePeripheralState(const Z80Header_v2& header);
+    void commitPeripheralState();
     bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
@@ -282,6 +291,8 @@ public:
     using LoaderZ80::_z80Registers;
     using LoaderZ80::_port7FFD;
     using LoaderZ80::_portFFFD;
+    using LoaderZ80::_port1FFD;
+    using LoaderZ80::_hasPort1FFD;
     using LoaderZ80::_borderColor;
     using LoaderZ80::_memoryMode;
 

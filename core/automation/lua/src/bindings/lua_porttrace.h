@@ -57,7 +57,13 @@ inline PortDiagnosticRecorder* resolveRecorder(Emulator* emulator, PortDecoder**
     return recorder;
 }
 
-inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e)
+/// The decoder's internal port codes (PLAN #60(g)); empty without a decoder or codes
+inline std::vector<PortTraceCodeName> codeTable(PortDecoder* decoder)
+{
+    return decoder ? decoder->GetPortTraceCodeTable() : std::vector<PortTraceCodeName>{};
+}
+
+inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e, const std::vector<PortTraceCodeName>& codes)
 {
     sol::table t = lua.create_table();
     t["timestamp"] = e.timestamp;
@@ -76,11 +82,19 @@ inline sol::table eventToTable(sol::state_view lua, const PortTraceEvent& e)
     t["cf_trdos"] = e.cfTrdosActive();
     t["via_legacy"] = (e.flags & PortTraceFlags::kViaLegacyBasePath) != 0;
     t["full_decode_claim"] = e.wasFullDecodeClaimed();
+    if (e.hasInternalCode())
+    {
+        t["code"] = e.internalCode;
+        for (const auto& entry : codes)
+            if (entry.code == e.internalCode)
+                t["code_name"] = entry.name;
+    }
     return t;
 }
 
 /// Build a compound rule from a Lua table: { port=0xFFFD, direction="out", ... }
-inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std::string& outError)
+inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std::string& outError,
+                          const std::vector<PortTraceCodeName>& codes)
 {
     if (sol::optional<uint16_t> port = spec["port"])
         rule.decodedPort = *port;
@@ -90,7 +104,7 @@ inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std
     if (sol::optional<std::string> device = spec["device"])
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
+        for (int id = 0; id <= static_cast<int>(kPortDeviceIdLast); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {
@@ -125,6 +139,21 @@ inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std
         rule.valueRange = {(*value)[1].get<uint8_t>(), (*value)[2].get<uint8_t>()};
     if (sol::optional<bool> unmapped = spec["unmapped"])
         rule.unmappedOnly = *unmapped;
+
+    // Internal port code: a number, or a name from porttrace_codes()
+    if (spec["code"].get_type() == sol::type::number)
+        rule.internalCode = spec["code"].get<uint16_t>();
+    else if (sol::optional<std::string> codeName = spec["code"])
+    {
+        for (const auto& entry : codes)
+            if (entry.name == *codeName)
+                rule.internalCode = entry.code;
+        if (!rule.internalCode)
+        {
+            outError = "Unknown code: " + *codeName;
+            return false;
+        }
+    }
 
     return true;
 }
@@ -231,22 +260,43 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
 
     lua.set_function("porttrace_include", [getEmulator](const sol::table& spec) -> bool {
         std::string error;
-        auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+        PortDecoder* decoder = nullptr;
+        auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return false;
         PortTraceFilterRule rule;
-        if (!ruleFromTable(spec, rule, error)) return false;
+        if (!ruleFromTable(spec, rule, error, codeTable(decoder))) return false;
         recorder->addIncludeRule(rule);
         return true;
     });
 
     lua.set_function("porttrace_exclude", [getEmulator](const sol::table& spec) -> bool {
         std::string error;
-        auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+        PortDecoder* decoder = nullptr;
+        auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return false;
         PortTraceFilterRule rule;
-        if (!ruleFromTable(spec, rule, error)) return false;
+        if (!ruleFromTable(spec, rule, error, codeTable(decoder))) return false;
         recorder->addExcludeRule(rule);
         return true;
+    });
+
+    // Internal port codes of the machine's decoder: { {code=5, name="Eff7Gluk"}, ... }
+    lua.set_function("porttrace_codes", [getEmulator](sol::this_state s) -> sol::table {
+        sol::state_view lua(s);
+        sol::table result = lua.create_table();
+        std::string error;
+        PortDecoder* decoder = nullptr;
+        if (!resolveRecorder(getEmulator(), &decoder, error))
+            return result;
+        int index = 1;
+        for (const auto& entry : codeTable(decoder))
+        {
+            sol::table code = lua.create_table();
+            code["code"] = entry.code;
+            code["name"] = entry.name;
+            result[index++] = code;
+        }
+        return result;
     });
 
     lua.set_function("porttrace_filter_clear", [getEmulator](sol::optional<std::string> what) -> bool {
@@ -290,11 +340,13 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         sol::state_view lua(s);
         sol::table result = lua.create_table();
         std::string error;
-        auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+        PortDecoder* decoder = nullptr;
+        auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return result;
+        const auto codes = codeTable(decoder);
         int index = 1;
         for (const auto& e : recorder->getAll())
-            result[index++] = eventToTable(lua, e);
+            result[index++] = eventToTable(lua, e, codes);
         return result;
     });
 
@@ -302,11 +354,13 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         sol::state_view lua(s);
         sol::table result = lua.create_table();
         std::string error;
-        auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+        PortDecoder* decoder = nullptr;
+        auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
         if (!recorder) return result;
+        const auto codes = codeTable(decoder);
         int index = 1;
         for (const auto& e : recorder->getLast(count))
-            result[index++] = eventToTable(lua, e);
+            result[index++] = eventToTable(lua, e, codes);
         return result;
     });
 
@@ -315,11 +369,13 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
                          sol::state_view lua(s);
                          sol::table result = lua.create_table();
                          std::string error;
-                         auto* recorder = resolveRecorder(getEmulator(), nullptr, error);
+                         PortDecoder* decoder = nullptr;
+                         auto* recorder = resolveRecorder(getEmulator(), &decoder, error);
                          if (!recorder) return result;
+                         const auto codes = codeTable(decoder);
                          int index = 1;
                          for (const auto& e : recorder->getSince(timestamp))
-                             result[index++] = eventToTable(lua, e);
+                             result[index++] = eventToTable(lua, e, codes);
                          return result;
                      });
 

@@ -34,6 +34,18 @@
 
 /// region <TTD Commands>
 
+
+/// TD-8: the part of history a backward search examined, one line
+static std::string FormatSearchWindow(const ttd::TTDSearchWindow& window)
+{
+    if (!window.searched)
+        return {};
+    std::stringstream ss;
+    ss << "  Searched: frame " << window.from.frame << " t=" << window.from.tInFrame << " .. frame "
+       << window.to.frame << " t=" << window.to.tInFrame << CLIProcessor::NEWLINE;
+    return ss.str();
+}
+
 void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -119,6 +131,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDFindLast(session, context, args);
     }
+    else if (subcommand == "port-events" || subcommand == "pe")
+    {
+        HandleTTDPortEvents(session, context, args);
+    }
     else if (subcommand == "step-instruction" ||
              subcommand == "si-back"    ||
              subcommand == "si-forward")
@@ -179,6 +195,16 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
     ss << "    [--before-frame F] [--before-tin T]" << NEWLINE;
+    ss << "  ttd port-events <event> [arg] [option=value ...]   (alias: pe)" << NEWLINE;
+    ss << "                                   When did the program ... - from the port journals, no replay:" << NEWLINE;
+    ss << "    key [KEY]       saw a key down (KEY: a, enter, space, caps, symbol...; none: any key)" << NEWLINE;
+    ss << "    ear             saw the tape (EAR) signal change" << NEWLINE;
+    ss << "    ay-read [R]  ay-write [R]  ay-select [R]   AY accesses (R: register 0..15)" << NEWLINE;
+    ss << "    border  beeper  OUT #FE changed the border color / beeper bit" << NEWLINE;
+    ss << "    in  out         every IN / OUT, narrowed by port=, port_mask=, value=, value_mask=" << NEWLINE;
+    ss << "    options: limit=N newest=true from=F[:T] to=F[:T] match=any|equals|any-clear|any-set" << NEWLINE;
+    ss << "             trigger=every|rising|change stream_mask=M ay_register=R" << NEWLINE;
+    ss << "             file=<path.ttd>  search a saved session without loading it" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
@@ -226,6 +252,21 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
        << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
        << info.writeJournalRecords << " records ("
        << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
+    ss << "  Journal coverage:       ";
+    if (info.writeJournalComplete)
+        ss << "complete" << (info.writeJournalWrapped ? " (ring wrapped: a 'no match' replays)" : "") << NEWLINE;
+    else
+    {
+        ss << "incomplete - write/port find-last replays";
+        if (!info.journalGapReason.empty())
+        {
+            ss << " (" << info.journalGapReason;
+            if (info.journalGapHasPosition)
+                ss << ", at frame " << info.journalGapAt.frame << " t=" << info.journalGapAt.tInFrame;
+            ss << ")";
+        }
+        ss << NEWLINE;
+    }
     if (info.coverageIndexFrames != 0)
     {
         ss << "  Coverage index:         " << info.coverageIndexFrames << " frames ("
@@ -237,6 +278,25 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
            << NEWLINE;
     }
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
+    ss << "  Input events:           " << info.inputEventCount << NEWLINE;
+    ss << "  Replay barriers:        " << info.externalEventCount << NEWLINE;
+    if (!info.inputHistoryComplete)
+        ss << "  Input history:          incomplete (the file predates saved input: in-frame replay may "
+              "differ from the recording)"
+           << NEWLINE;
+    if (info.portJournalActive)
+        ss << "  Port journals:          " << info.portReadCount << " IN, " << info.portWriteCount << " OUT ("
+           << info.portJournalBytes << " bytes), replay isolated from media and host devices" << NEWLINE;
+    else if (!info.portJournalOffReason.empty())
+        ss << "  Port journals:          off - " << info.portJournalOffReason << NEWLINE;
+    if (info.portReplayValueMismatches != 0 || info.portReplayDivergences != 0)
+        ss << "  Replay mismatches:      " << info.portReplayValueMismatches
+           << " device answer(s) (the CPU got the recorded values), " << info.portReplayDivergences
+           << " divergence(s)" << NEWLINE;
+    if (!info.lastDropReason.empty())
+        ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
+    if (!info.unavailableReason.empty())
+        ss << "  Not available:          " << info.unavailableReason << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -273,7 +333,9 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     }
     else
     {
-        session.SendResponse(std::string("TTD: Failed to start recording") + NEWLINE);
+        const std::string& reason = mgr->GetUnavailableReason();
+        session.SendResponse(std::string("TTD: Failed to start recording") + (reason.empty() ? "" : ": " + reason) +
+                             NEWLINE);
     }
 }
 
@@ -300,6 +362,12 @@ void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorCon
     if (args.size() > 1)
     {
         reason = args[1];
+    }
+
+    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        session.SendResponse("Error: " + refusal + NEWLINE);
+        return;
     }
 
     mgr->InvalidateSession(reason.c_str());
@@ -713,6 +781,78 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
     session.SendResponse(ss.str());
 }
 
+void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
+                                        const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    if (!mgr)
+    {
+        session.SendResponse(std::string("Error: TTD engine not available") + NEWLINE);
+        return;
+    }
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Usage: ttd port-events <event> [arg] [option=value ...]  (ttd help)") +
+                             NEWLINE);
+        return;
+    }
+
+    // args[1] is the event; an argument without '=' after it is the event's
+    // argument (a key name, an AY register); the rest are options
+    size_t next = 2;
+    std::string arg;
+    if (args.size() > 2 && args[2].find('=') == std::string::npos)
+        arg = args[next++];
+
+    ttd::TTDPortQuery q;
+    std::string err;
+    if (!ttd::BuildPortEventQuery(args[1], arg, q, err))
+    {
+        session.SendResponse("Error: " + err + NEWLINE);
+        return;
+    }
+    std::string file;  // file=<path>: search a .ttd on disk without loading it
+    for (; next < args.size(); ++next)
+    {
+        const size_t eq = args[next].find('=');
+        if (eq != std::string::npos && args[next].substr(0, eq) == "file")
+        {
+            file = args[next].substr(eq + 1);
+            continue;
+        }
+        if (eq == std::string::npos ||
+            !ttd::ApplyPortQueryOption(q, args[next].substr(0, eq), args[next].substr(eq + 1), err))
+        {
+            session.SendResponse("Error: " + (eq == std::string::npos ? "expected option=value, got '" + args[next] + "'"
+                                                                       : err) +
+                                 NEWLINE);
+            return;
+        }
+    }
+
+    const ttd::TTDPortSearchResult result = file.empty() ? mgr->SearchPortEvents(q) : mgr->SearchPortEventsInFile(file, q);
+    if (!result.ok)
+    {
+        session.SendResponse("Error: " + result.error + NEWLINE);
+        return;
+    }
+
+    std::stringstream ss;
+    ss << result.hits.size() << " hit(s)" << (result.truncated ? " (more than the limit)" : "") << ", "
+       << result.scanned << (q.direction == ttd::TTDPortJournal::Direction::Read ? " IN" : " OUT")
+       << " record(s) scanned" << NEWLINE;
+    for (const ttd::TTDPortHit& h : result.hits)
+    {
+        ss << "  frame " << h.record.frame << " t " << h.record.tInFrame << "  PC #" << std::hex << std::uppercase
+           << std::setw(4) << std::setfill('0') << h.record.pc << "  port #" << std::setw(4) << h.record.port
+           << "  value #" << std::setw(2) << static_cast<unsigned>(h.record.value) << std::dec << std::setfill(' ');
+        if (h.ayRegister >= 0)
+            ss << "  R" << h.ayRegister;
+        ss << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
 void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                                       const std::vector<std::string>& args)
 {
@@ -783,20 +923,19 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else if (tok == "--before-frame" && i + 1 < args.size())
         {
             uint64_t f = std::stoull(args[++i]);
-            // Will be combined with before-tin below; store frame in upper bits
-            const uint32_t frameT = context->config.frame;
+            // Combined with --before-tin in either order (TTD time: GlobalT)
+            const uint32_t frameSpan = mgr->FrameSpan();
             uint32_t tin = 0;
-            // If before-tin was already set, preserve it
             if (q.beforeGlobalT != UINT64_MAX)
-                tin = static_cast<uint32_t>(q.beforeGlobalT % frameT);
-            q.beforeGlobalT = f * frameT + tin;
+                tin = static_cast<uint32_t>(q.beforeGlobalT % frameSpan);
+            q.beforeGlobalT = mgr->GlobalT({f, tin});
         }
         else if (tok == "--before-tin" && i + 1 < args.size())
         {
             uint32_t tin = static_cast<uint32_t>(std::stoul(args[++i]));
-            const uint32_t frameT = context->config.frame;
-            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameT) : 0;
-            q.beforeGlobalT = frame * frameT + tin;
+            const uint32_t frameSpan = mgr->FrameSpan();
+            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameSpan) : 0;
+            q.beforeGlobalT = mgr->GlobalT({frame, tin});
         }
     }
 
@@ -810,7 +949,8 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
     }
 
     ttd::TTDExternalEvent blockingMarker;
-    auto result = mgr->FindLastAccess(q, &blockingMarker);
+    ttd::TTDSearchWindow window;
+    auto result = mgr->FindLastAccess(q, &blockingMarker, &window);
 
     if (result)
     {
@@ -827,6 +967,7 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else
             ss << result->physPage << NEWLINE;
         ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else if (blockingMarker.reason[0] != '\0')
@@ -837,11 +978,12 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
            << " tInFrame=" << blockingMarker.time.tInFrame << NEWLINE;
         ss << "  Kind: " << ttd::TTDExternalEventKindToString(blockingMarker.kind) << NEWLINE;
         ss << "  Reason: " << blockingMarker.reason << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else
     {
-        session.SendResponse(std::string("TTD: No match found") + NEWLINE);
+        session.SendResponse(std::string("TTD: No match found") + NEWLINE + FormatSearchWindow(window));
     }
 }
 
@@ -985,6 +1127,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
+    ss << FormatSearchWindow(result.window);
     session.SendResponse(ss.str());
 }
 

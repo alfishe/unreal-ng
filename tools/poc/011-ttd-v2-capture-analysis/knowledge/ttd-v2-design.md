@@ -436,5 +436,5 @@ constexpr bool CHECKSUM_ENABLED = false; // Skip for speed
 - [tools/poc/011-ttd-v2-capture-analysis/scripts/export_ttd_frames.py](../scripts/export_ttd_frames.py) — TTD to binary converter for C++ benchmarks
 
 ### Production Implementation
-- [core/src/debugger/ttd/ttdcodecpagestore.cpp](../../../core/src/debugger/ttd/ttdcodecpagestore.cpp) — Page store codec
-- [core/src/debugger/ttd/ttdcompression.h](../../../core/src/debugger/ttd/ttdcompression.h) — Compression utilities
+- [core/src/debugger/ttd/ttdcodecpagestore.cpp](../../../../core/src/debugger/ttd/ttdcodecpagestore.cpp) — Page store codec
+- [core/src/debugger/ttd/ttdcompression.h](../../../../core/src/debugger/ttd/ttdcompression.h) — Compression utilities

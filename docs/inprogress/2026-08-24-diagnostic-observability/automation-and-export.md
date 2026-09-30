@@ -100,6 +100,34 @@ auto  info     = context->pPortDecoder->getPortTraceSessionInfo();
 
 ---
 
+### 1.3 Internal port codes (PLAN #60(g), 2026-09-29)
+
+A table-driven decoder turns the address into an **internal code** first - what
+the port means under the current port map - and the trace records it, so an
+access stays readable when the map changes (Sprinter design decision D10).
+
+- Core: `PortTraceEvent::internalCode` (bytes 22-23, the former padding;
+  `PortTraceCode::kNone` = 0xFFFF when the decoder has none), filled from
+  `PortDecodeDisposition::internalCode`; `PortDecoder::GetPortTraceCodeTable()`
+  names the codes, `PortTraceSessionInfo::codes` carries them into every export;
+  `PortTraceFilterRule::internalCode` filters by code.
+- First decoder with codes: ZX-Evo (`ATM3`) - the BaseConf decode arm
+  (`PortDecoder_ATM3::PortArm`: `Eff7Gluk`, `Pager`, `Ay`, `SdData`, ...).
+  The Sprinter and TSConf port tables fill the same field when they land.
+- Formats: `PTRC` v2 (code in the event, code table after the decode rules),
+  `PTR2` v3 (code column + table), JSON `code_map` + per-event `code`, CSV
+  `code` / `code_name` columns. Older `PTRC` v1 / `PTR2` v2 files load with no
+  codes.
+
+| Surface | Event field | Code list | Filter |
+|---|---|---|---|
+| CLI | `Code` column in `port-trace dump` | `port-trace codes` | `port-trace include code <name\|hex>` |
+| WebAPI | `code`, `code_name` | `status` → `session.codes` | `{"code": "0x0005"}` |
+| MCP | via `analyze_performance porttrace` / `invoke_api` | `session.codes` | `invoke_api` filter body |
+| Lua | `code`, `code_name` | `porttrace_codes()` | `porttrace_include({code = "Eff7Gluk"})` |
+| Python | `code`, `code_name` | `emu.porttrace_codes()` | `emu.porttrace_include(code="Eff7Gluk")` |
+| Offline | `porttrace_convert.py` (all formats) | code table in the file | `--filter-code` |
+
 ## 2. CLI Interface
 
 Following the Subcommand Dispatch Pattern (§4.3 of Automation Architecture), registered as `port-trace` command family.

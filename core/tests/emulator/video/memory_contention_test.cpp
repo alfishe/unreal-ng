@@ -300,7 +300,7 @@ TEST_F(MemoryContention_Test, ZX48k_rdAddsContentionDelay)
     EXPECT_EQ(advance, 9u);
 }
 
-TEST_F(MemoryContention_Test, ZX48k_rdNoContentionForExecutionFetch)
+TEST_F(MemoryContention_Test, ZX48k_rdContendsExecutionFetch)
 {
     SetupZX48k();
 
@@ -311,15 +311,15 @@ TEST_F(MemoryContention_Test, ZX48k_rdNoContentionForExecutionFetch)
 
     uint32_t tBefore = _z80->t;
 
-    // Read from contended address 0x4000 as execution fetch
-    // Execution fetch should NOT trigger contention
+    // Read from contended address 0x4000 as an execution fetch (opcode or operand at PC): every MREQ cycle
+    // waits for the ULA, the fetch included (formerly exempt - the M1 contention rework)
     _z80->rd(0x4000, true);
 
     uint32_t tAfter = _z80->t;
     uint32_t advance = tAfter - tBefore;
 
-    // Only memory read cost (3), no contention delay
-    EXPECT_EQ(advance, 3u);
+    // contention(6) + memory_read(3), the same as a data read
+    EXPECT_EQ(advance, 9u);
 }
 
 TEST_F(MemoryContention_Test, ZX48k_rdNoContentionForUncontendedAddress)

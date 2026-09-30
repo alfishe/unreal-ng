@@ -12,14 +12,14 @@
 #include "emulator/sound/covox.h"
 
 // Binary export writes raw PortTraceEvent structs; pin the layout the Python
-// converter (tools/porttrace/porttrace_convert.py, struct "<QIHHHBBBBxx") depends on
-static_assert(sizeof(PortTraceEvent) == 24, "PortTraceEvent must stay 24 bytes (binary trace format v1)");
+// converter (tools/porttrace/porttrace_convert.py, struct "<QIHHHBBBBH") depends on
+static_assert(sizeof(PortTraceEvent) == 24, "PortTraceEvent must stay 24 bytes (binary trace format)");
 static_assert(offsetof(PortTraceEvent, timestamp) == 0 && offsetof(PortTraceEvent, frameNumber) == 8 &&
                   offsetof(PortTraceEvent, rawPort) == 12 && offsetof(PortTraceEvent, decodedPort) == 14 &&
                   offsetof(PortTraceEvent, pc) == 16 && offsetof(PortTraceEvent, value) == 18 &&
                   offsetof(PortTraceEvent, decodeRuleIndex) == 19 && offsetof(PortTraceEvent, deviceId) == 20 &&
-                  offsetof(PortTraceEvent, flags) == 21,
-              "PortTraceEvent field layout is part of the binary trace format v1");
+                  offsetof(PortTraceEvent, flags) == 21 && offsetof(PortTraceEvent, internalCode) == 22,
+              "PortTraceEvent field layout is part of the binary trace format (PTRC v2)");
 
 /// region <Filter matching>
 
@@ -38,6 +38,8 @@ bool PortTraceFilterRule::matches(const PortTraceEvent& event) const
     if (valueRange && (event.value < valueRange->first || event.value > valueRange->second))
         return false;
     if (unmappedOnly && event.decodedPort != 0x0000)
+        return false;
+    if (internalCode && event.internalCode != *internalCode)
         return false;
 
     return true;
@@ -117,9 +119,10 @@ void PortActivitySummary::reset(uint32_t frame)
 
 void PortDiagnosticRecorder::start()
 {
-    // Recreate the ring buffer so produced/evicted counters restart with the session
-    // (RingBuffer::clear() intentionally preserves them)
-    _events = std::make_unique<RingBuffer<PortTraceEvent>>(_capacity);
+    // Restart the ring in place so produced/evicted counters restart with the
+    // session (RingBuffer::clear() intentionally preserves them). Never replace
+    // the object: the emulator thread may be pushing into it right now
+    _events->reset(_capacity.load(std::memory_order_relaxed));
     _totalFiltered.store(0, std::memory_order_relaxed);
     _autoStopped.store(false, std::memory_order_release);
     _sessionState.store(PortTraceSessionState::Capturing, std::memory_order_release);
@@ -147,6 +150,12 @@ void PortDiagnosticRecorder::clear()
     _events->clear();
 }
 
+void PortDiagnosticRecorder::releaseBuffer()
+{
+    stop();
+    _events->reset(0);
+}
+
 /// endregion </Session control>
 
 /// region <Configuration>
@@ -156,8 +165,8 @@ bool PortDiagnosticRecorder::setCapacity(size_t events)
     if (events == 0 || getSessionState() != PortTraceSessionState::Stopped)
         return false;
 
-    _capacity = events;
-    _events = std::make_unique<RingBuffer<PortTraceEvent>>(_capacity);
+    _capacity.store(events, std::memory_order_relaxed);
+    _events->reset(events);
 
     return true;
 }
@@ -406,6 +415,14 @@ const char* PortDiagnosticRecorder::DeviceIdToString(PortDeviceId id)
         case PortDeviceId::Covox:          return "Covox";
         case PortDeviceId::Custom:         return "Custom";
         case PortDeviceId::FullDecodeClaim: return "FullDecodeClaim";
+        case PortDeviceId::ATM_FF77:       return "ATM_FF77";
+        case PortDeviceId::Memory_Windows: return "Memory_Windows";
+        case PortDeviceId::Control_EFF7:   return "Control_EFF7";
+        case PortDeviceId::Evo_Config:     return "Evo_Config";
+        case PortDeviceId::Palette:        return "Palette";
+        case PortDeviceId::GeneralSound:   return "GeneralSound";
+        case PortDeviceId::SdCard:         return "SdCard";
+        case PortDeviceId::Ide:            return "Ide";
         default:                           return "Unknown";
     }
 }
@@ -455,6 +472,11 @@ std::string PortDiagnosticRecorder::describeFilter() const
         if (rule.unmappedOnly)
         {
             ss << sep << "unmapped";
+            sep = " AND ";
+        }
+        if (rule.internalCode)
+        {
+            ss << sep << "code=0x" << std::hex << std::uppercase << *rule.internalCode;
         }
         return ss.str();
     };
@@ -480,13 +502,14 @@ std::string PortDiagnosticRecorder::describeFilter() const
 
 /// region <PTR2 v2 columnar delta/xor transform>
 ///
-/// Payload layout (22 bytes/event, no padding — columnar):
+/// Payload layout (24 bytes/event in version 3, 22 in version 2; no padding — columnar):
 ///   u64 tsDelta[n]    d[0] = ts[0]; d[i] = ts[i] - ts[i-1]   (wrapping)
 ///   u32 frameDelta[n]
 ///   u16 rawXor[n]     x[0] = raw[0]; x[i] = raw[i] ^ raw[i-1]
 ///   u16 decXor[n]
 ///   u16 pcXor[n]
 ///   u8  value[n], u8 rule[n], u8 dev[n], u8 flags[n]
+///   u16 codeXor[n]    version 3 only: the internal port code (PLAN #60(g))
 ///
 /// Timestamps dominate the raw stream's entropy; their deltas are
 /// near-constant instruction spacings, so the transform + one zstd frame
@@ -496,7 +519,8 @@ std::string PortDiagnosticRecorder::describeFilter() const
 namespace
 {
 
-constexpr size_t kV2BytesPerEvent = 22;
+constexpr size_t kV2BytesPerEvent = 22;  // PTR2 version 2: no internal code column
+constexpr size_t kV3BytesPerEvent = 24;  // PTR2 version 3: + internal code
 
 template <typename T>
 void appendLE(std::vector<uint8_t>& out, T value)
@@ -517,7 +541,7 @@ T readLE(const uint8_t* p)
 std::vector<uint8_t> encodePayloadV2(const std::vector<PortTraceEvent>& events)
 {
     std::vector<uint8_t> out;
-    out.reserve(events.size() * kV2BytesPerEvent);
+    out.reserve(events.size() * kV3BytesPerEvent);
 
     uint64_t prevTs = 0;
     for (const auto& e : events) { appendLE<uint64_t>(out, e.timestamp - prevTs); prevTs = e.timestamp; }
@@ -533,14 +557,16 @@ std::vector<uint8_t> encodePayloadV2(const std::vector<PortTraceEvent>& events)
     for (const auto& e : events) out.push_back(e.decodeRuleIndex);
     for (const auto& e : events) out.push_back(static_cast<uint8_t>(e.deviceId));
     for (const auto& e : events) out.push_back(e.flags);
+    prev = 0;
+    for (const auto& e : events) { appendLE<uint16_t>(out, e.internalCode ^ prev); prev = e.internalCode; }
 
     return out;
 }
 
-bool decodePayloadV2(const std::vector<uint8_t>& payload, size_t count,
+bool decodePayloadV2(const std::vector<uint8_t>& payload, size_t count, bool withCode,
                      std::vector<PortTraceEvent>& outEvents)
 {
-    if (payload.size() != count * kV2BytesPerEvent)
+    if (payload.size() != count * (withCode ? kV3BytesPerEvent : kV2BytesPerEvent))
         return false;
 
     outEvents.assign(count, PortTraceEvent{});
@@ -560,6 +586,11 @@ bool decodePayloadV2(const std::vector<uint8_t>& payload, size_t count,
     for (size_t i = 0; i < count; i++) outEvents[i].decodeRuleIndex = *p++;
     for (size_t i = 0; i < count; i++) outEvents[i].deviceId = static_cast<PortDeviceId>(*p++);
     for (size_t i = 0; i < count; i++) outEvents[i].flags = *p++;
+    if (withCode)
+    {
+        prev = 0;
+        for (size_t i = 0; i < count; i++, p += 2) { prev ^= readLE<uint16_t>(p); outEvents[i].internalCode = prev; }
+    }
 
     return true;
 }
@@ -570,6 +601,37 @@ bool decodePayloadV2(const std::vector<uint8_t>& payload, size_t count,
 
 namespace
 {
+/// Internal code table after the decode rules (PTRC v2, PTR2 v3):
+/// per entry u16 code, u8 name length, name bytes
+void writeCodeTable(std::ofstream& out, const std::vector<PortTraceCodeName>& codes)
+{
+    for (const auto& entry : codes)
+    {
+        const uint8_t length = static_cast<uint8_t>(entry.name.size() > 255 ? 255 : entry.name.size());
+        out.write(reinterpret_cast<const char*>(&entry.code), 2);
+        out.write(reinterpret_cast<const char*>(&length), 1);
+        out.write(entry.name.data(), length);
+    }
+}
+
+bool readCodeTable(std::ifstream& in, uint16_t count, std::vector<PortTraceCodeName>& codes)
+{
+    for (uint16_t i = 0; i < count; i++)
+    {
+        PortTraceCodeName entry;
+        uint8_t length = 0;
+        in.read(reinterpret_cast<char*>(&entry.code), 2);
+        in.read(reinterpret_cast<char*>(&length), 1);
+        entry.name.resize(length);
+        if (length)
+            in.read(&entry.name[0], length);
+        if (!in.good())
+            return false;
+        codes.push_back(std::move(entry));
+    }
+    return true;
+}
+
 std::string jsonEscape(const std::string& s)
 {
     std::string out;
@@ -616,10 +678,12 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             return false;
 
         // Header: 32 bytes — magic, version, count, capacity, tpf, ruleCount,
-        // compressedSize (u64), reserved. Rules stay uncompressed (tiny).
+        // compressedSize (u64), codeCount (u16, version 3), reserved. Rules and
+        // the code table stay uncompressed (tiny).
         uint8_t header[32] = {};
         memcpy(header, "PTR2", 4);
-        uint16_t version = 2;
+        uint16_t version = 3;
+        const uint16_t codeCount = static_cast<uint16_t>(info.codes.size());
         uint32_t count = static_cast<uint32_t>(events.size());
         uint32_t cap = static_cast<uint32_t>(_capacity);
         uint16_t ruleCount = static_cast<uint16_t>(info.decodeRules.size());
@@ -630,6 +694,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
         memcpy(header + 14, &info.tStatesPerFrame, 4);
         memcpy(header + 18, &ruleCount, 2);
         memcpy(header + 20, &compSize, 8);
+        memcpy(header + 28, &codeCount, 2);
         out.write(reinterpret_cast<const char*>(header), sizeof(header));
 
         for (const auto& rule : info.decodeRules)
@@ -638,6 +703,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             out.write(reinterpret_cast<const char*>(&rule.match), 2);
             out.write(reinterpret_cast<const char*>(&rule.port), 2);
         }
+        writeCodeTable(out, info.codes);
 
         out.write(reinterpret_cast<const char*>(compressed.data()),
                   static_cast<std::streamsize>(compressedSize));
@@ -655,10 +721,13 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
         if (!out)
             return false;
 
-        // Header: 32 bytes — magic, version, count, capacity, tpf, ruleCount, reserved
+        // Header: 32 bytes — magic, version, count, capacity, tpf, ruleCount,
+        // codeCount (u16, version 2), reserved. Version 2 events carry the
+        // internal code in bytes 22-23 (version 1 left them as padding)
         uint8_t header[32] = {};
         memcpy(header, "PTRC", 4);
-        uint16_t version = 1;
+        uint16_t version = 2;
+        const uint16_t codeCount = static_cast<uint16_t>(info.codes.size());
         uint32_t count = static_cast<uint32_t>(events.size());
         uint32_t cap = static_cast<uint32_t>(_capacity);
         uint16_t ruleCount = static_cast<uint16_t>(info.decodeRules.size());
@@ -667,6 +736,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
         memcpy(header + 10, &cap, 4);
         memcpy(header + 14, &info.tStatesPerFrame, 4);
         memcpy(header + 18, &ruleCount, 2);
+        memcpy(header + 20, &codeCount, 2);
         out.write(reinterpret_cast<const char*>(header), sizeof(header));
 
         for (const auto& rule : info.decodeRules)
@@ -675,6 +745,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
             out.write(reinterpret_cast<const char*>(&rule.match), 2);
             out.write(reinterpret_cast<const char*>(&rule.port), 2);
         }
+        writeCodeTable(out, info.codes);
 
         if (!events.empty())
             out.write(reinterpret_cast<const char*>(events.data()),
@@ -706,14 +777,19 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
                      info.decodeRules[i].mask, info.decodeRules[i].match, info.decodeRules[i].port);
             out << line;
         }
+        for (const auto& entry : info.codes)
+        {
+            snprintf(line, sizeof(line), "# Code 0x%04X: %s\n", entry.code, entry.name.c_str());
+            out << line;
+        }
         out << "index,timestamp,frame,direction,raw_port,decoded_port,decode_rule,value,pc,device,decoded,"
-               "had_handler,beta128_gated,handled_inline,cf_trdos,via_legacy,full_decode_claim\n";
+               "had_handler,beta128_gated,handled_inline,cf_trdos,via_legacy,full_decode_claim,code,code_name\n";
 
         for (size_t i = 0; i < events.size(); i++)
         {
             const PortTraceEvent& e = events[i];
             snprintf(line, sizeof(line),
-                     "%zu,%llu,%u,%s,0x%04X,0x%04X,%u,0x%02X,0x%04X,%s,%d,%d,%d,%d,%d,%d,%d\n", i,
+                     "%zu,%llu,%u,%s,0x%04X,0x%04X,%u,0x%02X,0x%04X,%s,%d,%d,%d,%d,%d,%d,%d,", i,
                      (unsigned long long)e.timestamp, e.frameNumber, e.isOut() ? "OUT" : "IN", e.rawPort,
                      e.decodedPort, e.decodeRuleIndex, e.value, e.pc, DeviceIdToString(e.deviceId),
                      e.wasDecoded() ? 1 : 0, e.hadHandler() ? 1 : 0, e.wasBeta128Gated() ? 1 : 0,
@@ -721,6 +797,15 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
                      (e.flags & PortTraceFlags::kViaLegacyBasePath) ? 1 : 0,
                      e.wasFullDecodeClaimed() ? 1 : 0);
             out << line;
+            if (e.hasInternalCode())
+            {
+                snprintf(line, sizeof(line), "0x%04X,%s\n", e.internalCode, info.CodeName(e.internalCode).c_str());
+                out << line;
+            }
+            else
+            {
+                out << ",\n";
+            }
         }
 
         // Flush before checking: the ofstream destructor's close runs after
@@ -758,8 +843,15 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
     }
     out << (info.decodeRules.empty() ? "]" : "\n  ]") << ",\n";
 
+    out << "  \"code_map\": {";
+    for (size_t i = 0; i < info.codes.size(); i++)
+    {
+        out << (i ? "," : "") << "\n    \"" << info.codes[i].code << "\": \"" << jsonEscape(info.codes[i].name) << "\"";
+    }
+    out << (info.codes.empty() ? "},\n" : "\n  },\n");
+
     out << "  \"device_map\": {";
-    for (int id = 0; id <= (int)PortDeviceId::FullDecodeClaim; id++)
+    for (int id = 0; id <= (int)kPortDeviceIdLast; id++)
     {
         const char* name = DeviceIdToString((PortDeviceId)id);
         if (std::string(name) == "Unknown")
@@ -775,10 +867,13 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
         const PortTraceEvent& e = events[i];
         snprintf(line, sizeof(line),
                  "%s\n    {\"ts\": %llu, \"frame\": %u, \"raw\": %u, \"dec\": %u, \"rule\": %u, \"val\": %u, "
-                 "\"pc\": %u, \"dev\": %u, \"flags\": %u}",
+                 "\"pc\": %u, \"dev\": %u, \"flags\": %u",
                  i ? "," : "", (unsigned long long)e.timestamp, e.frameNumber, e.rawPort, e.decodedPort,
                  e.decodeRuleIndex, e.value, e.pc, (unsigned)e.deviceId, e.flags);
         out << line;
+        if (e.hasInternalCode())
+            out << ", \"code\": " << e.internalCode;
+        out << "}";
     }
     out << (events.empty() ? "]" : "\n  ]") << "\n";
     out << "}\n";
@@ -808,10 +903,18 @@ bool PortDiagnosticRecorder::loadFromFile(const std::string& path, PortTraceSess
         return false;
 
     uint32_t count = 0;
+    uint16_t version = 0;
     uint16_t ruleCount = 0;
+    memcpy(&version, header + 4, 2);
     memcpy(&count, header + 6, 4);
     memcpy(&outInfo.tStatesPerFrame, header + 14, 4);
     memcpy(&ruleCount, header + 18, 2);
+
+    // Internal codes (PLAN #60(g)): PTRC version 2 and PTR2 version 3
+    const bool withCode = isV1 ? version >= 2 : version >= 3;
+    uint16_t codeCount = 0;
+    if (withCode)
+        memcpy(&codeCount, header + (isV1 ? 20 : 28), 2);
 
     for (uint16_t i = 0; i < ruleCount; i++)
     {
@@ -823,13 +926,21 @@ bool PortDiagnosticRecorder::loadFromFile(const std::string& path, PortTraceSess
             return false;
         outInfo.decodeRules.push_back(rule);
     }
+    if (!readCodeTable(in, codeCount, outInfo.codes))
+        return false;
 
     if (isV1)
     {
         outEvents.resize(count);
         in.read(reinterpret_cast<char*>(outEvents.data()),
                 static_cast<std::streamsize>(count * sizeof(PortTraceEvent)));
-        return in.gcount() == static_cast<std::streamsize>(count * sizeof(PortTraceEvent));
+        if (in.gcount() != static_cast<std::streamsize>(count * sizeof(PortTraceEvent)))
+            return false;
+        // Version 1 wrote bytes 22-23 as struct padding: whatever was there is not a code
+        if (!withCode)
+            for (auto& e : outEvents)
+                e.internalCode = PortTraceCode::kNone;
+        return true;
     }
 
     // V2: zstd frame of the columnar delta/xor payload
@@ -841,13 +952,13 @@ bool PortDiagnosticRecorder::loadFromFile(const std::string& path, PortTraceSess
     if (in.gcount() != static_cast<std::streamsize>(compressedSize))
         return false;
 
-    std::vector<uint8_t> payload(static_cast<size_t>(count) * kV2BytesPerEvent);
+    std::vector<uint8_t> payload(static_cast<size_t>(count) * (withCode ? kV3BytesPerEvent : kV2BytesPerEvent));
     size_t decompressedSize =
         ZSTD_decompress(payload.data(), payload.size(), compressed.data(), compressed.size());
     if (ZSTD_isError(decompressedSize) || decompressedSize != payload.size())
         return false;
 
-    return decodePayloadV2(payload, count, outEvents);
+    return decodePayloadV2(payload, count, withCode, outEvents);
 }
 
 /// endregion </Export>
@@ -870,6 +981,11 @@ PortDeviceId PortDiagnosticRecorder::ResolveDeviceId(uint16_t decodedPort)
         case 0x007F: return PortDeviceId::WD1793_Data;
         case 0x00FF: return PortDeviceId::Beta128_System;
         case 0x00FB: return PortDeviceId::Covox;
+        case 0xFF77: return PortDeviceId::ATM_FF77;
+        case 0xEFF7: return PortDeviceId::Control_EFF7;
+        case 0x00B3:
+        case 0x00BB:
+        case 0x0033: return PortDeviceId::GeneralSound;
         default:     break;
     }
 

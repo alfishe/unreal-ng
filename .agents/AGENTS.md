@@ -2,12 +2,24 @@
 
 > **CRITICAL**: NEVER commit changes without explicit user request.
 > - Each commit permission is **one-time only** — no blanket permissions
+> - **Cap build/test parallelism at 50% of logical cores.** Several agents build on this
+>   machine at once — each one launching an unbounded `ninja`/`cmake --build`/`ctest` job
+>   count stacks up across agents and brings the machine to a crawl. Always pass an explicit
+>   `-j` computed as half the logical cores, e.g.:
+>   ```bash
+>   JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+>   ninja -C cmake-build-agent-release -j "$JOBS"
+>   cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"
+>   ```
+>   This cap applies to every build/test command in this file, not just the mandatory
+>   pre-commit one.
 > - Steps before any commit:
 >   1. Run the checks that match what changed:
 >      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
 >        `unreal-videowall/`, `testclient/`, the automation modules in `core/automation/`):
->        **mandatory** full build `ninja -C cmake-build-agent-release` with zero compiler
->        warnings, and `core-tests` must pass (`cmake --build cmake-build-agent-release --target test-parallel`)
+>        **mandatory** full build `ninja -C cmake-build-agent-release -j "$JOBS"` with zero
+>        compiler warnings, and `core-tests` must pass
+>        (`cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"`)
 >      - **Documentation only** (`docs/`, `.recipe/`, other `*.md`): no build, no tests. Verify that
 >        cross-references and links resolve and that no machine-specific absolute paths slipped in
 >        (`python3 tools/fix-absolute-paths.py --path <changed files>`, dry run by default)
@@ -38,13 +50,17 @@
 | **`tools/poc/`** | Proof of Concept directory for isolated throwaway code and experiments. |
 
 ## Building the Project
-We use CMake with Ninja for building:
+We use CMake with Ninja for building. **Cap `-j` at 50% of logical cores** — multiple agents
+build concurrently on this machine, and unbounded job counts pile up and stall everything:
 ```bash
 # Configure the build system
 cmake -S . -B cmake-build-agent-release -G Ninja
 
+# Compute a job cap at 50% of logical cores (min 1)
+JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+
 # Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
-ninja -C cmake-build-agent-release
+ninja -C cmake-build-agent-release -j "$JOBS"
 ```
 
 ## Writing Tests
@@ -71,10 +87,14 @@ Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standa
 # Configure with tests enabled
 cmake -S . -B cmake-build-agent-release -G Ninja -DTESTS=ON
 
+# Job cap at 50% of logical cores (min 1) — keep this below full core count so
+# concurrent agent builds on this machine don't starve each other
+JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+
 # Run all tests in parallel (automatically builds core-tests on demand)
-cmake --build cmake-build-agent-release --target test-parallel
+cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"
 # Or run tests sequentially:
-ninja -C cmake-build-agent-release core-tests && ./cmake-build-agent-release/bin/core-tests
+ninja -C cmake-build-agent-release -j "$JOBS" core-tests && ./cmake-build-agent-release/bin/core-tests
 
 # Run specific tests
 ./cmake-build-agent-release/bin/core-tests --gtest_filter="*TestName*"
@@ -83,7 +103,7 @@ ninja -C cmake-build-agent-release core-tests && ./cmake-build-agent-release/bin
 cmake -S . -B cmake-build-agent-release -G Ninja -DBENCHMARKS=ON
 
 # Build and run benchmarks
-ninja -C cmake-build-agent-release core-benchmarks
+ninja -C cmake-build-agent-release -j "$JOBS" core-benchmarks
 ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
 
@@ -143,9 +163,11 @@ pkill -9 unreal-qt 2>/dev/null || true
 - Linux: `./cmake-build-agent-release/bin/unreal-qt`
 - Windows: `./cmake-build-agent-release/bin/unreal-qt.exe`
 
-**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `TSL`, `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
+**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `TSL` (alias `TSCONF`), `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
 
-> Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. Creatable on `master`: `PENTAGON`, `48K`, `128k`, `PLUS2` (grey +2: 128K hardware, Amstrad ROM), `PLUS2A` (the +3 without its floppy controller), `PLUS3` (uPD765A floppy controller, see `docs/inprogress/2026-09-28-plus3-upd765/`), `ATM710`, `ATM3` (ZX-Evo; decoders landed with the ATM Turbo 2+/3 clone support, configs ship as `configs/atm710` + `configs/atm3`), `SCORPION`, `PROFSCORP`, `PROFI` (Profi 1024; IDE not yet implemented, see `docs/inprogress/2026-09-21-profi/`). NOT creatable (no port-decoder factory case yet): `TSL`, `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` — a create request for them fails with HTTP 400 + reason, never a silent 48K fallback. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
+**ZX-Poly configurations** (four synchronized instances of one base model, created by name like any model): `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` — see [`.recipe/machines/zxpoly.md`](../.recipe/machines/zxpoly.md).
+
+> Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. Creatable on `master`: `PENTAGON`, `48K`, `128k`, `PLUS2` (grey +2: 128K hardware, Amstrad ROM), `PLUS2A` (the +3 without its floppy controller), `PLUS3` (uPD765A floppy controller, see `docs/inprogress/2026-09-28-plus3-upd765/`), `ATM710`, `ATM3` (ZX-Evo; decoders landed with the ATM Turbo 2+/3 clone support, configs ship as `configs/atm710` + `configs/atm3`), `SCORPION`, `PROFSCORP`, `PROFI` (Profi 1024; IDE works: `[HDD] Scheme=PROFI`, slots `ide0.master` / `ide0.slave`, see `.recipe/machines/profi.md` and `docs/inprogress/2026-09-21-profi/`). NOT creatable (no port-decoder factory case yet): `TSL`, `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` — a create request for them fails with HTTP 400 + reason, never a silent 48K fallback. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
 
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.
@@ -154,4 +176,5 @@ pkill -9 unreal-qt 2>/dev/null || true
 - **Testing**: See `core/tests/README.md` for test patterns (CUT pattern, fixtures, helpers).
 - **Documentation Rules**: Documentation files must use lowercase with hyphens (kebab-case). Ongoing design and analysis must go into `docs/inprogress/` following specific date-prefixed directory naming rules. See `docs/inprogress/README.md` for details.
 - **Coding Guidelines**: For detailed coding guidelines, see `docs/guidelines/coding-guidelines.md`.
+- **Performance**: A change to a hot path (per instruction, per memory or port access) must cost nothing for machines that do not use it and needs an A/B benchmark; patterns (combined gate, interface selection, templates) and the measurement procedure: `docs/guidelines/performance-guidelines.md`.
 - **Cross-Platform & Compatibility**: The codebase MUST be cross-platform (Windows, macOS, Linux) and cross-compiler compatible (gcc, clang, mingw, msvc) with **ZERO warnings** allowed. See `docs/guidelines/cross-platform-compatibility.md` for environmental constraints.

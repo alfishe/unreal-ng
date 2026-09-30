@@ -18,6 +18,10 @@ cmake --build . -j8
 ./build/bin/core-benchmarks --benchmark_filter="BM_Frame"  # Filter by name
 ```
 
+## TTD Benchmark Matrix
+
+Located in `debugger/ttd/`. `ttd_matrix_benchmark.cpp` registers one benchmark per TTD engine, configuration and workload: `TTDMatrix/<engine>/<configuration>/<workload>`, with the metrics BM-1 to BM-8 as counters. The environment variables `UNREAL_TTD_BENCH_*` pick the set (`ci`, `turbo` or `full`) and the engines. Running, comparing and baselines: [`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md).
+
 ## Message Center Benchmarks
 
 Located in `emulator/messagecenter/`. Tests the pub/sub notification system used for frame sync, debug events, and inter-component communication.

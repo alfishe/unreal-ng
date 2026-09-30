@@ -1,4 +1,5 @@
 #include "emulatormanager.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -201,6 +202,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError)
 {
+    // A ZX-Poly configuration name creates the whole group; checked before the
+    // lock, since the group creates its members through this method
+    if (ZXPolyGroup::FindConfiguration(modelName))
+        return CreateZXPolyMachine(symbolicId, modelName, "", outError);
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     // Create a new emulator instance
@@ -287,8 +293,15 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     return nullptr;
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
+    // A ZX-Poly configuration fixes its modules' memory (the base model's default)
+    if (ZXPolyGroup::FindConfiguration(modelName))
+    {
+        SetCreateError(outError, "'" + modelName + "' is a ZX-Poly configuration: its RAM size is fixed, omit ram_size");
+        return nullptr;
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     // Create a new emulator instance
@@ -317,6 +330,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     // Request this model and RAM size for initialization. Emulator::Init
     // resolves the model config itself: configs/<model>/unreal.ini
     emulator->SetPreferredModel(modelInfo->Model, ramSize);
+    if (configOverride)
+        emulator->SetConfigOverride(std::move(configOverride));
 
     // Initialize the emulator. A model the build cannot construct (missing
     // port decoder, missing device support) throws std::logic_error out of
@@ -442,7 +457,58 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
     identity.SpeedMultiplier = context->emulatorState.current_z80_frequency_multiplier;
     identity.ConfigFolder = Config::GetConfigFolderForModel(config.mem_model, config.ramsize);
 
+    if (ZXPolyGroup* group = GetInstance()->GetZXPolyGroup(emulator.GetId()))
+    {
+        const ZXPolyGroup::Status status = group->GetStatus();
+        identity.ZXPoly = true;
+        identity.ZXPolyMasterId = status.memberIds[0];
+        for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        {
+            if (status.memberIds[m] == emulator.GetId())
+                identity.ZXPolyModule = static_cast<int>(m);
+        }
+        identity.ZXPolyLocked = status.locked;
+        identity.ZXPolyVideoMode = status.videoMode;
+    }
+
     return identity;
+}
+
+std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string& symbolicId,
+                                                               const std::string& modelName,
+                                                               const std::string& mediaPath, std::string* outError)
+{
+    auto group = std::make_shared<ZXPolyGroup>(symbolicId.empty() ? std::string("zxpoly") : symbolicId);
+    std::string error;
+    if (!group->Create(modelName, &error) || !group->LoadMedia(mediaPath, &error))
+    {
+        if (outError)
+            *outError = error;
+        return nullptr;
+    }
+
+    group->AttachToMaster();
+    std::shared_ptr<Emulator> master = group->GetMaster();
+    {
+        std::lock_guard<std::recursive_mutex> lock(_zxpolyMutex);
+        _zxpolyGroups[master->GetId()] = group;
+    }
+    return master;
+}
+
+ZXPolyGroup* EmulatorManager::GetZXPolyGroup(const std::string& emulatorId)
+{
+    std::lock_guard<std::recursive_mutex> lock(_zxpolyMutex);
+    for (auto& [masterId, group] : _zxpolyGroups)
+    {
+        const ZXPolyGroup::Status status = group->GetStatus();
+        for (const std::string& id : status.memberIds)
+        {
+            if (id == emulatorId)
+                return group.get();
+        }
+    }
+    return nullptr;
 }
 
 std::shared_ptr<Emulator> EmulatorManager::GetEmulator(const std::string& emulatorId)
@@ -463,18 +529,19 @@ std::shared_ptr<Emulator> EmulatorManager::GetEmulatorByIndex(int index)
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
-    if (index < 0 || index >= static_cast<int>(_emulators.size()))
-    {
-        LOGDEBUG("EmulatorManager::GetEmulatorByIndex - Invalid index %d (valid range: 0-%d)",
-                index, static_cast<int>(_emulators.size()) - 1);
-        return nullptr;
-    }
-
-    // Create sorted list by creation time
+    // Create sorted list by creation time (hidden group members have no index)
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> emulatorTimestamps;
     for (const auto& pair : _emulators)
     {
-        emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
+        if (!pair.second->IsHiddenGroupMember())
+            emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
+    }
+
+    if (index < 0 || index >= static_cast<int>(emulatorTimestamps.size()))
+    {
+        LOGDEBUG("EmulatorManager::GetEmulatorByIndex - Invalid index %d (valid range: 0-%d)",
+                index, static_cast<int>(emulatorTimestamps.size()) - 1);
+        return nullptr;
     }
 
     // Sort by creation time (earlier = lower index)
@@ -494,7 +561,10 @@ std::vector<std::string> EmulatorManager::GetEmulatorIds()
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> emulatorTimestamps;
     for (const auto& pair : _emulators)
     {
-        emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
+        // Hidden group members (ZX-Poly slaves) are reached through their
+        // visible master, not listed as machines of their own
+        if (!pair.second->IsHiddenGroupMember())
+            emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
     }
 
     // Sort by creation time (earlier = lower index)
@@ -518,6 +588,28 @@ bool EmulatorManager::HasEmulator(const std::string& emulatorId)
 }
 
 bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
+{
+    // A ZX-Poly master takes its group along: unhook the group from the
+    // master's loop, remove the master, then the group removes its slaves
+    std::shared_ptr<ZXPolyGroup> group;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_zxpolyMutex);
+        auto it = _zxpolyGroups.find(emulatorId);
+        if (it != _zxpolyGroups.end())
+        {
+            group = std::move(it->second);
+            _zxpolyGroups.erase(it);
+        }
+    }
+    if (group)
+        group->DetachFromMaster();
+
+    const bool removed = RemoveEmulatorInstance(emulatorId);
+    group.reset();    // ~ZXPolyGroup removes the slaves (the master is already gone)
+    return removed;
+}
+
+bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
 {
     // Notify observers BEFORE the instance is stopped and freed. All message
     // handlers run on the single MessageCenter worker thread, so this destroy
@@ -896,12 +988,16 @@ std::shared_ptr<Emulator> EmulatorManager::GetMostRecentEmulator()
         return nullptr;
     }
     
-    auto recent = std::max_element(_emulators.begin(), _emulators.end(),
-        [](const auto& a, const auto& b) {
-            return a.second->GetLastActivityTime() < b.second->GetLastActivityTime();
-        });
-    
-    return recent->second;
+    std::shared_ptr<Emulator> recent;
+    for (const auto& pair : _emulators)
+    {
+        if (pair.second->IsHiddenGroupMember())
+            continue;
+        if (!recent || recent->GetLastActivityTime() < pair.second->GetLastActivityTime())
+            recent = pair.second;
+    }
+
+    return recent;
 }
 
 std::string EmulatorManager::GetSelectedEmulatorId()

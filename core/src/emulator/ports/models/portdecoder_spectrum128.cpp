@@ -13,7 +13,6 @@
 
 PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
 }
 
 PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
@@ -50,7 +49,6 @@ void PortDecoder_Spectrum128::reset()
     _screen->SetBorderColor(COLOR_WHITE);
 
     // Reset memory paging lock latch
-    _7FFD_Locked = false;
 
     // Explicitly force screen to SCREEN_NORMAL before port update
     // This is necessary because Port_7FFD_Out has an optimization that skips screen switching
@@ -64,6 +62,10 @@ void PortDecoder_Spectrum128::reset()
 
 uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
@@ -124,6 +126,12 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
+    else if (IsBeta128Port(port) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        // Beta 128 FDC ports answer only while the TR-DOS ROM is paged in (as in the Pentagon decoder):
+        // outside TR-DOS the port stays undecoded and Z80::in() serves the floating bus
+        disp.wasBeta128Gated = true;
+    }
     else
     {
         result = PeripheralPortIn(port);
@@ -152,6 +160,10 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
@@ -330,8 +342,9 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 
 void PortDecoder_Spectrum128::UpdateModelMemoryBanks()
 {
-    if (!_7FFD_Locked)
-        _context->pMemory->SetRAMPageToBank3(_context->emulatorState.p7FFD & 0b00000111);
+    // p7FFD always holds the accepted value (a locked port ignores writes),
+    // so it describes the mapping, locked or not
+    _context->pMemory->SetRAMPageToBank3(_context->emulatorState.p7FFD & 0b00000111);
 }
 
 /// Port #7FFD (Memory) handler
@@ -344,19 +357,17 @@ void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
 
     Memory &memory = *_context->pMemory;
 
+    // Locked (bit 5 of the accepted value): the whole write is ignored until
+    // reset, screen bit included, and the latch keeps the locking value
+    if (IsPagingLocked())
+        return;
+
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
     uint8_t romPage = (value & 0b00010000) >> 4;
-    bool isPagingDisabled = value & 0b00100000;
 
-    // Disabling latch is kept until reset
-    if (!_7FFD_Locked)
-    {
-        memory.SetRAMPageToBank3(bankRAM);
-        memory.SetROMPage(romPage);
-
-        _7FFD_Locked = isPagingDisabled;
-    }
+    memory.SetRAMPageToBank3(bankRAM);
+    memory.SetROMPage(romPage);
 
     // Detect if screen switch requested. Do not switch screen if state not changed
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;

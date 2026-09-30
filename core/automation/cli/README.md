@@ -22,6 +22,8 @@ nc localhost 8765
 | `select <uuid>` | Set active instance |
 | `status` | Show all instances status |
 | `models` | List supported models |
+| `zxpoly start <model> [file]` | Start a ZX-Poly machine: four synchronized instances (`model`: `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` or a base model; `file`: `.zxp`, `.prom` or multiloader disk) |
+| `zxpoly status [id]` | ZX-Poly group status: modules, R0-R3, `#3D00`, lock, video mode, lockstep check |
 
 ### Execution Control
 | Command | Description |
@@ -83,6 +85,7 @@ nc localhost 8765
 | `snapshot save <file>` | Save snapshot |
 | `tape load/eject/play/stop` | Tape control |
 | `disk insert/eject/catalog` | Disk control |
+| `media list/info/insert/swap/eject/save/export/discard/rescan/create/protect` | Every slot (floppy drives, SD card, ...): see [docs/features/media.md](../../../docs/features/media.md); `media help` lists the options |
 
 ### Features
 | Command | Description |

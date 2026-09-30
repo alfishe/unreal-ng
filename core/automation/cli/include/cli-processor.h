@@ -99,6 +99,8 @@ private:
     void HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    static std::string RtcReportText(EmulatorContext* context);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 
     // Memory command helpers
@@ -150,6 +152,7 @@ private:
     void HandlePorts(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePaging(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideo(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
@@ -210,6 +213,7 @@ private:
     void HandleStateScreenVerbose(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenFlash(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenAttributes(const ClientSession& session, EmulatorContext* context);
 
     // Audio state handlers
     void HandleStateAudio(const ClientSession& session, EmulatorContext* context);
@@ -220,6 +224,7 @@ private:
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
     void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
+    void HandleStateContention(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg);
 
     // GS coprocessor triage: activity counters + opt-in port/DAC event trace
@@ -252,8 +257,12 @@ private:
 
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
     void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
+    /// model <name> [--ram <kb>] [--stranded save|discard|keep]: switch the
+    /// selected emulator's model; the media follow (ModelSwitch)
+    void HandleModel(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
@@ -297,6 +306,10 @@ private:
     // no emulator state — no emulator needs to be selected for these two
     void HandleTapeRender(const ClientSession& session, const std::vector<std::string>& args);
     void HandleTapeImport(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Media command handlers (every slot through MediaControl)
+    void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowMediaHelp(const ClientSession& session);
 
     // Disk control command handlers
     void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);
@@ -355,6 +368,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,

@@ -1,11 +1,15 @@
 #include "loader_z80_test.h"
 
+#include <fstream>
+
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/soundmanager.h"
 
 namespace
 {
@@ -633,6 +637,36 @@ TEST_F(LoaderZ80_Test, saveAndLoadRoundtrip)
     EXPECT_EQ(z80->hl, orig_hl) << "HL mismatch after roundtrip";
 }
 
+/// R in a .z80: byte 11 holds bits 0-6, bit 7 of R is flags bit 0. The core keeps bit 7 in r_hi; r_low's own
+/// bit 7 is not part of R and must not reach the file
+TEST_F(LoaderZ80_Test, saveWritesRBit7OnlyThroughTheFlags)
+{
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_r_bit7.z80"));
+
+    LoaderZ80CUT loader(_context, testSnapshotPath);
+    ASSERT_TRUE(loader.load());
+    Z80* z80 = _context->pCore->GetZ80();
+
+    for (uint8_t rHi : { uint8_t(0x00), uint8_t(0x80) })
+    {
+        z80->r_low = 0x85;  // counter 05h, a stale bit 7 in r_low
+        z80->r_hi = rHi;
+
+        LoaderZ80CUT saver(_context, savePath);
+        ASSERT_TRUE(saver.save());
+        std::ifstream file(savePath.path(), std::ios::binary);
+        uint8_t header[13] = {};
+        file.read(reinterpret_cast<char*>(header), sizeof header);
+        EXPECT_EQ(header[11], 0x05) << "byte 11: bits 0-6 only (r_hi " << int(rHi) << ")";
+        EXPECT_EQ(header[12] & 0x01, rHi >> 7) << "flags bit 0 = R bit 7";
+
+        LoaderZ80CUT reloader(_context, savePath);
+        ASSERT_TRUE(reloader.load());
+        EXPECT_EQ((z80->r_low & 0x7F) | (z80->r_hi & 0x80), 0x05 | rHi) << "R after the round trip";
+    }
+}
+
 TEST_F(LoaderZ80_Test, savedFileIsValidZ80)
 {
     // Verify saved file can be validated as a proper Z80 format
@@ -654,4 +688,291 @@ TEST_F(LoaderZ80_Test, savedFileIsValidZ80)
 
 /// endregion </Save Tests>
 
+/// region <AY state>
 
+namespace
+{
+    /// Header bytes of a v2 / v3 .z80: 37 = flags 2 (bit 2 "AY sound in use, even on 48K machines"),
+    /// 38 = selected AY register, 39-54 = the 16 AY registers
+    constexpr size_t Z80_FLAGS2_OFFSET = 37;
+    constexpr size_t Z80_AY_SELECT_OFFSET = 38;
+    constexpr size_t Z80_AY_REGISTERS_OFFSET = 39;
+    constexpr uint8_t Z80_FLAGS2_AY_IN_USE = 0x04;
+
+    std::vector<uint8_t> ReadWholeFile(const std::string& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    }
+
+    void WriteWholeFile(const std::string& path, const std::vector<uint8_t>& data)
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    }
+}
+
+/// A 128K-class snapshot carries the AY registers and the selected register; loading must put them into the
+/// chip (before the fix the loader restored only the selection and left the reset chip silent)
+TEST_F(LoaderZ80_Test, loadRestoresAYRegistersFrom128KSnapshot)
+{
+    // dizzyx.z80: v3, Pentagon, AY in use, non-zero AY registers
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/dizzyx.z80");
+    const std::vector<uint8_t> file = ReadWholeFile(path);
+    ASSERT_GE(file.size(), Z80_AY_REGISTERS_OFFSET + 16u);
+
+    LoaderZ80CUT loader(_context, path);
+    ASSERT_TRUE(loader.load());
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    ASSERT_NE(psg, nullptr);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        EXPECT_EQ(psg->readRegister(reg), file[Z80_AY_REGISTERS_OFFSET + reg]) << "AY register " << int(reg);
+    }
+    EXPECT_EQ(psg->getCurrentRegister(), file[Z80_AY_SELECT_OFFSET] & 0x0F) << "selected AY register";
+}
+
+/// Save then load keeps every AY register and the selection
+TEST_F(LoaderZ80_Test, saveAndLoadRoundtripKeepsAYRegisters)
+{
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/dizzyx.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_roundtrip.z80"));
+
+    LoaderZ80CUT loader(_context, path);
+    ASSERT_TRUE(loader.load());
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    ASSERT_NE(psg, nullptr);
+    uint8_t expected[16];
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        expected[reg] = static_cast<uint8_t>(0x11 * reg + 3);
+        psg->writeRegister(reg, expected[reg]);
+    }
+    _context->emulatorState.pFFFD = 0x07;
+    psg->setRegister(0x07);
+
+    LoaderZ80CUT saver(_context, savePath);
+    ASSERT_TRUE(saver.save());
+
+    _cpu->Reset();
+    LoaderZ80CUT reloader(_context, savePath);
+    ASSERT_TRUE(reloader.load());
+
+    psg = _context->pSoundManager->getAYChip(0);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        EXPECT_EQ(psg->readRegister(reg), expected[reg]) << "AY register " << int(reg);
+    }
+    EXPECT_EQ(psg->getCurrentRegister(), 0x07);
+}
+
+/// In a 48K snapshot the AY bytes are state only when flags 2 bit 2 says the AY was in use
+TEST_F(LoaderZ80_Test, load48KSnapshotAppliesAYOnlyWhenMarkedInUse)
+{
+    const std::string source = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_48k.z80"));
+
+    // A 48K-mode v3 file written by the saver
+    _context->config.mem_model = MM_SPECTRUM48;
+    LoaderZ80CUT loader(_context, source);
+    ASSERT_TRUE(loader.load());
+    LoaderZ80CUT saver(_context, savePath);
+    ASSERT_TRUE(saver.save());
+
+    std::vector<uint8_t> file = ReadWholeFile(savePath);
+    ASSERT_GE(file.size(), Z80_AY_REGISTERS_OFFSET + 16u);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        file[Z80_AY_REGISTERS_OFFSET + reg] = static_cast<uint8_t>(0x20 + reg);
+    }
+
+    for (bool inUse : { false, true })
+    {
+        file[Z80_FLAGS2_OFFSET] = inUse ? Z80_FLAGS2_AY_IN_USE : 0x00;
+        WriteWholeFile(savePath, file);
+
+        _cpu->Reset();
+        SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+        ASSERT_NE(psg, nullptr);
+        uint8_t afterReset[16];
+        for (uint8_t reg = 0; reg < 16; reg++)
+            afterReset[reg] = psg->readRegister(reg);
+
+        LoaderZ80CUT reloader(_context, savePath);
+        ASSERT_TRUE(reloader.load());
+
+        psg = _context->pSoundManager->getAYChip(0);
+        for (uint8_t reg = 0; reg < 16; reg++)
+        {
+            const uint8_t expected = inUse ? static_cast<uint8_t>(0x20 + reg) : afterReset[reg];
+            EXPECT_EQ(psg->readRegister(reg), expected) << "AY register " << int(reg) << (inUse ? " (in use)" : " (not in use)");
+        }
+    }
+}
+
+/// The saver marks the AY as in use in a 48K-mode snapshot only when the machine has an AY
+TEST_F(LoaderZ80_Test, saveMarksAYInUseFor48KModeOnMachinesWithAY)
+{
+    const std::string source = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_flag.z80"));
+
+    LoaderZ80CUT loader(_context, source);
+    ASSERT_TRUE(loader.load());
+
+    for (MEM_MODEL model : { MM_SPECTRUM48, MM_PENTAGON })
+    {
+        _context->config.mem_model = model;
+        LoaderZ80CUT saver(_context, savePath);
+        ASSERT_TRUE(saver.save());
+
+        const std::vector<uint8_t> file = ReadWholeFile(savePath);
+        ASSERT_GT(file.size(), Z80_FLAGS2_OFFSET);
+        const bool marked = (file[Z80_FLAGS2_OFFSET] & Z80_FLAGS2_AY_IN_USE) != 0;
+        EXPECT_EQ(marked, model != MM_SPECTRUM48) << "model " << int(model);
+    }
+}
+
+/// endregion </AY state>
+
+
+
+
+/// region <Models: libspectrum files and saving by model>
+
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
+#include "loaders/snapshot/szx/loaderszx.h"
+#include "_helpers/soundcardscope.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+
+namespace
+{
+    struct Z80ModelCase
+    {
+        const char* file;   ///< testdata/loaders/z80/libspectrum/, written by libspectrum (tools/verification/szx)
+        const char* model;
+        uint32_t ramKb;
+        uint8_t modelCode;  ///< the v3 model byte our save writes
+        int pages;          ///< RAM pages in the file
+    };
+
+    class LoaderZ80Models_Test : public ::testing::TestWithParam<Z80ModelCase>
+    {
+    };
+}  // namespace
+
+/// libspectrum's .z80 files (known values: #7FFD = #13, page n filled with
+/// n * 16 + offset / 1024, #1FFD = #04 on +2A / +3) load on their model with
+/// every page and #1FFD, and our save writes the model's own code, #1FFD in a
+/// 55-byte header where the model has it, and every page
+TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
+{
+    const Z80ModelCase& param = GetParam();
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    SoundCardScope sound(TestSound::TurboSound);  // the AY registers travel too
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("z80-model", param.model, param.ramKb, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    const std::string path =
+        (TestPathHelper::FindProjectRoot() / "testdata/loaders/z80/libspectrum" / param.file).string();
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+
+    Memory& memory = *context->pMemory;
+    Z80& cpu = *context->pCore->GetZ80();
+    EXPECT_EQ(cpu.a, 0x11);
+    EXPECT_EQ(cpu.pc, 0x8000);
+    EXPECT_EQ(cpu.t, LoaderSZX::FramePositionFromIntCount(context, 12345)) << "v3 bytes 55-57: the frame position";
+    EXPECT_EQ(context->emulatorState.p7FFD, 0x13);
+    EXPECT_EQ(memory.GetRAMPageForBank3(), 3);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xC000), 3 * 16);
+    for (int page = 0; page < param.pages; page++)
+        EXPECT_EQ(memory.RAMPageAddress(static_cast<uint16_t>(page))[0], page * 16) << "RAM page " << page;
+    const bool has1FFD = param.modelCode == 7 || param.modelCode == 13 || param.modelCode == 10;
+    if (param.modelCode == 7 || param.modelCode == 13)
+        EXPECT_EQ(context->emulatorState.p1FFD, 0x04);
+
+    const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-model.z80");
+    ASSERT_TRUE(emulator->SaveSnapshot(saved));
+    // tools/verification/szx/check-interop.sh: libspectrum reads our file too
+    if (const char* folder = std::getenv("UNREALNG_SZX_EXPORT_DIR"); folder && *folder)
+        std::filesystem::copy_file(saved, std::filesystem::path(folder) / param.file,
+                                   std::filesystem::copy_options::overwrite_existing);
+    std::ifstream file(saved, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    ASSERT_GT(bytes.size(), 87u);
+    const uint16_t extended = static_cast<uint16_t>(bytes[30] | (bytes[31] << 8));
+    EXPECT_EQ(bytes[34], param.modelCode) << "model byte";
+    EXPECT_EQ(extended, has1FFD ? 55 : 54);
+    if (has1FFD)
+        EXPECT_EQ(bytes[86], context->emulatorState.p1FFD);
+    // Page blocks after the header: count them
+    int pages = 0;
+    for (size_t at = 32 + extended; at + 3 <= bytes.size(); pages++)
+    {
+        const uint16_t length = static_cast<uint16_t>(bytes[at] | (bytes[at + 1] << 8));
+        at += 3 + (length == 0xFFFF ? 16384 : length);
+    }
+    EXPECT_EQ(pages, param.pages);
+
+    // And it loads back with the same pages
+    auto again = manager->CreateEmulatorWithModelAndRAM("z80-model-2", param.model, param.ramKb, LoggerLevel::LogError);
+    ASSERT_TRUE(again);
+    ASSERT_TRUE(again->LoadSnapshot(saved));
+    for (int page = 0; page < param.pages; page++)
+        EXPECT_EQ(again->GetContext()->pMemory->RAMPageAddress(static_cast<uint16_t>(page))[1023], page * 16) << page;
+    EXPECT_EQ(again->GetContext()->emulatorState.p1FFD, context->emulatorState.p1FFD);
+    EXPECT_EQ(again->GetContext()->pCore->GetZ80()->t, cpu.t) << "the frame position round-trips";
+    std::remove(saved.c_str());
+    manager->RemoveEmulator(again->GetId());
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+INSTANTIATE_TEST_SUITE_P(Models, LoaderZ80Models_Test,
+                         ::testing::Values(Z80ModelCase{"synth-128.z80", "128k", 128, 4, 8},
+                                           Z80ModelCase{"synth-plus2a.z80", "PLUS2A", 128, 13, 8},
+                                           Z80ModelCase{"synth-plus3.z80", "PLUS3", 128, 7, 8},
+                                           Z80ModelCase{"synth-pentagon.z80", "PENTAGON", 128, 9, 8},
+                                           Z80ModelCase{"synth-scorpion.z80", "SCORPION", 256, 10, 16}),
+                         [](const ::testing::TestParamInfo<Z80ModelCase>& info) {
+                             std::string name = info.param.file;
+                             name = name.substr(6, name.size() - 10);  // "synth-" ... ".z80"
+                             return name;
+                         });
+
+/// +3 all-RAM mode (#1FFD bit 0) survives a save and a load
+TEST(LoaderZ80Plus3_Test, SpecialPagingRoundTrips)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("z80-p3", "PLUS3", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    for (uint16_t page = 0; page < 8; page++)
+        std::memset(context->pMemory->RAMPageAddress(page), page * 16, 16384);
+    context->pPortDecoder->DecodePortOut(0x1FFD, 0x03, 0);  // special: pages 4, 5, 6, 7
+    ASSERT_EQ(context->pMemory->DirectReadFromZ80Memory(0x0000), 4 * 16);
+    const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-p3.z80");
+    ASSERT_TRUE(emulator->SaveSnapshot(saved));
+
+    auto again = manager->CreateEmulatorWithModelAndRAM("z80-p3-2", "PLUS3", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(again);
+    ASSERT_TRUE(again->LoadSnapshot(saved));
+    Memory& memory = *again->GetContext()->pMemory;
+    EXPECT_EQ(again->GetContext()->emulatorState.p1FFD, 0x03);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0x0000), 4 * 16) << "all-RAM: page 4 at #0000";
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0x4000), 5 * 16);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xC000), 7 * 16);
+    std::remove(saved.c_str());
+    manager->RemoveEmulator(again->GetId());
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// endregion </Models: libspectrum files and saving by model>

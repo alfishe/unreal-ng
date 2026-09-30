@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
 
+#include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -267,11 +268,25 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
         path = content.path;
     }
 
-    bool success = emulator->LoadTape(path);
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string reason;
+    bool success = emulator->LoadTape(path, &reason);
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Tape loaded successfully" : "Failed to load tape (check logs for details)";
+    ret["message"] = success ? "Tape loaded successfully" : "Failed to load tape: " + reason;
     ret["path"] = path;
     if (content.isEmbedded) ret["uploaded"] = true;
     
@@ -314,18 +329,19 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
         return;
     }
     
-    // Thread-safe eject
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
-    context->pTape->stopTape();
-    context->coreState.tapeFilePath.clear();
-    
-    if (wasRunning) {
-        emulator->Resume();
+    // The tape slot of the media manager (pauses the emulator itself);
+    // refused while a TTD recording runs
+    std::string reason;
+    if (!emulator->EjectTape(&reason)) {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = reason;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     Json::Value ret;
@@ -1211,8 +1227,15 @@ void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
 
     // insert: swap the instance's tape through the same path /tape/load uses
     bool inserted = false;
+    std::string insertRefusal;
     if (insertRequested)
-        inserted = emulator->LoadTape(outputPath);
+    {
+        insertRefusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+        if (insertRefusal.empty())
+            inserted = emulator->LoadTape(outputPath);
+        else
+            ret["insert_error"] = insertRefusal;  // saved, but not inserted: TTD is recording
+    }
 
     ret["status"] = "success";
     ret["message"] = "Imported " + std::to_string(imported.blocksRecognized) + " block(s), saved " +
@@ -1317,6 +1340,19 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         else if (content.isEmbedded)
             autostart = (req->getHeader("X-Autostart") == "true");
     }
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Emulator::DiskAutostartResult autostartResult;
     std::string loadError;
     bool success;
@@ -1425,6 +1461,19 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
             sides = (*json)["sides"].asInt();
     }
 
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     std::string createError;
     Emulator::BlankDiskResult created;
     const bool geometryInRange = cylinders >= 0 && cylinders <= 255 && sides >= 0 && sides <= 255;
@@ -1503,23 +1552,19 @@ void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
         return;
     }
     
-    // Thread-safe eject
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
-    if (context->pBetaDisk) {
-        context->pBetaDisk->ejectDisk();
-    }
-    if (context->coreState.diskDrives[driveNum]) {
-        context->coreState.diskDrives[driveNum]->ejectDisk();
-    }
-    context->coreState.diskFilePaths[driveNum].clear();
-    
-    if (wasRunning) {
-        emulator->Resume();
+    // Only the drive asked for; the disk is freed. Unsaved writes are dropped,
+    // as this endpoint always did (the media verbs of M4 add the dirty check)
+    std::string ejectError;
+    if (!emulator->EjectDisk(driveNum, /*force*/ true, &ejectError)) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = ejectError;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     Json::Value ret;

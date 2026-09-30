@@ -1,14 +1,19 @@
 // WebApiClient — loopback HTTP implementation of IApiCaller
 //
-// Uses drogon::HttpClient against 127.0.0.1:8090 (the WebAPI listener on the
-// shared drogon app instance). Fully asynchronous: never blocks an IO thread.
+// Uses drogon::HttpClient against 127.0.0.1 on the WebAPI listener's port (the
+// shared drogon app instance): 8090, or UNREAL_WEBAPI_PORT when set - the same
+// override the WebAPI honors, so a second instance's MCP talks to its own
+// machines and not to the instance that owns 8090. Fully asynchronous: never
+// blocks an IO thread.
 
 #include "webapi-client.h"
 
 #include <drogon/HttpClient.h>
 #include <drogon/HttpAppFramework.h>
 
+#include <cstdlib>
 #include <iostream>
+#include <string>
 
 namespace mcp
 {
@@ -30,7 +35,15 @@ void WebApiClient::EnsureClient()
     // The drogon app loop is available once the WebAPI thread has called run().
     // Calls can only arrive through the /mcp endpoint which is served by the
     // same loop, so getLoop() is always valid here.
-    auto* client = new drogon::HttpClientPtr(drogon::HttpClient::newHttpClient("http://127.0.0.1:8090", drogon::app().getLoop()));
+    long port = 8090;
+    if (const char* portEnv = std::getenv("UNREAL_WEBAPI_PORT"))
+    {
+        const long parsed = std::strtol(portEnv, nullptr, 10);
+        if (parsed >= 1 && parsed <= 65535)
+            port = parsed;
+    }
+    const std::string url = "http://127.0.0.1:" + std::to_string(port);
+    auto* client = new drogon::HttpClientPtr(drogon::HttpClient::newHttpClient(url, drogon::app().getLoop()));
     _client = client;
 }
 

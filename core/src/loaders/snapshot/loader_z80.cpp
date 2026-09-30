@@ -9,6 +9,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
+#include "loaders/snapshot/szx/loaderszx.h"
 #include "stdafx.h"
 
 LoaderZ80::LoaderZ80(EmulatorContext* context, const std::string& path)
@@ -81,6 +82,11 @@ Z80MemoryMode LoaderZ80::determineOutputFormat()
 {
     // Check if emulator is in 128K mode by examining port 7FFD lock bit
     // If locked and in 48K mode, use 48K format; otherwise use 128K
+    // The Scorpion's 256 KB has its own layout (16 pages, #1FFD)
+    const MEM_MODEL model = _context->config.mem_model;
+    if (model == MM_SCORP || model == MM_PROFSCORP)
+        return Z80_256K;
+
     uint8_t port7FFD = _context->emulatorState.p7FFD;
     bool isLocked = (port7FFD & 0x20) != 0;  // Bit 5 = lock
 
@@ -132,6 +138,8 @@ bool LoaderZ80::captureStateToStaging()
 
     // Capture port state
     _port7FFD = _context->emulatorState.p7FFD;
+    _port1FFD = _context->emulatorState.p1FFD;
+    _tstatesFromInt = LoaderSZX::IntCountFromFramePosition(_context, z80->t);
     _portFFFD = _context->emulatorState.pFFFD;
 
     // Capture border color
@@ -174,7 +182,7 @@ bool LoaderZ80::saveV3FromStaging()
     header.reg_HL = _z80Registers.hl;
     header.reg_SP = _z80Registers.sp;
     header.reg_I = _z80Registers.i;
-    header.reg_R = _z80Registers.r_low | (_z80Registers.r_hi & 0x80);
+    header.reg_R = _z80Registers.r_low & 0x7F;  // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
 
     // Flags byte: bit 0 = R bit 7, bits 1-3 = border, bit 5 = compression
     header.flags = (_z80Registers.r_hi >> 7) | ((_borderColor & 0x07) << 1) | 0x20;  // 0x20 = compressed
@@ -194,11 +202,25 @@ bool LoaderZ80::saveV3FromStaging()
     header.reg_PC = 0;
 
     // V2 fields
-    header.extendedHeaderLen = 54;  // V3 standard
+    header.extendedHeaderLen = 54;  // V3 standard; 55 with the #1FFD byte below
     header.newPC = _z80Registers.pc;
     header.model = static_cast<Z80_Models_v2>(getModelCodeV3());
     header.p7FFD = _port7FFD;
     header.pFFFD = _portFFFD;
+    // +2A, +3 and Scorpion: byte 86 holds #1FFD (a 55-byte extended header)
+    const uint8_t modelCode = static_cast<uint8_t>(header.model);  // a v3 code in the v2-typed field
+    if (modelCode == Z80_MODEL3_128K_2A || modelCode == Z80_MODEL3_128K_3 || modelCode == Z80_MODEL3_ZS256K)
+    {
+        header.extendedHeaderLen = 55;
+        header.p1FFD = _port1FFD;
+    }
+
+    // A 48K-mode snapshot of a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise
+    // readers (this loader included) ignore the AY bytes of a 48K snapshot
+    if (_memoryMode == Z80_48K && _context->config.mem_model != MM_SPECTRUM48)
+    {
+        header.r2 |= 0b0000'0100;
+    }
 
     // AY registers - get from sound manager
     if (_context->pSoundManager != nullptr)
@@ -210,12 +232,18 @@ bool LoaderZ80::saveV3FromStaging()
             {
                 header.ay[i] = psg->readRegister(static_cast<uint8_t>(i));
             }
+            // The selected register is the chip's own: a TurboSound decoder
+            // (Pentagon) routes #FFFD without updating emulatorState.pFFFD
+            header.pFFFD = psg->getCurrentRegisterIndex();
         }
     }
 
     // V3 fields - T-state counter (optional, set to 0)
-    header.lowTCounter = 0;
-    header.highTCounter = 0;
+    // The frame position, as libspectrum / Fuse encode it: a count-down within
+    // the current quarter of the frame and the quarter, both from the INT
+    const uint32_t quarter = std::max(1u, _context->config.frame / 4);
+    header.lowTCounter = static_cast<uint16_t>(quarter - (_tstatesFromInt % quarter) - 1);
+    header.highTCounter = static_cast<uint8_t>(((_tstatesFromInt / quarter) + 3) % 4);
 
     // Write header (first 30 bytes of V1)
     fwrite(&header, sizeof(Z80Header_v1), 1, outFile);
@@ -252,8 +280,9 @@ bool LoaderZ80::saveV3FromStaging()
     }
     else
     {
-        // 128K: write all 8 RAM pages (Z80 pages 3-10)
-        for (int page = 0; page < 8; page++)
+        // 128K: all 8 RAM pages (Z80 pages 3-10); Scorpion 256K: 16 (3-18)
+        const int pages = _memoryMode == Z80_256K ? 16 : 8;
+        for (int page = 0; page < pages; page++)
         {
             if (_stagingRAMPages[page] != nullptr)
             {
@@ -262,7 +291,7 @@ bool LoaderZ80::saveV3FromStaging()
 
                 MemoryBlockDescriptor desc;
                 desc.compressedSize = static_cast<uint16_t>(compressedSize);
-                desc.memoryPage = page + 3;  // Z80 pages: 3=RAM0, 4=RAM1, ..., 10=RAM7
+                desc.memoryPage = static_cast<uint8_t>(page + 3);  // Z80 pages: 3=RAM0, 4=RAM1, ..., 10=RAM7 (18=RAM15)
 
                 fwrite(&desc, sizeof(desc), 1, outFile);
                 fwrite(compressBuffer, compressedSize, 1, outFile);
@@ -273,22 +302,31 @@ bool LoaderZ80::saveV3FromStaging()
     fclose(outFile);
 
     MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)",
-             _path.c_str(), (_memoryMode == Z80_48K) ? "48K" : "128K");
+             _path.c_str(), (_memoryMode == Z80_48K) ? "48K" : (_memoryMode == Z80_256K ? "256K" : "128K"));
 
     return true;
 }
 
 uint8_t LoaderZ80::getModelCodeV3()
 {
-    // Map current emulator model to Z80 v3 model code
-    // For now, default to standard models based on memory mode
+    // The running model's v3 code; a 48K-mode save (the #7FFD lock set) stays 48K
     if (_memoryMode == Z80_48K)
+        return Z80_MODEL3_48K;
+    switch (_context->config.mem_model)
     {
-        return Z80_MODEL3_48K;  // 0
-    }
-    else
-    {
-        return Z80_MODEL3_128K;  // 4
+        case MM_PLUS2: return Z80_MODEL3_128K_2;
+        case MM_PLUS2A: return Z80_MODEL3_128K_2A;
+        case MM_PLUS3: return Z80_MODEL3_128K_3;
+        case MM_PENTAGON:
+            if (_context->config.ramsize > 128)
+                MLOGWARNING("Z80 save: .z80 has no Pentagon 512 / 1024 model; saved as a Pentagon 128 (pages 0-7)");
+            return Z80_MODEL3_P128K;
+        case MM_SCORP:
+        case MM_PROFSCORP: return Z80_MODEL3_ZS256K;
+        case MM_SPECTRUM128: return Z80_MODEL3_128K;
+        default:
+            MLOGWARNING("Z80 save: .z80 has no code for this model; saved as a 128K");
+            return Z80_MODEL3_128K;
     }
 }
 
@@ -450,6 +488,7 @@ void LoaderZ80::commitFromStage()
             }
             break;
             case Z80_128K:
+            case Z80_256K:  // Scorpion ZS-256: the 128K path plus #1FFD (RAM page bit 3, ROM, RAM at #0000)
             {
                 // Initialize 128K memory configuration
                 // CRITICAL: Must fully unlock emulator state before applying snapshot
@@ -470,7 +509,16 @@ void LoaderZ80::commitFromStage()
                 memory.SetRAMPageToBank2(2);
                 memory.SetRAMPageToBank3(bank3Page);
 
-                // Step 3: Set port values via decoder (goes through hardware logic for ROM/screen)
+                // Step 3: Set port values via decoder (goes through hardware logic for ROM/screen).
+                // #1FFD first (+2A / +3 special paging and ROM high bit, Scorpion page bit 3):
+                // #7FFD's lock bit would block it afterwards
+                const MEM_MODEL model = _context->config.mem_model;
+                const bool has1FFD = model == MM_PLUS2A || model == MM_PLUS3 || model == MM_SCORP || model == MM_PROFSCORP;
+                if (_hasPort1FFD && has1FFD)
+                {
+                    ports.DecodePortOut(0x1FFD, _port1FFD, _z80Registers.pc);
+                    _context->emulatorState.p1FFD = _port1FFD;
+                }
                 ports.DecodePortOut(0x7FFD, _port7FFD, _z80Registers.pc);
                 ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
                 
@@ -481,8 +529,6 @@ void LoaderZ80::commitFromStage()
                 memory.UpdateZ80Banks();
                 break;
             }
-            case Z80_256K:
-                break;
             default:
                 throw std::logic_error("Not supported");
                 break;
@@ -504,6 +550,9 @@ void LoaderZ80::commitFromStage()
                                                (_borderColor & 0b0000'0111));
         borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
 
+        // AY registers: core.Reset() above cleared the chip, so the snapshot's
+        // registers go in after it
+        commitPeripheralState();
 
         /// endregion </Apply port configuration>
 
@@ -545,6 +594,9 @@ void LoaderZ80::commitFromStage()
         Z80Registers* actualRegisters = static_cast<Z80Registers*>(z80);
         memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
         z80->tt = preservedT;  // Restore timing state
+        // A v3 file stores the frame position (from the INT): resume there
+        if (_hasTStates)
+            z80->t = LoaderSZX::FramePositionFromIntCount(_context, _tstatesFromInt);
 
         // Detect if CPU was halted when snapshot was taken
         // If PC points to HALT instruction (0x76), set halted state
@@ -729,6 +781,7 @@ bool LoaderZ80::loadZ80v2()
         // Retrieve ports configuration
         _port7FFD = headerV2.p7FFD;
         _portFFFD = headerV2.pFFFD;
+        stagePeripheralState(headerV2);
 
         // Remember border color
         _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
@@ -855,6 +908,20 @@ bool LoaderZ80::loadZ80v3()
         // Retrieve ports configuration
         _port7FFD = headerV3.p7FFD;
         _portFFFD = headerV3.pFFFD;
+        _modelCode = static_cast<uint8_t>(headerV3.model);
+        // Byte 86 exists only in a 55-byte extended header (+2A / +3 / Scorpion writers)
+        _hasPort1FFD = headerV3.extendedHeaderLen >= 55;
+        _port1FFD = _hasPort1FFD ? headerV3.p1FFD : 0;
+        // Bytes 55-57: the frame position (libspectrum's decoding); out of range means "not stored"
+        {
+            const uint32_t frame = _context->config.frame;
+            const uint32_t quarter = std::max(1u, frame / 4);
+            const int64_t tstates = static_cast<int64_t>(((headerV3.highTCounter + 1) % 4) + 1) * quarter -
+                                    (static_cast<int64_t>(headerV3.lowTCounter) + 1);
+            _hasTStates = tstates >= 0 && tstates < static_cast<int64_t>(frame);
+            _tstatesFromInt = _hasTStates ? static_cast<uint32_t>(tstates) : 0;
+        }
+        stagePeripheralState(headerV3);
 
         // Remember border color
         _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
@@ -1116,9 +1183,41 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
     return result;
 }
 
-void LoaderZ80::applyPeripheralState(const Z80Header_v2& header)
+/// @brief Stage the AY registers of a v2 / v3 snapshot
+/// @details Bytes 38-54 hold the selected AY register and the 16 AY registers. They describe the machine's AY
+///          on 128K-class models, and on 48K only when byte 37 bit 2 ("AY sound in use, even on 48K
+///          machines") is set; otherwise they are not state and stay unused
+void LoaderZ80::stagePeripheralState(const Z80Header_v2& header)
 {
-    (void)header;
+    constexpr uint8_t Z80_FLAGS2_AY_IN_USE = 0b0000'0100;
+
+    const bool ayState = (_memoryMode != Z80_48K) || (header.r2 & Z80_FLAGS2_AY_IN_USE) != 0;
+    _hasAyRegisters = ayState;
+    if (ayState)
+    {
+        memcpy(_ayRegisters, header.ay, sizeof(_ayRegisters));
+    }
+}
+
+/// @brief Write the staged AY registers into the machine's first AY chip
+/// @details Called after core.Reset(). The registers go through the chip's logic-level interface (the same one
+///          the saver reads back from), then the selected register is restored. On a TurboSound machine this is
+///          chip 0, the chip the reset leaves selected
+void LoaderZ80::commitPeripheralState()
+{
+    if (!_hasAyRegisters || _context->pSoundManager == nullptr)
+        return;
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    if (psg == nullptr)
+        return;
+
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        psg->writeRegister(reg, _ayRegisters[reg]);
+    }
+
+    psg->setRegister(_portFFFD & 0x0F);
 }
 
 /// @brief Compress memory page using Z80 RLE compression
@@ -1398,8 +1497,12 @@ MemoryPageDescriptor LoaderZ80::resolveSnapshotPage(uint8_t page, Z80MemoryMode 
             // else: page >= 11, leave as BANK_INVALID
             break;
         case Z80_256K:
-            // Not implemented - leave as BANK_INVALID
-            MLOGWARNING("Z80 256K mode not implemented, skipping page %d", page);
+            // Scorpion ZS-256: 3 -> RAM page 0 ... 18 -> RAM page 15
+            if (page >= 3 && page < 19)
+            {
+                result.mode = MemoryBankModeEnum::BANK_RAM;
+                result.page = page - 3;
+            }
             break;
         case Z80_SAMCOUPE:
             // Not implemented - leave as BANK_INVALID

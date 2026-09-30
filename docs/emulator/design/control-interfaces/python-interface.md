@@ -72,6 +72,17 @@ python->executePython("print('Hello from embedded Python!')");
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**ZX-Poly** (four synchronized instances of one model, through the same
+`EmulatorManager::CreateZXPolyMachine` every surface uses):
+```python
+id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
+status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
+status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
+status["parallel_slaves"], status["pipelined_slaves"]      # how the slaves are scheduled
+```
+The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
+
 ## API Reference
 
 ### Module Functions
@@ -109,9 +120,47 @@ class Emulator:
         (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
         attenuation_db, key_on). available=False with a description without TSFM"""
 
+    def gs_state(self) -> dict:
+        """General Sound / NeoGS report (the WebAPI /state/audio/gs tree): device, mailbox,
+        MPAG page, DAC channels, card CPU, and on NeoGS a 'neogs' dict (windows, SD, MP3, DMA,
+        ZX-DMA). available=False with a description when no card is fitted"""
+
+    def audio_covox_state(self) -> dict:
+        """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
+        the four DAC latches. available=False when no Covox is fitted"""
+
+    def ide_state(self) -> dict:
+        """IDE board report: scheme, gate, adapter latches, selected unit, intrq,
+        units[2] (kind, slot, medium, translation, task_file with decoded bits,
+        command, atapi sense on a CD drive). available=False without a board"""
+
+    def rtc_state(self) -> dict:
+        """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
+        (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
+        alarm, dump (hex lines). Peeked: never clears register C. available=False without a clock"""
+
+    def rtc_read(self, start: int, count: int = 1) -> bytes:
+        """CMOS cells as the guest reads them, without side effects. ValueError without a
+        clock or for a range outside the chip"""
+
+    def rtc_write(self, start: int, values: list[int]) -> None:
+        """Write CMOS cells like a guest write: the time registers set the clock (set B bit 7
+        SET around a multi-register set, as a guest does), C and D are read-only, RAM cells
+        are stored. The address latch is not touched. ValueError without a clock / bad range"""
+
+    def audio_moonsound_state(self, part: str = "") -> dict:
+        """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
+        timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
+        available=False without the card; ValueError for another part"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+
+    def contention_state(self) -> dict:
+        """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
+        effective, memory_interface, io_rule, slots[4] (mapping, contended), the +2A/+3
+        floating_bus_latch, statistics per kind while debug mode is on"""
 
     # Screen reports - same fields as every other module (command-interface.md section 6.6)
     def screen_state(self, verbose: bool = False) -> dict:
@@ -181,8 +230,8 @@ emu = Emulator()
 emu.init()
 
 # Load / eject
-emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.csw
-emu.tape_eject()
+emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folder built into a tape
+emu.tape_eject()                      # the tape leaves the tape slot (False while TTD records)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 emu.tape_play()    # start at consumption cursor; resumes in place when paused
@@ -225,6 +274,27 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 ```
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Media (every slot)
+
+Floppy drives, the SD card and every other slot through one set of methods — the same verbs,
+slot names, options and errors as the WebAPI, CLI, MCP and Lua. Full reference:
+[docs/features/media.md](../../../features/media.md).
+
+```python
+emu.media_list()                                         # slots + detached media
+emu.media_insert("A", "/games/elite-1.trd")              # slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
+emu.media_insert("sd", "/home/me/zx/sdcard", fs="fat32")
+emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs save / export / discard
+emu.media_eject("B", export="/tmp/b.trd")
+emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
+emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
+emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
+emu.media(verb, slot, path, **options)                   # any verb
+```
+
+Each returns the result dict: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
+and the verb's fields. Errors are results (`ok: False`), not exceptions.
 
 ### Disk Operations
 
@@ -698,9 +768,16 @@ status = emu.profilers_status_all()
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`.
+```python
+try:
+    emu.snapshot_load('game.sna')
+except RuntimeError as refusal:
+    print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
+```
+
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
@@ -742,17 +819,33 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
+#   'write_journal_complete': True,   # False: write/io find-last replays history
+#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
+#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
 #   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
 #   'coverage_index_bytes': 13926,
+#   'input_event_count': 10,
+#   'external_event_count': 0,
+#   'input_history_complete': True,
+#   'port_journal_active': True,      # replay needs no media or host device
+#   'port_journal_off_reason': None,  # e.g. 'NeoGS: ...' when off
+#   'port_read_count': 8225,
+#   'port_write_count': 15520,
+#   'port_journal_bytes': 9234,
+#   'port_replay_value_mismatches': 0,  # > 0: a device answered otherwise on replay
+#   'port_replay_divergences': 0,     # > 0: execution left the recording
 #
 #   # Memory
 #   'page_store_bytes': 40960,
 #   'page_store_used_bytes': 665600,
 #   'baseline_frames_captured': 2159,
 #   'session_heap_bytes': 1043968,
+#
+#   'last_drop_reason': 'snapshot-load',   # None until a history is dropped
+#   'unavailable_reason': None,            # set when this machine has no time travel (a ZX-Poly member)
 # }
 ```
 
@@ -800,6 +893,8 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    'blocked_by_marker': {'kind': ..., 'reason': ..., 'frame': ..., 'tinframe': ...}
 #    (with 'matched': False when the barrier stopped the search before a match).
 #    None only when nothing matched and no marker stopped the search.
+#    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
+#    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
 ```
 
 **Reverse search:**
@@ -814,7 +909,9 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'pc': 0x4A21,
 #   'value': 0x07,
 #   'phys_page': 5,          # None for ROM / no RAM page
-#   'access': 'write'
+#   'access': 'write',
+#   'covered_from': 4823, 'covered_from_tinframe': 14982,  # the searched span:
+#   'covered_to': 4900, 'covered_to_tinframe': 0            # it ended at the hit
 # }
 
 # Full filter set (single address or address/PC range search):
@@ -833,8 +930,32 @@ result = emu.ttd_find_last(
 
 # A replay barrier stopped the search before any match:
 # {'found': False, 'blocked': True, 'marker_frame': 4700, 'marker_tinframe': 0,
-#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write'}
+#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write',
+#  'covered_from': 4700, 'covered_from_tinframe': 0, 'covered_to': 4900, 'covered_to_tinframe': 0}
+#  The search covered frame 4700..4900 only: nothing before the marker was examined.
 ```
+
+**When did the program ... (port events):** `ttd_port_events(event, arg=None, **options)` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+
+```python
+r = emu.ttd_port_events('key', 'space')        # when the game saw SPACE pressed
+# {'ok': True, 'direction': 'in', 'count': 1, 'truncated': False, 'scanned': 7905,
+#  'hits': [{'index': 6082, 'frame': 430, 'tinframe': 7824, 'port': 0x7FFE, 'value': 0xFE, 'pc': 0x72B2}]}
+
+w = emu.ttd_port_events('ay-write', 7, **{'from': 200, 'to': '260:0', 'limit': 100})
+# 60 hits, one a frame: the mixer written from PC 0xC176, 'ay_register': 7
+
+f = emu.ttd_port_events('key', '5', file='testdata/ttd/port-journals/dizzyx.ttd')
+# a saved session, searched without loading it
+
+edges = emu.ttd_port_events('ear', limit=100000)['hits']        # every tape edge the loader saw
+if not r['ok']:
+    print(r['error'])     # no journals, recording running, bad option
+```
+
+`from` is a Python keyword: pass it through a dict (`**{'from': 200}`).
 
 For writes the write journal answers when it holds every write of the session; otherwise the search replays history (see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules), "When the write journal answers").
 
@@ -935,7 +1056,12 @@ emu.paging_state()                   # tagged paging latches + bank table (P1-2)
                                      # ROM bank rows carry the §5.2 identification: name = recognized
                                      # content (SHA-256 catalog), role = the model's layout slot; a
                                      # role/name mismatch is the one-glance wrong-ROM signal.
-emu.beam_position()                  # { "frame": N, "scanline": N, "tstate": N, "zone": "..." }
+emu.beam_position()                  # { "frame": N, "line": N, "tstate": N, "zone": "...", "layers": [{id, x, x_end, y}] }
+emu.video_layout()                   # layers (surface, beam window, dots_per_t), framebuffer placement, family
+emu.video_pixel(x, y, layer=0)       # sources (space, page, offset, bit_mask, role, z80), colour_index, rgb, rendered_rgb
+emu.video_pixel_at(t)                # the same for the point under the beam at frame T (layer pixel or border)
+emu.video_address(page, offset)      # areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
+emu.video_text(layer=0)              # exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
 emu.frame_cost()                     # per-frame halt/run cost accounting
 
 # Coverage analyzer

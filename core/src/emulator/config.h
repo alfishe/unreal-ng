@@ -1,4 +1,5 @@
 #pragma once
+#include "emulator/media/mediaconfig.h"
 #include "stdafx.h"
 
 #include "common/inifile.h"
@@ -67,9 +68,26 @@ private:
 		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
 	};
 
+	/// Other names accepted for a model wherever a short name is (config HIMEM,
+	/// WebAPI / MCP / CLI model names): the model table keeps one canonical
+	/// short name each
+	struct ModelAlias
+	{
+		const char* Name;
+		MEM_MODEL Model;
+	};
+	static constexpr ModelAlias model_aliases[] =
+	{
+		{ "TSCONF", MM_TSL },  // TSConf technical-design D3: the scope named it TSCONF, the key stays TSL
+	};
+
 protected:
 	EmulatorContext* _context;
     std::string _configFilePath;
+
+    // [MEDIA] and the legacy media keys of the loaded config (media manager)
+    std::vector<MediaSetEntry> _mediaSet;
+    std::vector<std::string> _mediaReport;
 
 public:
 	static const char* GetDefaultConfig();
@@ -92,6 +110,11 @@ public:
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
 	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
 
+	/// The media set the config states ([MEDIA] + legacy keys), paths resolved
+	/// against the config file's folder; problems in it are in the report
+	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
+	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
+
 	/// Process-wide hook called for every config that loaded and validated
 	/// successfully (model resolved, model timing defaults applied) - the last
 	/// step of ParseConfig, before any device is created from the config.
@@ -102,6 +125,9 @@ public:
 	/// An empty hook (the default) changes nothing
 	using ConfigLoadedHook = std::function<void(CONFIG&)>;
 	static void SetConfigLoadedHook(ConfigLoadedHook hook);
+	/// The hook installed now (empty when none): a caller that overlays its
+	/// own settings for a while chains to it and puts it back afterwards
+	static ConfigLoadedHook GetConfigLoadedHook();
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
@@ -136,9 +162,9 @@ public:
 	/// [EVO] Fpga= value -> true for the frozen legacy BaseConf tree ("legacy"),
 	/// false for the current "trdemu" tree (also for a missing or unknown value)
 	static bool ParseEvoFpgaVariant(const char* value);
-
-	/// [ZC] SDWrite= value -> 0 session (also missing / unknown), 1 persist, 2 off
-	static uint8_t ParseSdWriteMode(const char* value);
+	/// [HDD] Scheme: NONE / ATM / NEMO / NEMO-A8 / NEMO-DIVIDE / SMUC / PROFI / DIVIDE (any case); false when unknown
+	static bool ParseIdeScheme(const char* value, IDE_SCHEME& scheme);
+	static const char* IdeSchemeName(IDE_SCHEME scheme);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

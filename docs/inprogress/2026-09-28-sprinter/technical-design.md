@@ -29,11 +29,11 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 | Hook | Status | Sprinter use | Spec |
 |---|---|---|---|
 | **M1 hook** `IMachineM1Hook` / `Z80::machineM1Hook` | **exists** (built for ATM3 E3; `core/src/emulator/cpu/z80.h:290-295`, `:445`) | TR-DOS entry at `#3D00-#3DFF` and exit at `≥ #4000` (the vROM DOS signal); accelerator opcode snooping; the `IN/OUT` + `#1F` quirk | ATM3 [e3-board-nmi.md](../2026-09-15-atm-baseconf-highres-ports/e3-board-nmi.md) |
-| **Write intercept** `_bank_write_intercept[4]` + virtual `OnInterceptedWrite` | specified, not built | video shadow writes, graphics pages, the reset page, ISA pages, accelerator write side | TSConf [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.5 |
-| **Interrupt source** `IInterruptSource` | specified, not built | INT position from the mode table; keyboard and Covox-Blaster interrupts (all vector `#FF`) | TSConf technical design §3.4 |
+| **Write intercept** = a write-only `HostBusOverlay` (`observesReads = false`, window `#0000-#FFFF`, the callback picks the bank; `Core::AddBusOverlay`, chained with other overlays) | **built** (PLAN #60(a), 2026-09-29; replaces the per-bank flag of the first design) | video shadow writes, graphics pages, the reset page, ISA pages, accelerator write side; where the plain store must not land, the bank's `_bank_write` points to the trash page | TSConf [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.5 item 2 |
+| **Interrupt source** `IInterruptSource` + `OnReti()`; engine step hook `IMachineStepHook` | **built** (PLAN #60(a) + TSConf INF-5, 2026-09-29; `Z80::interruptSource`, `Z80::machineStepHook`) | INT position from the mode table; keyboard and Covox-Blaster interrupts (all vector `#FF`); RETI for the Z84C15 daisy chain and the accelerator re-arm | TSConf technical design §3.4, §3.8 |
 | **Memory subclass** selected in the `Core` factory | pattern exists (`ScorpionMemory`, `core/src/emulator/memory/memory.h:313`) | `SprinterMemory`: bank computation, graphics-page reads | TSConf `TsConfMemory` §3.5 |
-| **Clock ratio** (new) | decided (review round 1); PLAN #60 | 21 MHz = 6 × 3.5 MHz | §3 below |
-| **Wait-state hook** (new) | decided (review round 1); PLAN #60 | turbo memory and port waits | §4 below |
+| **Clock ratio** (new) | decided (review round 1); PLAN #60(b), **postponed to the Sprinter program** (2026-09-28): no other machine needs it | 21 MHz = 6 × 3.5 MHz | §3 below |
+| **Wait-state hook** | **built** (PLAN #60(d), 2026-09-29): `MemoryWaitOverlay` (`core/src/emulator/memory/memorywaitoverlay.h`) - per-slot flags + `ExtraClocks(kind, addr, startClock)`, a host bus overlay so machines without waits pay nothing; port waits: the decoder calls `Z80::AddWaitStates` | turbo memory and port waits | §4 below |
 | **CMOS core** `Ds12887` (new) | decided (review round 1); PLAN #60, with the migrations of the existing clocks | Sprinter CMOS | [tdd-storage.md](tdd-storage.md) §4 |
 
 ## 3. Clock ratio (new, shared)
@@ -41,6 +41,11 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 Today the guest CPU clock is `base × (speed_multiplier << hw_turbo_shift)`, where
 `hw_turbo_shift` is a log2 (`core/src/emulator/platform.h:960-980`, `Z80::ApplyHardwareTurboNow`
 `core/src/emulator/cpu/z80.cpp:602`). A ×6 turbo cannot be expressed.
+
+> **Postponed (2026-09-28):** only the Sprinter needs a ×6. ATM, Scorpion,
+> Profi, ZX-Evo and TSConf run at ×1/×2/×4, which `hw_turbo_shift` covers, so
+> this change is built as the first step of the Sprinter program rather than
+> in the shared infrastructure ahead of TSConf.
 
 Decision (review round 1): replace `hw_turbo_shift` / `hw_turbo_shift_applied` **everywhere** by
 `hw_turbo_ratio` / `hw_turbo_ratio_applied` (`uint8_t`, 1…8, default 1).
@@ -75,6 +80,14 @@ number cannot hold it. Decision (review round 1): the per-bank byte is only a fl
 waits", computed when banks change. When the flag is set, the cost comes from one function,
 `SprinterWaits::ExtraClocks(kind, t)`. Machines without turbo never set the flag and pay nothing
 per access.
+
+> **Built as `MemoryWaitOverlay` (PLAN #60(d), 2026-09-29):** the per-slot
+> flag is `SetSlotWaits`, the function is the overlay's `ExtraClocks(kind,
+> addr, startClock)`; `startClock` = `Z80::AccessStartClock()`, the CPU clock
+> the access started at (at the current rate), which is the `t` of the rule
+> below. The wait lands after the byte transfer (the overlay runs after the
+> normal access); the instruction length and the phase are exact. Port waits:
+> `PortDecoder_Sprinter` adds them with `Z80::AddWaitStates`.
 
 v1 rule (MAME, `sprinter.cpp:1720-1731`): in turbo, a RAM access costs
 `((6 − (t mod 6)) mod 6) + 6 − 3` extra CPU clocks (21 MHz clocks, `t` = the CPU clock count); a

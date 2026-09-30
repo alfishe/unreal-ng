@@ -5,6 +5,7 @@
 #include "portdecoder_scorpion256.h"
 
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
+#include "debugger/ttd/ttdds12887.h"
 
 #include "common/collectionhelper.h"
 #include "emulator/cpu/core.h"
@@ -60,8 +61,8 @@ static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canon
 
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
     _savedP7FFDValid = false;
+    _smucNvram.GetRtc().SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
@@ -107,7 +108,6 @@ void PortDecoder_Scorpion256::reset()
     _screen->SetBorderColor(COLOR_BLACK);
 
     // Reset memory paging lock latch
-    _7FFD_Locked = false;
     _savedP7FFDValid = false;
 
     // SMUC stub: re-arm the serial-link lines (the EEPROM image itself is
@@ -125,6 +125,10 @@ void PortDecoder_Scorpion256::reset()
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
@@ -215,7 +219,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // service plane (profrom-smuc-not-found-and-driver-disassembly.md). Must
     // precede the #FE arm: every SMUC address also carries the weak FE pattern
     // (A5=1, A1=1, A0=0) and would otherwise read the keyboard instead
-    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    else if ((_context->config.mem_model == MM_PROFSCORP || _ide.Scheme() == IDE_SMUC) && IsPort_SMUC(port))
     {
         result = ReadSMUCPort(port);
         _lastPortDecoded = true;
@@ -358,6 +362,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
@@ -428,7 +436,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // SMUC board - same family and ordering constraint as the IN path (the
     // #FE arm would otherwise swallow every #xxBA/#xxBE write as border,
     // keys and mic levels)
-    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    else if ((_context->config.mem_model == MM_PROFSCORP || _ide.Scheme() == IDE_SMUC) && IsPort_SMUC(port))
     {
         WriteSMUCPort(port, value);
         disp.decodedPort = port;
@@ -689,19 +697,35 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
     return result;
 }
 
+PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()
+{
+    RtcBinding binding;
+    if (!IsSmucFitted())
+    {
+        binding.absentReason = "No SMUC board on this Scorpion (configure [HDD] Scheme=SMUC): the clock lives on the SMUC";
+        return binding;
+    }
+    binding.chip = &_smucNvram.GetRtc();
+    binding.ports = "SMUC: #DFBA address or data, latched by #FFBA bit 7";
+    return binding;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
 {
     // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
     // bits) and the DD50.1 magic-button trigger drive the paging chain and are
     // not in the model-agnostic TTDChipsetState. The ProfROM plane state rides
-    // in the same blob; on the plain Scorpion it is simply zero
-    return {ttd::PeripheralId::ScorpionProfROM};
+    // in the same blob; on the plain Scorpion it is simply zero. The SMUC
+    // clock is captured even with the board absent: 336 bytes, and a test
+    // that fits the board records it like any other
+    return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<SMUCNvram&>(_smucNvram).GetRtc()));
     return serializers;
 }
 
@@ -828,7 +852,7 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
         _savedP7FFDValid = false;
     }
 
-    if (!_7FFD_Locked)
+    if (!IsPagingLocked())
     {
         _state->p7FFD = value;
         memory.UpdateZ80Banks();
@@ -836,8 +860,6 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
         uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
         SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
         _screen->SetActiveScreen(screen);
-
-        _7FFD_Locked = value & 0b00100000;
     }
 
     MLOGDEBUG(memory.DumpMemoryBankInfo());
@@ -895,7 +917,7 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 
     if (monitorWasOn && !monitorNowOn && pc == 0x000B && _savedP7FFDValid)
     {
-        if (!_7FFD_Locked)
+        if (!IsPagingLocked())
             _state->p7FFD = _savedP7FFD;
     }
 
@@ -926,7 +948,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
     // Board absent: nothing decodes the family, the bus floats. Constant #FF
     // (not the attribute-latch floating stream: its bit 6 varies with the
     // raster and would ACK the presence polls at random screen positions)
-    if (!_smucEnabled)
+    if (!IsSmucFitted())
         return 0xFF;
 
     switch (port & 0xA044)
@@ -935,7 +957,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return _smucNvram.ReadSerialLink() ? 0xFF : 0xBF;
 
         case 0x8000:  // #DFBA - DS1685 RTC data register
-            return _smucNvram.ReadCMOS();
+            return _smucNvram.GetRtc().ReadData();
 
         case 0x2000:  // #7FBA - virtual FDD
             return static_cast<uint8_t>(state.p7FBA | 0x3F);
@@ -948,10 +970,14 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return 0x57;
 
         case 0x8004:  // #D8BE - IDE data high byte (16-bit path)
+            if (_ide.Scheme() == IDE_SMUC)
+                return _ide.SmucIn(port, state.pFFBA);
             return 0x00;
 
         case 0xA004:  // #F8BE-#FFBE - IDE window, A10-A8 select the ATA register
         {
+            if (_ide.Scheme() == IDE_SMUC)
+                return _ide.SmucIn(port, state.pFFBA);  // the real disk core (IDE design §4, SMUC row)
             const uint8_t ideReg = static_cast<uint8_t>((port >> 8) & 0x07);
             switch (ideReg)
             {
@@ -974,29 +1000,40 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
     EmulatorState& state = *_state;
 
     // Board absent: no latch behind the window, the write is lost
-    if (!_smucEnabled)
+    if (!IsSmucFitted())
         return;
 
     switch (port & 0xA044)
     {
-        case 0xA000:  // #FFBA - bit 7 CMOS data phase, bits 4/6/5 = SDA/SCL/WP
+        case 0xA000:  // #FFBA - bit 7 CMOS data phase / IDE control block, bit 0 IDE reset, bits 4/6/5 = SDA/SCL/WP
             state.pFFBA = value;
             _smucNvram.WriteSerialLink(value);
+            if (!(value & 0x01) && _ide.Scheme() == IDE_SMUC)
+                _ide.ResetUnits();  // 0 resets (IDE design Q3): MAME smuc.cpp, and ProfROM 4.01 keeps
+                                    // D0 = 1 and pulses it low to reset (page 7 #15C7); UnrealSpeccy has it inverted
             break;
 
         case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
             if (state.pFFBA & 0x80)
-                _smucNvram.WriteCMOS(value);
+                _smucNvram.GetRtc().WriteData(value);
             else
-                _smucNvram.SetCMOSAddress(value);
+                _smucNvram.GetRtc().WriteAddress(value);
             break;
 
         case 0x2000:  // #7FBA - virtual FDD latch
             state.p7FBA = value;
             break;
 
+        case 0x8004:  // #D8BE - IDE data high byte latch
+            if (_ide.Scheme() == IDE_SMUC)
+                _ide.SmucOut(port, state.pFFBA, value);
+            break;
+
         case 0xA004:  // #F8BE-#FFBE - IDE window task file
-            _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
+            if (_ide.Scheme() == IDE_SMUC)
+                _ide.SmucOut(port, state.pFFBA, value);
+            else
+                _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
             break;
 
         default:      // PIC / version / revision / IDE high byte: nothing to latch

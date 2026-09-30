@@ -12,6 +12,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
@@ -139,6 +140,11 @@ void MenuManager::createFileMenu()
     _openDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
+
+    // Open ZX-Poly: a four-CPU ZX-Poly machine from a .zxp snapshot or a multiloader disk
+    _openZXPolyAction = _fileMenu->addAction(tr("Open &ZX-Poly..."));
+    _openZXPolyAction->setStatusTip(tr("Run a ZX-Poly edition (.zxp snapshot or .trd/.scl multiloader disk) on four synchronized machines"));
+    connect(_openZXPolyAction, &QAction::triggered, this, &MenuManager::openZXPolyRequested);
 
     // Import audio → tape image (tape-audio-bridge §7.3): recognize a
     // WAV/FLAC/MP3 recording back into a .tzx/.tap image
@@ -512,6 +518,13 @@ void MenuManager::populateCrtProfileMenu()
     }
 }
 
+void MenuManager::setMediaPanelChecked(bool checked)
+{
+    // Sync from the panel's own close box; setChecked never re-emits triggered
+    if (_mediaPanelAction)
+        _mediaPanelAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -719,6 +732,30 @@ void MenuManager::createMachineMenu()
         }
     }
 
+    // ZX-Poly configurations: four synchronized instances of a base model,
+    // started as the bare machine (File -> Open ZX-Poly... loads an edition)
+    _machineMenu->addSeparator();
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base))
+            continue;
+
+        const QString name = QString::fromUtf8(configuration.name);
+        QAction* action = _machineMenu->addAction(QString::fromUtf8(configuration.title));
+        action->setCheckable(true);
+        action->setData(name);
+        action->setStatusTip(tr("Switch to ZX-Poly: four synchronized %1 machines")
+                                 .arg(QString::fromUtf8(base->FullName)));
+        _machineModelGroup->addAction(action);
+        _zxpolyConfigurationActions.push_back(action);
+
+        connect(action, &QAction::triggered, this, [this, name]() {
+            if (_currentModelShortName != name)
+                emit zxpolyConfigurationRequested(name);
+        });
+    }
+
     // Set default selection (first entry)
     if (!_machineModelActions.empty())
     {
@@ -776,6 +813,17 @@ void MenuManager::createMachineMenu()
     _autostartDisksAction->setCheckable(true);
     _autostartDisksAction->setChecked(true);
     connect(_autostartDisksAction, &QAction::triggered, this, &MenuManager::autostartDisksToggled);
+
+    // Video memory contention (design: docs/inprogress/2026-09-28-m1-contention). Mirrors the
+    // 'contention' feature (synced in updateMenuStates); only the 48K / 128K / +2 / +2A / +3 have it
+    _machineMenu->addSeparator();
+    _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
+    _contentionAction->setStatusTip(
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 (no effect on other machines); "
+           "fixed while TTD records or replays"));
+    _contentionAction->setCheckable(true);
+    _contentionAction->setChecked(true);
+    connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)
@@ -798,6 +846,23 @@ void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEm
 
     MEM_MODEL currentModel = ctx->config.mem_model;
     uint32_t currentRam = ctx->config.ramsize;
+
+    // A ZX-Poly master: the configuration of its base model
+    if (EmulatorManager::GetMachineIdentity(*activeEmulator).ZXPoly)
+    {
+        for (QAction* action : _zxpolyConfigurationActions)
+        {
+            const ZXPolyGroup::Configuration* configuration =
+                ZXPolyGroup::FindConfiguration(action->data().toString().toStdString());
+            const TMemModel* base = configuration ? Config::FindModelByShortName(configuration->baseModel) : nullptr;
+            if (base != nullptr && base->Model == currentModel)
+            {
+                action->setChecked(true);
+                _currentModelShortName = action->data().toString();
+                return;
+            }
+        }
+    }
 
     // Find and check the matching action (format: "MODEL:RAM")
     for (QAction* action : _machineModelActions)
@@ -942,6 +1007,14 @@ void MenuManager::createToolsMenu()
     _tapeManagerAction->setCheckable(true);
     _tapeManagerAction->setChecked(false);
     connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
+
+    // Media panel: every slot (floppy drives, SD card, ...) through MediaControl
+    _mediaPanelAction = _toolsMenu->addAction(tr("M&edia"));
+    _mediaPanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_4));
+    _mediaPanelAction->setStatusTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
+    _mediaPanelAction->setCheckable(true);
+    _mediaPanelAction->setChecked(false);
+    connect(_mediaPanelAction, &QAction::triggered, this, &MenuManager::mediaPanelToggled);
 
     _toolsMenu->addSeparator();
 
@@ -1219,6 +1292,13 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         {
             _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
         }
+
+        // Contention changes timing: fixed for a TTD timeline, like the core refuses (FeatureManager::setFeature)
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(!timelineBound);
+            _contentionAction->setChecked(featureManager && featureManager->isEnabled(Features::kContention));
+        }
     }
     else
     {
@@ -1237,6 +1317,10 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (_hudOverlayAction)
         {
             _hudOverlayAction->setChecked(false);
+        }
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(false);
         }
     }
 

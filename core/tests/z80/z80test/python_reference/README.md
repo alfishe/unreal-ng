@@ -92,7 +92,7 @@ their repeating forms) and block compare (`CPI`/`CPD`/`CPIR`/`CPDR`) are
 transcribed from the same published research the C++ core itself is built
 from — David Banks' Z80 undocumented-flags analysis and the Xpeccy
 emulator, both cited in
-[`../../../../docs/inprogress/2026-01-18-z80-tests/z80_block_io_fixes.md`](../../../../docs/inprogress/2026-01-18-z80-tests/z80_block_io_fixes.md).
+[`../../../../docs/inprogress/2026-01-18-z80-tests/z80_block_io_fixes.md`](../../../../../docs/inprogress/2026-01-18-z80-tests/z80_block_io_fixes.md).
 Everything else (ALU, rotates, INC/DEC, 16-bit arithmetic, BIT, DAA, block
 LD/CP, the Q-register SCF/CCF model) is written directly from the Zilog Z80
 undocumented-behavior literature this project already relies on elsewhere.

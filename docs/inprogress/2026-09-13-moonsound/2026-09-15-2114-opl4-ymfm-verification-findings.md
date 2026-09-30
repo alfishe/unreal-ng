@@ -31,8 +31,8 @@ distinct roles; findings below say which one produced them.
 
 | Role | Artifact | What runs on ymfm |
 |---|---|---|
-| **FM backend swap** | [`Opl4FmYmfm`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) adapter, selected by `CMake -DOPL4_FM_BACKEND=ymfm` (defines `OPL4_FM_YMFM`) | FM synthesis only (ymf262 core): phase, envelopes, connections, rhythm, 4-op, LFO. Bus-visible semantics — bank-1 aliasing, 0x105 NEW/NEW2, timers T1/T2, status bits — stay in the audited base class; ymfm's own timer/busy/IRQ machinery is stubbed and never advanced ([`opl4fmymfm.h`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) L10–18, L42–49). The whole PoC suite and the whole core suite re-run green on this build. |
-| **Full-chip differential** | [`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) vs ymfm's own `ymf278b` (6 scenarios, 6/6) | Both halves, including ymfm's PCM wave part — the corner the core TDD §13.2 calls "the least-developed corner of the library". Drives both engines from the same WaveMemory image and register scripts. |
+| **FM backend swap** | `Opl4FmYmfm` adapter, selected by `CMake -DOPL4_FM_BACKEND=ymfm` (defines `OPL4_FM_YMFM`) | FM synthesis only (ymf262 core): phase, envelopes, connections, rhythm, 4-op, LFO. Bus-visible semantics — bank-1 aliasing, 0x105 NEW/NEW2, timers T1/T2, status bits — stay in the audited base class; ymfm's own timer/busy/IRQ machinery is stubbed and never advanced (`opl4fmymfm.h` L10–18, L42–49). The whole PoC suite and the whole core suite re-run green on this build. |
+| **Full-chip differential** | [`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) vs ymfm's own `ymf278b` (6 scenarios, 6/6) | Both halves, including ymfm's PCM wave part — the corner the core TDD §13.2 calls "the least-developed corner of the library". Drives both engines from the same WaveMemory image and register scripts. |
 
 Adapter-level contract that made the swap trustworthy: one `generate()` call per
 684-clock FM boundary — the exact cadence ymfm's own ymf278b uses (OPL4's 49516.4 Hz
@@ -48,7 +48,7 @@ ratio 1.0000 on identical voices.
 
 Feeding one **real OPL3 driver's register bytes** into both engines (the A/B's whole
 purpose) reports DIVERGENT — three stacked divergences, none of them state-visible
-([`opl4fmcompare.cpp`](tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp) L1–24, L251–302; audit doc §6.2):
+([`opl4fmcompare.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp) L1–24, L251–302; audit doc §6.2):
 
 1. **Operator register map.** In-tree is linear (`op = reg − 0x20`, channel *i* pairs
    operators {2i, 2i+1}); YMF262 silicon — and ymfm — use the classic layout
@@ -115,7 +115,7 @@ and adapter save/restore exactness (2000-sample lockstep, §3.8).
 ### 2.2 Sweep-suite divergences (post-adoption status)
 
 From running the 13 FM sweep families on **both** backends
-([`opl4sweep.cpp`](tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)). The classic-map
+([`opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)). The classic-map
 adoption (§2.1) resolved the first four rows; the last two are the live set:
 
 | # | Divergence | Status / disposition |
@@ -393,17 +393,17 @@ ymfm's PCM unity chain is `(x*8168)>>15` — roughly **1/4 scale** — while lib
 rounds through the triple `(x*2047)>>11` mantissa chain (envelope, TL, pan each).
 ymfm's own source flags this corner as unverified. Consequence: cosim position
 decoding estimates a per-engine empirical scale from frame 0 instead of assuming
-one ([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L22–30, L191–236). On the FM side the
+one ([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L22–30, L191–236). On the FM side the
 raw ymf262 core similarly runs ~13-bit intermediate headroom; the **adapter**
 compensates with a ×4 scale so backend-swapped builds level-match (sweep constant
-`kFmCarrierRmsMin`, [`opl4sweep.cpp`](tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp) L42–50).
+`kFmCarrierRmsMin`, [`opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp) L42–50).
 
 ### 3.2 No PCM interpolation — fractional position bits ignored
 
 ymf278b's `fetch_sample` ignores the fractional position bits, so its output is a
 zero-order hold at integer steps. The cosim position traces therefore run integer
 steps (fnum 0); libopl4's interpolator is covered separately by `VecInterpGolden`
-([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L28–30). Any future fractional-step differential
+([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L28–30). Any future fractional-step differential
 against ymfm needs a different oracle.
 
 ### 3.3 PCM envelope clocking — 2× faster at mid rates
@@ -413,7 +413,7 @@ per the core TDD); ymfm's 5.11 fractional counter nets `2^(11-rate/4)` — measu
 **exactly 2× faster at rate 32** (1024 vs 2048 samples per 6 dB). Both agree at
 rate 0/15 and on sustain plateaus. The cosim envelope scenario compares each
 engine against its own unity reference and accepts a `[1.6, 2.4]` band around the
-documented 2× ([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L31–36, L539–552). Which cadence matches
+documented 2× ([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L31–36, L539–552). Which cadence matches
 silicon is unresolved until the hardware-recording tier.
 
 ### 3.4 PCM end S == 0 corner — wrap-every-step vs 64 KiB one-shot
@@ -423,19 +423,19 @@ chip comparator (commit 5426b4b1: `pos + S >= 0x10000` never trips → linear
 one-shot), while ymfm decodes `end == 0` and **wraps every step** (`pos +=
 increment + loop`). The cosim `end0-degenerate` case checks each engine against
 its **own** model step (1 for ours, `increment + loop` for ymfm) rather than
-against each other ([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L43–47, L275–298, L359–364). This is
+against each other ([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L43–47, L275–298, L359–364). This is
 the one cosim scenario that is an own-model check by design.
 
 ### 3.5 Register 0x04 storage — RST bit ORed into the stored byte
 
 ymfm ORs the RST bit into the stored 0x04 byte; Opl4Fm stores it raw. The
 comparator's 512-byte storage sweep skips 0x04 (plus 0x104/0x105 choreography
-registers) for exactly this reason ([`opl4fmcompare.cpp`](tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp) L146–171).
+registers) for exactly this reason ([`opl4fmcompare.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp) L146–171).
 
 ### 3.6 `reset()` does not clear the address latch
 
 `ymf262::reset()` leaves `m_address` untouched; the adapter's `Reset()` explicitly
-clears it via the exposed `ResetAddress()` ([`opl4fmymfm.h`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) L52–64). Without
+clears it via the exposed `ResetAddress()` (`opl4fmymfm.h` L52–64). Without
 this, a save/restore or chip-reset sequence could pair a stale latch with a fresh
 register file.
 
@@ -443,7 +443,7 @@ register file.
 
 `opl_registers_base::read()` is const, but the `regs()` accessor is not — the
 adapter's `RegByte()` (used by the comparator and diagnostics) performs a
-`const_cast` ([`opl4fmymfm.h`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) L74–78).
+`const_cast` (`opl4fmymfm.h` L74–78).
 
 ### 3.8 `save_restore` — single non-const entry point for both directions
 
@@ -463,7 +463,7 @@ exact — 2000-sample lockstep in `FmCompare`.
 ymfm mixes channels internally; the adapter zeroes per-channel taps (rhythm-mode
 taps included) and serves a static `Channels()` stub. Host FM peak meters and
 per-channel mute have no effect on the ymfm build's FM output
-([`opl4fmymfm.h`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) L20–26, L123–128).
+(`opl4fmymfm.h` L20–26, L123–128).
 
 ### 3.10 ymf278b output routing — the PCM primary pair is not exposed
 
@@ -472,7 +472,7 @@ channels 2+3 (the 0x68+s bit-4 output select), DO2 = `(fmout*fmMix +
 pcmout*pcmMix) >> 11`. The PCM engine's **primary** stereo pair (normal voices,
 pan applied) is not exposed directly — with FM silent and mix code 0, DO2-left is
 the PCM left channel scaled by 2042/2048. The cosim taps DO2 accordingly
-([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L100–107).
+([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) L100–107).
 
 ---
 
@@ -484,24 +484,24 @@ single-path classic on both backends. What remains is there for one of three
 reasons — ymfm-side quirks (§3), engine-internal differences, or genuine live
 divergences (§2.2 #5/#6):
 
-- **Single-path shared conventions** ([`opl4sweep.cpp`](tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp) header note):
+- **Single-path shared conventions** ([`opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp) header note):
   `FmOpAddr()` (classic `(c%3)+8*(c/3)`/`+3`) and the include-semantics `kRoute*`
   constants — identical on both backends.
 - **Scale constant** (`kFmCarrierRmsMin`): in-tree `16000·kNormScale` vs ymfm
   `4000·4·kNormScale` — the adapter's ×4 level fold, by design (§3.1 headroom).
 - **Guard inventory** (`#if !defined(OPL4_FM_YMFM)`), each with in-code rationale:
-  - [`opl4sweep.cpp`](tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp): rhythm B0-kon suppression (real divergence,
+  - [`opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp): rhythm B0-kon suppression (real divergence,
     §2.2 #6) and envelope shift-ladder exactness (internal counter models differ,
     §2.2 #5 — superseded map-agnostically by `FmEnvelopeRatesVsYmfm`).
-  - [`opl4vectors.cpp`](tools/poc/015-opl4-synthesis/tests/opl4vectors.cpp) `VecFm4Op`/`VecFmRhythm`/`VecFmKsl`
-    per-channel-peak blocks and [`opl4tests.cpp`](tools/poc/015-opl4-synthesis/tests/opl4tests.cpp) `TestTaps` — the
+  - [`opl4vectors.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4vectors.cpp) `VecFm4Op`/`VecFmRhythm`/`VecFmKsl`
+    per-channel-peak blocks and [`opl4tests.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4tests.cpp) `TestTaps` — the
     ymfm adapter zeroes per-channel taps (§3.9); the assertions pin in-tree
     instrumentation, not map semantics.
   - Core: the `TTD_Capture_Cost_Gate_Test` time-share assertion (§3.8 cost).
 - **Backend-aware key-on helpers are gone**: the PoC `KeyOnFmCh0`
-  ([`testfw.h`](tools/poc/015-opl4-synthesis/tests/testfw.h)) and the core-side
+  ([`testfw.h`](../../../tools/poc/015-opl4-synthesis/tests/testfw.h)) and the core-side
   `KeyOnFmChannelThroughPorts` are single-path classic now.
-- **Cosim accommodations** ([`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp)): FM-side register
+- **Cosim accommodations** ([`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp)): FM-side register
   scripts are single-path classic (the `KeyOnFm` `ours` flag is vestigial); the
   per-engine empirical decode scale with a 4% tolerance plus a 2-LSB absolute
   floor, integer-step traces (§3.2), the [1.6, 2.4] decay band (§3.3), the

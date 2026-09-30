@@ -2,7 +2,7 @@
 
 **Fixture**: `testdata/loaders/fdi/VORON1.FDI` (`VORON2.FDI` shares the general protection
 family but uses a different, incompatible track-0 layout - see §8.4)
-**Repro snapshot**: [`snapshot.sna`](snapshot.sna) — Pentagon 128, disk inserted in drive A,
+**Repro snapshot**: `snapshot.sna` — Pentagon 128, disk inserted in drive A,
 paused mid-load with WD1793 stuck retrying `Read Sector` (track 1, side 0, sector 16). Load
 it, re-insert `VORON1.FDI` in drive A (snapshots don't carry disk contents), and resume.
 **Related**: [Flaky/floating sector emulator](../../WD1793/FlakySectorEmulator.md) — the

@@ -136,7 +136,7 @@ curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d
 | Reset | `POST .../{id}/reset` | `emulator_manage` `reset` |
 | Hard stop | `POST .../{id}/stop` | `emulator_manage` `stop` |
 | Destroy (free memory) | `DELETE /api/v1/emulator/{id}` | `emulator_manage` `destroy` |
-| Switch model | `POST .../{id}/model {"model":"48K"}` | recreate instead |
+| Switch model | `POST .../{id}/model {"model":"48K"}` (media follow; `"stranded"` for dirty media without a slot) | `emulator_manage` `switch_model` (`model`, optional `stranded`) |
 
 Notes agents trip over:
 

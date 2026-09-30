@@ -22,9 +22,10 @@ Remediation started the same day. ✅ Done (gap-analysis IDs in parentheses):
 - ✅ **P1-3** Screen digest `mode=active` — follows the displayed surface (B-4) — implemented this session, pending commit
 - ✅ **P1-5** `GET /ports` static port map + live routing flags incl. mouse Q4 (C-3, D-1) — implemented this session, pending commit
 - ✅ **P2-1** Mouse status `routing` field + `mouse` aspect in `inspect_state` (D-1, D-2) — implemented this session, pending commit
+- ✅ **P1-4** Port trace attribution on ATM710 / ZX-Evo / Pentagon 1024 (C-2) — done 2026-09-28 (PLAN #8)
 
-Still open: P1-1 (B-1), P1-2 (B-2/E-1), P1-4 (C-2, atm-branch side), P2-2,
-P2-3 (A-4), P2-4 (D-3), P3-1..P3-3. The body of each file below remains the
+Still open: P1-1 (B-1), P1-2 (B-2/E-1), P2-2 (MoonSound control and port-map rows),
+P2-3 (A-4), P3-1..P3-3. The body of each file below remains the
 pre-fix snapshot; per-gap status lives in the gap-analysis summary matrix and
 per-item ✅ marks in recommendations.md.
 

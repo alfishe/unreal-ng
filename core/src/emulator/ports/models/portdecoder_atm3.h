@@ -7,6 +7,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
@@ -20,7 +21,7 @@
 /// - No INT gate (always passes interrupts)
 /// - NMI handling maps RAM page 0xFF to window 0
 /// - Additional registers: pBD, pBE, pBF
-/// - CMOS (DS12885-style RTC + NVRAM) shared with the memory manager ports:
+/// - Gluk clock (the AVR's MC146818 emulation, EvoAvr on Ds12887) shared with the memory manager ports:
 ///   data #BFF7 / address #DFF7 outside shadow (after #EFF7 bit 7),
 ///   data #BEF7 / address #DEF7 in shadow
 /// - Z-Controller SD card (#77 chip select, #57 data; in shadow #57 with
@@ -81,6 +82,14 @@ public:
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
 
+    /// Port-trace attribution of one classified cycle: the canonical port and
+    /// the device the arm reaches (if-chain decoder: no rule table). The
+    /// caller sets wasDecoded
+    static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port, bool isWrite);
+
+    /// Internal port codes for the trace: every PortArm with its name
+    std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
+
     /// FPGA variant the ROM image expects ([EVO] Fpga=): the frozen legacy
     /// tree reads the Evo registers on #xxBE, the current "trdemu" tree on #xxBD
     bool IsLegacyFpga() const;
@@ -105,15 +114,21 @@ public:
     /// endregion </Board NMI>
 
     /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
-    /// The card in the slot and the Z80-side controller. [ZC] SDCardImage is
-    /// inserted at power-on (the first reset); a Z80 reset keeps the card and
-    /// its session writes, like pressing reset on the board
+    /// The card is the media manager's slot "sd.zc" (storage-manager
+    /// integration-zxevo-sd.md): the manager owns the medium and applies the
+    /// config ([MEDIA] sd.zc, legacy [ZC]) before the first reset. A Z80
+    /// reset keeps the card and its session writes, like the board's reset
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
-    /// Insert an image file / any medium; the AVR reports the card present
+    /// Insert an image file / any medium through the media manager (directly
+    /// when the context has none: bare decoder unit tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
     bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
     void EjectSdCard();
+
+    /// ATM paging + the SD card's protocol state
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </SD card>
     /// endregion </Types>
 
@@ -122,13 +137,28 @@ protected:
     // The board's AVR behind the Gluk clock ports: MC146818 clock, battery-backed
     // NVRAM, EEPROM window, version / PS/2 / modes extension window. Lives with
     // the decoder so the contents survive Core::Reset() (like the real battery)
-    EvoAvr _cmos;
+    EvoAvr _evoAvr;
     bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
 
     // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
+    class EvoSdSlot : public IMediaSlot
+    {
+    public:
+        explicit EvoSdSlot(PortDecoder_ATM3& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+
+    private:
+        PortDecoder_ATM3& _owner;
+        SlotDescriptor _descriptor;
+    };
+
     SdCardSpi _sdCard;
     ZControllerSpi _zc;
-    bool _sdConfigApplied = false;  // [ZC] SDCardImage inserted once, on the first reset
+    EvoSdSlot _sdSlot{*this};
     bool _sdWriteProtect = false;   // the slot's write-protect switch
     /// endregion </Fields>
 
@@ -145,14 +175,28 @@ public:
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
-    /// CMOS/RTC backing store (verification tests / debug UI - mirrors
-    /// PortDecoder_Scorpion256::GetSMUCNvram())
-    CMOS& GetCMOS() { return _cmos; }
-    EvoAvr& GetEvoAvr() { return _cmos; }
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _evoAvr; }
+    EvoAvr& GetEvoAvr() { return _evoAvr; }
+    RtcBinding GetRtcBinding() override;
     /// endregion </Interface methods>
 
     /// region <Port detection>
 public:
+    /// BaseConf: the 7FFD lock bit only counts while EFF7 bit 2 (lockmem) holds
+    /// the memory manager in 128K mode; in P1024 mode bits 5..7 extend the page
+    bool IsPagingLocked() const override
+    {
+        return (_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK);
+    }
+
+    /// BaseConf clock select: 3.5, 7 or 14 MHz (updateTurboMode)
+    uint8_t TtdClockUnits() const override { return 4; }
+
+    /// ZX-Evo BaseConf turbo VG: the FPGA feeds the VG93 CLK and switches it to 2 MHz on the STEP rising
+    /// edge and back to 1 MHz on the first DRQ; RCLK stays at 250 kHz (fpga/baseconf/trunk/vg93/vg93.v,
+    /// fapch_zek.v). No port bit: the switching is automatic
+    FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::AutoStepTurbo; }
     bool IsPort_FF77(uint16_t port);  // Partial decode for ATM3
     bool IsPort_37F7(uint16_t port);  // 4MB memory manager
     bool IsPort_BF(uint16_t port);    // ATM3 control
@@ -186,6 +230,7 @@ protected:
     // 7FFD lock honored only while EFF7 bit 2 (lockmem) keeps the manager in
     // 128K mode (xpeccy evoOut7FFD)
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) override;
+
 
     // EFF7 z-bits (bit 0 / bit 5) fold into the video mode decode on ATM3
     // (xpeccy evoOutEFF7 -> evoSetVideoMode): re-run raster detection on change

@@ -103,7 +103,8 @@ state sysvars           # ZX-Spectrum system variables
 find <hex-pattern>      # Search Z80 memory for a byte pattern
                         #   (--from N, --to N, --align 1|2, --max N)
 digest                  # Screen-area digest (change detection)
-beam                    # Raster beam position/zone
+beam                    # Raster beam position/zone (+ layer pixel under it)
+video layout|pixel|address|text  # What makes a pixel, which pixels a byte feeds, text modes
 frame_cost              # Frame cost stats (halt vs active)
 ```
 
@@ -134,11 +135,11 @@ symbols info            # Show symbol count
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
-snapshot save <file>    # Save snapshot (.sna/.z80)
+snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension)
 snapshot info           # Current snapshot status
 # Tape transport (see command-interface.md §10 for the full tables)
-tape load <file>        # Load tape image (.tap/.tzx/.csw)
-tape eject              # Eject: stop playback, drop image and catalog
+tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
+tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
 tape play               # Start at cursor; resume in place when paused
 tape pause              # Freeze mid-block; next play resumes there
 tape stop               # Terminal stop (invalidates the image)
@@ -154,7 +155,14 @@ tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
 
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
+
+# Every slot (floppy drives, SD card, ...): see media.md
+media list              # Slots, media, dirty state
+media insert <slot|auto> <path>   # A file or a folder (A, B, sd, fdd.b, ...)
+media swap <slot> <path> --save   # Eject + insert; a dirty disk needs --save/--export/--discard
 ```
+
+Full media reference (all surfaces): [media.md](media.md).
 
 #### Disk Operations
 ```
@@ -274,6 +282,10 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/memory/find` | Search memory for a byte pattern |
 | GET | `/api/v1/emulator/{id}/state/screen/digest` | Screen-area digest (change detection) |
 | GET | `/api/v1/emulator/{id}/video/beam` | Raster beam position and frame timing |
+| GET | `/api/v1/emulator/{id}/video/layout` | Video mode layers, beam windows, framebuffer placement |
+| GET | `/api/v1/emulator/{id}/video/pixel` | Sources of a pixel (`x`,`y`[,`layer`] or `t`) |
+| GET | `/api/v1/emulator/{id}/video/address` | Pixels a byte feeds (`page`,`offset` or `z80`) |
+| GET | `/api/v1/emulator/{id}/video/text` | Text grid of a text mode |
 | GET | `/api/v1/emulator/{id}/frame_cost` | Frame cost stats (halt vs active) |
 
 #### Labels & Symbols
@@ -327,7 +339,7 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
-| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: drop image and catalog |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (409 while TTD records) |
 | POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
 | POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
 | POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
@@ -409,7 +421,7 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
   -d '{"model": "PENTAGON", "ram_size": 512}'
 ```
 
-**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs.
+**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs. The media follow into the same slots, unsaved writes included; see [media.md → Model switch](media.md#model-switch) for media the new model has no slot for (`"stranded": "save" | "discard" | "keep"`). CLI: `model <name> [--stranded ...]`; MCP: `emulator_manage` action `switch_model`.
 
 #### Command Batching
 For VideoWall and bulk operations:
@@ -460,6 +472,7 @@ end
 - `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
+- `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load)
@@ -670,6 +683,6 @@ clients — see [MCP Server](mcp/README.md) and its
 ---
 
 ## See Also
-- [Debugging](debugging.md) - Breakpoint details
+- [Breakpoints & Watchpoints](../emulator/design/control-interfaces/command-interface.md#4-breakpoints--watchpoints) - Breakpoint details
 - [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification
 - [MCP Server](mcp/README.md) - LLM-native smart tools over Streamable HTTP + stdio bridge

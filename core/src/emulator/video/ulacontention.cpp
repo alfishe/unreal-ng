@@ -4,6 +4,22 @@
 #include "emulator/video/screen.h"  // for VideoModeEnum / M_ZX128
 #include "emulator/emulatorcontext.h"
 
+const char* ContentionRuleName(ContentionRule rule)
+{
+    switch (rule)
+    {
+        case ContentionRule::Ula48:
+            return "ula48";
+        case ContentionRule::Ula128:
+            return "ula128";
+        case ContentionRule::GateArray:
+            return "gatearray";
+        case ContentionRule::None:
+        default:
+            return "none";
+    }
+}
+
 void UlaContention::SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* context)
 {
     _cpu = cpu;
@@ -38,8 +54,13 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
 
     // Contention runs for 128 T, starting kContentionLeadT before the first
     // displayed pixel: 48K first contended T = INT + 14335, pixel at INT + 14340.
+    // The +2A/+3 gate array holds the CPU one T longer: its pattern opens with a 1 T hold before the first
+    // fetch cell and closes with the same 1 T hold after the last one, so offset 128 still waits 1 (Rak's
+    // Timing Test v0.3 "contended NOP" on a real +3 and a real +2A; every emulator surveyed - Fuse, MAME,
+    // BizHawk, ZXMAK2, ZEsarUX, Xpeccy - reuses the ULA's 128 T without +3-specific evidence)
     const uint32_t contentionStart = _raster.screenLineAreaStart - kContentionLeadT;
-    if (tInLine < contentionStart || tInLine > _raster.screenLineAreaEnd - kContentionLeadT)
+    const uint32_t contentionLast = _raster.screenLineAreaEnd - kContentionLeadT + (_gateArray ? 1 : 0);
+    if (tInLine < contentionStart || tInLine > contentionLast)
         return 0;
 
     // The ULA fetches memory in 8-pixel character blocks, taking 4 T-states per fetch.
@@ -51,46 +72,39 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     return _gateArray ? gateArrayContentionPattern[offsetInCell] : contentionPattern[offsetInCell];
 }
 
-uint8_t UlaContention::GetIOContentionDelay(uint16_t port) const
+uint8_t UlaContention::IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) const
 {
-    // The +2A/+3 gate array contends memory cycles only, never I/O (#FE included)
+    // The +2A/+3 gate array contends memory cycles only, never I/O
+    if (!_contentionEnabled || _gateArray)
+        return 0;
+    // C:1 when the high byte addresses contended memory, N:1 otherwise
+    return _slotContended[port >> 14] ? ComputeContentionDelay(cycleStartT) : 0;
+}
+
+uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
+{
     if (!_contentionEnabled || _gateArray)
         return 0;
 
-    uint32_t t = _cpu->t % _raster.configFrameDuration;
-
-    uint8_t delay = ComputeContentionDelay(t);
-
-    // IO contention rules (https://faqwiki.zxnet.co.uk/wiki/Contended_I/O):
-    //
-    // ZX-48K:
-    //   A0=0 (even port): contention pattern delay
-    //   A0=1 (odd port): no delay
-    //
-    // ZX-128K/+2/+3:
-    //   A0=0 (even port): contention pattern delay + 1T extra
-    //   A0=1, A1=0:       1T delay
-    //   A0=1, A1=1:       no delay
-
+    // ULA port (A0 = 0): C:3 - one wait at the IORQ T, then the cycle's 3 T
     if ((port & 0x0001) == 0)
+        return ComputeContentionDelay(iorqT);
+
+    // Only the high byte contended: C:1, C:1, C:1 - a wait before each of the remaining T-states
+    if (_slotContended[port >> 14])
     {
-        // Even port (A0=0) — contended on both 48K and 128K
-        // 128K gets +1T extra for all even ports
-        // (Screen pushes the model flag via UpdateRaster; we detect 128K
-        //  by checking tstatesPerLine since 128K has 228 vs 48K's 224)
-        if (_raster.tstatesPerLine >= 228)
-            delay++;
-    }
-    else
-    {
-        // Odd port (A0=1)
-        if (_raster.tstatesPerLine >= 228 && (port & 0x0002) == 0)
-            delay = 1;  // 128K: 1T delay for A0=1, A1=0
-        else
-            delay = 0;
+        uint32_t t = iorqT;
+        uint32_t waits = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            const uint8_t w = ComputeContentionDelay(t);
+            waits += w;
+            t += w + 1;
+        }
+        return static_cast<uint8_t>(waits);
     }
 
-    return delay;
+    return 0;  // N:4 (or N:1 before IORQ, then N:3)
 }
 
 uint8_t UlaContention::GetFloatingBus() const
@@ -191,9 +205,15 @@ bool UlaContention::FetchedByte(uint8_t& value) const
     //
     // Both architectures fetch VRAM data ahead of the electron beam because the
     // shift register / attribute latch must be loaded before pixels are drawn.
-    // We model this by shifting the effective paper area backward by 4 T-states:
-    //   fetchAreaStart = screenLineAreaStart - 4
-    //   fetchAreaEnd   = screenLineAreaEnd   - 4
+    // We model this by shifting the effective paper area backward (FetchLead):
+    //   fetchAreaStart = screenLineAreaStart - lead
+    //   fetchAreaEnd   = screenLineAreaEnd   - lead
+    // The lookup runs at IORQ, one T into the I/O cycle. On the Ferranti ULA
+    // (lead 6) an I/O cycle that starts on the contention onset (the T with
+    // delay 6, 5 T before the first pixel) reads the bitmap byte: FUSE, Zero,
+    // ZXMAK2, MAME and pico-spec agree (the "14338" of the floating-bus
+    // articles is FUSE's end-of-cycle count of the same T). The discrete-logic
+    // clones keep lead 4.
     //
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -207,7 +227,7 @@ bool UlaContention::FetchedByte(uint8_t& value) const
     // phase from it; recomputed here to keep LocateFloatingBusCell minimal)
     uint32_t t = _cpu->t % _raster.configFrameDuration;
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
-    uint32_t tInPaper = tInLine - (_raster.screenLineAreaStart - 4);
+    uint32_t tInPaper = tInLine - (_raster.screenLineAreaStart - FetchLead());
 
     // ── Determine which byte is on the bus based on architecture ──
     bool isAttribute;
@@ -264,9 +284,9 @@ bool UlaContention::LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) cons
     uint32_t t = _cpu->t % _raster.configFrameDuration;
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
 
-    // Apply 4T pipeline offset (video controller fetches ahead of beam)
-    uint32_t fetchAreaStart = _raster.screenLineAreaStart - 4;
-    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - 4;
+    // Pipeline offset: the video controller fetches ahead of the beam (FetchedByte)
+    uint32_t fetchAreaStart = _raster.screenLineAreaStart - FetchLead();
+    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - FetchLead();
 
     // Fast area checks: outside the overall screen or outside the fetch area
     if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)

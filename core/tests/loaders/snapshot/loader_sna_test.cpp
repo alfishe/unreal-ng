@@ -3,7 +3,9 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "emulator/emulator.h"
 
 #include <vector>
 
@@ -906,3 +908,28 @@ TEST_F(LoaderSNA_Test, save_load_with_different_ROM_states)
 }
 
 /// endregion </TR-DOS State Preservation Tests>
+/// region <48K snapshot on any model>
+
+/// A 48K snapshot runs on the 48K BASIC ROM of whatever model loads it: page 3 on the Pentagon, page 1 on
+/// the 128K, the only ROM on the 48K (a fixed page 3 left the 48K and 128K on an empty page: #FF everywhere,
+/// the program ran into RST 38 and never started)
+TEST(LoaderSNA48KRom_Test, MapsTheModels48KBasicRom)
+{
+    for (const char* model : { "48K", "128K", "PENTAGON" })
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << model;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna")))
+            << model;
+
+        Memory* memory = emulator->GetContext()->pMemory;
+        EXPECT_TRUE(memory->IsBank0ROM()) << model;
+        EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), 0xF3) << model << ": DI of the 48K ROM";
+        EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0038), 0xF5) << model << ": PUSH AF of the IM 1 handler";
+        EXPECT_TRUE(memory->IsCurrentROM48k()) << model;
+
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+/// endregion </48K snapshot on any model>

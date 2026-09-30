@@ -63,8 +63,10 @@ protected:
         _z80 = _context->pCore->GetZ80();
         _memory = _context->pMemory;
 
+        // Memory and port phases only: internal ('N') T-states are checked against FUSE in FusePhase_Test
         _z80->busTraceHook = [this](char type, uint16_t addr, uint8_t value) {
-            _trace.push_back({type, addr, value, _z80->t - _t0});
+            if (type != 'N')
+                _trace.push_back({type, addr, value, _z80->t - _t0});
         };
     }
 

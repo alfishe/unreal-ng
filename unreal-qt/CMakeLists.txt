@@ -85,10 +85,18 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         endif()
     endif()
 
-    if (CMAKE_BUILD_TYPE)
-        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
-    else()
+    # Same rule as the root CMakeLists.txt: the Release default below has to
+    # be in place before the build type is recorded, and multi-config
+    # generators get the configuration at build time
+    get_property(UNREAL_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if (NOT UNREAL_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Release)
+    endif ()
+    if (UNREAL_MULTI_CONFIG)
         set(UNREAL_BUILD_TYPE "MultiConfig")
+        add_compile_definitions([[UNREAL_BUILD_CONFIG="$<CONFIG>"]])
+    else()
+        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
     endif()
 
     configure_file(
@@ -651,6 +659,9 @@ if (TESTS)
     file(GLOB_RECURSE HUD_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/hud/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/*.cpp"
+        # The media panel's Qt-free model (src/media/core) is tested here too
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/media/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/*.cpp"
     )
     add_executable(hud-core-tests ${HUD_TEST_SOURCES})
     set_target_properties(hud-core-tests PROPERTIES
@@ -661,6 +672,7 @@ if (TESTS)
         CXX_STANDARD_REQUIRED ON
     )
     target_include_directories(hud-core-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
         "${ROOT_DIR}/core/src"
         "${ROOT_DIR}/core/src/common"

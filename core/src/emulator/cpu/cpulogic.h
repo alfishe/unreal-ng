@@ -21,6 +21,8 @@ typedef uint8_t(Z80FAST* LOGICFUNC)(Z80*, uint8_t byte);
 
 // Operations decoder / micrologic helpers
 #define cputact(a) cpu->tt += ((a) * cpu->rate);
+// Internal (no-MREQ) cycles with an address on the bus: contended on the Ferranti ULA machines (Z80::Idle)
+#define cpuidle(addr, n) cpu->Idle(static_cast<uint16_t>(addr), (n));
 #define turbo(a) cpu.rate = (256 / (a))
 
 // Aliases to access CPU tables

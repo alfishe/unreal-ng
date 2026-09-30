@@ -12,11 +12,22 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/rtc/rtcaccess.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
+#include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/video/ulacontention.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -649,6 +660,587 @@ StateNode Fm(EmulatorContext* context)
     return ret;
 }
 
+StateNode Gs(EmulatorContext* context, bool ramWindow)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    if (!sm)
+        return Unavailable("Sound manager not available");
+    GeneralSoundCard* gs = sm->getGeneralSound();
+    if (!gs)
+        return Unavailable("General Sound card not fitted (configure [SOUND] GSType=Z80, LW or NGS)");
+
+    const uint8_t status = gs->getStatusRaw();
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["device"] = gs->deviceDescription();
+    ret["implementation"] = gsImplementationLabel(gs->implementation());
+    ret["enabled"] = true;
+    ret["rom_loaded"] = gs->isROMLoaded();
+    ret["firmware"] = gs->firmwareDescription();
+    ret["ram_kb"] = uint64_t(gs->getRamSizeKB());
+    ret["status"] = int(status);
+    ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
+    ret["data_pending"] = (status & 0x80) != 0;     // bit7: GS data waiting
+    // Single-latch mailbox on every personality (not a FIFO): the command
+    // count mirrors command_pending; the data count mirrors data_pending on
+    // the LLE card but is the lightweight card's param buffer depth (0..16)
+    ret["command_queue_count"] = uint64_t(gs->getCommandQueueCount());
+    ret["data_queue_count"] = uint64_t(gs->getDataQueueCount());
+    ret["command_from_host"] = int(gs->getCommandFromHost());
+    ret["data_from_host"] = int(gs->getDataFromHost());
+    ret["data_to_host"] = int(gs->getDataToHost());
+    ret["page"] = int(gs->getMPAG());  // MPAG banking latch (GS design §2.3)
+
+    StateNode channels = StateNode::Array();
+    for (int i = 0; i < gs->channelCount(); i++)
+    {
+        StateNode channel = StateNode::Object();
+        channel["sample"] = int(gs->getChannelSample(i));
+        channel["volume"] = int(gs->getChannelVolume(i));
+        channels.push(channel);
+    }
+    ret["channels"] = channels;
+
+    StateNode cpu = StateNode::Object();
+    cpu["coprocessor"] = gs->hasCoprocessor();
+    if (gs->hasCoprocessor())
+    {
+        cpu["pc"] = int(gs->getCPUReg(GSCpuRegister::PC));
+        cpu["sp"] = int(gs->getCPUReg(GSCpuRegister::SP));
+        cpu["af"] = int(gs->getCPUReg(GSCpuRegister::AF));
+        cpu["halted"] = gs->isCPUHalted();
+    }
+    ret["cpu"] = cpu;
+
+    NeoGSStateInfo ngs;
+    if (gs->neogsState(ngs))
+    {
+        StateNode n = StateNode::Object();
+        n["stereo_mode"] = neogsStereoModeName(sm->neoGSStereoMode());
+        n["flash"] = ngs.flashTitle;
+        n["flash_modified"] = ngs.flashModified;
+        n["gscfg0"] = int(ngs.gscfg0);
+        StateNode flags = StateNode::Array();
+        flags.push((ngs.gscfg0 & 0x01) ? "ram_mode" : "rom_mode");
+        if (ngs.gscfg0 & 0x02) flags.push("ramro");
+        if (ngs.gscfg0 & 0x04) flags.push("8_channels");
+        if (ngs.gscfg0 & 0x08) flags.push("expag");
+        if (ngs.gscfg0 & 0x40) flags.push("pan4ch");
+        if (ngs.gscfg0 & 0x80) flags.push("inv7b");
+        n["gscfg0_flags"] = flags;
+        n["clock_hz"] = ngs.clockHz;
+        StateNode windows = StateNode::Array();
+        for (int w = 0; w < 4; w++)
+        {
+            StateNode window = StateNode::Object();
+            window["page"] = int(ngs.pages[w]);
+            window["flash"] = ngs.windowFlash[w];
+            windows.push(window);
+        }
+        n["windows"] = windows;
+        n["led_on"] = ngs.ledOn;
+        n["ready"] = ngs.readyForCommands;
+        n["int_enable"] = int(ngs.intEnable);
+        n["int_request"] = int(ngs.intRequest);
+        n["tim_freq"] = int(ngs.timFreq);
+        n["sctrl"] = int(ngs.sctrl);
+        StateNode sd = StateNode::Object();
+        sd["present"] = ngs.sdPresent;
+        if (ngs.sdPresent)
+        {
+            sd["path"] = ngs.sdPath;
+            sd["sdhc"] = ngs.sdSdhc;
+            sd["size_bytes"] = ngs.sdSizeBytes;
+            sd["blocks_read"] = ngs.sdBlocksRead;
+            sd["blocks_written"] = ngs.sdBlocksWritten;
+        }
+        n["sd"] = sd;
+        StateNode mp3 = StateNode::Object();
+        mp3["fitted"] = ngs.mp3Fitted;
+        if (ngs.mp3Fitted)
+        {
+            mp3["chip"] = ngs.mp3Chip;
+            mp3["dreq"] = ngs.mp3Dreq;
+            mp3["rate"] = ngs.mp3Rate;
+            mp3["channels"] = ngs.mp3Channels;
+            mp3["frames"] = ngs.mp3Frames;
+            mp3["decode_time_s"] = ngs.mp3DecodeSeconds;
+            mp3["input_fill"] = uint64_t(ngs.mp3InputFill);
+        }
+        n["mp3"] = mp3;
+        StateNode dma = StateNode::Object();
+        dma["select"] = int(ngs.dmaSelect);
+        static const char* kModules[3] = {"zx", "sd", "mp3"};
+        for (int m = 0; m < 3; m++)
+        {
+            StateNode module = StateNode::Object();
+            module["running"] = ngs.dmaRunning[m];
+            module["address"] = ngs.dmaAddress[m];
+            dma[kModules[m]] = module;
+        }
+        // ZX-DMA: the host's view (neogs-zxdma-design.md §7)
+        StateNode& zx = dma["zx"];
+        zx["mode"] = ngs.zxMode;
+        zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["read_latch"] = int(ngs.zxReadLatch);
+        zx["pending"] = ngs.zxPending;
+        zx["pending_address"] = ngs.zxPendingAddress;
+        zx["bytes_read"] = ngs.zxBytesRead;
+        zx["bytes_written"] = ngs.zxBytesWritten;
+        zx["bytes_dropped"] = ngs.zxBytesDropped;
+        zx["wait_tstates"] = ngs.zxWaitTStates;
+        zx["late_starts"] = ngs.zxLateStarts;
+        zx["late_start_ticks"] = ngs.zxLateStartUnits;
+        zx["watch_setting"] = ngs.zxWatchSetting;
+        zx["watch_frames"] = ngs.zxWatchFrames;
+        zx["watch_frames_left"] = int(ngs.zxWatchFramesLeft);
+        n["dma"] = dma;
+        ret["neogs"] = n;
+    }
+
+    // The card CPU's window #4000-#7FFF, where GS-compatible firmwares keep
+    // their runtime variables (NUMPG #4080 .. MTSTAT #4151). Side-effect-free
+    // peek: right on every card with a CPU
+    uint8_t probe = 0;
+    if (ramWindow && gs->peekCardMemory(0x4000, probe))
+    {
+        static const char kHexDigits[] = "0123456789abcdef";
+        constexpr size_t kWindow = 0x4000;
+        std::string windowHex(kWindow * 2, '0');
+        for (size_t i = 0; i < kWindow; i++)
+        {
+            uint8_t byte = 0;
+            gs->peekCardMemory(static_cast<uint16_t>(0x4000 + i), byte);
+            windowHex[i * 2] = kHexDigits[byte >> 4];
+            windowHex[i * 2 + 1] = kHexDigits[byte & 0x0F];
+        }
+        ret["fixed_window_base"] = 0x4000;
+        ret["fixed_window_hex"] = windowHex;
+    }
+    return ret;
+}
+
+StateNode Covox(EmulatorContext* context)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    if (!sm)
+        return Unavailable("Sound manager not available");
+    ::Covox* covox = sm->getCovox();
+    if (!covox)
+        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
+
+    const bool quad = covox->fitment() == ::Covox::Fitment::Quad;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["device"] = quad ? "SoundDrive (4 x 8-bit DAC)" : "Covox (8-bit DAC on #FB)";
+    ret["fitment"] = quad ? "quad" : "mono";
+
+    // Ports: this model's decode, straight from its port map (the same rows
+    // /ports and `ports` list), and the ones it shares with Beta-128
+    StateNode ports = StateNode::Array();
+    StateNode shared = StateNode::Array();
+    if (PortDecoder* decoder = context->pPortDecoder)
+    {
+        const std::vector<PortMapEntry> map = decoder->getPortMapEntries();
+        std::vector<uint8_t> betaLowBytes;
+        for (const PortMapEntry& row : map)
+            if (row.device && std::string(row.device).rfind("Beta128", 0) == 0)
+                betaLowBytes.push_back(static_cast<uint8_t>(row.port & 0x00FF));
+        for (const PortMapEntry& row : map)
+        {
+            const bool dac = (row.tags & Tags(PortTag::SoundCovox)) == Tags(PortTag::SoundCovox) ||
+                             (row.tags & Tags(PortTag::SoundSoundDrive)) == Tags(PortTag::SoundSoundDrive);
+            if (!dac)
+                continue;
+            StateNode p = StateNode::Object();
+            p["port"] = int(row.port);
+            p["mask"] = int(row.mask);
+            p["match"] = int(row.match);
+            p["decode"] = row.device ? row.device : "";
+            if (row.gate)
+                p["gate"] = row.gate;
+            ports.push(p);
+        }
+        // A Beta-128 register whose low byte a DAC row also decodes (e.g.
+        // SoundDrive mode 1 on #1F/#5F) is shared: which device answers
+        // depends on whether TR-DOS is paged in
+        for (uint8_t low : betaLowBytes)
+            for (const PortMapEntry& row : map)
+            {
+                const bool dac = (row.tags & Tags(PortTag::SoundCovox)) == Tags(PortTag::SoundCovox) ||
+                                 (row.tags & Tags(PortTag::SoundSoundDrive)) == Tags(PortTag::SoundSoundDrive);
+                if (dac && (low & (row.mask & 0x00FF)) == (row.match & 0x00FF))
+                {
+                    shared.push(int(low));
+                    break;
+                }
+            }
+    }
+    ret["ports"] = ports;
+    ret["shared_with_beta128"] = shared;
+    if (!shared.items.empty())
+        ret["shared_port_rule"] = "Beta-128 owns them while TR-DOS is paged in; the DAC otherwise";
+
+    uint8_t latches[4] = {};
+    covox->getDacLatches(latches);
+    static const char* kNames[4] = {"left_a", "left_b", "right_a", "right_b"};
+    StateNode channels = StateNode::Array();
+    for (int i = 0; i < 4; i++)
+    {
+        StateNode channel = StateNode::Object();
+        channel["name"] = kNames[i];
+        channel["latch"] = int(latches[i]);
+        channel["muted"] = covox->isChannelMuted(static_cast<::Covox::Channel>(i));
+        channels.push(channel);
+    }
+    ret["channels"] = channels;
+    ret["last_left_amplitude"] = int(covox->lastLeftAmplitude());
+    ret["last_right_amplitude"] = int(covox->lastRightAmplitude());
+    ret["sound_last_frame"] = covox->hadSoundLastFrame();
+    ret["dc_removal"] = covox->isDCRemovalEnabled();
+    ret["synthesis_suppressed"] = covox->isSynthesisSuppressed();
+    return ret;
+}
+
+namespace
+{
+SoundChip_Moonsound* MoonSoundOf(EmulatorContext* context, StateNode& unavailable)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    if (!sm)
+    {
+        unavailable = Unavailable("Sound manager not available");
+        return nullptr;
+    }
+    SoundChip_Moonsound* ms = sm->getMoonSound();
+    if (!ms)
+        unavailable = Unavailable("MoonSound not fitted (configure [SOUND] MoonSound=1)");
+    return ms;
+}
+
+std::string HexBytes(const uint8_t* data, size_t size)
+{
+    static const char kHex[] = "0123456789abcdef";
+    std::string out(size * 2, '0');
+    for (size_t i = 0; i < size; i++)
+    {
+        out[i * 2] = kHex[data[i] >> 4];
+        out[i * 2 + 1] = kHex[data[i] & 0x0F];
+    }
+    return out;
+}
+
+/// One block mix latch (#F8 FM / #F9 PCM): 3-bit attenuation per side, 3 dB
+/// steps, level 7 = muted
+StateNode MixNode(uint8_t latch)
+{
+    StateNode n = StateNode::Object();
+    n["raw"] = int(latch);
+    for (const auto& [side, shift] : {std::pair<const char*, int>{"left", 0}, {"right", 3}})
+    {
+        const int level = (latch >> shift) & 0x07;
+        StateNode s = StateNode::Object();
+        s["level"] = level;
+        s["muted"] = level == 7;
+        if (level != 7)
+            s["attenuation_db"] = -3 * level;
+        n[side] = s;
+    }
+    return n;
+}
+
+const char* PcmPhaseName(opl4::Opl4::PcmEnvelopePhase phase)
+{
+    switch (phase)
+    {
+        case opl4::Opl4::PcmEnvelopePhase::Attack: return "attack";
+        case opl4::Opl4::PcmEnvelopePhase::Decay: return "decay";
+        case opl4::Opl4::PcmEnvelopePhase::Sustain: return "sustain";
+        case opl4::Opl4::PcmEnvelopePhase::Release: return "release";
+        case opl4::Opl4::PcmEnvelopePhase::Off: return "off";
+    }
+    return "off";
+}
+
+const char* FmPhaseName(opl4::Opl4::FmEnvelopePhase phase)
+{
+    switch (phase)
+    {
+        case opl4::Opl4::FmEnvelopePhase::Attack: return "attack";
+        case opl4::Opl4::FmEnvelopePhase::Decay: return "decay";
+        case opl4::Opl4::FmEnvelopePhase::Sustain: return "sustain";
+        case opl4::Opl4::FmEnvelopePhase::Release: return "release";
+        case opl4::Opl4::FmEnvelopePhase::Off: return "off";
+    }
+    return "off";
+}
+
+/// One OPL3 operator, decoded (register fields plus the live envelope)
+StateNode FmOperatorNode(const opl4::Opl4::FmView& fm, int slot)
+{
+    static const double kMultFactor[16] = {0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15};
+    static const double kKslDbPerOctave[4] = {0.0, 3.0, 1.5, 6.0};  // register values 0..3
+    static const char* kWaveforms[8] = {"sine",     "half_sine",       "abs_sine",   "pulse_sine",
+                                        "sine_even", "abs_sine_even", "square",     "derived_square"};
+    const opl4::Opl4::FmOperatorView& op = fm.operators[size_t(slot)];
+    StateNode n = StateNode::Object();
+    n["slot"] = slot;
+    n["register_offset"] = slot % 22;  // operator registers 0x20/0x40/0x60/0x80/0xE0 + offset
+    n["mult"] = int(op.mult);
+    n["multiplier"] = kMultFactor[op.mult & 0x0F];
+    n["ksr"] = op.ksr;
+    n["tremolo"] = op.am;
+    n["vibrato"] = op.vib;
+    n["sustaining"] = op.egt;
+    n["ksl"] = int(op.kslRegister);
+    n["ksl_db_per_octave"] = kKslDbPerOctave[op.kslRegister & 0x03];
+    n["tl"] = int(op.tl);
+    n["total_level_db"] = -0.75 * op.tl + 0.0;  // + 0.0: no "-0.0" for level 0
+    n["ar"] = int(op.ar);
+    n["dr"] = int(op.dr);
+    n["sl"] = int(op.sl);
+    n["sustain_level_db"] = op.sl == 15 ? -93 : -3 * int(op.sl);
+    n["rr"] = int(op.rr);
+    n["waveform"] = int(op.ws);
+    n["waveform_name"] = kWaveforms[op.ws & 0x07];
+    n["key_on"] = op.keyOn;
+    StateNode env = StateNode::Object();
+    env["phase"] = FmPhaseName(op.phase);
+    env["attenuation"] = int(op.attenuation);
+    env["attenuation_max"] = opl4::Opl4::kFmMaxAttenuation;
+    n["envelope"] = env;
+    n["sounding"] = op.phase != opl4::Opl4::FmEnvelopePhase::Off && op.attenuation < opl4::Opl4::kFmMaxAttenuation;
+    return n;
+}
+
+bool FmKeyOn(const opl4::Opl4::FmView& fm, int ch)
+{
+    const int base = (ch / 9) * 256;
+    return (fm.regs[size_t(base + 0xB0 + ch % 9)] & 0x20) != 0;
+}
+}  // namespace
+
+StateNode MoonSound(EmulatorContext* context)
+{
+    StateNode unavailable;
+    SoundChip_Moonsound* ms = MoonSoundOf(context, unavailable);
+    if (!ms)
+        return unavailable;
+    const opl4::Opl4& chip = ms->chip();
+    opl4::Opl4::FmView fm;
+    chip.PeekFm(fm);
+    opl4::Opl4::PcmView pcm;
+    chip.PeekPcm(pcm);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["device"] = "ZXM-MoonSound (YMF278B OPL4: 18-channel FM + 24-slot wavetable)";
+    ret["new_mode"] = fm.newMode;
+    ret["new2_mode"] = fm.new2;
+    ret["status"] = int(fm.status);
+
+    StateNode latches = StateNode::Object();
+    latches["fm_address_bank0"] = int(ms->fmAddressLatch(0));
+    latches["fm_address_bank1"] = int(ms->fmAddressLatch(1));
+    latches["fm_selected_bank"] = int(ms->fmSelectedBank());
+    latches["wave_address"] = int(ms->waveAddressLatch());
+    ret["latches"] = latches;
+
+    StateNode mix = StateNode::Object();
+    mix["fm"] = MixNode(chip.MixFmLatch());
+    mix["pcm"] = MixNode(chip.MixPcmLatch());
+    ret["mix"] = mix;
+
+    const opl4::WaveMemory& memory = ms->waveMemory();
+    StateNode wave = StateNode::Object();
+    wave["rom_bytes"] = uint64_t(memory.RomEnd());
+    wave["rom_loaded_bytes"] = uint64_t(ms->waveRomLoadedBytes());
+    wave["ram_bytes"] = uint64_t(memory.RamEnd() - memory.RomEnd());
+    wave["ram_dirty_pages"] = uint64_t(memory.DirtyPageCount());
+    ret["wave_memory"] = wave;
+
+    StateNode fmKeyed = StateNode::Array();
+    for (int ch = 0; ch < 18; ch++)
+        if (FmKeyOn(fm, ch))
+            fmKeyed.push(ch);
+    ret["fm_keyed_channels"] = fmKeyed;
+    StateNode pcmKeyed = StateNode::Array();
+    for (size_t i = 0; i < pcm.slots.size(); i++)
+        if (pcm.slots[i].keyOn)
+            pcmKeyed.push(int(i));
+    ret["pcm_keyed_slots"] = pcmKeyed;
+    return ret;
+}
+
+StateNode MoonSoundFm(EmulatorContext* context)
+{
+    StateNode unavailable;
+    SoundChip_Moonsound* ms = MoonSoundOf(context, unavailable);
+    if (!ms)
+        return unavailable;
+    const opl4::Opl4& chip = ms->chip();
+    opl4::Opl4::FmView fm;
+    chip.PeekFm(fm);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["new_mode"] = fm.newMode;
+    ret["status"] = int(fm.status);
+    StateNode timers = StateNode::Array();
+    for (int n = 0; n < 2; n++)
+    {
+        StateNode t = StateNode::Object();
+        t["timer"] = n + 1;
+        t["step_us"] = n == 0 ? 80 : 320;
+        t["count"] = int(fm.timers[n].count);
+        t["load"] = int(fm.timers[n].load);
+        t["enabled"] = fm.timers[n].enabled;
+        t["masked"] = fm.timers[n].masked;
+        t["flag"] = (fm.status & (n == 0 ? 0x40 : 0x20)) != 0;
+        timers.push(t);
+    }
+    ret["timers"] = timers;
+    ret["four_op_connections"] = int(fm.regs[0x104]);  // bank 1 reg 0x04: 4-op pairs
+    ret["rhythm"] = fm.rhythm;
+    ret["tremolo_depth_db"] = (fm.regs[0xBD] & 0x80) ? 4.8 : 1.0;   // DAM
+    ret["vibrato_depth_cents"] = (fm.regs[0xBD] & 0x40) ? 14 : 7;   // DVB
+    ret["note_select"] = (fm.regs[0x08] & 0x40) != 0;               // NTS
+
+    const double fmRate = double(opl4::kMasterClockHz) / double(opl4::kFmDivider);
+    StateNode channels = StateNode::Array();
+    for (int ch = 0; ch < 18; ch++)
+    {
+        const int base = (ch / 9) * 256;
+        const int c = ch % 9;
+        const uint8_t a0 = fm.regs[size_t(base + 0xA0 + c)];
+        const uint8_t b0 = fm.regs[size_t(base + 0xB0 + c)];
+        const uint8_t c0 = fm.regs[size_t(base + 0xC0 + c)];
+        const int fnum = a0 | ((b0 & 0x03) << 8);
+        const int block = (b0 >> 2) & 0x07;
+        StateNode n = StateNode::Object();
+        n["channel"] = ch;
+        n["bank"] = ch / 9;
+        n["fnum"] = fnum;
+        n["block"] = block;
+        n["frequency_hz"] = std::round(fnum * fmRate / double(1 << (20 - block)) * 100.0) / 100.0;
+        n["key_on"] = (b0 & 0x20) != 0;
+        n["feedback"] = (c0 >> 1) & 0x07;
+        n["connection"] = c0 & 0x01;
+        n["output_left"] = (fm.route[size_t(ch)] & 0x10) != 0;
+        n["output_right"] = (fm.route[size_t(ch)] & 0x20) != 0;
+
+        // 4-op pairs: channels 0-2 with 3-5 in each bank; the first carries the
+        // algorithm (its CNT and the partner's), the second is its lower half
+        const opl4::Opl4::FmChannelView& view = fm.channels[size_t(ch)];
+        const bool pairFirst = view.fourOp && c < 3;
+        n["four_op"] = view.fourOp;
+        if (view.fourOp)
+            n["four_op_role"] = pairFirst ? "first" : "second";
+        if (pairFirst)
+        {
+            static const char* kAlgorithms[4] = {"fm_fm", "am_fm", "fm_am", "am_am"};
+            const int partnerConn = fm.channels[size_t(ch + 3)].connection & 1;
+            n["algorithm"] = kAlgorithms[(view.connection & 1) | (partnerConn << 1)];
+        }
+        else if (!view.fourOp)
+        {
+            n["algorithm"] = (view.connection & 1) ? "additive" : "fm";
+        }
+        if (fm.rhythm && ch >= 6 && ch <= 8)
+        {
+            static const char* kParts[3] = {"bass_drum", "hi_hat_snare", "tom_cymbal"};
+            n["rhythm_part"] = kParts[ch - 6];
+        }
+        StateNode operators = StateNode::Array();
+        operators.push(FmOperatorNode(fm, view.op1));
+        operators.push(FmOperatorNode(fm, view.op2));
+        n["operators"] = operators;
+        n["sounding"] = operators.items[0].find("sounding")->b || operators.items[1].find("sounding")->b;
+        n["peak"] = double(chip.ChannelPeak(opl4::ChannelId{opl4::ChannelGroup::Fm, uint8_t(ch)}));
+        channels.push(n);
+    }
+    ret["channels"] = channels;
+    ret["registers_bank0_hex"] = HexBytes(fm.regs.data(), 256);
+    ret["registers_bank1_hex"] = HexBytes(fm.regs.data() + 256, 256);
+    return ret;
+}
+
+StateNode MoonSoundPcm(EmulatorContext* context)
+{
+    StateNode unavailable;
+    SoundChip_Moonsound* ms = MoonSoundOf(context, unavailable);
+    if (!ms)
+        return unavailable;
+    const opl4::Opl4& chip = ms->chip();
+    opl4::Opl4::PcmView pcm;
+    chip.PeekPcm(pcm);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["wave_enabled"] = chip.New2Mode();  // NEW2 gates wave register writes
+    ret["memory_address"] = uint64_t(pcm.memAddress);
+    const uint32_t romEnd = ms->waveMemory().RomEnd();
+    auto panDb = [](uint16_t att) -> StateNode { return att >= 1020 ? StateNode() : StateNode(-3.0 * att / 32.0 + 0.0); };
+    StateNode slots = StateNode::Array();
+    for (size_t i = 0; i < pcm.slots.size(); i++)
+    {
+        const opl4::Opl4::PcmSlotView& s = pcm.slots[i];
+        StateNode n = StateNode::Object();
+        n["slot"] = int(i);
+        n["wave"] = int(s.wave);
+        n["octave"] = int(s.octave);
+        n["fnum"] = int(s.fnum);
+        n["playback_rate_hz"] =
+            std::round(44100.0 * std::ldexp(1.0, s.octave) * (1024.0 + s.fnum) / 1024.0 * 100.0) / 100.0;
+        n["key_on"] = s.keyOn;
+        n["total_level"] = int(s.totalLevel);
+        const uint8_t tlReg = pcm.regs[0x50 + i];
+        n["total_level_db"] = -0.375 * (tlReg >> 1) + 0.0;  // 7-bit TL, 0.375 dB/step
+        n["level_direct"] = (tlReg & 0x01) != 0;
+        n["pan"] = int(s.pan);
+        StateNode pan = StateNode::Object();
+        pan["left_db"] = panDb(s.panLeft);    // null: that side is off
+        pan["right_db"] = panDb(s.panRight);
+        n["pan_attenuation"] = pan;
+        n["damp"] = s.damp;
+        n["sample_bits"] = s.bits == 0 ? 8 : (s.bits == 1 ? 12 : 16);
+        n["start"] = uint64_t(s.start);
+        n["loop"] = int(s.loop);
+        n["end"] = int(0x10000 - s.endComplement);
+        n["position"] = int(s.position);
+        // Byte address of the current sample (12-bit samples pack two in three bytes)
+        const uint32_t offset = s.bits == 0 ? s.position : (s.bits == 1 ? (s.position * 3u) / 2u : s.position * 2u);
+        n["sample_address"] = uint64_t((s.start + offset) & 0x3FFFFF);
+        n["memory"] = s.start < romEnd ? "rom" : "ram";
+        StateNode env = StateNode::Object();
+        env["phase"] = PcmPhaseName(s.phase);
+        env["attenuation"] = int(s.attenuation);
+        env["attenuation_max"] = opl4::Opl4::kPcmMaxAttenuation;
+        env["ar"] = int(s.ar);
+        env["d1r"] = int(s.d1r);
+        env["d2r"] = int(s.d2r);
+        env["rr"] = int(s.rr);
+        env["rc"] = int(s.rc);
+        // D1L: register group 7 (0xB0 + slot) bits 7:4, 3 dB/step, 15 = -93 dB
+        const int dl = pcm.regs[0xB0 + i] >> 4;
+        env["decay_level"] = dl;
+        env["decay_level_db"] = dl == 15 ? -93 : -3 * dl;
+        n["envelope"] = env;
+        n["lfo"] = int(s.lfo);
+        n["lfo_hz"] = opl4::Opl4::kPcmLfoHz[s.lfo & 0x07];
+        n["lfo_active"] = s.lfoActive;
+        n["vibrato"] = int(s.vib);
+        n["am"] = int(s.am);
+        n["sounding"] = s.phase != opl4::Opl4::PcmEnvelopePhase::Off &&
+                        s.attenuation < opl4::Opl4::kPcmMaxAttenuation;
+        n["peak"] = double(chip.ChannelPeak(opl4::ChannelId{opl4::ChannelGroup::Pcm, uint8_t(i)}));
+        slots.push(n);
+    }
+    ret["slots"] = slots;
+    ret["registers_hex"] = HexBytes(pcm.regs.data(), pcm.regs.size());
+    return ret;
+}
+
 StateNode FmChip(EmulatorContext* context, int chip)
 {
     SoundManager* sm = context ? context->pSoundManager : nullptr;
@@ -715,6 +1307,9 @@ StateNode Fdc(EmulatorContext* context)
     ret["signals"] = sig;
     ret["beta128_register"] = int(fdc->getBeta128Register());
     ret["density"] = fdc->isDoubleDensityMode() ? "MFM" : "FM";
+    ret["clock_policy"] = WD1793::ClockPolicyName(fdc->GetClockPolicy());
+    ret["clock_mhz"] = static_cast<int>(fdc->GetClock());
+    ret["data_rate_kbps"] = fdc->GetDataRate() == FdcDataRate::Rate500Kbps ? 500 : 250;
     ret["selected_drive"] = int(fdc->getSelectedDriveIndex());
     ret["side"] = fdc->getSideUp() ? 1 : 0;
 
@@ -764,6 +1359,8 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         return Unavailable("Screen not available");
 
     const ScreenState s = context->pScreen->DescribeScreenState();
+    // In effect: the model's rule and the 'contention' switch (DeviceState::Contention has the details)
+    const bool contention = s.contention && (!context->pCore || context->pCore->IsContentionSwitchOn());
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["model"] = Config::GetModelFullName(s.model);
@@ -774,7 +1371,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
     ret["active_screen"] = int(s.activeScreen);
     ret["active_ram_page"] = int(s.activeRamPage);
     ret["active_ram_pages"] = PagesArray(s.activeRamPages);
-    ret["contention"] = s.contention;
+    ret["contention"] = contention;
     ret["flash_inverted"] = s.flashInverted;
     if (!verbose)
         return ret;
@@ -788,7 +1385,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         n["attributes"] = "0x1800-0x1AFF (768 bytes)";
         n["z80_access"] = Z80Access(memory, page);
         n["ula_display"] = displayed;
-        n["contention"] = s.contention ? "active" : "none";
+        n["contention"] = contention ? "active" : "none";
         return n;
     };
 
@@ -902,6 +1499,156 @@ StateNode ScreenFlash(EmulatorContext* context)
     return ret;
 }
 
+namespace
+{
+/// One decoded attribute cell: ink/paper/bright/flash from a classic ZX
+/// attribute byte (bits 0-2 ink, 3-5 paper, 6 bright, 7 flash).
+StateNode AttributeCellNode(uint8_t attr)
+{
+    StateNode cell = StateNode::Object();
+    cell["ink"] = int(attr & 0x07);
+    cell["paper"] = int((attr >> 3) & 0x07);
+    cell["bright"] = (attr & 0x40) != 0;
+    cell["flash"] = (attr & 0x80) != 0;
+    return cell;
+}
+
+/// One screen's 32x24 decoded attribute cells, read straight off the RAM
+/// page (not the Z80 bank mapping) at offset 0x1800.
+StateNode ScreenAttributesNode(Memory* memory, int screenIndex, uint16_t page)
+{
+    StateNode n = StateNode::Object();
+    n["screen"] = screenIndex;
+    n["ram_page"] = int(page);
+
+    const uint8_t* base = memory ? memory->RAMPageAddress(page) : nullptr;
+    StateNode cells = StateNode::Array();
+    for (int row = 0; row < 24; row++)
+    {
+        for (int col = 0; col < 32; col++)
+        {
+            const uint8_t attr = base ? base[0x1800 + row * 32 + col] : 0;
+            cells.push(AttributeCellNode(attr));
+        }
+    }
+    n["cells"] = cells;
+    return n;
+}
+}  // namespace
+
+StateNode ScreenAttributes(EmulatorContext* context, int screen)
+{
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+
+    const ScreenState s = context->pScreen->DescribeScreenState();
+    Memory* memory = context->pMemory;
+
+    if (screen == 1 && !s.shadowScreenCapable)
+        return Unavailable("Shadow screen not available on this model");
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["model"] = Config::GetModelFullName(s.model);
+    ret["cols"] = 32;
+    ret["rows"] = 24;
+
+    StateNode screens = StateNode::Array();
+    if (screen == 0)
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+    else if (screen == 1)
+        screens.push(ScreenAttributesNode(memory, 1, 7));
+    else if (s.shadowScreenCapable)
+    {
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+        screens.push(ScreenAttributesNode(memory, 1, 7));
+    }
+    else
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+    ret["screens"] = screens;
+
+    return ret;
+}
+
+namespace
+{
+StateNode CountersNode(const ContentionCounters& c)
+{
+    static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io", "idle" };
+    StateNode n = StateNode::Object();
+    uint64_t accesses = 0;
+    uint64_t waitT = 0;
+    for (int k = 0; k < CONTENTION_KINDS; k++)
+    {
+        StateNode kind = StateNode::Object();
+        kind["accesses"] = c.accesses[k];
+        kind["wait_t"] = c.waitT[k];
+        n[kinds[k]] = kind;
+        accesses += c.accesses[k];
+        waitT += c.waitT[k];
+    }
+    n["accesses"] = accesses;
+    n["wait_t"] = waitT;
+    return n;
+}
+}  // namespace
+
+StateNode Contention(EmulatorContext* context)
+{
+    UlaContention* ula = context ? context->pUlaContention : nullptr;
+    Core* core = context ? context->pCore : nullptr;
+    if (!ula || !core || !core->GetZ80())
+        return Unavailable("Contention component not available");
+
+    const ContentionRule rule = ula->GetRule();
+    const bool effective = core->IsContentionEffective();
+    Z80* z80 = core->GetZ80();
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["rule"] = ContentionRuleName(rule);
+    ret["applicable"] = rule != ContentionRule::None;
+    ret["switch"] = core->IsContentionSwitchOn() ? "on" : "off";
+    ret["effective"] = effective;
+    ret["memory_interface"] = core->GetMemoryInterfaceName();
+    ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
+
+    // The slots the CPU would wait on (none while contention is not in effect)
+    Memory* memory = context->pMemory;
+    StateNode slots = StateNode::Array();
+    for (uint8_t slot = 0; slot < 4; slot++)
+    {
+        StateNode n = StateNode::Object();
+        char range[24];
+        snprintf(range, sizeof range, "0x%04X-0x%04X", slot * 0x4000, slot * 0x4000 + 0x3FFF);
+        n["slot"] = int(slot);
+        n["range"] = range;
+        n["mapping"] = memory ? memory->GetCurrentBankName(slot) : std::string("unknown");
+        n["contended"] = core->IsSlotContended(slot);
+        slots.push(n);
+    }
+    ret["slots"] = slots;
+
+    if (rule == ContentionRule::GateArray)
+        ret["floating_bus_latch"] = Hex8(ula->GetLatchedByte());
+
+    // Counted only by the debug interfaces
+    if (z80->isDebugMode)
+    {
+        StateNode stats = StateNode::Object();
+        stats["current_frame"] = CountersNode(ula->GetStatisticsCurrentFrame());
+        stats["last_frame"] = CountersNode(ula->GetStatisticsLastFrame());
+        stats["total"] = CountersNode(ula->GetStatisticsTotal());
+        ret["statistics"] = stats;
+    }
+    else
+    {
+        ret["statistics"] = "debug mode off (counted only while the debugger is on)";
+    }
+
+    return ret;
+}
+
 std::string ToText(const StateNode& node, int indent)
 {
     std::ostringstream out;
@@ -910,6 +1657,332 @@ std::string ToText(const StateNode& node, int indent)
     else
         TextLine(out, indent, "", node);
     return out.str();
+}
+
+/// region <IDE>
+
+namespace
+{
+    const char* AtaCommandName(uint8_t command)
+    {
+        using namespace ata;
+        if (command >= Command::RecalibrateFirst && command <= Command::RecalibrateLast)
+            return "RECALIBRATE";
+        if (command >= Command::SeekFirst && command <= Command::SeekLast)
+            return "SEEK";
+        switch (command)
+        {
+            case 0x00: return "none";
+            case Command::DeviceReset: return "DEVICE RESET";
+            case Command::ReadSectors:
+            case Command::ReadSectorsNoRetry: return "READ SECTORS";
+            case Command::ReadSectorsExt: return "READ SECTORS EXT";
+            case Command::ReadMultipleExt: return "READ MULTIPLE EXT";
+            case Command::WriteSectors:
+            case Command::WriteSectorsNoRetry: return "WRITE SECTORS";
+            case Command::WriteSectorsExt: return "WRITE SECTORS EXT";
+            case Command::WriteMultipleExt: return "WRITE MULTIPLE EXT";
+            case Command::ReadVerify:
+            case Command::ReadVerifyNoRetry: return "READ VERIFY";
+            case Command::ReadVerifyExt: return "READ VERIFY EXT";
+            case Command::FormatTrack: return "FORMAT TRACK";
+            case Command::ExecuteDiagnostic: return "EXECUTE DEVICE DIAGNOSTIC";
+            case Command::InitializeDeviceParameters: return "INITIALIZE DEVICE PARAMETERS";
+            case Command::Packet: return "PACKET";
+            case Command::IdentifyPacket: return "IDENTIFY PACKET DEVICE";
+            case Command::ReadMultiple: return "READ MULTIPLE";
+            case Command::WriteMultiple: return "WRITE MULTIPLE";
+            case Command::SetMultipleMode: return "SET MULTIPLE MODE";
+            case Command::CheckPowerMode: return "CHECK POWER MODE";
+            case Command::FlushCache:
+            case Command::FlushCacheExt: return "FLUSH CACHE";
+            case Command::Identify: return "IDENTIFY DEVICE";
+            case Command::SetFeatures: return "SET FEATURES";
+            default: return "other";
+        }
+    }
+
+    const char* AtaPhaseName(uint8_t phase)
+    {
+        switch (static_cast<AtaPhase>(phase))
+        {
+            case AtaPhase::Idle: return "idle";
+            case AtaPhase::DataIn: return "data in";
+            case AtaPhase::DataOut: return "data out";
+            case AtaPhase::PacketCommand: return "packet";
+        }
+        return "?";
+    }
+
+    StateNode Bits(uint8_t value, const std::vector<std::pair<uint8_t, const char*>>& names)
+    {
+        StateNode bits = StateNode::Array();
+        for (const auto& [mask, name] : names)
+            if (value & mask)
+                bits.push(name);
+        return bits;
+    }
+
+    const char* IdeGateText(IDE_SCHEME scheme)
+    {
+        switch (scheme)
+        {
+            case IDE_NEMO:
+            case IDE_NEMO_A8:
+            case IDE_DIVIDE: return "TR-DOS ports off";
+            case IDE_NEMO_DIVIDE: return "always";
+            case IDE_ATM:
+            case IDE_SMUC: return "TR-DOS ports on";
+            case IDE_PROFI: return "Profi EXT mode (#DFFD.5 and #7FFD.4)";
+            default: return "";
+        }
+    }
+}  // namespace
+
+StateNode Ide(EmulatorContext* context)
+{
+    IdeController* ide = context ? context->pIdeController : nullptr;
+    if (!ide || !ide->Enabled())
+        return Unavailable("No IDE board on this machine (configure [HDD] Scheme)");
+
+    using namespace ata;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["scheme"] = Config::IdeSchemeName(ide->Scheme());
+    ret["gate"] = IdeGateText(ide->Scheme());
+    AtaChannel& channel = ide->Channel();
+    ret["selected"] = channel.Selected() ? "slave" : "master";
+    ret["intrq"] = channel.Intrq();
+
+    if (context->pPortDecoder)
+    {
+        const IdeAdapterState& latches = context->pPortDecoder->GetIdeAdapter().State();
+        StateNode adapter = StateNode::Object();
+        adapter["read_latch"] = int(latches.readLatch);
+        adapter["write_latch"] = int(latches.writeLatch);
+        adapter["read_pair"] = latches.readPair != 0;
+        adapter["write_pair"] = latches.writePair != 0;
+        adapter["write_high_armed"] = latches.writeHigh != 0;
+        ret["adapter"] = adapter;
+    }
+
+    StateNode units = StateNode::Array();
+    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    {
+        AtaDevice* device = channel.Unit(unit);
+        if (!device)
+            continue;
+        const AtaDeviceState& s = device->State();
+        const bool cd = device->Kind() == AtaDeviceKind::Cdrom;
+        StateNode u = StateNode::Object();
+        u["position"] = unit ? "slave" : "master";
+        u["slot"] = IdeUnitSlot::IdFor(0, unit);
+        u["kind"] = cd ? "cdrom" : "disk";
+        u["present"] = device->IsPresent();
+
+        if (IBlockDevice* medium = device->Medium())
+        {
+            StateNode m = StateNode::Object();
+            m["description"] = medium->Describe();
+            m["sectors"] = static_cast<uint64_t>(medium->SectorCount());
+            if (cd)
+                m["blocks"] = static_cast<uint64_t>(medium->SectorCount() / AtapiCdrom::kSectorsPerBlock);
+            m["writable"] = medium->IsWritable();
+            u["medium"] = m;
+        }
+        else
+            u["medium"] = StateNode();
+        if (!cd)
+        {
+            StateNode chs = StateNode::Object();
+            chs["cylinders"] = static_cast<unsigned>(s.cylinders);
+            chs["heads"] = int(s.heads);
+            chs["sectors"] = int(s.sectors);
+            u["translation"] = chs;
+            u["write_protect"] = device->Config().writeProtect;
+            u["multiple"] = int(s.multiple);
+        }
+
+        StateNode task = StateNode::Object();
+        task["features"] = int(s.features);
+        task["sector_count"] = int(s.sectorCount);
+        task["lba_low"] = int(s.lbaLow);
+        task["lba_mid"] = int(s.lbaMid);
+        task["lba_high"] = int(s.lbaHigh);
+        task["device"] = int(s.device);
+        task["status"] = int(s.status);
+        task["status_bits"] = Bits(s.status, {{Status::BSY, "BSY"}, {Status::DRDY, "DRDY"}, {Status::DF, "DF"},
+                                              {Status::DSC, "DSC"}, {Status::DRQ, "DRQ"}, {Status::CORR, "CORR"},
+                                              {Status::IDX, "IDX"}, {Status::ERR, "ERR"}});
+        task["error"] = int(s.error);
+        task["error_bits"] = Bits(s.error, {{Error::ICRC, "ICRC"}, {Error::UNC, "UNC"}, {Error::MC, "MC"},
+                                            {Error::IDNF, "IDNF"}, {Error::MCR, "MCR"}, {Error::ABRT, "ABRT"},
+                                            {Error::TK0NF, "TK0NF"}, {Error::AMNF, "AMNF"}});
+        task["control"] = int(s.control);
+        task["control_bits"] = Bits(s.control, {{DeviceControl::HOB, "HOB"}, {DeviceControl::SRST, "SRST"},
+                                                {DeviceControl::nIEN, "nIEN"}});
+        u["task_file"] = task;
+
+        StateNode command = StateNode::Object();
+        command["code"] = int(s.command);
+        command["name"] = AtaCommandName(s.command);
+        command["phase"] = AtaPhaseName(s.phase);
+        command["lba"] = static_cast<uint64_t>(s.lba);
+        command["left"] = static_cast<unsigned>(s.sectorsLeft);
+        command["buffer_position"] = int(s.bufferPos);
+        command["buffer_length"] = int(s.bufferLen);
+        command["intrq_pending"] = s.intrq != 0;
+        u["command"] = command;
+
+        if (cd)
+        {
+            StateNode atapi = StateNode::Object();
+            atapi["disc"] = device->Medium() != nullptr;
+            atapi["unit_attention"] = s.unitAttention != 0;
+            atapi["byte_count_limit"] = int(s.byteLimit);
+            atapi["transfer_left"] = static_cast<unsigned>(s.transferLeft);
+            atapi["sense_key"] = int(s.senseKey);
+            atapi["asc"] = int(s.asc);
+            atapi["ascq"] = int(s.ascq);
+            char cdb[40];
+            std::snprintf(cdb, sizeof(cdb), "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X", s.cdb[0], s.cdb[1],
+                          s.cdb[2], s.cdb[3], s.cdb[4], s.cdb[5], s.cdb[6], s.cdb[7], s.cdb[8], s.cdb[9], s.cdb[10], s.cdb[11]);
+            atapi["last_packet"] = cdb;
+            u["atapi"] = atapi;
+        }
+        units.push(u);
+    }
+    ret["units"] = units;
+    return ret;
+}
+
+/// endregion </IDE>
+
+
+namespace
+{
+    const char* TimeModeName(Ds12887::TimeMode mode)
+    {
+        switch (mode)
+        {
+            case Ds12887::TimeMode::Emulated:
+                return "emulated";
+            case Ds12887::TimeMode::Fixed:
+                return "fixed";
+            case Ds12887::TimeMode::Host:
+            default:
+                return "host";
+        }
+    }
+
+    std::string Hex2(unsigned value)
+    {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%02X", value & 0xFF);
+        return buf;
+    }
+}  // namespace
+
+StateNode Rtc(EmulatorContext* context)
+{
+    std::string reason;
+    Ds12887* chip = RtcAccess::Find(context, &reason);
+    if (!chip)
+        return Unavailable(reason.c_str());
+
+    const PortDecoder::RtcBinding binding = context->pPortDecoder->GetRtcBinding();
+    auto peek = [chip](uint8_t index) { return chip->PeekRegister(index); };
+    const uint8_t a = peek(Ds12887::kRegA);
+    const uint8_t b = peek(Ds12887::kRegB);
+    const uint8_t c = peek(Ds12887::kRegC);
+    const uint8_t d = peek(Ds12887::kRegD);
+    const bool binary = (b & Ds12887::kBBinary) != 0;
+    const bool hour24 = (b & Ds12887::kB24Hour) != 0;
+    auto decode = [binary](uint8_t v) { return binary ? int(v) : int((v >> 4) * 10 + (v & 0x0F)); };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["chip"] = chip->ChipName();
+    ret["ports"] = binding.ports;
+    ret["cells"] = int(chip->GetCellCount());
+    ret["nvram_file"] = binding.nvramFile.empty() ? std::string("(none: kept for the session only)") : binding.nvramFile;
+    ret["address_latch"] = int(chip->GetAddress());
+    ret["time_mode"] = TimeModeName(chip->GetTimeMode());
+    if (chip->RegistersNote()[0] != '\0')
+        ret["note"] = chip->RegistersNote();
+
+    // The time as the guest reads it now, decoded per register B
+    const uint8_t hoursRaw = peek(Ds12887::kHours);
+    int hours = decode(static_cast<uint8_t>(hoursRaw & (hour24 ? 0xFF : 0x7F)));
+    if (!hour24)
+        hours = (hours % 12) + ((hoursRaw & 0x80) ? 12 : 0);
+    const int year = decode(peek(Ds12887::kYear));
+    const int month = decode(peek(Ds12887::kMonth));
+    const int day = decode(peek(Ds12887::kDay));
+    const int minutes = decode(peek(Ds12887::kMinutes));
+    const int seconds = decode(peek(Ds12887::kSeconds));
+    StateNode time = StateNode::Object();
+    time["year"] = year;
+    time["month"] = month;
+    time["day"] = day;
+    time["hours"] = hours;
+    time["minutes"] = minutes;
+    time["seconds"] = seconds;
+    time["day_of_week"] = int(peek(Ds12887::kDayOfWeek));
+    char text[32];
+    std::snprintf(text, sizeof(text), "%02d-%02d-%02d %02d:%02d:%02d", year, month, day, hours, minutes, seconds);
+    time["text"] = text;
+    ret["time"] = time;
+
+    StateNode regA = StateNode::Object();
+    regA["value"] = int(a);
+    regA["uip"] = (a & 0x80) != 0;
+    regA["divider"] = int((a >> 4) & 0x07);
+    regA["rate"] = int(a & 0x0F);
+    ret["register_a"] = regA;
+
+    StateNode regB = StateNode::Object();
+    regB["value"] = int(b);
+    regB["set"] = (b & 0x80) != 0;
+    regB["periodic_irq"] = (b & 0x40) != 0;
+    regB["alarm_irq"] = (b & 0x20) != 0;
+    regB["update_irq"] = (b & 0x10) != 0;
+    regB["square_wave"] = (b & 0x08) != 0;
+    regB["binary"] = binary;
+    regB["hour_24"] = hour24;
+    regB["daylight_saving"] = (b & 0x01) != 0;
+    ret["register_b"] = regB;
+
+    StateNode regC = StateNode::Object();
+    regC["value"] = int(c);
+    regC["irq"] = (c & 0x80) != 0;
+    regC["periodic"] = (c & 0x40) != 0;
+    regC["alarm"] = (c & 0x20) != 0;
+    regC["update_ended"] = (c & 0x10) != 0;
+    ret["register_c"] = regC;
+
+    StateNode regD = StateNode::Object();
+    regD["value"] = int(d);
+    regD["battery_ok"] = (d & 0x80) != 0;
+    ret["register_d"] = regD;
+
+    StateNode alarm = StateNode::Object();
+    alarm["seconds"] = int(peek(Ds12887::kSecondsAlarm));
+    alarm["minutes"] = int(peek(Ds12887::kMinutesAlarm));
+    alarm["hours"] = int(peek(Ds12887::kHoursAlarm));
+    ret["alarm"] = alarm;
+
+    // Every cell as the guest reads it (peeked, no side effects), 16 per line
+    StateNode dump = StateNode::Array();
+    for (size_t row = 0; row < chip->GetCellCount(); row += 16)
+    {
+        std::string line = Hex2(unsigned(row)) + ":";
+        for (size_t col = 0; col < 16 && row + col < chip->GetCellCount(); ++col)
+            line += " " + Hex2(peek(static_cast<uint8_t>(row + col)));
+        dump.push(line);
+    }
+    ret["dump"] = dump;
+    return ret;
 }
 
 }  // namespace DeviceState

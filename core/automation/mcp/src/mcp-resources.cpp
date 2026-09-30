@@ -251,7 +251,7 @@ framebuffer. Both use the 312-line x 224 T raster (69888 T per frame, INT-to-pap
 `sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and palette as PeripheralId ProfiPaging (9).
 
 ## Peripherals
-RTC/CMOS (DS12885): address #BF/#FF, data #9F/#DF, only in EXT mode (CPM and ROM14). Covox DAC: #5F left, #3F right
+RTC/CMOS (MC146818 / DS12887, 256 cells; inspect_state aspect rtc, cells via /rtc/cells): address #BF/#FF, data #9F/#DF, only in EXT mode (CPM and ROM14). Covox DAC: #5F left, #3F right
 while the disk interface is off the bus, #C7 left / #A7 right (CP/M-extended mode aliases) while it's on. #FE read
 bit 7 reports GX0 in DS80. NMI (magic button) raises the DOS latch while DS80 is off.
 

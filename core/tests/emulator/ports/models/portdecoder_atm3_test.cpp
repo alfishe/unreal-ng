@@ -3,16 +3,25 @@
 
 #include "portdecoder_atm3_test.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/zcsdtesthelper.h"
+#include "common/filehelper.h"
 #include "base/featuremanager.h"
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
-#include "emulator/memory/atm/cmos.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulator.h"
+
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 
 /// region <SetUp / TearDown>
 
@@ -727,26 +736,25 @@ TEST_F(PortDecoder_ATM3_Test, Eff7_WrittenOnlyOutsideShadow_WriteOnly)
 TEST_F(PortDecoder_ATM3_Test, Gluk_GatedByEff7Bit7OutsideShadow)
 {
     EmulatorState& state = _context->emulatorState;
-    CMOS& cmos = _portDecoder->GetCMOS();
-    cmos.SetCMOSType(Dallas);
+    Ds12887& cmos = _portDecoder->GetRtc();
 
     SetShadow(state, false);
     state.pEFF7 = 0x00;
-    cmos.SetCMOSAddress(0x20);
+    cmos.WriteAddress(0x20);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
+    EXPECT_EQ(cmos.GetAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF);
 
     _portDecoder->DecodePortOut(0xEFF7, 0x80, 0x0000);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x30);
+    EXPECT_EQ(cmos.GetAddress(), 0x30);
     _portDecoder->DecodePortOut(0xBFF7, 0x5A, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0x5A);
 
     SetShadow(state, true);
     state.pEFF7 = 0x00;
     _portDecoder->DecodePortOut(0xDEF7, 0x31, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
+    EXPECT_EQ(cmos.GetAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
     _portDecoder->DecodePortOut(0xBEF7, 0xA5, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBEF7, 0x0000), 0xA5);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF) << "#BFF7 has A8=1: in shadow it is not the clock";
@@ -809,47 +817,10 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ConfigReadsZero_DataIdle)
     EXPECT_EQ(_portDecoder->ClassifyPort(0x0077, false), Arm::Atm77);
 }
 
-namespace
-{
-    /// Send one SD command through a port pair and return R1 (IN twice per
-    /// byte: the first clocks it in, the second returns it)
-    uint8_t SdCommand(PortDecoder_ATM3* decoder, uint16_t dataPort, uint8_t index, uint32_t arg, uint8_t crc = 0xFF)
-    {
-        decoder->DecodePortOut(dataPort, static_cast<uint8_t>(0x40 | index), 0);
-        for (int shift = 24; shift >= 0; shift -= 8)
-            decoder->DecodePortOut(dataPort, static_cast<uint8_t>(arg >> shift), 0);
-        decoder->DecodePortOut(dataPort, crc, 0);
-        decoder->DecodePortIn(dataPort, 0);  // the CRC exchange's byte (NCR)
-        for (int i = 0; i < 16; i++)
-        {
-            const uint8_t r = decoder->DecodePortIn(dataPort, 0);
-            if (r != 0xFF)
-                return r;
-        }
-        return 0xFF;
-    }
-
-    bool SdInit(PortDecoder_ATM3* decoder, uint16_t dataPort)
-    {
-        if (SdCommand(decoder, dataPort, 0, 0, 0x95) != 0x01)
-            return false;
-        for (int tries = 0; tries < 20; tries++)
-        {
-            SdCommand(decoder, dataPort, 55, 0);
-            if (SdCommand(decoder, dataPort, 41, 0x40000000) == 0x00)
-                return true;
-        }
-        return false;
-    }
-
-    std::unique_ptr<MemoryDisk> PatternDisk(uint64_t sectors)
-    {
-        auto disk = std::make_unique<MemoryDisk>(sectors);
-        for (uint64_t i = 0; i < sectors * 512; i++)
-            disk->Data()[i] = static_cast<uint8_t>(i / 512 + i % 7);
-        return disk;
-    }
-}  // namespace
+using zcsdtest::PatternDisk;
+using zcsdtest::SdCommand;
+using zcsdtest::SdInit;
+using zcsdtest::SdWriteBlock;
 
 /// ZC-2 on the machine: the whole SD protocol through #77 / #57 outside
 /// shadow - init, then READ_SINGLE_BLOCK of sector 5
@@ -902,8 +873,8 @@ TEST_F(PortDecoder_ATM3_Test, ZController_CardStatusInAvrRegisterC)
     EvoAvr& avr = _portDecoder->GetEvoAvr();
     avr.SetFixedTime(1767268830);  // no update-ended flag in the read
     auto registerC = [&avr]() {
-        avr.SetCMOSAddress(0x0C);
-        return static_cast<uint8_t>(avr.ReadCMOS() & 0x0C);
+        avr.WriteAddress(0x0C);
+        return static_cast<uint8_t>(avr.ReadData() & 0x0C);
     };
 
     EXPECT_EQ(registerC(), 0x00) << "empty slot";
@@ -934,39 +905,150 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ResetKeepsTheCardAndDeselects)
     EXPECT_EQ(back[0], 0x99) << "session writes survive a Z80 reset";
 }
 
-/// ST-TTD-1 (SD part): the first SD command while TTD records ends the
-/// recording at the frame boundary; an idle card in the slot does not
-TEST(ZXEvoSdCardTtd_Test, FirstSdCommandEndsTheRecording)
+/// ST-TTD-1 under the media manager's rule (storage-manager
+/// integration-ttd-snapshots.md §2): the card's protocol state is in the
+/// EvoSdCard blob, SD commands do not end a recording, the media set is fixed
+/// while recording, and a guest write is a replay barrier, once per frame
+TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
+    ASSERT_NE(context->pMediaManager, nullptr);
+    EXPECT_TRUE(context->pMediaManager->HasSlot("sd.zc")) << "the ZX-Evo registers its SD slot";
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-    ASSERT_NE(ttd, nullptr);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
-    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
     ASSERT_TRUE(ttd->StartRecording());
-    ttd->OnFrameBoundary();
-    EXPECT_TRUE(ttd->IsRecording()) << "a card that is only inserted is not activity";
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::EvoSdCard)) << "the card's state is recorded";
 
     SetShadow(context->emulatorState, false);
-    decoder->DecodePortOut(0x0077, 0x00, 0);  // select
-    for (int i = 0; i < 10; i++)
-        decoder->DecodePortOut(0x0057, 0xFF, 0);  // clocks without a command
-    EXPECT_FALSE(ttd->IsInvalidationPending());
-
-    EXPECT_EQ(SdCommand(decoder, 0x0057, 0, 0, 0x95), 0x01);
-    EXPECT_TRUE(ttd->IsInvalidationPending());
-    EXPECT_TRUE(ttd->IsRecording()) << "never from inside the port handler";
-
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(SdInit(decoder, 0x0057));
     ttd->OnFrameBoundary();
-    EXPECT_FALSE(ttd->IsRecording());
-    EXPECT_FALSE(ttd->IsInvalidationPending());
-    EXPECT_EQ(ttd->GetCheckpointCount(), 0u) << "history dropped";
+    EXPECT_TRUE(ttd->IsRecording()) << "commands no longer end a recording";
 
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    auto another = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(8));
+    EXPECT_EQ(context->pMediaManager->Insert("sd.zc", std::move(another)).error, MediaError::Recording)
+        << "the media set is fixed while recording";
+
+    const size_t before = ttd->GetExternalEvents().Size();
+    EXPECT_EQ(SdWriteBlock(decoder, 3 * 512, 0x11), 0x05);
+    EXPECT_EQ(SdWriteBlock(decoder, 4 * 512, 0x22), 0x05);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 1) << "one barrier per frame, not per write";
+    context->pMediaManager->ApplyPending();  // the frame ends
+    EXPECT_EQ(SdWriteBlock(decoder, 5 * 512, 0x33), 0x05);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 2);
+    EXPECT_TRUE(ttd->IsRecording());
+
+    ttd->StopRecording();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Review round 2, G10: a sparse 4 GiB image through the manager is an SDHC
+/// card (block addressing) that reads its first and its last sector,
+/// without the image ever being loaded whole
+TEST(ZXEvoSdSlot_Test, LargeSparseImage)
+{
+    constexpr uint64_t kSize = 4ull * 1024 * 1024 * 1024;
+    constexpr uint32_t kLastLba = static_cast<uint32_t>(kSize / 512 - 1);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("zxevo-sparse-4g.img");
+    const std::filesystem::path imagePath = FileHelper::ToFsPath(image);
+    {
+        std::ofstream create(imagePath, std::ios::binary);
+        create.write("HEAD", 4);
+    }
+    // Only extended, never written past the head: NTFS would zero-fill up to a late write
+    std::filesystem::resize_file(imagePath, kSize);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.access = AccessMode::ReadOnly;
+    const MediaResult inserted = context->pMediaManager->Insert("sd.zc", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_TRUE(decoder->GetSdCard().isSdhc());
+
+    SetShadow(context->emulatorState, false);
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(SdInit(decoder, 0x0057));
+    auto readBlock = [decoder](uint32_t lba, std::vector<uint8_t>& data) {
+        if (SdCommand(decoder, 0x0057, 17, lba) != 0x00)  // SDHC: the argument is the block number
+            return false;
+        bool token = false;
+        for (int i = 0; i < 64 && !token; i++)
+            token = decoder->DecodePortIn(0x0057, 0) == 0xFE;
+        data.resize(512);
+        for (auto& b : data)
+            b = decoder->DecodePortIn(0x0057, 0);
+        for (int i = 0; i < 2; i++)
+            decoder->DecodePortIn(0x0057, 0);  // CRC
+        return token;
+    };
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(readBlock(0, data));
+    EXPECT_EQ(std::string(data.begin(), data.begin() + 4), "HEAD");
+    ASSERT_TRUE(readBlock(kLastLba, data)) << "the last block of 4 GiB";
+    EXPECT_EQ(std::count(data.begin(), data.end(), 0), 512);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    std::error_code ec;
+    std::filesystem::remove(imagePath, ec);
+}
+
+/// A swap on a running machine: the old card leaves at the next frame
+/// boundary and AVR register C (the card-detect bit the ERS polls) reads
+/// "no card" for the slot's swap delay before the new card shows up
+TEST(ZXEvoSdSlot_Test, SwapDelaySeenInCardDetect)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    MediaManager& manager = *context->pMediaManager;
+    EvoAvr& avr = decoder->GetEvoAvr();
+    avr.SetFixedTime(1767268830);
+    auto cardPresent = [&avr]() {
+        avr.WriteAddress(0x0C);
+        return (avr.ReadData() & 0x08) != 0;
+    };
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+
+    ASSERT_TRUE(manager.Insert("sd.zc", MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(16))).Ok());
+    ASSERT_TRUE(cardPresent());
+
+    bool running = true;
+    manager.SetApplyNowProbe([&running] { return !running; });
+    ASSERT_TRUE(manager.Insert("sd.zc", MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(32))).Ok());
+    EXPECT_TRUE(cardPresent()) << "queued: nothing changes before the frame boundary";
+
+    int emptyBoundaries = 0;
+    for (int boundary = 0; boundary < 60; boundary++)
+    {
+        manager.ApplyPending();
+        if (cardPresent())
+            break;
+        emptyBoundaries++;
+    }
+    // 500 ms at ~20 ms per frame: about 25 boundaries without a card
+    EXPECT_GE(emptyBoundaries, 20) << "the ERS must see the card leave";
+    EXPECT_LE(emptyBoundaries, 30);
+    ASSERT_TRUE(cardPresent()) << "the new card arrives";
+    EXPECT_EQ(decoder->GetSdCard().sizeBytes(), 32u * 512);
+
+    manager.SetApplyNowProbe(nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
@@ -1577,3 +1659,162 @@ TEST_F(ZXEvoTrdemu_Test, LegacyFpgaLatchBytes)
 }
 
 /// endregion </Virtual TR-DOS>
+
+/// region <Port trace attribution>
+
+/// PLAN #8: every mainboard arm names its port and device in the port trace;
+/// before, the ZX-Evo decoder handed the trace nothing and every event read
+/// as undecoded with no device
+TEST(PortDecoder_ATM3_Trace_Test, EveryMainboardArmIsAttributed)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+
+    struct Case
+    {
+        uint16_t port;
+        uint8_t value;
+        PortDeviceId device;
+        uint16_t decodedPort;
+    };
+    // After reset the board is in shadow (CPM clear): the ATM group and the FDC
+    // decode. #FF77 carries A9, which sets CPM and leaves shadow; then the
+    // outside-shadow group (#EFF7, Z-Controller config), and #BF bit 0 opens it again
+    const Case inShadow[] = {
+        {0x00FE, 0x00, PortDeviceId::ULA_FE, 0x00FE},
+        {0x7FFD, 0x00, PortDeviceId::Memory_7FFD, 0x7FFD},
+        {0xFFFD, 0x07, PortDeviceId::AY_FFFD, 0xFFFD},
+        {0xBFFD, 0x3F, PortDeviceId::AY_BFFD, 0xBFFD},
+        {0x7FF7, 0x7F, PortDeviceId::Memory_Windows, 0x7FF7},
+        {0x001F, 0xD0, PortDeviceId::WD1793_Status, 0x001F},
+        {0x0057, 0xFF, PortDeviceId::SdCard, 0x0057},
+        {0x00B3, 0x00, PortDeviceId::GeneralSound, 0x00B3},
+        {0xFF77, 0xAB, PortDeviceId::ATM_FF77, 0xFF77},
+    };
+    const Case outsideShadow[] = {
+        {0xEFF7, 0x00, PortDeviceId::Control_EFF7, 0xEFF7},
+        {0x0077, 0x03, PortDeviceId::SdCard, 0x0077},
+        {0x00BF, 0x01, PortDeviceId::Evo_Config, 0x00BF},
+    };
+
+    auto check = [&](const Case& c) {
+        context->pPortDecoder->DecodePortOut(c.port, c.value, 0x0000);
+        const std::vector<PortTraceEvent> events = recorder->getAll();
+        ASSERT_FALSE(events.empty()) << std::hex << c.port;
+        const PortTraceEvent* e = &events.back();
+        EXPECT_EQ(e->rawPort, c.port);
+        EXPECT_EQ(e->decodedPort, c.decodedPort) << "port #" << std::hex << c.port;
+        EXPECT_EQ(e->deviceId, c.device) << "port #" << std::hex << c.port << ": "
+                                         << PortDiagnosticRecorder::DeviceIdToString(e->deviceId);
+        EXPECT_TRUE(e->wasDecoded()) << "port #" << std::hex << c.port;
+        EXPECT_EQ(e->decodeRuleIndex, PortTraceRule::kNoTable);
+    };
+    for (const Case& c : inShadow)
+        check(c);
+    context->emulatorState.flags &= ~CF_TRDOS;  // a TR-DOS session would keep shadow open
+    for (const Case& c : outsideShadow)
+        check(c);
+
+    // Reads go through the same attribution
+    context->pPortDecoder->DecodePortIn(0x00BF, 0x0000);
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().deviceId, PortDeviceId::Evo_Config);
+    EXPECT_FALSE(events.back().isOut());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// PLAN #60(g): every event carries the decoder's internal port code - on the
+/// ZX-Evo the BaseConf decode arm - named by the session's code table, the
+/// filter selects by it, and every export format keeps it
+TEST(PortDecoder_ATM3_Trace_Test, EventsCarryTheDecodeArmAsInternalCode)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDecoder& decoder = *context->pPortDecoder;
+    PortDiagnosticRecorder* recorder = decoder.getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+
+    const PortTraceSessionInfo info = decoder.getPortTraceSessionInfo();
+    ASSERT_EQ(info.codes.size(), 21u) << "one code per BaseConf decode arm";
+    auto codeOf = [&](const char* name) {
+        for (const auto& entry : info.codes)
+            if (entry.name == name)
+                return entry.code;
+        ADD_FAILURE() << "no code named " << name;
+        return PortTraceCode::kNone;
+    };
+
+    recorder->start();
+    decoder.DecodePortOut(0x00FE, 0x00, 0x0000);  // in shadow after reset
+    decoder.DecodePortOut(0xFFFD, 0x07, 0x0000);
+    decoder.DecodePortOut(0x7FF7, 0x7F, 0x0000);
+    decoder.DecodePortOut(0x001F, 0xD0, 0x0000);
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_EQ(events.size(), 4u);
+    EXPECT_EQ(events[0].internalCode, codeOf("KeyboardBorder"));
+    EXPECT_EQ(events[1].internalCode, codeOf("Ay"));
+    EXPECT_EQ(events[2].internalCode, codeOf("Pager"));
+    EXPECT_EQ(events[3].internalCode, codeOf("Fdc"));
+    EXPECT_EQ(info.CodeName(events[1].internalCode), "Ay");
+
+    // The filter selects by code: only the AY accesses stay
+    recorder->stop();
+    recorder->clear();
+    PortTraceFilterRule rule;
+    rule.internalCode = codeOf("Ay");
+    recorder->addIncludeRule(rule);
+    EXPECT_NE(recorder->describeFilter().find("code=0x"), std::string::npos) << recorder->describeFilter();
+    recorder->start();
+    decoder.DecodePortOut(0x00FE, 0x00, 0x0000);
+    decoder.DecodePortOut(0xFFFD, 0x07, 0x0000);
+    decoder.DecodePortOut(0xBFFD, 0x3F, 0x0000);
+    decoder.DecodePortOut(0x001F, 0xD0, 0x0000);
+    recorder->stop();
+    const std::vector<PortTraceEvent> ay = recorder->getAll();
+    ASSERT_EQ(ay.size(), 2u);
+    EXPECT_EQ(ay[0].rawPort, 0xFFFD);
+    EXPECT_EQ(ay[1].rawPort, 0xBFFD);
+
+    // Every export keeps the code; the binary ones also the code table
+    const std::string base = TestPathHelper::GetUniqueTestScratchPath("porttrace-codes");
+    for (const auto& [format, suffix] : {std::pair{PortTraceExportFormat::Binary, ".bin"},
+                                          std::pair{PortTraceExportFormat::BinaryCompressed, ".binz"}})
+    {
+        const std::string path = base + suffix;
+        ASSERT_TRUE(recorder->saveToFile(path, format, info)) << path;
+        PortTraceSessionInfo loadedInfo;
+        std::vector<PortTraceEvent> loaded;
+        ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(path, loadedInfo, loaded)) << path;
+        ASSERT_EQ(loaded.size(), ay.size()) << path;
+        EXPECT_TRUE(loaded[0] == ay[0] && loaded[1] == ay[1]) << path;
+        ASSERT_EQ(loadedInfo.codes.size(), info.codes.size()) << path;
+        EXPECT_EQ(loadedInfo.CodeName(loaded[0].internalCode), "Ay") << path;
+        std::remove(path.c_str());
+    }
+    for (const auto& [format, suffix] : {std::pair{PortTraceExportFormat::JSON, ".json"},
+                                          std::pair{PortTraceExportFormat::CSV, ".csv"}})
+    {
+        const std::string path = base + suffix;
+        ASSERT_TRUE(recorder->saveToFile(path, format, info)) << path;
+        std::ifstream in(FileHelper::ToFsPath(path));
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("Ay"), std::string::npos) << path << ": the code name";
+        EXPECT_NE(text.find(format == PortTraceExportFormat::JSON ? "\"code\": " : ",Ay"), std::string::npos)
+            << path << ": the per-event code";
+        in.close();
+        std::remove(path.c_str());
+    }
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Port trace attribution>

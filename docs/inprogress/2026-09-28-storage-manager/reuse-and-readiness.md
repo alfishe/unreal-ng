@@ -87,7 +87,7 @@ stack.
 | G4 | Card-detect and write-protect | `SlotDescriptor` gains `hasCardDetect`, `hasWriteProtectSwitch`. The switch is a slot property `<slot>.wp`, separate from `AccessMode`; the slot pushes both to its peripheral (Evo AVR register C, NeoGS SSTAT). A slot without the lines (Next, bare Z-Controller) still shows "no card" by protocol | technical design §2 |
 | G5 | One image in two slots | the manager compares canonical paths and refuses a second insert with `in-use` (naming the other slot), unless **both** are `ReadOnly`. Evo's shipped config (`wc.img` for SD and HDD) then reports instead of corrupting; Next's two sockets cannot show a phantom card | technical design §3, requirements FR-7 |
 | G6 | Media the firmware boots from | configured media attach **at creation, before the first reset**, with no swap delay. A slot can be `required` (Next `sd.next0`): starting without it fails with a clear error instead of a black screen | technical design §3 |
-| G7 | FAT32 cluster minimum | a FAT32 volume always has ≥ 65 526 clusters and a FAT16 volume ≥ 4 086. ChaN FatFs decides the type by cluster count (65 525 or fewer = FAT16, 4 085 or fewer = FAT12; the Next's `tbblue.fw`, gitlab.com/thesmog358/tbblue `ff.c:3144-3146`), so an under-clustered FAT32 volume is rejected (`jnext/src/core/fat32_image.h:8-17`). The layout grows the volume or shrinks the cluster; the FatFs oracle test checks every generated size | technical design §6.3 |
+| G7 | FAT32 cluster minimum | a FAT32 volume always has ≥ 65 526 clusters and a FAT16 volume ≥ 4 086. ChaN FatFs decides the type by cluster count (65 525 or fewer = FAT16, 4 085 or fewer = FAT12; the Next's `tbblue.fw`, gitlab.com/thesmog358/tbblue `ff.c:3144-3146`), so an under-clustered FAT32 volume is rejected (`jnext/src/core/fat32_image.h:8-17`). The layout grows the volume or shrinks the cluster; the oracle test checks every generated size | technical design §6.3 |
 | G8 | Per-slot FAT default | FAT16 stays the default for every slot. A slot may declare another if its firmware requires it; none does. The Next firmware and NextZXOS read FAT16 and FAT32 ([integration-next.md](integration-next.md)), Sprinter's DSS reads FAT12 / FAT16 only | technical design §6.3 |
 | G9 | Floppy geometry | the floppy kind carries 256-, 512- and 1024-byte sectors (TRD, Profi CP/M 720 KB, Sprinter / PC 1.44 MB, +3). The registry adds raw PC floppy images by size (737 280, 1 474 560 bytes); `.img` ambiguity is settled by the slot kind, as before | [integration-floppy.md](integration-floppy.md) §2 |
 | G10 | Large media | multi-GB images are normal (Next ≥ 1 GB, SDHC up to 32 GB). `RawImage` already uses 64-bit offsets and never loads the file; `SessionWriteMap` is sparse; `SdCardSpi` reports SDHC above 2 GB. A test inserts a sparse 4 GB image | [integration-zxevo-sd.md](integration-zxevo-sd.md) §5 |
@@ -101,9 +101,9 @@ stack.
 | Requirements and the review decisions | folded into the documents |
 | Slot catalog, add-on registration, signals, collisions, boot media, FAT limits | this round (G1-G12) |
 | Existing seam | `IBlockDevice`, `RawImage`, `MemoryDisk`, `SessionWriteMap`, `SdCardSpi`, `ZControllerSpi` on master (E5) |
-| FAT oracle | ChaN FatFs R0.15b (BSD-1) is available locally (`jnext/third_party/fatfs`, also pico-spec); vendored into `core/src/3rdparty/fatfs` (the test oracle in M1, the FAT file view in H3). jnext already uses it the same way, over host images |
+| FAT oracle | **As built:** our own `FatVolumeReader` (`core/src/emulator/io/storage/fat/`), written from the FAT specification, no third-party code (the test oracle in M1, the FAT file view in H3). It decides the FAT type by cluster count exactly as ChaN FatFs does |
 | YAML / JSON for the manifest | `core/src/3rdparty/rapidyaml` (bundled, single header, unused so far); reads JSON too |
-| Guest oracles | ERS (on master), NedoOS release (`osatm3sd.$C` + tree), jnext / NeoGS images later |
+| Guest oracles | ERS (on master), NedoOS `sd_boot.$C` + `term.com` / `cmd.com` (`testdata/machines/zxevo/nedoos/`), jnext / NeoGS images later |
 | Code hook points | pinned: **frame boundary** = `MainLoop::CompleteFrame` (`core/src/emulator/mainloop.cpp:419`; the TTD call is at `:457`), reached by both the main loop and `RunFrame`, so `MediaManager::ApplyPending()` goes just before the TTD call. **Creation** in `Emulator::Init`: `Core` created and `Init()`-ed at `emulator.cpp:173-174` (peripherals register their slots there), the TTD manager at `:272`, the first `_core->Reset()` at `:362`. So the manager is created before `:173`, and configured media are inserted between `:272` and `:362`. **Relative paths** resolve against the folder of `Config::_configFilePath` (`config.h:72`) |
 
 M1 work order:
@@ -111,7 +111,7 @@ M1 work order:
 2. `MediaManager` with a block slot.
 3. `ReadOnlyGuard`.
 4. The folder pipeline: `ServiceFileFilter`, `FolderSnapshot`, `FolderManifest`.
-5. `FatNameMapper`, `FatLayout`, `HostFolderFat`, with the FatFs oracle.
+5. `FatNameMapper`, `HostFolderFat`, with the `FatVolumeReader` oracle.
 6. `MediaConfig`.
 7. `sd.zc` migration.
 8. The TTD common rule for `sd.zc`.
@@ -125,4 +125,4 @@ M1 work order:
 | ZX Next details (both SD sockets in NextZXOS, the FPGA flash) | [integration-next.md](integration-next.md), Next project |
 | Sprinter details (IDE channel-select ports, the accelerator) | [2026-09-28-sprinter](../2026-09-28-sprinter/) |
 | A hardware Z-Controller variant for Scorpion (emulators offer it as a generic add-on) | M6 |
-| `data/configs/atm710/unreal.ini` uses `NEMO-DIVIDE` and `[ZC]`, which are not ATM2 hardware (a copied config) | fix with the ATM IDE scheme in M6 |
+| `data/configs/atm710/unreal.ini` uses `NEMO-DIVIDE` and `[ZC]`, which are not ATM2 hardware (a copied config) | fix with the ATM IDE scheme in M6 - IDE part done: `Scheme=ATM` (`f5fc5f05`); the `[ZC]` section is still in the config |

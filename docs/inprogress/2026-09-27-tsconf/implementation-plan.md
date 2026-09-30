@@ -43,7 +43,8 @@ flowchart LR
 ```
 
 Both PLAN #40 V0 items TSConf depended on are done: the unique `PeripheralId`
-table (P1 appends id 13 to it) and the page-255 sentinel fix (`3a6eabc6`), so
+table (P1 appends id 16 to it - 13/14 are the +3's, 15 is `EvoSdCard`, which
+TSConf reuses for its SD card) and the page-255 sentinel fix (`3a6eabc6`), so
 vdos's RAM page 0xFF is fully tracked by TTD. V1
 and #42 are only needed by P7; P0-P6 can proceed without them. P4 and P5 are
 independent after P3.
@@ -56,26 +57,33 @@ with agent assistance; for sequencing, not commitments).
 Goal: every generic extension point exists and is proven not to change any
 existing machine.
 
-**Moved to PLAN #60 (2026-09-28).** The interrupt source (INF-1) and the memory
-write intercept with its benchmark gate (INF-2, INF-3) are now built by the
-shared machine-infrastructure row #60, before TSConf starts (PLAN rationale 6:
-infrastructure → existing machines migrated → TSConf → Sprinter). The M1 hook
-(INF-4) already exists on master (#55 E3). When phase 0 starts, these rows only
-confirm the landed pieces meet the asserts below; the rest of phase 0 (INF-5 to
-INF-10) stays here.
+**Built on branch `tsconf-infra` (2026-09-29): INF-1, INF-2, INF-5; INF-3 measured (A/B, within noise after the per-step gate)**
+(PLAN #60(a) plus INF-5). The M1 hook (INF-4) was already on master (#55 E3).
+What changed from the v1.0 plan:
+- INF-2: the write intercept is a **write-only host bus overlay**
+  (technical-design §3.5 item 2), not a per-bank flag in the plain write path;
+  several overlays can be installed at once (`Core::AddBusOverlay`).
+- INF-3: no gate is needed on the plain path (it is untouched: the overlay
+  interfaces are selected only while an overlay is installed); the existing
+  `hostbusoverlay_benchmark.cpp` covers the overlay path.
+- INF-1: `IInterruptSource` has no `OnFrameStart`; the rollover comes through
+  `IMachineStepHook::OnMachineFrameRollover`. It has `OnReti()` (Sprinter).
+- INF-4: `IMachineM1Hook::BeforeMachineM1/OnMachineM1(address)` - the opcode
+  comes from a debug read, not a hook argument.
+INF-6 to INF-10 done 2026-09-29 (branch `tsconf-isolation`): phase 0 is complete; phase 1 starts with the decoder.
 
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
-| INF-1 | `cpu/interruptsource_test.cpp` | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow respected; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |
-| INF-2 | `memory/memory_test.cpp` (new cases) | flag clear → no callback; flag set on bank 1 → `OnInterceptedWrite(0x4123, v)` called **after** the byte is stored (RAM holds `v`); `MemoryWriteDebug` path too | §3.5 intercept |
-| INF-3 | benchmark `BM_MemoryWriteFast` (existing or new in `core/benchmarks`) | ≤ 1 % regression vs. master on the 128K path | gate for INF-2 |
+| INF-1 ✅ | `cpu/int_test.cpp` (`InterruptSource_Test`) | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow and prefix respected; RETI (and mirrors) call `OnReti`, RETN does not; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |
+| INF-2 ✅ | `cpu/core_test.cpp` | a write-only overlay sees writes in its window **after** the byte is stored and never a read, in fast and debug mode; two overlays chain in install order; one alone is called directly; at most 4 | §3.5 intercept |
+| INF-3 ✅ | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` (`BM_HostFrame_*`) | A/B done 2026-09-29 ([performance-guidelines.md](../../guidelines/performance-guidelines.md) §5): the first version's two per-instruction tests cost 0-1 %; after moving them behind the per-step gate `EmulatorContext::stepWork` the classic machines are within noise of the code without the feature (−0.8 … +0.2 %) | gate for INF-1 / INF-2 / INF-5 |
 | INF-4 | `cpu/z80_test.cpp` (new cases) | with `CF_MACHINEM1` set and a fake hook: `OnM1(pc, opcode)` called once per instruction with the right opcode (incl. prefixed: once per M1 cycle — ED xx gives two calls); not called when flag clear | §3.6 |
-| INF-5 | `mainloop_test.cpp` (new) | a registered `IMachineStepHook` runs on every CPU step **also when `_renderThisFrame` is false** (turbo decimation) | §3.8, `MainLoop::OnCPUStep` |
-| INF-6 | `tsconfisolation_test.cpp` | scan of `core/src` finds no forbidden token outside the allowlist (§3.3) — **expected red** until INF-7 lands | enforcement |
-| INF-7 | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 |
-| INF-8 | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias |
-| INF-9 | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 |
-| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 13`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
+| INF-5 ✅ | `cpu/z80_test.cpp` (`MachineStepHook_Test`) | a registered `IMachineStepHook` runs after every CPU step with the reached `t`, **also when `_renderThisFrame` is false** (turbo decimation), and gets `OnMachineFrameRollover(frame)` once per frame | §3.8, `Z80::OnCPUStep`, `Core::AdjustFrameCounters` |
+| INF-6 ✅ | `tsconfisolation_test.cpp` | scan of `core/src` finds no forbidden token outside the allowlist (§3.3) — green since INF-7 (2026-09-29), file `core/tests/emulator/machines/tsconf/tsconfisolation_test.cpp` | enforcement |
+| INF-7 ✅ | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 — done; deviations: `clut` stays shared (the ATM drawers and tests read it), the ROM loader dispatch moves to phase 1 ROM-1 |
+| INF-8 ✅ | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias — done 2026-09-29: `Config::model_aliases` (`FindModelByShortName`, also config `HIMEM`); tests `ConfigModelLookup_Test`, `Config_Test.TsconfConfigHimemSelectsTsl` |
+| INF-9 ✅ | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 — done 2026-09-29: `MM_TSL` in the canonical-geometry switch; test `Config_Test.TsconfCanonicalTiming` |
+| INF-10 ✅ | TTD contract test | `PeripheralId::TsConfPaging == 16`, `TtdClockUnits() == 4`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) — done 2026-09-29 for the table: `PeripheralId::TsConfPaging = 16`, `ttd.ksy`, test `TTDPeripheralIdTable_Test` (checks every id's number and its ttd.ksy entry); `TtdClockUnits() == 4` moves to phase 1 with the decoder |
 
 Exit: all INF tests green; the full suite and the benchmark gate unchanged;
 `TSL` still not creatable.
@@ -115,7 +123,7 @@ offset 0 of every page), helpers `Out(port, v)`, `In(port)`, `Peek(addr)`,
 | CCH-1 | cache hit semantics: `CACHE_CONFIG=0x04` (W2), read 0x8000 (fills), DMA-free RAM change via debug poke to the physical page, read 0x8000 → **old** value; CPU write 0x8000 → invalidates, next read → new value (hs §2.5) |
 | CCH-2 | `SYS_CONFIG` bit 2 → `CACHE_CONFIG = 0x0F`; any later `SYS_CONFIG` write with bit 2 = 0 → 0x00 |
 | MRG-1 | `modelsregression_test.cpp` row for `MM_TSL` |
-| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares id 13 |
+| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares ids 16 (paging) and 15 (`EvoSdCard`) |
 | ROM-1 | loader: 512 KB `zxevo.rom` and 64 KB `ts-bios.rom` both load; 64 KB pads pages 4-31 with 0xFF; < 64 KB rejected |
 | BOOT-0 | real ROM smoke (skip if `data/rom/zxevo.rom` absent): after reset, W0 page 0 bytes at 0x0B05 read "TS-BIOS" (hs §2.2 evidence) |
 
@@ -202,30 +210,62 @@ clears (with a frame cap).
 | DMA-8 | busy: `IN #27AF` bit 7 = 1 while running, 0 after; DMA INT (vector 0xFB) once at completion when `INT_MASK[2]` |
 | DMA-9 | `DMA_CTRL` write while busy → relaunch from reloaded counters, **no INT** for the aborted run |
 | DMA-10 | address register write while busy modifies the live counter; `DMA_LEN` write applies at the next block |
-| DMA-11 | undefined code (0x0, 0x5, 0x8, 0xE, 0xF, 0x3 without IDE) → busy forever, no INT; next `DMA_CTRL` recovers |
+| DMA-11 | undefined code (0x0, 0x5, 0x8, 0xE, 0xF; 0x3/0xB with `[HDD] Scheme=NONE`) → busy forever, no INT; next `DMA_CTRL` recovers |
 | DMA-12 | pacing: a 256-word copy with video in 256C takes more lines than with NOGFX (budget model, ancestor units); identical when frames are decimated |
 | DMA-13 | DMA does not invalidate the CPU cache (CCH-1 with DMA as the writer) |
 | DMA-14 | SPI 0x2 with a scripted `SdCardSpi` stub: 512-byte sector = LEN 0xFF, NUM 0; little-endian word assembly; 0xFF transmitted on reads |
+| DMA-15 | IDE 0x3 with a memory disk on `ide0.master` after READ SECTORS: `LEN 0xFF, NUM 0` moves 256 words = the sector, low byte at the even address; 0xB writes a sector back (WRITE SECTORS) byte-identical; after 0x3, `IN #11` = high byte of the last word (hs §8.3); an empty unit reads #FFFF and completes |
 | TTD-4 | capture mid-transfer (half the words done), restore, continue → destination bytes and completion tact identical |
 
 ## Phase 6 — Storage and snapshots · L
+
+> **2026-09-28, the unified media manager (PLAN #58):** the SD card is the
+> media manager's `sd.zc` slot ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)).
+> Already built and tested by #58 M1 (branch `media-manager`): `SdCardSpi` over
+> `IBlockDevice` (SD-0, BLK-1), host folders as FAT16 / FAT32 volumes
+> (`HostFolderFat`, checked by the independent `FatVolumeReader`; VFAT-1…3 run
+> against it with `fs=fat32` for the xpeccy layout), CP866 / CP1251 short
+> names, `[MEDIA] sd.zc = <image or folder>` plus the legacy `[ZC]` keys.
+> API-1 is the media verbs of [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)
+> (#58 M4: one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP,
+> Lua, Python), not a TSConf `/sd` API. TSConf's own work here: register the
+> `sd.zc` slot in its decoder (as `PortDecoder_ATM3::EvoSdSlot`), the DMA SPI
+> path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3 — layers 1 and 2 of
+> the storage stack ([layers](../2026-09-28-storage-manager/technical-design.md#11-layers-from-the-guests-port-to-the-medium)).
+>
+> **2026-09-29, Nemo IDE (D2 decided: emulated; hardware-spec §8.3,
+> technical-design §3.11).** On the shared IDE core (`f5fc5f05`). TSConf's own
+> work: `TryIdePortIn/Out` first in its decoder, `[HDD] Scheme=NEMO-DIVIDE`
+> and `IdeStall=0` in the ts-conf ini, `PeripheralId::AtaChannel` (17) in its
+> TTD ids, and three small additions to the shared `IdeAdapter`
+> (`DmaReadWord`, `DmaWriteWord`, a "this access reached the drive" flag) with
+> their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
+> methods; do them first in this phase or move them into phase 5.
 
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |
 | SD-0 | `SdCardSpi` is present on master (NeoGS merged) or lifted unchanged from the `neogs` branch with its own suite (CMD0 → R1 0x01, CMD8 echo 0x1AA, ACMD41 → 0x00, CMD58 CCS, CMD17 token 0xFE + 512 B, write modes, CMD59) — no TSConf changes to the protocol |
 | BLK-1 | `sdcardspi_test.cpp`: the `ISdBlockStore` extraction leaves every NeoGS SD test green; a memory-backed store serves CMD17/CMD24 |
-| VFAT-1 | `VirtualFatBlockStore` (`virtualfatblockstore_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry (2 FATs, 8 sectors/cluster) |
-| VFAT-2 | a host folder with `readme.txt` + long-name file → a FAT reader (test helper) lists the LFN and the cp866 8.3 alias; file bytes match; writes rejected |
+| VFAT-1 | `HostFolderFat` with `fs=fat32` (#58 M1, `hostfolderfat_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry |
+| VFAT-2 | a host folder with `readme.txt` + long-name file → `FatVolumeReader` lists the LFN and the cp866 8.3 alias; file bytes match; guest writes go to the session layer, the folder is unchanged (#58 M1) |
 | VFAT-3 | equivalence: same file set via `mkfs.fat` image (fixture checked into `testdata/`) → identical directory listing and file bytes (not identical sectors) |
+| SLOT-1 | TSConf registers `sd.zc` with the media manager (tags `block sd zcontroller primary`); `[MEDIA] sd.zc` and a folder insert attach before the first reset; a ZX-Evo → TSConf model switch keeps the card (#58 M5) |
 | BETA-1 | VG93 ports answer only in DOS or with `FDD_VIRT[7]`; `#9F` never; joystick `#1F` only outside DOS (hs §8.2, §9) |
 | VDOS-1 | drive B virtual (`FDD_VIRT=0x02`), system reg selects B, `IN (#1F)` in DOS → next M1 W0 = RAM 0xFF writable; `IN (#3F)` inside vdos → exit immediately; `OUT (#FF)` inside vdos only changes drive bits |
 | VDOS-2 | CMOS reachable inside vdos, not from TR-DOS ROM (hs §9) |
 | SPG-1 | uncompressed SPG v1.0 fixture: PC/SP/IFF1/clock/page3 applied, blocks placed |
 | SPG-2 | MegaLZ and Hrust blocks decode (fixtures generated with the ancestor's packers or taken from MAME's `tsconf.xml` set) |
 | SPG-3 | v1.1 (version 0x11) accepted |
-| API-1 | WebAPI/MCP/CLI/Lua/Python SD media: mount image, mount folder, eject, status — same `SdCardState` everywhere (parity contract test) |
+| API-1 | the media verbs on every surface (#58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): `media insert sd <image or folder>`, `eject`, `info` — nothing TSConf-specific; the #58 conformance test covers TSConf's slot |
+| IDE-1 | decode: `IN #F0` (status), `#C8` (alternate status), `#11` answer from the IDE board in DOS, outside DOS and inside vdos, at every clock; `#1F`/`#3F` stay Beta-128 / joystick; with `Scheme=NONE` all read 0xFF (hs §8.3) |
+| IDE-2 | Nemo order: `OUT #11,#AB : OUT #10,#CD` writes #ABCD (image bytes `CD AB`); `IN #10` then `IN #11` read a word low, high |
+| IDE-3 | DivIDE order: `OUT #10,lo : OUT #10,hi` and two `IN #10`; an access to another IDE port between the halves restarts the pair |
+| IDE-4 | stall off (`IdeStall=0`, default): `IN A,(#F0)` costs the same T-states as `IN A,(#FE)`; on: +1 / +2 / +3 T at 3.5 / 7 / 14 MHz; `IN #11` and the latched second `IN #10` add nothing |
+| IDE-5 | TTD: capture between the two halves of a Nemo write and mid-sector, restore → identical bytes on the unit and identical latch state (shared `AtaChannel` blob 17) |
+| BOOT-4 | TS-BIOS lists and boots a small IDE image on `ide0.master` (characterize, then assert; skip without the fixture) |
 | BOOT-3 | TS-BIOS boots a FatFS folder (fixture with a small `.spg` or `.trd`) to its file browser (characterize, then assert) |
+| IDE-1 | `[HDD] Scheme=NEMO-DIVIDE` (D2): the decoder reaches the IDE registers through `TryIdePortIn/Out`; DMA 0x3 / 0xB move whole words through `GetIdeAdapter().DmaReadWord/DmaWriteWord` (IDENTIFY sector lands in RAM; a written sector reads back) |
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
 
@@ -247,7 +287,7 @@ settings. Exit = technical-design §3.19 checklist.
 
 | ID | Asserts |
 |:--|:--|
-| TIM-1 | 14 MHz cache-miss waits per `zmem.v:153-172` tables (M1 +3..+6 fclk, read +2..+5) — measured with a timing loop vs. the table |
+| TIM-1 | 14 MHz cache-miss waits per `zmem.v:153-172` tables (M1 +3..+6 fclk, read +2..+5) — measured with a timing loop vs. the table. Built on the shared `MemoryWaitOverlay` (PLAN #60(d)): `ExtraClocks(kind, addr, startClock)` asks `TsConfMemory`'s cache whether the access misses; installed only while `zclk` = 14 MHz and a bank is uncached |
 | TIM-2 | 14 MHz external I/O (AY, VG93) stall = 8 fclk per access |
 | TIM-3 | DMA per-word costs per hs §6.2 (copy 2, BLT 3, fill 1, CRAM/SFILE ~2, SPI ~8 slots) replacing ancestor units; DMA-12 re-baselined deliberately |
 | TIM-4 | CPU stall at full video bandwidth (8/8 block) at 3.5/7 MHz |
@@ -263,9 +303,9 @@ settings. Exit = technical-design §3.19 checklist.
 | hs §3 | DEC-1, REG-1..2, RST-1..2, VID-4 |
 | hs §4 | ENG-2..3, VID-*, GFX-*, TSU-* |
 | hs §5 | INT-1..8 |
-| hs §6 | DMA-1..14, TIM-3 |
+| hs §6 | DMA-1..15, TIM-3 |
 | hs §7 | SND-1..3 |
-| hs §8 | SPI-1, SD-*, VFAT-*, BETA-1, VDOS-1..2 |
+| hs §8 | SPI-1, SD-*, VFAT-*, BETA-1, VDOS-1..2, IDE-1..5, DMA-15, BOOT-4 |
 | hs §9 | BETA-1, VDOS-2 |
 | hs §10 | RST-*, ROM-1, BOOT-*, SPG-* |
 | hs §11 | CLK-1..2, INT-7, TIM-* |

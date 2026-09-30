@@ -193,6 +193,36 @@ TEST_F(McpTools_Test, EmulatorManage_StartStopDestroy_VerbAndPath)
     EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1"));
 }
 
+TEST_F(McpTools_Test, EmulatorManage_CreateZXPoly_PostsTheWebApiZXPolyRequest)
+{
+    Json::Value response;
+    response["id"] = "poly-master";
+    _caller->routes["POST /api/v1/emulator/start"] = {201, response};
+
+    Json::Value args;
+    args["action"] = "create";
+    args["zxpoly"] = true;
+    args["zxpoly_file"] = "/games/Alien8.zxp";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["model"].asString(), "PENTAGON");    // ZX-Poly default machine
+    EXPECT_EQ(call->body["zxpoly"]["file"].asString(), "/games/Alien8.zxp");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/zxpoly"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "zxpoly_status";
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/zxpoly"));
+}
+
 TEST_F(McpTools_Test, EmulatorManage_GsByteActions_PostControlAudioGsWithValue)
 {
     Json::Value response;
@@ -700,6 +730,44 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("ch2 key-on mask 8 alg 7 228.5 Hz"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[fdc] S_IDLE, last restore"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_ContentionAspect)
+{
+    Json::Value contention;
+    contention["available"] = true;
+    contention["rule"] = "ula48";
+    contention["applicable"] = true;
+    contention["switch"] = "on";
+    contention["effective"] = true;
+    contention["memory_interface"] = "debug_contended";
+    contention["io_rule"] = "ula48";
+    contention["slots"] = Json::Value(Json::arrayValue);
+    for (int slot = 0; slot < 4; slot++)
+    {
+        Json::Value n;
+        n["slot"] = slot;
+        n["contended"] = slot == 1;
+        contention["slots"].append(n);
+    }
+    contention["statistics"]["last_frame"]["accesses"] = 1200;
+    contention["statistics"]["last_frame"]["wait_t"] = 3400;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/contention"] = {200, contention};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("contention");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/contention"));
+    ASSERT_TRUE(result.structured.isMember("contention"));
+    EXPECT_EQ(result.structured["contention"]["rule"].asString(), "ula48");
+    EXPECT_NE(result.text.find("[contention] rule ula48, switch on, in effect, interface debug_contended, io ula48, slots - C - -"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("last frame 1200 contended accesses, 3400 T waited"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
@@ -1417,6 +1485,60 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsQueryAndReportsHit)
     EXPECT_NE(result.text.find("RAM page 5"), std::string::npos) << result.text;
 }
 
+/// port_events: "when did the program ..." - the event, its argument and the
+/// options reach POST /ttd/port-events (from_frame/to_frame as from/to), and
+/// the summary lists each hit with its time, PC, port, value and AY register
+TEST_F(McpTools_Test, TimeTravel_PortEvents_ForwardsTheQueryAndListsTheHits)
+{
+    Json::Value reply;
+    reply["event"] = "ay-write";
+    reply["direction"] = "out";
+    reply["count"] = 1;
+    reply["truncated"] = false;
+    reply["scanned"] = 42;
+    Json::Value hit;
+    hit["index"] = 5;
+    hit["frame"] = 120;
+    hit["tinframe"] = 3500;
+    hit["port"] = 0xBFFD;
+    hit["value"] = 0x38;
+    hit["pc"] = 0x800C;
+    hit["ay_register"] = 7;
+    reply["hits"].append(hit);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/port-events"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "port_events";
+    args["event"] = "ay-write";
+    args["event_arg"] = "7";
+    args["from_frame"] = 100;
+    args["limit"] = 10;
+    args["newest"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/port-events");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["event"].asString(), "ay-write");
+    EXPECT_EQ(call->body["arg"].asString(), "7");
+    EXPECT_EQ(call->body["from"].asUInt(), 100u);
+    EXPECT_EQ(call->body["limit"].asUInt(), 10u);
+    EXPECT_TRUE(call->body["newest"].asBool());
+    EXPECT_NE(result.text.find("1 hit(s) among 42 out record(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 120 t=3500"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("(R7)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_PortEvents_NeedsAnEvent)
+{
+    Json::Value args;
+    args["action"] = "port_events";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'event'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/port-events"), nullptr);
+}
+
 TEST_F(McpTools_Test, TimeTravel_FindLast_BlockedReportsMarker)
 {
     Json::Value reply;
@@ -1436,6 +1558,54 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_BlockedReportsMarker)
 
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_NE(result.text.find("replay barrier disk_write"), std::string::npos) << result.text;
+}
+
+/// TD-8: the summary names the part of history the search examined
+TEST_F(McpTools_Test, TimeTravel_FindLast_ReportsTheSearchWindow)
+{
+    Json::Value reply;
+    reply["found"] = false;
+    reply["blocked"] = true;
+    reply["marker_frame"] = 30;
+    reply["marker_tinframe"] = 1200;
+    reply["marker_kind"] = "disk_write";
+    reply["marker_reason"] = "Write Sector";
+    reply["covered_from"] = 30;
+    reply["covered_from_tinframe"] = 1200;
+    reply["covered_to"] = 90;
+    reply["covered_to_tinframe"] = 0;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr"] = 23296;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Searched frame 30 t=1200 .. frame 90."), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseContinue_NoMatchReportsTheSearchWindowNotFrameZero)
+{
+    Json::Value reply;
+    reply["matched"] = false;
+    reply["pc"] = 65535;
+    reply["frame"] = 0;
+    reply["tinframe"] = 0;
+    reply["covered_from"] = 1;
+    reply["covered_from_tinframe"] = 0;
+    reply["covered_to"] = 40;
+    reply["covered_to_tinframe"] = 500;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "reverse_continue";
+    args["pcs"].append(0x8100);
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text.find("stopped at frame 0"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("No PC match. Searched frame 1 .. frame 40 t=500."), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_FindLast_NoCriterion_RejectsBeforeAnyCall)
@@ -1642,4 +1812,52 @@ TEST_F(McpTools_Test, TargetResolver_ExplicitId_ValidatedAgainstInstance)
 
     EXPECT_TRUE(ok);
     EXPECT_EQ(id, "emu-1");
+}
+
+// PLAN #42: the video_layout and video_text aspects hit /video/layout and /video/text
+// and summarize the layer windows / the text rows
+TEST_F(McpTools_Test, InspectState_VideoAspects_FetchLayoutAndText)
+{
+    Json::Value layer;
+    layer["id"] = "atm16";
+    layer["surface"]["width"] = 320;
+    layer["surface"]["height"] = 200;
+    layer["window"]["first_line"] = 68;
+    layer["window"]["line_count"] = 200;
+    layer["window"]["first_t"] = 8;
+    layer["window"]["t_count"] = 160;
+    layer["window"]["dots_per_t"] = 2;
+    Json::Value layout;
+    layout["available"] = true;
+    layout["mapped"] = true;
+    layout["family"] = "atm";
+    layout["video_mode"] = "ATM16";
+    layout["layers"].append(layer);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/layout"] = {200, layout};
+
+    Json::Value line;
+    line["text"] = "HELLO....";
+    Json::Value text;
+    text["available"] = true;
+    text["layer"] = "atmtx";
+    text["columns"] = 80;
+    text["rows"] = 25;
+    text["lines"].append(line);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/text"] = {200, text};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("video_layout");
+    aspects.append("video_text");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/layout"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/text"));
+    EXPECT_EQ(result.structured["video_layout"]["family"].asString(), "atm");
+    EXPECT_NE(result.text.find("[video_layout] ATM16, family atm"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("atm16 320x200, lines 68+200, T 8+160 at 2 dots/T"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[video_text] atmtx 80x25"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("\n  HELLO"), std::string::npos) << result.text;
 }

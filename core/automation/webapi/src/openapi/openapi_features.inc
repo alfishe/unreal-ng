@@ -54,6 +54,7 @@
     paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["responses"]["404"]["description"] =
         "Unknown emulator id, or unknown feature (the body lists available_features)";
     paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["responses"]["409"]["description"] =
-        "The feature exists but time-travel debugging holds it off: turbomode while a recording runs; fasttape, "
-        "turbotape and fastdisk while a recording runs, history is replayed, or the machine sits in history";
+        "The feature exists but time-travel debugging holds it: turbomode while a recording runs; fasttape, "
+        "turbotape and fastdisk while a recording runs, history is replayed, or the machine sits in history; "
+        "timetravel and debugmode cannot be switched off while a recording runs. The message says why";
 

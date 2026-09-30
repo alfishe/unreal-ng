@@ -61,6 +61,17 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 ### Machine Identity and Lifecycle
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**ZX-Poly** (four synchronized instances of one model, through the same
+`EmulatorManager::CreateZXPolyMachine` every surface uses):
+```lua
+local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
+local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
+print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
+print(status.parallel_slaves, status.pipelined_slaves)   -- how the slaves are scheduled
+```
+The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
+
 ### Running Scripts
 
 #### From Command Line
@@ -109,8 +120,8 @@ Global functions mirroring the CLI `tape` commands and the WebAPI `/tape/*` endp
 
 ```lua
 -- Load / eject
-local ok = tape_load("/path/to/game.tap")   -- Load tape image (.tap/.tzx/.csw)
-local ok = tape_eject()                     -- Stop playback, drop image and catalog
+local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder
+local ok = tape_eject()                     -- The tape leaves the tape slot (false while TTD records)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 tape_play()      -- start at consumption cursor; resumes in place when paused
@@ -156,6 +167,26 @@ local result = tape_import("recording.wav", "imported.tap", 0.25)
 ```
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Media (every slot)
+
+Floppy drives, the SD card and every other slot through one set of functions — the same verbs,
+slot names, options and errors as the WebAPI, CLI, MCP and Python. Full reference:
+[docs/features/media.md](../../../features/media.md).
+
+```lua
+media_list()                                            -- slots + detached media
+media_insert("A", "/games/elite-1.trd")                 -- slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
+media_insert("sd", "/home/me/zx/sdcard", {fs = "fat32"})
+media_swap("A", "/games/elite-2.trd", {save = true})    -- a dirty disk needs save / export / discard
+media_eject("B", {export = "/tmp/b.trd"})
+media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
+media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
+media(verb, slot, path, opts)                           -- any verb
+```
+
+Each returns the result table: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
+and the verb's fields (`slots`, `info`, `formats`, ...).
 
 ### Disk Operations
 
@@ -302,7 +333,17 @@ ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
 ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
+gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
+cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
+ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, wave_memory, keyed channels/slots
+msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
+msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
+cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
+ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
+con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
 mode = screen_mode()        -- picture format, memory_layout, active_ram_pages, eff7/dffd/ff77
@@ -649,9 +690,14 @@ local status = profilers_status_all()
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
-Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false`, an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
+```lua
+local ok, reason = snapshot_load("game.sna")
+if not ok then print(reason) end   -- "Cannot load a snapshot while TTD is recording: ... Stop the recording first."
+```
+
+Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false` (plus a reason for a TTD refusal), an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
 
 **Session lifecycle:**
 
@@ -688,17 +734,33 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
+-- status.write_journal_complete = true  -- false: write/io find-last replays history
+-- status.write_journal_wrapped = false  -- true: a "no match" from the journal replays
+-- status.write_journal_gap     = nil    -- when incomplete: {reason, frame, tinframe}
 -- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300
 -- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
 -- status.coverage_index_bytes  = 13926
+-- status.input_event_count     = 10
+-- status.external_event_count  = 0
+-- status.input_history_complete = true
+-- status.port_journal_active   = true   -- replay needs no media or host device
+-- status.port_journal_off_reason = nil  -- set when off (e.g. NeoGS in the GS slot)
+-- status.port_read_count       = 8225
+-- status.port_write_count      = 15520
+-- status.port_journal_bytes    = 9234
+-- status.port_replay_value_mismatches = 0  -- > 0: a device answered otherwise on replay
+-- status.port_replay_divergences = 0     -- > 0: execution left the recording
 --
 -- Memory
 -- status.page_store_bytes         = 40960
 -- status.page_store_used_bytes    = 665600
 -- status.baseline_frames_captured = 2159
 -- status.session_heap_bytes       = 1043968
+--
+-- status.last_drop_reason         = "snapshot-load"  -- "" until a history is dropped
+-- status.unavailable_reason       = nil  -- set when this machine has no time travel (a ZX-Poly member)
 ```
 
 `source_path` is filled by `ttd_load` (the path it was given).
@@ -737,6 +799,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 --     frame/tinframe are present only when matched.
 --     A replay barrier met on the way adds
 --     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
+--     covered_from, covered_from_tinframe, covered_to, covered_to_tinframe:
+--     the searched span (command-interface.md -> Search window)
 ```
 
 **Reverse search:**
@@ -763,8 +827,30 @@ local r2 = ttd_find_last{
 --     { found = false, blocked = true, marker_frame, marker_tinframe,
 --       marker_kind, marker_reason }  (a replay barrier stopped the search first)
 --     phys_page is absent (nil) for ROM / no RAM page.
+--     Every answer also carries covered_from / covered_from_tinframe /
+--     covered_to / covered_to_tinframe: the part of history searched.
 --     For writes the write journal answers when it holds every write of the session;
 --     otherwise the search replays history (see command-interface.md "When the write journal answers").
+```
+
+**When did the program ... (port events):** `ttd_port_events(event, [arg], [options])` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+
+```lua
+local r = ttd_port_events("key", "space")          -- when the game saw SPACE pressed
+-- r.ok = true, r.count = 1, r.truncated = false, r.scanned = 7905, r.direction = "in"
+-- r.hits[1] = { index = 6082, frame = 430, tinframe = 7824, port = 0x7FFE, value = 0xFE, pc = 0x72B2 }
+
+local w = ttd_port_events("ay-write", 7, { limit = 3 })
+-- w.count = 3, w.truncated = true; w.hits[1]: frame 50, tinframe 9202, pc 0xD86E, value 0x18, ay_register 7
+
+local f = ttd_port_events("key", "q", { file = "testdata/ttd/port-journals/dizzyx.ttd" })
+-- a saved session, searched without loading it: f.hits[1].frame = 365
+
+local j = ttd_port_events("in", nil, { port = 0x1F, port_mask = 0xFF, match = "any-set", value_mask = 0x1F })
+-- Kempston joystick reads with a direction or fire down
+if not j.ok then print(j.error) end                 -- no journals, recording running, bad option
 ```
 
 **Markers and bookmarks:**
@@ -865,7 +951,12 @@ emu.paging_state()                   -- tagged paging latches + bank table (P1-2
                                      -- ROM bank rows carry the §5.2 identification: name = recognized
                                      -- content (SHA-256 catalog), role = the model's layout slot; a
                                      -- role/name mismatch is the one-glance wrong-ROM signal.
-emu.beam_position()                  -- { frame, scanline, tstate, zone, ... }
+emu.beam_position()                  -- { frame, line, tstate, zone, ..., layers = {{id, x, x_end, y}} }
+emu.video_layout()                   -- layers (surface, beam window, dots_per_t), framebuffer placement, family
+emu.video_pixel(x, y [, layer])      -- sources (space, page, offset, bit_mask, role, z80), colour_index, rgb, rendered_rgb
+emu.video_pixel_at(t)                -- the same for the point under the beam at frame T (layer pixel or border)
+emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
+emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 
 -- Coverage analyzer

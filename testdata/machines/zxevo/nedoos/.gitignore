@@ -1,0 +1,2 @@
+# NedoOS keeps its programs in bin/: re-include it past the root **/[Bb]in rule
+!sdcard/bin/

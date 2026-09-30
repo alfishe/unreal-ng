@@ -55,7 +55,8 @@
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["responses"]["200"]["description"] =
         "Memory profiler status";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "Get per-page access summaries";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "[Planned] Get per-page access summaries";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["description"] =
         "Get read/write/execute access counts aggregated per physical memory page.";
@@ -72,7 +73,8 @@
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["responses"]["200"]["description"] =
         "Per-page access summaries";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "Get address-level access counters";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "[Planned] Get address-level access counters";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["description"] =
         "Get detailed read/write/execute counters for each address within a page or Z80 address space.";
@@ -95,7 +97,8 @@
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] =
         "Address-level access counters";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["summary"] = "Get monitored region statistics";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["summary"] = "[Planned] Get monitored region statistics";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["description"] =
         "Get access statistics for all monitored memory regions.";
@@ -106,7 +109,8 @@
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] =
         "Monitored region statistics";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "Save access data to file";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "[Planned] Save access data to file";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["description"] =
         "Save memory access profiling data to a file in the specified format.";
@@ -201,7 +205,8 @@
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["responses"]["200"]["description"] =
         "Call trace entries";
 
-    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["summary"] = "Get call/return statistics";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["summary"] = "[Planned] Get call/return statistics";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["tags"].append("Call Trace Profiler");
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["description"] =
         "Get aggregated statistics including call counts, return counts, max call depth, and top targets.";

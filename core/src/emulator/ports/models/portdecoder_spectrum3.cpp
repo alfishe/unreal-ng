@@ -13,7 +13,6 @@
 
 PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
 }
 
 PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
@@ -42,7 +41,6 @@ void PortDecoder_Spectrum3::reset()
     state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
     // Both latches zero: ROM 0 at #0000, RAM 5 / 2 / 0 (UpdateModelMemoryBanks)
-    _7FFD_Locked = false;
     _context->pMemory->UpdateZ80Banks();
 
     // Set default border color to white
@@ -54,6 +52,10 @@ void PortDecoder_Spectrum3::reset()
 
 uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
@@ -129,6 +131,12 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
+    else if (IsBeta128Port(port) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        // Beta 128 FDC ports answer only while the TR-DOS ROM is paged in (as in the Pentagon decoder):
+        // outside TR-DOS the port stays undecoded and Z80::in() serves the floating bus
+        disp.wasBeta128Gated = true;
+    }
     else
     {
         result = PeripheralPortIn(port);
@@ -157,6 +165,10 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
@@ -361,14 +373,13 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
     // Locked: the whole port is ignored until reset. The lock is the latch's
     // own bit 5, so a reset into 48 BASIC (RM_SOS sets it) and a TTD restore
     // lock exactly like an OUT does
-    if (state.p7FFD & 0b0010'0000)
+    if (IsPagingLocked())
         return;
 
     const uint8_t prevScreenNumber = (state.p7FFD & 0b0000'1000) >> 3;
     const uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
 
     state.p7FFD = value;
-    _7FFD_Locked = (value & 0b0010'0000) != 0;
     memory.UpdateZ80Banks();
 
     if (prevScreenNumber != screenNumber)

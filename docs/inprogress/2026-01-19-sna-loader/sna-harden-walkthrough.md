@@ -147,6 +147,6 @@ snapshot save <file> [--force]    # Format from extension (.sna)
 - [lua_emulator.h](../../../core/automation/lua/src/emulator/lua_emulator.h) - Lua binding
 
 ## Documentation Updated
-- Created [docs/inprogress/2026-01-19-sna-loader/SCOPE.md](docs/inprogress/2026-01-19-sna-loader/SCOPE.md) - Scope of work document
+- Created docs/inprogress/2026-01-19-sna-loader/SCOPE.md - Scope of work document
 - Created [save-implementation-plan.md](save-implementation-plan.md) - Save feature implementation plan
 

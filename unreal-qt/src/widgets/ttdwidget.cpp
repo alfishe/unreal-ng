@@ -354,6 +354,21 @@ void TtdWidget::updateTelemetry()
     ttd::TTDSessionInfo info = ttd->GetSessionInfo();
     ttd::TTDTimePoint currentPos = ttd->CurrentPosition();
 
+    // Not available for this machine at all (a ZX-Poly member): say why
+    if (!info.unavailableReason.empty())
+    {
+        _recordBtn->setEnabled(false);
+        _recordBtn->setText(tr("Start Rec"));
+        _loadBtn->setEnabled(false);
+        _exportBtn->setEnabled(false);
+        _clearBtn->setEnabled(false);
+        _statusLabel->setText(tr("TTD: not available"));
+        _statusLabel->setToolTip(QString::fromStdString(info.unavailableReason));
+        _scrubberContainer->setVisible(false);
+        return;
+    }
+    _statusLabel->setToolTip(QString());
+
     _loadBtn->setEnabled(true);
 
     const bool isRecording = (info.state == ttd::TTDSessionState::Recording);
@@ -378,6 +393,16 @@ void TtdWidget::updateTelemetry()
     QString provenanceStr = info.loadedFromFile
         ? tr(" [Loaded: %1]").arg(QFileInfo(QString::fromStdString(info.sourcePath)).fileName())
         : QString();
+
+    // The journal was expected (enabled) but misses writes of this session:
+    // write searches will replay instead of answering from it. Say so, with
+    // the cause in the tooltip.
+    const bool journalGap = info.writeJournalEnabled && !info.writeJournalComplete && hasHistory;
+    provenanceStr += journalGap ? tr(" | Journal incomplete") : QString();
+    _statusLabel->setToolTip(journalGap
+        ? tr("The write journal does not cover this session (%1): write/port searches replay history.")
+              .arg(QString::fromStdString(info.journalGapReason))
+        : QString());
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
 
@@ -554,6 +579,12 @@ void TtdWidget::onClearSession()
     if (!context || !context->pTimeTravelManager) return;
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
 
+    // B9: clearing while recording would drop the history being recorded
+    if (const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        QMessageBox::warning(this, tr("TTD Recording Active"), QString::fromStdString(refusal));
+        return;
+    }
     ttd->InvalidateSession("User cleared session in Qt GUI");
     updateTelemetry();
 }

@@ -232,9 +232,74 @@ Content-Type: application/json
 }
 ```
 
+
+### 5b. ZX-Poly machine
+**Endpoints**: `POST /api/v1/emulator/start` with `zxpoly`, `GET /api/v1/emulator/{id}/zxpoly`
+**Description**: A ZX-Poly machine is four synchronized instances of one
+model (default `PENTAGON`). Module 0, the master, is the machine every
+endpoint addresses and the id returned. Modules 1-3 are hidden members: they
+are not listed, but are reachable by id. Deleting the master removes all four.
+Recipe: [.recipe/machines/zxpoly.md](../../../../.recipe/machines/zxpoly.md).
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" \
+  -d '{"model": "PENTAGON", "zxpoly": {"file": "/path/to/Alien8.zxp"}}'
+```
+
+The same machine also starts by name, like any model. There are three
+configurations; `GET /api/v1/emulator/models` lists them with `"zxpoly":
+true` and `base_model`:
+
+| Configuration | Modules | Runs |
+|:--|:--|:--|
+| `ZXPOLY-48K` | 4 × 48K | replicated 48K software; ZX-Poly editions are refused (they need 128K paging) |
+| `ZXPOLY-128K` | 4 × 128K | `.zxp`, the Test ROM |
+| `ZXPOLY-PENTAGON` | 4 × Pentagon | everything, including multiloader disks (TR-DOS) |
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" -d '{"model": "ZXPOLY-128K"}'
+```
+
+A configuration fixes the RAM size, so `ram_size` with a configuration name
+returns 400.
+
+The `zxpoly` field takes one of two forms:
+
+- `true`: the bare machine;
+- `{"file": path}`: a `.zxp` snapshot, a `.prom` ZX-Poly ROM image (the Test
+  ROM), or a multiloader disk (`.trd`/`.scl`, which needs a model with
+  TR-DOS).
+
+The 201 response carries the group status under `zxpoly`. Every member's
+`GET /api/v1/emulator/{id}` carries `"zxpoly": {"module", "master_id",
+"locked", "video_mode"}`.
+
+`GET /api/v1/emulator/{id}/zxpoly` (any member id):
+```json
+{
+  "master_id": "e5dad078-...", "locked": true, "slaves_running": false,
+  "parallel_slaves": true, "pipelined_slaves": false,
+  "port_3d00": 157, "video_mode": 7,
+  "modules": [ {"module": 0, "id": "e5dad078-...", "registers": [0, 0, 0, 0]},
+               {"module": 1, "id": "f67691a2-...", "registers": [18, 0, 0, 0]}, "..." ],
+  "divergence": {"diverged": false}
+}
+```
+`divergence` compares each slave's control state (PC, SP, I, IM, IFF1, HALT,
+T-state, `#7FFD`) with the master's at the last frame boundary, where all
+four stand at the same position. `parallel_slaves`: the locked slaves run
+their frame at the same time. `pipelined_slaves`: the last frame boundary
+left them running into the master's next frame (unlimited speed only). The
+state at every frame boundary is the same in every schedule. A 404 means no such instance, or it is
+not a ZX-Poly machine.
+
 ### 5b. Switch Model (validate-first)
-**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep"}`)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
 ### 6. Remove Emulator
 **Endpoint**: `DELETE /api/v1/emulators/{id}`  
@@ -296,17 +361,30 @@ GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
 GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
 GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
-GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone; layers[] = the layer pixel under the beam (id, x, x_end, y)
+GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, beam window, dots per T) and framebuffer placement (mapped, family)
+GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too
+GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture)
+GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
+GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
+GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
+GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
+GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
+GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
+POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
+GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
 
-The three device reports (AY, FM, FDC) are built once in the core
+The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
 data the CLI, Lua, Python and MCP return — see
 [command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)
@@ -1114,8 +1192,8 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 
 | Method | Endpoint | Body | Description |
 |:-------|:---------|:-----|:------------|
-| `POST` | `/tape/load` | `{"path": "..."}` | Load tape image (.tap/.tzx/.csw/…) |
-| `POST` | `/tape/eject` | — | Stop playback, drop image and catalog |
+| `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
+| `POST` | `/tape/eject` | — | The tape leaves the tape slot; 409 while a TTD recording runs |
 | `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
@@ -1227,24 +1305,25 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
 - `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- Snapshot/tape/disk load, disk create, ROM reload, a host speed change on a stopped session and `invalidate` drop the history; a reset stops the recording and keeps it.
+- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate`, switching `timetravel`/`debugmode` off and a GS `switch_personality` return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
-Positions are always a pair `frame` (absolute frame number) + `tinframe` (t-state offset inside the frame).
+Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).
 
 | Method | Path | Body / Query | Response fields | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |
 | `POST` | `/ttd/start` | Optional `{"mode": "gaming"\|"development", "enable_write_journal": bool}`. `gaming` = no write journal; `development` (default) = journal on. `enable_write_journal` wins over `mode`. Ignored when already recording. | `started`, `already_active`, `state`, `write_journal_enabled` | ✅ Implemented |
 | `POST` | `/ttd/stop` | — | `stopped` (false if it was not recording), `state` | ✅ Implemented |
-| `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state` | ✅ Implemented |
+| `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state`. 409 while recording (stop first). | ✅ Implemented |
 | `POST` | `/ttd/seek` | `{"frame": N, "tinframe"?: T}` *or* `{"bookmark": "label"}` | `reached`, `arrived_at {frame, tinframe}`, `halt_reason`, `blocking_marker {frame, tinframe, kind, reason}` (only when `halt_reason` is `external_event`), `state`, `bookmark` (bookmark seeks). 400 without `frame`/`bookmark` or with an empty label; 404 for an unknown bookmark. | ✅ Implemented |
 | `POST` | `/ttd/step-back` | — | `stepped`, `frame`, `tinframe` (one frame back, same position inside the frame) | ✅ Implemented |
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
 | `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
-| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it) | ✅ Implemented |
-| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason` | ✅ Implemented |
+| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)) | ✅ Implemented |
+| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
+| `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
 | `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
@@ -1280,15 +1359,30 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "model_id": 0,
   "model_ram_pages": 8,
   "write_journal_enabled": true,
+  "write_journal_complete": false,
+  "write_journal_wrapped": false,
+  "write_journal_gap": {"reason": "debug mode switched off during the recording", "frame": 240, "tinframe": 18211},
   "write_journal_records": 729025,
   "write_journal_bytes": 8748300,
   "coverage_index_frames": 300,
   "coverage_index_bytes": 13926,
-  "bookmark_count": 0
+  "bookmark_count": 0,
+  "input_event_count": 10,
+  "external_event_count": 0,
+  "input_history_complete": true,
+  "port_journal_active": true,
+  "port_journal_off_reason": null,
+  "port_read_count": 8225,
+  "port_write_count": 15520,
+  "port_journal_bytes": 9234,
+  "port_replay_value_mismatches": 0,
+  "port_replay_divergences": 0,
+  "last_drop_reason": null,
+  "unavailable_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 
@@ -1303,6 +1397,24 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
 ```
 
 `halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
+
+**port-events request:** searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Real answers from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X; the full set is its `expected.json`):
+
+```json
+{"event": "ay-write", "arg": "7", "limit": 2}
+```
+
+```json
+{
+  "event": "ay-write", "direction": "out", "count": 2, "truncated": true, "scanned": 73,
+  "hits": [{"index": 12, "frame": 50, "tinframe": 9202, "port": 48893, "value": 24, "pc": 55406, "ay_register": 7},
+           {"index": 42, "frame": 51, "tinframe": 6203, "port": 48893, "value": 24, "pc": 55406, "ay_register": 7}]
+}
+```
+
+Other options: `newest` (true: the last hits), `to`, `port`, `port_mask`, `value`, `value_mask`, `match` (`any`, `equals`, `any-clear`, `any-set`), `trigger` (`every`, `rising`, `change`), `stream_mask`, `ay_register`, and `file` - a `.ttd` path on the emulator's machine to search instead of the current session, without loading it (400 when it cannot be read or has no journals). Numbers may be JSON numbers or strings (`"0x7FFE"`, `"#7FFE"`, `"$7FFE"`); `from`/`to` are a frame or `"frame:tinframe"`.
 
 **find-last request:**
 

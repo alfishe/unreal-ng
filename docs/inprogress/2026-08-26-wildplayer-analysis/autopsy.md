@@ -13,15 +13,15 @@ TurboSound-capable tracker player for the ZX Spectrum.
 
 | artifact | what it is |
 |---|---|
-| [`wildplayer_body_org5D3B.bin`](wildplayer_body_org5D3B.bin) | the pure player body, 19,336 bytes, org `0x5D3B` |
-| [`wildplayer_body.asm`](wildplayer_body.asm) | annotated disassembly of the body (read this) |
-| [`wildplayer_bank1_vtii.asm`](wildplayer_bank1_vtii.asm) | VTII PT3 r.7 engine master (RAM bank 1, org `0xC000`) |
-| [`wildplayer_bank4_unipt2.asm`](wildplayer_bank4_unipt2.asm) | UniPT2 engine (RAM bank 4, PT2-format support) |
-| [`engine_install_patches.txt`](engine_install_patches.txt) | the 204 bytes the player patches per engine instance |
-| [`WILDDISASM_NOTES.md`](WILDDISASM_NOTES.md) | terse companion notes (memory map, bank roles) |
-| [`disasm_wildplayer.py`](disasm_wildplayer.py) | rebuilds everything above from [`dumps/`](dumps) |
-| [`analyze_wildplayer_ts.py`](analyze_wildplayer_ts.py) | port-trace forensics tool (chapter 10) |
-| [`dumps/`](dumps) | the raw live-memory captures this is all derived from |
+| [`wildplayer_body_org5D3B.bin`](../../disasm/software/wildplayer/wildplayer_body_org5D3B.bin) | the pure player body, 19,336 bytes, org `0x5D3B` |
+| [`wildplayer_body.asm`](../../disasm/software/wildplayer/wildplayer_body.asm) | annotated disassembly of the body (read this) |
+| [`wildplayer_bank1_vtii.asm`](../../disasm/software/wildplayer/wildplayer_bank1_vtii.asm) | VTII PT3 r.7 engine master (RAM bank 1, org `0xC000`) |
+| [`wildplayer_bank4_unipt2.asm`](../../disasm/software/wildplayer/wildplayer_bank4_unipt2.asm) | UniPT2 engine (RAM bank 4, PT2-format support) |
+| [`engine_install_patches.txt`](../../disasm/software/wildplayer/engine_install_patches.txt) | the 204 bytes the player patches per engine instance |
+| [`WILDDISASM_NOTES.md`](../../disasm/software/wildplayer/WILDDISASM_NOTES.md) | terse companion notes (memory map, bank roles) |
+| [`disasm_wildplayer.py`](../../disasm/software/wildplayer/disasm_wildplayer.py) | rebuilds everything above from `dumps/` |
+| [`analyze_wildplayer_ts.py`](../../disasm/software/wildplayer/analyze_wildplayer_ts.py) | port-trace forensics tool (chapter 10) |
+| `dumps/` | the raw live-memory captures this is all derived from |
 
 ---
 
@@ -166,7 +166,7 @@ flowchart LR
 ```
 
 The diff between the installed instance at `0xA000` and the bank-1 master is
-exactly 204 bytes — [`engine_install_patches.txt`](engine_install_patches.txt)
+exactly 204 bytes — [`engine_install_patches.txt`](../../disasm/software/wildplayer/engine_install_patches.txt)
 lists every one. The engine obeys the VTII contract: `+0` = INIT with
 `HL` pointing at the module, `+5` = PLAY, called once per interrupt. Note the
 instance's first instructions:

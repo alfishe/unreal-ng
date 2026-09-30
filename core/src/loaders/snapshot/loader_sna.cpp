@@ -502,8 +502,9 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(0);
 
-            // Set 48k ROM as active (ROM page 3 is the 48k BASIC ROM)
-            memory.SetROMPage(3);
+            // The 48K BASIC ROM, wherever the model keeps it (Memory::base_sos_rom: page 3 on the Pentagon,
+            // page 1 on the 128K, the only ROM on the 48K - a fixed page 3 was empty there)
+            memory.SetROM48k();
 
             // 48k SNA files store Z80 PC on stack, so we need to pop it and load to PC
             // Z80 is little-endian: low byte at SP, high byte at SP+1

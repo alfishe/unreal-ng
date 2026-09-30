@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Design / draft for review |
+| **Status** | **Rollout 1 implemented** 2026-09-28, on master (`f5fc5f05`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md). Where they differ, the plan's decisions D1-D9 win: the media manager owns the media (§6.1), the automation is the `media` verbs plus `state ide` (§8.2), TTD is a blob + write barriers (§10.0), one adapter class for every board (§5) |
 | **Date** | 2026-09-25 |
 | **Branch** | `profi` (baseline `f4e35ee6`) |
 | **Closes** | Reconciliation gaps **G1** (Profi IDE) and **T3** (IDE state in TTD), [2026-09-25-profi-reconciliation.md](2026-09-25-profi-reconciliation.md) §4; roadmap items **ST-1..ST-3, ST-5** ([01-roadmap-and-machine-state.md](../2026-09-21-roadmap/01-roadmap-and-machine-state.md) §6) |
@@ -784,7 +784,7 @@ A small Z80 test program (assembled with the in-repo assembler) runs a fixed IDE
 |---|---|---|
 | Q1 | `#06AB` read on real Profi: `#FF` (RTL) or alternate status (pico-spec)? | `#FF` |
 | Q2 | Karabas EXT variant (DOS ∧ ¬ROM14) as a whole-decoder switch: needed for Karabas BIOS HDD self-test | not implemented (§3.2) |
-| Q3 | SMUC IDE reset polarity (`#FFBA` bit 0: Unreal/ZXMAK2 = 1 resets, MAME = 0 resets) and version-register values (four emulators, four answers) | Unreal, matching the existing SMUC stub |
+| Q3 | SMUC IDE reset polarity (`#FFBA` bit 0: Unreal/ZXMAK2 = 1 resets, MAME = 0 resets) and version-register values (four emulators, four answers) | **Answered 2026-09-28** from ProfROM 4.01 (docs/inprogress/2026-09-28-scorpion-smuc, hardware reference §5.6): D0 = 0 resets; the firmware keeps D0 = 1 and pulses it low. Implemented on `ide-atapi`. Version registers: still open |
 | Q4 | Profi disk geometry conventions: confirm 16/16 (original SYS ROM) vs 16/63 (Karabas) and the `ProfiHiDD` header offset/layout against a real image | configurable; auto-detect behind a flag |
 | Q5 | Which SYS ROM menu path reaches `#28CE` (for an end-to-end "press key → boots from HDD" test) | R1 enters `#28CE` directly |
 | Q6 | Source of a real Profi HDD image (CP/M) for R3/R6 | synthetic images only |
@@ -807,10 +807,10 @@ Goal: everything UnrealSpeccy / ZXMAK2 / Xpeccy / xpeccy-plus / pico-spec / DOSB
 |---|---|---|---|
 | **R1-1 Disk core** | `ataregisters.h`, `AtaDevice` engine + `AtaDisk`, `AtaChannel`, `IBlockDevice`, `RawImage` (write-through), `MemoryDisk`, POD state; delete the skeleton; `Core` owns the channel | L1 (ATA part) | M |
 | **R1-2 Profi adapter** | `IdeLatch` helpers, `IdeAdapterProfi`, decoder arms, `[HDD]` parsing, `Scheme=PROFI` in the Profi config (CRLF file), `PortTag::StorageIde`; **TTD interim rule** (§10.0) | L2 Profi + collision sweep; R1, R2; L4 rollout-1 cases | S–M |
-| **R1-3 Automation** | CLI / WebAPI / Lua / Python / MCP `hdd` and `cd` verbs, `NC_HDD_STATE_CHANGED` | L7 smoke | S–M |
+| **R1-3 Automation** | ~~CLI / WebAPI / Lua / Python / MCP `hdd` and `cd` verbs~~ **2026-09-28: the media verbs of the unified media manager** (PLAN #58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): the IDE units register `ide0.*` / `ide1.*` slots (#58 M6) and every surface controls them through `media …`; no `hdd` / `cd` verbs of their own | L7 smoke | S |
 | **R1-4 Other boards** | Nemo (+A8, DivIDE/Evo toggle), SMUC (replaces the Scorpion stub), ATM (+INTRQ bit); per-model scheme validation | L2 per board; R4, R5 (image) | M |
 | **R1-5 Image formats** | HDF, HDI, fixed VHD; Profi geometry auto-detect (§8.3) | L3 | S |
-| **R1-6 Host folders** | `FolderSnapshot`, `FatBuilder`, `HostFolderFat`, `SessionWriteMap`, export to `.img`, `Folder0ReadOnly`; FatFs in the test build | L3 folder cases; R5 (folder) | M–L |
+| **R1-6 Host folders** | **Done by PLAN #58 M1** (2026-09-28, branch `media-manager`, [storage-manager](../2026-09-28-storage-manager/technical-design.md)): `FolderSnapshot`, `HostFolderFat` (FAT16 / FAT32), the session layer, export to `.img`, `ReadOnly` access; the independent `FatVolumeReader` replaces FatFs in the tests. The IDE side only accepts a folder in its slot (`acceptsFolder`) | L3 folder cases; R5 (folder) | — |
 | **R1-7 ATAPI CD-ROM** | `AtapiCdrom` (pico-spec command list), `IsoImage`, `CD0/CD1`, `cd insert/eject` | ATAPI conformance; R7 (if Q9 answered) | M |
 | **R1-8 Tooling + UI** | differential harness (§12.6), fuzz, perf check; Qt HDD/CD menu + activity LED | L6, L7 | S–M |
 

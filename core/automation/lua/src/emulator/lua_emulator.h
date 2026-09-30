@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -7,6 +8,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -14,6 +16,7 @@
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -24,6 +27,7 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <tuple>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/analyzermanager.h>
@@ -35,6 +39,7 @@
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/config.h>
+#include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -292,6 +297,60 @@ public:
         lua.set_function("emu_count", []() -> int {
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
+        });
+
+        // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
+        // every surface uses): four synchronized instances of one model.
+        // zxpoly_start([model], [file]) -> master id, or nil + error
+        lua.set_function("zxpoly_start", [](sol::optional<std::string> model, sol::optional<std::string> file,
+                                            sol::this_state state) -> sol::variadic_results {
+            sol::variadic_results results;
+            auto* mgr = EmulatorManager::GetInstance();
+            std::string error;
+            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error);
+            if (!master)
+            {
+                results.push_back(sol::make_object(state, sol::lua_nil));
+                results.push_back(sol::make_object(state, "cannot start ZX-Poly: " + error));
+                return results;
+            }
+            mgr->StartEmulatorAsync(master->GetId());
+            mgr->SetSelectedEmulatorId(master->GetId());
+            results.push_back(sol::make_object(state, master->GetId()));
+            return results;
+        });
+
+        // zxpoly_status(id) -> table (nil if not a ZX-Poly machine)
+        lua.set_function("zxpoly_status", [](const std::string& id, sol::this_state state) -> sol::object {
+            ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
+            if (!group)
+                return sol::make_object(state, sol::lua_nil);
+            const ZXPolyGroup::Status status = group->GetStatus();
+            sol::state_view view(state);
+            sol::table out = view.create_table();
+            out["master_id"] = status.memberIds[0];
+            out["locked"] = status.locked;
+            out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
+            out["port_3d00"] = status.port3D00;
+            out["video_mode"] = status.videoMode;
+            sol::table modules = view.create_table();
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                sol::table module = view.create_table();
+                module["module"] = m;
+                module["id"] = status.memberIds[m];
+                sol::table registers = view.create_table();
+                for (size_t r = 0; r < 4; r++)
+                    registers[r + 1] = status.registers[m][r];
+                module["registers"] = registers;
+                modules[m + 1] = module;
+            }
+            out["modules"] = modules;
+            out["diverged"] = status.divergence.diverged;
+            out["divergence"] = status.divergence.what;
+            return out;
         });
 
         lua.set_function("emu_get", [](const std::string& id) -> Emulator* {
@@ -679,11 +738,14 @@ public:
             return fm ? fm->isEnabled(name) : false;
         });
 
-        lua.set_function("feature_set", [this](const std::string& name, bool enabled) -> bool {
+        // ok, reason: the reason says why a known feature was refused (TTD holds it)
+        lua.set_function("feature_set", [this](const std::string& name, bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
+            if (!emulator) return {false, "no emulator"};
             FeatureManager* fm = emulator->GetFeatureManager();
-            return fm ? fm->setFeature(name, enabled) : false;
+            if (!fm) return {false, "FeatureManager not available"};
+            if (fm->setFeature(name, enabled)) return {true, ""};
+            return {false, fm->hasFeature(name) ? fm->refusalReason(name, enabled) : "unknown feature: " + name};
         });
 
         // Disk inspection functions
@@ -694,6 +756,105 @@ public:
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
 
+        // region <Media: every slot through MediaControl (media-control-design.md)>
+        // media_list(), media_info(slot), media_formats([kind]),
+        // media_insert(slot, path [, opts]), media_swap(slot, path [, opts]),
+        // media_eject(slot [, opts]), media_save(slot [, path] [, opts]),
+        // media_export(slot, path), media_discard(slot [, opts]),
+        // media_rescan(slot [, opts]), media_create(slot [, opts]),
+        // media_protect(slot, on), and media(verb, slot, path, opts).
+        // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
+        // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
+        // Each returns the reply table every surface returns: ok, error, message,
+        // slot, pending, revision, report, and the verb's fields (slots, info, ...)
+        auto mediaCall = [this](sol::this_state s, const std::string& verb, const std::string& selector,
+                                const std::string& path, sol::optional<sol::table> opts) -> sol::object {
+            MediaRequest request;
+            request.verb = verb;
+            request.selector = selector;
+            request.path = path;
+            if (opts)
+            {
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                    {
+                        const double number = value.as<double>();
+                        text = number == static_cast<double>(static_cast<long long>(number))
+                                   ? std::to_string(static_cast<long long>(number))
+                                   : std::to_string(number);
+                    }
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
+        };
+        lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
+                                              sol::optional<std::string> path, sol::optional<sol::table> opts) {
+            return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);
+        });
+        lua.set_function("media_list", [mediaCall](sol::this_state s) { return mediaCall(s, "list", "", "", sol::nullopt); });
+        lua.set_function("media_info", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "info", slot, "", sol::nullopt);
+        });
+        lua.set_function("media_formats", [mediaCall](sol::this_state s, sol::optional<std::string> kind) {
+            sol::state_view view(s);
+            sol::optional<sol::table> opts;
+            if (kind)
+            {
+                sol::table t = view.create_table();
+                t["kind"] = *kind;
+                opts = t;
+            }
+            return mediaCall(s, "formats", "", "", opts);
+        });
+        for (const char* verb : {"insert", "swap"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot, const std::string& path,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, path, opts);
+                             });
+        }
+        for (const char* verb : {"eject", "discard", "rescan", "create"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, "", opts);
+                             });
+        }
+        lua.set_function("media_save", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                   sol::optional<sol::table> opts) {
+            return mediaCall(s, "save", slot, path.value_or(""), opts);
+        });
+        lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
+            return mediaCall(s, "export", slot, path, sol::nullopt);
+        });
+        lua.set_function("media_protect", [mediaCall](sol::this_state s, const std::string& slot, bool on) {
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["on"] = on;
+            return mediaCall(s, "protect", slot, "", sol::optional<sol::table>(t));
+        });
+        // endregion <Media>
+
         lua.set_function("disk_get_path", [this](int drive) -> std::string {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return "";
             auto* ctx = effectiveEmulator()->GetContext();
@@ -703,11 +864,7 @@ public:
 
         lua.set_function("disk_eject", [this](int drive) -> bool {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-            ctx->coreState.diskDrives[drive]->ejectDisk();
-            ctx->coreState.diskFilePaths[drive] = "";
-            return true;
+            return effectiveEmulator()->EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
         });
 
         // disk_load(path [, drive=0] [, autostart=false]) - insert a disk image (.trd/.scl/.fdi/.udi/...)
@@ -758,15 +915,20 @@ public:
         // disk_create(drive [, cylinders [, sides [, format]]]): format auto (plus3 on a +3, unformatted
         // elsewhere), unformatted or plus3; cylinders / sides 0 or left out = the format's geometry
         lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides,
-                                               sol::optional<std::string> format) -> bool {
-            if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
+                                               sol::optional<std::string> format) -> std::tuple<bool, std::string> {
+            if (!effectiveEmulator()) return {false, "no emulator"};
+            if (drive < 0 || drive > 3) return {false, "invalid drive (valid range: 0-3)"};
             Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
-            if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return false;
+            if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return {false, "unknown disk format"};
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
-            if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255) return false;
-            return effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
-                                              static_cast<uint8_t>(numSides));
+            if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255)
+                return {false, "cylinders must be 40 or 80, sides 1 or 2"};
+            std::string error;  // carries the TTD refusal while recording
+            const bool ok = effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed,
+                                                                 static_cast<uint8_t>(cylinders),
+                                                                 static_cast<uint8_t>(numSides), &error);
+            return {ok, ok ? std::string() : error};
         });
 
         lua.set_function("disk_list", [this]() -> sol::table {
@@ -850,10 +1012,15 @@ public:
         });
 
         // Tape operations
-        lua.set_function("tape_load", [this](const std::string& path) -> bool {
+        // ok, reason: the reason is set when TTD refuses the insert (recording)
+        lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            return emulator->LoadTape(path);
+            if (!emulator) return {false, "no emulator"};
+            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+                return {false, refusal};
+            std::string reason;
+            const bool loaded = emulator->LoadTape(path, &reason);
+            return {loaded, reason};
         });
 
         lua.set_function("tape_is_inserted", [this]() -> bool {
@@ -919,13 +1086,7 @@ public:
         lua.set_function("tape_eject", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTape) {
-                ctx->pTape->reset();
-                ctx->coreState.tapeFilePath = "";
-                return true;
-            }
-            return false;
+            return emulator->EjectTape();
         });
 
         lua.set_function("tape_pause", [this]() -> bool {
@@ -1307,9 +1468,13 @@ public:
         });
 
         // Snapshot operations
-        lua.set_function("snapshot_load", [this](const std::string& path) -> bool {
-            if (!effectiveEmulator()) return false;
-            return effectiveEmulator()->LoadSnapshot(path);
+        // ok, reason: the reason is set when TTD refuses the load (recording)
+        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {false, "no emulator"};
+            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+                return {false, refusal};
+            return {emulator->LoadSnapshot(path), ""};
         });
 
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
@@ -1783,6 +1948,11 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenFlash(ctx));
         });
+        // Per-cell ink/paper/bright/flash decoded from screen attribute memory
+        lua.set_function("screen_attributes", [this](sol::this_state s, sol::optional<int> screen) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::ScreenAttributes(ctx, screen.value_or(-1)));
+        });
         // Former name of screen_mode, kept for existing scripts
         lua.set_function("screen_video_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -1800,9 +1970,63 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
         });
+        lua.set_function("ide_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
+        });
+
+        // CMOS clock: the same report and cell access every interface uses
+        // (DeviceState::Rtc, RtcAccess). Cells are numbered as the guest numbers them
+        lua.set_function("rtc_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Rtc(emulator->GetContext()));
+        });
+        lua.set_function("rtc_read", [this](sol::this_state s, int start, sol::optional<int> count) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            std::string error;
+            if (start < 0 || count.value_or(1) < 0 ||
+                !RtcAccess::Read(emulator->GetContext(), static_cast<unsigned>(start),
+                                 static_cast<unsigned>(count.value_or(1)), bytes, error))
+                return mouseError(s, error.empty() ? "start and count must not be negative" : error);
+            sol::state_view view(s);
+            sol::table out = view.create_table();
+            for (size_t i = 0; i < bytes.size(); ++i)
+                out[i + 1] = bytes[i];
+            sol::variadic_results results;
+            results.push_back(out);
+            return results;
+        });
+        lua.set_function("rtc_write", [this](sol::this_state s, int start, sol::table values) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            for (size_t i = 1; i <= values.size(); ++i)
+            {
+                const int v = values.get_or(i, -1);
+                if (v < 0 || v > 255)
+                    return mouseError(s, "Every value must be 0-255");
+                bytes.push_back(static_cast<uint8_t>(v));
+            }
+            std::string error;
+            if (start < 0 || !RtcAccess::Write(emulator->GetContext(), static_cast<unsigned>(start), bytes,
+                                               "Lua rtc_write", error))
+                return mouseError(s, error.empty() ? "start must not be negative" : error);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, true));
+            return results;
+        });
+
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
+        });
+        lua.set_function("contention_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Contention(ctx));
         });
 
         // Audio state
@@ -1853,47 +2077,49 @@ public:
             return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
         });
 
-        lua.set_function("gs_state", [this]() -> sol::object {
-            sol::state_view lua_view(*_lua);
-            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = effectiveEmulator()->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (!gs) return sol::make_object(lua_view, sol::lua_nil);
+        // One report for every interface (DeviceState::Gs); `available = false`
+        // with a description when no card is fitted
+        lua.set_function("gs_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Gs(ctx));
+        });
+        lua.set_function("audio_covox_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Covox(ctx));
+        });
+        // MoonSound: overview, or part "fm" / "pcm"
+        lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (part && *part == "fm")
+                return StateNodeToLua(s, DeviceState::MoonSoundFm(ctx));
+            if (part && *part == "pcm")
+                return StateNodeToLua(s, DeviceState::MoonSoundPcm(ctx));
+            return StateNodeToLua(s, DeviceState::MoonSound(ctx));
+        });
 
-            sol::table t = lua_view.create_table();
-            const uint8_t status = gs->getStatusRaw();
-            t["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-            t["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
-            t["rom_loaded"] = gs->isROMLoaded();
-            t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
-            t["status"] = status;
-            t["command_pending"] = (status & 0x01) != 0;
-            t["data_pending"] = (status & 0x80) != 0;
-            t["command_queue_count"] = static_cast<double>(gs->getCommandQueueCount());
-            t["data_queue_count"] = static_cast<double>(gs->getDataQueueCount());
-            t["command_from_host"] = gs->getCommandFromHost();
-            t["data_from_host"] = gs->getDataFromHost();
-            t["data_to_host"] = gs->getDataToHost();
-            t["page"] = gs->getMPAG();
-
-            sol::table channels = lua_view.create_table();
-            for (int i = 0; i < 4; i++) {
-                sol::table channel = lua_view.create_table();
-                channel["sample"] = gs->getChannelSample(i);
-                channel["volume"] = gs->getChannelVolume(i);
-                channels[i + 1] = channel;  // Lua tables start at 1
-            }
-            t["channels"] = channels;
-
-            sol::table cpu = lua_view.create_table();
-            cpu["coprocessor"] = gs->hasCoprocessor();
-            cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-            cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-            cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-            cpu["halted"] = gs->isCPUHalted();
-            t["cpu"] = cpu;
-            return t;
+        // NeoGS SD slot and flash (other cards: false / no-op)
+        // NeoGS media: checked here, carried out on the machine's thread
+        // (neogsmedia.h); true when accepted. Insert / eject are refused while
+        // a TTD recording runs
+        lua.set_function("gs_sd_insert", [this](const std::string& path) -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdInsert(_emulator->GetContext(), path));
+        });
+        lua.set_function("gs_sd_eject", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdEject(_emulator->GetContext()));
+        });
+        lua.set_function("gs_flash_save", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
+        });
+        // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
+        // like the classic GS) or "mono"; applied at the next frame. False on
+        // an unknown name
+        lua.set_function("gs_stereo_mode", [this](const std::string& mode) -> bool {
+            NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+            SoundManager* sm = _emulator && _emulator->GetContext() ? _emulator->GetContext()->pSoundManager : nullptr;
+            if (!sm || !neogsParseStereoMode(mode, parsed))
+                return false;
+            sm->setNeoGSStereoMode(parsed);
+            return true;
         });
 
         // Host-port stimuli step the card's Z80, so they go through the live-input
@@ -1943,21 +2169,19 @@ public:
         // requested here, applied at the next frame boundary on the
         // emulation thread - same semantics as the WebAPI switch_personality
         // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> bool {
-            if (!effectiveEmulator()) return false;
+        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
+            if (!effectiveEmulator()) return {false, ""};
             auto* ctx = effectiveEmulator()->GetContext();
             SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return false;
+            if (!sm) return {false, ""};
 
             GSTypeKind target;
-            if (personality == "z80" || personality == "lle")
-                target = GSTypeKind::Z80;
-            else if (personality == "lw" || personality == "lightweight")
-                target = GSTypeKind::LW;
-            else
-                return false;
+            if (!gsParsePersonality(personality, target))
+                return {false, ""};
 
-            return sm->requestGeneralSoundCardSwitch(target);
+            std::string refusal;  // a TTD recording refuses the switch (FR-4)
+            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+            return {requested, refusal};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw
@@ -2074,12 +2298,14 @@ public:
                     case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                     case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                     case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                    case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                 }
                 ev["direction"] = e.isOut() ? "out" : "in";
                 ev["port"] = e.port;
                 ev["value"] = e.value;
                 ev["pc"] = e.pc;
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                 result[idx++] = ev;
             }
@@ -2181,7 +2407,35 @@ public:
             info["coverage_index_frames"] = si.coverageIndexFrames;
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
+            info["write_journal_complete"]   = si.writeJournalComplete;
+            info["write_journal_wrapped"]    = si.writeJournalWrapped;
+            if (!si.journalGapReason.empty())
+            {
+                sol::table gap = lua_view.create_table();
+                gap["reason"] = si.journalGapReason;
+                if (si.journalGapHasPosition)
+                {
+                    gap["frame"]    = si.journalGapAt.frame;
+                    gap["tinframe"] = si.journalGapAt.tInFrame;
+                }
+                info["write_journal_gap"] = gap;
+            }
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
+            info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
+            info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
+            info["input_history_complete"]   = si.inputHistoryComplete;
+            info["port_journal_active"]      = si.portJournalActive;
+            if (!si.portJournalOffReason.empty())
+                info["port_journal_off_reason"] = si.portJournalOffReason;
+            info["port_read_count"]          = si.portReadCount;
+            info["port_write_count"]         = si.portWriteCount;
+            info["port_journal_bytes"]       = static_cast<uint64_t>(si.portJournalBytes);
+            info["port_replay_value_mismatches"] = si.portReplayValueMismatches;
+            info["port_replay_divergences"]  = si.portReplayDivergences;
+            if (!si.lastDropReason.empty())
+                info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
+            if (!si.unavailableReason.empty())
+                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
             info["ttd_available"]            = true;
             return info;
         });
@@ -2201,12 +2455,14 @@ public:
         });
 
         // ttd_set_journal_enabled(bool) - configure write journal capture
-        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) {
+        // ok, reason: refused while recording (a recording keeps its journal mode)
+        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
+            if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
+            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
+            if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
+            return {false, ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal)};
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
@@ -2225,13 +2481,17 @@ public:
                 ctx->pTimeTravelManager->StopRecording();
         });
 
-        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) {
+        // ok, reason: refused while recording (stop the recording first)
+        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
+            if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->InvalidateSession(
-                    reason.value_or("lua invalidate").c_str());
+            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
+            if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
+                !refusal.empty())
+                return {false, refusal};
+            ctx->pTimeTravelManager->InvalidateSession(reason.value_or("lua invalidate").c_str());
+            return {true, ""};
         });
 
         lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
@@ -2511,6 +2771,89 @@ public:
             return result;
         });
 
+        // "When did the program ...": ttd_port_events(event, [arg], [options])
+        // over the session's port journals (ttdportsearch.h). event: "key",
+        // "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in",
+        // "out"; arg: a key name or an AY register; options: a table of
+        // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
+        // port_mask, value, value_mask, match, trigger, ay_register; file = a
+        // .ttd path searched without loading it)
+        lua.set_function("ttd_port_events", [this](const std::string& event, sol::object argObj,
+                                                     sol::object optionsObj) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["ok"] = false;
+            Emulator* emulator = effectiveEmulator();
+            auto* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["error"] = "TTD engine not available";
+                return result;
+            }
+            auto text = [](const sol::object& o) -> std::string {
+                if (o.is<bool>())
+                    return o.as<bool>() ? "true" : "false";
+                if (o.is<double>())
+                    return std::to_string(static_cast<long long>(o.as<double>()));
+                return o.is<std::string>() ? o.as<std::string>() : std::string();
+            };
+            ttd::TTDPortQuery q;
+            std::string err;
+            const std::string arg = (argObj.valid() && argObj.get_type() != sol::type::lua_nil) ? text(argObj) : "";
+            if (!ttd::BuildPortEventQuery(event, arg, q, err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            std::string file;  // options.file: a .ttd on disk, searched without loading it
+            if (optionsObj.is<sol::table>())
+            {
+                for (const auto& [key, value] : optionsObj.as<sol::table>())
+                {
+                    if (key.as<std::string>() == "file")
+                    {
+                        file = text(value);
+                        continue;
+                    }
+                    if (!ttd::ApplyPortQueryOption(q, key.as<std::string>(), text(value), err))
+                    {
+                        result["error"] = err;
+                        return result;
+                    }
+                }
+            }
+            const ttd::TTDPortSearchResult found = file.empty()
+                                                       ? ctx->pTimeTravelManager->SearchPortEvents(q)
+                                                       : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
+            if (!found.ok)
+            {
+                result["error"] = found.error;
+                return result;
+            }
+            result["ok"] = true;
+            result["direction"] = ttd::PortDirectionName(q.direction);
+            result["count"] = static_cast<uint64_t>(found.hits.size());
+            result["truncated"] = found.truncated;
+            result["scanned"] = found.scanned;
+            sol::table hits = lua_view.create_table();
+            int i = 1;
+            for (const ttd::TTDPortHit& h : found.hits)
+            {
+                sol::table hit = lua_view.create_table();
+                hit["index"] = h.index;
+                hit["frame"] = h.record.frame;
+                hit["tinframe"] = h.record.tInFrame;
+                hit["port"] = h.record.port;
+                hit["value"] = h.record.value;
+                hit["pc"] = h.record.pc;
+                if (h.ayRegister >= 0)
+                    hit["ay_register"] = h.ayRegister;
+                hits[i++] = hit;
+            }
+            result["hits"] = hits;
+            return result;
+        });
+
         lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
@@ -2566,12 +2909,11 @@ public:
                     q.physPage = static_cast<ttd::PhysPage>(page);
                 }
 
-                const uint32_t frameT = ctx->config.frame;
                 if (tbl["before_frame"].valid())
                 {
                     uint64_t f = tbl["before_frame"].get<uint64_t>();
                     uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = f * frameT + tin;
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
                 }
                 else if (tbl["before"].valid())
                 {
@@ -2603,13 +2945,22 @@ public:
                     q.hasPhysPageFilter = true;
                     q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
                 }
-                const uint32_t frameT = ctx->config.frame;
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
+                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
             }
 
             ttd::TTDExternalEvent marker{};
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+            ttd::TTDSearchWindow window;
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
+            // TD-8: the part of history the search examined
+            if (window.searched)
+            {
+                result["covered_from"]          = window.from.frame;
+                result["covered_from_tinframe"] = window.from.tInFrame;
+                result["covered_to"]            = window.to.frame;
+                result["covered_to_tinframe"]   = window.to.tInFrame;
+            }
             if (!found)
             {
                 result["found"] = false;
@@ -2705,6 +3056,14 @@ public:
                 m["frame"]    = r.blockingMarker.time.frame;
                 m["tinframe"] = r.blockingMarker.time.tInFrame;
                 result["blocked_by_marker"] = m;
+            }
+            // TD-8: the part of history the search examined
+            if (r.window.searched)
+            {
+                result["covered_from"]          = r.window.from.frame;
+                result["covered_from_tinframe"] = r.window.from.tInFrame;
+                result["covered_to"]            = r.window.to.frame;
+                result["covered_to_tinframe"]   = r.window.to.tInFrame;
             }
             return result;
         });
@@ -3354,11 +3713,13 @@ public:
                     bank["type"] = "RAM";
                     switch (i) {
                         case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
-                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); break;
                         case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
                         case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
                     }
                 }
+                // The CPU waits for the video logic there (Core::IsSlotContended)
+                bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.add(bank);
             }
             result["banks"] = banks;
@@ -3367,52 +3728,34 @@ public:
             return results;
         });
 
-        // Raster beam position and zone at the current t-state
-        lua.set_function("beam_position", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            EmulatorContext* context = emulator->GetContext();
-            if (!context || !context->pScreen) { result["error"] = "context not initialized"; return result; }
-
-            const CONFIG& config = context->config;
-            Screen* screen = context->pScreen;
-            if (config.t_line == 0 || config.frame == 0)
-            {
-                result["error"] = "machine timing not initialized";
-                return result;
-            }
-
-            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-            const uint32_t tInFrame = tstate % config.frame;
-
-            const BeamPosition beam = screen->DescribeBeam(tInFrame);
-            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-            const uint32_t line = tInFrame / tstatesPerLine;
-
-            result["tstate"] = tstate;
-            result["tstate_in_frame"] = tInFrame;
-            result["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
-            result["line"] = line;
-            result["dot_in_line"] = tInFrame % tstatesPerLine;
-            result["beam_x"] = beam.beamX;
-            result["beam_y"] = line;
-            result["zone"] = std::string(beam.zone);
-            result["vertical_zone"] = std::string(beam.verticalZone);
-            result["horizontal_zone"] = std::string(beam.horizontalZone);
-            result["in_paper"] = beam.inPaper;
-            if (beam.inPaper)
-            {
-                sol::table paper = lua_view.create_table();
-                paper["x"] = beam.paperX;
-                paper["x_end"] = beam.paperXEnd;
-                paper["y"] = beam.paperY;
-                result["paper"] = paper;
-            }
-            return result;
+        // Beam and video debug translation (PLAN #42): the same DeviceState reports every interface returns
+        lua.set_function("beam_position", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoBeam(ctx));
+        });
+        lua.set_function("video_layout", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoLayout(ctx));
+        });
+        lua.set_function("video_pixel", [this](sol::this_state s, unsigned x, unsigned y, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixel(ctx, layer.value_or(0), x, y));
+        });
+        lua.set_function("video_pixel_at", [this](sol::this_state s, unsigned t) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixelAtBeam(ctx, t));
+        });
+        lua.set_function("video_address", [this](sol::this_state s, unsigned page, unsigned offset) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddress(ctx, page, offset));
+        });
+        lua.set_function("video_address_z80", [this](sol::this_state s, unsigned address) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddressZ80(ctx, address));
+        });
+        lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
         });
 
         // Halt/active cost of the last frame plus session averages

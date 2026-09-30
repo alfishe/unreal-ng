@@ -131,15 +131,51 @@ types:
           most 63 chars). Bit 4 = the write journal holds every write
           of the session (journaling never paused, the ring never
           overwrote a record): only then may a reader answer write/port
-          reverse queries from it instead of replaying.
+          reverse queries from it instead of replaying. Bit 5 = every
+          in-frame position (tInFrame, journal globalT) counts T-states at
+          the model's top CPU clock (B4); without it a model with a hardware
+          turbo is refused, because its positions counted at the clock
+          running then and repeat after a mid-frame switch down. Bit 6 = an
+          input-journal section follows the bookmarks: u32 count, then per
+          event (21 bytes) u64 frame, u32 tInFrame, u8 kind
+          (TTDInputKind: 0 Key, 1 MouseMove, 2 MouseButtons, 3 MouseWheel,
+          4 MouseCounters, 5 KeyboardReset, 6 GSCommand, 7 GSData, 8 GSNmi,
+          9 GSResetCard, 10 GSReset), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
+          external-event section follows: u32 count, then per marker u64
+          frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
+          are kept), u8 reason_len (0..63), reason bytes; ascending time.
+          The writer always sets bits 6 and 7 (the sections may be empty), so
+          a file without them predates saved input: it replays inside a frame
+          without the recorded input. Both sections are replay data - a
+          reader must not treat them as optional annotations.
+          Bit 8 = the port journals follow the external events: every IN
+          result, then every OUT, of the main CPU in execution order, each
+          with its time and PC (ttd-port-read-journal.md). Each journal: u8
+          record_count, u4 block_records (32768), u4 block_count, then per
+          block u4 records, u8 base_frame (its first record's frame), u4
+          crc32c of the raw block, u4 compressed_size, zstd payload; the raw
+          block is five columns of `records` entries - u2 ports, u1 values,
+          u2 PCs, u4 frame deltas (from the previous record, 0 for the
+          first), u4 T-states (TTD time in the frame: absolute for the first
+          record and when the frame changed, else the step from the previous
+          record). Every block but the last holds block_records records;
+          records are in time order. Then u4 cursor_count (=
+          checkpoint_count) and one u8 cursor per checkpoint (the journal
+          position at its capture; non-decreasing, at most record_count).
+          Written only when the session holds all of its history's I/O; with
+          it a replay feeds the CPU the recorded IN values and needs no media
+          or host device. Replay data, like bits 6 and 7.
 
           The flag-gated trailing sections (write journal, coverage index,
-          bookmarks) are not yet modeled in this schema's top-level seq;
+          bookmarks, input journal, external events, port journals) are
+          not yet modeled in
+          this schema's top-level seq;
           the C++ writer/reader pair (TimeTravelManager::SerializeSession /
           DeserializeSession) is authoritative for their layouts, and a
-          reader that stops after `checkpoints` gets a complete session
-          minus those accelerators/annotations. Bits 5-15 reserved
-          (must be 0).
+          reader that stops after `checkpoints` gets the machine states of a
+          session, without the accelerators, annotations and replay inputs.
+          Bits 9-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
@@ -472,8 +508,19 @@ types:
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
           8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (reserved),
-          13 Plus3Paging, 14 Upd765 (+3 floppy controller).
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
+          13 Plus3Paging, 14 Upd765 (+3 floppy controller),
+          15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
+          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
+          18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
+          ATM3, Profi, Scorpion SMUC).
+          BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
+          (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
+          the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
+          the clock now (1 = 1 MHz, 2 = 2 MHz) and the data separator rate
+          (0 = 250 kbit/s, 1 = 500 kbit/s). Recordings made before 2026-09-29
+          carry the older 251-byte blob, which the reader reports as a size
+          mismatch and does not restore.
       - id: state
         type: peripheral_blob
 

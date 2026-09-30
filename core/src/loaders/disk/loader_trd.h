@@ -76,6 +76,14 @@ public:
 protected:
     uint8_t getTrackNoFromImageSize(size_t filesize);
     bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
+
+public:
+    /// The geometry of a .TRD file. The TR-DOS disk type in sector 9 (#E3:
+    /// #16 DS80, #17 DS40, #18 SS80, #19 SS40) decides when the file fits in
+    /// it (a TRD file may end after its last used track). Without a known
+    /// type: double-sided, 40 cylinders for exactly 320 KiB, else 80 (or the
+    /// cylinders the size needs above 80)
+    static void geometryForFile(const uint8_t* buffer, size_t fileSize, uint8_t& cylinders, uint8_t& sides);
     void populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType);
     /// endregion </Helper methods>
 };

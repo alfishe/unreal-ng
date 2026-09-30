@@ -2,12 +2,15 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/atm/ttdevosdcard.h"
+#include "debugger/ttd/ttdds12887.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
-#include "emulator/memory/atm/cmos.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -15,24 +18,30 @@
 PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
 {
     _zc.SetDevice(&_sdCard);
+    _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
-    // Storage is not in the TTD checkpoints yet (rollout-1 rule of the IDE
-    // design §10.0, tdd-storage-sd-ide-cd.md §5): the first card command of
-    // a recording ends it at the frame boundary, never a silently wrong replay
-    _sdCard.setCommandListener([this](uint8_t) {
-        if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-            _context->pTimeTravelManager->RequestInvalidation("SD card activity: storage is not covered by TTD yet");
+    // TTD: the card's protocol state is in the EvoSdCard blob; a guest write
+    // changes the medium, so it is a replay barrier (the media manager's rule)
+    _sdCard.setWriteListener([this](uint64_t) {
+        if (_context->pMediaManager)
+            _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
     });
+
+    if (_context->pMediaManager)
+        _context->pMediaManager->RegisterSlot(_sdSlot);
 }
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
+    if (_context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
 
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
-    if (_nvramLoaded && nvramPath[0] != '\0' && !_cmos.SaveNvram(nvramPath))
+    if (_nvramLoaded && nvramPath[0] != '\0' && !_evoAvr.SaveNvram(nvramPath))
         MLOGWARNING("PortDecoder_ATM3: cannot save the ZX-Evo NVRAM to '%s'", nvramPath);
 
     MLOGDEBUG("PortDecoder_ATM3::~PortDecoder_ATM3()");
@@ -62,33 +71,20 @@ void PortDecoder_ATM3::reset()
     _state->evoVgDrive = 0;
     RefreshM1Hook();
 
-    // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
-    // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
-    _cmos.SetCMOSType(Dallas);
-
     // The battery-backed NVRAM and EEPROM come from [EVO] NvramFile once, at
     // power-on; a Z80 reset does not touch the AVR
     if (!_nvramLoaded)
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_cmos.LoadNvram(nvramPath))
+        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
             MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
     }
 
-    // The card and its session writes survive a Z80 reset; [ZC] is read once,
-    // at power-on. The controller itself resets (spihub.v: /CS high)
+    // The card and its session writes survive a Z80 reset (the media manager
+    // inserted the configured card before the first one). The controller
+    // itself resets (spihub.v: /CS high)
     _zc.Reset();
-    if (!_sdConfigApplied)
-    {
-        _sdConfigApplied = true;
-        const auto& zc = _context->config.zc;
-        const auto mode = zc.sd_write_mode == 1   ? SdCardSpi::WriteMode::Persist
-                          : zc.sd_write_mode == 2 ? SdCardSpi::WriteMode::Off
-                                                  : SdCardSpi::WriteMode::Session;
-        if (zc.sd_image_path[0] != '\0' && !InsertSdCard(zc.sd_image_path, mode, zc.sd_write_protect != 0))
-            MLOGWARNING("PortDecoder_ATM3: cannot insert the SD card image '%s' ([ZC] SDCardImage)", zc.sd_image_path);
-    }
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
@@ -163,8 +159,122 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
     return PortArm::ZxBus;
 }
 
+/// @brief Internal port codes: the BaseConf decode arms ClassifyPort resolves
+///        every I/O cycle to (zports.v porthit list), by PortArm value
+std::vector<PortTraceCodeName> PortDecoder_ATM3::GetPortTraceCodeTable() const
+{
+    return {
+        {static_cast<uint16_t>(PortArm::ZxBus), "ZxBus"},
+        {static_cast<uint16_t>(PortArm::KeyboardBorder), "KeyboardBorder"},
+        {static_cast<uint16_t>(PortArm::BorderAnd7FFD), "BorderAnd7FFD"},
+        {static_cast<uint16_t>(PortArm::Paging7FFD), "Paging7FFD"},
+        {static_cast<uint16_t>(PortArm::Ay), "Ay"},
+        {static_cast<uint16_t>(PortArm::Eff7Gluk), "Eff7Gluk"},
+        {static_cast<uint16_t>(PortArm::Pager), "Pager"},
+        {static_cast<uint16_t>(PortArm::Atm77), "Atm77"},
+        {static_cast<uint16_t>(PortArm::SdConfig), "SdConfig"},
+        {static_cast<uint16_t>(PortArm::SdData), "SdData"},
+        {static_cast<uint16_t>(PortArm::Fdc), "Fdc"},
+        {static_cast<uint16_t>(PortArm::Joystick), "Joystick"},
+        {static_cast<uint16_t>(PortArm::Mouse), "Mouse"},
+        {static_cast<uint16_t>(PortArm::EvoConfig), "EvoConfig"},
+        {static_cast<uint16_t>(PortArm::EvoExit), "EvoExit"},
+        {static_cast<uint16_t>(PortArm::EvoReadback), "EvoReadback"},
+        {static_cast<uint16_t>(PortArm::ComPort), "ComPort"},
+        {static_cast<uint16_t>(PortArm::UlaPlus), "UlaPlus"},
+        {static_cast<uint16_t>(PortArm::NemoIde), "NemoIde"},
+        {static_cast<uint16_t>(PortArm::Covox), "Covox"},
+        {static_cast<uint16_t>(PortArm::LegacyFddLatch), "LegacyFddLatch"},
+    };
+}
+
+PortDecodeDisposition PortDecoder_ATM3::TraceDisposition(PortArm arm, uint16_t port, bool isWrite)
+{
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    disp.wasHandledInline = true;
+    disp.internalCode = static_cast<uint16_t>(arm);  // the BaseConf decode arm (GetPortTraceCodeTable)
+    const uint16_t low = port & 0x00FF;
+
+    switch (arm)
+    {
+        case PortArm::KeyboardBorder:
+            disp.decodedPort = 0x00FE;
+            break;
+        case PortArm::BorderAnd7FFD:
+            // #FC: a write with A15=0 also pages - the paging is the part that matters
+            disp.decodedPort = (isWrite && (port & 0x8000) == 0) ? 0x7FFD : 0x00FE;
+            break;
+        case PortArm::Paging7FFD:
+            disp.decodedPort = 0x7FFD;
+            break;
+        case PortArm::Ay:
+            disp.decodedPort = (port & 0x4000) ? 0xFFFD : 0xBFFD;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::Eff7Gluk:
+            // #EFF7 is A12=0; the other #xxF7 addresses are the Gluk clock
+            disp.decodedPort = (port & 0x1000) == 0 ? 0xEFF7 : port;
+            disp.device = (port & 0x1000) == 0 ? PortDeviceId::Control_EFF7 : PortDeviceId::Custom;
+            break;
+        case PortArm::Pager:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Memory_Windows;
+            break;
+        case PortArm::Atm77:
+            disp.decodedPort = 0xFF77;
+            disp.device = PortDeviceId::ATM_FF77;
+            break;
+        case PortArm::SdConfig:
+        case PortArm::SdData:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::SdCard;
+            break;
+        case PortArm::Fdc:
+            // #FF also strobes the palette latch; the FDC side is the one attributed
+            disp.decodedPort = low;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::EvoConfig:
+        case PortArm::EvoExit:
+        case PortArm::EvoReadback:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Evo_Config;
+            break;
+        case PortArm::Covox:
+            disp.decodedPort = 0x00FB;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::Joystick:
+        case PortArm::Mouse:
+        case PortArm::ComPort:
+        case PortArm::UlaPlus:
+        case PortArm::NemoIde:
+        case PortArm::LegacyFddLatch:
+            // Mainboard ports without their own device id (joystick #1F must not
+            // read as the FDC, which shares the low byte in shadow)
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Custom;
+            break;
+        case PortArm::ZxBus:
+        default:
+            // ZX-Bus cards: the General Sound host ports by their canonical keys
+            disp.wasHandledInline = false;
+            if ((port & 0x00F7) == 0x00B3)
+                disp.decodedPort = low == 0x00BB ? 0x00BB : 0x00B3;
+            else if (isWrite && low == 0x0033)
+                disp.decodedPort = 0x0033;
+            break;
+    }
+    return disp;
+}
+
 uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -270,12 +380,18 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             break;
     }
 
-    OnPortInComplete(port, result, pc);
+    PortDecodeDisposition trace = TraceDisposition(arm, port, /*isWrite*/ false);
+    trace.wasDecoded = _lastPortDecoded;
+    OnPortInComplete(port, result, pc, trace);
     return result;
 }
 
 void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     const PortArm arm = ClassifyPort(port, /*isWrite*/ true);
 
     PortDecodeDisposition disp;
@@ -377,7 +493,9 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             break;
     }
 
-    OnPortOutComplete(port, value, pc);
+    PortDecodeDisposition trace = TraceDisposition(arm, port, /*isWrite*/ true);
+    trace.wasDecoded = trace.decodedPort != 0x0000;
+    OnPortOutComplete(port, value, pc, trace);
 }
 
 /// endregion </Interface methods>
@@ -716,7 +834,7 @@ void PortDecoder_ATM3::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t val
     // 7FFD stays writable - bits 5..7 then extend the RAM page number, so a
     // sticky latch would brick the machine after the first P1024 lock write
     // (xpeccy pentevo.c evoOut7FFD: `if ((pEFF7 & 4) && (p7FFD & 0x20)) return;`)
-    if ((_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK))
+    if (IsPagingLocked())
     {
         MLOGWARNING("Port_7FFD_Out(ATM3): Paging locked (EFF7 lockmem + 7FFD.5), ignoring write of 0x%02X", value);
         return;
@@ -785,9 +903,9 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
         Port_EFF7_Out(port, value, pc);
 
     if (gluk && (port & 0x2000) == 0)
-        _cmos.SetCMOSAddress(value);
+        _evoAvr.WriteAddress(value);
     if (gluk && (port & 0x4000) == 0)
-        _cmos.WriteCMOS(value);
+        _evoAvr.WriteData(value);
 }
 
 /// @brief #F7 reads: only the clock data port drives the bus (zports.v:455-460);
@@ -795,7 +913,7 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
 uint8_t PortDecoder_ATM3::DecodeF7In(uint16_t port)
 {
     if (IsPort_CMOS_Data(port))
-        return _cmos.ReadCMOS();
+        return _evoAvr.ReadData();
     return 0xFF;
 }
 
@@ -937,8 +1055,34 @@ bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t va
 
 /// region <SD card>
 
+namespace
+{
+    AccessMode AccessOf(SdCardSpi::WriteMode mode)
+    {
+        switch (mode)
+        {
+            case SdCardSpi::WriteMode::Persist: return AccessMode::WriteThrough;
+            case SdCardSpi::WriteMode::Off: return AccessMode::ReadOnly;
+            default: return AccessMode::Session;
+        }
+    }
+}  // namespace
+
 bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect)
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;  // the legacy call always replaced the card
+        const MediaResult result = manager->Insert(_sdSlot.Descriptor().id, source, options);
+        if (!result.Ok())
+            MLOGWARNING("PortDecoder_ATM3: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
+        return result.Ok();
+    }
     const bool inserted = _sdCard.open(path, mode);
     _sdWriteProtect = writeProtect;
     UpdateSdStatus();
@@ -947,6 +1091,16 @@ bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMod
 
 bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect)
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.type = MediaSourceType::Blank;
+        InsertOptions options;
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
+        auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
+        return manager->Insert(_sdSlot.Descriptor().id, std::move(medium), options).Ok();
+    }
     const bool inserted = _sdCard.insert(std::move(media), mode);
     _sdWriteProtect = writeProtect;
     UpdateSdStatus();
@@ -955,6 +1109,13 @@ bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardS
 
 void PortDecoder_ATM3::EjectSdCard()
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;  // the programmatic eject of tests and automation wrappers
+        manager->Eject(_sdSlot.Descriptor().id, options);
+        return;
+    }
     _sdCard.close();
     UpdateSdStatus();
 }
@@ -963,7 +1124,75 @@ void PortDecoder_ATM3::UpdateSdStatus()
 {
     // AVR register C: b3 card present, b2 write-protected (rtc.c reads the
     // slot's detect and WP switches)
-    _cmos.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+    _evoAvr.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+}
+
+PortDecoder_ATM3::EvoSdSlot::EvoSdSlot(PortDecoder_ATM3& owner) : _owner(owner)
+{
+    _descriptor.id = "sd.zc";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (Z-Controller)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;  // the ERS and NedoOS poll the card and re-initialize it
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.defaultFs = FatType::Fat16;
+    _descriptor.hasCardDetect = true;          // AVR register C bit 3
+    _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "E: in the ERS and NedoOS (the card's first FAT partition)";
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Attach(Medium& medium)
+{
+    _owner._sdCard.attach(*medium.Block());
+    _owner._sdCard.select(_owner._zc.IsSelected());
+    _owner.UpdateSdStatus();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Detach()
+{
+    _owner._sdCard.detach();
+    _owner.UpdateSdStatus();
+}
+
+bool PortDecoder_ATM3::EvoSdSlot::IsBusy() const
+{
+    return _owner._sdCard.busy();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::SetWriteProtectSwitch(bool on)
+{
+    _owner._sdWriteProtect = on;
+    _owner.UpdateSdStatus();
+}
+
+PortDecoder::RtcBinding PortDecoder_ATM3::GetRtcBinding()
+{
+    RtcBinding binding;
+    binding.chip = &_evoAvr;
+    binding.ports = "Gluk: #DFF7 address / #BFF7 data after #EFF7 bit 7; #DEF7 / #BEF7 in shadow";
+    binding.nvramFile = _context->config.atm.evo_nvram_path;
+    return binding;
+}
+
+std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
+{
+    std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
+    ids.push_back(ttd::PeripheralId::EvoSdCard);
+    ids.push_back(ttd::PeripheralId::Ds12887);
+    return ids;
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSerializers() const
+{
+    auto serializers = PortDecoder_ATM710::CreateTTDSerializers();
+    // The serializer reads and restores the live card; the decoder outlives
+    // every TTD session (the manager goes before the core)
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
+    return serializers;
 }
 
 /// endregion </SD card>

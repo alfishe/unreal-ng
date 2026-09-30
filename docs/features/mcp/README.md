@@ -105,15 +105,16 @@ progress when the request carries a `_meta.progressToken` (see
 
 | Tool | Purpose | Progress |
 |:--|:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity | — |
-| `load_software` | `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `switch_model` (`model`, optional `ram_size` and `stranded`: the media follow, [media.md](../media.md#model-switch)), `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity. `create` with `zxpoly: true` (+ `zxpoly_file`), or with a configuration as `model` (`ZXPOLY-48K`/`ZXPOLY-128K`/`ZXPOLY-PENTAGON`), starts a ZX-Poly machine, `zxpoly_status` reports its group ([recipe](../../../.recipe/machines/zxpoly.md)) | — |
+| `load_software` | `.sna/.z80/.szx` snapshots, `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
-| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse (device reports, see command-interface.md §3.3), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
+| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse (device reports, see command-interface.md §3.3; CMOS cells are written with invoke_api POST /api/v1/emulator/{id}/rtc/cells), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
 | `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index — see [Time-travel debugging](#time-travel-debugging) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace` | `profile_report` + `porttrace`: per phase |
+| `media` | every media slot: list, insert (a file or a folder; `slot:"auto"`), swap, eject, save, export, discard, rescan, create, protect ([media.md](../media.md)) | — |
 | `capture_media` | screenshot (PNG/GIF + metadata), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling), `audio_capture` (RMS/peak/dominant-Hz, WAV) | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` | — |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution | — |
@@ -163,6 +164,7 @@ the internals).
 | `reverse_step` | `count` (instructions) **or** `tstates` | Step back several instructions or T-states |
 | `reverse_continue` | `pcs`: list of addresses | Run backward until the CPU was about to execute one of them |
 | `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
+| `port_events` | `event` (`key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`, `in`, `out`); optional `event_arg` (a key name or an AY register), `limit`, `newest`, `from_frame`/`to_frame`, `port`/`port_mask`, `value`/`value_mask`, `match`, `trigger`, `ay_register`, `file` (a saved `.ttd` searched without loading it) | "When did the program ...": every matching IN/OUT with frame, tinframe, PC, port, value - from the port journals, no replay (needs a stopped or paused recording) |
 | `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded**. Needs the machine positioned in history (`seek` or a step first); right after `stop` it fails |
 | `dump` / `load` | `path` | Save / load a `.ttd` session file |
 | `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |
@@ -173,6 +175,11 @@ through history (`seek`, the step actions, `reverse_*`, `find_last`) needs a
 stopped session: while recording the call fails with HTTP 409 and the tool
 tells you to call `stop` first. `find_last` reports where the access happened;
 `seek` to the reported `frame`/`tinframe` to inspect the machine there.
+`find_last` and `reverse_continue` also name the part of history they searched
+(`Searched frame A .. frame B.`): a marker (tape, disk write, edit) can cut a
+search short, and the span shows it. `status` says `write journal on
+(incomplete: <cause> at frame N; write searches replay)` when the journal
+misses writes of the session.
 
 ### Session rules
 
@@ -211,7 +218,7 @@ that did it.
 
 // 2. Ask for the last write to 0x5800
 {"name": "time_travel", "arguments": {"action": "find_last", "addr": "0x5800", "access": "write"}}
-// -> "Last write at frame 431 t=20112 by PC 0x8F3A, value 16, RAM page 5. Seek to that frame/tinframe ..."
+// -> "Last write at frame 431 t=20112 by PC 0x8F3A, value 16, RAM page 5. Searched frame 431 t=20112 .. frame 480. Seek to that frame/tinframe ..."
 
 // 3. Go there and look at the code
 {"name": "time_travel",   "arguments": {"action": "seek", "frame": 431, "tinframe": 20112}}

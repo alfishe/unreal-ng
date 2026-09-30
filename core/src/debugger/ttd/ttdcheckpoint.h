@@ -19,7 +19,7 @@
 ///     store itself is item 3 of P1 and lands in ttd_page_store.h.
 ///
 /// Excluded by design (host-side, preserved by caller on restore):
-///   - Z80State::FastMemIf / DbgMemIf / MemIf (pointers)
+///   - Z80State::FastMemIf / DbgMemIf / Overlay*MemIf / MemIf (pointers)
 ///   - Z80State::isDebugMode, trace_curs/top/mode, mem_curs/top/second,
 ///     pc_trflags, prev_pc, m1_pc, last_branch, nextpc
 ///   - Z80State::rate, vm1, outc0, tpi, trpc[] (CPU config, not state)
@@ -46,7 +46,8 @@ namespace ttd {
 struct TTDTimePoint
 {
     uint64_t frame = 0;       ///< Frame index since session start
-    uint32_t tInFrame = 0;    ///< T-states within the frame (0 = frame start)
+    uint32_t tInFrame = 0;    ///< T-states within the frame at the model's top CPU clock
+                              ///< (0 = frame start; TimeTravelManager::TInFrameNow, B4)
 
     bool operator==(const TTDTimePoint& o) const
     { return frame == o.frame && tInFrame == o.tInFrame; }
@@ -314,9 +315,11 @@ struct TTDCheckpoint
     /// entry references 4 codec-store sub-page slots (4 KB each).
     std::vector<TTDPageRef> ramPages;
 
-    // --- Journal offsets (populated by P2 and P4) ---
-    uint64_t inputJournalOffset = 0;
-    uint64_t writeJournalOffset = 0;
+    /// Port journal positions at the capture: the records before them were
+    /// made before this checkpoint, so a replay from it starts there
+    /// (TTDPortJournal: IN results, OUTs). 0 when the session has no journals.
+    uint64_t portReadCursor = 0;
+    uint64_t portWriteCursor = 0;
 };
 
 // ---------------------------------------------------------------------------

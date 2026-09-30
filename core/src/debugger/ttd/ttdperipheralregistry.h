@@ -119,6 +119,10 @@ public:
     /// knowing about machine specifics.
     uint64_t ComputePeripheralHash() const;
 
+    /// Tell every registered device that recording started / stopped
+    /// (TTDSerializable::TTDRecordingStarted / TTDRecordingStopped)
+    void NotifyRecording(bool started) const;
+
 private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
 

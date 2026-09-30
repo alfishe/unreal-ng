@@ -24,14 +24,17 @@ Type I commands are responsible for moving the Read/Write head across the disk s
 
 **Stepping Rate Table:**
 
-| r1 r0 | 2 MHz Clock, DDEN=0 (MFM) | 2 MHz Clock, DDEN=1 (FM) | 1 MHz Clock |
-|-------|---------------------------|--------------------------|-------------|
-| 0 0 | 3 ms | 6 ms | 6 ms |
-| 0 1 | 6 ms | 12 ms | 12 ms |
-| 1 0 | 10 ms | 20 ms | 20 ms |
-| 1 1 | 15 ms | 30 ms | 30 ms |
+| r1 r0 | 1 MHz clock (Spectrum clones) | 2 MHz clock ("turbo VG", 8" drives) |
+|-------|-------------------------------|-------------------------------------|
+| 0 0 | 6 ms | 3 ms |
+| 0 1 | 12 ms | 6 ms |
+| 1 0 | 20 ms | 10 ms |
+| 1 1 | 30 ms | 15 ms |
 
-*Note: At 2 MHz with FM mode (DDEN=1), step rates are doubled compared to MFM mode.*
+*Note: the step rate depends only on the controller clock (CLK, pin 24), not on the density (DDEN).
+Datasheet p.6: "When the clock is at 2 MHz, the stepping rates of 3, 6, 10, and 15 ms are obtainable.
+When CLK equals 1 MHz these times are doubled." An older version of this table had an FM column taken
+from a column-shifted OCR; the original datasheet has no such dependence.*
 
 | Bit | Name     | Value | Description                                                                                                                                |
 | :-: | :------- | :---- | :----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -127,4 +130,26 @@ Type I commands are responsible for moving the Read/Write head across the disk s
 *   If `V=1`, simulate reading ID fields from the virtual disk image on the target track.
 *   Correctly handle `/TR00` input for RESTORE.
 *   Update status bits accurately upon completion, including error conditions.
+
+### How unreal-ng does it
+
+*   The step period and the verify settle follow the controller clock of the machine
+    (`WD1793::FdcClock`): 6/12/20/30 ms and 30 ms settle at 1 MHz, 3/6/10/15 ms and 15 ms settle at 2 MHz.
+    See [WD1793_Timeouts.md](WD1793_Timeouts.md#controller-clock-and-data-rate-in-unreal-ng) for the clock
+    policies (fixed 1 MHz, automatic "turbo VG", latched).
+*   Worked example: SEEK from track 0 to track 40 with `r1 r0 = 00` and `V = 1`.
+    *   1 MHz clock: 40 steps x 6 ms + 30 ms settle = **270 ms** (945 000 T-states at 3.5 MHz).
+    *   ZX-Evo "turbo VG" (the first step pulse switches the clock to 2 MHz): 40 x 3 ms + 15 ms = **135 ms**.
+*   Verify follows the datasheet flowchart. From the current head position the ID fields pass under the
+    head in rotation order. The first one whose track number equals the Track Register and whose CRC is
+    good ends the command (CRC ERROR cleared); the time charged is the rotation up to that ID field plus its
+    7 bytes. A matching ID with a bad CRC sets CRC ERROR and the search goes on. The side number is not
+    compared. With no acceptable ID the command ends with SEEK ERROR at the fifth index pulse.
+*   No ID field can be recognized at all when the track is unformatted, recorded in the other encoding
+    (FM / MFM), at the other data rate (a 500 kbit/s HD track read at 250 kbit/s), or when the head of an
+    80-track drive sits between two tracks of a 40-track disk (odd head position): SEEK ERROR.
+*   Worked example, a 40-track disk in an 80-track drive: TR-DOS keeps TR = 5 while the head is at
+    position 10. The drive reads disk track 5 there, whose ID fields carry C = 5, so verify passes.
+    A protected disk whose track 5 IDs say C = 6 fails verify with SEEK ERROR, as on real hardware.
+*   Fast disk loading: a successful verify is charged at most 100 T-states (rotation teleport).
 *   Manage the HLD output and HLT input interaction (head load timing).

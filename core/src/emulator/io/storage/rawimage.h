@@ -7,9 +7,15 @@
 /// with zeros. Writes go straight to the file (write-through); a write to that
 /// padded last sector extends the file to a whole sector. Opened read-only,
 /// every write fails, and the file is never modified.
+///
+/// Headered formats (HDF, HDI, fixed VHD: HddImageFormats) are the same file
+/// with a Layout: the disk starts at `dataOffset`, is `dataBytes` long, carries
+/// the header's geometry, and may store only the low byte of every word
+/// (`halved`, RS-IDE 8-bit images: 256 bytes per sector, high bytes read 0).
 
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "emulator/io/storage/iblockdevice.h"
@@ -23,9 +29,19 @@ public:
         ReadWrite
     };
 
+    struct Layout
+    {
+        uint64_t dataOffset = 0;                ///< where sector 0 starts in the file
+        uint64_t dataBytes = 0;                 ///< the disk's length; 0: to the end of the file
+        std::optional<BlockGeometry> geometry;  ///< from the header
+        bool halved = false;                    ///< 256 stored bytes per sector: the low byte of each word
+    };
+
     /// Open an existing image. Returns nullptr (and a reason in `error`) when
     /// the file is missing, is not a regular file, or cannot be opened for `access`
     static std::unique_ptr<RawImage> Open(const std::string& path, Access access, std::string* error = nullptr);
+    static std::unique_ptr<RawImage> Open(const std::string& path, Access access, const Layout& layout,
+                                          std::string* error = nullptr);
 
     ~RawImage() override;
 
@@ -36,6 +52,7 @@ public:
     bool ReadSector(uint64_t lba, uint8_t* dst) override;
     bool WriteSector(uint64_t lba, const uint8_t* src) override;
     bool IsWritable() const override { return _access == Access::ReadWrite; }
+    std::optional<BlockGeometry> NativeGeometry() const override { return _layout.geometry; }
     std::string Describe() const override { return _path; }
     uint64_t ContentId() const override { return _contentId; }
 
@@ -46,7 +63,8 @@ public:
     void Flush();
 
 private:
-    RawImage(std::string path, Access access, std::fstream file, uint64_t sizeBytes);
+    RawImage(std::string path, Access access, std::fstream file, uint64_t sizeBytes, const Layout& layout);
+    uint32_t StoredSectorBytes() const { return _layout.halved ? kSectorSize / 2 : kSectorSize; }
 
     std::string _path;
     Access _access;
@@ -54,4 +72,6 @@ private:
     uint64_t _sizeBytes = 0;
     uint64_t _sectors = 0;
     uint64_t _contentId = 0;
+    Layout _layout;
+    bool _fixedSize = false;  ///< the layout sets the length: writes never grow the file
 };

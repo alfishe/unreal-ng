@@ -569,5 +569,5 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* msg) {
 
 - [emulator-lifecycle-management.md](./emulator-lifecycle-management.md) - Emulator ownership model
 - [pause-stop-race-condition-fix.md](./pause-stop-race-condition-fix.md) - Thread safety patterns
-- [Debugger events analysis](../../inprogress/2026-01-11-debugger-events/) - Root cause of crash
+- [Debugger events analysis](../../../inprogress/2026-01-11-debugger-events/) - Root cause of crash
 

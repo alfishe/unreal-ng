@@ -13,6 +13,9 @@
 #include <cassert>
 #include <array>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
 
 Config::Config(EmulatorContext* context)
 {
@@ -124,6 +127,39 @@ bool Config::LoadConfigFile(const std::string& filename)
 	return result;
 }
 
+bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
+{
+	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
+		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
+	for (const auto& [text, id] : schemes)
+	{
+		if (name == text)
+		{
+			scheme = id;
+			return true;
+		}
+	}
+	return false;
+}
+
+const char* Config::IdeSchemeName(IDE_SCHEME scheme)
+{
+	switch (scheme)
+	{
+		case IDE_NONE: return "NONE";
+		case IDE_ATM: return "ATM";
+		case IDE_NEMO: return "NEMO";
+		case IDE_NEMO_A8: return "NEMO-A8";
+		case IDE_NEMO_DIVIDE: return "NEMO-DIVIDE";
+		case IDE_SMUC: return "SMUC";
+		case IDE_PROFI: return "PROFI";
+		case IDE_DIVIDE: return "DIVIDE";
+	}
+	return "?";
+}
+
 bool Config::ParseEvoFpgaVariant(const char* value)
 {
 	if (value == nullptr || value[0] == '\0')
@@ -137,23 +173,6 @@ bool Config::ParseEvoFpgaVariant(const char* value)
 
 	LOGWARNING("Config: unknown [EVO] Fpga='%s' - using the current trdemu BaseConf", value);
 	return false;
-}
-
-uint8_t Config::ParseSdWriteMode(const char* value)
-{
-	if (value == nullptr || value[0] == '\0')
-		return 0;
-
-	const size_t length = strlen(value);
-	if (length == strlen("session") && StringHelper::CompareCaseInsensitive(value, "session", length) == 0)
-		return 0;
-	if (length == strlen("persist") && StringHelper::CompareCaseInsensitive(value, "persist", length) == 0)
-		return 1;
-	if (length == strlen("off") && StringHelper::CompareCaseInsensitive(value, "off", length) == 0)
-		return 2;
-
-	LOGWARNING("Config: unknown [ZC] SDWrite='%s' - keeping writes for the session only", value);
-	return 0;
 }
 
 bool Config::ParseConfig(IniFile& inimanager)
@@ -206,8 +225,6 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// MISC::ULA+ sub-section
 
-	// MISC::TSConf sub-section
-
     // ROM set. GetValue returns NULL when the [ROM] section or the key is
     // absent (a valid minimal config may carry neither) - a NULL const char*
     // assigned to std::string is UB, so map it to the empty name explicitly.
@@ -240,14 +257,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
-	// ZC section: the Z-Controller SD card slot. SDCARD is the UnrealSpeccy key,
-	// kept as an alias; SDDelay (UnrealSpeccy latency) is accepted and ignored
-	config.zc.sd_image_path[0] = '\0';
-	CopyStringValue(inimanager.GetValue("ZC", "SDCardImage", nullptr), config.zc.sd_image_path, sizeof config.zc.sd_image_path);
-	if (!config.zc.sd_image_path[0])
-		CopyStringValue(inimanager.GetValue("ZC", "SDCARD", nullptr), config.zc.sd_image_path, sizeof config.zc.sd_image_path);
-	config.zc.sd_write_mode = ParseSdWriteMode(inimanager.GetValue("ZC", "SDWrite", nullptr));
-	config.zc.sd_write_protect = inimanager.GetLongValue("ZC", "SDWriteProtect", 0) != 0 ? 1 : 0;
+	// PROFI section: battery-backed RTC cells
+	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
+
+	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
@@ -299,6 +313,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
 	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
 	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 0) ? true : false;  // Default: off (realistic WD1793 timing)
+	{
+		// Turbo VG (WD1793 clocked at 2 MHz while positioning): absent = the machine's own policy
+		const long turboVg = inimanager.GetLongValue(beta128, "TurboVG", -1);
+		config.fdcTurboVg = static_cast<int8_t>(turboVg < 0 ? -1 : (turboVg ? 1 : 0));
+	}
 	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
@@ -344,7 +363,38 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.input.mousescale = static_cast<char>(scale);
 	}
 
-	// HDD section
+	// HDD section: the machine's IDE board and how its units are set up. The
+	// images (Image0/1, HD0RO/1RO) are media: MediaConfig reads them
+	{
+		config.ide_scheme = IDE_NONE;
+		if (const char* scheme = inimanager.GetValue(hdd, "Scheme", nullptr); scheme && !ParseIdeScheme(scheme, config.ide_scheme))
+			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
+		for (int unit = 0; unit < 2; unit++)
+		{
+			IDE_CONFIG& ide = config.ide[unit];
+			ide = IDE_CONFIG{};
+			const std::string n = std::to_string(unit);
+			if (const char* chs = inimanager.GetValue(hdd, ("CHS" + n).c_str(), nullptr))
+			{
+				unsigned c = 0, h = 0, s = 0;
+				if (std::sscanf(chs, "%u/%u/%u", &c, &h, &s) == 3 && h <= 16 && s <= 255)
+				{
+					ide.c = c;
+					ide.h = h;
+					ide.s = s;
+				}
+				else
+					MLOGWARNING("Config: [HDD] CHS%d=%s: expected C/H/S (heads up to 16)", unit, chs);
+			}
+			// A CD drive: CDn=1, or the unit's configured image is an ISO
+			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
+			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			if (!image || !*image)
+				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
+			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
+			ide.cd = ((cd && std::atoi(cd) != 0) || iso) ? 1 : 0;
+		}
+	}
 
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
@@ -477,8 +527,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// Z80 = LLE coprocessor card, LW/LIGHT = lightweight in-tree mod player
 	// (docs/inprogress/2026-09-19-general-sound), BASS = legacy
 	// upstream HLE spelling kept as a deprecated alias of LW (no BASS library
-	// is linked), NGS = NeoGS FPGA card (neogs-tdd.md - P2 placeholder, no
-	// device is created yet), NONE = no GS card. A missing key keeps NONE;
+	// is linked), NGS = NeoGS FPGA card (SoundChip_NeoGS, neogs-tdd.md),
+	// NONE = no GS card. A missing key keeps NONE;
 	// unknown values warn and fall back to NONE.
 	{
 		// Explicit default first: a missing key must reset to NONE even when
@@ -551,31 +601,72 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 #endif
 #ifdef MOD_GSZ80
-	// NeoGS placeholders (neogs-tdd.md §6): RAM size in KB, SD card image
-	// and the MP3 decode path, all consumed by no card until the P2
-	// implementation lands. SDCARD is the original UnrealSpeccy key, kept as
-	// an alias so existing configs load. The GS Z80 card has its own fixed
-	// geometry, so RamSize only matters for NeoGS.
-	config.gs_ramsize = (unsigned)inimanager.GetLongValue(ngs, "RamSize", 2048);
-	CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
-	if (!config.ngs_sd_card_path[0])
-		CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	// NeoGS card ([NGS] section, neogs-tdd.md §6). The classic GS card has
+	// its own fixed geometry ([SOUND] GSRamSize), so nothing here reaches it
+	// (verification BUG-6). SDCARD is the original UnrealSpeccy key, kept as
+	// an alias of SDCardImage so existing configs load.
 	{
-		config.ngsMP3SupportKind = NGSMP3SupportKind::Stub;
-		line[0] = '\0';
-		CopyStringValue(inimanager.GetValue(ngs, "MP3Support", "stub"), line, sizeof line);
-		if (StringHelper::CompareCaseInsensitive(line, "none", strlen("none")) == 0)
+		NeoGSConfig& ngsConfig = config.ngs;
+		ngsConfig = NeoGSConfig{};
+
+		auto choice = [&](const char* key, const char* fallback, std::initializer_list<const char*> names) -> int
 		{
-			config.ngsMP3SupportKind = NGSMP3SupportKind::None;
-		}
-		else if (StringHelper::CompareCaseInsensitive(line, "software", strlen("software")) == 0)
-		{
-			config.ngsMP3SupportKind = NGSMP3SupportKind::Software;
-		}
-		else if (StringHelper::CompareCaseInsensitive(line, "stub", strlen("stub")) != 0)
-		{
-			MLOGWARNING("Config: unsupported [NGS] MP3Support='%s', using stub", line);
-		}
+			line[0] = '\0';
+			CopyStringValue(inimanager.GetValue(ngs, key, fallback), line, sizeof line);
+			int index = 0;
+			for (const char* name : names)
+			{
+				if (StringHelper::CompareCaseInsensitive(line, name, strlen(name)) == 0 && strlen(line) == strlen(name))
+					return index;
+				index++;
+			}
+			MLOGWARNING("Config: unsupported [NGS] %s='%s', using %s", key, line, fallback);
+			index = 0;
+			for (const char* name : names)
+			{
+				if (StringHelper::CompareCaseInsensitive(fallback, name, strlen(name)) == 0)
+					return index;
+				index++;
+			}
+			return 0;
+		};
+
+		const char* flash = inimanager.GetValue(ngs, "Flash", nullptr);
+		if (flash && flash[0])
+			CopyStringValue(flash, ngsConfig.flashPath, sizeof ngsConfig.flashPath);
+		ngsConfig.flashId = choice("FlashId", "st", {"st", "amd"}) == 1 ? NeoGSConfig::FlashId::AMD : NeoGSConfig::FlashId::ST;
+		ngsConfig.fpga = choice("Fpga", "current", {"current", "d"}) == 1 ? NeoGSConfig::Fpga::D : NeoGSConfig::Fpga::Current;
+
+		// 2 MB and 4 MB boards only; anything else snaps to the nearer one
+		long ramKB = inimanager.GetLongValue(ngs, "RamSize", 4096);
+		ngsConfig.ramKB = ramKB <= 3072 ? 2048u : 4096u;
+		if (ramKB != 2048 && ramKB != 4096)
+			MLOGWARNING("Config: [NGS] RamSize=%ld is not a NeoGS size (2048 | 4096), using %u", ramKB, ngsConfig.ramKB);
+
+		ngsConfig.boot = choice("Boot", "loader", {"loader", "direct"}) == 1 ? NeoGSConfig::Boot::Direct : NeoGSConfig::Boot::Loader;
+		ngsConfig.bootDelayMs = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "BootDelayMs", 0), 0, 10000));
+
+		CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), ngsConfig.sdCardPath, sizeof ngsConfig.sdCardPath);
+		if (!ngsConfig.sdCardPath[0])
+			CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), ngsConfig.sdCardPath, sizeof ngsConfig.sdCardPath);
+		static constexpr NeoGSConfig::SDType sdTypes[] = {NeoGSConfig::SDType::Auto, NeoGSConfig::SDType::SDSC, NeoGSConfig::SDType::SDHC};
+		ngsConfig.sdType = sdTypes[choice("SDType", "auto", {"auto", "sdsc", "sdhc"})];
+		ngsConfig.sdWriteProtect = inimanager.GetLongValue(ngs, "SDWriteProtect", 0) != 0;
+		static constexpr NeoGSConfig::WriteMode writeModes[] = {NeoGSConfig::WriteMode::Session, NeoGSConfig::WriteMode::Persist, NeoGSConfig::WriteMode::Off};
+		ngsConfig.sdWrite = writeModes[choice("SDWrite", "session", {"session", "persist", "off"})];
+		ngsConfig.flashWrite = writeModes[choice("FlashWrite", "session", {"session", "persist", "off"})];
+
+		static constexpr NGSMP3SupportKind mp3Kinds[] = {NGSMP3SupportKind::None, NGSMP3SupportKind::Stub, NGSMP3SupportKind::Software};
+		ngsConfig.mp3Support = mp3Kinds[choice("MP3Support", "software", {"none", "stub", "software"})];
+		ngsConfig.mp3Chip = choice("Mp3Chip", "vs1001", {"vs1001", "vs1011"}) == 1 ? NeoGSConfig::Mp3Chip::VS1011 : NeoGSConfig::Mp3Chip::VS1001;
+		ngsConfig.mp3Gain = std::clamp(inimanager.GetDoubleValue(ngs, "Mp3Gain", 1.0), 0.0, 8.0);
+		ngsConfig.volume = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "Volume", 8000), 0, 8192));
+		ngsConfig.zxDmaWatch = choice("ZxDmaWatch", "selected", {"selected", "always"}) == 1 ? NeoGSConfig::ZxDmaWatch::Always
+		                                                                                     : NeoGSConfig::ZxDmaWatch::Selected;
+		ngsConfig.zxDmaWatchFrames = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "ZxDmaWatchFrames", 5), 1, 3000));
+		static constexpr NeoGSConfig::StereoMode stereoModes[] = {NeoGSConfig::StereoMode::Separated, NeoGSConfig::StereoMode::GS,
+		                                                          NeoGSConfig::StereoMode::Mono};
+		ngsConfig.stereoMode = stereoModes[choice("StereoMode", "separated", {"separated", "gs", "mono"})];
 	}
 #endif
 	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown
@@ -595,6 +686,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	{
 		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
 		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
+
+	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file
+	{
+		std::string configFolder;
+		if (!_configFilePath.empty())
+		{
+			const auto parent = FileHelper::ToFsPath(_configFilePath).parent_path().u8string();
+			configFolder.assign(parent.begin(), parent.end());
+		}
+		_mediaReport.clear();
+		_mediaSet = MediaConfig::FromIni(inimanager, configFolder, &_mediaReport);
 	}
 
 	// Emulated model
@@ -634,6 +737,11 @@ void Config::SetConfigLoadedHook(ConfigLoadedHook hook)
 	ConfigLoadedHookStorage() = std::move(hook);
 }
 
+Config::ConfigLoadedHook Config::GetConfigLoadedHook()
+{
+	return ConfigLoadedHookStorage();
+}
+
 bool Config::DetermineModel(const char* model, uint32_t ramsize)
 {
 	bool result = false;
@@ -648,22 +756,13 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 		return false;
 	}
 
-	// Search for model in lookup dictionary
-	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	// Search for model in lookup dictionary (short names and their aliases)
+	if (const TMemModel* found = FindModelByShortName(model))
 	{
-		// Null check before calling strlen to prevent crash
-		if (mem_model[i].ShortName != nullptr)
-		{
-			if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
-			{
-				config.mem_model = mem_model[i].Model;
-				maxMemory = mem_model[i].AvailRAMs;
-				fullModelName = mem_model[i].FullName;
-
-				result = true;
-				break;
-			}
-		}
+		config.mem_model = found->Model;
+		maxMemory = found->AvailRAMs;
+		fullModelName = found->FullName;
+		result = true;
 	}
 
 	// Check if config requested RAM size allowed for the selected model
@@ -718,6 +817,11 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 				return &mem_model[i];
 			}
 		}
+	}
+	for (const ModelAlias& alias : model_aliases)
+	{
+		if (StringHelper::CompareCaseInsensitive(shortName.c_str(), alias.Name, strlen(alias.Name)) == 0)
+			return FindModelByEnum(alias.Model);
 	}
 	return nullptr;
 }
@@ -985,7 +1089,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         default:
-            // Leave existing values for TSConf etc.
+            // Leave existing values for the other models
             break;
     }
 
@@ -1002,6 +1106,9 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     // model. INI-driven runs (per-model config dirs) pass false and are untouched.
     if (canonicalGeometry)
     {
+        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there
+        config.even_M1 = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) ? 1 : 0;
+
         switch (config.mem_model)
         {
             case MM_SPECTRUM48:
@@ -1043,6 +1150,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 1756;
                 config.intlen = 32;
+                break;
+            case MM_TSL:
+                // TS-Conf: 320 lines x 224 T (the Pentagon raster, hardware-spec §4). INT comes from the
+                // machine's interrupt source (VS_INT / HS_INT), so intstart / intlen are not used
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
                 break;
             default:
                 break;

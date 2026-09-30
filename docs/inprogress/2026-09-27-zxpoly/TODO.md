@@ -39,6 +39,15 @@ architecture:
   sampling 8×1…per-pixel (+2–3 wk), (C) per-game metadata bundles loaded by
   content signature (~1 wk). MVP A+C ≈ 5–6 wk; shares discovery/atlas core
   with the ZX-Poly port.
+- [model-agnostic-sync-layer.md](model-agnostic-sync-layer.md) — ZX-Poly as
+  a pure synchronization wrapper over **any** model (4×48K, 4×128K, 4×+3,
+  4×Pentagon, …).
+  - Hooks: one port interceptor in `Z80::in/out` (ZX-Poly ports +
+    master-authoritative floating bus), a line-capture hook in `ScreenZX`,
+    and a frame-end callback on the master's `MainLoop`.
+  - Includes a per-model support matrix, `slave_io = full | replay` for heavy
+    devices, the start option instead of a new `MEM_MODEL`, the WebAPI/MCP/Qt
+    surface, tests G1–G7 and effort (~+2 wk over QI).
 - [unreal-ng-port-analysis.md](unreal-ng-port-analysis.md) — component mapping,
   phased plan with effort estimates, value and risk assessment.
 - [quad-instance-architecture.md](quad-instance-architecture.md) — **the
@@ -60,6 +69,23 @@ architecture:
     journals) + group seek/branch.
   - Includes the test plan T1–T12 (tests first), the decisions table, effort
     (~6–7 wk) and the deferred coupled machine (Test ROM/MIMD only).
+- [prototype-results.md](prototype-results.md) — the implementation as built:
+  what runs, every platform mechanism with its test, frame scheduling,
+  measurements, what is deferred.
+- [platform-bringup.md](platform-bringup.md) — the bring-up retrospective:
+  every step from the brief to the polish, the bug catalogue, lessons, the
+  commit log and the time accounting.
+
+## Test corpus
+
+Everything public, from the zxpoly repository, collected with measurements
+in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md):
+
+- 7 `.zxp` snapshots;
+- 2 multiloader TRDs (After The War 2, ZX-Word) with their loader sources;
+- 9 Sprite Corrector projects, including the unexported After The War 1;
+- the Test ROM and its source;
+- the Flying Shark base snapshot and pokes.
 
 ## What remains
 
@@ -82,6 +108,10 @@ architecture:
   - the composer should plug into the #42 video mapper interface.
 - Out of scope for v1: the Test ROM's per-CPU tests and MIMD software, which
   need the coupled machine of quad-instance §13.
+- Deferred, low priority (possible later): time travel for ZX-Poly machines
+  (the group timeline exists in the core only; every member refuses the per-instance TTD commands with the reason) and
+  ZX-Poly tiles in the video wall; the risks are in
+  [prototype-results.md §9](prototype-results.md#9-not-done-yet).
 
 ## Trigger for next step
 

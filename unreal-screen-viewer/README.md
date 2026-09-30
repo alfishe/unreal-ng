@@ -206,6 +206,6 @@ The shared memory region (`/zxspectrum_memory-{uuid}`) contains the full emulato
 
 ## See Also
 
-- [Technical Design Document](../docs/inprogress/2016-01-17-screen-viewer/tdd.md)
+- [Technical Design Document](../docs/inprogress/2026-01-17-screen-viewer/tdd.md)
 - [WebAPI Documentation](../docs/emulator/design/control-interfaces/command-interface.md)
-- [Shared Memory Feature](../docs/emulator/design/features.md)
+- [Shared Memory Feature](../docs/inprogress/2026-01-14-feature-brainstorming/features.md)

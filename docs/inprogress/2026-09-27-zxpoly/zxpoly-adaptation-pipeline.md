@@ -141,6 +141,11 @@ minimal reference for "authoring poly content from scratch".
 | **Buratino** | 5 | `buratino_adventures.zxp` | Mirrored sprites (one sprite serves left+right walk via flip) can't take two colors — inherent limitation for symmetrical art |
 | **Comando Quatro** | 4 | `ComandoQuatro.zxp` | Colorized by the game's *original author* 35 years later; "no more colour clash" |
 | **Alien 8** | 4 | `Alien8.zxp` | One-evening adaptation |
+| **After The War (1)** | (4) | `zxpolyeditions/atw1.sze` only | A Sprite Corrector project never exported to `.zxp` or TRD; exporting it gives a ninth title |
+
+All of the above, plus the loader sources and Sprite Corrector projects, are
+collected with measurements in
+[testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md).
 
 ## 6. The workflow, condensed
 

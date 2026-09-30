@@ -816,24 +816,32 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
                 bool ok = false;
+                std::string refusal;  // B9: a TTD recording refuses loads; report why
                 if (ext == "sna" || ext == "z80" || ext == "szx")
                 {
-                    ok = _emulator->LoadSnapshot(path);
+                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
+                    ok = refusal.empty() && _emulator->LoadSnapshot(path);
                 }
-                else if (ext == "tap" || ext == "tzx")
+                else if (Emulator::IsTapeExtension(ext))
                 {
-                    ok = _emulator->LoadTape(path);
+                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+                    ok = refusal.empty() && _emulator->LoadTape(path);
                 }
                 else if (ext == "trd" || ext == "scl" || ext == "fdi")
                 {
-                    ok = _emulator->LoadDisk(path);
+                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk);
+                    ok = refusal.empty() && _emulator->LoadDisk(path);
                 }
                 else
                 {
                     response = "Error: unsupported file type '" + ext + "'\n";
                 }
 
-                if (ok)
+                if (!refusal.empty())
+                {
+                    response = "Error: " + refusal + "\n";
+                }
+                else if (ok)
                 {
                     response = "Loaded: " + path + "\n";
                 }
@@ -887,7 +895,9 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                     }
                     else
                     {
-                        response = "Error: TTD recording failed to start\n";
+                        const std::string& reason = ttd->GetUnavailableReason();
+                        response = "Error: TTD recording failed to start" + (reason.empty() ? "" : ": " + reason) +
+                                   "\n";
                     }
                 }
             }

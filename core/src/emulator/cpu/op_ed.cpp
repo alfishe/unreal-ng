@@ -121,7 +121,7 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_43(Z80 *cpu) { // ld (nnnn),bc
@@ -178,9 +178,9 @@ Z80OPCODE ope_46(Z80 *cpu) { // im 0
 }
 
 Z80OPCODE ope_47(Z80 *cpu) { // ld i,a
-   cpu->i = cpu->a;
+   cpuidle(cpu->IR(), 1);  // the old IR is on the bus in the extra T (FUSE)
 
-   cputact(1);
+   cpu->i = cpu->a;
 }
 
 Z80OPCODE ope_48(Z80 *cpu) { // in c,(c)
@@ -228,7 +228,7 @@ Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3|F5|SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
@@ -250,6 +250,10 @@ Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
 Z80OPCODE ope_4D(Z80 *cpu) { // reti
     retxRestoreIff1(cpu);
 
+    // Z80-family peripherals decode RETI on the bus (IInterruptSource::OnReti)
+    if (IInterruptSource* source = cpu->GetInterruptSource()) [[unlikely]]
+        source->OnReti();
+
     uint16_t sp = cpu->sp;
 
     uint16_t addr = cpu->rd(sp++);
@@ -265,10 +269,10 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
 #define ope_4E ope_46  // im0 undocumented
 
 Z80OPCODE ope_4F(Z80 *cpu) { // ld r,a
+   cpuidle(cpu->IR(), 1);  // the old IR is on the bus in the extra T (FUSE)
+
    cpu->r_low = cpu->a;
    cpu->r_hi = cpu->a & 0x80;
-
-   cputact(1);
 }
 
 Z80OPCODE ope_50(Z80 *cpu) { // in d,(c)
@@ -317,7 +321,7 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_53(Z80 *cpu) { // ld (nnnn),de
@@ -346,7 +350,7 @@ Z80OPCODE ope_56(Z80 *cpu) { // im 1
 Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
    cpu->a = cpu->i;
    cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
-   cputact(1);
+   cpuidle(cpu->IR(), 1);
    cpu->boundary = Z80_BOUNDARY_LD_A_IR;  // an INT accepted next clears P/V (HandleINT)
 }
 
@@ -394,7 +398,7 @@ Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3|F5|SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_5B(Z80 *cpu) { // ld de,(nnnn)
@@ -421,7 +425,7 @@ Z80OPCODE ope_5E(Z80 *cpu) { // im 2
 Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
    cpu->a = (cpu->r_low & 0x7F) | cpu->r_hi;
    cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
-   cputact(1);
+   cpuidle(cpu->IR(), 1);
    cpu->boundary = Z80_BOUNDARY_LD_A_IR;  // an INT accepted next clears P/V (HandleINT)
 }
 
@@ -460,7 +464,7 @@ Z80OPCODE ope_62(Z80 *cpu) { // sbc hl,hl
    cpu->hl = result & 0xFFFF;
    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-   cputact(7);
+   cpuidle(cpu->IR(), 7);
 }
 
 #define ope_63 op_22 // ld (nnnn),hl
@@ -473,7 +477,7 @@ Z80OPCODE ope_67(Z80 *cpu) { // rrd
 
   cpu->memptr = cpu->hl + 1;
 
-  cputact(4);
+  cpuidle(cpu->hl, 4);
 
   cpu->wd(cpu->hl, (cpu->a << 4) | (value >> 4));
 
@@ -518,7 +522,7 @@ Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    cpu->hl = result & 0xFFFF;
    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-   cputact(7);
+   cpuidle(cpu->IR(), 7);
 }
 
 #define ope_6B op_2A // ld hl,(nnnn)
@@ -531,7 +535,7 @@ Z80OPCODE ope_6F(Z80 *cpu) { // rld
 
   cpu->memptr = cpu->hl + 1;
 
-  cputact(4);
+  cpuidle(cpu->hl, 4);
 
   cpu->wd(cpu->hl, (cpu->a & 0x0F) | (value << 4));
 
@@ -584,7 +588,7 @@ Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_73(Z80 *cpu) { // ld (nnnn),sp
@@ -655,7 +659,7 @@ Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE ope_7B(Z80 *cpu) { // ld sp,(nnnn)
@@ -690,7 +694,7 @@ Z80OPCODE ope_A0(Z80 *cpu) { // ldi
     if (--cpu->bc)
         cpu->f |= PV;
 
-    cputact(2);
+    cpuidle(cpu->de - 1, 2);  // on the write address
 }
 
 Z80OPCODE ope_A1(Z80 *cpu) { // cpi
@@ -705,7 +709,7 @@ Z80OPCODE ope_A1(Z80 *cpu) { // cpi
 
    cpu->memptr++;
 
-   cputact(5);
+   cpuidle(cpu->hl - 1, 5);  // on the read address
 }
 
 Z80OPCODE ope_A2(Z80 *cpu) { // ini
@@ -715,7 +719,8 @@ Z80OPCODE ope_A2(Z80 *cpu) { // ini
     // remaining 3T of the IO cycle before the 3T memory write.
     cpu->memptr = cpu->bc + 1;
 
-    cputact(2);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
+    cputact(1);
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
     cputact(3);
@@ -748,7 +753,7 @@ Z80OPCODE ope_A3(Z80 *cpu) { // outi
     // Based on Xpeccy emulator implementation
     // Cycle order (Xpeccy "5 3rd 4wr" / ZXMAK2): M1 stall T, memory read, IO write.
     // IORQ asserts at T2 of the IO cycle (see op_D3).
-    cputact(1);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
 
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->rd(hl);  // M = memory value
@@ -802,7 +807,7 @@ Z80OPCODE ope_A8(Z80 *cpu) { // ldd
     cpu->hl = hl;
     cpu->de = de;
 
-    cputact(2);
+    cpuidle(cpu->de + 1, 2);  // on the write address
 }
 
 Z80OPCODE ope_A9(Z80 *cpu) { // cpd
@@ -820,7 +825,7 @@ Z80OPCODE ope_A9(Z80 *cpu) { // cpd
 
     cpu->memptr--;
 
-    cputact(5);
+    cpuidle(cpu->hl + 1, 5);  // on the read address
 }
 
 Z80OPCODE ope_AA(Z80 *cpu) { // ind
@@ -828,7 +833,8 @@ Z80OPCODE ope_AA(Z80 *cpu) { // ind
     // Cycle order and IO phase: see ope_A2 (ini)
     cpu->memptr = cpu->bc - 1;
 
-    cputact(2);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
+    cputact(1);
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
     cputact(3);
@@ -860,7 +866,7 @@ Z80OPCODE ope_AA(Z80 *cpu) { // ind
 Z80OPCODE ope_AB(Z80 *cpu) { // outd
     // Based on Xpeccy emulator implementation
     // Cycle order and IO phase: see ope_A3 (outi)
-    cputact(1);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
 
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->rd(hl);  // M = memory value
@@ -916,13 +922,13 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 		// Interrupted block instruction: YF=PC.13, XF=PC.11
 		cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-		cputact(7);
+		cpuidle(de - 1, 7);  // 2 + 5 for the repeat, on the write address
 
 		cpu->memptr = cpu->pc + 1;
 	}
 	else
 	{
-		cputact(2);
+		cpuidle(de - 1, 2);
 	}
 
 	cpu->hl = hl;
@@ -954,16 +960,16 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 
           cpu->memptr = cpu->pc + 1;
 
-          cputact(10); // 5 + 5 cycles for repeat
+          cpuidle(hl - 1, 10);  // 5 + 5 for the repeat, on the read address
       }
       else
       {
-          cputact(5);
+          cpuidle(hl - 1, 5);
       }
    }
    else
    {
-      cputact(5);
+      cpuidle(hl - 1, 5);
    }
 
    cpu->hl = hl;
@@ -975,7 +981,8 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
     cpu->memptr = cpu->bc + 1;
 
     // Cycle order and IO phase: see ope_A2 (ini)
-    cputact(2);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
+    cputact(1);
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
     cputact(3);
@@ -1028,7 +1035,7 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(5);
+        cpuidle(hl - 1, 5);  // repeat, on the write address
     }
     else
     {
@@ -1047,7 +1054,7 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
 Z80OPCODE ope_B3(Z80 *cpu) { // otir
     // Based on David Banks' research:
     // https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags
-    cputact(1);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
 
     // Decrement B first (before output)
     uint8_t b_out = cpu->b - 1;  // Bo = output value of B
@@ -1117,7 +1124,7 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
         // Interrupted block instruction: YF=PC.13, XF=PC.11
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(5);
+        cpuidle(cpu->bc, 5);  // repeat, on the port address
     }
     else  // B == 0, single iteration flags
     {
@@ -1160,11 +1167,11 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
        // Repeating block op: MEMPTR = PC+1 (FUSE-verified, same as LDIR)
        cpu->memptr = cpu->pc + 1;
 
-       cputact(7);
+       cpuidle(de + 1, 7);  // 2 + 5 for the repeat, on the write address
     }
     else
     {
-       cputact(2);
+       cpuidle(de + 1, 2);
     }
 
     cpu->hl = hl;
@@ -1196,16 +1203,16 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 
           cpu->memptr = cpu->pc + 1;
 
-          cputact(10); // 5 + 5 cycles for repeat
+          cpuidle(hl + 1, 10);  // 5 + 5 for the repeat, on the read address
       }
       else
       {
-          cputact(5);
+          cpuidle(hl + 1, 5);
       }
    }
    else
    {
-      cputact(5);
+      cpuidle(hl + 1, 5);
    }
 
    cpu->hl = hl;
@@ -1217,7 +1224,8 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
     cpu->memptr = cpu->bc - 1;
 
     // Cycle order and IO phase: see ope_A2 (ini)
-    cputact(2);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
+    cputact(1);
     uint16_t hl = cpu->hl;
     uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
     cputact(3);
@@ -1270,7 +1278,7 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(5);
+        cpuidle(hl + 1, 5);  // repeat, on the write address
     }
     else
     {
@@ -1289,7 +1297,7 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
 
 Z80OPCODE ope_BB(Z80 *cpu) { // otdr
     // Based on David Banks' research
-    cputact(1);
+    cpuidle(cpu->IR(), 1);  // the M1 stall T
 
     // Decrement B first (before output)
     uint8_t b_out = cpu->b - 1;  // Bo = output value of B
@@ -1346,7 +1354,7 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-        cputact(5);
+        cpuidle(cpu->bc, 5);  // repeat, on the port address
     }
     else
     {

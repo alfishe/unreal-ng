@@ -88,6 +88,7 @@ static Z80INLINE void Z80HaltT(Z80Regs*&, Z80CPU*, int& tact)
 #define Z80M1(cpu) Z80M1T(rf, cpu, tact_)
 #define Z80Pin(cpu, port) Z80PinT(rf, cpu, port, tact_)
 #define Z80Pout(cpu, port, val) Z80PoutT(rf, cpu, port, val, tact_)
+#define cpuidle(addr, n) ((void)(addr), cputact(n))  // no contention hook on the flat bus
 
 #include "z80cpu-opcodes.inc"
 #include "opcodes-base.inc"

@@ -44,7 +44,7 @@ This project's own core (`-DOPL4_FM_BACKEND=opl4`, the CMake default):
 
 Aaron Giles's Yamaha FM emulation library (MAME lineage, BSD-3, vendored at pinned commit
 `81aec25`, `core/src/3rdparty/ymfm/`), wrapped by the adapter
-[`Opl4FmYmfm : Opl4Fm`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h):
+`Opl4FmYmfm : Opl4Fm`:
 
 - **FM synthesis only.** ymfm's `ymf262` core renders phase/envelopes/connections/rhythm/
   4-op/LFO. Bus-visible semantics — bank-1 aliasing, `0x105` NEW/NEW2, timers
@@ -64,8 +64,8 @@ Aaron Giles's Yamaha FM emulation library (MAME lineage, BSD-3, vendored at pinn
 
 | Role | Artifact | What runs on ymfm |
 |---|---|---|
-| FM backend swap | [`Opl4FmYmfm`](tools/poc/015-opl4-synthesis/src/ymfm/opl4fmymfm.h) | FM synthesis only; whole PoC and core suites re-run green on this build |
-| Full-chip differential | [`cosim-ymfm.cpp`](tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) | Both halves incl. ymfm's PCM wave part (6/6 scenarios) — the source of the PCM-side quirks in §9 below |
+| FM backend swap | `Opl4FmYmfm` | FM synthesis only; whole PoC and core suites re-run green on this build |
+| Full-chip differential | [`cosim-ymfm.cpp`](../../../tools/poc/015-opl4-synthesis/cosim/cosim-ymfm.cpp) | Both halves incl. ymfm's PCM wave part (6/6 scenarios) — the source of the PCM-side quirks in §9 below |
 
 ---
 
@@ -88,7 +88,7 @@ configured is silently absent there ("Running 0 tests"); re-run the cmake line b
 
 ## 3. Where the engines agree (the baseline trust)
 
-Same register stream into both engines ([`opl4fmcompare.cpp`](tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp),
+Same register stream into both engines ([`opl4fmcompare.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4fmcompare.cpp),
 state-diff first):
 
 - **Pitch ratio 1.0000** (zero-cross/sample 0.00600 on both).
@@ -127,7 +127,7 @@ guest tunes render healthy on both backends (§8).
 ### 4.2 Sweep-suite divergences (findings §2.2)
 
 From the 13 FM sweep families run on both backends
-([`opl4sweep.cpp`](tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)):
+([`opl4sweep.cpp`](../../../tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)):
 
 | # | Divergence | Disposition |
 |---|---|---|
@@ -274,7 +274,7 @@ B0-kon suppression, and the PCM-side quirks (§9).
 The corpus disk `MFM Music sample 1` (`testdata/sound/moonsound/mfm_sample.trd`) is the
 first **whole-disk reproducer** of the classic-map divergences. Symptom report: *FM plays at
 very low amplitude compared to PCM, hisses, drops notes.* Per-melody guest tests
-([`moonsound_mfm_guest_test.cpp`](../../../core/tests/emulator/sound/moonsound_mfm_guest_test.cpp),
+(`moonsound_mfm_guest_test.cpp`,
 fixtures persisted at `testdata/sound/moonsound/mfm-sample/`) play both tunes through the
 real MBPlayer code and measure the rendered FM buffer at 1x speed. **Guest execution is
 byte-identical on both backends** (same card-port write counts, same MBPlayer position

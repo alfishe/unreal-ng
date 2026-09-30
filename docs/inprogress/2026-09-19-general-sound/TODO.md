@@ -13,7 +13,7 @@ Sound card implementations for ZX Spectrum emulation:
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
 | [`gs-card-interface.md`](gs-card-interface.md) | — | Phase 0 design snapshot for the card-personalities work (interface contract, LW interpreter design); superseded by the as-built TDD |
 | [`gs-card-personalities-tdd.md`](gs-card-personalities-tdd.md) | P0 | As-built record: `GeneralSoundCard` interface, `SoundChip_GSLightweight` card + `gsmodplayer`, runtime switching, replay algorithm (§7.3), TTD contracts (§5.5); phases 0-4 gated, phase 5 tests 18/18 |
-| [`neogs-tdd.md`](neogs-tdd.md) | P2 | Rewritten 2026-09-27; review round 4 applied (FPGA, firmware, peripherals, codebase); ready for phase 0 |
+| [`neogs-tdd.md`](neogs-tdd.md) | P2 | Phases 0-4 implemented 2026-09-27; §14 as built |
 | [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 6 bugs found, BUG-4 (DRC windup), BUG-5 (37.5 kHz interrupt pulse-loss — the steady-tone pitch float) and BUG-6 (NeoGS RAM default bled into the classic card — scorpion-family boot race, stock 128 KB card restored) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1); BUG-10..16 (real-content playback correctness) + render-quality pass (2026-09-22) |
 | [`diagnostics-gaps-proposal.md`](diagnostics-gaps-proposal.md) | — | WebAPI/MCP/CLI/Lua/Python triage gaps found while debugging BUG-10..16 (§1-§5: PROPOSAL, not implemented), a concrete wiring plan for those gaps (§6), and the TTD-specific angle (§7): BUG-17 (TTD use-after-free on GS personality switch, §7.1) IMPLEMENTED + tested 2026-09-22; the TTD restore-report visibility gap (§7.2) is still PROPOSAL |
 | [`materials/README.md`](materials/README.md) | — | Materials index |
@@ -139,73 +139,75 @@ Sound card implementations for ZX Spectrum emulation:
 - [x] CLI: add `state audio gs` command + `gs` control command (9 actions)
 - [x] Lua: add gs_* functions to lua_emulator.h
 - [x] Python: add gs_* functions to python_emulator.h
-- [ ] Docs: update command-interface.md - still marks `state audio gs` as
-      "🔮 Planned" (line ~2103); stale, not yet corrected
+- [x] Docs: command-interface.md `state audio gs` and `gs` rows (2026-09-27)
 
-### NeoGS (P2) - design review round 4 applied 2026-09-27, ready for phase 0
+### NeoGS (P2) - phases 0-4 implemented 2026-09-27 (branch `neogs`)
 
-Plan: [`neogs-tdd.md`](neogs-tdd.md) §9. Each phase ends at its "done when"
-gate; tests are listed in §8.
+Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
+§14.
+
+**Test assets** (`testdata/sound/neogs/`, see its `SOURCES.md`)
+- [x] MP3 streams recorded from `eyeache1.sna` (CBR 44.1 kHz, VBR mono with
+      ID3v2 + Xing, Layer II)
+- [x] SD images FAT16+MBR, FAT16 no MBR, FAT32+MBR, built at run time by the tests (`core/tests/_helpers/fatimagebuilder.h`); `tools/neogs/make_sd_image.py` for manual use
+- [x] NedoPC programs: test_ngs, test_emu_ngs, flasher, Neo Player Light
+      v0.60 and v0.44 (SCL checksums appended)
 
 **Phase 0 - shared parts, classic card bit-identical**
-- [ ] Capture the baseline first: card RAM hash, DAC stream, port trace over
-      the GS scenarios; GS benchmark numbers
-- [ ] `GSCardRunner<Card>` template (`chips/gs/gscardrunner.h`): catch-up
-      loop, event queue, stalls (block INT/NMI), per-card time unit; the card
-      keeps its own bus trampolines
-- [ ] `GSAudioOut` (blip pair) used by LLE and LW
-- [ ] `GSModuleReplay` moved out of `SoundChip_GeneralSound`;
-      `isReadyForCommands()` on the interface
-- [ ] Move `GS_CLOCK_HZ` / `GS_CYCLES_PER_INT` out of `generalsoundcard.h`
-- [ ] Shared `ToString(GSCardImplementation)` and personality parser; all
-      surfaces use them; channel loops use `channelCount()`
-- [ ] Gate: GS tests unchanged, baseline identical, TTD fixture corpus loads,
-      benchmark within 2%
+- [x] Golden fingerprints and GS benchmarks captured first
+- [x] `GSCardRunner<Card>`, `GSHostClock`, `GSAudioOut`, `GSModuleReplay`,
+      `GSUploadCapture`, `gscpuregisters.h`
+- [x] Clock constants out of `generalsoundcard.h`; shared personality
+      labels/parser; `channelCount()`; `deviceDescription()`
+- [x] Gate: golden identical, all tests pass, classic card 4-8% faster
 
 **Phase 1 - NeoGS core**
-- [ ] `[NGS]` keys (§6); `gs_ramsize` → `ngsRamKB`, BUG-6 guard kept
-- [ ] Replace the "P2 placeholder" code comments (`ttdserializable.h:56`,
-      `config.cpp:432`, `platform.h:418`, `soundmanager.cpp:130, 1399`,
-      `generalsoundcard.h:12`) and the stale test comment
-      (`soundchip_gs_test.cpp:759-770`)
-- [ ] Ship `data/rom/neogs/full_ngs.rom` + `tools/neogs/pack_flash.py`
-      (CI byte check) + THIRD_PARTY_NOTICES row; `neogsflashimages.h`
-- [ ] `NeoGSMemory` (PG0-3, MPAG/MPAGEX, NOROM/RAMRO/EXPAG, flash reads)
-- [ ] `NeoGSInterrupts` (24 MHz phase, TIM_FREQ incl. extra tick, INTENA/
-      INTREQ, priority, vectors)
-- [ ] `NeoGSSound` (8 latches, modes, INV7B, alternating L/R, 24 MHz blip)
-- [ ] `SoundChip_NeoGS`: ports §3.3/§3.4, reset rules, port `#80`, LED
-- [ ] `Boot=loader` / `Boot=direct`; creation from config in SoundManager
-- [ ] Our 8-channel / PAN4CH / INV7B host test program (`testdata/neogs/`)
-- [ ] Gate: module plays on Pentagon; `test_ngs` detect/version/pages
+- [x] `[NGS]` config (`NeoGSConfig`); BUG-6 guard kept
+- [x] Shipped `data/rom/neogs/full_ngs.rom` + `tools/neogs/pack_flash.py`; digests
+- [x] Memory, interrupts + timer, sound, card ports, resets, boot modes
+- [x] Gate: GS module plays; `test_ngs` passes (4 MB reports the RAMRO quirk)
 
 **Phase 2 - SD and flash programming**
-- [ ] `emulator/io/sdcard/SdCardSpi` (shared with TS-Conf, Z-Controller)
-- [ ] `NeoGSSpi` (byte times, inclusive boundary, restart, SCTRL/SSTAT)
-- [ ] `emulator/io/flash/Flash29F040B` programming + `FlashWrite` modes
-- [ ] Gate: SD boot FAT16/FAT32/no-MBR; flasher in `session`; `test_emu_ngs`
+- [x] `emulator/io/sdcard/SdCardSpi`, `NeoGSSpi`, `emulator/io/flash/Flash29F040B`
+- [x] Gate: SD boot on every layout; the flasher reprograms the flash;
+      `test_emu_ngs` passes; flash persistence
 
 **Phase 3 - MP3 and DMA**
-- [ ] Vendor minimp3; `Vs10xxDecoder` (chip types, resets, frame parser,
-      PCM queue); MP3 audio source at stream rate
-- [ ] SD and MP3 DMA modules (21-bit address, stalls, INTREQ)
-- [ ] Gate: Neo Player Light and `npl_044_dma` play from SD
+- [x] minimp3 vendored; `Vs10xxDecoder`; "NeoGS MP3" mixer source
+- [x] SD and MP3 DMA modules
+- [x] Gate: Neo Player Light v0.60 plays the MP3 in real time
+- [x] Neo Player Light v0.44 (`npl044`, `npl044_dma`) "finds no files" - explained 2026-09-28 (neogs-tdd.md §14.2): a player bug with exactly one MP3 on the card (FINDMP3 returns with the directory page mapped); the test cards now carry two MP3 files and v0.44 plays. `npl044_dma` cannot play on the board either (CMD17 commented out before the SD DMA); its search works. Acceptance tests: `NeoPlayerLight044PlaysAnMp3FromTheSdCard`, `NeoPlayerLight044DmaFindsTheFilesAndWaitsInTheSdDma`
+- [x] Player verification (2026-09-28): v0.60 and v0.44 on every card layout (`NeoPlayerLight_Test`, 10 cases), their transport keys (`NeoPlayerLightKeys_Test`), and our own card-side DMA player (`soundchip_neogs_dmaplayer_test`: CMD17 + SD DMA + MP3 DMA, real time)
+      on the test images (neogs-tdd.md §14.2)
 
-**Phase 4 - switching, automation, debugger, TTD refusal**
-- [ ] NGS as switch source/target; `gs_lightweight` ignored while NGS fitted;
-      registry label updated on switch
-- [ ] CLI/WebAPI/MCP/Lua/Python + `command-interface.md` + OpenAPI;
-      WebAPI `?ram=1` through `debugAccess()`
-- [ ] `TTDCanRecord` veto; switch-to-NGS refused while recording; GS-slot
-      guard; move `ttdmodelstatecontract_test` off id 12
-- [ ] `neogs` debugger target
+**Phase 4 - switching, automation, TTD guard**
+- [x] Switching to and from NGS with module replay; `gs_lightweight` ignores NGS
+- [x] CLI/WebAPI/MCP/Lua/Python + `command-interface.md` + OpenAPI; `?ram=1` via `peekCardMemory`
+- [x] GS-slot session guard (the `TTDCanRecord` veto was removed in phase 6: NeoGS records)
+- [ ] `neogs` debugger target (waits for the GS debugger)
 
-**Phase 5 - ZX-DMA and fpgaD**
-- [ ] Host `Z80` memory-interface swap, `isRomAt0000()`, wait states
-- [ ] `Fpga=D` tables; v1.08 images boot
+**Phase 5 - ZX-DMA and fpgaD** - designed ([`neogs-zxdma-design.md`](neogs-zxdma-design.md)), not started
+- [x] 5a host bus overlay slot + one memory-interface selector (no user yet), golden host test, selection tests, benchmarks A/B (neogs-zxdma-design.md §10 "5a as built")
+- [x] 5b `NeoGSZxDma` model: Watch/Divert, waits, arbitration, late-start counter (neogs-zxdma-design.md §10 "5b as built")
+- [x] 5c TTD layout 3, automation, port trace side, docs (neogs-zxdma-design.md §10 "5c as built"; the `ZxDmaWatch` settings came with 5b)
+- [ ] 5d GS debugger items (tight mode via the overlay, DMA panel, events, trace) - **deferred until the GS debugger exists** (decided 2026-09-28)
+- [ ] 5e `Fpga=D` - **Decision (2026-09-28): skip.** Kept for reference: only the old 2 MB fpgaD boards (2008-2013) and their v1.08 flash images need it (neogs-tdd.md §3.12); the shipped image and every tested program run on the current FPGA. The config value stays parsed; today it only switches ZX-DMA off
 
-**Phase 6 - NeoGS TTD (after TTD v2 memory regions, step V1)**
-- [ ] RAM/flash/SD overlay as v2 regions; exact replay over 300 frames
+**Phase 6 - NeoGS TTD, v1 full blobs** - done 2026-09-27
+- [x] SD card, decoder and DMA state in the blob (layout 2); state hash without the platform-dependent PCM
+- [x] Recording allowed; switch to NGS during a recording allowed
+- [x] SD writes are TTD replay barriers (`DiskWrite` markers)
+- [x] Card insert/eject refused while TTD records (configuration fixed for a recording; decided 2026-09-28); media requests from automation run on the machine thread (`neogsmedia.h`, `SubmitMachineTask`, `neogsmedia_test.cpp`)
+- [x] Snapshot-continuation tests (SD boot, MP3 DMA) and engine replay test (`ttdneogs_test.cpp`)
+- [ ] RAM and flash as v2 memory regions (with the TTD v2 migration of every device)
+
+**NeoGS configuration and GUI** - done 2026-09-28
+- [x] Shipped configs list every `[NGS]` key with its default; `MP3Support` defaults to `software`
+- [x] Every shipped model fits NeoGS (`GSType=NGS`)
+- [x] Audio Settings: "General Sound slot" section (card switch; NeoGS SD insert/eject) over `SoundManager::generalSoundSlot()`
+- [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3"); "NeoGS DMA" and "NeoGS <->" show data movement without sound
+- [x] `[NGS] StereoMode` separated / gs (50% cross-feed) / mono - config, Audio Settings, CLI/WebAPI/MCP/Lua/Python
+- [ ] GS-slot stats for all three cards (neogs-automation-design.md)
 
 ### Documentation Updates (2026-09-19)
 

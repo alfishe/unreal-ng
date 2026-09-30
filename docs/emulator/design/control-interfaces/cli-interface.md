@@ -101,6 +101,11 @@ state audio ay          AY/SSG overview           state audio ay 0    one chip d
 state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
 state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
+state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
+state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
+rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
+rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
+state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
 state screen            Screen state: video mode, active screen + RAM pages, contention, flash
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
@@ -159,6 +164,32 @@ Available ZX Spectrum:
 - `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
 - `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.
 
+**ZX-Poly** (four synchronized instances of one model; recipe
+[.recipe/machines/zxpoly.md](../../../../.recipe/machines/zxpoly.md)):
+```
+> zxpoly start PENTAGON /path/to/zxpolytest.prom
+Started ZX-Poly machine: fa3b65e0-...
+> zxpoly status
+ZX-Poly machine fa3b65e0-...
+  #3D00: #00  locked: no  video mode: 0  slaves: waiting
+  CPU0 fa3b65e0-...  R0-R3: #20 #00 #00 #00
+  ...
+  lockstep: ok
+```
+`zxpoly start <model> [file]` takes a `.zxp`, a `.prom` or a multiloader
+disk. `<model>` is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model. `start ZXPOLY-128K` (the ordinary
+command) starts the bare machine, and `models` lists the configurations.
+`zxpoly status [id|index]` works for any member of the group. A locked
+machine also shows its `schedule`: `parallel` (the slaves run their frame
+at the same time), `pipelined` (at unlimited speed, also overlapping the
+master's next frame) or `sequential`.
+
+The CLI server listens on port 8765. `UNREAL_CLI_PORT` moves it, just as
+`UNREAL_WEBAPI_PORT` moves the WebAPI's 8090 (and the MCP endpoint `/mcp` with it:
+its loopback calls follow the same variable), so a second instance can run
+beside one that owns the default ports.
+
 **Error Messages**:
 ```
 > invalid_command
@@ -173,6 +204,8 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
+| `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
+| `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 
@@ -198,6 +231,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
 | `ttd find-last --addr A` | `ttd fl` | Reverse watchpoint: find the last access at an address (full filter set in the command reference). | ✅ Implemented |
+| `ttd port-events <event> [arg]` | `ttd pe` | "When did the program ..." - saw a key (`key space`), the tape signal change (`ear`), wrote an AY register (`ay-write 7`), changed the border... From the port journals, no replay ([command reference](./command-interface.md), "Port events"). | ✅ Implemented |
 | `ttd step-instruction` | `si-back` / `si-forward` | Step one Z80 instruction back or forward within recorded history. | ✅ Implemented |
 | `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
@@ -302,7 +336,11 @@ reference: [command-interface.md](./command-interface.md).
 | `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
 | `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
 | `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |
-| `beam` | Current raster position and beam zone. |
+| `beam` | Current raster position and beam zone, plus the layer pixel under the beam. |
+| `video layout` | The current mode's layers (surface, beam window, dots per T) and framebuffer placement. |
+| `video pixel <x> <y> [layer]` / `video pixel t <tstate>` | Memory, registers and palette cell behind a pixel (or the point under the beam, border included). |
+| `video address <page> <offset>` / `video address z80 <addr>` | Every area of the picture a byte feeds. |
+| `video text [layer]` | Exact text grid of an ATM / ZX-Evo text mode. |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |

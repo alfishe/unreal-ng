@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed; applies when the `neogs` branch merges (PLAN #45) |
+| **Status** | Implemented on `neogs` at the master merge (2026-09-28); see neogs-tdd.md §7.6 |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today (branch)** | `SoundChip_NeoGS` owns `std::unique_ptr<SdCardSpi> _sd` and opens `[NGS] SDCardImage` with `open(path, mode, type)` after resolving the path against the executable; `insertSdCard` / `ejectSdCard` refuse while TTD records; card writes mark a replay barrier (`markSdWrite`) |
 | **Master** | `[NGS] SDCardImage` is parsed into `ngs_sd_card_path` and used by nothing |
 
@@ -53,3 +54,20 @@ hook, so every block slot gets it.
   with images.
 - New: the same boot from a **folder** holding `NEOGS.ROM`.
 - New: `sd.ngs` appears in `media list` only when NeoGS is fitted.
+
+## 6. As built (2026-09-28)
+
+- `SoundChip_NeoGS::SdSlot` as in §2; tags `sd`, `neogs`, `addon`. `[NGS] SDType` is passed to
+  `attach`; `[NGS] SDWrite` / `SDWriteProtect` map to `sd.ngs` access and switch in `MediaConfig`
+  (legacy section, like `[ZC]`), and to the access of the card's own inserts.
+- A card fitted after creation: `MediaManager` keeps the set `ApplyConfiguredMedia` applied, and
+  `RegisterSlot` inserts a later slot's configured medium when no parked one comes back. At
+  creation slots register before the set is applied, so nothing goes in twice.
+- `neogsmedia.h` (GUI Audio Settings, CLI / WebAPI / MCP / Lua / Python `sd_insert` / `sd_eject`)
+  passes SD requests to the manager: `done` when the machine is not running, `queued` otherwise.
+- Without a media manager (bare unit-test contexts) the card still opens `NeoGSConfig::sdCardPath`
+  itself.
+- Tests: `SoundChip_NeoGS_SdBoot.LoaderBootsNeogsRomFromAHostFolder` (FAT16 and FAT32 folder
+  volumes), `NeoGSMedia_Test.SdSlotListedOnlyWhileNeoGSIsFitted` (listing, parking, session
+  writes kept), `MediaManager_Test.SlotRegisteredLaterGetsItsConfiguredMedium`,
+  `MediaConfig_Test.LegacyNeoGSWriteModeAndSwitch`.

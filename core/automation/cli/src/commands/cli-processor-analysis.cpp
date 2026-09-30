@@ -23,6 +23,7 @@
 #include <emulator/ports/portdecoder.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/audio.h>
+#include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 
 #include <algorithm>
@@ -382,18 +383,22 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     {
         ss << "RAM p" << (int)memory.GetRAMPageForBank0();
     }
-    ss << NEWLINE;
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    auto contended = [context](uint8_t slot) {
+        return (context->pCore && context->pCore->IsSlotContended(slot)) ? "  (contended)" : "";
+    };
+    ss << contended(0) << NEWLINE;
 
     // Banks 1-3
-    ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << "  (contended, Screen 0)" << NEWLINE;
-    ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << NEWLINE;
-    ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << NEWLINE;
+    ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << contended(1) << "  [Screen 0]" << NEWLINE;
+    ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << contended(2) << NEWLINE;
+    ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << contended(3) << NEWLINE;
 
     session.SendResponse(ss.str());
 }
 
-// HandleBeam — current raster beam position and zone. Mirrors
-// GET /api/v1/emulator/{id}/video/beam.
+// HandleBeam — current raster beam position and zone, plus the layer pixel
+// under it. Mirrors GET /api/v1/emulator/{id}/video/beam (DeviceState::VideoBeam).
 void CLIProcessor::HandleBeam(const ClientSession& session, const std::vector<std::string>& args)
 {
     (void)args;  // No parameters
@@ -404,7 +409,36 @@ void CLIProcessor::HandleBeam(const ClientSession& session, const std::vector<st
         session.SendResponse("No emulator selected.");
         return;
     }
+    EmulatorContext* context = emulator->GetContext();
+    if (!context || !context->pScreen)
+    {
+        session.SendResponse("Emulator context is not fully initialized.");
+        return;
+    }
+    session.SendResponse("Beam position:" + std::string(NEWLINE) + DeviceState::ToText(DeviceState::VideoBeam(context)));
+}
 
+// HandleVideo — video debug translation (PLAN #42): layout, pixel sources,
+// byte -> pixels, text grid. Mirrors GET /api/v1/emulator/{id}/video/layout,
+// /video/pixel, /video/address and /video/text (the same DeviceState reports).
+void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<std::string>& args)
+{
+    static const char* kUsage =
+        "Usage:\n"
+        "  video layout                   - layers, beam windows, framebuffer placement\n"
+        "  video pixel <x> <y> [layer]    - memory, registers and palette cell behind a pixel\n"
+        "  video pixel t <tstate>         - the same for the point under the beam at a frame T\n"
+        "  video address <page> <offset>  - pixels a RAM byte feeds\n"
+        "  video address z80 <addr>       - pixels the byte at a Z80 address feeds\n"
+        "  video text [layer]             - text grid of a text mode (ATM / ZX-Evo)\n"
+        "Numbers are decimal or 0x-hex.";
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
     EmulatorContext* context = emulator->GetContext();
     if (!context || !context->pScreen)
     {
@@ -412,38 +446,41 @@ void CLIProcessor::HandleBeam(const ClientSession& session, const std::vector<st
         return;
     }
 
-    const CONFIG& config = context->config;
-    Screen* screen = context->pScreen;
+    auto number = [](const std::string& text, unsigned& out) {
+        try
+        {
+            size_t used = 0;
+            out = static_cast<unsigned>(std::stoul(text, &used, 0));
+            return used == text.size();
+        }
+        catch (...)
+        {
+            return false;
+        }
+    };
 
-    if (config.t_line == 0 || config.frame == 0)
+    const std::string sub = args.empty() ? "" : args[0];
+    unsigned a = 0, b = 0, c = 0;
+    StateNode report;
+    if (sub == "layout" && args.size() == 1)
+        report = DeviceState::VideoLayout(context);
+    else if (sub == "pixel" && args.size() == 3 && args[1] == "t" && number(args[2], a))
+        report = DeviceState::VideoPixelAtBeam(context, a);
+    else if (sub == "pixel" && (args.size() == 3 || args.size() == 4) && number(args[1], a) && number(args[2], b) &&
+             (args.size() == 3 || number(args[3], c)))
+        report = DeviceState::VideoPixel(context, c, a, b);
+    else if (sub == "address" && args.size() == 3 && args[1] == "z80" && number(args[2], a))
+        report = DeviceState::VideoAddressZ80(context, a);
+    else if (sub == "address" && args.size() == 3 && number(args[1], a) && number(args[2], b))
+        report = DeviceState::VideoAddress(context, a, b);
+    else if (sub == "text" && args.size() <= 2 && (args.size() == 1 || number(args[1], a)))
+        report = DeviceState::VideoText(context, args.size() == 2 ? a : 0);
+    else
     {
-        session.SendResponse("Machine model timing is not initialized yet.");
+        session.SendResponse(kUsage);
         return;
     }
-
-    Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-    const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-    const uint32_t tInFrame = tstate % config.frame;
-
-    const VideoModeEnum mode = screen->GetVideoMode();
-    const BeamPosition beam = screen->DescribeBeam(tInFrame);
-    const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-    const uint32_t line = tInFrame / tstatesPerLine;
-    const uint32_t dotInLine = tInFrame % tstatesPerLine;
-
-    std::stringstream ss;
-    ss << std::dec;
-    ss << "Beam position:" << NEWLINE;
-    ss << "  T-state: " << tstate << " (in frame: " << tInFrame << ")" << NEWLINE;
-    ss << "  Frame: " << context->emulatorState.frame_counter << NEWLINE;
-    ss << "  Line: " << line << "  Dot: " << dotInLine << NEWLINE;
-    ss << "  Beam X/Y: " << beam.beamX << "/" << line << NEWLINE;
-    ss << "  Zone: " << beam.zone << " (v: " << beam.verticalZone << ", h: " << beam.horizontalZone << ")" << NEWLINE;
-    if (beam.inPaper)
-        ss << "  Paper X/Y: " << beam.paperX << ".." << beam.paperXEnd << "/" << beam.paperY << NEWLINE;
-    ss << "  Video mode: " << Screen::GetVideoModeName(mode) << NEWLINE;
-
-    session.SendResponse(ss.str());
+    session.SendResponse(DeviceState::ToText(report));
 }
 
 // HandleFrameCost — halt/active cost of the last frame plus session averages.

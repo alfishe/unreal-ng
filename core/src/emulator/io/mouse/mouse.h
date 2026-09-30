@@ -109,6 +109,10 @@ public:
     /// = classic Kempston mouse: D7-D3 read 1 as part of the #FF base, which is
     /// what software detection expects (ProfROM #08FB tests bits 5-3 == 1).
     void SetWheelEnabled(bool enabled) { _wheelEnabled.store(enabled, std::memory_order_relaxed); }
+
+    /// Ignore host (MessageCenter) mouse events: a ZX-Poly group member gets
+    /// its mouse input from the group, at frame boundaries
+    void SetHostInputGated(bool gated) { _hostInputGated.store(gated, std::memory_order_relaxed); }
     bool IsWheelEnabled() const { return _wheelEnabled.load(std::memory_order_relaxed); }
 
     /// Apply the machine config (Mouse=, Wheel=) and the kempstonmouse feature to the fitting
@@ -137,6 +141,7 @@ public:
 
 private:
     MouseEvent* AcceptEvent(Message* message, MouseEventKind kind) const;
+    std::atomic<bool> _hostInputGated{false};
 
     EmulatorContext* _context = nullptr;
     ModuleLogger* _logger = nullptr;

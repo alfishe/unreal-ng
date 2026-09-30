@@ -44,6 +44,10 @@ void PortDecoder_Spectrum48::reset()
 
 uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     /// region <Override submodule>
     [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
@@ -105,6 +109,12 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
+    else if (IsBeta128Port(port) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        // Beta 128 FDC ports answer only while the TR-DOS ROM is paged in (as in the Pentagon decoder):
+        // outside TR-DOS the port stays undecoded and Z80::in() serves the floating bus
+        disp.wasBeta128Gated = true;
+    }
     else
     {
         result = PeripheralPortIn(port);
@@ -130,6 +140,10 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     /// region <Override submodule>
     [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;

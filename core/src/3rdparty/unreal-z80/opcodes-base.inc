@@ -29,7 +29,7 @@ Z80OPCODE op_03(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc bc
    Z80_T_BEGIN(cpu);
    rf->bc = (rf->bc + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -91,7 +91,7 @@ Z80OPCODE op_09(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add hl,bc
     rf->hl = hl & 0xFFFF;
     rf->f = flags;
 
-    cputact(7);
+    cpuidle(Z80_IR(rf), 7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -106,7 +106,7 @@ Z80OPCODE op_0B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec bc
    Z80_T_BEGIN(cpu);
    rf->bc = (rf->bc - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -134,7 +134,7 @@ Z80OPCODE op_0F(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rrca
 
 Z80OPCODE op_10(Z80CPU *cpu, int tact0, Z80Regs *rf) { // djnz rr
 	Z80_T_BEGIN(cpu);
-	cputact(1);
+	cpuidle(Z80_IR(rf), 1);
 
 	int8_t offset = Z80Rd(cpu, rf->pc++, true);  // instruction-stream byte (m1State, Operand kind)
 
@@ -145,7 +145,7 @@ Z80OPCODE op_10(Z80CPU *cpu, int tact0, Z80Regs *rf) { // djnz rr
         rf->pc += offset;
 		rf->memptr = rf->pc;
 
-		cputact(5);
+		cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
 	}
 	Z80_RETURN_Q(0, tact_);
 }
@@ -169,7 +169,7 @@ Z80OPCODE op_13(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc de
    Z80_T_BEGIN(cpu);
    rf->de = (rf->de + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -205,7 +205,7 @@ Z80OPCODE op_18(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jr rr
     rf->pc += offset;
     rf->memptr = rf->pc;
 
-    cputact(5);
+    cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
     Z80_RETURN_Q(0, tact_);
 }
 
@@ -237,7 +237,7 @@ Z80OPCODE op_19(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add hl,de
     rf->hl = hl & 0xFFFF;
     rf->f = flags;
 
-    cputact(7);
+    cpuidle(Z80_IR(rf), 7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -253,7 +253,7 @@ Z80OPCODE op_1B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec de
    Z80_T_BEGIN(cpu);
    rf->de = (rf->de - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -291,7 +291,7 @@ Z80OPCODE op_20(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jr nz, rr
 
         rf->memptr = rf->pc;
 
-        cputact(5);
+        cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
     }
     Z80_RETURN_Q(0, tact_);
 }
@@ -319,7 +319,7 @@ Z80OPCODE op_23(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc hl
    Z80_T_BEGIN(cpu);
    rf->hl = (rf->hl + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -354,7 +354,7 @@ Z80OPCODE op_28(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jr z,rr
         rf->pc += offset;
         rf->memptr = rf->pc;
 
-        cputact(5);
+        cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
     }
     Z80_RETURN_Q(0, tact_);
 }
@@ -386,7 +386,7 @@ Z80OPCODE op_29(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add hl,hl
     rf->hl = hl & 0xFFFF;
     rf->f = flags;
 
-    cputact(7);
+    cpuidle(Z80_IR(rf), 7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -406,7 +406,7 @@ Z80OPCODE op_2B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec hl
    Z80_T_BEGIN(cpu);
    rf->hl = (rf->hl - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -441,7 +441,7 @@ Z80OPCODE op_30(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jr nc, rr
         rf->pc += offset;
         rf->memptr = rf->pc;
 
-        cputact(5);
+        cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
     }
     Z80_RETURN_Q(0, tact_);
 }
@@ -469,7 +469,7 @@ Z80OPCODE op_33(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc sp
 	Z80_T_BEGIN(cpu);
 	rf->sp = (rf->sp + 1) & 0xFFFF;
 
-	cputact(2);
+	cpuidle(Z80_IR(rf), 2);
 	Z80_RETURN_Q(0, tact_);
 }
 
@@ -478,7 +478,7 @@ Z80OPCODE op_34(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc (hl)
 	uint8_t value = Z80Rd(cpu, rf->hl);
 	inc8(rf, value);
 
-	cputact(1);
+	cpuidle(rf->hl, 1);
 
 	Z80Wd(cpu, rf->hl, value);
 	Z80_RETURN_Q(0x28, tact_);
@@ -490,7 +490,7 @@ Z80OPCODE op_35(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec (hl)
 
 	dec8(rf, hl);
 
-	cputact(1);
+	cpuidle(rf->hl, 1);
 
 	Z80Wd(cpu, rf->hl, hl);
 	Z80_RETURN_Q(0x28, tact_);
@@ -525,7 +525,7 @@ Z80OPCODE op_38(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jr c,rr
         rf->pc += offset + 1;
         rf->memptr = rf->pc;
 
-        cputact(5);
+        cpuidle(rf->pc - offset - 1, 5);  // on the displacement's address
     }
     else
         rf->pc++;
@@ -559,7 +559,7 @@ Z80OPCODE op_39(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add hl,sp
    rf->f |= ((hl >> 8) & (F5 | F3));  // X/Y from result high byte
    rf->hl = hl & 0xFFFF;
 
-   cputact(7);
+   cpuidle(Z80_IR(rf), 7);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -578,7 +578,7 @@ Z80OPCODE op_3B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec sp
    Z80_T_BEGIN(cpu);
    rf->sp = (rf->sp - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -1240,7 +1240,7 @@ Z80OPCODE op_BF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp a
 
 Z80OPCODE op_C0(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret nz
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (!(rf->f & ZF))
     {
@@ -1297,7 +1297,7 @@ Z80OPCODE op_C4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call nz,nnnn
     // Branch taken
     if (!(rf->f & ZF))
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1309,7 +1309,7 @@ Z80OPCODE op_C4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call nz,nnnn
 
 Z80OPCODE op_C5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push bc
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->b);
     Z80Wd(cpu, --rf->sp, rf->c);
@@ -1324,7 +1324,7 @@ Z80OPCODE op_C6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add a,nn
 
 Z80OPCODE op_C7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 00
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1337,7 +1337,7 @@ Z80OPCODE op_C7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 00
 
 Z80OPCODE op_C8(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret z
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (rf->f & ZF)
     {
@@ -1387,7 +1387,7 @@ Z80OPCODE op_CC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call z,nnnn
 
     if (rf->f & ZF)
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
 
@@ -1402,7 +1402,7 @@ Z80OPCODE op_CD(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call nnnn
     uint16_t addr = Z80Rd(cpu, rf->pc++, true);
     addr += 0x100 * Z80Rd(cpu, rf->pc++, true);
 
-    cputact(1);
+    cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
     // Put return address to stack
     Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
@@ -1421,7 +1421,7 @@ Z80OPCODE op_CE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // adc a,nn
 
 Z80OPCODE op_CF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 08
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1435,7 +1435,7 @@ Z80OPCODE op_CF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 08
 
 Z80OPCODE op_D0(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret nc
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (!(rf->f & CF))
     {
@@ -1508,7 +1508,7 @@ Z80OPCODE op_D4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call nc,nnnn
     // Branch taken
     if (!(rf->f & CF))
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1521,7 +1521,7 @@ Z80OPCODE op_D4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call nc,nnnn
 
 Z80OPCODE op_D5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push de
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->d);
     Z80Wd(cpu, --rf->sp, rf->e);
@@ -1536,7 +1536,7 @@ Z80OPCODE op_D6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sub nn
 
 Z80OPCODE op_D7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 10
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1549,7 +1549,7 @@ Z80OPCODE op_D7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 10
 
 Z80OPCODE op_D8(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret c
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     // Branch taken
     if (rf->f & CF)
@@ -1615,7 +1615,7 @@ Z80OPCODE op_DC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call c,nnnn
     // Branch taken
     if (rf->f & CF)
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1633,7 +1633,7 @@ Z80OPCODE op_DE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sbc a,nn
 
 Z80OPCODE op_DF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 18
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1646,7 +1646,7 @@ Z80OPCODE op_DF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 18
 
 Z80OPCODE op_E0(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret po
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     // Branch taken
     if (!(rf->f & PV))
@@ -1686,7 +1686,7 @@ Z80OPCODE op_E3(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ex (sp),hl
     Z80_T_BEGIN(cpu);
     uint16_t value = Z80Rd(cpu, rf->sp) + 0x100 * Z80Rd(cpu, rf->sp + 1);
 
-    cputact(1);
+    cpuidle(rf->sp + 1, 1);
 
     // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
     Z80Wd(cpu, rf->sp + 1, rf->h);
@@ -1696,7 +1696,7 @@ Z80OPCODE op_E3(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ex (sp),hl
 
     rf->hl = value;
 
-    cputact(2);
+    cpuidle(rf->sp, 2);
     Z80_RETURN_Q(0, tact_);
 }
 
@@ -1710,7 +1710,7 @@ Z80OPCODE op_E4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call po,nnnn
     // Branch taken
     if (!(rf->f & PV))
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
           Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1723,7 +1723,7 @@ Z80OPCODE op_E4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call po,nnnn
 
 Z80OPCODE op_E5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push hl
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->h);
     Z80Wd(cpu, --rf->sp, rf->l);
@@ -1738,7 +1738,7 @@ Z80OPCODE op_E6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // and nn
 
 Z80OPCODE op_E7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 20
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1751,7 +1751,7 @@ Z80OPCODE op_E7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 20
 
 Z80OPCODE op_E8(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret pe
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (rf->f & PV)
     {
@@ -1801,7 +1801,7 @@ Z80OPCODE op_EC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call pe,nnnn
 
     if (rf->f & PV)
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1820,7 +1820,7 @@ Z80OPCODE op_EE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // xor nn
 
 Z80OPCODE op_EF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 28
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1833,7 +1833,7 @@ Z80OPCODE op_EF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 28
 
 Z80OPCODE op_F0(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret p
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (!(rf->f & SF))
     {
@@ -1887,7 +1887,7 @@ Z80OPCODE op_F4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call p,nnnn
     // Branch taken
     if (!(rf->f & SF))
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -1900,7 +1900,7 @@ Z80OPCODE op_F4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call p,nnnn
 
 Z80OPCODE op_F5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push af
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->a);
     Z80Wd(cpu, --rf->sp, rf->f);
@@ -1915,7 +1915,7 @@ Z80OPCODE op_F6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // or nn
 
 Z80OPCODE op_F7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 30
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);
@@ -1928,7 +1928,7 @@ Z80OPCODE op_F7(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 30
 
 Z80OPCODE op_F8(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ret m
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     if (rf->f & SF)
     {
@@ -1946,7 +1946,7 @@ Z80OPCODE op_F9(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld sp,hl
    Z80_T_BEGIN(cpu);
    rf->sp = rf->hl & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -1985,7 +1985,7 @@ Z80OPCODE op_FC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // call m,nnnn
 
     if (rf->f & SF)
     {
-        cputact(1);
+        cpuidle(rf->pc - 1, 1);  // on the address's high byte
 
         Z80Wd(cpu, --rf->sp, (rf->pc >> 8) & 0xFF);
         Z80Wd(cpu, --rf->sp, rf->pc & 0xFF);
@@ -2004,7 +2004,7 @@ Z80OPCODE op_FE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp nn
 
 Z80OPCODE op_FF(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rst 38
     Z80_T_BEGIN(cpu);
-    cputact(1);
+    cpuidle(Z80_IR(rf), 1);
 
     Z80Wd(cpu, --rf->sp, rf->pch);
     Z80Wd(cpu, --rf->sp, rf->pcl);

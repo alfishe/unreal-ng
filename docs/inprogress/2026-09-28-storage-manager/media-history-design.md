@@ -154,7 +154,7 @@ A `IMediaFileView` decoder reads a block view at a version:
 
 | Decoder | Media | Source of truth for the code |
 |---|---|---|
-| FAT12 / 16 / 32 | SD, IDE, PC floppies | ChaN FatFs R0.15b, read-only build, over the block view (the same library as the test oracle, `core/src/3rdparty/fatfs`) |
+| FAT12 / 16 / 32 | SD, IDE, PC floppies | `FatVolumeReader` over the block view (the M1 test oracle, our own code) |
 | TR-DOS | TRD / SCL / floppies in TR-DOS format | the existing TR-DOS catalog code in the disk loaders |
 | +3DOS / CP/M | +3, Profi | later |
 | Tape blocks | tapes | the tape image's block list (header names, lengths) |
@@ -215,8 +215,8 @@ because they all write into the same layer. It does not need a separate journal 
 |---|---|
 | Layer unit tests | head / version / truncation / labeled keep; write-equal-to-source frees; COW table sharing; the same writes give the same bytes |
 | Spill | budget crossed → versions spill → reads identical; a killed process recovers to the last sealed chunk |
-| File views | FAT: create / change / delete / rename detected between versions (FatFs-made reference volumes); TR-DOS catalog changes; tape block list |
-| Export | image at v1 and at head = FatFs-readable, byte-exact against a reference; folder export equals the file view; `..` in a guest name cannot escape |
+| File views | FAT: create / change / delete / rename detected between versions (reference volumes from `FatImageBuilder`); TR-DOS catalog changes; tape block list |
+| Export | image at v1 and at head readable by `FatVolumeReader`, byte-exact against a reference; folder export equals the file view; `..` in a guest name cannot escape |
 | Drift | changed source → re-attach refused |
 | Real ROM | the §1 example with NedoOS or the ERS: two saves, read the file at v1, export at v1, snapshot at frame 20 000 restores v1 |
 | TTD v2 (when it lands) | the storage-overlay conformance test of the roadmap §8: write, seek back before it, reread → pre-write contents |

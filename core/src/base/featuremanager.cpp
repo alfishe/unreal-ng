@@ -14,6 +14,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #endif
@@ -126,19 +127,29 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
             // machine is bound to a TTD timeline (they change what the guest code does,
             // so a replay would diverge), and turbo mode while recording (a recorded run
             // must reflect real timing)
-            const bool shortcut = id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape;
-            if (enabled && (shortcut || id == Features::kTurboMode))
+            // ...and switching the capture flags off (timetravel, debugmode) while
+            // recording: capture would stop mid-session and corrupt the history
+            const std::string refusal = refusalReason(id, enabled);
+            if (!refusal.empty())
             {
-                if (shortcut ? isTtdTimelineBound() : isTtdRecordingActive())
+                if (_context && _context->pModuleLogger)
                 {
-                    if (_context && _context->pModuleLogger)
-                    {
-                        _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
-                            "Cannot enable '%s' while the TTD recording lock is held or history is being replayed",
-                            id.c_str());
-                    }
-                    return false;
+                    _context->pModuleLogger->Warning(_MODULE, _SUBMODULE, "setFeature('%s', %s) refused: %s",
+                                                     id.c_str(), enabled ? "on" : "off", refusal.c_str());
                 }
+                return false;
+            }
+
+            // Contention changes the machine's timing in both directions: a timeline recorded with one
+            // setting replays only with the same one
+            if (id == Features::kContention && enabled != feature->enabled && isTtdTimelineBound())
+            {
+                if (_context && _context->pModuleLogger)
+                {
+                    _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
+                        "Cannot change '%s' while the machine is bound to a TTD timeline", id.c_str());
+                }
+                return false;
             }
 
             bool wasEnabled = feature->enabled;
@@ -265,6 +276,49 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
         return false;
 
     return feature->enabled && !isMaskedByTtd(feature->id);
+}
+
+std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool enabled) const
+{
+    std::string id;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        const auto* feature = findFeature(idOrAlias);
+        if (!feature)
+            return {};
+        id = feature->id;
+    }
+
+    // Either direction swaps the fitted General Sound card (FR-4)
+    if (id == Features::kGSLightweight)
+    {
+        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        const bool gsFitted = _context && _context->pSoundManager && _context->pSoundManager->getGeneralSound();
+        return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
+    }
+
+    if (!enabled)
+    {
+        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        if (ttd && id == Features::kTimeTravel)
+            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableTimeTravel);
+        if (ttd && id == Features::kDebugMode)
+            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableDebugMode);
+        return {};
+    }
+
+    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isTtdTimelineBound())
+    {
+        return "Cannot enable " + id + " while TTD is recording or replaying history: it changes what the guest "
+               "code does, so the replay would no longer match the recording. Stop the recording, or leave the "
+               "history, first.";
+    }
+    if (id == Features::kTurboMode && isTtdRecordingActive())
+    {
+        return "Cannot enable turbo mode while TTD is recording: a recording must show the code running at real "
+               "speed. Stop the recording first.";
+    }
+    return {};
 }
 
 bool FeatureManager::hasFeature(const std::string& idOrAlias) const
@@ -487,6 +541,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kContention,
+                     Features::kContentionAlias,
+                     Features::kContentionDesc,
+                     true,  // ON by default - the machine's hardware timing
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kGSLightweight,
                      Features::kGSLightweightAlias,
                      Features::kGSLightweightDesc,
@@ -591,15 +653,8 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
         }
         _context->pCore->GetZ80()->isDebugMode = debugEnabled;
 
-        // Switch memory interface based on debug mode
-        if (debugEnabled)
-        {
-            _context->pCore->UseDebugMemoryInterface();
-        }
-        else
-        {
-            _context->pCore->UseFastMemoryInterface();
-        }
+        // Switch memory interface based on debug mode and the machine's contention (with its switch)
+        _context->pCore->SetContentionSwitch(isEnabled(Features::kContention));  // re-selects the interface
 
         // Update Z80 feature cache (opcode profiler etc.)
         _context->pCore->GetZ80()->UpdateFeatureCache();

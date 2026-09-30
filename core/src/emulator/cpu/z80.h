@@ -4,6 +4,7 @@
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portinterceptor.h"
 #include "stdafx.h"
 
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
@@ -300,6 +301,53 @@ public:
     virtual void OnMachineM1(uint16_t address) = 0;
 };
 
+/// Model-side owner of the /INT pin (see Z80::SetInterruptSource). Shared
+/// infrastructure (PLAN #60(a)) for machines whose INT is not the fixed ULA
+/// frame pulse: TSConf (frame INT at a programmable position, line, DMA and
+/// wait-port INTs, each with its own IM2 vector, deferred inside vdos) and the
+/// Sprinter (mode-table INT position, a Z84C15 daisy chain that needs RETI).
+/// With a source registered the machine owns INT completely: the ULA window
+/// (config intstart/intlen), RaiseLocalInt and IntClearedByAcknowledge are not
+/// consulted. The EI shadow, IFF1, a pending prefix and NMI priority stay the
+/// CPU's. Null for every other machine: one pointer test per instruction
+class IInterruptSource
+{
+public:
+    virtual ~IInterruptSource() = default;
+    /// Is /INT asserted at this instruction boundary? `t` is the frame
+    /// T-state (Z80::t, rebased at every frame end). Called once per step,
+    /// before the instruction; must have no side effects the CPU could see
+    virtual bool IsIntAsserted(uint32_t t) = 0;
+    /// INT acknowledge (the IORQ + M1 cycle): the byte the device drives on
+    /// the data bus - the IM2 vector low byte, ignored in IM1 (and IM0 is
+    /// not modeled beyond RST #38). Clears only the source that was served
+    virtual uint8_t AcknowledgeInterrupt(uint32_t t) = 0;
+    /// RETI (ED 4D and its mirrors ED 5D/6D/7D) was executed: Z80-family
+    /// peripherals watch the bus for it to end their interrupt service (the
+    /// Z84C15 daisy chain; the Sprinter re-arms its accelerator)
+    virtual void OnReti() {}
+};
+
+/// Model-side engine that must advance with the CPU (see
+/// Z80::SetMachineStepHook): TSConf's TSU, DMA, line events and DRAM budget,
+/// whose results the program can observe (RAM written by DMA, a finished
+/// DMA's INT) without touching a port. Runs after every instruction and INT
+/// acknowledge, on every frame - including frames the turbo mode does not
+/// render (MainLoop's _renderThisFrame gates only the screen). Null for every
+/// other machine: one pointer test per instruction
+class IMachineStepHook
+{
+public:
+    virtual ~IMachineStepHook() = default;
+    /// After the step, `t` = the frame T-state reached. May be called again
+    /// with the same `t` (Core::UpdateScreen replays OnCPUStep): catching up
+    /// to a T-state already reached must change nothing
+    virtual void OnMachineStep(uint32_t t) = 0;
+    /// The frame ended: Z80::t was just rebased by `frameLength` (the scaled
+    /// frame). Frame-relative positions held by the engine are rebased too
+    virtual void OnMachineFrameRollover(uint32_t frameLength) { (void)frameLength; }
+};
+
 /// INT/NMI acceptance. One value at a time - each is a property of the last
 /// instruction or the last acknowledge. Set by that instruction/acknowledge,
 /// cleared when the next Z80Step starts. Same values and meaning as
@@ -362,9 +410,17 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;  // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;   // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* MemIf;      // Currently selected memory interface (Fast|Debug)
+    const MemoryInterface* FastMemIf;                  // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;                   // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* FastContendedMemIf;         // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* DbgContendedMemIf;          // Debug + video memory contention
+    const MemoryInterface* OverlayFastMemIf;           // Fast + host bus overlay (only while one is installed)
+    const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
+    const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
+    const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
+    /// Currently selected memory interface. Written only by
+    /// Core::SelectMemoryInterface (under its lock); read on every access
+    const MemoryInterface* MemIf;
 };
 
 /// endregion </Structures>
@@ -388,6 +444,11 @@ protected:
 
 protected:
     int _nmi_pending_count = 0;
+
+    // Local INT (RaiseLocalInt): active until this frame / T-state
+    bool _localIntArmed = false;
+    uint64_t _localIntEndFrame = 0;
+    uint32_t _localIntEndT = 0;
     
     // Opcode profiling
     OpcodeProfiler* _opcodeProfiler = nullptr;
@@ -414,7 +475,8 @@ public:
     void NotifyInstructionStart();               // run the observers for the instruction at m1_pc
     void NotifyMachineM1Before(uint16_t address);  // run machineM1Hook before the opcode read
     void NotifyMachineM1(uint16_t address);      // run machineM1Hook (out of line, see m1_cycle)
-    uint8_t in(uint16_t port);
+    uint8_t in(uint16_t port);       // the value the CPU gets (TTD port-read journal applied)
+    uint8_t inFromBus(uint16_t port);  // the value the bus drives (devices, floating bus)
     void out(uint16_t port, uint8_t val);
     void retn();
 
@@ -422,13 +484,58 @@ public:
     uint8_t rd(uint16_t addr, bool isExecution = false);
     void wd(uint16_t addr, uint8_t val);
 
+    /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
+    /// the same counter step as the CPU's own cycles
+    inline void InsertWaitStates(uint8_t cycles) { tt += cycles * rate; }
+
+    /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
+    inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
+
+    /// The same moment in CPU clocks at the current clock rate (turbo counts
+    /// each of its faster clocks): what a phase-dependent wait rule needs
+    /// (MemoryWaitOverlay::ExtraClocks)
+    inline uint32_t AccessStartClock() const { return rate ? tt / rate - 3u : 0; }
+
+    /// Internal (no-MREQ) cycles: `cycles` T-states with `addr` on the address bus (HL, PC, SP, IR... per
+    /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
+    /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without
+    /// that rule (and without a bus trace hook) this is the plain cycle count
+    inline void Idle(uint16_t addr, uint8_t cycles)
+    {
+        if (idleContention || busTraceHook) [[unlikely]]
+            IdleSlow(addr, cycles);
+        else
+            tt += cycles * rate;
+    }
+    void IdleSlow(uint16_t addr, uint8_t cycles);  // contention per T-state and the 'N' trace events
+
+    /// The refresh address the CPU puts on the bus in internal cycles after M1 (I in the high byte, R low)
+    inline uint16_t IR() const { return static_cast<uint16_t>((i << 8) | (r_low & 0x7F) | (r_hi & 0x80)); }
+
+    /// The ULA's rule for internal cycles: set with ioContention (the same machines), null otherwise
+    UlaContention* idleContention = nullptr;
+
+    /// I/O contention rule for in / out: the machine's contention component while its ULA contends port
+    /// accesses (48K / 128K / +2), null otherwise (no contention, +2A / +3 gate array). Set by
+    /// Core::SelectMemoryInterface together with MemIf
+    UlaContention* ioContention = nullptr;
+
+    /// Second part of the I/O contention: the waits after IORQ (C:3, or C:1 x3), before the handler's
+    /// remaining 3 T. `ioWait` is the first part, added for the debug access counter
+    void IoWaitAfterIorq(uint16_t port, uint8_t ioWait);
+
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus
     /// event with cpu.t already advanced to it:
     ///   'R' memory read (data latched at T3 of the cycle - rd() charges first)
-    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state)
+    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state),
+    ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
+
+    /// Optional pre-decode port hook (see IPortInterceptor); null on stock
+    /// machines - one pointer check per IN/OUT
+    IPortInterceptor* portInterceptor = nullptr;
 
     /// Test-only instruction-fetch trace hook (null in production - a single
     /// empty-function check per instruction when unset). Fired once per
@@ -443,6 +550,23 @@ public:
     /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
     /// Null unless a model decoder needs it: one pointer test per M1
     IMachineM1Hook* machineM1Hook = nullptr;
+
+private:
+    IInterruptSource* _interruptSource = nullptr;
+    IMachineStepHook* _machineStepHook = nullptr;
+
+public:
+    /// The machine's INT logic when it is not the ULA frame pulse (see
+    /// IInterruptSource). Set by the model's port decoder at init, nullptr
+    /// when it goes away. Also raises / clears the per-step work bit
+    /// (EmulatorContext::kStepWorkInterruptSource), so a machine without a
+    /// source pays nothing per instruction
+    void SetInterruptSource(IInterruptSource* source);
+    IInterruptSource* GetInterruptSource() const { return _interruptSource; }
+    /// The machine engine advanced after every step (see IMachineStepHook);
+    /// the same contract as SetInterruptSource (kStepWorkMachineStep)
+    void SetMachineStepHook(IMachineStepHook* hook);
+    IMachineStepHook* GetMachineStepHook() const { return _machineStepHook; }
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods
@@ -474,6 +598,8 @@ public:
     /// then the per-step peripheral dispatch. An accepted interrupt IS the
     /// step - no opcode runs in the same iteration
     StepResult StepInstruction(bool skipBreakpoints = false);
+    /// StepInstruction with rare work around the step (the per-step gate was non-zero)
+    StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
 
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
@@ -526,9 +652,27 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
+
+    /// Hold /INT low for lengthT T-states from now, independently of the ULA
+    /// frame pulse (a board-level interrupt line: ZX-Poly local INT)
+    void RaiseLocalInt(unsigned lengthT);
+
+    /// Drop pending NMI / local INT requests (a board-level CPU reset)
+    void ClearInterruptRequests()
+    {
+        _nmi_pending_count = 0;
+        _localIntArmed = false;
+        int_pending = false;
+    }
+
+    /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
+    /// does not see the common frame INT). Local INT is not affected
+    bool frameIntMasked = false;
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
+    template <bool UseSource>
+    bool ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:
@@ -544,16 +688,13 @@ public:
 
     void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
 
+public:
+    /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
+    /// Called from a host bus overlay; the plain memory paths never call it.
+    void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
+
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
-
-    // TSConf specific
-    // TODO: Move to plugin
-protected:
-    uint8_t GetTSConfInterruptVector();
-    void ts_frame_int(bool vdos);
-    void ts_line_int(bool vdos);
-    void ts_dma_int(bool vdos);
 
     /// region <Debug methods>
 public:

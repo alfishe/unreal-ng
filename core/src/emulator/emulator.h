@@ -28,6 +28,11 @@
 
 class BreakpointManager;
 
+namespace ttd
+{
+enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+}
+
 /// region <Types>
 
 enum EmulatorStateEnum : uint8_t
@@ -50,6 +55,9 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 };
 
 /// endregion </Types>
+
+class FloppyDriveSlots;
+class TapeSlot;
 
 class Emulator
 {
@@ -86,16 +94,22 @@ protected:
     bool _hasPreferredModel = false;
     MEM_MODEL _preferredModel = MM_PENTAGON;
     uint32_t _preferredRamSize = 0;
+    std::function<void(CONFIG&)> _configOverride;
     std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
     Core* _core = nullptr;
+    FloppyDriveSlots* _floppySlots = nullptr;  // fdd.a-d registered with the media manager while the drives exist
+    TapeSlot* _tapeSlot = nullptr;             // "tape", registered while the deck exists
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     MainLoop* _mainloop = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
     FeatureManager* _featureManager = nullptr;  // Feature toggle manager
+    std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
+    std::mutex _speedInterceptorMutex;
+    std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -147,6 +161,16 @@ public:
         _hasPreferredModel = true;
     }
 
+    /// Adjust this instance's configuration after it is loaded and the
+    /// preferred model is applied, before any device is created from it.
+    /// Must be called before Init(). Per instance - unlike the process-wide
+    /// Config::SetConfigLoadedHook - so one caller cannot change another
+    /// instance's hardware (MachineStateTransfer fits the source's cards).
+    void SetConfigOverride(std::function<void(CONFIG&)> configOverride)
+    {
+        _configOverride = std::move(configOverride);
+    }
+
     /// Set a custom config file path. Must be called before Init().
     /// If set, this path is used instead of the default config search.
     void SetCustomConfigPath(const std::string& path)
@@ -156,6 +180,12 @@ public:
 
     [[nodiscard]] bool Init();
     void Release();
+
+    /// A hidden member of a multi-instance machine (a ZX-Poly slave): left out
+    /// of instance listings, index lookup and "most recent" selection, but
+    /// still addressable by its ID (debugger, WebAPI)
+    void SetHiddenGroupMember(bool hidden) { _hiddenGroupMember = hidden; }
+    bool IsHiddenGroupMember() const { return _hiddenGroupMember; }
 
     // Timestamp helpers
     void UpdateLastActivity();
@@ -175,6 +205,19 @@ public:
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
+
+    /// A group that runs this instance in lockstep with others (the ZX-Poly
+    /// master) takes host speed changes itself: SetSpeedMultiplier hands the
+    /// validated multiplier to `interceptor`, which queues it for the next frame
+    /// boundary, where the group gives it to every member at once. Without it
+    /// a change written from another thread could reach the master one frame
+    /// before the slaves. An empty function removes it
+    void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
+
+    /// @brief Why a recording-destructive action is refused right now (empty when
+    /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
+    /// it themselves; surfaces ask first to report the reason.
+    std::string RecordingGuard(ttd::TTDGuardedAction action) const;
 
     /// @brief Run a guest-memory edit made by a tool (a script, a debugger
     /// surface) so a TTD recording stays consistent: the edit is recorded as a
@@ -248,7 +291,13 @@ public:
     // File format operations
     bool LoadSnapshot(const std::string& path);
     bool SaveSnapshot(const std::string& path);
-    bool LoadTape(const std::string& path);
+    /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
+    /// slot, at once; the deck stops and plays the new tape from its start
+    bool LoadTape(const std::string& path, std::string* error = nullptr);
+    /// The tape out of the deck. Refused while a TTD recording runs
+    bool EjectTape(std::string* error = nullptr);
+    /// `ext` (no dot, any case) is a format a tape loader reads
+    static bool IsTapeExtension(const std::string& ext);
     /// @param drive Target floppy drive, 0-3 (A-D). Must name a drive this machine actually has;
     ///               anything else is a hard failure (see `error`), never a silent fallback to A.
     /// @param error When non-null and the call fails, receives a human-readable reason
@@ -258,6 +307,13 @@ public:
     ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
     ///               must pass the drive the caller actually asked for.
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
+
+    /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
+    /// @param force Eject even when the disk has unsaved writes (they are lost); without it a
+    ///              dirty disk stays in and `error` says so
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    /// An empty drive is not an error. Like LoadDisk, it is refused while a TTD recording runs
+    bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()
     enum class BlankDiskFormat
@@ -312,8 +368,9 @@ public:
     };
 
     /// Save the disk image in drive `drive` (0..3).
-    /// @param path   Target file; empty = the image's own file path. The extension selects the format
-    ///               (trd, scl, fdi, udi; anything else = trd).
+    /// @param path   Target file; empty = the image's own file path (a disk from a folder, a Hobeta file or a
+    ///               blank disk has none). The extension selects the format (trd, scl, fdi, udi, dsk, td0,
+    ///               mgt / img, hfe, scp; anything else = trd); the disk then stands for that file.
     /// @param allowRetarget  When the selected format refuses the image (TRD / SCL hold only 16 x 256-byte
     ///               TR-DOS tracks, FDI drops FM / non-nominal tracks with a warning but does not refuse),
     ///               save losslessly to `<path without extension>.udi` instead, keep the original file untouched
@@ -343,7 +400,10 @@ public:
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
     void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
-    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);
+    /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
+    /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0,
+                           bool notifyDebugger = true);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame
@@ -388,6 +448,10 @@ public:
     // Identity and state methods
     const std::string& GetId() const;
     EmulatorStateEnum GetState();
+
+    /// Release() has run: the context and every subsystem are gone. A holder
+    /// of a shared_ptr (a UI binding) must not call into the instance any more
+    bool IsReleased() const { return _isReleased; }
     void SetState(EmulatorStateEnum state);
 
     // Status methods

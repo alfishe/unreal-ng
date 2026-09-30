@@ -1,4 +1,6 @@
 #include "screenzx.h"
+#include "emulator/video/videofamily.h"
+#include "emulator/video/zx/zxgeometry.h"
 
 #include <algorithm>
 #include <cassert>
@@ -27,25 +29,22 @@ void ScreenZX::SetVideoMode(VideoModeEnum mode)
 
 void ScreenZX::SelectRangeRenderer()
 {
-    switch (_mode)
+    // FamilyOf is shared with the video debug mappers (VideoMapService)
+    switch (FamilyOf(_mode))
     {
-        case M_NUL:
+        case VideoFamily::None:
             _rangeRenderer = &ScreenZX::DrawRangeNull;
             break;
-        case M_ATM16:
-        case M_ATMHR:
-        case M_ATMTX:
-        case M_ATMTL:
+        case VideoFamily::Atm:
             _rangeRenderer = &ScreenZX::DrawRangeAtm;
             break;
-        case M_PROFIHR:
+        case VideoFamily::Profi:
             _rangeRenderer = &ScreenZX::DrawRangeProfi;
             break;
-        case M_P16:
-        case M_PMC:
+        case VideoFamily::Alco:
             _rangeRenderer = &ScreenZX::DrawRangeAlco;
             break;
-        default:
+        case VideoFamily::Zx:
             _rangeRenderer = _planeBEnabled ? &ScreenZX::DrawRangeZXPlaneB : &ScreenZX::DrawRangeZX;
             break;
     }
@@ -210,8 +209,8 @@ void ScreenZX::CreateTstateLUT()
     // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
     // No framebuffer offset needed - the extra content fills the larger buffer directly
     // The screen position shifts within the buffer (48,48 → 72,64) because more border is visible
-    const int overscanExtraLines = (_mode == M_P384) ? 16 : 0;
-    const int overscanExtraPixels = (_mode == M_P384) ? 32 : 0;
+    const int overscanExtraLines = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
+    const int overscanExtraPixels = (_mode == M_P384) ? ZxGeometry::kP384ExtraPixels : 0;
 
     // Clear LUT first
     memset(_tstateLUT, 0, sizeof(_tstateLUT));
@@ -417,14 +416,8 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPix
 {
     // ABGR32 (Little-endian) or RGBA32 (Big-endian)
     // Alpha - #FF - opaque, #00 - transparent
-    static uint32_t palette[2][8] = {
-        // LSB ABGR encoded colors
-        //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
-        {0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC,
-         0xFFCACACA},  // Brightness = 0
-        {0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF}
-        // Brightness = 1
-    };
+    // One palette for the renderer and the video mappers (zxgeometry.h)
+    const auto& palette = ZxGeometry::kPalette;
     //    { // MSB RGBA encoded colors
     //        //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
     //        { 0x000000FF, 0x0022C7FF, 0xD62816FF, 0xD433C7FF, 0x00C525FF, 0x00C7C9FF, 0xCCC82AFF, 0xCACACAFF },  //

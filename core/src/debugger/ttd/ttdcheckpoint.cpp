@@ -116,7 +116,7 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
     dst->halt_cycle = src.halt_cycle;
 
     // Deliberately NOT touched (host-side; preserved by caller):
-    //   FastMemIf, DbgMemIf, MemIf         — reattached by orchestrator
+    //   FastMemIf, DbgMemIf, Overlay*MemIf, MemIf — reattached by orchestrator
     //   isDebugMode, cycles_to_capture     — debugger session state
     //   trace_curs/top/mode, mem_curs/top/second, pc_trflags — UI cursors
     //   prev_pc, m1_pc, last_branch, nextpc — debug view / prefetch cache
@@ -224,8 +224,7 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     //   nvram     — peripheral; handled via TTDSerializable when wired in
     //   video_memory_changed — debug-only flag
     //   nmi_in_progress — already in TTDCpuState
-    //   ts (TSPORTS_t)   — TS-Conf specific; not supported in v1
-    //   cram, sfile      — TS-Conf palette/sprite files; not in v1
+    //   TS-Conf state    — owned by its decoder (TsConfState), its own blob
     //
     // Caller is responsible for re-running the port decoder to rebuild
     // memory bank mappings from the restored port latches (TDD §8.1 step 2b).
