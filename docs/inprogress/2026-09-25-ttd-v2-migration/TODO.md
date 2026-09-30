@@ -21,7 +21,7 @@ Requirements: [requirements.md](requirements.md).
 - [x] Merge `generalsound` (merged before V1; GS RAM as a region moves into V1)
 - [x] Merge `moonsound` (`e18f3a29`, before V1). Left over: automation (PLAN #11), port-claim unification (design debt, MoonSound TODO), wave SRAM as a region (V1)
 - [ ] V2: device state v2
-- [ ] V3: determinism inputs
+- [ ] V3: determinism inputs — first slice pulled forward by the offline-analysis program: input events and external events saved in the file (not saved today, verified 2026-09-29); see [ttd-offline-analysis.md](../2026-09-28-debugger-family/ttd-offline-analysis.md) O-1
 - [ ] Integrity and versioning decision written (before V4)
 - [ ] V4: memory budget
 - [ ] V5: container v2 + disk mode (format becomes versioned)
