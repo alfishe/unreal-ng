@@ -136,7 +136,7 @@ public:
     /// @param outError Optional; when non-null it receives a human-readable failure reason
     ///        (unknown model, RAM size not supported, model not supported by this build, init failure) on nullptr return
     /// @return Shared pointer to the created emulator, or nullptr on failure
-    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr);
+    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr, std::function<void(CONFIG&)> configOverride = {});
 
     /// @brief Get an existing emulator by ID
     /// @param emulatorId ID of the emulator to retrieve

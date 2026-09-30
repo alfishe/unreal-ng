@@ -26,6 +26,7 @@
 
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
+#include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
 #include "emulator/io/ide/idecontroller.h"
 
 // Pull in the actual struct definitions for the capture call sites.
@@ -1369,102 +1370,9 @@ uint64_t TimeTravelManager::ComputeRomSignature() const
 
 bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
-    // Idempotent: a restart must not stack duplicate serializers.
-    ReleaseModelPeripherals();
-
-    if (!_context)
-        return true;
-
-    // Core devices, present (or absent) independently of the model. They are
-    // owned by the emulator, not by us, so they are registered by raw pointer
-    // and simply dropped on release. A device that is absent on this model
-    // leaves no entry at all, which is the whole point of a registry: a
-    // checkpoint carries blobs only for what is actually connected.
-    if (_context->pSoundManager)
-    {
-        // TurboSound slot: register under the live device's own peripheral
-        // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
-        // device cannot load on the other (design §8.2). An empty slot
-        // (TurboSound = None) registers nothing, same as an absent Covox.
-        if (ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound())
-            _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
-        _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
-        // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
-        // the config did not fit one - the registry then simply carries no
-        // blob for it, same as Covox above. Registered under the live card's
-        // own peripheral id, same pattern as the TurboSound slot just above -
-        // LLE (GeneralSound) and LW (GeneralSoundLightweight) are different
-        // slots, so a session recorded on one personality cannot silently
-        // restore into the other.
-        if (GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound())
-            _peripherals.Register(gs->TTDPeripheralId(), gs);
-#ifdef UNREALNG_HAVE_OPL4
-        // MoonSound registers only when the config flag built it; a null
-        // pointer leaves no entry, so a session from a MoonSound machine
-        // loads on a MoonSound-less build as a visible missingBlob (R7).
-        _peripherals.Register(PeripheralId::MoonSound, _context->pSoundManager->getMoonSound());
-#endif
-    }
-    _peripherals.Register(PeripheralId::Tape, _context->pTape);
-    // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
-    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
-    _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
-
-    // IDE board (any machine with [HDD] Scheme): controller state, not the media
-    if (_context->pIdeController && _context->pIdeController->Enabled())
-    {
-        auto ide = std::make_unique<TTDAtaChannel>(_context);
-        _peripherals.Register(PeripheralId::AtaChannel, ide.get());
-        _ownedPeripherals.push_back(std::move(ide));
-    }
-
-    // --- Model-specific state (TDD 6.4) ---
-    // The framework names no machine. The port decoder owns the model's
-    // latches, so it declares what extra state exists and supplies the
-    // serializers; we only check that the two agree.
-    PortDecoder* decoder = _context->pPortDecoder;
-    if (!decoder)
-        return true;
-
-    for (auto& serializer : decoder->CreateTTDSerializers())
-    {
-        if (!serializer)
-            continue;
-
-        _peripherals.Register(serializer->TTDPeripheralId(), serializer.get());
-        _ownedPeripherals.push_back(std::move(serializer));
-    }
-
-    // A declared id with no serializer behind it means this model's state
-    // would be dropped silently - a recording that looks correct and restores
-    // wrong. Refuse instead, naming what is missing.
-    for (PeripheralId id : decoder->GetTTDModelStateIds())
-    {
-        if (_peripherals.IsRegistered(id))
-            continue;
-
-        const std::string message =
-            "model (mem_model=" + std::to_string(static_cast<unsigned>(_context->config.mem_model)) +
-            ") declares TTD state id " + std::to_string(static_cast<unsigned>(id)) +
-            " but its port decoder supplied no serializer for it - recording would "
-            "silently drop that state. Implement CreateTTDSerializers() for this model.";
-
-        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", message.c_str());
-        if (err)
-            *err = message;
-
-        ReleaseModelPeripherals();
-        return false;
-    }
-
-    if (_peripherals.Count() > 0)
-    {
-        MLOGINFO("TimeTravelManager::RegisterModelPeripherals - %zu serializer(s) registered for mem_model=%u",
-                 _peripherals.Count(),
-                 static_cast<unsigned>(_context->config.mem_model));
-    }
-
-    return true;
+    // The device set is enumerated in one place (ttdmachineperipherals.cpp),
+    // shared with MachineStateTransfer. On failure the registry is left empty.
+    return RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err);
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
