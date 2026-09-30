@@ -4006,6 +4006,12 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoAddress(ctx, page, offset));
         });
+        // video_address_in(space, offset[, page]): "ram", "sprite_ram" or "palette"
+        lua.set_function("video_address_in", [this](sol::this_state s, const std::string& space, unsigned offset,
+                                                    sol::optional<unsigned> page) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddressIn(ctx, space, page.value_or(0), offset));
+        });
         lua.set_function("video_address_z80", [this](sol::this_state s, unsigned address) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoAddressZ80(ctx, address));

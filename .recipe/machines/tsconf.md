@@ -98,5 +98,5 @@ and IDE details: `docs/inprogress/2026-09-27-tsconf/boot-and-storage-notes.md`.
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
 | 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs | implemented (phase 8) |
 | VDAC color curves, TSU render timing within the line | not yet |
-| Video debug mapper (`/video/layout`, `/video/pixel`, `/video/address`, `/video/text`; CLI `video ...`, Lua / Python `video_*`) | graphics layer of every mode (surfaces in 14 MHz pixels); the TSU layers not yet |
+| Video debug mapper (`/video/layout`, `/video/pixel`, `/video/address`, `/video/text`; CLI `video ...`, Lua / Python `video_*`) | graphics layer (layer 0) and the TSU (layer 1 "tsu": the object, its SFILE / tilemap words, graphics byte, CRAM) in 14 MHz pixels; `/video/address?space=sprite_ram|palette` |
 | TS-specific Qt docks | not yet (the model-first debugger) |

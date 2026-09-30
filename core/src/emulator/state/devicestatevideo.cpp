@@ -344,6 +344,33 @@ StateNode VideoAddress(EmulatorContext* context, unsigned page, unsigned offset)
     return ret;
 }
 
+StateNode VideoAddressIn(EmulatorContext* context, const std::string& space, unsigned page, unsigned offset)
+{
+    if (space.empty() || space == "ram")
+        return VideoAddress(context, page, offset);
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+    Space where;
+    if (space == "sprite_ram")
+        where = Space::SpriteRam;
+    else if (space == "palette")
+        where = Space::Palette;
+    else
+    {
+        const std::string reason = "space '" + space + "': expected ram, sprite_ram or palette";
+        return Unavailable(reason.c_str());
+    }
+    const VideoMapService service(context);
+    const std::vector<SurfaceArea> areas = service.PixelsFor({where, 0, 0, offset, 2, 0xFFFF, SourceRole::PaletteEntry});
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["space"] = space;
+    ret["offset"] = Hex(offset, 4);
+    ret["feeds_picture"] = !areas.empty();
+    ret["areas"] = AreasNode(areas);
+    return ret;
+}
+
 StateNode VideoAddressZ80(EmulatorContext* context, unsigned address)
 {
     if (!context || !context->pScreen)

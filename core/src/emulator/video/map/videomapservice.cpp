@@ -193,8 +193,10 @@ PixelSources VideoMapService::SourcesAt(const VideoState& s, size_t layerIndex, 
     if (screen && screen->GetVideoMode() == s.mode)
     {
         FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
-        const uint32_t fx = layout.fb.surfaceLeft + x;
-        const uint32_t fy = layout.fb.surfaceTop + y;
+        const LayerDesc* layer = layerIndex < layout.layers.size() ? &layout.layers[layerIndex] : nullptr;
+        const bool own = layer && layer->ownFramebufferOrigin;
+        const uint32_t fx = (own ? layer->fbLeft : layout.fb.surfaceLeft) + x;
+        const uint32_t fy = (own ? layer->fbTop : layout.fb.surfaceTop) + y;
         if (fb.memoryBuffer && fx < fb.width && fy < fb.height)
         {
             result.renderedRgb = reinterpret_cast<const uint32_t*>(fb.memoryBuffer)[fy * fb.width + fx];

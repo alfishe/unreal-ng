@@ -431,6 +431,8 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video pixel t <tstate>         - the same for the point under the beam at a frame T\n"
         "  video address <page> <offset>  - pixels a RAM byte feeds\n"
         "  video address z80 <addr>       - pixels the byte at a Z80 address feeds\n"
+        "  video address palette <offset> - pixels drawn with a palette cell (16-bit cells at 2n)\n"
+        "  video address sprite_ram <off> - pixels of the sprite a sprite attribute word describes\n"
         "  video text [layer]             - text grid of a text mode (ATM / ZX-Evo)\n"
         "  video temporal [status]        - ZX DLSS de-flicker: algorithm, delays, timing\n"
         "  video temporal list            - algorithms that can be switched on\n"
@@ -481,6 +483,8 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         report = DeviceState::VideoPixel(context, c, a, b);
     else if (sub == "address" && args.size() == 3 && args[1] == "z80" && number(args[2], a))
         report = DeviceState::VideoAddressZ80(context, a);
+    else if (sub == "address" && args.size() == 3 && (args[1] == "sprite_ram" || args[1] == "palette") && number(args[2], a))
+        report = DeviceState::VideoAddressIn(context, args[1], 0, a);
     else if (sub == "address" && args.size() == 3 && number(args[1], a) && number(args[2], b))
         report = DeviceState::VideoAddress(context, a, b);
     else if (sub == "text" && args.size() <= 2 && (args.size() == 1 || number(args[1], a)))

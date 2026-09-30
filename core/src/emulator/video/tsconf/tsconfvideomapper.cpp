@@ -5,6 +5,7 @@
 #include "emulator/platforms/tsconf/tsconfengine.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
+#include "emulator/platforms/tsconf/tsconftsu.h"
 #include "emulator/video/tsconf/screentsconf.h"
 
 using namespace videomap;
@@ -54,7 +55,48 @@ uint32_t ZxAttrAddress(uint8_t vPage, uint32_t gx, uint32_t gy)
 {
     return (static_cast<uint32_t>(vPage) << 14) + 0x1800 + ((gy & 0xFF) >> 3) * 32 + ((gx & 0xFF) >> 3);
 }
+
+/// The TS window of the frame: the graphics window, or all 360x288 with T_CONFIG[0]
+const TsConfGeometry::Window& TsuWindow(const TsConfVideoView& v)
+{
+    return (v.ts->regs[TsConfReg::TConfig] & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(CurrentVConfig(v));
+}
+
+const char* TsuLayerName(TsConfTsu::Layer layer)
+{
+    switch (layer)
+    {
+        case TsConfTsu::Layer::S0: return "tsu.s0";
+        case TsConfTsu::Layer::T0: return "tsu.t0";
+        case TsConfTsu::Layer::S1: return "tsu.s1";
+        case TsConfTsu::Layer::T1: return "tsu.t1";
+        case TsConfTsu::Layer::S2: return "tsu.s2";
+        default:                   return "tsu";
+    }
+}
+
+/// The sources of a probed TSU pixel: map word + graphics byte, or the three SFILE words + graphics byte
+void TsuSources(const TsConfTsu::Source& src, std::vector<SourceRef>& out)
+{
+    const uint16_t nibble = static_cast<uint16_t>(src.lowNibble ? 0x0F : 0xF0);
+    const bool tile = src.layer == TsConfTsu::Layer::T0 || src.layer == TsConfTsu::Layer::T1;
+    if (tile)
+    {
+        out.push_back(RamByte(src.mapAddress, 0xFFFF, SourceRole::TileDescriptor));
+        out.back().width = 2;
+        out.push_back(RamByte(src.graphicAddress, nibble, SourceRole::TileGraphic));
+        return;
+    }
+    for (uint32_t word = 0; word < 3; word++)
+        out.push_back({Space::SpriteRam, 0, 0, (src.descriptor * 3u + word) * 2u, 2, 0xFFFF, SourceRole::SpriteDescriptor});
+    out.push_back(RamByte(src.graphicAddress, nibble, SourceRole::SpriteGraphic));
+}
 } // namespace
+
+bool TsConfVideoMapper::HasTsu(const TsConfState& ts)
+{
+    return (ts.regs[TsConfReg::TConfig] & 0xE0) != 0;
+}
 
 const char* TsConfVideoMapper::LayerId(uint8_t vConfig)
 {
@@ -106,6 +148,19 @@ VideoLayout TsConfVideoMapper::Layout(const VideoState& s) const
     layer.window.dotsPerT = 4;  // 14 MHz pixels: the framebuffer's unit in every TS mode
     layout.layers.push_back(layer);
 
+    if (HasTsu(*v->ts))
+    {
+        const TsConfGeometry::Window& ts = TsuWindow(*v);
+        LayerDesc tsu;
+        tsu.id = "tsu";
+        tsu.surface = {static_cast<uint16_t>(ts.w * 2), ts.h, 4};
+        tsu.window = {ts.y0, ts.h, static_cast<uint16_t>(ts.x0 / 2), static_cast<uint16_t>(ts.w / 2), 4};
+        tsu.ownFramebufferOrigin = true;
+        tsu.fbLeft = static_cast<uint16_t>((ts.x0 - kFirstVisibleDot) * 2);
+        tsu.fbTop = static_cast<uint16_t>(ts.y0 - kFirstVisibleLine);
+        layout.layers.push_back(tsu);
+    }
+
     layout.fb = {static_cast<uint16_t>(ScreenTSConf::kVisibleDots * 2), static_cast<uint16_t>(ScreenTSConf::kVisibleLines),
                  static_cast<uint16_t>((win.x0 - kFirstVisibleDot) * 2), static_cast<uint16_t>(win.y0 - kFirstVisibleLine)};
     return layout;
@@ -115,7 +170,32 @@ bool TsConfVideoMapper::SourcesAt(const VideoState& s, const MemView& m, size_t 
                                   LayerContribution& out) const
 {
     const TsConfVideoView* v = ViewOf(s);
-    if (!v || layerIndex != 0)
+    if (!v)
+        return false;
+    if (layerIndex == 1)
+    {
+        // TSU: the line drawn again with each pixel's source
+        if (!HasTsu(*v->ts))
+            return false;
+        const TsConfGeometry::Window& ts = TsuWindow(*v);
+        if (x >= static_cast<uint32_t>(ts.w) * 2u || y >= ts.h)
+            return false;
+        uint8_t indices[TsConfTsu::kMaxWidth];
+        TsConfTsu::Source sources[TsConfTsu::kMaxWidth];
+        if (!v->engine->ProbeTsuLine(ts.y0 + y, indices, sources))
+            return false;
+        const uint32_t dot = x / 2;
+        if (!(indices[dot] & 0x0F) || sources[dot].layer == TsConfTsu::Layer::None)
+            return false;  // transparent
+        out.layer = TsuLayerName(sources[dot].layer);
+        out.colourIndex = indices[dot];
+        out.sources.clear();
+        TsuSources(sources[dot], out.sources);
+        out.sources.push_back(CramCell(out.colourIndex));
+        out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex]);
+        return true;
+    }
+    if (layerIndex != 0)
         return false;
     const uint8_t frameVConfig = CurrentVConfig(*v);
     const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(frameVConfig);
@@ -200,10 +280,137 @@ void TsConfVideoMapper::BorderSources(const VideoState& s, LayerContribution& ou
     out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex]);
 }
 
+void TsConfVideoMapper::TsuPixelsFor(const TsConfVideoView& v, const SourceRef& ref, std::vector<SurfaceArea>& out)
+{
+    // A tilemap word, a graphics byte or an SFILE word: every TSU pixel the probe names it for
+    if (!HasTsu(*v.ts))
+        return;
+    const bool sfile = ref.space == Space::SpriteRam;
+    const bool cram = ref.space == Space::Palette;
+    if (!sfile && !cram && (ref.space != Space::Ram || ref.offset >= 0x4000))
+        return;
+    const uint32_t physical = (static_cast<uint32_t>(ref.page) << 14) | ref.offset;
+    const TsConfGeometry::Window& ts = TsuWindow(v);
+    uint8_t indices[TsConfTsu::kMaxWidth];
+    TsConfTsu::Source sources[TsConfTsu::kMaxWidth];
+    for (uint32_t y = 0; y < ts.h; y++)
+    {
+        if (!v.engine->ProbeTsuLine(ts.y0 + y, indices, sources))
+            continue;
+        uint32_t runStart = 0, runLength = 0;
+        auto flush = [&]() {
+            if (runLength)
+                out.push_back({"tsu", static_cast<uint16_t>(runStart * 2), static_cast<uint16_t>(y),
+                               static_cast<uint16_t>(runLength * 2), 1});
+            runLength = 0;
+        };
+        for (uint32_t dot = 0; dot < ts.w; dot++)
+        {
+            const TsConfTsu::Source& src = sources[dot];
+            bool hit = false;
+            if (src.layer != TsConfTsu::Layer::None && (indices[dot] & 0x0F))
+            {
+                const bool tile = src.layer == TsConfTsu::Layer::T0 || src.layer == TsConfTsu::Layer::T1;
+                if (cram)
+                    hit = indices[dot] == ref.offset / 2u;
+                else if (sfile)
+                    hit = !tile && ref.offset / 6u == src.descriptor;
+                else
+                    hit = src.graphicAddress == physical ||
+                          (tile && (src.mapAddress == physical || src.mapAddress + 1 == physical));
+            }
+            if (hit && runLength && dot == runStart + runLength)
+                runLength++;
+            else if (hit)
+            {
+                flush();
+                runStart = dot;
+                runLength = 1;
+            }
+        }
+        flush();
+    }
+}
+
+uint8_t TsConfVideoMapper::GraphicsIndex(const TsConfVideoView& v, const TsConfLine& set, uint32_t x)
+{
+    // The colour index SourcesAt reports for surface x of a line drawn with `set`
+    const uint8_t* ram = v.ram;
+    const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+    const uint32_t gx = (x / 2 + set.gxOffs) & 0x1FF;
+    const uint32_t gy = set.cntRow & 0x1FF;
+    const uint8_t vPage = set.vPage;
+    switch (set.vConfig & 0x03)
+    {
+        case 0:
+        {
+            const uint8_t a = ram[ZxAttrAddress(vPage, gx, gy)];
+            bool ink = (ram[ZxPixelAddress(vPage, gx, gy)] >> (7 - (gx & 7))) & 1;
+            if ((a & 0x80) && v.state && ((v.state->frame_counter >> 4) & 1))
+                ink = !ink;
+            return static_cast<uint8_t>(palBank | ((a & 0x40) ? 0x08 : 0x00) | (ink ? (a & 0x07) : ((a >> 3) & 0x07)));
+        }
+        case 1:
+        {
+            const uint8_t b = ram[((static_cast<uint32_t>(vPage) & 0xF8) << 14) | (gy << 8) | (gx >> 1)];
+            return static_cast<uint8_t>(palBank | ((gx & 1) ? (b & 0x0F) : (b >> 4)));
+        }
+        case 2:
+            return ram[((static_cast<uint32_t>(vPage) & 0xF0) << 14) | (gy << 9) | gx];
+        default:
+        {
+            const uint32_t px = (gx * 2 + (x & 1)) & 0x3FF;
+            const uint32_t row = (static_cast<uint32_t>(vPage) << 14) + ((gy >> 3) & 0x3F) * 256;
+            const uint32_t column = (px >> 3) & 0x7F;
+            const uint8_t code = ram[row + column];
+            const uint8_t a = ram[row + 128 + column];
+            const bool on = (ram[(static_cast<uint32_t>(vPage ^ 1) << 14) + code * 8u + (gy & 7)] >> (7 - (px & 7))) & 1;
+            return static_cast<uint8_t>(palBank | (on ? (a & 0x0F) : (a >> 4)));
+        }
+    }
+}
+
 void TsConfVideoMapper::PixelsFor(const VideoState& s, const SourceRef& ref, std::vector<SurfaceArea>& out) const
 {
     const TsConfVideoView* v = ViewOf(s);
-    if (!v || ref.space != Space::Ram || ref.offset >= 0x4000)
+    if (!v)
+        return;
+    if (ref.space == Space::Palette)
+    {
+        // A CRAM cell: every graphics pixel and TSU pixel drawn with that index
+        if (!v->ram || ref.offset >= 512)
+            return;
+        const uint8_t index = static_cast<uint8_t>(ref.offset / 2);
+        const uint8_t frameVConfig = CurrentVConfig(*v);
+        const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(frameVConfig);
+        const char* id = LayerId(frameVConfig);
+        for (uint32_t y = 0; y < win.h; y++)
+        {
+            const TsConfLine& set = v->engine->Line(win.y0 + y);
+            uint32_t runStart = 0, runLength = 0;
+            for (uint32_t x = 0; x <= static_cast<uint32_t>(win.w) * 2u; x++)
+            {
+                const bool hit = x < static_cast<uint32_t>(win.w) * 2u && GraphicsIndex(*v, set, x) == index;
+                if (hit && runLength && x == runStart + runLength)
+                {
+                    runLength++;
+                    continue;
+                }
+                if (runLength)
+                    out.push_back({id, static_cast<uint16_t>(runStart), static_cast<uint16_t>(y), static_cast<uint16_t>(runLength), 1});
+                runLength = 0;
+                if (hit)
+                {
+                    runStart = x;
+                    runLength = 1;
+                }
+            }
+        }
+        TsuPixelsFor(*v, ref, out);
+        return;
+    }
+    TsuPixelsFor(*v, ref, out);
+    if (ref.space != Space::Ram || ref.offset >= 0x4000)
         return;
     const uint32_t physical = (static_cast<uint32_t>(ref.page) << 14) | ref.offset;
     const uint8_t frameVConfig = CurrentVConfig(*v);

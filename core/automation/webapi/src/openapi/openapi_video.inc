@@ -63,11 +63,14 @@
         address["description"] =
             "areas[] (layer, x, y, width, height) of every layer the byte feeds in the current mode, and "
             "feeds_picture. Either a physical RAM byte (page + offset 0..0x3FFF) or a Z80 address resolved through "
-            "the current paging (ROM and non-screen memory feed nothing). Numbers are decimal or 0x-hex.";
+            "the current paging (ROM and non-screen memory feed nothing), or with space=sprite_ram / palette a "
+            "sprite attribute word (TS-Conf SFILE, word n at byte offset 2n) or a palette cell (16-bit, cell n at "
+            "2n) - every pixel drawn with it. Numbers are decimal or 0x-hex.";
         idParam(address);
         queryParam(address, "page", "integer", "RAM page (with offset)");
         queryParam(address, "offset", "integer", "Offset in the page, 0..0x3FFF (with page)");
         queryParam(address, "z80", "integer", "Z80 address instead of page / offset");
+        queryParam(address, "space", "string", "ram (default), sprite_ram or palette (with offset)");
         address["responses"]["200"]["description"] = "Areas the byte feeds";
         address["responses"]["400"]["description"] = "Neither page and offset nor z80 given";
         address["responses"]["404"]["description"] = "Emulator not found";

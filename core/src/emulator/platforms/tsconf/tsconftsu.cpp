@@ -13,10 +13,16 @@ namespace
     constexpr uint8_t kTile1Zero = 0x08;      // T_CONFIG[3]: draw tile number 0
     constexpr uint8_t kTile0Zero = 0x04;      // T_CONFIG[2]
 
+    /// Physical address of the byte holding 4 bpp pixel (x, y) of a 512x512 bitmap at `page & 0xF8`
+    inline uint32_t BitmapAddress(uint8_t page, uint32_t x, uint32_t y)
+    {
+        return (static_cast<uint32_t>(page & 0xF8) << 14) + (y & 0x1FF) * 256 + ((x & 0x1FF) >> 1);
+    }
+
     /// 4 bpp pixel (x, y) of a 512x512 graphics bitmap at `page & 0xF8`; high nibble = left pixel
     inline uint8_t BitmapNibble(const uint8_t* ram, uint8_t page, uint32_t x, uint32_t y)
     {
-        const uint8_t byte = ram[(static_cast<uint32_t>(page & 0xF8) << 14) + (y & 0x1FF) * 256 + ((x & 0x1FF) >> 1)];
+        const uint8_t byte = ram[BitmapAddress(page, x, y)];
         return (x & 1) ? (byte & 0x0F) : (byte >> 4);
     }
 }
@@ -47,8 +53,10 @@ uint32_t TsConfTsu::Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t
     return used;
 }
 
+template <bool kProbe>
 bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
+                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, [[maybe_unused]] Source* sources,
+                          uint32_t budget, uint32_t& used)
 {
     const uint8_t* r = ts.regs;
     const uint8_t tConfig = r[TsConfReg::TConfig];
@@ -67,7 +75,8 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
     // Tiles left to right; the first starts at -(X offset & 7)
     for (int32_t x0 = -static_cast<int32_t>(xOffs & 7), k = 0; x0 < static_cast<int32_t>(width); x0 += 8, k++)
     {
-        const uint16_t entry = ring[slot][((xOffs >> 3) + static_cast<uint32_t>(k)) & 0x3F][layer];
+        const uint32_t column = ((xOffs >> 3) + static_cast<uint32_t>(k)) & 0x3F;
+        const uint16_t entry = ring[slot][column][layer];
         const uint32_t tile = entry & 0x0FFF;
         if (tile == 0 && !drawZero)
             continue;  // skipped: no graphics fetch
@@ -83,16 +92,34 @@ bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
             if (x < 0 || x >= static_cast<int32_t>(width))
                 continue;
             const uint32_t fx = (entry & 0x4000) ? 7 - static_cast<uint32_t>(px) : static_cast<uint32_t>(px);
-            const uint8_t nibble = BitmapNibble(ram, gPage, (tile & 0x3F) * 8 + fx, (tile >> 6) * 8 + fy);
+            const uint32_t bx = (tile & 0x3F) * 8 + fx;
+            const uint32_t by = (tile >> 6) * 8 + fy;
+            const uint8_t nibble = BitmapNibble(ram, gPage, bx, by);
             if (nibble)
+            {
                 out[x] = static_cast<uint8_t>(index | nibble);
+                if constexpr (kProbe)
+                {
+                    // The map word the ring slot holds: the row it was prefetched from
+                    const uint32_t yRegisterNow = TsConfReg::T0XOffsL + (layer ? 6u : 2u);
+                    const uint32_t mapRow = ((((y & 0x1FF) + (r[yRegisterNow] | ((r[yRegisterNow + 1] & 1u) << 8))) >> 3)) & 0x3F;
+                    Source& src = sources[x];
+                    src.layer = layer ? Layer::T1 : Layer::T0;
+                    src.mapColumn = static_cast<uint8_t>(column);
+                    src.mapAddress = (static_cast<uint32_t>(r[TsConfReg::TMapPage]) << 14) + mapRow * 256 + layer * 128 + column * 2;
+                    src.graphicAddress = BitmapAddress(gPage, bx, by);
+                    src.lowNibble = bx & 1;
+                }
+            }
         }
     }
     return true;
 }
 
-bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t first, uint32_t end, uint32_t y,
-                            uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
+template <bool kProbe>
+bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, [[maybe_unused]] Layer layer, uint32_t first,
+                            uint32_t end, uint32_t y, uint32_t width, uint8_t* out, [[maybe_unused]] Source* sources,
+                            uint32_t budget, uint32_t& used)
 {
     const uint8_t sgPage = ts.regs[TsConfReg::SGPage];
     for (uint32_t d = first; d < end; d++)
@@ -128,20 +155,38 @@ bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t 
             const uint32_t bx = (tile & 0x3F) * 8 + (xFlip ? spriteWidth - 1 - fx : fx);
             const uint8_t nibble = BitmapNibble(ram, sgPage, bx, bitmapY);
             if (nibble)
+            {
                 out[sx] = static_cast<uint8_t>(pal | nibble);
+                if constexpr (kProbe)
+                {
+                    Source& src = sources[sx];
+                    src.layer = layer;
+                    src.descriptor = static_cast<uint8_t>(d);
+                    src.mapColumn = 0;
+                    src.mapAddress = 0;
+                    src.graphicAddress = BitmapAddress(sgPage, bx, bitmapY);
+                    src.lowNibble = bx & 1;
+                }
+            }
         }
     }
     return true;
 }
 
-bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                           uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
+template <bool kProbe>
+bool TsConfTsu::Render(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                       uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used)
 {
     const uint8_t tConfig = ts.regs[TsConfReg::TConfig];
     if (!(tConfig & (kSpritesEnable | kTile0Enable | kTile1Enable)))
         return false;
 
     std::memset(out, 0, width);
+    if constexpr (kProbe)
+    {
+        for (uint32_t x = 0; x < width; x++)
+            sources[x] = Source{};
+    }
 
     // Sprite layers: S0 runs to the first descriptor with LEAP, S1 to the
     // next one, S2 to descriptor 84; LEAP counts on inactive descriptors too
@@ -156,15 +201,27 @@ bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const u
     // Processing order S0, T0, S1, T1, S2 is also the drawing order; the
     // first object that does not fit ends the line
     const bool sprites = tConfig & kSpritesEnable;
-    if (sprites && !DrawSprites(ts, ram, bounds[0], bounds[1], y, width, out, budget, used))
+    if (sprites && !DrawSprites<kProbe>(ts, ram, Layer::S0, bounds[0], bounds[1], y, width, out, sources, budget, used))
         return true;
-    if ((tConfig & kTile0Enable) && !DrawTiles(ts, set, ram, ring, 0, y, width, out, budget, used))
+    if ((tConfig & kTile0Enable) && !DrawTiles<kProbe>(ts, set, ram, ring, 0, y, width, out, sources, budget, used))
         return true;
-    if (sprites && !DrawSprites(ts, ram, bounds[1], bounds[2], y, width, out, budget, used))
+    if (sprites && !DrawSprites<kProbe>(ts, ram, Layer::S1, bounds[1], bounds[2], y, width, out, sources, budget, used))
         return true;
-    if ((tConfig & kTile1Enable) && !DrawTiles(ts, set, ram, ring, 1, y, width, out, budget, used))
+    if ((tConfig & kTile1Enable) && !DrawTiles<kProbe>(ts, set, ram, ring, 1, y, width, out, sources, budget, used))
         return true;
     if (sprites)
-        DrawSprites(ts, ram, bounds[2], bounds[3], y, width, out, budget, used);
+        DrawSprites<kProbe>(ts, ram, Layer::S2, bounds[2], bounds[3], y, width, out, sources, budget, used);
     return true;
+}
+
+bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                           uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
+{
+    return Render<false>(ts, set, ram, ring, y, width, out, nullptr, budget, used);
+}
+
+bool TsConfTsu::ProbeLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                          uint32_t y, uint32_t width, uint8_t* out, Source* sources, uint32_t budget, uint32_t& used)
+{
+    return Render<true>(ts, set, ram, ring, y, width, out, sources, budget, used);
 }

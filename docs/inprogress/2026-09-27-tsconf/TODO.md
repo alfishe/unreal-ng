@@ -110,7 +110,8 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   there; notes in [boot-and-storage-notes.md](boot-and-storage-notes.md)
 - [x] `TsConfVideoMapper` for #42 (2026-09-30, branch `tsconf-videomap`):
   the graphics layer of every mode on `/video/*` and every automation surface
-- [ ] Open: the TSU layers in the video mapper;
+- [x] The TSU layer in the video mapper (2026-09-30, branch `tsconf-tsumap`)
+- [ ] Open:
   TSU-6; VDAC curves; TIM-5; the 1.1x speed target; DBG-3 and TS docks with
   the model-first debugger
 - [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +

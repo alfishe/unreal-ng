@@ -79,6 +79,39 @@ void TsConfEngine::RenderTsu(uint32_t line, TsConfLine& set)
     set.tsuCost = static_cast<uint16_t>(used);
 }
 
+bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Source* sources) const
+{
+    if (line >= kLines || !_context->pMemory)
+        return false;
+    const TsConfLine& set = _lines[line];
+    if (!set.tsu)
+        return false;
+    const uint8_t tConfig = _ts.regs[TsConfReg::TConfig];
+    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(set.vConfig);
+    if (line < win.y0 || line >= static_cast<uint32_t>(win.y0 + win.h))
+        return false;
+    const uint8_t* ram = _context->pMemory->RAMBase();
+
+    // The ring as the prefetches of the 24 lines up to this one left it (RenderTsu's window rule)
+    TsConfTsu::MapRing ring{};
+    uint32_t used = 0;
+    for (uint32_t back = 24; back != UINT32_MAX; back--)
+    {
+        if (line < back)
+            continue;
+        const uint32_t raster = line - back;
+        const uint32_t previous = raster ? raster - 1 : kLines - 1;
+        if (previous + 17 >= win.y0 && previous + 9 < static_cast<uint32_t>(win.y0 + win.h))
+        {
+            const uint32_t fetched = TsConfTsu::Prefetch(_ts, ram, (raster - win.y0 + 16) & 0x1FF, ring);
+            if (back == 0)
+                used = fetched;  // this line's own prefetch counts in its budget
+        }
+    }
+    // The budget the line used: an object that fitted then fits now, the first dropped one is dropped again
+    return TsConfTsu::ProbeLine(_ts, set, ram, ring, line - win.y0, win.w, indices, sources, set.tsuCost, used);
+}
+
 void TsConfEngine::AccountBudget(uint32_t raster)
 {
     const uint32_t cpu = _ts.cpuAccesses;
