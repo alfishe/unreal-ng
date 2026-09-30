@@ -9,7 +9,8 @@
         paths[kReport]["get"]["description"] =
             "Network adapters and the machine's virtual network, as of the last frame boundary. card: kind "
             "(ZXNETUSB), the card ports port_83AB / port_82AB / port_81AB, w5300_running (false while the chip is "
-            "held in reset by #83AB bit 4), w5300_in_io_space, the chip's mac / ip / gateway / mask registers as the "
+            "held in reset by #83AB bit 4), w5300_int (the chip's INTn: IR & IMR), int_to_z80 (the card holds the "
+            "Z80's /INT low: w5300_int with #83AB bits 2 and 6), w5300_in_io_space, the chip's mac / ip / gateway / mask registers as the "
             "guest programmed them, and per W5300 socket n: mode (TCP / UDP / IPRAW / CLOSED), state (Sn_SSR by "
             "name) and ssr, ir, source_port, destination, tx_free, rx_received (Sn_RX_RSR), tcp_backlog (bytes "
             "waiting for receive memory), network_socket. virtual_network: host_access (false = only the virtual "

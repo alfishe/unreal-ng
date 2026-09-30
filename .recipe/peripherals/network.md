@@ -76,6 +76,7 @@ call hangs the whole OS (a NedoOS bug:
 ```
 
 Answer: `card` (ports `#83AB/#82AB/#81AB`, W5300 running or held in reset,
+`w5300_int` / `int_to_z80` (the chip's INT, the card's /INT to the Z80),
 the chip's mac / ip / gateway / mask, per socket mode / state / ports /
 buffers) and `virtual_network` (leases, sockets, guest servers, counters,
 `recent_activity`: the last 64 socket actions).

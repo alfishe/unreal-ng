@@ -676,9 +676,9 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     else
     {
         const bool nmiPending = _nmi_pending_count > 0;
-        const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
-                                  ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
-                                  : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
+        const bool accepted = ProcessInterruptsSelect((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource,
+                                                      (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines,
+                                                      _intWraps, _intStart, _intEnd);
         if (accepted)
         {
             if (nmiPending)
@@ -765,6 +765,15 @@ void Z80::SetInterruptSource(IInterruptSource* source)
 {
     _interruptSource = source;
     _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
+}
+
+void Z80::SetDeviceIntLine(uint32_t line, bool asserted)
+{
+    const uint32_t lines = asserted ? (_deviceIntLines | line) : (_deviceIntLines & ~line);
+    if (lines == _deviceIntLines)
+        return;
+    _deviceIntLines = lines;
+    _context->SetStepWork(EmulatorContext::kStepWorkDeviceInt, lines != 0);
 }
 
 void Z80::SetMachineStepHook(IMachineStepHook* hook)
@@ -1305,14 +1314,28 @@ void Z80::RequestNonMaskedInterrupt()
 /// \param int_end
 bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
-    // Direct callers (tests, tools) get the machine's INT logic when it has one
-    return _interruptSource ? ProcessInterruptsImpl<true>(int_occurred, int_start, int_end)
-                            : ProcessInterruptsImpl<false>(int_occurred, int_start, int_end);
+    // Direct callers (tests, tools) get the machine's INT logic when it has
+    // one, and the device INT lines
+    return ProcessInterruptsSelect(_interruptSource != nullptr, _deviceIntLines != 0, int_occurred, int_start, int_end);
 }
 
-/// UseSource: the machine owns INT (IInterruptSource). A template so the
-/// classic machines' step carries no test for it (StepInstruction)
-template <bool UseSource>
+/// The instantiation for this step: the machine's own INT logic or not, the
+/// device lines or not. Only the work path (StepInstructionWithWork) and
+/// direct callers come here; the plain step stays ProcessInterruptsImpl<false>
+bool Z80::ProcessInterruptsSelect(bool useSource, bool deviceInt, bool int_occurred, unsigned int_start,
+                                  unsigned int_end)
+{
+    if (useSource)
+        return deviceInt ? ProcessInterruptsImpl<true, true>(int_occurred, int_start, int_end)
+                         : ProcessInterruptsImpl<true, false>(int_occurred, int_start, int_end);
+    return deviceInt ? ProcessInterruptsImpl<false, true>(int_occurred, int_start, int_end)
+                     : ProcessInterruptsImpl<false, false>(int_occurred, int_start, int_end);
+}
+
+/// UseSource: the machine owns INT (IInterruptSource). DeviceInt: a device
+/// holds /INT low (SetDeviceIntLine). Templates so the classic machines' step
+/// carries no test for either (StepInstruction)
+template <bool UseSource, bool DeviceInt>
 bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end)
 {
     Z80& cpu = *this;
@@ -1407,10 +1430,15 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     // A machine that owns its INT logic decides the pin alone (IInterruptSource)
     if constexpr (UseSource)
     {
-        cpu.int_pending = _interruptSource->IsIntAsserted(cpu.t);
+        const bool sourceInt = _interruptSource->IsIntAsserted(cpu.t);
+        cpu.int_pending = sourceInt;
+        if constexpr (DeviceInt)
+            cpu.int_pending = sourceInt || _deviceIntLines != 0;
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            HandleINT(_interruptSource->AcknowledgeInterrupt(cpu.t));
+            // Wired-OR: the machine's logic drives its vector when it asserts;
+            // a device alone drives none, the bus reads #FF
+            HandleINT(sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF);
             return true;
         }
         return false;
@@ -1461,7 +1489,13 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     // Important! Interrupts are in fact enabled only after command executed after EI (delay to 1 command)
     // See: https://floooh.github.io/2021/12/06/z80-instruction-timing.html
     // See: https://www.msx.org/forum/development/msx-development/question-about-z80r800-irqs-and-eidi-behaviour
-    if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
+    // Device INT lines (SetDeviceIntLine) join the pin as a level: not stored
+    // in int_pending, which tracks the machine's own pulse
+    bool intLine = cpu.int_pending;
+    if constexpr (DeviceInt)
+        intLine = intLine || _deviceIntLines != 0;
+
+    if (intLine && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
         HandleINT();
         intHandled = true;  // Signal caller to skip Z80Step this iteration

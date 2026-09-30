@@ -98,6 +98,10 @@ public:
     void OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
                     const uint8_t* data, uint32_t length, uint32_t source) override;
 
+    /// Called after every network event the chip took (its interrupt flags may
+    /// have changed outside a bus access): the card re-drives its /INT
+    std::function<void()> onNetEvent;
+
     // --- TTD state (netstate.h, network adapters TDD §6.3 option A) --------
 
     /// Registers, socket states, unsent bytes and references to the received
@@ -191,6 +195,8 @@ private:
     void Open(int n);
     void Send(int n);
     void Release(int n);           ///< drop the virtual-network socket
+    void TakeNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
+                      const uint8_t* data, uint32_t length, uint32_t source);
     void SetIr(int n, uint8_t bits);
     void FillFromBacklog(int n);
     void QueuePacket(int n, const uint8_t* header, size_t headerLength, const uint8_t* data, size_t length,

@@ -554,6 +554,153 @@ TEST_F(InterruptSource_Test, WithoutASourceRetiIsAPlainReturn)
 
 /// endregion </Machine interrupt source>
 
+/// region <Device INT lines (Z80::SetDeviceIntLine)>
+
+/// A device on the bus (the ZXNETUSB card) pulls the shared /INT low as a
+/// level, wired-OR with the machine's own INT: taken at any T-state while
+/// held, no vector of its own (the bus reads #FF), gone the moment it is
+/// released. The per-step work bit is up only while a line is low, so every
+/// other machine keeps its plain step.
+class DeviceInt_Test : public IntAcceptance_Test
+{
+protected:
+    void TearDown() override
+    {
+        if (_z80)
+            _z80->SetDeviceIntLine(0xFFFFFFFFu, false);
+        IntAcceptance_Test::TearDown();
+    }
+
+    bool offerAt(uint32_t t)
+    {
+        _z80->t = t;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+        return _z80->ProcessInterrupts(false, _intStart, _intEnd);
+    }
+
+    bool DeviceWork() const { return _context->HasStepWork(EmulatorContext::kStepWorkDeviceInt); }
+};
+
+TEST_F(DeviceInt_Test, WorkBitOnlyWhileALineIsLow)
+{
+    EXPECT_FALSE(DeviceWork()) << "no device: the plain step";
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+    EXPECT_TRUE(DeviceWork());
+    _z80->SetDeviceIntLine(1u << 5, true);
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, false);
+    EXPECT_TRUE(DeviceWork()) << "another device still holds the line";
+    _z80->SetDeviceIntLine(1u << 5, false);
+    EXPECT_FALSE(DeviceWork());
+    EXPECT_EQ(_z80->GetDeviceIntLines(), 0u);
+}
+
+TEST_F(DeviceInt_Test, TakenOutsideTheFrameWindowWithTheFFVector)
+{
+    _z80->im = 2;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->i = 0xBE;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+    _z80->int_pending = false;
+    _memory->DirectWriteToZ80Memory(0xBEFF, 0x34);  // I*256 + #FF: handler #C234
+    _memory->DirectWriteToZ80Memory(0xBF00, 0xC2);
+
+    const uint32_t far = _intEnd + 30000;
+    EXPECT_FALSE(offerAt(far)) << "no line, no frame INT";
+
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+    ASSERT_TRUE(offerAt(far));
+    EXPECT_EQ(_z80->pc, 0xC234u) << "the bus reads #FF";
+    EXPECT_EQ(_z80->t, far + 19u);
+}
+
+TEST_F(DeviceInt_Test, ReleasedLineLeavesNoLatch)
+{
+    _z80->im = 1;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+    _z80->int_pending = false;
+
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+    _z80->iff1 = 0;
+    EXPECT_FALSE(offerAt(_intEnd + 1000)) << "DI";
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, false);
+    _z80->iff1 = _z80->iff2 = 1;
+    EXPECT_FALSE(offerAt(_intEnd + 1000)) << "a level: nothing remembered once released";
+    EXPECT_FALSE(_z80->int_pending);
+}
+
+TEST_F(DeviceInt_Test, TheCpuRulesStillApply)
+{
+    _z80->im = 1;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->t = _intEnd + 1000;
+    _z80->boundary = Z80_BOUNDARY_INT_SHADOW;
+    EXPECT_FALSE(_z80->ProcessInterrupts(false, _intStart, _intEnd)) << "EI shadow";
+    _z80->boundary = Z80_BOUNDARY_PREFIX_FD;
+    EXPECT_FALSE(_z80->ProcessInterrupts(false, _intStart, _intEnd)) << "inside a prefixed instruction";
+    _z80->boundary = Z80_BOUNDARY_NONE;
+    EXPECT_TRUE(_z80->ProcessInterrupts(false, _intStart, _intEnd));
+    EXPECT_EQ(_z80->pc, 0x0038u);
+}
+
+TEST_F(DeviceInt_Test, TheStepTakesItThroughTheWorkPath)
+{
+    // HALT outside the frame window: only the device line can release it
+    _z80->im = 1;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->sp = 0xA000;
+    load(0x8000, {0x76});
+    _z80->pc = 0x8000;
+    _z80->t = _intEnd + 1000;
+    _z80->boundary = Z80_BOUNDARY_NONE;
+    _z80->int_pending = false;
+    EXPECT_FALSE(_z80->StepInstruction(true).intAccepted);
+    EXPECT_TRUE(_z80->halted);
+
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+    EXPECT_TRUE(_z80->StepInstruction(true).intAccepted);
+    EXPECT_EQ(_z80->pc, 0x0038u);
+    EXPECT_FALSE(_z80->halted);
+}
+
+TEST_F(DeviceInt_Test, WithAMachineSourceTheVectorComesFromWhoAsserts)
+{
+    FakeInterruptSource source;
+    source.vector = 0xFB;
+    _z80->SetInterruptSource(&source);
+    _z80->im = 2;
+    _z80->i = 0xBE;
+    _z80->sp = 0xA000;
+    _memory->DirectWriteToZ80Memory(0xBEFF, 0x34);  // #FF: handler #C234
+    _memory->DirectWriteToZ80Memory(0xBF00, 0xC2);
+    _memory->DirectWriteToZ80Memory(0xBEFB, 0x78);  // #FB: handler #5678
+    _memory->DirectWriteToZ80Memory(0xBEFC, 0x56);
+
+    _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->pc = 0x8000;
+    ASSERT_TRUE(offerAt(1000));
+    EXPECT_EQ(_z80->pc, 0xC234u) << "the source is quiet: the device alone, #FF";
+    EXPECT_EQ(source.acks, 0) << "the source was not acknowledged";
+
+    source.assertTo = 0x10000;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->pc = 0x8000;
+    ASSERT_TRUE(offerAt(2000));
+    EXPECT_EQ(_z80->pc, 0x5678u) << "the source asserts too: its vector";
+    EXPECT_EQ(source.acks, 1);
+
+    _z80->SetInterruptSource(nullptr);
+}
+
+/// endregion </Device INT lines>
+
 /// region <From int_pending_wrap_test.cpp>
 
 /// Regression tests for the stale INT latch across frame wrap.

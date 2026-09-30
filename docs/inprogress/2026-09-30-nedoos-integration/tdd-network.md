@@ -206,7 +206,7 @@ The memory-mapped mode (`#82AB` bit2: W5300 over a ROM window, `#2000/#3000`
 FIFO windows for `LDIR`) is a host bus overlay installed only while the mode
 is on (zero cost otherwise): writes into the window always reach the chip,
 reads come from it while ROM is paged at `#0000` (window 0, the /CSROM
-condition). The card's INT to the Z80 is not wired (§4.5 item 6).
+condition). The card's INT reaches the Z80 as a device INT line (§4.5 item 6).
 
 ### 4.2 Chip model
 
@@ -291,9 +291,22 @@ Settled in the implementation:
 4. Refused connect: `CLOSED` without an IR bit; timeout / unreachable: `CLOSED` + TIMEOUT.
 5. A TCP receive packet never spans two host chunks (each packet names one
    journal source); packets are at most the MSS and fit the free memory.
-6. The card's /INT is not wired into the Z80: the CPU model has one INT
-   owner per machine and no additive device INT. `#83AB` b0 / b7 show the
-   state; no known program uses the interrupt (NedoOS polls).
+6. The card's /INT is a device INT line of the Z80
+   (`Z80::SetDeviceIntLine`, `kDeviceIntZxNetUsb`): low while W5300 INTn
+   AND `#83AB` b2 AND b6, re-driven after every access to the card, every
+   network event, reset and state load; released when the card goes away.
+   On the hardware the line is open drain, wired-OR with the machine's INT:
+   card `zint_n` (CPLD pin 80) to ZX-Bus B13; ZX-Evo rev D `~INT` joins the
+   Z80, the FPGA (pin 10, `zint.v` drives 0 / Z), both slots' B13 and a 680 Ω
+   pull-up. No vector: the Z80 reads the bus, and the ZX-Evo FPGA drives #FF
+   at every acknowledge (`zbus.v` `drive_ff`), so IM2 takes `I*256 + #FF`
+   (programs keep a 256-byte table anyway: an original ULA machine reads
+   whatever floats on the bus). A level: taken again after `EI` until the
+   program clears Sn_IR. On ZX-Evo the acknowledge also ends the frame pulse
+   (`zint.v`), whichever source was served. The CPU cost: a per-step work bit
+   raised only while a line is low; a machine without a device, or with the
+   line released, keeps the plain step. NedoOS itself polls and never enables
+   the interrupt.
 
 ## 5. Virtual network (step N0)
 
@@ -640,6 +653,13 @@ runs x 5 repetitions, load average falling to 5): frame without TTD 2221 vs
 change. Checked live with the user: zxdb on the full NedoOS card talks to the
 real next.zxart.ee through the virtual network.
 
-Open: the card INT to the Z80 (§4.5 item 6), the debugging views
+Card INT to the Z80 wired (§4.5 item 6). A/B of the device INT line (A = master
+`2e106688`, B = the change; two runs of 10 interleaved rounds, the second in
+reverse order, load 4-9): the plain step's machine code (`StepInstruction`,
+`ProcessInterruptsImpl<false, false>`) is identical instruction for instruction;
+B/A of the minimum CPU time per frame: 48K fast 1.010 / 0.996, Scorpion fast
+1.006 / 0.999, TSConf (machine INT source) 1.018 / 1.004, Pentagon fast 1.013 /
+1.016. The Pentagon shift repeats with unchanged code and no card fitted: code
+layout, noted for the next A/B on this path. Open: the debugging views
 ([tdd-network-debugging.md](tdd-network-debugging.md)).
 

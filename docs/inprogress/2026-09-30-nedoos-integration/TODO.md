@@ -20,7 +20,7 @@ Index: [README.md](README.md).
 
 - Network adapters: N0, N1a, N1b done on branch `network-w5300`
   ([tdd-network.md](tdd-network.md) §15); A/B benchmark: no measurable change; zxdb
-  checked live against the real server. Open there: card INT to the Z80. Next: N2 COM port, N3 ESP modules (ESPNET,
+  checked live against the real server. Card INT to the Z80 wired (device INT line). Next: N2 COM port, N3 ESP modules (ESPNET,
   then AT), N4 ATM2 COM, N5-N6 the rest; debugging per
   [tdd-network-debugging.md](tdd-network-debugging.md) later.
 - Answer the open questions in the requirements (§5), then a design for the layer.

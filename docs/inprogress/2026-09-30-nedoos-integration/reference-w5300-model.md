@@ -349,7 +349,7 @@ PACKET-INFO formats. All fields are big-endian, MSB first on FIFOR0:
   - Sn_IR: write 1s. IR bit n clears automatically when Sn_IR becomes 0.
   - IR bits 15..12: write 1s [DS p.52].
 - The driver's ISR copies Sn_IR into a software variable, then writes it back to clear it [DRV w5300.c:591-626].
-- On the card, W5300 /INT is visible in 0x83AB bit 0. It reaches the Z80 only if 0x83AB bits 2 and 6 are set [RTL ports.v; PRM p.9-10]. The Z80 gets no vector (IM2 reads a random byte).
+- On the card, W5300 /INT is visible in 0x83AB bit 0. It reaches the Z80 only if 0x83AB bits 2 and 6 are set [RTL ports.v; PRM p.9-10]. The card drives no vector: the Z80 reads the bus, #FF on ZX-Evo (the FPGA drives #FF at every acknowledge, `zbus.v` `drive_ff`); an original ULA machine may read any floating byte, hence the usual 256-byte IM2 table.
 - **NedoOS does not use interrupts.** It never writes 0x83AB, IMR or Sn_IMR, and never clears Sn_IR [NEDOOS whole file]. Sn_IR therefore accumulates bits. The model still needs Sn_IR for the WIZnet-style drivers that poll SENDOK and TIMEOUT.
 
 ---

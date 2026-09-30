@@ -460,6 +460,9 @@ protected:
 
     // Local INT (RaiseLocalInt): active until this frame / T-state
     bool _localIntArmed = false;
+
+    // Device INT lines (SetDeviceIntLine): bit set = that device holds /INT low
+    uint32_t _deviceIntLines = 0;
     uint64_t _localIntEndFrame = 0;
     uint32_t _localIntEndT = 0;
     
@@ -709,6 +712,23 @@ public:
     /// frame pulse (a board-level interrupt line: ZX-Poly local INT)
     void RaiseLocalInt(unsigned lengthT);
 
+    /// Devices that pull the shared /INT line low (open drain, wired-OR with
+    /// the machine's own INT). One bit per device
+    enum DeviceIntLine : uint32_t
+    {
+        kDeviceIntZxNetUsb = 1u << 0,   ///< ZXNETUSB card (W5300), ZX-Bus /INT
+    };
+
+    /// A device drives its /INT output: asserted = the line held low. A level,
+    /// not a pulse: it stays until the device releases it (the program clears
+    /// the device's interrupt flags). The CPU takes it like the machine's INT,
+    /// at an instruction boundary with IFF1 set; the device drives no vector,
+    /// the bus reads #FF (ZX-Evo zbus.v drive_ff). Raises the per-step work
+    /// bit only while a line is low, so a machine without such a device, or
+    /// with the line released, keeps the plain step
+    void SetDeviceIntLine(uint32_t line, bool asserted);
+    uint32_t GetDeviceIntLines() const { return _deviceIntLines; }
+
     /// Drop pending NMI / local INT requests (a board-level CPU reset)
     void ClearInterruptRequests()
     {
@@ -734,8 +754,10 @@ public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
-    template <bool UseSource>
+    template <bool UseSource, bool DeviceInt = false>
     bool ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end);
+    /// ProcessInterruptsImpl with the device INT lines when any is low (see SetDeviceIntLine)
+    bool ProcessInterruptsSelect(bool useSource, bool deviceInt, bool int_occurred, unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:

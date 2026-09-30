@@ -218,7 +218,8 @@ public:
         kStepWorkInterruptSource = 1u << 1,  ///< the machine owns INT (Z80::SetInterruptSource)
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
-        // Next free: 1u << 4
+        kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
+        // Next free: 1u << 5
     };
     std::atomic<uint32_t> stepWork{0};
 

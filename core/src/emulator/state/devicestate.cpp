@@ -1965,6 +1965,8 @@ StateNode Network(EmulatorContext* context)
     card["port_82AB"] = StringHelper::Format("#%02X", st.mode);
     card["port_81AB"] = StringHelper::Format("#%02X", st.addressHigh);
     card["w5300_running"] = st.chipRunning;
+    card["w5300_int"] = st.chipInt;
+    card["int_to_z80"] = st.intToZ80;
     card["w5300_in_io_space"] = (st.mode & 0x10) != 0 && (st.mode & 0x04) == 0;
     card["mac"] = StringHelper::Format("%02X:%02X:%02X:%02X:%02X:%02X", st.common[8], st.common[9], st.common[10],
                                         st.common[11], st.common[12], st.common[13]);

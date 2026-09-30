@@ -583,6 +583,14 @@ void W5300::FillFromBacklog(int n)
 void W5300::OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
                        const uint8_t* data, uint32_t length, uint32_t source)
 {
+    TakeNetEvent(cookie, type, status, peer, data, length, source);
+    if (onNetEvent)
+        onNetEvent();
+}
+
+void W5300::TakeNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
+                         const uint8_t* data, uint32_t length, uint32_t source)
+{
     if (cookie >= kSockets)
         return;
     const int n = static_cast<int>(cookie);

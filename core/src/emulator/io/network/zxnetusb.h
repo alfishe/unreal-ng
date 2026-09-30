@@ -81,6 +81,11 @@ public:
     /// Card /INT to the Z80 (level, no vector)
     bool InterruptActive() const;
 
+    /// Drive the Z80's /INT from InterruptActive (Z80::SetDeviceIntLine).
+    /// Called after everything that can change it: a bus access to the card,
+    /// a network event, reset, a state load
+    void UpdateIntLine();
+
     W5300& Chip() { return _chip; }
     const W5300& Chip() const { return _chip; }
     uint8_t Control() const { return _p83; }

@@ -183,6 +183,8 @@ void NetworkManager::UpdateStatus()
         st.mode = _card->Mode();
         st.addressHigh = _card->AddressHigh();
         st.chipRunning = _card->ChipRunning();
+        st.chipInt = st.chipRunning && _card->Chip().InterruptActive();
+        st.intToZ80 = _card->InterruptActive();
         st.common = _card->Chip().CommonRegisters();
         for (int n = 0; n < W5300::kSockets; ++n)
             st.chipSockets.push_back(_card->Chip().GetSocket(n));
