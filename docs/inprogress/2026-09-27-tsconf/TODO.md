@@ -111,7 +111,8 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Phase 8 timing (2026-09-30, branch `tsconf-phase8`): 14 MHz DRAM
   waits by the zmem.v phase table, 14 MHz external I/O stall, DMA SPI / IDE
   word costs; TIM-4 needs nothing (no mode saturates DRAM); TIM-5 deferred.
-  Open: the `cpu_next = 0` slot wait at 14 MHz in 256C / TXT
+  The `cpu_next = 0` arbiter model followed (branch `tsconf-arbiter`), with
+  the data-read wait corrected to the RTL (+4..+7 fclk)
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the

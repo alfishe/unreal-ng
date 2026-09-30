@@ -137,14 +137,16 @@ TEST_F(TsConfMemory_Test, TIM1_UncachedRamWaitsAt14MHz)
     const double clocks = ClocksOf(_z80, [&] { RunCode(nops); });
     EXPECT_DOUBLE_EQ(clocks, 65 * 6.0) << "NOP from DRAM: 4 + 2 clocks";
 
-    // LD A,(HL) (M1 + read): 20 fclk = 10 clocks; LD (HL),A (M1 + write, the
-    // write does not wait): 20 fclk = 10 clocks - both settle by the table
+    // LD A,(HL) (M1 + read, a read waits one fclk longer than M1: +4..+7 by
+    // phase, the RTL's release at c2): settles at M1 c1 (+5) and read c2 (+5),
+    // 24 fclk = 12 clocks. LD (HL),A (M1 + write, the write does not wait
+    // outside the fetch window): M1 c0 (+6), 20 fclk = 10 clocks
     _z80->hl = 0x8800;
     std::vector<uint8_t> loads;
     for (int i = 0; i < 32; i++)
         loads.push_back(0x7E);
     RunCode(loads);
-    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(loads); }), 32 * 10.0);
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(loads); }), 32 * 12.0);
     std::vector<uint8_t> stores(32, 0x77);
     RunCode(stores);
     EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(stores); }), 32 * 10.0);

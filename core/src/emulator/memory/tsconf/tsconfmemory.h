@@ -1,6 +1,8 @@
 #pragma once
 #include "emulator/memory/memory.h"
 
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
+
 struct TsConfState;
 class Z80;
 
@@ -47,9 +49,18 @@ public:
     /// not modeled, see CacheRead)
     void CacheClear();
 
-    /// 14 MHz DRAM waits (phase 8 TIM-1, hardware-spec §2.5): `cpu` while the
-    /// CPU runs at 14 MHz, null otherwise (the read path then pays one test)
-    void SetDramWaits(Z80* cpu) { _waitCpu = cpu; }
+    /// 14 MHz DRAM waits (phase 8 TIM-1, hardware-spec §2.5, TsConfArbiter):
+    /// `cpu` while the CPU runs at 14 MHz, null otherwise (the read path then
+    /// pays one test)
+    void SetDramWaits(Z80* cpu, TsConfArbiter* arbiter)
+    {
+        _waitCpu = cpu;
+        _arbiter = arbiter;
+    }
+    /// A CPU write at addr has just been done: its DRAM wait, if it went to
+    /// DRAM (a RAM window that takes writes). The decoder's write overlay calls
+    /// it while the 14 MHz waits are on
+    void AfterWrite(uint16_t addr);
     /// The next read is an opcode fetch (M1): the decoder's M1 hook says so
     /// right before it, so an M1 miss waits one fclk longer than a data read
     void NoteM1Fetch() { _nextIsM1 = true; }
@@ -67,10 +78,11 @@ private:
     bool CountDramRead(uint16_t addr);
     /// Cache, DRAM accounting and 14 MHz waits after the normal read
     uint8_t AfterRead(uint16_t addr, uint8_t normal);
-    void DramWait(bool m1);
+    void DramWait(TsConfArbiter::Access kind);
 
     TsConfState* _ts = nullptr;
     bool _cacheActive = false;
     Z80* _waitCpu = nullptr;
+    TsConfArbiter* _arbiter = nullptr;
     bool _nextIsM1 = false;
 };

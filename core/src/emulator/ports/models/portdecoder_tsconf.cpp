@@ -60,6 +60,7 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
     {
         core->RemoveBusOverlay(&_fmWindow);
         core->RemoveBusOverlay(&_cacheSnoop);
+        core->RemoveBusOverlay(&_dramWriteWait);
         Z80* z80 = core->GetZ80();
         if (z80 && z80->machineM1Hook == this)
             z80->machineM1Hook = nullptr;
@@ -914,6 +915,13 @@ void PortDecoder_TSConf::RefreshCache()
         core->RemoveBusOverlay(&_cacheSnoop);
 }
 
+void PortDecoder_TSConf::DramWriteWait::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
+                                                [[maybe_unused]] bool romPaged)
+{
+    if (_owner._tsMemory)
+        _owner._tsMemory->AfterWrite(addr);
+}
+
 void PortDecoder_TSConf::CacheWriteSnoop::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
                                                   [[maybe_unused]] bool romPaged)
 {
@@ -930,8 +938,17 @@ void PortDecoder_TSConf::ApplyClock()
     Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     // 14 MHz: DRAM reads wait for the arbiter (TIM-1); the M1 hook tells the
     // memory which read is the opcode fetch
+    const bool waits14 = ratio == 4 && z80;
     if (_tsMemory)
-        _tsMemory->SetDramWaits(ratio == 4 ? z80 : nullptr);
+        _tsMemory->SetDramWaits(waits14 ? z80 : nullptr, &_arbiter);
+    _arbiter.Reset();
+    if (Core* core = _context->pCore)
+    {
+        if (waits14)
+            core->AddBusOverlay(&_dramWriteWait);
+        else
+            core->RemoveBusOverlay(&_dramWriteWait);
+    }
     RefreshM1Hook();
     if (_state->hw_turbo_ratio == ratio)
         return;

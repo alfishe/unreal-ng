@@ -161,24 +161,29 @@ inline bool TsConfMemory::CountDramRead(uint16_t addr)
     return true;
 }
 
-/// 14 MHz: a CPU read that goes to DRAM stretches by the fclk (28 MHz) count
-/// of [V] zmem.v:154-172, by the DRAM-cycle phase c0..c3 its request starts
-/// in (dram_beg, the CPU clock's falling edge in T2 = T1 + 3 fclk):
-///   M1   c3 +3, c2 +4, c1 +5, c0 +6 fclk
-///   read c3 +2, c2 +3, c1 +4, c0 +5 fclk
-/// Writes do not wait. The 14 MHz clock is not locked to the DRAM phases
-/// (zclock.v): every stall shifts it, so the phase comes from the stretched
-/// counter itself - 2 fclk per 14 MHz clock, a frame starting at c0.
-/// Not modeled: the wait for a slot while video holds the next DRAM cycle
-/// (cpu_next = 0, only in 256C / TXT fetch windows at 14 MHz).
-void TsConfMemory::DramWait(bool m1)
+/// 14 MHz: a CPU access that goes to DRAM waits for the arbiter
+/// (TsConfArbiter: the zmem.v wait by the DRAM phase its request falls in,
+/// plus the cycles video holds). The request comes 3 fclk after T1; the
+/// 14 MHz clock is not locked to the DRAM phases and every stall shifts it,
+/// so the phase comes from the stretched counter itself - 2 fclk per clock, a
+/// frame starting at c0
+void TsConfMemory::DramWait(TsConfArbiter::Access kind)
 {
     const uint32_t fclkTicks = _waitCpu->rate / 2;  // a CPU clock is `rate` ticks at every speed (turbo scales the frame)
-    if (!fclkTicks)
+    if (!fclkTicks || !_arbiter)
         return;
-    const uint32_t start = _waitCpu->tt - 3u * _waitCpu->rate;  // T1 of the access (rd charged its 3 T)
-    const uint32_t phase = (start / fclkTicks + 3u) & 3u;       // c-phase of dram_beg
-    _waitCpu->AddWaitTicks(((m1 ? 6u : 5u) - phase) * fclkTicks);
+    const uint32_t start = _waitCpu->tt - 3u * _waitCpu->rate;  // T1 of the access (rd / wd charged its 3 T)
+    const uint32_t fclks = _arbiter->CpuAccess(start / fclkTicks + 3u, kind);
+    if (fclks)
+        _waitCpu->AddWaitTicks(fclks * fclkTicks);
+}
+
+void TsConfMemory::AfterWrite(uint16_t addr)
+{
+    const uint8_t bank = static_cast<uint8_t>(addr >> 14);
+    if (!_waitCpu || _bank_mode[bank] != BANK_RAM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
+        return;  // ROM is a separate chip; a write-protected window starts no DRAM cycle
+    DramWait(TsConfArbiter::Access::Write);
 }
 
 inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
@@ -194,7 +199,7 @@ inline uint8_t TsConfMemory::AfterRead(uint16_t addr, uint8_t normal)
         const bool m1 = _nextIsM1;
         _nextIsM1 = false;
         if (dram)
-            DramWait(m1);
+            DramWait(m1 ? TsConfArbiter::Access::M1 : TsConfArbiter::Access::Read);
     }
     return value;
 }
