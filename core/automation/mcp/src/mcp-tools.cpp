@@ -116,7 +116,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
         "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
         "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
-        "reason when the target cannot hold the state; 'check': true (with 'to') only decides; media are not moved. 'create' with 'zxpoly': true starts a "
+        "reason when the target cannot hold the state; 'check': true (with 'to') only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are NOT moved. 'create' with 'zxpoly': true starts a "
         "ZX-Poly machine (four synchronized instances of 'model', default PENTAGON; optional 'zxpoly_file': a "
         ".zxp snapshot, a .prom ROM image or a multiloader disk); the returned id is its master, the slaves are "
         "hidden members. 'zxpoly_status' reports a ZX-Poly machine's modules, platform registers, lock, video "
