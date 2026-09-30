@@ -28,6 +28,10 @@ struct FrameInput
     /// frame, (48, 56) in Pentagon overscan cropped to 352 x 304
     int paperX = 48;
     int paperY = 48;
+    /// The 16 ZX colors as the emulator draws them now (required): RGBA8888,
+    /// little-endian uint32 0xAABBGGRR - Screen::GetRGBAPalette16. The algorithm
+    /// mixes in these colors and rebuilds its tables when they change.
+    const uint32_t* palette = nullptr;
 };
 
 /// Output picture: width x height x 3 (RGB8).

@@ -8,7 +8,7 @@ sections 5 and 7.8) and `mod-tpgwafsd` (+ no border field seeds on stripe tiles,
 section 7.3), the current baseline. This document specifies the algorithm
 completely: an implementation written only from it must reproduce the
 reference implementation's output (Python: `python/mod/`, `python/twopage.py`,
-`python/mixers.py`; C++: `tools/verification/zxdlss/`).
+`python/mixers.py`; C++: `core/src/emulator/video/zxdlss/`, tools in `tools/verification/zxdlss/`).
 
 Related: [requirements](requirements.md), [plane B](p0a-plane-b.md),
 [mixers](design-mixers.md), [optimization ideas](optimization-ideas.md),
@@ -405,7 +405,7 @@ return render(recipe)
 | ate-dj-circles | 11300..11500 | static GigaScreen DJ over a two-page circle lattice jumping in steps (added with mod-tpgwa) |
 
 Across the Edge by Demarche (`testdata/loaders/trd/across_the_edge_by_demarche.trd`)
-and `testdata/flicker/flickering_test.tap`, recorded as TTD sessions and exported
+and `testdata/video/zxdlss/flickering_test.tap`, recorded as TTD sessions and exported
 as clips with plane B (POC `walkthrough.md`).
 
 ### 10.2 Three oracles

@@ -20,7 +20,6 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.clip import Clip, ClipV2  # noqa: E402
-from common.zxscreen import ZX_RGB  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("clip")
@@ -44,7 +43,7 @@ for i in range(len(clip)):
     bright = (attr >> 6) & 1
     want = np.where(pb["ink"], (attr & 7) + 8 * bright, ((attr >> 3) & 7) + 8 * bright)
     problems = []
-    if not np.array_equal(ZX_RGB[color[drawn]], rgb[drawn]):
+    if not np.array_equal(clip.zx_palette[color[drawn]], rgb[drawn]):
         problems.append("color index does not match RGBA")
     if not np.array_equal(color[screen], want[screen]):
         problems.append("screen color does not follow attribute/ink")

@@ -16,9 +16,9 @@
 #include <deque>
 #include <memory>
 
-#include "palette.h"
-#include "registry.h"
-#include "zxdlss/algorithm.h"
+#include "emulator/video/zxdlss/algorithm.h"
+#include "emulator/video/zxdlss/palette.h"
+#include "emulator/video/zxdlss/registry.h"
 
 namespace zxdlss
 {
@@ -78,6 +78,8 @@ public:
     void process(const FrameInput& in, RGBImage& out) override
     {
         ++_frames;
+        if (!_pal.sameAs(in.palette))
+            _pal = Palette::fromRGBA(in.palette);
         setup(in.width, in.height, in.paperX, in.paperY);
         Timer tp(_stage[kPush]);
         push(in);
@@ -153,7 +155,7 @@ private:
 
     int _w = 0, _h = 0, _th = 0, _tw = 0, _paperX = 48, _paperY = 48;
     std::deque<std::unique_ptr<Frame>> _ring;                // newest first
-    const Palette& _pal = Palette::instance();
+    Palette _pal;   // the emulator's active palette (FrameInput::palette)
 
     // pixel stage
     std::vector<uint8_t> _period, _start;

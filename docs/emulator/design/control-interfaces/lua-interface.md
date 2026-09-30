@@ -994,6 +994,15 @@ emu.video_pixel(x, y [, layer])      -- sources (space, page, offset, bit_mask, 
 emu.video_pixel_at(t)                -- the same for the point under the beam at frame T (layer pixel or border)
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+                                     --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
+                                     --   written, late, restarts, last_ms, average_ms, algorithms = {...},
+                                     --   default_algorithm = "mod-tpgwafsd" }
+emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it off. Returns the new status,
+                                     --   or { ok = false, error = "..." } for an unknown name. While on, the
+                                     --   picture is shown later by the algorithm's look-ahead (7 frames for
+                                     --   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
+                                     --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 
 -- Coverage analyzer

@@ -6,6 +6,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/video/temporaleffects.h"
 #include "stdafx.h"
 
 class Z80;
@@ -775,8 +776,16 @@ protected:
     // _presentDelayFrames so both land at the same constant latency and
     // the net A/V offset collapses to ~0. Recording is unaffected: it taps
     // emulated time upstream of both presentation paths.
-    static constexpr size_t PRESENT_SLOTS = 4;  // > max delay (3) + write slot
+    //
+    // Temporal effects (ZX DLSS) delay the video further: the algorithm's
+    // look-ahead + 1 frame for its worker (TemporalEffects::VideoDelayFrames,
+    // 7 for mod-tpgwafsd). The queue holds that many frames plus the write slot.
+    static constexpr size_t PRESENT_SLOTS = 12;  // > max delay (11) + write slot
     uint8_t* _presentSlots[PRESENT_SLOTS] = {};
+    // Serial of the frame each slot holds (never reset, unlike the latch counter):
+    // temporal effects write their output back into the slot of its frame
+    uint64_t _presentSlotSerial[PRESENT_SLOTS] = {};
+    uint64_t _presentSerial = 0;
     uint64_t _presentLatchCounter = 0;  // Total frames latched (next write index)
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
     std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
@@ -785,6 +794,16 @@ protected:
     // plane B is off, so the feature-off latch copies nothing
     std::vector<uint16_t> _presentPlaneB[PRESENT_SLOTS];
     const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves
+
+    // Temporal effects (created on first use: no worker thread otherwise)
+    std::unique_ptr<TemporalEffects> _temporal;
+    std::mutex _temporalCreateMutex;
+    std::atomic<uint8_t> _temporalDelayFrames{0};  // video delay the effect needs (0 = off)
+    int _audioExtraDelayFrames = 0;                // emulation thread: what SoundManager was told
+    bool _temporalRestoreScreenHQ = false;         // switched on for the effect: off again with it
+    bool _temporalRestoreZXDLSS = false;
+    bool WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height);  // worker thread
+    void UpdateAudioDelay();                                                              // emulation thread
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
@@ -825,13 +844,32 @@ public:
     }
     uint8_t GetPresentDelayFrames() const { return _presentDelayFrames.load(std::memory_order_acquire); }
 
+    /// The delay actually applied: the configured one, or more while a temporal
+    /// effect needs its look-ahead (the audio is delayed by the difference)
+    uint8_t GetEffectivePresentDelayFrames() const
+    {
+        const uint8_t base = _presentDelayFrames.load(std::memory_order_acquire);
+        const uint8_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
+        return temporal > base ? temporal : base;
+    }
+
+    /// @brief Temporal effect run on every frame before presentation (ZX DLSS
+    /// de-flicker, core/src/emulator/video/zxdlss): the registry name of the
+    /// algorithm, "" = off. Any thread. The algorithm needs plane B: switching it
+    /// on switches the features zxdlss + screenhq on, switching it off restores
+    /// them. On a mode without a ZX raster the effect stays inactive (see stats).
+    /// @return false for an unknown algorithm name
+    bool SetTemporalAlgorithm(const std::string& name);
+    std::string GetTemporalAlgorithm();
+    TemporalEffects::Stats GetTemporalStats();
+
     /// Present delay in microseconds at the current frame duration (for the
     /// video presentation latency readout: paint-to-latch delta measures the
     /// NEWEST latch, but the presented frame is GetPresentDelayFrames older)
     uint32_t GetPresentDelayUs() const
     {
         const uint32_t frameTStates = (_context && _context->config.frame) ? _context->config.frame : 71680;
-        return static_cast<uint32_t>(_presentDelayFrames.load(std::memory_order_acquire) *
+        return static_cast<uint32_t>(GetEffectivePresentDelayFrames() *
                                      (static_cast<uint64_t>(frameTStates) * 10 / 35));
     }
 

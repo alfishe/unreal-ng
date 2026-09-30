@@ -153,6 +153,7 @@ private:
     void HandlePaging(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBeam(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideo(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoTemporal(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);

@@ -66,6 +66,7 @@
 #include <thread>
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
+#include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
@@ -3933,6 +3934,20 @@ namespace PythonBindings
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
+        // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
+        .def("video_temporal", [](Emulator& self) -> py::object {
+            return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
+        }, "ZX DLSS de-flicker status: algorithm, active, video / audio delay, frame counters, timing, algorithms")
+        .def("video_temporal_set", [](Emulator& self, const std::string& name) -> py::object {
+            if (!TemporalStatus::Set(self.GetContext(), name))
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = "Unknown temporal algorithm '" + name + "'. Valid: " + TemporalStatus::OfferedList() + ", off";
+                return StateNodeToPy(error);
+            }
+            return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
+        }, "Switch the ZX DLSS de-flicker: an algorithm name, or \"\" / \"off\"; returns the new status", py::arg("name"))
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

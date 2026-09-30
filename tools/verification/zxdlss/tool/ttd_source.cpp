@@ -26,6 +26,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/screen.h"
 
 namespace zxdlss
 {
@@ -118,6 +119,8 @@ std::string readTtd(const std::string& path, const std::string& model, uint64_t 
             return false;
         }
         f.frame = c.frame;
+        // The palette the frame is drawn in: the emulator's live one
+        emulator->GetContext()->pScreen->GetRGBAPalette16(f.palette.data());
         f.width = static_cast<int>(c.width);
         f.height = static_cast<int>(c.height);
         f.paperX = 48;

@@ -419,7 +419,7 @@ if (BUILD_POC)
 endif (BUILD_POC)
 
 # ========================================
-# ZX DLSS algorithm module and tools (opt-in)
+# ZX DLSS verification tools (opt-in; the algorithms are in the core)
 # ========================================
 # zxdlss-render (TTD file / clip -> de-flicker algorithm -> video) and
 # zxdlss-bench. Enable with -DBUILD_ZXDLSS_TOOLS=ON, then: ninja zxdlss-render

@@ -15,7 +15,7 @@
 #include <string>
 
 #include "frames.h"
-#include "zxdlss/algorithm.h"
+#include "emulator/video/zxdlss/algorithm.h"
 
 using namespace zxdlss;
 
@@ -186,7 +186,7 @@ int main(int argc, char** argv)
                 return false;
             opened = true;
         }
-        FrameInput in{f.width, f.height, plane.data(), attr.data(), ink.data(), f.paperX, f.paperY};
+        FrameInput in{f.width, f.height, plane.data(), attr.data(), ink.data(), f.paperX, f.paperY, f.palette.data()};
         const auto t0 = std::chrono::steady_clock::now();
         alg->process(in, out);
         algoSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

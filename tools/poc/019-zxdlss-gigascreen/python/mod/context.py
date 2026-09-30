@@ -7,7 +7,6 @@ is frame t (the frame being rendered), index L+k is t-k.
 """
 import numpy as np
 
-from common.zxscreen import ZX_RGB
 
 PAPER_Y0, PAPER_X0 = 48, 48
 TILE_MOTION, RADIUS = 32, 8        # translation detector (v7)
@@ -44,7 +43,7 @@ class Frame:
 
 
 class FrameContext:
-    def __init__(self, shape, lookahead, depth):
+    def __init__(self, shape, lookahead, depth, palette_rgb):
         self.h, self.w = shape
         self.L = lookahead
         self.depth = depth
@@ -52,7 +51,8 @@ class FrameContext:
         self.serial = 0
         self.paper = np.zeros(shape, bool)
         self.paper[PAPER_Y0:PAPER_Y0 + 192, PAPER_X0:PAPER_X0 + 256] = True
-        self.luma_lut = (ZX_RGB.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
+        # luma of the palette the frames are drawn in (the clip's, via the mixer)
+        self.luma_lut = (palette_rgb.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
         self._pair_cache = {}               # (serial newer, serial older) -> feature
 
     def push(self, plane, attr, ink):
