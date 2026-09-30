@@ -244,7 +244,7 @@ TEST(DeviceStateFdc_Test, Plus3ReportsTheUpd765)
     ports->DecodePortOut(0x1FFD, 0x08, 0x8000);  // motor on
     for (uint8_t byte : { uint8_t(UPD765::CMD_SPECIFY), uint8_t(0xAF), uint8_t(0x03) })
         ports->DecodePortOut(0x3FFD, byte, 0x8000);
-    for (uint8_t byte : { uint8_t(UPD765::CMD_READ_DATA | UPD765::CMD_FLAG_MF), uint8_t(0x00), uint8_t(0),
+    for (uint8_t byte : { uint8_t(uint8_t(UPD765::CMD_READ_DATA) | uint8_t(UPD765::CMD_FLAG_MF)), uint8_t(0x00), uint8_t(0),
                           uint8_t(0), uint8_t(3), uint8_t(2), uint8_t(3), uint8_t(0x2A), uint8_t(0xFF) })
         ports->DecodePortOut(0x3FFD, byte, 0x8000);
 
