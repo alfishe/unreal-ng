@@ -14,10 +14,10 @@ Requirements: [requirements.md](requirements.md).
 
 - [x] Step 0: `PeripheralId` table + notification enum on master - **done** (checked 2026-09-28): ids 5 GS, 9 ProfiPaging, 10 MoonSound, 11 GS-LW, 12 NeoGS in `ttdserializable.h`, `ttd.ksy` and the analyzer (later ids 13-15 appended the same way); audio-activity enum GS = 6, MoonFM = 7, MoonPCM = 8 in `notifications.h`; the branch fast-forward is moot (profi, generalsound, moonsound merged)
 - [x] V0: make v1 honest - **done 2026-09-28** (B7-B10, FR-3 with TR-DOS, FR-4, analyzer bookmarks; ~~page-255 gap~~ done 2026-09-27, suspected bugs with tests — ~~B1 B2 B3 B5~~ fixed `a2d265df`/`86813dcb`, ~~B4~~ fixed 2026-09-28 (top-clock TTD time), ~~F3 feature-flag side effect~~ done `005771c8`, analyzer fixes)
-- [ ] V0b: benchmark harness with v1 as first engine (parallel with V0)
+- [x] V0b: benchmark harness with v1 as first engine - **done 2026-09-29** ([v0b-benchmark-results.md](v0b-benchmark-results.md)): harness `core/src/debugger/ttd/bench/`, matrix `TTDMatrix/*` in core-benchmarks, compare script `tools/verification/ttd-bench/`, CI gate `TTDBench_Test` replaces `TTD_Capture_Cost_Gate_Test`, v1 baselines in `testdata/ttd/bench/`
 - [x] Merge `profi` (merged; moot for this plan)
 - [ ] V1: memory regions, per-piece chain cap, dirty-only cache, COW reference blocks
-- [ ] V1b (conditional): checkpoints inside a frame, only if V0b shows PR-5 failing
+- [x] ~~V1b (conditional): checkpoints inside a frame~~ - **not needed** (V0b, 2026-09-29): seek p99 ≤ 3.5 ms on the heaviest turbo configuration over a 10-minute session. The part above 5 ms is drawing the picture of the position (re-running the frame), which in-frame checkpoints do not shorten; a faster picture is a V1+ follow-up
 - [x] Merge `generalsound` (merged before V1; GS RAM as a region moves into V1)
 - [x] Merge `moonsound` (`e18f3a29`, before V1). Left over: automation (PLAN #11), port-claim unification (design debt, MoonSound TODO), wave SRAM as a region (V1)
 - [ ] V2: device state v2

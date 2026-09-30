@@ -12,7 +12,7 @@
 ;             returns its duration (minus the 10 T of that RET) in HL and BC
 ; DELAY       wait BC T-states, the CALL included (BC >= 141); destroys AF, BC, HL
 ;
-; The engine must run from uncontended memory (the probe loads at 40000).
+; The engine must run from uncontended memory (the probe loads at 36000).
 
 ; ---- interrupt.asm (Jan Bobrowski, modified slightly by Patrik Rak) ----
 
@@ -240,4 +240,43 @@ DlB0:
 DlB1:
         rra
         ret nc
+        ret
+
+; ---- DELAYE: DELAY for Even M1 machines (this project, not Bobrowski / Rak) ----
+;
+; On a Scorpion every opcode fetch from RAM starts on an even T-state, so every instruction here takes its
+; length rounded up to even: ADD HL,BC 12, JR taken 12 / not 8, ADD A,n 8, OR n 8, CALL 18. DELAY's 23 T loop
+; and its odd branches do not survive that. DELAYE waits BC T-states, the CALL to DELAY and the JP DELAYE the
+; probe patches there included; BC even (an odd BC waits BC-1), BC >= 170. Destroys AF, BC, HL.
+;   fixed: CALL 18 + JP 10 + LD HL 10 + ADD HL 12 + LD BC 10 + LD A,L 4 + ADD A 8 + RRA 4 + RET 10 = 86
+;   loop:  24 per 24 T-states, then 20 on the way out; the rest r (0..22): four stages of 16 + r
+DELAYE:
+        ld hl,-170
+        add hl,bc
+        ld bc,-24
+DeLoop:
+        add hl,bc               ; 12
+        jr c,DeLoop             ; 12 / 8
+        ld a,l                  ; the rest, minus 24
+        add a,24                ; r = 0..22
+        rra                     ; bit 0 (odd BC): dropped
+        rra
+        jr nc,DeB1              ; 16 / 18: 2 T
+        inc hl
+DeB1:
+        rra
+        jr nc,DeB2              ; 16 / 20: 4 T
+        or 0
+DeB2:
+        rra
+        jr nc,DeB3              ; 16 / 24: 8 T
+        jr DeB3a
+DeB3a:
+DeB3:
+        rra
+        jr nc,DeB4              ; 16 / 32: 16 T
+        jr DeB4a
+DeB4a:
+        or 0
+DeB4:
         ret

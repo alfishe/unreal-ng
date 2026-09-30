@@ -1,6 +1,9 @@
 # TODO — Contended opcode fetches without a cost for machines that have no contention
 
-**Status:** phases 1a (baselines), 1b (bus interfaces, M1 contention) 1c (control and diagnostics), 1d (test suites), phase 2 (internal cycles) and phase 3 (multi-point I/O) done 2026-09-28 on branch `m1-contention` ([baseline.md](baseline.md)). PLAN.md row #61.
+**Status (2026-09-29):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
+probe suite, the co-emulation harness (eight runners incl. SkoolKit) and the probe's Even M1 mode, all on
+master (see Done). **Where we stopped:** the six follow-ups in "Remaining", item 1 done,
+item 2 (snow test) next. PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 
 ## Done
@@ -56,14 +59,30 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
   end-of-cycle count of the same T). `UlaContention::FetchLead` (6 on the Ferranti ULA, 4 on the discrete
   clones, unchanged). Tests 36 and 37 (real hardware values) pass only with it.
 
-## Remaining (value order)
-1. **Phase 1e — emulated-side suite H** (in progress): done - the Butler 48K suite runs to completion (after
-   the `.sna` 48K ROM fix) and the Rak Timing Test matrix against the published screens (test-programs §2.5).
-   Fixed on the way: the +2A/+3 gate array window is 129 T (real-hardware photos of the Rak test; every
-   emulator surveyed uses 128 - test-programs §2.5). The `ctprobe` probe suite v2 runs (test-programs
-   §3.7): 53 cases match an independent oracle on the 48K, 128K, +3, Pentagon and Scorpion; standalone
-   reference files `ctprobe.tap` / `ctprobe.trd` print a report and pass on all five when loaded as a user
-   does. Open: running them on real hardware and other emulators (§3.6), X-04; fusetest (needs pasmo); the
-   cross-emulator consensus table.
+- **Machines research, Scorpion Even M1** (2026-09-29): which machines contend, by circuit
+  ([contention-by-machine.md](contention-by-machine.md)); the stable summary is
+  [docs/emulator/design/core/memory-contention.md](../../emulator/design/core/memory-contention.md). The
+  Scorpion has no contention but Even M1 (an opcode fetch from RAM that would start on an odd T-state waits
+  one): in the core since `f2323325` (`EvenM1_Test`).
+- **ctprobe v2 and the co-emulation harness** (2026-09-29, master): 53 cases, standalone `.tap` / `.trd`
+  printing through the ROM; `tools/verification/coemu` runs it on unreal-ng, FUSE, MAME, ZEsarUX, ZXMAK2,
+  xpeccy-plus, Xpeccy and SkoolKit (`db0efe06`, PLAN #74); results table in the probe's README.
+- **ctprobe measures Even M1 machines** (2026-09-29, `3952bdc8`): 2 T-state delays
+  (`DELAYE`) and two worked-out engine corrections; classes 5 (Scorpion) and 6 (Even M1 without the
+  attribute bus). unreal-ng, MAME and ZXMAK2 all as expected on the Scorpion; xpeccy-plus differs on P-02
+  only (2 T: it adds the tick before sampling the interrupt).
+
+## Remaining (value order, the six follow-ups agreed 2026-09-29)
+1. ~~**Probe engine for Even M1 machines**~~ - done (`3952bdc8`, see Done).
+2. **Snow test** (next): a visual test in the style of Snow Hold (hardware photos exist) plus an analytic
+   floating-bus / fetch-timing check with numbers; unreal-ng has no snow emulation.
+3. **Real-hardware kit**: ready-to-run programs and instructions for what only hardware can settle - P-05
+   (a port's high byte in an odd page at #C000 on the 128K), which Scorpion boards have Even M1, the
+   Scorpion's turbo waits, the Even M1 start offset (P-02 on a real Scorpion).
+4. **Not modeled yet**: the Scorpion's turbo slot waits, the ZX-Evo's 14 MHz waits and its optional 48K / 128K
+   raster contention, TS-Conf cache misses.
+5. **Harness follow-ups**: why MAME's `scorpio` crashed earlier (it now runs), further runners (Kozynax,
+   ZX-M8XXX, spec_chum), fusetest (needs pasmo), X-04.
+6. ~~**This TODO brought up to date**~~ - done 2026-09-29.
 
 Ideas backlog (performance of the contended machines): [baseline.md](baseline.md) §3.2.

@@ -7,15 +7,15 @@
 ; T-states from ONSET + OFFSET. A duration is the fragment's plus whatever the RET placed after it waits (the
 ; engine subtracts the RET's 10 T).
 ;
-; Loads and runs at 40000 (uncontended on every machine; the engine uses #BE00-#BFC2). Standalone:
-; CLEAR 39999, load the code, RANDOMIZE USR 40000 (or PRINT USR 40000: the number of wrong values). It detects
+; Loads and runs at 36000 (uncontended on every machine; the engine uses #BE00-#BFC2). Standalone:
+; CLEAR 35999, load the code, RANDOMIZE USR 36000 (or PRINT USR 36000: the number of wrong values). It detects
 ; everything itself and prints a report; the border ends green (all values right) or red.
 ; A host may preset any setting below (#FF = detect), start at HOSTENTRY with SP below #BE00 and wait for DONE.
 ;
 ; The expected tables (EXPECTED) are filled by the generator (core/tests/emulator/video/ctprobe_test.cpp) from
 ; its oracle; in the plain source they are zero.
 
-        org 40000
+        org 36000
 
 START:
         jp MAIN
@@ -28,7 +28,9 @@ HostSpin:
 
 ONSET:   dw 0           ; first contended T-state, INT-relative (69888 T frame: 14335, else 14361)
 CLASS:   db #FF         ; 0 Ferranti ULA 48K, 1 Ferranti ULA 128K, 2 gate array, 3 no contention,
-                        ; 4 no contention, and unused ports read the attribute being fetched (the Scorpion)
+                        ; 4 no contention, and unused ports read the attribute being fetched (the Scorpion),
+                        ; 5 as 4 with Even M1 (opcode fetches from RAM start on even T-states),
+                        ; 6 as 3 with Even M1 (a Scorpion whose unused ports do not show the attribute bus)
 CAPS:    db #FF         ; bit 0: #7FFD paging works, bit 1: +2A/+3 #1FFD layouts
 DEF7FFD: db #FF         ; #7FFD outside the paging cases; a case ORs its page in
 DEF1FFD: db #FF         ; #1FFD outside the layout cases
@@ -40,8 +42,8 @@ SHOW:    db 1           ; print the report
 DONE:    db 0           ; 1 when finished
 FAILS:   dw 0           ; values that differ from the expected table
 TOOFAST: db 0           ; 1: the CPU runs faster than 3.5 MHz, nothing was measured
-EVENM1:  db 0           ; 1: opcode fetches from RAM start on even T-states only (the Scorpion's "Even M1"),
-                        ; nothing was measured: the engine's delays need single T-state steps
+EVENM1:  db 0           ; 1: opcode fetches from RAM start on even T-states only (the Scorpion's "Even M1"):
+                        ; the engine then delays in 2 T-state steps (DELAYE) and the Scorpion is class 5
 
 ; ---- current case (a copy of its record) ----
 
@@ -49,7 +51,7 @@ CUR:
 CURID:     db 0
 CURFLAGS:  db 0         ; bit 0 page at #C000, bit 1 +3 layout, bit 2 store A (CTVALUE) not the duration,
                         ; bit 3 time the RET found in ROM, bit 4 fill the first screen cells first,
-                        ; bit 5 not on the plain clones (CLASS 3): what an unused port reads there depends on the
+                        ; bit 5 not on the plain clones (CLASS 3 and 6): what an unused port reads there depends on the
                         ; machine and its mode (an ATM's disk ports stay open outside TR-DOS in one mode)
 CUR7FFD:   db 0         ; page at #C000 (#FF = leave)
 CURMIRROR: db 0         ; also copy the placed fragment into this page at the same #8000-slot offset (#FF = no)
@@ -83,7 +85,7 @@ MAIN:
         call TurboOff
         jp z,TooFast
         call IsEvenM1
-        jp nz,EvenM1
+        call nz,UseEvenM1
         call INSTINT
         call FRAMETIME
 
@@ -206,7 +208,7 @@ TimeLoop:
         ld hl,(CURT)
         inc hl                  ; CODETIME counts one more: Rak's 48K grid shows the first wait at 14336
         ld de,(CURTARGET)
-        call CODETIME
+        call TIMEIT
         di                      ; the page mapped may not hold a ROM's IM1 handler
         ld a,(CURFLAGS)
         and 4
@@ -262,11 +264,45 @@ TooFast:
         ld hl,TxTooFast
         jr NotMeasured
 
-; Opcode fetches wait for an even T-state: the engine cannot place code at every T-state
-EvenM1:
+; Opcode fetches from RAM wait for an even T-state (the Scorpion's Even M1): every delay the engine makes is
+; then even, so it switches to DELAYE, whose steps are 2 T-states (engine.asm); a fragment placed at an odd
+; T-state starts one T-state later, as it would on the machine
+UseEvenM1:
         ld a,1
         ld (EVENM1),a
-        ld hl,TxEvenM1
+        ld a,#C3                ; JP DELAYE at DELAY
+        ld (DELAY),a
+        ld hl,DELAYE
+        ld (DELAY+1),hl
+        ld hl,2                 ; FRAMETIME and CODETIME come out short: see TIMEIT
+        ld (FRAMEADJ),hl
+        ld hl,4
+        ld (CTBIAS),hl
+        ld hl,2
+        ld (CTSHIFT),hl
+        ret
+
+; CODETIME, corrected for Even M1. With every fetch from RAM on an even T-state the Bobrowski / Rak engine's
+; vernier, which relies on the interrupt landing on a different T-state phase in each of its four passes,
+; sees one phase only, and its PUSH BC takes 12 T-states, not 11. Worked through for FRAMETIME, that makes
+; the measured frame exactly 2 T-states short whatever the phase; the engine keeps that FRAMET (its retry
+; loop converges on it; the exact value would never move the phase). With it CODETIME starts the code
+; 2 T-states early (CTSHIFT asks for 2 later; the floating-bus case P-02 shows where the code runs) and every
+; duration comes out 4 T-states short: 2 for the later request, 2 through FRAMET (CTBIAS). FRAMEADJ corrects
+; the frame length shown. All three are 0 on every other machine
+TIMEIT:
+        ld bc,(CTSHIFT)
+        add hl,bc
+        call CODETIME
+        ld bc,(CTBIAS)
+        add hl,bc
+        ld b,h
+        ld c,l
+        ret
+FRAMEADJ: dw 0
+CTBIAS:   dw 0
+CTSHIFT:  dw 0
+
 NotMeasured:
         ld a,(SHOW)
         or a
@@ -329,7 +365,7 @@ TurboFrames: db 0
 ; an odd T-state waits one). After a HALT the loop below runs 65931 T, less than any frame with the interrupt
 ; routine; with the waits its 7 T loads and 13 T DJNZ each take one more, 73236 T, longer than any frame, and
 ; the next interrupt moves FRAMES. HL points at #8000, uncontended on every machine.
-; To drop the check: remove this routine, its call in MAIN, EvenM1, EVENM1 and TxEvenM1.
+; To drop the check: remove this routine, its call in MAIN, UseEvenM1 and DELAYE, and class 5.
 IsEvenM1:
         ei
         halt
@@ -351,6 +387,8 @@ EvenM1Loop:
 ; Z if the frame is 69888 T
 IsFrame48:
         ld hl,(FRAMET)
+        ld de,(FRAMEADJ)
+        add hl,de
         ld de,69888-32768
         or a
         sbc hl,de
@@ -393,7 +431,7 @@ ClassLoop:
         add hl,de
         inc hl                  ; CODETIME counts one more
         ld de,#7FFF
-        call CODETIME
+        call TIMEIT
         ld a,l
         sub 4                   ; the NOP's own 4 T
         ld hl,MAXWAIT
@@ -407,8 +445,8 @@ ClassNext:
         cp 16
         jr c,ClassLoop
         ld a,(MAXWAIT)
-        or a
-        jr z,ClassNone
+        cp 2                    ; 0 or 1: no contention (Even M1 can add 1 T at an odd T-state)
+        jr c,ClassNone
         call IsFrame48          ; Z: 69888 T
         ld a,0                  ; 48K
         jr z,SetClass
@@ -423,8 +461,9 @@ SetClass:
 
 ; No contention: what does an unused port read in the picture area? The first screen cells get a pattern and
 ; IN A,(#FF) runs with its I/O cycle 5 T after the onset. One of the pattern's attributes: the Scorpion's attribute
-; bus (class 4). Anything else (#FF, or a byte from a device that answers the port): an ordinary clone (class 3). Measured, not guessed from the frame length, which the
-; Scorpion shares with the 48K, the ATM and the Profi
+; bus (class 4, 5 with Even M1). Anything else (#FF, or a byte from a device that answers the port): an ordinary
+; clone (class 3, 6 with Even M1). Measured, not guessed from the frame length, which the Scorpion shares with
+; the 48K, the ATM and the Profi
 ClassNone:
         call FillCells
         ld hl,FrFloat           ; XOR A / IN A,(#FF) / LD (CTVALUE),A, at FRAGBUF
@@ -437,12 +476,20 @@ ClassNone:
         ld de,5-11+1            ; the I/O cycle is 11 T in; CODETIME counts one more
         add hl,de
         ld de,FRAGBUF
-        call CODETIME
+        call TIMEIT
         ld a,(CTVALUE)          ; one of the pattern's attributes (#40-#5F): the attribute bus
         and #E0
         cp #40
         ld a,4                  ; no contention, attribute bus
-        jr z,SetClass
+        jr nz,NotAttrBus
+        ld hl,EVENM1
+        add a,(hl)              ; 5 with Even M1
+        jr SetClass
+NotAttrBus:
+        ld a,(EVENM1)           ; 6 with Even M1
+        or a
+        ld a,6
+        jr nz,SetClass
         ld a,3                  ; no contention (#FF, or a device that answers the port)
         jr SetClass
 
@@ -514,7 +561,10 @@ CheckCaps:
         jr z,CheckPaging
         ld a,(CLASS)
         cp 3
+        jr z,NotHere
+        cp 6
         jr nz,CheckPaging
+NotHere:
         or a                    ; NZ: not here
         ret
 CheckPaging:
@@ -764,7 +814,11 @@ PrintMachine:
         call NewLine
         ld hl,TxFrame
         call PrintStr
-        ld bc,(FRAMET)          ; the length: FRAMET + 32768, up to 17 bits
+        ld hl,(FRAMET)          ; the length: FRAMET + FRAMEADJ + 32768, up to 17 bits
+        ld bc,(FRAMEADJ)
+        add hl,bc
+        ld b,h
+        ld c,l
         call #2D2B
         ld bc,32768
         call #2D2B
@@ -878,7 +932,6 @@ TxLayouts: db ", +3 layouts ", 0
 TxYes:     db "yes", 0
 TxNo:      db "no", 0
 TxTime:    db "Takes about 3 min at 3.5 MHz", 0
-TxEvenM1:  db "Opcode fetches wait for even", 13, "T-states (Scorpion Even M1).", 13, "This version cannot time code", 13, "on it: nothing was measured.", 13, 0
 TxTooFast: db "The CPU runs faster than 3.5 MHz.", 13, "Switch the machine to 3.5 MHz", 13, "(turbo off) and run it again.", 13, 0
 TxOk:      db " OK", 0
 TxBadT:    db " BAD T", 0
@@ -888,12 +941,14 @@ TxSkip:    db " skipped as N/A", 0
 TxAllOk:   db "ALL VALUES AS EXPECTED", 0
 TxWrong:   db " VALUES WRONG", 0
 ClassNames:
-        dw TxUla48, TxUla128, TxGate, TxNone, TxScorpion
+        dw TxUla48, TxUla128, TxGate, TxNone, TxScorpion, TxScorpionE, TxNoneE
 TxUla48:   db "ULA 48K", 0
 TxUla128:  db "ULA 128K", 0
 TxGate:    db "gate array", 0
 TxNone:    db "no contention", 0
 TxScorpion: db "no contention, attr bus", 0
+TxScorpionE: db "attr bus, Even M1", 0
+TxNoneE:   db "no contention, Even M1", 0
 
 ; ---- cases ----
 ; id, flags, page at #C000 (#FF = leave), mirror page (#FF = none), target (0 = FRAGBUF), fragment, length,
@@ -1571,5 +1626,5 @@ R73:       ds 16
 R60:       ds 8
 RESULTSEND:
 
-EXPECTED:  ds 5*(RESULTSEND-RESULTS)     ; per CLASS, laid out as RESULTS (filled by the generator)
+EXPECTED:  ds 7*(RESULTSEND-RESULTS)     ; per CLASS, laid out as RESULTS (filled by the generator)
 PROBEEND:

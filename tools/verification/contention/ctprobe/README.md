@@ -34,20 +34,22 @@ The program needs the CPU at 3.5 MHz. A Scorpion's turbo is switched off by the 
 machines (ATM Turbo, ZX-Evo) it stops and says so: "The CPU runs faster than 3.5 MHz. Switch the machine to
 3.5 MHz (turbo off) and run it again."
 
-**The Scorpion: not measured.** A real Scorpion (and unreal-ng's since 2026-09-29) makes every opcode fetch
+**The Scorpion and "Even M1".** A real Scorpion (and unreal-ng's since 2026-09-29) makes every opcode fetch
 from RAM start on an even clock tick: a fetch that would start on an odd tick waits one ("Even M1", from its
-circuit). The measuring engine needs waits of every length, odd ones included, so it cannot work there. The
-program checks for it first: after a screen interrupt it runs a loop that takes 65931 ticks, which ends
-within the frame; with Even M1 the same loop takes 73236 ticks and runs past the next interrupt. If so, it
-prints "Opcode fetches wait for even T-states (Scorpion Even M1) ... nothing was measured", with a red
-border, and the harness reports the machine as `skipped`. An emulator that ends its Scorpion run with "all
-as expected" does not model Even M1.
+circuit). So every instruction run from RAM takes its length rounded up to an even number of ticks: `LD A,n`
+takes 8, not 7. The program checks for it first: after a screen interrupt it runs a loop that takes 65931
+ticks, which ends within the frame; with Even M1 the same loop takes 73236 ticks and runs past the next
+interrupt. If so, it switches its measuring engine to delays in steps of 2 ticks (the only steps such a
+machine can make; see "Where the expected values come from"), and the machine type becomes `attr bus,
+Even M1`, with its own table: a Scorpion with Even M1 is checked against what Even M1 does, and a Scorpion
+without it (the 2007 re-creation of its logic chip, or an emulator that leaves it out) against the plain
+Scorpion table.
 
 A full run takes **about 3 minutes** at the normal 3.5 MHz speed. An emulator's fast or turbo mode is fine: the
 program measures CPU clock ticks, not seconds.
 
 At the end the border turns **green** if every value was as expected and **red** otherwise.
-`PRINT USR 40000` instead of `RANDOMIZE USR 40000` also prints the number of wrong values.
+`PRINT USR 36000` instead of `RANDOMIZE USR 36000` also prints the number of wrong values.
 
 ## What it measures, in plain words
 
@@ -62,7 +64,7 @@ How long the CPU waits depends on the exact clock tick. It repeats every 8 ticks
 |:--|:--|
 | 48K, 128K, +2 (Ferranti ULA) | 6, 5, 4, 3, 2, 1, 0, 0 |
 | +2A, +3 (Amstrad gate array) | 1, 0, 7, 6, 5, 4, 3, 2 |
-| Pentagon, Scorpion and other clones | no waits at all |
+| Pentagon, Scorpion and other clones | no waits at all (a Scorpion rounds each instruction run from RAM up to an even number of ticks, Even M1, above) |
 
 The waits only happen while the picture itself (not the border) is drawn: 128 ticks of every one of the 192
 screen lines. On the +2A / +3 the gate array holds the CPU for one more tick after that.
@@ -85,7 +87,7 @@ Takes about 3 min at 3.5 MHz
 
 | Line | Meaning |
 |:--|:--|
-| `Machine:` | The contention type it found: `ULA 48K`, `ULA 128K`, `gate array` (+2A/+3), `no contention` (Pentagon, ATM, Profi and similar), `no contention, attr bus` (Scorpion) |
+| `Machine:` | The contention type it found: `ULA 48K`, `ULA 128K`, `gate array` (+2A/+3), `no contention` (Pentagon, ATM, Profi and similar), `no contention, attr bus` (Scorpion without Even M1), `attr bus, Even M1` (Scorpion) |
 | `Frame` | Clock ticks from one screen interrupt to the next: 69888 on a 48K and a Scorpion, 70908 on a 128K / +2 / +2A / +3, 71680 on a Pentagon |
 | `onset` | The first contended tick after the interrupt: 14335 (48K), 14361 (128K and later) |
 | `Paging` | Whether it could switch 16K memory pages at `#C000`. `no` on a 48K, and also on a 128K or +3 started from 48 BASIC, which locks the paging |
@@ -234,7 +236,7 @@ test they appear on screen only as that first one; see the next section for gett
    | `Machine: no contention` on a 48K / 128K / +3 | Contention is switched off or not emulated; every contended check will fail |
 
 4. **Get every value, not just the first wrong one.** When the program has finished, the measurements are in
-   memory. A debugger or an emulator's memory dump of `40000` to `PROBEEND` (address in `ctprobe.sym`)
+   memory. A debugger or an emulator's memory dump of `36000` (`START`) to `PROBEEND` (addresses in `ctprobe.sym`)
    is enough; the case table in that same memory says which bytes belong to which check. Comparing the whole
    row with the expected row shows a shift at once (in the example above every value is the expected value of
    the tick before). `ctprobe-compare.py` does it for you:
@@ -257,16 +259,27 @@ Run by the [co-emulation harness](../../coemu/README.md), with each emulator's s
 
 | Emulator | 48K | 128K | +2 | +2A / +3 | Pentagon | Scorpion |
 |:--|:--|:--|:--|:--|:--|:--|
-| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected | not measured: Even M1 (all as expected before Even M1 was added) |
-| xpeccy-plus 7a96d8da | all as expected | P-05 only: a port whose high byte points at an odd page at `#C000` does not wait | as the 128K | the gate array's waits come 2 ticks late; the extra tick at the end of each line is missing | all as expected | does not finish: its stock `scrp.wait` adds a tick to odd-length instructions, which the measuring engine does not survive |
+| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected | all as expected (attr bus, Even M1) |
+| xpeccy-plus 7a96d8da | all as expected | P-05 only: a port whose high byte points at an odd page at `#C000` does not wait | as the 128K | the gate array's waits come 2 ticks late; the extra tick at the end of each line is missing | all as expected | P-02 only, 2 ticks late: its `scrp.wait` adds the Even M1 tick at the end of an odd-length instruction, before it looks at the interrupt (see below) |
 | FUSE 1.6.0 | all as expected | all as expected | all as expected | the extra tick at the end of each line is missing (1 value) | all as expected | - |
-| MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | the machine resets during the frame measurement (not yet explained) |
+| MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | all as expected (Even M1, no attr bus) |
 | ZEsarUX 13.0 | floating bus (P-02) only | floating bus (P-02) only | floating bus (P-02) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
 | SkoolKit 10.1 | floating bus (P-02) only: unused ports always read `#FF` | floating bus (P-02) only | - | - | - | - |
+| ZXMAK2 | everything 1 tick late | everything 1 tick late | - | +3: the +3 layouts and the floating bus (10 checks) | all as expected | all as expected (Even M1, no attr bus) |
+| Xpeccy (upstream) | many values differ (33 checks) | many values differ (40 checks) | as the 128K | many values differ (33 checks) | all as expected | all as expected (Even M1 off by default, no attr bus) |
 
-unreal-ng also runs it on the ATM Turbo 2+, the ZX-Evo and the Profi: all as expected (the Scorpion with
-ProfROM: not measured, Even M1); xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, and MAME on its Scorpion with ProfROM: all as
+unreal-ng also runs it on the Scorpion with ProfROM, the ATM Turbo 2+, the ZX-Evo and the Profi: all as
+expected; xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, ZXMAK2 and Xpeccy on theirs and on the Scorpion with
+ProfROM, and MAME on its Scorpion with ProfROM: all as
 expected. MAME's ATM Turbo boots at 7 MHz (the probe stops and asks for 3.5 MHz).
+
+**The Scorpion.** Three emulators model Even M1, each in its own way: unreal-ng (a wait inside the opcode
+fetch), MAME and ZXMAK2 (a wait in the opcode read), xpeccy-plus (the instruction's length rounded up at its
+end). All give the same durations, so the measuring engine's Even M1 mode is not tuned to one of them. They
+differ in when the interrupt is looked at: the Z80 samples it at the end of an instruction, and the Scorpion's
+WAIT for the next fetch comes after that, as in unreal-ng, MAME and ZXMAK2; xpeccy-plus adds the tick first.
+That moves the measuring engine's start by 2 ticks, which only the floating-bus check P-02 can see, and only
+unreal-ng and xpeccy-plus have the Scorpion's attribute bus. A real Scorpion decides it.
 
 On P-05 the emulators disagree: FUSE, SkoolKit and unreal-ng contend such a port, xpeccy-plus does not. A
 real 128K decides it; until someone runs the probe on one, treat P-05 as open.
@@ -297,6 +310,19 @@ used here, one cell per 4 ticks, is unreal-ng's model and is not yet checked on 
 answer `#FF`, or a device's byte. On those plain clones the floating-bus check P-02 is skipped as N/A: what an
 unused port reads depends on the machine and its mode.
 
+**Even M1 in the expected values and in the engine.** On a Scorpion with Even M1 the expected durations add,
+before every opcode fetch from RAM (the fragment's first one included: the wait is inside that fetch's
+cycle), one tick when the fetch would start on an odd tick, and a `RET` in ROM (X-02) one tick when the
+engine's next fetch back in RAM would. The measuring engine needs delays of every length, and on such a
+machine none of its instructions in RAM can take an odd number of ticks, so it runs with `DELAYE`, a delay
+built only from instructions whose Even M1 length is known, in steps of 2 ticks. The rest of the engine is
+unchanged, and two effects of Even M1 on it are worked out and corrected (`TIMEIT` in `ctprobe.asm`):
+its frame measurement relies on the interrupt landing on a different tick in each of four passes, which
+Even M1 prevents, and comes out exactly 2 ticks short whatever the phase; with that frame length the engine
+starts code 2 ticks early and reports durations 4 ticks short. The floating-bus check P-02 shows where the
+code really runs, so the start correction is measured, not assumed. On every other machine the corrections
+are 0.
+
 The measuring engine is Jan Bobrowski's, as adjusted by Patrik Rak for his Timing Test (GPL). It is the same
 code, byte for byte, as in Rak's test, whose results were photographed on real 48K, 128K, +2A and +3 machines.
 
@@ -304,7 +330,7 @@ code, byte for byte, as in Rak's test, whose results were photographed on real 4
 
 | File | Content |
 |:--|:--|
-| `ctprobe.tap` | Tape: a BASIC loader and the code at 40000 |
+| `ctprobe.tap` | Tape: a BASIC loader and the code at 36000 |
 | `ctprobe.trd` | TR-DOS disk: `boot` loads and runs the same code |
 | `ctprobe.sym` | Every label with its address, for debuggers (for example `DONE`, `RESULTS`, `PROBEEND`) |
 | `ctprobe-compare.py` | Reads a memory dump of a finished run and prints every check that differs, with the whole row of values |

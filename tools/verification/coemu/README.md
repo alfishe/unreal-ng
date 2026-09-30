@@ -27,7 +27,7 @@ tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
 | `ok` | The program ran to the end and every value is as expected |
 | `wrong` | The program ran to the end and some values differ; see `out/<emulator>/<machine>.compare.txt` |
 | `error` | The program did not finish (timeout, build failure, a crash); see `out/<emulator>/<machine>.log` |
-| `skipped` | The emulator is not installed, or has no such machine, or its runner does not do that machine yet, or the program found it cannot measure on this machine (the contention probe on a Scorpion with Even M1) |
+| `skipped` | The emulator is not installed, or has no such machine, or its runner does not do that machine yet, or the program found it cannot measure on this machine |
 
 ## Emulators
 
