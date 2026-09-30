@@ -1190,7 +1190,8 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     auto serializers = PortDecoder_ATM710::CreateTTDSerializers();
     // The serializer reads and restores the live card; the decoder outlives
     // every TTD session (the manager goes before the core)
-    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
+    auto& self = const_cast<PortDecoder_ATM3&>(*this);
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self._sdCard, self._zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
     return serializers;
 }

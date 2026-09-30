@@ -286,16 +286,21 @@ TEST_F(TsConfDma_Test, DMA13_DmaLeavesTheCacheStale)
 TEST_F(TsConfDma_Test, DMA14_SpiToRam)
 {
     std::vector<uint8_t> sent;
+    uint32_t reads = 0;
     uint8_t next = 0;
-    Dma().SetSpi([&](uint8_t out) {
+    Dma().SetSpi([&](bool read, uint8_t out) -> uint8_t {
+        if (read)
+        {
+            reads++;
+            return next++;
+        }
         sent.push_back(out);
-        return next++;
+        return 0xFF;
     });
     Launch(0, 0x50000, 0xFF, 0, 0x02);  // 256 words = one 512-byte sector
     RunDma();
-    ASSERT_EQ(sent.size(), 512u);
-    for (uint8_t b : sent)
-        ASSERT_EQ(b, 0xFF);
+    EXPECT_EQ(reads, 512u);
+    EXPECT_TRUE(sent.empty());
     EXPECT_EQ(Byte(0x50000), 0x00);
     EXPECT_EQ(Byte(0x50001), 0x01);
     EXPECT_EQ(Byte(0x501FF), 0xFF);

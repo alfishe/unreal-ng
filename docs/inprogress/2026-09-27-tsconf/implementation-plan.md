@@ -357,6 +357,24 @@ clears (with a frame cap).
 > their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
 > methods; do them first in this phase or move them into phase 5.
 
+**Storage built 2026-09-30 (branch `tsconf-phase6`, step 6a).**
+- SD: the decoder owns `SdCardSpi` + `ZControllerSpi` and registers the
+  media manager's `sd.zc` slot (card detect / write protect through `EvoAvr`
+  register C); the SPI DMA shares the Z-Controller as the board's SPI master
+  does - a DMA read is pipelined like `IN #57` (the previous exchange's byte,
+  then a new exchange sending #FF: `spi_stb` is the start strobe, [V] top.v).
+  TTD: the shared `EvoSdCard` blob (15), now built from the card and the
+  controller instead of the ATM3 decoder.
+- Virtual TR-DOS: the VG93 is selected only outside vdos and for a real
+  drive; #FF drive bits always latch; the trap starts vdos at the next M1, a
+  VG93 register access ends it ([V] zports.v:638-651). State `vgDrive`,
+  `preVdos` in `TsConfState`.
+- Nemo IDE: `[HDD] IdeStall` (0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
+  (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
+- Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
+  read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).
+Open in phase 6: SPG-1…3 (step 6b), BOOT-3 / BOOT-4 (fixtures), IDE-5.
+
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |

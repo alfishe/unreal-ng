@@ -168,6 +168,12 @@ struct TsConfState
     uint16_t cpuLineAccesses;   ///< CPU DRAM reads of the previous line (the TSU's budget)
     /// endregion
 
+    /// region <Virtual TR-DOS (§8.2)>
+    uint8_t vgDrive;            ///< drive select bits of the last #FF write (drive_sel_raw)
+    uint8_t preVdos;            ///< a trapped FDC access: vdos starts at the next M1
+    uint8_t vdosReserved[2];    ///< keeps the struct free of tail padding
+    /// endregion
+
     /// Accessors
     uint8_t Page(uint8_t window) const { return regs[TsConfReg::Page0 + (window & 3)]; }
     uint8_t MemConfig() const { return regs[TsConfReg::MemConfig]; }
@@ -176,4 +182,4 @@ struct TsConfState
     uint16_t FmBase() const { return static_cast<uint16_t>((regs[TsConfReg::FMaps] & 0x0F) << 12); }
 };
 
-static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16 + 32, "TsConfState must stay padding-free (TTD blob)");
+static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16 + 32 + 4, "TsConfState must stay padding-free (TTD blob)");

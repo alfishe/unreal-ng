@@ -38,8 +38,11 @@ public:
 
     /// Memory and devices the DMA reaches
     void Attach(uint8_t* ram, IdeAdapter* ide) { _ram = ram; _ide = ide; }
-    /// SPI exchange (phase 6: the SD card); none = no card, every byte reads #FF
-    void SetSpi(std::function<uint8_t(uint8_t)> exchange) { _spi = std::move(exchange); }
+    /// The board's SPI master, shared with the CPU's #57 ([V] top.v:1056-1062,
+    /// spi.v): a DMA read takes the byte of the PREVIOUS exchange and starts a
+    /// new one sending #FF (as IN #57 does); a DMA write starts an exchange
+    /// sending the byte. `read` selects which; none = no card, reads give #FF
+    void SetSpi(std::function<uint8_t(bool read, uint8_t out)> spi) { _spi = std::move(spi); }
     /// Tests: emulate a firmware build with XTR_FEAT (BLT2)
     void SetBlt2Built(bool built) { _blt2 = built; }
 
@@ -84,6 +87,6 @@ private:
     TsConfInterrupts& _interrupts;
     uint8_t* _ram = nullptr;
     IdeAdapter* _ide = nullptr;
-    std::function<uint8_t(uint8_t)> _spi;
+    std::function<uint8_t(bool, uint8_t)> _spi;
     bool _blt2 = kBuildHasBlt2;
 };

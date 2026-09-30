@@ -179,7 +179,11 @@ void TsConfDma::Word()
         _ts.dmaSrc = NextAddress(_ts.dmaSrc, _ts.dmaSrcLow, srcAlign);
         return word;
     };
-    auto spiByte = [&](uint8_t out) { return _spi ? _spi(out) : static_cast<uint8_t>(0xFF); };
+    auto spiRead = [&] { return _spi ? _spi(true, 0xFF) : static_cast<uint8_t>(0xFF); };
+    auto spiWrite = [&](uint8_t out) {
+        if (_spi)
+            _spi(false, out);
+    };
 
     switch (_ts.dmaDevice)
     {
@@ -214,17 +218,17 @@ void TsConfDma::Word()
             break;
         case SpiIn:
         {
-            // Two exchanges sending #FF, low byte first ([V] dma.v:430-433)
-            const uint8_t lowByte = spiByte(0xFF);
-            const uint8_t highByte = spiByte(0xFF);
+            // Two pipelined reads, low byte first ([V] dma.v:252-257, 430-433)
+            const uint8_t lowByte = spiRead();
+            const uint8_t highByte = spiRead();
             _ts.dmaData = static_cast<uint16_t>(lowByte | (highByte << 8));
             WriteWord(_ts.dmaDst, _ts.dmaData);
             break;
         }
         case SpiOut:
             _ts.dmaData = readSource();
-            spiByte(static_cast<uint8_t>(_ts.dmaData));
-            spiByte(static_cast<uint8_t>(_ts.dmaData >> 8));
+            spiWrite(static_cast<uint8_t>(_ts.dmaData));
+            spiWrite(static_cast<uint8_t>(_ts.dmaData >> 8));
             break;
         case IdeIn:
             _ts.dmaData = _ide->DmaReadWord();
