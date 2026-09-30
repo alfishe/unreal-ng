@@ -84,6 +84,7 @@ private slots:
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);
     void updateCpuFreqToolTip(EmulatorContext* context);
     void updateRzx(std::shared_ptr<Emulator> emulator);
+    void applyRzxStyle();
     void updateTtd(EmulatorContext* context);
 
 private:
@@ -102,6 +103,8 @@ private:
     QLabel* _rzx = nullptr;               ///< RZX playback progress, shown while a recording was played
     QLabel* _ttd = nullptr;               ///< TTD history replay progress, shown while positioned in the past
     RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop
+    bool _rzxPopoverOpen = false;         ///< the label shows it (a toggle)
+    bool _rzxDesynced = false;            ///< the label is red after a desync
     uint8_t _rzxLastState = 0xFF;         ///< rzx::PlayerState of the last tick (end / desync message once)
 
     QTimer _pollTimer;
