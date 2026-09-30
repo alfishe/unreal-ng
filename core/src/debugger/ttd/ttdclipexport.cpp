@@ -223,8 +223,24 @@ TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDCl
         json << ",\n    \"planeb\": {\"files\": \"planeb_NNNN.zst\", \"bytes_per_pixel\": 2, "
              << "\"encoding\": \"u16le: attr[0:7] color[8:11] ink[12] role[13:14] (1 screen, 2 border)\"}";
     }
-    json << "\n  },\n"
-         << "  \"meta\": \"meta.jsonl: frame, p7FFD, active_screen, border at the frame's start\"\n"
+    json << "\n  },\n";
+    if (result.planeB && _context->pScreen)
+    {
+        // The 16 ZX colors plane B's color indices were drawn in (the live palette):
+        // a consumer mixing plane B needs them, not a copy of some default table
+        uint32_t palette[16];
+        _context->pScreen->GetRGBAPalette16(palette);
+        json << "  \"palette16\": [";
+        for (int c = 0; c < 16; ++c)
+        {
+            char hex[16];
+            std::snprintf(hex, sizeof(hex), "\"#%02x%02x%02x\"", palette[c] & 0xFF, (palette[c] >> 8) & 0xFF,
+                          (palette[c] >> 16) & 0xFF);
+            json << (c ? ", " : "") << hex;
+        }
+        json << "],\n";
+    }
+    json << "  \"meta\":\"meta.jsonl: frame, p7FFD, active_screen, border at the frame's start\"\n"
          << "}\n";
     const std::string text = json.str();
     if (!WriteFile(dir / "clip.json", std::vector<uint8_t>(text.begin(), text.end()), result.bytesWritten))

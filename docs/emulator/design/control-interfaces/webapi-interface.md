@@ -375,6 +375,8 @@ GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, be
 GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too
 GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture)
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
+GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, written, late, restarts, last_ms, average_ms, algorithms[], default_algorithm
+PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
@@ -392,6 +394,15 @@ GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest rea
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
+
+The ZX DLSS de-flicker blends frames that flicker between two pictures (a
+"gigascreen" effect) into one steady picture before it is shown. It looks at
+the frames that follow, so while it is on the picture is shown later by the
+algorithm's look-ahead and the sound is delayed by the same extra amount:
+`mod-tpgwafsd` (the default) gives `video_delay_frames` 7 (about 143 ms on a
+Pentagon) with the default A/V delay of 2, and `audio_extra_delay_frames` 5.
+Emulation itself is not delayed. The same status is CLI `video temporal`,
+Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same

@@ -1337,6 +1337,37 @@ never be silently mislabeled. The same switch exists as `setting audio_rate`,
 WebAPI `PUT /settings/audio_rate`, Lua/Python `set_audio_rate` and the Lua
 `video_record` `audio_rate` option.
 
+#### 5.9 Temporal Effects (ZX DLSS De-flicker)
+
+Some ZX Spectrum programs show more colors by switching two pictures every
+frame (a "gigascreen" or flicker effect). On a modern display this flickers;
+the ZX DLSS de-flicker blends such frames into one steady picture. It runs on
+every emulated frame just before the frame is shown.
+
+To decide how to blend a frame the algorithm looks at the frames that follow
+it, so while it is on the picture is shown a few frames later. The sound is
+delayed by the same extra amount so picture and sound stay in sync. Example:
+`mod-tpgwafsd` (the default) needs a 7-frame video delay; with the default
+A/V delay of 2 frames the sound is delayed by 5 more frames (about 100 ms at
+50 frames per second). Emulation itself is not delayed: only what you see and
+hear.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `video temporal` / `video temporal status` | | Show the selected algorithm, whether it runs, the video and audio delay it causes, frame counters and processing time. |
+| `video temporal list` | | List the algorithms that can be switched on (the default is `mod-tpgwafsd`). |
+| `video temporal <algorithm>` | algorithm name | Switch the de-flicker on with that algorithm. An unknown name is an error that lists the valid ones. |
+| `video temporal off` | | Switch the de-flicker off (the delays return to the normal A/V delay). |
+
+The same status and switch are available as WebAPI
+`GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
+`video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
+actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
+when off), `active`, `inactive_reason`, `video_delay_frames`,
+`video_delay_ms`, `audio_extra_delay_frames`, `processed`, `written`, `late`
+(outputs finished after their frame was already shown), `restarts`,
+`last_ms`, `average_ms`, `algorithms`, `default_algorithm`.
+
 ### 6. System State Inspection
 
 Commands to inspect the runtime hardware configuration and peripheral state of the selected emulator instance. All state inspection commands are organized under the `state` command hierarchy for consistency and discoverability.

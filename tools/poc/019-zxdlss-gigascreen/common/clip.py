@@ -106,12 +106,26 @@ class ClipV2:
         self.h, self.w = self.info["height"], self.info["width"]
         self.chunk = self.info["chunk"]
         self.has_planeb = "planeb" in self.info["planes"]
+        self.zx_palette = self._palette16()
         self.meta = [json.loads(l) for l in open(os.path.join(path, "meta.jsonl"))]
         self._dctx = zstandard.ZstdDecompressor()
         self._cache = {}
 
     def __len__(self):
         return len(self.meta)
+
+    def _palette16(self):
+        """16 x 3 uint8: the ZX colors plane B's color indices were drawn in (the
+        emulator's live palette at export, index = bright * 8 + color). An index the
+        clip never draws is null in clip.json and black here (nothing can need it)."""
+        if not self.has_planeb:
+            return None
+        entries = self.info.get("palette16")
+        if entries is None:
+            raise ValueError(f"{self.path}: clip.json has no palette16 - exported before the core wrote it; "
+                             f"run capture/add_palette16.py on it")
+        return np.array([[int(v[1:3], 16), int(v[3:5], 16), int(v[5:7], 16)] if v else [0, 0, 0]
+                         for v in entries], np.uint8)
 
     def _load(self, kind, cid, dtype, shape):
         key = (kind, cid)

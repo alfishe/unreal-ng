@@ -22,6 +22,7 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
+#include "../../../temporalstatus.h"
 #include <debugger/debugmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
@@ -3956,6 +3957,23 @@ public:
         lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
+        });
+        // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
+        lua.set_function("video_temporal", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, TemporalStatus::Report(ctx));
+        });
+        lua.set_function("video_temporal_set", [this](sol::this_state s, const std::string& name) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (!TemporalStatus::Set(ctx, name))
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = ctx ? "Unknown temporal algorithm '" + name + "'. Valid: " + TemporalStatus::OfferedList() + ", off"
+                                     : std::string("No emulator selected");
+                return StateNodeToLua(s, error);
+            }
+            return StateNodeToLua(s, TemporalStatus::Report(ctx));
         });
 
         // Halt/active cost of the last frame plus session averages

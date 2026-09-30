@@ -25,7 +25,6 @@ frame it is visible again (the first, with t+1).
 """
 import numpy as np
 
-from common.zxscreen import ZX_RGB
 from python.dlss_v1 import P2, PASS
 from python.dlss_v7 import MOTION_VETO, DeflickerV7  # noqa: F401
 

@@ -1145,6 +1145,97 @@ TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFrame
     EXPECT_EQ(events.back().first, 1.0); // final report reaches 100%
 }
 
+namespace
+{
+Json::Value TemporalStatusBody(const std::string& algorithm, bool active)
+{
+    Json::Value status;
+    status["algorithm"] = algorithm;
+    status["active"] = active;
+    status["inactive_reason"] = "";
+    status["video_delay_frames"] = algorithm.empty() ? 2 : 7;
+    status["video_delay_ms"] = algorithm.empty() ? 40.96 : 143.36;
+    status["audio_extra_delay_frames"] = algorithm.empty() ? 0 : 5;
+    status["processed"] = 100;
+    status["written"] = 100;
+    status["late"] = 0;
+    status["restarts"] = 0;
+    status["last_ms"] = 4.9;
+    status["average_ms"] = 4.8;
+    status["algorithms"].append("mod-tpgwafsd");
+    status["default_algorithm"] = "mod-tpgwafsd";
+    return status;
+}
+} // namespace
+
+TEST_F(McpTools_Test, CaptureMedia_TemporalStatus_GetsTemporalRouteWithSummary)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/video/temporal"] = {200, TemporalStatusBody("mod-tpgwafsd", true)};
+
+    Json::Value args;
+    args["action"] = "temporal_status";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/temporal"));
+    EXPECT_NE(result.text.find("ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, late 0, "
+                               "restarts 0"),
+              std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["default_algorithm"].asString(), "mod-tpgwafsd");
+}
+
+TEST_F(McpTools_Test, CaptureMedia_TemporalSet_PutsAlgorithm)
+{
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/temporal"] = {200, TemporalStatusBody("mod-tpgwafsd", true)};
+
+    Json::Value args;
+    args["action"] = "temporal_set";
+    args["algorithm"] = "mod-tpgwafsd";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/video/temporal");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["algorithm"].asString(), "mod-tpgwafsd");
+    EXPECT_NE(result.text.find("ZX DLSS mod-tpgwafsd active"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_TemporalSetOff_SendsEmptyAlgorithm)
+{
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/temporal"] = {200, TemporalStatusBody("", false)};
+
+    Json::Value args;
+    args["action"] = "temporal_set";
+    args["algorithm"] = "off";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/video/temporal");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body.isMember("algorithm"));
+    EXPECT_EQ(call->body["algorithm"].asString(), "");
+    EXPECT_NE(result.text.find("ZX DLSS off, video +2 frames"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_TemporalSet_RejectsMissingAlgorithmAndReportsUnknownName)
+{
+    Json::Value args;
+    args["action"] = "temporal_set";
+    mcp::ToolResult missing = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_FALSE(_caller->Saw("PUT", "/api/v1/emulator/emu-1/video/temporal"));
+
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "Unknown temporal algorithm 'nope'. Valid: mod-tpgwafsd, off";
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/temporal"] = {400, error};
+    args["algorithm"] = "nope";
+    mcp::ToolResult unknown = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(unknown.isError);
+    EXPECT_NE(unknown.text.find("HTTP 400"), std::string::npos) << unknown.text;
+}
+
 // ===========================================================================
 // time_travel (TD-4 — agent bookmarks)
 // ===========================================================================

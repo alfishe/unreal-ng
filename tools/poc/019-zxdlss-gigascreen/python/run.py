@@ -18,7 +18,6 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.clip import Clip, ClipV2  # noqa: E402
-from common.zxscreen import ZX_RGB  # noqa: E402
 from python.dlss_v1 import CLASS_COLORS, CLASS_NAMES  # noqa: E402
 from python.mixers import MIXERS  # noqa: E402
 from python.quality import Oracle, QualityAccumulator  # noqa: E402
@@ -41,12 +40,14 @@ ap.add_argument("--out", default="out/v1")
 ap.add_argument("--video", default="mp4", choices=["mp4", "gif", "none"])
 ap.add_argument("--dump", help="write the exact output as an RGB dump (zxdlss-rgb-dump, as zxdlss-render --dump)")
 ap.add_argument("--oracle2", action="store_true", help="also score with oracle2 (multi-reference) and oracle3 (pixel XOR + averaging)")
+ap.add_argument("--warmup", type=int, default=0,
+                help="feed this many frames before --from first (history, as in a continuous run); not scored")
 args = ap.parse_args()
 
 clip = ClipV2(args.clip) if args.clip_v2 else Clip(args.clip)
 if args.alg in NEEDS_PLANE_B and not args.clip_v2:
     sys.exit(f"{args.alg} needs plane B: use a core-exported clip with --clip-v2")
-palette = ZX_RGB if args.clip_v2 else clip.palette_rgb
+palette = clip.zx_palette if args.clip_v2 else clip.palette_rgb
 i0, i1 = clip.index_of_frame(args.first), clip.index_of_frame(args.last)
 alg = ALGORITHMS[args.alg]((clip.h, clip.w), MIXERS[args.mixer](palette))
 os.makedirs(args.out, exist_ok=True)
@@ -91,7 +92,7 @@ def feed(j):
     return alg.process(p)
 
 
-for j in range(i0, i0 + delay):
+for j in range(max(0, i0 - args.warmup), i0 + delay):
     feed(j)
 for i in range(i0, i1 + 1):
     plane = clip.plane(i)

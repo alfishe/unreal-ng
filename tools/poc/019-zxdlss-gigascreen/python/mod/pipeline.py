@@ -37,7 +37,7 @@ class DeflickerMoD:
         self.threshold = threshold
         self.stages = [(st, [REGISTRY[name](**params) for name, params in st.detectors]) for st in self.graph]
         history = max(d.history for _, ds in self.stages for d in ds)
-        self.ctx = FrameContext(shape, lookahead, depth=lookahead + history + 2)
+        self.ctx = FrameContext(shape, lookahead, depth=lookahead + history + 2, palette_rgb=mixer.palette_rgb)
         self.classifier = SceneClassifier()
         self.last_motion = np.zeros((self.h, self.w // 8), bool)
         self.last_scene = None

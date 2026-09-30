@@ -1,22 +1,16 @@
-# tools/verification/zxdlss - ZX DLSS algorithm module and tools.
+# tools/verification/zxdlss - ZX DLSS verification tools.
 #
-#   zxdlss_algo    de-flicker algorithms behind one interface (algo/include/zxdlss/algorithm.h);
-#                  no emulator dependency. OBJECT library: every algorithm registers itself
-#                  from its own translation unit, which a static archive would drop.
+# The algorithms live in the emulator core (core/src/emulator/video/zxdlss, the
+# interface in algorithm.h); the tools link the core. Only the literal,
+# unoptimized reference implementation (algo/src/mod_tpgw_ref.cpp, "mod-tpgw-ref")
+# stays here: it exists to check the optimized one bit for bit, and registers
+# itself from the tool binaries.
+#
 #   zxdlss-render  TTD file or clip -> algorithm -> video / exact RGB dump
 #   zxdlss-bench   per-frame cost of an algorithm on a clip
 #
 # Built from the root with -DBUILD_ZXDLSS_TOOLS=ON (targets excluded from `all`):
 #   ninja zxdlss-render zxdlss-bench
-
-add_library(zxdlss_algo OBJECT
-    algo/src/palette.cpp
-    algo/src/registry.cpp
-    algo/src/mod_tpgw.cpp
-    algo/src/mod_tpgw_ref.cpp
-)
-target_include_directories(zxdlss_algo PUBLIC algo/include PRIVATE algo/src)
-target_compile_features(zxdlss_algo PUBLIC cxx_std_20)
 
 set(ZXDLSS_COMMON_LIBS)
 if (APPLE)
@@ -25,35 +19,30 @@ elseif (UNIX)
     set(ZXDLSS_COMMON_LIBS pthread)
 endif ()
 
-add_executable(zxdlss-render EXCLUDE_FROM_ALL
-    tool/main.cpp
-    tool/frames.cpp
-    tool/ttd_source.cpp
-    $<TARGET_OBJECTS:zxdlss_algo>
-)
-target_include_directories(zxdlss-render PRIVATE algo/include)
-target_link_libraries(zxdlss-render PRIVATE ${ZXDLSS_COMMON_LIBS})
+# the emulator reads its machine configs and ROMs next to the binary: one copy
+# step both tools depend on (two POST_BUILD copies of the same folders race)
+add_custom_target(zxdlss-data
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMENT "zxdlss tools: copying machine configs and ROMs")
 
-if (TARGET core)
+foreach (tool zxdlss-render zxdlss-bench)
+    if (tool STREQUAL "zxdlss-render")
+        set(main tool/main.cpp)
+    else ()
+        set(main tool/bench.cpp)
+    endif ()
+    add_executable(${tool} EXCLUDE_FROM_ALL
+        ${main}
+        tool/frames.cpp
+        tool/ttd_source.cpp
+        algo/src/mod_tpgw_ref.cpp
+    )
+    target_compile_features(${tool} PRIVATE cxx_std_20)
     # TTD input replays sessions through the emulator core (which brings zstd)
-    target_compile_definitions(zxdlss-render PRIVATE ZXDLSS_WITH_CORE)
-    target_include_directories(zxdlss-render PRIVATE ${CMAKE_SOURCE_DIR}/core/src
+    target_compile_definitions(${tool} PRIVATE ZXDLSS_WITH_CORE)
+    target_include_directories(${tool} PRIVATE ${CMAKE_SOURCE_DIR}/core/src
         $<TARGET_PROPERTY:libzstd_static,INTERFACE_INCLUDE_DIRECTORIES>)
-    target_link_libraries(zxdlss-render PRIVATE core recording)
-    # the emulator reads its machine configs and ROMs next to the binary
-    add_custom_command(TARGET zxdlss-render POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-        COMMENT "zxdlss-render: copying machine configs and ROMs")
-else ()
-    target_link_libraries(zxdlss-render PRIVATE libzstd_static)
-endif ()
-
-add_executable(zxdlss-bench EXCLUDE_FROM_ALL
-    tool/bench.cpp
-    tool/frames.cpp
-    tool/ttd_source.cpp
-    $<TARGET_OBJECTS:zxdlss_algo>
-)
-target_include_directories(zxdlss-bench PRIVATE algo/include)
-target_link_libraries(zxdlss-bench PRIVATE libzstd_static ${ZXDLSS_COMMON_LIBS})
+    target_link_libraries(${tool} PRIVATE core recording ${ZXDLSS_COMMON_LIBS})
+    add_dependencies(${tool} zxdlss-data)
+endforeach ()
