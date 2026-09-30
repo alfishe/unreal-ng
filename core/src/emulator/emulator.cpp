@@ -27,6 +27,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/tape/loader_tape.h"
@@ -1464,9 +1465,9 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return played.Ok();
     }
 
-    if (ext != "z80" && ext != "sna" && ext != "szx")
+    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg")
     {
-        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna or .szx", ext.c_str());
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx or .spg", ext.c_str());
         if (_context)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1515,6 +1516,14 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
 
                 /// endregion </Load Z80 snapshot>
             }
+            else if (ext == "spg")
+            {
+                // TS-Conf SDK program (loaderspg.h): the TS-Conf machine only
+                LoaderSPG loaderSpg(_context, absolutePath);
+                result = loaderSpg.load();
+                if (!result)
+                    error = loaderSpg.GetError();
+            }
             else if (ext == "szx")
             {
                 /// region <Load SZX snapshot>
@@ -1542,9 +1551,9 @@ bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::str
         return false;
     }
     const std::string ext = StringHelper::ToLower(extension);
-    if (ext != "z80" && ext != "sna" && ext != "szx")
+    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg")
     {
-        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna or szx", ext.c_str());
+        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna, szx or spg", ext.c_str());
         if (_context)
             MessageCenter::DefaultMessageCenter().Post(
                 NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", reportedPath, false));
@@ -1584,7 +1593,15 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
         MLOGINFO("SZX image loaded:\n%s", report.ToText().c_str());
         return true;
     }
-    error = "snapshot type '" + ext + "' is not supported (sna, z80, szx)";
+    if (ext == "spg")
+    {
+        LoaderSPG loader(_context, data, "memory");
+        if (loader.load())
+            return true;
+        error = loader.GetError();
+        return false;
+    }
+    error = "snapshot type '" + ext + "' is not supported (sna, z80, szx, spg)";
     return false;
 }
 
@@ -2132,8 +2149,9 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
-    // rzx: an input recording, opened as its start snapshot plus the playback
-    return {"sna", "z80", "szx", "rzx"};
+    // rzx: an input recording, opened as its start snapshot plus the playback;
+    // spg: a TS-Conf program (the TS-Conf machine only)
+    return {"sna", "z80", "szx", "spg", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

@@ -547,7 +547,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             std::string ext = path.substr(dot + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "rzx";
+            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx";
             const auto& tapeExtensions = TapeExtensions();
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||

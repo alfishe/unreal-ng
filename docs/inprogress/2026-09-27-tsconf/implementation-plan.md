@@ -373,7 +373,20 @@ clears (with a frame cap).
   (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
 - Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
   read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).
-Open in phase 6: SPG-1…3 (step 6b), BOOT-3 / BOOT-4 (fixtures), IDE-5.
+**SPG built (step 6b).** `LoaderSPG` (`loaders/snapshot/loaderspg.*`): v1.0 and
+v1.1 (the ancestor refused 1.1), parse and depack first, then commit to a
+TS-Conf machine; `ZxDepack::MegaLz / Hrust` (`zxdepackers.*`, a bounds-checked
+port of lvd's mhmt depackers). Wired into `Emulator::LoadSnapshot` / the
+in-memory path, the supported-extension list, the Qt dialog and file manager,
+the GDB server and MCP. Test programs from the TS-Conf SDK in
+`testdata/machines/tsconf/spg` (public domain, README there); every compressed
+block was compared byte for byte with the mhmt reference depacker (26 blocks).
+Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
+(v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
+example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
+the pager / resident addresses and the v1.1 picture; v0.x refused.
+Open in phase 6: BOOT-3 / BOOT-4 (TS-BIOS booting an SD folder / IDE image),
+IDE-5.
 
 | ID | Asserts |
 |:--|:--|
