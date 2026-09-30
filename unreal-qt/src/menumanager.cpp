@@ -819,8 +819,8 @@ void MenuManager::createMachineMenu()
     _machineMenu->addSeparator();
     _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
     _contentionAction->setStatusTip(
-        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 (no effect on other machines); "
-           "fixed while TTD records or replays"));
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3, and ULA snow on the 48K / 128K / +2 "
+           "(no effect on other machines); fixed while TTD records or replays"));
     _contentionAction->setCheckable(true);
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);

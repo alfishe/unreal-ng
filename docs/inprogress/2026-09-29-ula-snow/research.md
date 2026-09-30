@@ -100,7 +100,30 @@ M1's increment** (as the Z80 puts `R` on the bus, then increments it; ZX-M8XXX u
 "4th tick of the fetch" and "3rd / 5th tick of the ULA cycle" count one tick later on both sides, which gives
 the same instant.
 
-## 7. unreal-ng before this work
+## 7. Cross-check against the MiSTer ZX-Spectrum core
+
+`rtl/ula.sv` (MiSTer ZX-Spectrum core; the snow timing fix of 2026-07-24, commit `a2bc564`, samples MREQ and
+RFSH through the ULA's transparent latches on the CPU clock's low phase):
+
+```
+if (mZX & ~m128 & ~mreqt23 & ~rfsht23 & contendAddr & snow_ena) case(hc_next[3:0])
+    'h8,'hC: vaddr[6:0] <= addr[6:0]; // R register corrupts DRAM row address
+```
+
+`hc` counts pixels (two per T-state); `h8` / `hC` load the row address of the first / second cell's bitmap, and
+the attribute fetch at `hA` / `hE` changes only bits 14..7, so bits 6..0 are shared by a cell's pixel byte and
+attribute.
+
+| Point | MiSTer | unreal-ng | Evidence |
+|:--|:--|:--|:--|
+| Condition | `I` in #40-#7F (the address bus in slow memory) | the same | agree |
+| Bits taken from the refresh | 6..0, pixel byte and attribute of the cell | the same | agree |
+| First cell's tick | the RAS of cell 0 at `hc_next` = 8: INT + 14338, the floating bus's first-bitmap tick | T3 on the floating bus's pixel byte 1 tick | agree |
+| R | the address bus during the refresh | R before the increment (what the bus carries) | agree; the photos exclude "after" |
+| Second cell (`hC`) | snow: the second cell's row from R | double: the second cell repeats the first (Weiv) | **the photos side with Weiv**: with MiSTer's rule Snow Hold also shows ladders at columns 13 and 27 in every band (checked in unreal-ng with the rule switched), none of the three machines shows them |
+| 128K / +2 | no snow (`~m128`: "ULA-128 has no snow bug") | snow, #C0-#FF with an odd page too | Weiv: Snow128N and videos of a real +2 show snow; no hardware source for the MiSTer rule. Open until a photo of snowtest on a 128K / +2 |
+
+## 8. unreal-ng before this work
 
 No snow: `I` reached the bus only for the no-MREQ contention of internal cycles (`Z80::IR()`), the renderer read
 the screen memory directly, and [the M1 contention design](../2026-09-28-m1-contention/design.md) listed snow as a
