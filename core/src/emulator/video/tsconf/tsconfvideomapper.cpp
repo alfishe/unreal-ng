@@ -192,7 +192,7 @@ bool TsConfVideoMapper::SourcesAt(const VideoState& s, const MemView& m, size_t 
         out.sources.clear();
         TsuSources(sources[dot], out.sources);
         out.sources.push_back(CramCell(out.colourIndex));
-        out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex]);
+        out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex], v->vdac);
         return true;
     }
     if (layerIndex != 0)
@@ -264,7 +264,7 @@ bool TsConfVideoMapper::SourcesAt(const VideoState& s, const MemView& m, size_t 
             break;
         }
     }
-    out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex]);
+    out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex], v->vdac);
     return true;
 }
 
@@ -277,7 +277,7 @@ void TsConfVideoMapper::BorderSources(const VideoState& s, LayerContribution& ou
     out.colourIndex = v->ts->regs[TsConfReg::Border];
     // BORDER is TS register #0F (a CRAM index; #FE writes set it with PAL_SEL, hs §4.3)
     out.sources = {{Space::Register, 0, 0x0FAF, 0, 1, 0xFF, SourceRole::Border}, CramCell(out.colourIndex)};
-    out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex]);
+    out.rgb = ScreenTSConf::CramToRgba(v->ts->cram[out.colourIndex], v->vdac);
 }
 
 void TsConfVideoMapper::TsuPixelsFor(const TsConfVideoView& v, const SourceRef& ref, std::vector<SurfaceArea>& out)

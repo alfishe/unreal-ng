@@ -35,12 +35,26 @@ ScreenTSConf::ScreenTSConf(EmulatorContext* context) : ScreenZX(context)
 {
 }
 
-uint32_t ScreenTSConf::CramToRgba(uint16_t cram)
+uint32_t ScreenTSConf::CramToRgba(uint16_t cram, uint8_t vdac)
 {
-    const uint32_t r = kPwm.level[(cram >> 10) & 0x1F];
-    const uint32_t g = kPwm.level[(cram >> 5) & 0x1F];
-    const uint32_t b = kPwm.level[cram & 0x1F];
-    return 0xFF000000u | (b << 16) | (g << 8) | r;
+    uint32_t level[3] = {static_cast<uint32_t>((cram >> 10) & 0x1F), static_cast<uint32_t>((cram >> 5) & 0x1F),
+                         static_cast<uint32_t>(cram & 0x1F)};
+    for (uint32_t& v : level)
+    {
+        if (vdac == 0)
+            v = kPwm.level[v];                  // no VDAC: 2-bit DAC + PWM, time-averaged
+        else if (!(cram & 0x8000))
+            v = v >= 24 ? 255 : v * 255 / 24;   // PWM-compatible linear curve (hs §4.3)
+        else
+        {
+            // The DAC's bits of the channel, its full scale = 255 ([U] tsconf.cpp
+            // keeps Ccccc000 for 5 bits; the bit replication here makes 31 white)
+            const uint32_t bits = vdac == 1 ? 3u : (vdac == 2 ? 4u : 5u);
+            const uint32_t code = v >> (5 - bits);
+            v = code * 255 / ((1u << bits) - 1);
+        }
+    }
+    return 0xFF000000u | (level[2] << 16) | (level[1] << 8) | level[0];
 }
 
 VideoModeEnum ScreenTSConf::ModeOf(uint8_t vConfig)
@@ -143,6 +157,7 @@ const void* ScreenTSConf::VideoFamilyView() const
     _view.engine = _engine;
     _view.state = &_context->emulatorState;
     _view.ram = _context->pMemory ? _context->pMemory->RAMBase() : nullptr;
+    _view.vdac = _context->config.ts_vdac;
     return &_view;
 }
 
@@ -185,6 +200,12 @@ void ScreenTSConf::RefreshPalette(const TsConfState& ts)
 {
     // The beam renderer calls this for every few dots: the unchanged case is
     // one 512-byte compare
+    const uint8_t vdac = _context ? _context->config.ts_vdac : 0;
+    if (vdac != _paletteVdac)
+    {
+        _paletteVdac = vdac;
+        _paletteValid = false;
+    }
     if (_paletteValid && std::memcmp(ts.cram, _paletteCram, sizeof(_paletteCram)) == 0)
         return;
     for (uint32_t i = 0; i < 256; i++)
@@ -192,7 +213,7 @@ void ScreenTSConf::RefreshPalette(const TsConfState& ts)
         if (!_paletteValid || ts.cram[i] != _paletteCram[i])
         {
             _paletteCram[i] = ts.cram[i];
-            _palette[i] = CramToRgba(ts.cram[i]);
+            _palette[i] = CramToRgba(ts.cram[i], vdac);
         }
     }
     _paletteValid = true;

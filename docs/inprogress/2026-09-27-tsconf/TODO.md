@@ -116,7 +116,9 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   video mapper this is what a TSU / palette debug view integrates
 - [x] TSU-6 (2026-09-30, branch `tsconf-tsu6`): the TSU draws line L at
   `ts_start` of line L - 1 with its latches
-- [ ] Open: VDAC curves; TIM-5; the 1.1x speed target; DBG-3 and TS docks with
+- [x] VDAC builds (2026-09-30, branch `tsconf-vdac`): `[MISC] TS_VDAC` /
+  `TS_VDAC2` set STATUS VDAC_VER, the palette curve and BLT2; default NONE
+- [ ] Open: TIM-5; the 1.1x speed target; DBG-3 and TS docks with
   the model-first debugger
 - [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
   palette cache, pixel-identical to the old renderer (test TSO2); frame render

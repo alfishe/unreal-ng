@@ -100,8 +100,11 @@ Tests in `core/tests/emulator/machines/tsconf/` (`portdecoder_tsconf_test`,
 `tsconfmemory_test`, `ttdtsconfstate_test`; fixture `tsconffixture.h`), plus
 `TSL` in `TTD_ModelPageBounds_Test` (MEM-6) and `EmulatorManager_Test`.
 Deviations and open items:
-- **REG-2**: STATUS `VDAC_VER` is the constant 0 of the standard `quartus`
-  build (no VDAC, Nemo IDE fitted); a `TS_VDAC` config key comes with the VDAC curves.
+- **REG-2**: STATUS `VDAC_VER` follows `[MISC] TS_VDAC` (2026-09-30, branch
+  `tsconf-vdac`): 0 for the standard `quartus` build (the default), 1 / 2 / 3 / 7
+  for the video DAC builds, which also have BLT2 and the VDAC palette curves
+  (test `VDAC_CurvesStatusAndRender`, `DMA5_Blit2InTheVdacBuilds`); the build
+  is in `/state/tsconf` `build{}`.
 - **MRG-1 closed by MEM-1…6 and P7F-1…7** (2026-09-30 review): they pin the
   TS-Conf bank map; a `modelsregression_test` row would need that harness to
   learn the TS ROM layout for no extra coverage.

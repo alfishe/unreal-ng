@@ -56,11 +56,15 @@ Never built in any of them: `COPPER`, `FDR`, `PENT_312`, `AUTO_INT`,
 `XTR_FEAT` gates: DMA BLT2, `V_CONFIG` bit 3 `GFXOVR`, `T_CONFIG` bit 0 (360-wide
 TS window).
 
-**Emulator decision (D1):** implement the **superset** — all `XTR_FEAT`
-features always present (as the ancestor does) — and derive `VDAC_VER` + the
-palette DAC curve from the existing ini key `TS_VDAC` (`OFF` → 0 and PWM curve,
-`5BIT` → 3, `VDAC2` → 7). The shipped ini says `TS_VDAC=5BIT`. FT812/ESP32
-(`TS_VDAC2`) are out of v1 scope; `V_CONFIG` bit 2 is stored and ignored.
+**Emulator decision (D1):** implement the **superset** — `GFXOVR` and the
+360-wide TS window always present (as the ancestor does) — and derive
+`VDAC_VER`, the palette DAC curve and BLT2 from the ini key `[MISC] TS_VDAC`
+(`NONE` → 0, PWM curve, no BLT2 - the default and the shipped setting since
+2026-09-30, the standard build with the IDE board; `3BIT` / `4BIT` / `5BIT` →
+1 / 2 / 3; `TS_VDAC2=1` → 7; the VDAC values have BLT2 and the §4.3 VDAC
+curves). A video DAC sits on the IDE connector; the emulator leaves the IDE to
+`[HDD] Scheme`. FT812 / ESP32 are out of scope; `V_CONFIG` bit 2 is stored
+and ignored.
 
 ## 1. Machine overview
 
@@ -331,7 +335,9 @@ Entry: `[14:10]` R, `[9:5]` G, `[4:0]` B, `[15]` VDAC mode flag.
   `video_out.v:75-132`). Emulator: static time-average, i.e. [M]'s 32-entry
   `pwm_to_rgb` LUT.
 - **VDAC builds** (`5BIT`): bit 15 = 1 → direct 5-bit per channel; bit 15 = 0 →
-  PWM-compatible linear 0..24 curve ([U] `tsconf.cpp:49-62`).
+  PWM-compatible linear 0..24 curve ([U] `tsconf.cpp:49-62`). 3 / 4-bit DACs
+  take the top 3 / 4 bits. The emulator scales each DAC to full 255 (bit
+  replication: 31 = white; [U] keeps `Ccccc000`, max 248).
 - **Writes are immediate** (CRAM is dual-port, read per pixel): a mid-line
   write changes the rest of that line ([V] `zmaps.v:64-77`, `video_out.v:135-151`).
 - **Power-on contents** = `video/mem/video_cram.mif` loaded at FPGA

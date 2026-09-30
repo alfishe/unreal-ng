@@ -61,8 +61,12 @@ public:
     void RenderOnlyMainScreen() override;
     void FillBorderWithColor(uint8_t color) override;
 
-    /// Framebuffer RGBA (0xAABBGGRR) of a CRAM word, no-VDAC build (hs §4.3)
-    static uint32_t CramToRgba(uint16_t cram);
+    /// Framebuffer RGBA (0xAABBGGRR) of a CRAM word (hs §4.3). `vdac` = the
+    /// build's STATUS VDAC_VER ([MISC] TS_VDAC): 0 = no VDAC (2-bit DAC + PWM,
+    /// time-averaged); 1 / 2 / 3 / 7 = a 3 / 4 / 5-bit video DAC: CRAM bit 15
+    /// set = the channel's 5 bits through the DAC, clear = the PWM-compatible
+    /// linear curve (levels 0..24, then full)
+    static uint32_t CramToRgba(uint16_t cram, uint8_t vdac = 0);
     /// Video mode of a V_CONFIG value
     static VideoModeEnum ModeOf(uint8_t vConfig);
 
@@ -87,5 +91,6 @@ private:
     mutable TsConfVideoView _view;
     uint32_t _palette[256] = {};      ///< RGBA of each CRAM entry
     uint16_t _paletteCram[256] = {};  ///< the CRAM words _palette was built from
+    uint8_t _paletteVdac = 0;         ///< the DAC _palette was built for
     bool _paletteValid = false;
 };

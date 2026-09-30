@@ -63,9 +63,10 @@ public:
         ComPort,         ///< #EF
     };
 
-    /// STATUS [2:0] VDAC_VER of the emulated firmware build: the standard
-    /// `quartus` build (no VDAC, Nemo IDE fitted) reports 0 (hardware-spec §0.1, §3.3)
-    static constexpr uint8_t kVdacVersion = 0;
+    /// STATUS [2:0] VDAC_VER of the emulated firmware build ([MISC] TS_VDAC):
+    /// 0 = the standard `quartus` build (no VDAC, Nemo IDE), 3 = `quartus_vdac`
+    /// (5-bit), 7 = `quartus_vdac2` (hardware-spec §0.1, §3.3)
+    uint8_t VdacVersion() const { return _context->config.ts_vdac & 0x07; }
 
     /// region <Constructors / Destructors>
 public:

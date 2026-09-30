@@ -381,3 +381,18 @@ TEST_F(TsConfDma_Test, TIM3_WordCosts)
     EXPECT_EQ(Dma().WordCost(), 3u) << "blit";
     Dma().Reset();
 }
+
+/// The VDAC builds are XTR_FEAT builds: BLT2 is there after a reset
+TEST_F(TsConfDma_Test, DMA5_Blit2InTheVdacBuilds)
+{
+    _context->config.ts_vdac = 3;
+    _decoder->reset();
+    Launch(0x40000, 0x50000, 0, 0, 0x06);  // BLT2 (add), one word
+    EXPECT_NE(Dma().WordCost(), 0u) << "BLT2 runs";
+    Dma().Reset();
+    _context->config.ts_vdac = 0;
+    _decoder->reset();
+    Launch(0x40000, 0x50000, 0, 0, 0x06);
+    EXPECT_EQ(Dma().WordCost(), 0u) << "the standard build hangs on BLT2";
+    Dma().Reset();
+}

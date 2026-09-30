@@ -739,6 +739,28 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [MISC] RAMPowerOn='%s' - using RANDOM (RANDOM | ZERO)", powerOn);
 	}
 	
+	// TS-Conf video DAC (the firmware build: STATUS VDAC_VER, the palette curve).
+	// NONE is the standard build (the IDE board, PWM colours); a video DAC sits
+	// on the IDE connector. TS_VDAC2=1 selects the VDAC2 (FT812) build
+	{
+		const char* vdac = inimanager.GetValue(misc, "TS_VDAC", "NONE");
+		const std::string v = vdac ? vdac : "NONE";
+		if (v == "3BIT")
+			config.ts_vdac = 1;
+		else if (v == "4BIT")
+			config.ts_vdac = 2;
+		else if (v == "5BIT")
+			config.ts_vdac = 3;
+		else
+		{
+			config.ts_vdac = 0;
+			if (v != "NONE" && v != "OFF")
+				MLOGWARNING("Config: unknown [MISC] TS_VDAC='%s' - using NONE (NONE | 3BIT | 4BIT | 5BIT)", vdac);
+		}
+		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
+			config.ts_vdac = 7;
+	}
+
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.
 	char netValue[64] = {};
