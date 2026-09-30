@@ -297,3 +297,41 @@ the AVR main-loop jitter (not deterministic on hardware either; the model
 uses the fixed service time). The peer starts a byte only while RTS is asserted and
 finishes it whatever RTS does afterwards, so the NedoOS type 0 RTS pulse
 (`MCR 2`, `MCR 0`) gets one byte per pulse.
+
+---
+
+## 8. Real ESP modules and adapters (sources for the SERIAL: peer)
+
+The emulated ESP modules (network TDD step N3) are the main path. A real
+module on the host through `SERIAL:` stays supported for firmware work
+(the ESPNET firmware itself), real modems, a null-modem link to another
+machine, and checking the emulation against hardware. **Testing with real
+devices is postponed** until the hardware is on the desk, together with the
+other real-device bridges (Greaseweazle / KryoFlux: PLAN #12).
+
+### Boards and wiring
+
+| What | Source | Notes |
+|---|---|---|
+| ZX-WiFi (16550 + ESP-12F on the ZX-Bus) pinout, flashing jumpers | `NOS/src/kapps/common/espnet/PROTOCOL.md` ("Pins"), `pins.h`, `host_uart.cpp` | ESP TX GPIO1 -> 16550 SIN, RX GPIO3 <- SOUT, CTS GPIO13 <- 16550 RTS, RTS GPIO15 -> 16550 CTS; v1.6: flash via X2 (3.3 V TTL) with SW1 = ESP, X5 / X6 open while programming. No published schematic found; the community thread is [zx-pk.ru: NedoOS](https://zx-pk.ru/threads/30190-nedoos.html) (ESP on the ATM / Evo COM port, 16550 + ESP above 38400 baud) |
+| ESPNET-capable boards: ESP32 WROOM, ESP32-C3 Super Mini, ESP8266 D1 mini | `PROTOCOL.md` "Pins" table, `README.txt` (Arduino IDE setup, board packages) | UART pins per board; ESP8266 D1 mini uses the swapped UART (GPIO15 / 13) |
+| USB-serial adapters and the auto-reset circuit (why RTS / DTR must not follow the ZX by default) | [esptool: Boot Mode Selection (ESP8266)](https://docs.espressif.com/projects/esptool/en/latest/esp8266/advanced-topics/boot-mode-selection.html), [ESP32](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html); [Espressif's Automatic Reset](https://qsantos.fr/2025/05/09/espressifs-automatic-reset/) | DTR / RTS of the FTDI / CP210x / CH340 drive GPIO0 and EN through two cross-coupled transistors: DTR 1 RTS 0 holds the chip in reset, DTR 0 RTS 1 enters the bootloader. `ComModemLines=0` (the default) keeps the emulator off these lines |
+| CH340 adapter with auto-reset, schematic | [USB-C-CH340K-Auto-Reset-Programmer](https://github.com/mariusmym/USB-C-CH340K-Auto-Reset-Programmer), [CH340C programmer with auto-reset (PCBWay)](https://www.pcbway.com/project/shareproject/CH340C_with_Auto_Reset_104b447f.html), [ESP-01 on a CH340 dongle](https://cmheong.blogspot.com/2018/05/using-ch340-usb-dongle-as-esp-01s.html) | the ESP-01 "USB programmer" boards; many need a mod to program, none to run |
+
+### Firmware
+
+| Firmware | Source | Used by |
+|---|---|---|
+| ESPNET 1.2x (binary socket protocol, frames `#A5`, 8 sockets on ESP32, 4 on ESP8266) | `NOS/src/kapps/common/espnet/` (`espnet.ino`, `protocol.h`, `PROTOCOL.md`, `README.txt`) | NedoOS `sd_bootesp.$C`, `_sdk/espnet.asm` (network TDD N3 `EspnetModule`) |
+| Espressif ESP-AT (current AT firmware, all chips) | [espressif/esp-at](https://github.com/espressif/esp-at/releases) | NedoOS ESPCOM apps, Moon Rabbit, `cuart` (N3 `AtModule`) |
+| Espressif NonOS AT 1.7.x (legacy ESP8266 AT, what most ZX software was written against) | [ESP8266_NONOS_SDK releases](https://github.com/espressif/ESP8266_NONOS_SDK/releases), [ESP8266 AT Instruction Set (PDF)](https://www.espressif.com/sites/default/files/documentation/4a-esp8266_at_instruction_set_en.pdf); flashing notes: [AT firmware on an ESP-01S](https://www.sigmdel.ca/michel/ha/esp8266/ESP01_AT_Firmware_en.html) | the same software; `AT+GMR` answers `AT version:1.7.x` |
+| ZiFi (TS-Conf AVR API over the same ports) | `github/zx-evo-docs/ZiFi/zifi.md` ([tslabs/zx-evo-docs](https://github.com/tslabs/zx-evo-docs)) | TS-Conf software (network TDD N5) |
+
+### Emulations to learn from (N3)
+
+| Emulator | Source | What it has |
+|---|---|---|
+| TSLabs Unreal | `github/zx-evo-unreal/Unreal/zifi32/` (`esp32_emul.cpp`, `zifi32.cpp`; [tslabs/zx-evo-unreal](https://github.com/tslabs/zx-evo-unreal)) | an ESP32 emulation behind ZiFi |
+| pico-spec | `github/pico-spec/src/ZiFiAT.cpp`, `ZiFiSock.cpp` ([drewpo28/pico-spec](https://github.com/drewpo28/pico-spec)) | an AT command emulation over sockets |
+| Unreal_NS | `svn/pentevo/tools/unreal_fix/0.39.0/Unreal_NS/SRC/modem.h`, `config.cpp` (`[MISC] Modem=COMn`) | host COM port passthrough only, no ESP emulation: the reason real ESPs on USB were used with it |
+
