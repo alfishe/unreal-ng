@@ -28,10 +28,15 @@ public:
     /// Create a standard emulator instance with debug features off
     /// @param modelName Model short name (e.g., "PENTAGON", "48K", "128K")
     /// @param logLevel Logging level
+    /// @param ramPowerOn Power-on RAM: Zero for a test whose boot or result
+    ///        depends on RAM contents - the default noise comes from the
+    ///        process-wide rand(), so it depends on every test that ran before
+    ///        (core/tests/README.md, "Power-on RAM is a hidden global input")
     /// @return Initialized emulator instance (caller owns)
     static Emulator* CreateStandardEmulator(
         const std::string& modelName = "PENTAGON",
-        LoggerLevel logLevel = LoggerLevel::LogError);
+        LoggerLevel logLevel = LoggerLevel::LogError,
+        RamPowerOn ramPowerOn = RamPowerOn::Random);
 
     /// Create an emulator whose TurboSound slot kind is pinned instead of
     /// inherited from the shipped default. The shipped inis now enable TSFM
