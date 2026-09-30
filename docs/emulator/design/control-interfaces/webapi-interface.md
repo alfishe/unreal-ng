@@ -1346,7 +1346,7 @@ With `"switch_model": false` a mismatch answers 409 with `"error": "model_mismat
   "path": "/games/greenberet.rzx", "creator": "Spectaculator 62.552", "version": "0.12",
   "snapshot": "Z80 v2, hardware 3",
   "frame": 896, "total_frames": 39041, "progress": 0.023, "block": 1, "blocks": 1,
-  "interrupts": 896, "desyncs": 0, "drift": -48, "max_drift": -2045,
+  "interrupts": 896, "desyncs": 0, "drift": -48, "max_drift": -2045, "snapshots_applied": 0,
   "options": {"desync_mode": "strict", "ei_short_frame_blocks_int": false, "ld_air_parity_quirk": false, "ignore_later_snapshots": false},
   "summary": "playing frame 896 / 39041 (2.3%), block 1 / 1, 0 desyncs"
 }

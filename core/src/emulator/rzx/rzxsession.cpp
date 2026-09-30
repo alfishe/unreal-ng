@@ -110,6 +110,51 @@ namespace rzx
         }
     }
 
+    bool RzxSession::SnapshotBytes(const Snapshot& snapshot, const std::string& sourcePath, std::string& extension,
+                                   std::vector<uint8_t>& bytes, std::string& error)
+    {
+        extension = snapshot.extension;
+        if (snapshot.external)
+        {
+            // Next to the RZX first, then the stored name as it is
+            std::vector<std::string> candidates;
+            if (!sourcePath.empty())
+            {
+                const std::filesystem::path folder = FileHelper::ToFsPath(sourcePath).parent_path();
+                const std::string name = ToUtf8(FileHelper::ToFsPath(snapshot.externalName).filename());
+                candidates.push_back(FileHelper::PathCombine(ToUtf8(folder), name));
+            }
+            candidates.push_back(snapshot.externalName);
+
+            bool found = false;
+            for (const std::string& candidate : candidates)
+            {
+                if (ReadWholeFile(candidate, bytes))
+                {
+                    found = true;
+                    if (extension.empty())
+                        extension = FileHelper::GetFileExtension(candidate);
+                    break;
+                }
+            }
+            if (!found)
+            {
+                error = "external snapshot '" + snapshot.externalName + "' not found";
+                return false;
+            }
+        }
+        else
+        {
+            bytes = snapshot.data;
+        }
+
+        for (char& c : extension)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (extension == "zxs")
+            extension = "szx";
+        return true;
+    }
+
     bool RzxSession::ResolveStartSnapshot(const File& file, const std::string& sourcePath,
                                           const PlayerOptions& options, StartSnapshot& snapshot,
                                           PlayResult& result)
@@ -131,48 +176,14 @@ namespace rzx
             return false;
         }
 
-        snapshot.extension = start->extension;
-        if (start->external)
-        {
-            // Next to the RZX first, then the stored name as it is
-            std::vector<std::string> candidates;
-            if (!sourcePath.empty())
-            {
-                const std::filesystem::path folder = FileHelper::ToFsPath(sourcePath).parent_path();
-                const std::string name = ToUtf8(FileHelper::ToFsPath(start->externalName).filename());
-                candidates.push_back(FileHelper::PathCombine(ToUtf8(folder), name));
-            }
-            candidates.push_back(start->externalName);
-
-            bool found = false;
-            for (const std::string& candidate : candidates)
-            {
-                if (ReadWholeFile(candidate, snapshot.data))
-                {
-                    found = true;
-                    if (snapshot.extension.empty())
-                        snapshot.extension = FileHelper::GetFileExtension(candidate);
-                    break;
-                }
-            }
-            if (!found)
-            {
-                result.error = PlayError::NoSnapshot;
-                result.message = "external start snapshot '" + start->externalName + "' not found";
-                return false;
-            }
-        }
-        else
-        {
-            snapshot.data = start->data;
-        }
-
-        for (char& c : snapshot.extension)
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (snapshot.extension == "zxs")
-            snapshot.extension = "szx";
-
         std::string error;
+        if (!SnapshotBytes(*start, sourcePath, snapshot.extension, snapshot.data, error))
+        {
+            result.error = PlayError::NoSnapshot;
+            result.message = error;
+            return false;
+        }
+
         if (!DetectSnapshotMachine(snapshot.extension, snapshot.data, snapshot.machine, error))
         {
             result.error = PlayError::UnsupportedMachine;
@@ -282,6 +293,9 @@ namespace rzx
         }
         player->onEnded = [this](RzxPlayer& ended) { OnPlayerEnded(ended); };
         player->captureState = [this](std::vector<uint8_t>& out) { return CaptureState(out); };
+        player->applySnapshot = [this](const Snapshot& snapshot, uint32_t tstates, std::string& error) {
+            return ApplyRecordedSnapshot(snapshot, tstates, error);
+        };
 
         // The first frame starts where the recording's T-state counter says,
         // counted from its INT (Fuse writes it; SkoolKit ignores it). The CPU
@@ -317,37 +331,58 @@ namespace rzx
     bool RzxSession::LoadStartSnapshot(const StartSnapshot& snapshot, const std::string& sourcePath,
                                        PlayResult& result)
     {
-        // The loaders read files: the image goes through a temporary file
-        // (design §7; span-based loaders are phase R3)
-        static std::atomic<uint32_t> counter{0};
-        std::error_code ec;
-        const std::filesystem::path folder = std::filesystem::temp_directory_path(ec);
-        if (ec)
-        {
-            result.error = PlayError::SnapshotLoadFailed;
-            result.message = "no temporary folder for the start snapshot: " + ec.message();
-            return false;
-        }
-        const std::string name = "unreal-rzx-" + _emulator.GetId() + "-" + std::to_string(counter++) + "." +
-                                 snapshot.extension;
-        const std::string tempPath = ToUtf8(folder / FileHelper::ToFsPath(name));
-
-        std::vector<uint8_t> bytes = snapshot.data;
-        if (!FileHelper::SaveBufferToFile(tempPath, bytes.data(), bytes.size()))
-        {
-            result.error = PlayError::SnapshotLoadFailed;
-            result.message = "cannot write the start snapshot to " + tempPath;
-            return false;
-        }
-
-        const bool loaded = _emulator.LoadSnapshot(tempPath, sourcePath);
-        std::filesystem::remove(FileHelper::ToFsPath(tempPath), ec);
-        if (!loaded)
+        // From memory, reported as the RZX file it came from
+        if (!_emulator.LoadSnapshotData(snapshot.data, snapshot.extension, sourcePath))
         {
             result.error = PlayError::SnapshotLoadFailed;
             result.message = "the start snapshot (" + snapshot.extension + ") did not load";
             return false;
         }
+        return true;
+    }
+
+    bool RzxSession::ApplyRecordedSnapshot(const Snapshot& snapshot, uint32_t tstates, std::string& error)
+    {
+        // Emulation thread, at the RZX frame boundary before the next input
+        // block (design §7, RZ-F9): the machine is replaced as the recording
+        // says, the playback goes on (frame numbering, keyframes, hooks kept)
+        std::string extension;
+        std::vector<uint8_t> bytes;
+        if (!SnapshotBytes(snapshot, _path, extension, bytes, error))
+            return false;
+        SnapshotMachine machine;
+        if (!DetectSnapshotMachine(extension, bytes, machine, error))
+            return false;
+        const CONFIG& config = _context->config;
+        if (!MachineMatches(machine, config.mem_model, config.ramsize))
+        {
+            error = "the recording goes on on another machine (" + machine.description + ")";
+            return false;
+        }
+
+        // A snapshot replaces the machine: not while TTD records, a stopped
+        // history is dropped (as for any snapshot load)
+        ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+        if (ttd && ttd->IsRecording())
+        {
+            error = "a TTD recording runs: the recording's snapshot block cannot be applied";
+            return false;
+        }
+        if (ttd)
+            ttd->InvalidateSession("rzx-snapshot");
+
+        if (!_emulator.ApplySnapshotData(bytes, extension, error))
+            return false;
+
+        // The loaders reset the CPU: the playback keeps the frame INT masked
+        Z80& cpu = *_context->pCore->GetZ80();
+        cpu.frameIntMasked = true;
+        cpu.int_pending = false;
+        if (_context->config.frame > 0 && tstates < _context->config.frame)
+            cpu.t = LoaderSZX::FramePositionFromIntCount(_context, tstates);
+        _emulator.RestartFrame();
+
+        PostEvent("snapshot", extension + " snapshot applied (" + machine.description + ")");
         return true;
     }
 

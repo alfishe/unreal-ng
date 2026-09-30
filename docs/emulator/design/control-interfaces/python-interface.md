@@ -775,7 +775,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 | `unreal.rzx_play(path, emulator_id="", desync_mode="strict", ei_short_frame_blocks_int=False, ld_air_parity_quirk=False, ignore_later_snapshots=False, switch_model=True)` | dict `{ok, error, message, emulator_id, model_switched, model, previous_emulator_id, required_model, status}` | Play a recording; a recording made on another model switches to that model first (`emulator_id` is the new machine). `ValueError` on a bad `desync_mode`. |
 | `unreal.rzx_seek(frame, emulator_id="")` | bool | Move to the boundary after `frame` frames (back through keyframes, forward by playing on); `RuntimeError` with the reason when refused. |
 | `unreal.rzx_stop(emulator_id="")` | bool | Stop playing; `False` when nothing played. |
-| `unreal.rzx_status(emulator_id="")` | dict | `loaded`, `active`, `summary`, `path`, `creator`, `version`, `snapshot`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `keyframe_interval`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+| `unreal.rzx_status(emulator_id="")` | dict | `loaded`, `active`, `summary`, `path`, `creator`, `version`, `snapshot`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `keyframe_interval`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 

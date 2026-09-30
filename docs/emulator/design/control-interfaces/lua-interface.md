@@ -695,7 +695,7 @@ Play RZX input recordings: the start snapshot loads, then every `IN` returns the
 | `rzx_play(path [, options])` | table `{ok, error, message, emulator_id, model_switched, model, required_model, summary}` | Play a recording. `options`: `desync_mode` (`"strict"` / `"tolerant"`), `ei_short_frame_blocks_int`, `ld_air_parity_quirk`, `ignore_later_snapshots`, `switch_model` (default `true`). The model switches only when the interpreter follows the selected machine; an interpreter bound to one machine gets `error = "model_mismatch"` and `required_model` instead (its machine is never replaced under it). |
 | `rzx_seek(frame)` | `ok, reason` | Move to the boundary after `frame` frames (back through keyframes, forward by playing on). |
 | `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
-| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
 `snapshot_load("game.rzx")` plays a recording on the machine as it is.
 

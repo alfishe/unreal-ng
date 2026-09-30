@@ -98,6 +98,7 @@ namespace rzx
         /// interrupt position (positive: later); max: the largest magnitude seen
         int32_t drift = 0;
         int32_t maxDrift = 0;
+        uint64_t snapshotsApplied = 0;  ///< snapshot blocks between input blocks (multiload, rollback)
         uint64_t keyframes = 0;       ///< stored for seeking back
         uint64_t keyframeBytes = 0;
         uint32_t keyframeInterval = 0;
@@ -106,8 +107,9 @@ namespace rzx
     /// What the CPU does at a frame end
     enum class FrameEnd : uint8_t
     {
-        Interrupt,   ///< the CPU takes the interrupt that ends the frame
-        NoInterrupt  ///< frame advanced without one (IFF1 clear, the EI convention, or playback ended)
+        Interrupt,    ///< the CPU takes the interrupt that ends the frame
+        NoInterrupt,  ///< frame advanced without one (IFF1 clear, the EI convention, or playback ended)
+        Snapshot      ///< the next input block starts from a snapshot block: ApplyPendingSnapshot()
     };
 
     const char* StateName(PlayerState state);
@@ -163,6 +165,12 @@ namespace rzx
         /// due. The machine state comes from captureState (the session)
         void MaybeKeyframe();
         std::function<bool(std::vector<uint8_t>& state)> captureState;
+
+        /// FrameEnd::Snapshot: replace the machine by the snapshot block before
+        /// the next input block (applySnapshot, the session); a failure stops
+        /// the playback with its reason
+        bool ApplyPendingSnapshot();
+        std::function<bool(const Snapshot& snapshot, uint32_t tstates, std::string& error)> applySnapshot;
 
         /// Put the cursor where a keyframe was taken and play on from there
         /// (the caller restored the machine); false past the recording
@@ -253,6 +261,11 @@ namespace rzx
         static const Frame kEndFrame;
 
         RzxKeyframeStore _keyframes;
+
+        /// Set by NextBlock when a snapshot block precedes the input block just entered
+        const Snapshot* _pendingSnapshot = nullptr;
+        uint32_t _pendingTstates = 0;
+        uint64_t _snapshotsApplied = 0;
 
         mutable std::mutex _statusMutex;
         PlayerStatus _published;

@@ -134,7 +134,8 @@ libspectrum reads from our file with the reference. See `szx/README.md`.
 
 Located in `rzx/`. `rzxplay-memptr.py` runs SkoolKit's `rzxplay.py` with its
 MEMPTR-exact simulator to make the expected states in `testdata/loaders/rzx/`
-and to check any recording; `rzxtrim.py` cuts recordings down to fixtures.
+and to check any recording; `rzxtrim.py` cuts recordings down to fixtures,
+`rzxjoin.py` joins them into multi-block recordings.
 `core-tests` plays folders of recordings against them (`UNREAL_RZX_CORPUS`,
 `UNREAL_RZX_FULL`). See `rzx/README.md`.
 

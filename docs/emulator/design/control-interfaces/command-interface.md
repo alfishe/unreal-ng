@@ -2966,7 +2966,7 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 **Conventions** (defaults as SkoolKit `rzxplay.py`):
 - `--ei-short-frame`: a frame of 1-2 fetches right after `EI` means "the interrupt was blocked by EI". Default: the interrupt is taken at every frame end while interrupts are enabled.
 - `--ld-air-quirk`: the NMOS `LD A,I` / `LD A,R` parity-flag quirk on the frame interrupt. Default off: the recording emulators did not apply it.
-- `--ignore-later-snapshots`: skip snapshot blocks after the first. Default: a snapshot block between input blocks (multiload, rollback point) stops playback with a message; applying it is a later phase.
+- `--ignore-later-snapshots`: skip snapshot blocks after the first. Default: a snapshot block between input blocks (multiload, rollback point) replaces the machine where the block before it ends, and the playback goes on (`rzx status` counts them); a snapshot for another machine stops the playback with the reason.
 
 While a recording plays: fast tape, turbo tape and fast disk read as off, the disk autostart is disarmed, live keyboard / mouse input and the command typer are refused. Turbo mode, pausing, breakpoints, stepping and analyzers work. Machines whose interrupt is not the ULA frame interrupt (TSConf, Sprinter) are refused.
 

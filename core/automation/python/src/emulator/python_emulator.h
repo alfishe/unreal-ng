@@ -154,6 +154,7 @@ namespace python_rzx
         d["desyncs"] = player.desyncs;
         d["drift"] = player.drift;
         d["max_drift"] = player.maxDrift;
+        d["snapshots_applied"] = player.snapshotsApplied;
         d["keyframes"] = player.keyframes;
         d["keyframe_bytes"] = player.keyframeBytes;
         d["keyframe_interval"] = player.keyframeInterval;

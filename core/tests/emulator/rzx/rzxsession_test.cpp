@@ -684,6 +684,106 @@ TEST_F(RzxSession_Test, StatusStaysReadableDuringASeek)
 
 /// endregion </Seek>
 
+/// region <Snapshot blocks>
+
+/// A snapshot block between input blocks replaces the machine where the
+/// block before it ends (multiload, rollback point): no interrupt there, the
+/// playback goes on with the next block's frames
+TEST_F(RzxSession_Test, SnapshotBlockReplacesTheMachineBetweenBlocks)
+{
+    Create("48K");
+    Z80TestRegisters second;
+    second.pc = 0x9000;
+    second.a = 0x42;
+    RzxTestBuilder rzx;
+    rzx.Creator("test", 1, 0)
+        .Snapshot("z80", Z80Snapshot48K({0x18, 0xFE}, 0x8000))  // JR $: one fetch a loop
+        .Input({{10, {}}})
+        .Snapshot("z80", Z80Snapshot48K({0x00, 0x00, 0x18, 0xFE}, 0x9000, second))
+        .Input({{2, {}}, {60000, {}}});
+    ASSERT_TRUE(_emulator->PlayRzx(ParseBytes(rzx.Build()), "").Ok());
+
+    for (int i = 0; i < 10; i++)
+        Step();
+    EXPECT_EQ(_cpu->pc, 0x8000) << "still the first block";
+    const StepOutcome boundary = Step();
+    EXPECT_FALSE(boundary.intAccepted) << "the snapshot, not an interrupt, ends the block";
+    EXPECT_EQ(_cpu->pc, 0x9000);
+    EXPECT_EQ(_cpu->a, 0x42);
+    EXPECT_TRUE(_cpu->frameIntMasked) << "the playback still owns the interrupt";
+    const SessionStatus status = _emulator->GetRzxStatus();
+    EXPECT_TRUE(status.active);
+    EXPECT_EQ(status.player.snapshotsApplied, 1u);
+    EXPECT_EQ(status.player.frame, 1u);
+    EXPECT_EQ(status.player.block, 1u) << "the second input block (0-based)";
+
+    Step();
+    Step();
+    EXPECT_EQ(_cpu->pc, 0x9002);
+    EXPECT_EQ(Player().Fetches(), 2u) << "fetches count on in the second block";
+}
+
+/// ignore_later_snapshots (SkoolKit flag 4) plays past the snapshot block
+TEST_F(RzxSession_Test, IgnoreLaterSnapshotsKeepsTheMachine)
+{
+    Create("48K");
+    Z80TestRegisters second;
+    second.pc = 0x9000;
+    RzxTestBuilder rzx;
+    rzx.Snapshot("z80", Z80Snapshot48K({0x18, 0xFE}, 0x8000))
+        .Input({{10, {}}})
+        .Snapshot("z80", Z80Snapshot48K({0x00}, 0x9000, second))
+        .Input({{60000, {}}});
+    PlayerOptions options;
+    options.ignoreLaterSnapshots = true;
+    ASSERT_TRUE(_emulator->PlayRzx(ParseBytes(rzx.Build()), "", options).Ok());
+    for (int i = 0; i < 12; i++)
+        Step();
+    EXPECT_EQ(_cpu->pc, 0x8000);
+    EXPECT_EQ(_emulator->GetRzxStatus().player.snapshotsApplied, 0u);
+    EXPECT_TRUE(_emulator->IsRzxPlaying());
+}
+
+/// A snapshot block for another machine stops the playback with the reason
+TEST_F(RzxSession_Test, SnapshotBlockForAnotherMachineStops)
+{
+    Create("48K");
+    RzxTestBuilder rzx;
+    rzx.Snapshot("z80", Z80Snapshot48K({0x18, 0xFE}, 0x8000))
+        .Input({{10, {}}})
+        .Snapshot("sna", std::vector<uint8_t>(131103, 0))  // a 128K SNA
+        .Input({{60000, {}}});
+    ASSERT_TRUE(_emulator->PlayRzx(ParseBytes(rzx.Build()), "").Ok());
+    for (int i = 0; i < 12; i++)
+        Step();
+    const SessionStatus status = _emulator->GetRzxStatus();
+    EXPECT_FALSE(status.active);
+    EXPECT_EQ(status.player.state, PlayerState::Stopped);
+    EXPECT_NE(status.player.stopReason.find("another machine"), std::string::npos) << status.player.stopReason;
+    EXPECT_FALSE(_cpu->frameIntMasked) << "the machine runs live";
+}
+
+/// Eric's first 300 frames, then SkoolKit's state at frame 300 as a snapshot
+/// block with the next 300 frames: the machine after 600 frames equals
+/// SkoolKit's on the same file; a seek back across the block boundary replays
+/// through the snapshot. About 30 M T-states (a real recording)
+TEST_F(RzxSession_Test, TwoBlockRecordingMatchesSkoolKit)
+{
+    Create("48K");
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("cases/multiload-join.rzx")).Ok());
+    PlayToFrame(0);
+    EXPECT_EQ(_emulator->GetRzxStatus().player.snapshotsApplied, 1u);
+    CompareWith(Fixture("cases/multiload-join-600.z80"), "48K");
+
+    // From the end back to 450: the keyframe at 250 lies before the snapshot block
+    std::string error;
+    ASSERT_TRUE(_emulator->SeekRzx(450, &error)) << error;
+    EXPECT_EQ(_emulator->GetRzxStatus().player.frame, 450u);
+    CompareWith(Fixture("cases/multiload-join-450.z80"), "48K");
+}
+
+/// endregion </Snapshot blocks>
+
 /// region <Real recordings>
 
 struct ArchiveCase
