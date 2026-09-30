@@ -415,6 +415,14 @@ IDE-5.
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
 
+**Step 7a built 2026-09-30 (branch `tsconf-phase7`):** **DBG-1** -
+`DeviceState::TsConf` (built in `platforms/tsconf/tsconfdevicestate.cpp`) on
+every surface: WebAPI `GET /state/tsconf` (+ OpenAPI), CLI `state tsconf`,
+Lua / Python `tsconf_state()`, MCP `inspect_state` aspect `tsconf`; the
+interface docs updated; test `tsconfdevicestate_test.cpp`. AGENTS.md lists `TSL`
+as creatable; recipe `.recipe/machines/tsconf.md`. Open: SND-1…3, DBG-2 / DBG-3,
+AUTO-1 (the MCP machine resource, screen mode names per geometry), TTD-5, Qt docks.
+
 | ID | Asserts |
 |:--|:--|
 | SND-1 | AY on `#FFFD/#BFFD` only with A15 = 1; clock 1.75 MHz regardless of `SYS_CONFIG[4:3]` (D5) |

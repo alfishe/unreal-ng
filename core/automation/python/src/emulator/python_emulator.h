@@ -1783,6 +1783,9 @@ namespace PythonBindings
             .def("ide_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Ide(self.GetContext()));
             }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
+            .def("tsconf_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
+            }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")

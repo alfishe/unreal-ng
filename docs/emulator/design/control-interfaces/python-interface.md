@@ -136,6 +136,12 @@ class Emulator:
         units[2] (kind, slot, medium, translation, task_file with decoded bits,
         command, atapi sense on a CD drive). available=False without a board"""
 
+    def tsconf_state(self) -> dict:
+        """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
+        lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /
+        notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
+        line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
+
     def rtc_state(self) -> dict:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,

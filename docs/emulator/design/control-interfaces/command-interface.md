@@ -733,6 +733,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
+| TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
