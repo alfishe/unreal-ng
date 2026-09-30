@@ -1,6 +1,7 @@
 #include "screenprofi.h"
 
 #include "emulator/memory/memory.h"
+#include "emulator/video/profi/profigeometry.h"
 
 /// region <Constructors / Destructors>
 
@@ -29,14 +30,14 @@ ScreenProfi::ScreenProfi(EmulatorContext* context, Memory* memory) : _context(co
 void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer,
                         uint8_t borderColor)
 {
-    constexpr uint32_t TSTATES_PER_LINE = 224;
-    constexpr uint32_t VSYNC_VBLANK_LINES = 24;
-    constexpr uint32_t VISIBLE_LINES = 288;
-    constexpr uint32_t PAPER_START_T = 24;    // 48 px left border at 2 px/T
-    constexpr uint32_t PAPER_TSTATES = 128;   // 512 px at 4 px/T
-    constexpr uint32_t PAPER_END_T = PAPER_START_T + PAPER_TSTATES;
-    constexpr uint32_t VISIBLE_END_T = PAPER_END_T + 24;  // right border, then blanking
-    constexpr uint32_t SCREEN_LINES = 240;
+    using namespace ProfiGeometry;
+    constexpr uint32_t TSTATES_PER_LINE = kTStatesPerLine;
+    constexpr uint32_t VSYNC_VBLANK_LINES = kVSyncVBlankLines;
+    constexpr uint32_t VISIBLE_LINES = kVisibleLines;
+    constexpr uint32_t PAPER_START_T = kPaperStartT;    // 48 px left border at 2 px/T
+    constexpr uint32_t PAPER_END_T = kPaperEndT;        // 512 px at 4 px/T
+    constexpr uint32_t VISIBLE_END_T = kVisibleEndT;    // right border, then blanking
+    constexpr uint32_t SCREEN_LINES = kScreenLines;
 
     if (framebuffer.memoryBuffer == nullptr)
         return;
@@ -57,14 +58,7 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
 
     // Palette entry -> ABGR (9-bit GGGRRRBBB: 3-bit G, 3-bit R, 3-bit B - the extra blue LSB
     // comes from #FE.D7 latched at the time of the palette write, see Port_Palette_Out)
-    auto paletteColor = [&state](uint8_t index) -> uint32_t
-    {
-        const uint16_t raw = state.profiPalette[index & 0x0F];
-        const uint32_t g = ((raw >> 6) & 0x07) * 255 / 7;
-        const uint32_t r = ((raw >> 3) & 0x07) * 255 / 7;
-        const uint32_t b = (raw & 0x07) * 255 / 7;
-        return 0xFF000000u | (b << 16) | (g << 8) | r;
-    };
+    auto paletteColor = [&state](uint8_t index) -> uint32_t { return PaletteColour(state.profiPalette[index & 0x0F]); };
 
     const uint32_t border = paletteColor(static_cast<uint8_t>(~borderColor) & 0x07);
     const bool inScreenRow = (fbRow >= rd.screenOffsetTop) && (fbRow < rd.screenOffsetTop + SCREEN_LINES);
@@ -98,16 +92,12 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
     // Paper: two T-states per pixel byte, four pixels per T-state
     const uint32_t t = tInLine - PAPER_START_T;              // 0..127
     const uint32_t byteIndex = t / 2;                        // 0..63, two bytes per 16-px cell
-    const uint32_t cell = byteIndex / 2;                     // column 0..31
     const uint32_t half = t % 2;                             // which nibble of the byte
     const uint32_t v = fbRow - rd.screenOffsetTop;           // 0..239
 
-    const bool shadow = (state.p7FFD & 0x08) != 0;
-    const uint16_t pixelPage = shadow ? 6 : 4;
-    const uint16_t attrPage = static_cast<uint16_t>((shadow ? 0x3A : 0x38) & _memory->GetRamMask());
-
-    const uint32_t offset = ((v & 0x07) << 8) | ((v & 0x38) << 2) | ((v & 0xC0) << 5) | cell;
-    const uint32_t byteOffset = offset | ((byteIndex & 1) ? 0x0000 : 0x2000);
+    const uint16_t pixelPage = PixelPage(state.p7FFD);
+    const uint16_t attrPage = AttrPage(state.p7FFD, static_cast<uint16_t>(_memory->GetRamMask()));
+    const uint32_t byteOffset = ByteOffset(v, byteIndex);
 
     const uint8_t pixels = _memory->RAMPageAddress(pixelPage)[byteOffset];
     uint8_t attr = _memory->RAMPageAddress(attrPage)[byteOffset];
@@ -115,11 +105,11 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
     if (_context->config.profi_monochrome)
     {
         // Profi 3.xx / ProfiMonochrome: attribute page unused, ink = border colour, paper = its inverse
-        attr = static_cast<uint8_t>((state.pFE & 0x07) | (((state.pFE & 0x07) ^ 0x07) << 3));
+        attr = MonochromeAttr(state.pFE);
     }
 
-    const uint32_t ink = paletteColor(static_cast<uint8_t>((attr & 0x07) | ((attr & 0x40) >> 3)));
-    const uint32_t paper = paletteColor(static_cast<uint8_t>(((attr >> 3) & 0x07) | ((attr & 0x80) >> 4)));
+    const uint32_t ink = paletteColor(AttrColourIndex(attr, true));
+    const uint32_t paper = paletteColor(AttrColourIndex(attr, false));
 
     const uint32_t x = rd.screenOffsetLeft + 8 * byteIndex + 4 * half;
     const uint32_t shift = 4 * half;
