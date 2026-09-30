@@ -35,6 +35,8 @@
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/machinestatehash.h>
+#include <debugger/ttd/ttdfileinfo.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
@@ -69,6 +71,28 @@
 #include "../bindings/python_porttrace.h"
 
 namespace py = pybind11;
+
+
+/// The recorded machine of a TTD session / file as a dict (the same keys as the
+/// WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
+/// peripherals, general_sound, turbo_sound)
+inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
+{
+    py::dict d;
+    d["model_id"] = py::cast(static_cast<unsigned>(m.modelId));
+    d["model"] = m.model.empty() ? py::object(py::none()) : py::object(py::cast(m.model));
+    d["ram_page_bound"] = py::cast(static_cast<unsigned>(m.ramPageBound));
+    d["rom_signature"] = m.romSignature == 0 ? py::object(py::none())
+                                             : py::object(py::cast("0x" + ttd::HashToString(m.romSignature)));
+    d["peripheral_mask"] = py::cast(m.peripheralMask);
+    py::list list;
+    for (const std::string& name : m.peripherals)
+        list.append(name);
+    d["peripherals"] = list;
+    d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
+    d["turbo_sound"] = py::cast(m.turboSound);
+    return d;
+}
 
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
@@ -2711,9 +2735,54 @@ namespace PythonBindings
                                                                              : py::object(py::cast(si.lastDropReason));
                 info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
                                                                                 : py::object(py::cast(si.unavailableReason));
+                // The recorded machine (None while there is no session) and, for a
+                // loaded file, the instance that recorded it
+                info["machine"] = si.checkpointCount != 0 ? py::object(TtdRecordedMachineDict(si.machine))
+                                                          : py::object(py::none());
+                info["recorded_by"] = si.recordedBy.empty() ? py::object(py::none())
+                                                            : py::object(py::cast(si.recordedBy));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")
+            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::dict {
+                py::dict r;
+                ttd::TTDFileInfo fi;
+                std::string err;
+                if (!ttd::ReadTTDFileInfo(path, fi, err))
+                {
+                    r["ok"] = false;
+                    r["path"] = path;
+                    r["error"] = err;
+                    return r;
+                }
+                r["ok"] = true;
+                r["path"] = fi.path;
+                r["file_bytes"] = py::cast(fi.fileBytes);
+                r["schema_version"] = py::cast(static_cast<unsigned>(fi.schemaVersion));
+                r["flags"] = py::cast(static_cast<unsigned>(fi.flags));
+                r["captured_at_unix_ms"] = py::cast(fi.capturedAtUnixMs);
+                r["recorded_by"] = fi.emulatorId.empty() ? py::object(py::none()) : py::object(py::cast(fi.emulatorId));
+                r["session_state"] = py::cast(std::string(
+                    ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState))));
+                r["session_start_frame"] = py::cast(fi.startFrame);
+                r["session_end_frame"] = py::cast(fi.endFrame);
+                r["checkpoint_count"] = py::cast(static_cast<uint64_t>(fi.checkpointCount));
+                r["page_slot_count"] = py::cast(static_cast<uint64_t>(fi.pageStoreCount));
+                py::dict sections;
+                sections["write_journal"] = py::cast(fi.hasWriteJournal);
+                sections["write_journal_complete"] = py::cast(fi.writeJournalComplete);
+                sections["coverage_index"] = py::cast(fi.hasCoverageIndex);
+                sections["bookmarks"] = py::cast(fi.hasBookmarks);
+                sections["input_journal"] = py::cast(fi.hasInputJournal);
+                sections["external_events"] = py::cast(fi.hasExternalEvents);
+                sections["port_journals"] = py::cast(fi.hasPortJournals);
+                sections["top_clock_time"] = py::cast(fi.topClockTime);
+                r["sections"] = sections;
+                r["machine"] = TtdRecordedMachineDict(fi.machine);
+                r["peripherals_from_header"] = py::cast(fi.peripheralsFromHeader);
+                return r;
+            }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
+               "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
             // mode: "development" (write journal on) or "gaming" (off); an explicit
             // enable_write_journal wins over mode; with neither, the choice made

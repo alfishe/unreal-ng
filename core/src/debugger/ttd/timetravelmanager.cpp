@@ -321,6 +321,8 @@ bool TimeTravelManager::StartRecording()
     _inputHistoryComplete = true;
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
+    _loadedRomSignature = 0;
+    _loadedRecordedBy.clear();
 
     MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
              static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
@@ -467,6 +469,8 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
+    _loadedRomSignature = 0;
+    _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
         _context->ttdCoverageActive = false;
@@ -645,6 +649,19 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
                                  ? _sessionModelId
                                  : static_cast<uint8_t>(_context ? _context->config.mem_model : 0);
     info.modelRamPages     = _modelRamPages;
+
+    // The recorded machine, as a file would state it (ttdfileinfo.h)
+    if (!_timeline.empty())
+    {
+        info.machine.modelId = info.modelId;
+        info.machine.ramPageBound = _modelRamPages;
+        info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : ComputeRomSignature();
+        for (const auto& blob : _timeline.front().peripheralBlobs)
+            if (blob.first < 64)
+                info.machine.peripheralMask |= uint64_t(1) << blob.first;
+        ttd::DescribeRecordedMachine(info.machine);
+    }
+    info.recordedBy = _loadedFromFile ? _loadedRecordedBy : std::string();
 
     // Sections. The write journal is normally the largest part of a session,
     // and the coverage index decides whether reverse queries run in
@@ -3403,6 +3420,17 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // Port-read journal: only a session that holds every IN of its history
     if (_portJournalValid)
         flags |= ttd::dump::kFlagsHasPortJournals;
+    // The recorded device set, in the header: readers provision a matching
+    // machine before the load (ttdfileinfo.h). The baseline checkpoint's blob
+    // ids speak for the whole session, as the loader's slot checks assume.
+    uint64_t peripheralMask = 0;
+    if (!_timeline.empty())
+    {
+        for (const auto& blob : _timeline.front().peripheralBlobs)
+            if (blob.first < 64)
+                peripheralMask |= uint64_t(1) << blob.first;
+    }
+    flags |= ttd::dump::kFlagsHasPeripheralMask;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -3441,12 +3469,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
 
     static_assert(ttd::dump::kSubPageSize == TTDCodecPageStore::kPageSize,
                   "sub-page size mismatch between format and codec page store");
-    for (int i = 0; i < 8; ++i)
-    {
-        const char zero = 0;
-        out.write(&zero, 1);
-        if (!out) { err = "stream write failed (reserved)"; return false; }
-    }
+    // Formerly 8 reserved bytes: the peripheral mask (kFlagsHasPeripheralMask)
+    if (!WritePod(out, peripheralMask, err)) return false;
 
     // --- Write page store (only live slots, in remapped order) ---
     //
@@ -3852,10 +3876,12 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     if (!ReadPod(in, pageStoreCount, err)) return false;
     if (!ReadPod(in, checkpointCount, err)) return false;
 
-    // Skip reserved bytes.
-    char reserved[8];
-    in.read(reserved, 8);
-    if (!in) { err = "stream read failed (reserved)"; return false; }
+    // The peripheral mask (kFlagsHasPeripheralMask; zero in older files). The
+    // loader does not need it: it checks the devices against the baseline
+    // checkpoint's blobs below, and GetSessionInfo reads them from there too.
+    uint64_t peripheralMask = 0;
+    if (!ReadPod(in, peripheralMask, err)) return false;
+    (void)peripheralMask;
 
     // --- Staging ---
     // The file replaces the current session only once it has been read in
@@ -4368,6 +4394,8 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _loadedFromFile   = true;
     _capturedAtUnixMs = capturedAtMs;
     _sessionModelId   = modelId;
+    _loadedRomSignature = romSignature;
+    _loadedRecordedBy = emulatorId;
 
     // --- Finalize state ---
     // The file does not carry live recording semantics; force Idle. Callers

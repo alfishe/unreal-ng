@@ -905,6 +905,41 @@ namespace
 /// One-line summary of a GET /ttd/status body (shared by inspect_state's
 /// 'ttd' aspect and time_travel's 'status' action). When a GET /ttd/position
 /// body was merged in as "position", the current frame is named too.
+/// " on PENTAGON, General Sound z80, TurboSound turbosound" - the recorded machine of
+/// a ttd/status or ttd/file-info answer ("" without one)
+std::string FormatTtdMachine(const Json::Value& machine)
+{
+    if (!machine.isObject())
+        return {};
+    std::ostringstream out;
+    out << " on " << (machine["model"].isString() ? machine["model"].asString()
+                                                  : "model id " + std::to_string(machine["model_id"].asUInt()));
+    out << ", General Sound " << machine["general_sound"].asString() << ", TurboSound "
+        << machine["turbo_sound"].asString();
+    return out.str();
+}
+
+/// One line for GET /api/v1/ttd/file-info
+std::string FormatTtdFileInfo(const Json::Value& info)
+{
+    if (!info["ok"].asBool())
+        return "cannot read " + info["path"].asString() + ": " + info["error"].asString();
+    std::ostringstream out;
+    out << info["path"].asString() << ": recorded" << FormatTtdMachine(info["machine"]) << ", frames "
+        << info["session_start_frame"].asUInt64() << ".." << info["session_end_frame"].asUInt64() << ", "
+        << info["checkpoint_count"].asUInt64() << " checkpoint(s), " << info["file_bytes"].asUInt64() << " bytes";
+    const Json::Value& devices = info["machine"]["peripherals"];
+    if (devices.isArray() && !devices.empty())
+    {
+        out << "; devices:";
+        for (const Json::Value& d : devices)
+            out << " " << d.asString();
+    }
+    if (info["recorded_by"].isString())
+        out << "; recorded by " << info["recorded_by"].asString();
+    return out.str();
+}
+
 std::string FormatTtdStatus(const Json::Value& status)
 {
     if (!status["ttd_available"].asBool())
@@ -925,6 +960,8 @@ std::string FormatTtdStatus(const Json::Value& status)
     }
     out << state << ", frames " << status["session_start_frame"].asUInt64() << ".." << status["current_end_frame"].asUInt64()
         << ", " << checkpoints << " checkpoint(s)";
+    if (status["machine"].isObject())
+        out << ", recorded" << FormatTtdMachine(status["machine"]);
     if (status.isMember("position") && status["position"].isMember("current"))
     {
         const Json::Value& current = status["position"]["current"];
@@ -2401,7 +2438,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
-                               "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "bookmark_add", "bookmark_list",
+                               "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
+                               "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -2421,7 +2459,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "register), 'border', 'beeper', 'in' / 'out' (narrow with port / port_mask / value / value_mask). "
         "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
         "machine positioned in history (seek or step first - it fails right after 'stop'). "
-        "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model). "
+        "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model, ROM "
+        "set and General Sound / TurboSound card), 'file_info' describes a .ttd file without loading it and without an "
+        "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
+        "fit before 'load'). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
         "'coverage_summary' (bucketed activity heatmap).";
@@ -2460,7 +2501,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "dump / load: .ttd file path, resolved by the emulator process (its machine and working directory)";
+        "dump / load / file_info: .ttd file path, resolved by the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
     schema["properties"]["access"]["type"] = "string";
@@ -2546,6 +2587,20 @@ void RegisterTimeTravel(ToolRegistry& registry)
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
+
+            // A file, not a session: no emulator instance to resolve
+            if (action == "file_info")
+            {
+                const std::string path = args["path"].asString();
+                if (path.empty())
+                {
+                    done(ToolResult::Error("Action 'file_info' requires 'path' (a .ttd file on the emulator's machine)"));
+                    return;
+                }
+                CallAndSummarize("GET", "/api/v1/ttd/file-info?path=" + UrlEncodeSegment(path), nullptr, caller,
+                                 [](const Json::Value& b) { return FormatTtdFileInfo(b); }, done);
+                return;
+            }
 
             if (action == "bookmark_add" || action == "bookmark_delete" || action == "seek_bookmark")
             {

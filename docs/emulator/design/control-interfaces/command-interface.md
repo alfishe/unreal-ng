@@ -2509,7 +2509,8 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `ttd status` | `ttd info` | — | Print the session: origin, model, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
+| `ttd status` | `ttd info` | — | Print the session: origin, recorded machine, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
+| `ttd info <path>` | `ttd file-info <path>` | `<path>` | Describe a `.ttd` file **without loading it** and without an emulator: size, frame range, checkpoints, sections and the recorded machine (model, ROM signature, General Sound card, TurboSound slot device, fitted devices). See "Reading a file before loading it" below. | ✅ Implemented |
 | `ttd start` | `ttd record` | `[--no-journal \| -n] [--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--no-journal` is "gaming mode": no write journal, smaller memory footprint, but reverse search has less to work with. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
@@ -2552,6 +2553,45 @@ model-dependent subsystem starts).
 Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
 (`POST /api/v1/emulator/{id}/ttd/load` with body `{"path": "..."}`), Lua (`ttd_load(path)`), Python
 (`emu.ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
+
+**Reading a file before loading it (`ttd info <path>`).** Besides the model, the
+loader refuses a session recorded against another ROM set or with another device
+in the General Sound or TurboSound slot (a Pentagon now fits NeoGS; a session
+recorded with the classic GS card is refused there). The file says which machine
+it needs, and every surface reads that from the file's headers alone - nothing is
+decompressed and no emulator instance is involved:
+
+| Surface | Call |
+|---|---|
+| CLI | `ttd info <path>` (alias `ttd file-info`; `ttd info` without a path is `ttd status`) |
+| WebAPI | `GET /api/v1/ttd/file-info?path=<file>` (no `{id}`) - 200 with the info, 400 when it is no readable `.ttd`, 404 when it cannot be opened |
+| Lua | `ttd_file_info(path)` |
+| Python | `emu.ttd_file_info(path)` |
+| MCP | `time_travel` action `file_info` with `path` |
+| Qt | **Load session…** reads it first: a different model is refused with the recorded machine named, a failed load shows it too |
+
+The answer (WebAPI / Lua / Python keys): `ok` (`error` when false), `path`,
+`file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`
+(the recording instance's id), `session_state`, `session_start_frame`,
+`session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections`
+(`write_journal`, `write_journal_complete`, `coverage_index`, `bookmarks`,
+`input_journal`, `external_events`, `port_journals`, `top_clock_time`), `machine`
+(below) and `peripherals_from_header` (false for a file written before the header
+carried its device set: the reader then walks to the first checkpoint for it).
+
+`machine` - the same object in `ttd status`:
+
+| Key | Meaning |
+|---|---|
+| `model_id`, `model` | Recorded model (`MEM_MODEL` value and short name, e.g. `PENTAGON`) |
+| `ram_page_bound` | Exclusive RAM page-index bound |
+| `rom_signature` | ROM set fingerprint as a hex string `0x...` (a 64-bit value does not survive a JSON number); null = unknown, not checked |
+| `peripheral_mask`, `peripherals` | Fitted devices: bit per TTD peripheral id, and their names (`betadisk`, `gs`, `neogs`, `tsfm`, `kempston-mouse`, ...) |
+| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names) |
+| `turbo_sound` | `none` / `turbosound` / `tsfm` |
+
+Provisioning a matching machine: read the info, create an instance of `machine.model`,
+fit `machine.general_sound`, then `ttd load`.
 
 **Halt reasons** (seek results; the WebAPI, Lua and Python return them as `halt_reason`):
 
@@ -2735,6 +2775,8 @@ usually the first thing to check when a session is handed to you.
 |---|---|
 | `model_id` | `eModel` value. A session refuses to load into a different model |
 | `model_ram_pages` | Exclusive RAM page-index **bound**, not a page count — a 48K machine reports 6 because its three pages are numbered 0, 2 and 5 |
+| `machine` | The recorded machine - model, ROM signature, fitted devices, General Sound card, TurboSound slot device; the same object `ttd info <path>` returns for a file (see "Reading a file before loading it"). The file's ROM signature for a loaded session, the live ROM's for a recording; null / absent while there is no session |
+| `recorded_by` | Symbolic id of the instance that recorded a loaded file; null / absent for a live recording |
 
 **What is inside it?**
 

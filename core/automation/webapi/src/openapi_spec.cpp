@@ -184,6 +184,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
 #include "openapi/openapi_ttd.inc"
+#include "openapi/openapi_ttdfile.inc"
 
     spec["paths"] = paths;
 
@@ -192,6 +193,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
 #include "openapi/openapi_schemas.inc"
 #include "openapi/openapi_media_schemas.inc"
+#include "openapi/openapi_ttdfile_schemas.inc"
 
     spec["components"]["schemas"] = schemas;
 

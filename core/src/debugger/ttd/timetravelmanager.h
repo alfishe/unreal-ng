@@ -55,6 +55,7 @@
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
+#include "ttdfileinfo.h"
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdwritejournal.h"
@@ -202,6 +203,17 @@ struct TTDSessionInfo
 
     uint8_t  modelId = 0;         ///< eModel value the session belongs to
     uint16_t modelRamPages = 0;   ///< Exclusive RAM page-index bound (see TDD 6.2a)
+
+    /// The machine the session was recorded on, as a .ttd file states it
+    /// (ttdfileinfo.h): model, ROM signature (the file's when loaded, the live
+    /// ROM's otherwise), the fitted devices of the baseline checkpoint and the
+    /// General Sound / TurboSound slot devices among them. Empty (modelId 0,
+    /// no devices) while there is no session.
+    ttd::TTDRecordedMachine machine;
+
+    /// Symbolic id of the instance that recorded a loaded session (the file's
+    /// emulator_id); empty for a live recording.
+    std::string recordedBy;
 
     // --- Sections ---------------------------------------------------------
 
@@ -1791,6 +1803,8 @@ private:
     std::string _sourcePath;
     uint64_t    _capturedAtUnixMs = 0;
     uint8_t     _sessionModelId = 0;
+    uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
+    std::string _loadedRecordedBy;        ///< The loaded file's emulator_id
 
     /// Per-frame coverage sets backing reverse-search frame skipping.
     TTDCoverageIndex _coverageIndex;
