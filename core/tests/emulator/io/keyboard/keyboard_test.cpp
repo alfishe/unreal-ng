@@ -258,3 +258,84 @@ TEST_F(Keyboard_Test, HandlePortIn_CloneCompatibility)
 
     _keyboard->Reset();
 }
+
+// --- Physical keys and the PS/2 controller (ZX-Evo) ---
+
+#include "_helpers/emulatortesthelper.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/memory/atm/evoavr.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
+
+namespace
+{
+    void PostHostKey(Keyboard* keyboard, uint8_t zxKey, PcKey pcKey, bool pressed)
+    {
+        // The front end's event, delivered as MessageCenter would (payload kept by the caller)
+        KeyboardEvent event(zxKey, static_cast<uint8_t>(pcKey), pressed ? KEY_PRESSED : KEY_RELEASED, "");
+        Message message(0, &event, /*cleanupPayload=*/false);
+        if (pressed)
+            keyboard->OnKeyPressed(0, &message);
+        else
+            keyboard->OnKeyReleased(0, &message);
+    }
+
+    std::vector<uint8_t> DrainPs2Log(EvoAvr& avr)
+    {
+        avr.WriteRegister(0xF0, EvoAvr::kExtPs2Log);
+        std::vector<uint8_t> bytes;
+        for (uint8_t byte = avr.ReadRegister(0xF0); byte != 0 && bytes.size() < 20; byte = avr.ReadRegister(0xF0))
+            bytes.push_back(byte);
+        return bytes;
+    }
+}  // namespace
+
+/// PS2-5: host Up reaches the PS/2 log as E0 75 (the physical key), while the
+/// matrix gets Caps Shift + 7 as before; F1 has no ZX key and reaches only PS/2
+TEST(Keyboard_Ps2_Test, HostKeyReachesThePs2ControllerAsThePhysicalKey)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EvoAvr& avr = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder)->GetEvoAvr();
+    auto* keyboard = static_cast<KeyboardCUT*>(context->pKeyboard);
+
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::Up, true);
+    EXPECT_EQ(DrainPs2Log(avr), (std::vector<uint8_t>{0xE0, 0x75})) << "not 12 3D (Shift + 7)";
+    EXPECT_EQ(keyboard->_keyboardMatrixState[0] & 0x01, 0) << "Caps Shift down on the matrix";
+    EXPECT_EQ(keyboard->_keyboardMatrixState[4] & 0x08, 0) << "7 down on the matrix";
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::Up, false);
+    EXPECT_EQ(DrainPs2Log(avr), (std::vector<uint8_t>{0xE0, 0xF0, 0x75}));
+
+    uint8_t matrix[8];
+    std::memcpy(matrix, keyboard->_keyboardMatrixState, sizeof(matrix));
+    PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, true);
+    PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, false);
+    EXPECT_EQ(DrainPs2Log(avr), (std::vector<uint8_t>{0x05, 0xF0, 0x05}));
+    EXPECT_EQ(std::memcmp(matrix, keyboard->_keyboardMatrixState, sizeof(matrix)), 0) << "F1 leaves the matrix alone";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// PS2-6: without a PS/2 controller the physical key changes nothing; the matrix
+/// result is the same with and without it
+TEST(Keyboard_Ps2_Test, WithoutAControllerThePhysicalKeyIsIgnored)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    auto* keyboard = static_cast<KeyboardCUT*>(emulator->GetContext()->pKeyboard);
+    ASSERT_FALSE(keyboard->HasPs2Sink());
+
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::Up, true);
+    uint8_t withPcKey[8];
+    std::memcpy(withPcKey, keyboard->_keyboardMatrixState, sizeof(withPcKey));
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::Up, false);
+
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::None, true);
+    EXPECT_EQ(std::memcmp(withPcKey, keyboard->_keyboardMatrixState, sizeof(withPcKey)), 0);
+    PostHostKey(keyboard, ZXKEY_EXT_UP, PcKey::None, false);
+
+    PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, true);  // no ZX key, no controller: nothing
+    PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, false);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

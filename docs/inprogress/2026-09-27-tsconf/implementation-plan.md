@@ -200,8 +200,29 @@ GFX-1, GFX-3, CRAM colors) and **BOOT-1 / BOOT-2** in `tsconf_boot_test.cpp`:
 blank NVRAM → TS-BIOS Setup (TXT, page #F6); ENTER saves NVRAM, reset → TR-DOS
 5.04T prompt. BOOT-2 as planned (menu → 128 BASIC) is replaced by the TR-DOS
 boot the BIOS defaults select.
-Open: the engine (ENG-1…4, per-line budget), line-latched registers (a change
-now takes effect at the dot the beam is on), VID-2 golden, VID-5…7, the TSU.
+
+**Engine and the rest of phase 3 built 2026-09-30 (branch `tsconf-phase3`).**
+`TsConfEngine` (`platforms/tsconf/tsconfengine.*`) is the step hook: at every
+line start it latches V_CONFIG, V_PAGE, G_X_OFFS, PAL_SEL, T0/T1_G_PAGE and
+T0/T1_X_OFFS, moves the graphics row counter (reload with G_Y_OFFS after line
+31 and after a G_Y_OFFS write, +1 per window line) and records the set in the
+frame's line table the screen draws from; #7FFD writes V_PAGE into the current
+line at once. The latches, the row counter and the line position are in
+`TsConfState` (TTD). The decoder brings the engine and the screen up to a
+write before any register the picture depends on changes (`FlushVideo`).
+Tests `tsconfengine_test.cpp`: ENG-2 (latched register from the next line;
+BORDER inside the line), ENG-3 (row counter reload with the written value,
+9-bit wrap, window geometry), ENG-4 (same state rendered or decimated, real
+ROM), VID-7; `screentsconf_test.cpp` VID-5; frame goldens of the Setup (TXT)
+and TR-DOS (ZX) screens in `tsconf_boot_test.cpp` (VID-2; re-record with
+`UNREALNG_DUMP_TSCONF_FRAMES=1`, which dumps the frames).
+**Other machines unchanged**: `ScreenZXFrames_Test` pins the framebuffer of
+12 classic setups (48K … ATM3, Pentagon with a border / multicolor demo) in
+both render paths (per-T and batch), recorded on master 686fd0d4 before
+TS-Conf had its own renderer; no shared hot path changed, so no A/B benchmark.
+Moved: **ENG-1** (per-line DRAM budget) to phase 4/5 with its consumers (TSU,
+DMA); **VID-6** (VDAC curves) with a `TS_VDAC` config key; BENCH-1 (TS frame
+cost) in phase 4.
 
 | ID | Asserts |
 |:--|:--|
@@ -223,6 +244,33 @@ Exit: 128K software and demos in ZX mode display correctly; `/state/screen/mode`
 
 ## Phase 4 — Graphics modes and TSU · L
 
+**Built 2026-09-30 (branch `tsconf-phase4`).** 16C / 256C / TXT came with the
+video v1 (phase 3). `TsConfTsu` (`platforms/tsconf/tsconftsu.*`): two tile
+layers and three sprite layers (S0 < T0 < S1 < T1 < S2, LEAP, the 85-descriptor
+cap, flips, TxZ, palette indices) rendered by the engine at every line start
+into per-frame line buffers, independent of the screen; the tilemap goes
+through the hardware's 4-row prefetch ring (coarse Y ~16 lines late, fine Y at
+once). `ScreenTSConf` mixes it like the video plex (NOTSU, NOGFX, GFXOVR, the
+TS window, the 360x288 window over the border with `T_CONFIG[0]`, TXT 4-bit
+flattening). Tests `tsconftsu_test.cpp`: TSU-1…5, TSU-7, GFX-5.
+**BENCH-1** (`core/benchmarks/emulator/video/screentsconfbenchmark.cpp`,
+2026-09-30, load ~35, medians of 3): Pentagon frame 1.80 ms, TS-BIOS Setup TSU
+off 3.42 ms (1.9x, target 1.1x), TSU at its limit (both tile layers, 85
+sprites of 64x64) 4.07 ms (1.19x TSU off, target 2x met). The gap is the
+per-dot renderer: backlog TS-O1 / TS-O2 below.
+Open: TSU-6 (the line renders at its start, not during the previous line
+from `ts_start`), TSU-8 and ENG-1 (DRAM budget and starvation, with the DMA
+in phase 5), TTD-3 needs nothing extra (checkpoints are frame boundaries, the
+prefetch ring refills before the window; TSU line buffers are derived).
+
+**Speed backlog (naive first, measured above):**
+- TS-O1: CRAM → RGBA LUT, refreshed on CRAM writes (FM, DMA) instead of the
+  PWM curve per dot.
+- TS-O2 (SIMD candidate): a per-line span renderer: border / window spans,
+  one loop per mode, 8-pixel character spans in TXT, TSU mixing only on lines
+  that have TSU pixels.
+- TS-O3: skip the per-dot TSU lookup on lines without TSU pixels.
+
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
 | GFX-1 | 16C: byte 0x12 at `(V_PAGE&0xF8)<<14` → pixel 0 = `{pal,1}`, pixel 1 = `{pal,2}` (high nibble left); golden per geometry (4) |
@@ -242,6 +290,24 @@ Exit: 128K software and demos in ZX mode display correctly; `/state/screen/mode`
 | BENCH-1 | `BM_TsConfFrame_TsuOff/On` — TSU on ≤ 2× TSU off; TSU off ≤ 1.1× ZX 128 frame |
 
 ## Phase 5 — DMA · M
+
+**Built 2026-09-30 (branch `tsconf-phase5`).** `TsConfDma`
+(`platforms/tsconf/tsconfdma.*`) follows `dma.v`: live 21-bit word address
+counters, S_ALGN / D_ALGN block wrap and reload, block / transfer counters
+with DMA_LEN reloaded per block, relaunch without INT, the tasks RAM copy,
+BLT1, FILL, CRAM, SFILE, SPI in / out (a pluggable exchange; no card = #FF),
+IDE in / out through `IdeAdapter::DmaReadWord / DmaWriteWord`; BLT2 is built
+but off, as in the emulated standard `quartus` firmware (no XTR_FEAT), so code
+0x6 hangs like the wait port (0x7) and the undefined codes. All state in
+`TsConfState` (TTD). **DRAM budget (ENG-1)** in `TsConfEngine`: 448 accesses per
+line, minus the graphics fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window
+dots, none with NOGFX), the TSU (8 map words per layer, 2 per tile, width / 4
+per sprite line) and the CPU's DRAM reads (counted by `TsConfMemory`; cache
+hits and ROM take none; **CPU writes are not counted - v1 approximation**);
+the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
+previous line and drops what does not fit (**TSU-8**).
+Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,
+TTD-4. Open: DMA-15 (IDE with a disk) with phase 6.
 
 Fixture: raw physical RAM access (`RAMPageAddress`) to seed/verify; helper
 `Dma(src, dst, len, num, ctrl)` writing the registers and running until busy

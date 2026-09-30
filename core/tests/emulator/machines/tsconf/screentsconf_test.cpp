@@ -10,9 +10,13 @@ class ScreenTSConf_Test : public TsConfFixture
 protected:
     ScreenTSConf* Screen() { return dynamic_cast<ScreenTSConf*>(_context->pScreen); }
 
-    /// Draw the whole frame and read framebuffer pixel (x, y)
+    /// Run the engine through one whole frame (every line latches the
+    /// current registers), draw it and read framebuffer pixel (x, y)
     uint32_t PixelAfterFrame(uint32_t x, uint32_t y)
     {
+        TsConfEngine& engine = _decoder->GetEngine();
+        engine.OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+        engine.CatchUp(TsConfEngine::kFrameTacts - 1);
         Screen()->InitRaster();
         Screen()->RenderFrameBatch();
         uint32_t* buffer = nullptr;
@@ -99,4 +103,18 @@ TEST_F(ScreenTSConf_Test, GFX1_SixteenColors)
     ts.cram[0x32] = 0x0002;
     EXPECT_EQ(PixelAfterFrame(Fx(140), Fy(80)), ScreenTSConf::CramToRgba(0x0001));
     EXPECT_EQ(PixelAfterFrame(Fx(141), Fy(80)), ScreenTSConf::CramToRgba(0x0002));
+}
+
+/// VID-5: ZX in rres 3 fills 360x288 from (88, 32); columns wrap at 32 bytes,
+/// so graphics x 256 shows byte column 0 again
+TEST_F(ScreenTSConf_Test, VID5_ZxInFullWindowWrapsColumns)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::VConfig, 0xC0);  // ZX, rres 3
+    Ram(5, 0x0000) = 0x80;          // row 0, column 0: leftmost pixel set
+    Ram(5, 0x1800) = 0x02;          // ink 2, paper 0
+    ts.cram[0xF2] = 0x7C00;
+    EXPECT_EQ(PixelAfterFrame(Fx(88), Fy(32)), ScreenTSConf::CramToRgba(0x7C00)) << "window origin";
+    EXPECT_EQ(PixelAfterFrame(Fx(88 + 256), Fy(32)), ScreenTSConf::CramToRgba(0x7C00)) << "column wrap";
+    EXPECT_EQ(PixelAfterFrame(Fx(89), Fy(32)), ScreenTSConf::CramToRgba(ts.cram[0xF0])) << "paper";
 }

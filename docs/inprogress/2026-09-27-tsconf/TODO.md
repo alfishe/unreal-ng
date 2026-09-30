@@ -1,7 +1,8 @@
 # TODO — ZX-Evo TSConf machine support
 
-**Status marker:** in progress - phases 0-2 done, phase 3 video v1 done
-(2026-09-30): `TSL` is creatable and boots the real ROM (TS-BIOS, TR-DOS).
+**Status marker:** in progress - phases 0-5 done (2026-09-30): `TSL` is
+creatable and boots the real ROM (TS-BIOS, TR-DOS); phase 5 (DMA) done;
+next: phase 6 (storage, vdos, SPG).
 Starts after the shared infrastructure and the move of the existing machines onto
 it (PLAN rationale 6); the interrupt source, write intercept and step hook of
 phase 0 are built (PLAN #60(a) + INF-5, [implementation-plan.md](implementation-plan.md) phase 0).
@@ -83,8 +84,16 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 
 ## Remaining
 
-- Phase 3 rest: the engine (per-line budget), line-latched registers, goldens.
-- Phase 4: TSU (tiles, sprites); phase 5 DMA; phase 6 SD / vdos / IDE / SPG;
+- [x] Phase 3 rest (2026-09-30, branch `tsconf-phase3`): line engine (latches,
+  row counter, line table), frame goldens, the classic machines' pictures pinned
+  (`ScreenZXFrames_Test`). The per-line DRAM budget moves to phases 4-5.
+- [x] Phase 4 TSU (2026-09-30, branch `tsconf-phase4`): tiles, sprites, layer
+  order, prefetch ring, mixing; BENCH-1 measured (TSU off 1.9x a ZX frame vs
+  the 1.1x target: speed backlog TS-O1…O3 in the implementation plan)
+- [x] Phase 5 DMA (2026-09-30, branch `tsconf-phase5`): every task of the
+  standard build, the per-line DRAM budget (video / TSU / CPU reads / DMA),
+  TSU starvation
+- Phase 6 SD / vdos / IDE / SPG;
   phase 7 surfaces (a `TsConfVideoMapper` for #42, debugger docks); phase 8 timing.
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
