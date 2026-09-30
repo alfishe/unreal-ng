@@ -271,6 +271,21 @@ prefetch ring refills before the window; TSU line buffers are derived).
   that have TSU pixels.
 - TS-O3: skip the per-dot TSU lookup on lines without TSU pixels.
 
+**TS-O1…O3 built 2026-09-30 (branch `tsconf-perf`):** `ScreenTSConf` draws
+one span per raster line (graphics per mode into an index buffer, GFXOVR /
+TSU mixing only over the TS window of lines the TSU drew on, TXT cell
+lookups once per 8 pixels) and converts through a 256-entry palette rebuilt
+only when CRAM changed (a 512-byte compare per call). Proof: test TSO2
+compares it pixel for pixel with the old per-dot renderer (kept in the test
+as the oracle) over 128 random setups covering every mode x geometry x
+NOTSU / NOGFX / GFXOVR, whole and in random chunks. BENCH-1 (minimum of 7,
+load ~100): frame render alone 1368 → 198 µs (TXT Setup), 1450 → 228 µs
+(TSU at its limit); whole frame TSU off 3299 → ~2200 µs = 1.26x Pentagon
+(was 1.89x; target 1.1x not met), TSU on ~2480 µs = 1.13x TSU off. The rest
+of the gap: TXT draws twice the pixels of a ZX frame, and the per-step line
+engine / interrupt hooks (~10% of the frame). Ideas left: SIMD in the 16C /
+256C gathers (tagged SIMD-CANDIDATE), fewer per-step hook calls.
+
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
 | GFX-1 | 16C: byte 0x12 at `(V_PAGE&0xF8)<<14` → pixel 0 = `{pal,1}`, pixel 1 = `{pal,2}` (high nibble left); golden per geometry (4) |

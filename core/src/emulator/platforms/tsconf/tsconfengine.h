@@ -86,6 +86,10 @@ public:
         return _tsu[line][dot - set.tsX0];
     }
 
+    /// The TSU line buffer of line `line` (valid for Line(line).tsX0 .. + tsW
+    /// when Line(line).tsu; 0 = transparent)
+    const uint8_t* TsuRow(uint32_t line) const { return _tsu[line < kLines ? line : kLines - 1]; }
+
     /// region <IMachineStepHook>
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
