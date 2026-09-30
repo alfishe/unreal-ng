@@ -710,6 +710,7 @@ void ScreenZX::SetBorderColor(uint8_t color)
     }
 
     _borderColor = color & 0b0000'0111;
+    NoteVideoWrite();
 }
 
 /// Emulate ULA video signal generator

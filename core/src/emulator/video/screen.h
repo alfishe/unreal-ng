@@ -6,6 +6,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/video/map/videowritelog.h"
 #include "stdafx.h"
 
 class Z80;
@@ -526,6 +527,10 @@ protected:
     ModuleLogger* _logger;
 
     uint8_t _activeScreen;
+
+    /// Latches after every video port write of the current and previous frame (cold: port handlers only)
+    videomap::VideoWriteLog _videoWriteLog;
+    void NoteVideoWrite();
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
@@ -644,6 +649,12 @@ public:
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
+
+    /// Video debug translation (PLAN #42 phase 3): the latches the picture's
+    /// geometry and memory depend on now, and their history over the current
+    /// and the previous frame (videowritelog.h)
+    videomap::VideoLatches CaptureVideoLatches() const;
+    const videomap::VideoWriteLog& GetVideoWriteLog() const { return _videoWriteLog; }
 
     /// @brief Read-only access to the calculated raster zone boundaries
     /// (t-state ranges for blank/border/screen areas, vertical and horizontal)

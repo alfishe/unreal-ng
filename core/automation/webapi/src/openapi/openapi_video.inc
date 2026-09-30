@@ -41,10 +41,13 @@
         pixel["tags"].append("Screen State");
         pixel["description"] =
             "The memory, registers and palette cell behind a pixel: layer, x, y, sources[] (space, page, offset, "
-            "width, bit_mask, role, z80[]), colour_index, rgb, rendered_rgb (what the framebuffer holds), state_at "
-            "and values_at (current). With t= the point under the beam at that frame T: a layer pixel, or the "
-            "border (border: true, with its register and palette sources). available: false when the point has "
-            "neither.";
+            "width, bit_mask, role, z80[]), colour_index, rgb, rendered_rgb (what the framebuffer holds, only when "
+            "its geometry is that moment's), values_at (current: colours from memory now) and snapshot (the machine "
+            "was running: the last completed frame answered). With t= the point under the beam at that frame T in "
+            "the video mode of that moment (video write log: state_at = t, state_frame, state_partial when the log "
+            "overflowed): a layer pixel, or the border (border: true, with its register and palette sources). "
+            "Paused: the current frame once T has passed, else the previous one. Without t: state_at = current. "
+            "available: false when the point has neither.";
         idParam(pixel);
         queryParam(pixel, "x", "integer", "Surface x of the layer (with y)");
         queryParam(pixel, "y", "integer", "Surface y of the layer (with x)");

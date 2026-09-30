@@ -140,6 +140,13 @@ struct PixelSources
     uint32_t renderedRgb = 0;        ///< what the framebuffer holds
     bool renderedKnown = false;
     std::vector<uint16_t> z80;       ///< Z80 addresses of the first memory source under current paging
+
+    /// Time labels (design §4.6). Addresses follow the latches at stateAtT
+    /// (-1: now); colours come from memory and palettes as they are now
+    int64_t stateAtT = -1;
+    uint64_t stateFrame = 0;         ///< the frame whose history answered (stateAtT >= 0)
+    bool statePartial = false;       ///< that frame's write log overflowed: later writes are missing
+    bool fromSnapshot = false;       ///< the machine was running: the last completed frame answered
 };
 
 /// A rectangle of a layer that a byte feeds
