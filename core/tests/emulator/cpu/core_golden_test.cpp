@@ -63,7 +63,7 @@ const Golden kGolden[] = {
     // ATM3 re-recorded 2026-09-29 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
     // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)
     {"ATM3", nullptr, 0xF416FE88041AFE2Full, 0x6A8F4FE6FCE9BDBCull, 9434880ull},
-    // TSL (TS-Conf) is not creatable with the shipped ROMs.
+    // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 
 constexpr unsigned kFrames = 150;

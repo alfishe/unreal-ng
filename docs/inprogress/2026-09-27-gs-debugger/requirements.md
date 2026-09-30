@@ -1,8 +1,30 @@
 # Sound-card CPU debugging (General Sound, NeoGS) — requirements
 
-- **Date:** 2026-09-27
-- **Status:** draft, revision 2 (first review answers applied, see §6).
-  Requirements only; the design follows once these are agreed.
+- **Date:** 2026-09-27; revision 3 and revision 4 on 2026-09-28
+- **Status:** draft, revision 4.
+  - Revision 4 adds §4.13-§4.16:
+    - tracing and analysis;
+    - audio tools;
+    - firmware metadata and uploaded code;
+    - validation scenarios from real software.
+
+    They come from the survey of other emulators' debuggers
+    ([2026-09-28-emulator-debugger-survey](../2026-09-28-emulator-debugger-survey/)),
+    the NedoOS metadata ideas and the GS / NeoGS software in the NedoOS
+    tree, and the Unreal Speccy GS dialog.
+  - Revision 4 also extends F4, S7, D1, W2 and W3 (§6, "Decided in revision
+    4").
+  - Revision 3: Revision 2 applied the first review
+  answers (§6). Revision 3 brings in NeoGS as built and merged into master,
+  and adds N6-N8 (§4.9). It also moves every front-end matter into the
+  debugger model ([2026-09-28-debugger-model](../2026-09-28-debugger-model/)):
+  - widgets and fields: [widget-catalog.md](../2026-09-28-debugger-model/widget-catalog.md);
+  - behavior: [rules.md](../2026-09-28-debugger-model/rules.md);
+  - the protocol: [protocol.md](../2026-09-28-debugger-model/protocol.md);
+  - the GUI: [gui-main-debugger.md](../2026-09-28-debugger-model/gui-main-debugger.md) and its card delta [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md).
+
+  This document keeps the requirement IDs. The model documents implement
+  them for every front-end.
 - **Scope:** debugging the program that runs on a sound card's own Z80 - the
   General Sound (GS) firmware today, the NeoGS firmware next - side by side
   with the main machine, plus card-specific tools built around the host ↔ card
@@ -38,6 +60,24 @@ This document asks for:
    tables selected by firmware signature, not from code (§4.6).
 5. **The LW card gets a read-only inspector**, not a debugger: its command log
    and the state of its command interpreter (§4.11).
+6. **See what the card does over time, not only at a pause** (revision 4,
+   §4.13):
+   - a merged trace of both CPUs;
+   - a whole-frame event viewer;
+   - probes that log without stopping;
+   - a code / data log, a profiler with the interrupt budget, and heat maps;
+   - watchpoints by bus master (CPU or DMA);
+   - hardware-misuse validators.
+7. **Hear and export the sound** (§4.14): mute and solo channels, per-channel
+   scopes, audition and export of samples and modules, and a list of the
+   commands a card does not know.
+8. **Firmware and uploaded code as data** (§4.15):
+   - structs and instances;
+   - the dispatcher and its patches;
+   - the handshake per command;
+   - profiles for code the host uploads into the card (players, drivers,
+     replacement BIOSes);
+   - checked against real NedoOS software (§4.16).
 
 ## 1. Terms
 
@@ -242,7 +282,10 @@ stateDiagram-v2
 | S4 | P0 | **Never shown in the future.** The main CPU is never shown later than the card's stop point by more than its current instruction. Today's catch-up lets the main CPU run ahead by up to a frame (§2 diagram); while any card breakpoint or card step is active, the emulation must keep the two CPUs within one main instruction of each other. When card debugging is not active, catch-up stays as it is (P1). | Card breakpoint at cycle 60,000 (main T 17,500): the main CPU is shown at the instruction containing T 17,500, not at the next card-port access at T 34,996. |
 | S5 | P0 | **Step one target, the other frozen, timing kept.** Stepping one CPU freezes the other: it runs no instruction of its own beyond what the elapsed time requires. The time line advances by the stepped CPU's cycles converted by the clock ratio. Stepping the card by one instruction moves the main CPU's progress by the matching T. When the progress crosses the end of its instruction, that instruction completes and the next one starts. Stepping the main CPU by one instruction runs the card for the matching cycles, several card instructions, and stops it on a boundary per S2. | From the example, step `gs` once over `JR NZ` (12 cycles = 3.5 T): the main CPU shows `OUT (#B3),A` at 10.1 of 11 T (92%, port write under way). A second `gs` step of 19 cycles (5.5 T) completes `OUT` and shows the next instruction 4.6 T in. Step `main` once over an 11 T instruction: the card advances ≈37.7 cycles, ending on a boundary. |
 | S6 | P0 | **Step modes on the card.** Step into, step over, step out and run to cursor work on the card target with the same meaning as on the main CPU, and follow S5 for the other CPU. | Step over a `CALL` on `gs`: the card is at the next instruction; the main CPU advanced by the routine's duration × 7/24 T. |
-| S7 | P1 | **Run to a moment.** "Run until the card reaches cycle N", "until main T reaches N", "until the next frame", "until the next card interrupt", with both CPUs moving on the one time line. | Run to next frame from any pause: the main CPU is at T 0 of the next frame, the card at its matching boundary. |
+| S7 | P1 | **Run to a moment.** "Run until the card reaches cycle N", "until main T reaches N", "until the next frame", "until the next card interrupt", with both CPUs moving on the one time line. "Break in N" accepts N in **card cycles, card instructions, card interrupt periods, main T or main instructions** (Mesen2's step units). "Frame" always means the main machine's frame; the card has no frames. The targets are scheduled events, not per-instruction compares (vAmiga beamtraps), so tight sync stays cheap. | Run to next frame from any pause: the main CPU is at T 0 of the next frame, the card at its matching boundary. "Break in 3 card interrupt periods" stops at the third period boundary. |
+| S10 | P1 | **Resume from a breakpoint, per CPU.** When the machine resumes while one or both CPUs sit on an execution breakpoint, each such CPU first steps off its own breakpoint; resuming never re-hits immediately. | Pause on a card breakpoint while a main breakpoint is also at the main PC; Continue runs on, and both fire again only on their next pass. |
+| S11 | P1 | **The stop report gives both deltas:** main ΔT and card Δcycles since resume, the frame and the position of each CPU (WinUAE prints cycles since resume and the beam at resume and at stop). | After a card breakpoint: `main +71,680 T (frame 413) · card +245,760 c`. |
+| S12 | P2 | **Focus the other CPU at its next boundary.** One action finishes the other CPU's current instruction (for the main CPU, the one left partway, S3) and focuses its window there (MAME `next`). | From a card pause inside `OUT (#B3),A`, the action completes `OUT` and shows the main CPU on the next instruction. |
 | S8 | P1 | **Debugging does not change results.** Stepping, pausing and breakpoints change when the CPUs are looked at, never what they compute. | Card RAM hash, DAC output and every reply byte over 300 frames are identical with and without 10 card breakpoints that are hit and resumed, and with a run of 1,000 alternating `gs` / `main` steps. |
 | S9 | P1 | **Ratio changes are honoured.** Main-CPU turbo (e.g. 7 MHz: ratio 12/7) and NeoGS clock switching (10/12/20/24 MHz) change the conversion from the moment they happen; progress and gaps are computed with the ratio in effect at that time. | Switch to turbo mid-frame; a step of the card by 12 cycles moves the main CPU by 7 T instead of 3.5 T. |
 
@@ -316,7 +359,7 @@ sequenceDiagram
 | F1c | P1 | **Retention.** The log is a ring. Its capacity holds at least a complete load plus 5 minutes of playback. Worked sizing: 5 minutes at 48.83 frames/s is 14,650 frames. A game that sends 2 commands per frame (e.g. volume and position polling) produces ≈30,000 entries. Uploads are one entry each (F1a). The design states the entry size and the resulting memory, and decides whether the ring can be always on (then F1b's default changes). When the ring wraps, the oldest entries are dropped, and the log says how many. | Load a module and play it for 5 minutes with 2 commands per frame: the first load command is still in the log. |
 | F2 | P0 | **Firmware profiles as metadata tables.** All knowledge of a firmware - command names, parameter count and meaning, reply meaning, which commands start multi-byte transfers, addresses of its variables (for F3, F5), its symbol file (L3) - is data in a firmware profile, selected by the ROM signature (L4). No firmware-specific code in the debugger. First version: profiles built into the emulator for GS v1.04, v1.05a and v1.05b. Later: profiles read from files by signature, so a new firmware needs no rebuild. The source of truth for a profile is the firmware source (command tables `COMTAB` / `COMTABH`), not the published guide, which omits e.g. `#0E` Covox streaming, `#13` jump, `#16` put byte. Commands missing from the profile are logged as "unknown command #NN". | Commands `#0E`, `#13`, `#16` appear by name in the log with v1.05a. A ROM with no profile still logs every command, by number. |
 | F3 | P1 | **Protocol state.** What the card is doing with the conversation right now: which command is in progress, how many parameter bytes it expects and has received, and for multi-byte transfers (module upload) the progress. | During a module upload the view shows "load module: 12,288 of 38,400 bytes". |
-| F4 | P1 | **Protocol problem detection**, flagged in the log: a byte written before the card consumed the previous one (lost byte), a command sent while the previous one was not yet taken, a reply read that was never written, a transfer that stalls. | A program that writes two data bytes back to back without waiting gets a "byte `#12` overwritten before the card read it" entry. |
+| F4 | P1 | **Protocol problem detection**, flagged in the log. The kinds are:<br/>- a byte written before the card consumed the previous one (lost byte);<br/>- a command sent while the previous one was not yet taken;<br/>- a reply read that was never written;<br/>- a transfer that stalls.<br/><br/>**Revision 4 adds these kinds (from the GS software in NedoOS):**<br/>- `reply_read_without_poll`: the host read `#B3` while the data flag was clear. It is flagged even when the value happened to be valid, because it breaks under turbo and other clock ratios.<br/>- `data_before_command`: a note, not an error.<br/>- `command_while_busy`: e.g. `#F3` inside an open `#D1` stream.<br/>- `card_reply_stall`: the card spins on its own unread reply.<br/>- `stale_reply_drain`: repeated reads that empty the data flag.<br/>- `upload_over_running_code`: e.g. `#14` to `#0000`.<br/>- `command_rejected_in_state`: e.g. only `#E4` / `#E6` are accepted while the NeoTracker player runs.<br/><br/>The expected handshake per command comes from the profile (M6), so legal firmware-specific handshakes raise no flag. | A program that writes two data bytes back to back without waiting gets a "byte `#12` overwritten before the card read it" entry. The NedoOS kernel's `GS_INIT` (`#23`, then a read after two HALTs without polling) gets a `reply_read_without_poll` entry. |
 | F5 | P1 | **Firmware objects view.** What the firmware holds: loaded modules and samples (slot, size, address in card RAM), and playback state (song position, pattern row, speed, active channels, global volume), read from the firmware's own variables through a per-firmware map. | After loading and starting a module, the view shows the slot, its size, song position 0 and advancing rows. |
 | F6 | P1 | **Send from the debugger.** Send a command or data byte and read the reply from the debugger UI, with the same name/parameter decoding (this exists in automation today; the requirement is the debugger-side tool with decoding). | Send `#23` (number of pages) from the UI; the log shows it and the reply `#10` with its meaning. |
 | F7 | P2 | Export of the command log (text / JSON) and a filter by command, by main-CPU routine and by time range. | Export the log of a session to JSON; filter to `#30`-`#33`. |
@@ -325,7 +368,7 @@ sequenceDiagram
 
 | ID | Pri | Requirement | Check |
 |---|---|---|---|
-| D1 | P1 | Reverse step and reverse continue on the card target, like on the main CPU. | Reverse-step five card instructions; registers match a forward run to the same point. |
+| D1 | P1 | Reverse step and reverse continue on the card target, like on the main CPU. The replay window is sized in **card instructions**, not in main T: one main instruction can span several card instructions, and the reverse holds at 7 MHz main turbo (Mesen2's step-back cache retries when one instruction spans more than the window). | Reverse-step five card instructions; registers match a forward run to the same point. |
 | D2 | P1 | "Who wrote this byte" in card memory: the history of writes to a card address, with the card PC of each write. | Ask for the last writer of card RAM `#4100`; get the firmware routine that wrote it. |
 | D3 | P1 | The command log (F1) is part of the recorded history: seeking back shows the log up to that point; nothing after it. | Seek to frame 200; the log ends at frame 200. |
 | D4 | P2 | Card breakpoints participate in reverse search (reverse continue stops at the previous hit of a card breakpoint). | Reverse continue from frame 400 stops at the previous `#31` command. |
@@ -350,7 +393,10 @@ sequenceDiagram
 | N1 | P0 | Nothing in the design assumes the GS memory map, port list, number of DAC channels or command table. Each card model supplies: its address windows and pages, its port list with names, its hardware panel fields, its command tables per firmware version, its firmware variable map. | Adding NeoGS needs only a new card description plus its own panel fields, no change to the debugger core. |
 | N2 | P1 | The card CPU clock can change while running (NeoGS 10, 12, 20 or 24 MHz); time conversion (§4.2) follows the current clock. | Switch NeoGS to 24 MHz mid-frame; a main breakpoint still reports the card at the matching cycle. |
 | N3 | P1 | Large and deep memory: NeoGS has up to 4 MB of RAM (256 pages of 16 KB; the older fpgaD revision addresses 2 MB) and 512 KB of flash. Its current FPGA can switch **all four** windows (page ports `#20`-`#23`, besides `MPAG` / `MPAGEX`), and `GSCFG0` selects ROM or RAM. Memory views, page-tied breakpoints and labels handle 8-bit page numbers and switchable windows 0 and 1. | A breakpoint in NeoGS RAM page 200 fires only for that page, in whichever window it is mapped. |
-| N4 | P2 | NeoGS-only devices appear as inspectable state: SD card (current sector, transfer state), MP3 decoder (buffer fill, status), DMA (source, destination, remaining count). | — |
+| N4 | P1 | NeoGS-only devices appear as inspectable state, as device boards (widget catalog §4.5-§4.7): the configuration register, the four page registers, the clock, eight channels, interrupts, SPI, the SD card, the MP3 decoder, the DMA and the flash. | Every field of `NeoGSStateInfo` is on a board and in `GET /debug/boards/neogs`. |
+| N6 | P1 | **ZX-DMA in the debugger** ([neogs-zxdma-design.md](../2026-09-19-general-sound/neogs-zxdma-design.md) §6): tight mode goes through the host bus overlay; the main CPU's memory view and disassembly show a banner while Divert is on; ZX-DMA waits count in the main CPU's instruction progress; ZX-DMA event breakpoints; the ZX-DMA trace. | The Link's tunnel: the DMA board shows Divert, the pending byte and 0 wait T; a `zxdma_start` breakpoint stops the machine. |
+| N7 | P1 | **Card statistics in the debugger**: the `GSSlotStats` block of [neogs-automation-design.md](../2026-09-19-general-sound/neogs-automation-design.md) is the Stats widget, with the same fields as automation. | The Stats widget and `GET /state/audio/gs/stats` show the same numbers in the same frame. |
+| N8 | P1 | **The NeoGS SD card is the media slot `sd.ngs`** (master's media manager, 2026-09-28). The SD board shows the slot's medium (image or folder), access and write protection from the manager, and offers insert / eject through it. | Insert a folder through the board; `media list` shows it in `sd.ngs`. |
 | N5 | P1 | **NeoGS firmware symbols from its sources, plus a comparison with GS.** The NeoGS firmware sources are in the NedoPC SVN repository `ngs` (`svn.nedopc.com`, folder `/z80/`); a local git-svn mirror synced on 2026-09-19 exists, so no download is needed. It contains `main_rom/` (`main_ngs.a80`, `main_full.a80`, `ngs_sd_drv.a80`, `version.a80`, `build.bat`, the built `neogs.rom`), `gs105a_fix/`, `loader_ngs/`, `bootGS01/`, `sdcomand.a80` and `ports_ngs.a80`. They are imported into the GS materials and used to mark up the NeoGS ROM binary like L3. The results go into `data/symbols/gs/` and a NeoGS firmware profile. A comparison against the GS v1.05a firmware is a deliverable too: each routine is marked "same as GS `NAME`", "changed from GS `NAME`" or "NeoGS only", which shows what NeoGS adds on top of GS. | The mark-up report places every label, or lists it. The profile names every command in its command table. The comparison report lists every routine in one of the three classes. |
 
 ### 4.10 Performance
@@ -390,7 +436,7 @@ stateDiagram-v2
 |---|---|---|---|
 | W1 | P1 | The command log (F1) works for the LW card with the same format and decoding (the LW card emulates GS v1.05a behaviour, so the v1.05a profile applies). | The same game on LLE and LW gives command logs that match line for line in commands, parameters and replies. |
 | W2 | P1 | The interpreter state is shown read-only: current state, command in progress, bytes expected / received, reply pending, upload progress. | During a module upload the inspector reads "Upload, 12,288 of 38,400 bytes". |
-| W3 | P1 | Player state is shown read-only: loaded modules and samples, song position, row, speed, channel volumes, playing / stopped. The fields are the same as the LLE firmware objects view (F5). | Start a module on LW: position and row advance, matching the same module on LLE. |
+| W3 | P1 | Player state is shown read-only: loaded modules and samples, song position, row, speed, channel volumes, playing / stopped. The fields are the same as the LLE firmware objects view (F5). The sample rows keep every column of the Unreal Speccy GS dialog (`mon.gs`, `dbgoth.cpp:292-517`): the module row with `(P)` / `(S)` and its name; per sample: the number, volume, note, priority, playback rate in Hz, length, the current-effect marker `*` and the loop flag `(L)`. | Start a module on LW: position and row advance, matching the same module on LLE. The sample list shows note, priority and rate. |
 | W4 | P2 | Protocol problem detection (F4) works on the LW card too. | A lost-byte case gets the same flag on both cards. |
 | W5 | — | No breakpoints, stepping, registers or memory editing on the LW card. Pausing the machine freezes the inspector's view. | — |
 
@@ -399,6 +445,87 @@ stateDiagram-v2
 | ID | Pri | Requirement | Check |
 |---|---|---|---|
 | R1 | P1 | GS v1.05b is added as a selectable card ROM (`data/rom/gs105b.rom`, chosen with the existing `GS=` config key), built from the in-tree sources. v1.05a stays the default. CI checks that the build matches the shipped file byte for byte, and its SHA-256 is in the emulator's known-ROM table. | Set `GS=rom/gs105b.rom`: the card boots, answers the version query with v1.05b, and its profile and symbols load (L4). |
+
+### 4.13 Tracing and analysis (revision 4)
+
+From the survey of other debuggers. **Scope** says whether the feature is
+card-only or general, that is, also for the main CPU (the model documents
+carry the general ones for every CPU).
+
+| ID | Pri | Scope | Requirement | Check |
+|---|---|---|---|---|
+| X1 | P1 | general | **Interleaved multi-CPU instruction trace.**<br/>- One ring per CPU records {machine time, cycles, PC, page, registers, access}. The merged view is ordered by machine time, with card cycles converted at the ratio in effect (S9) (Mesen2 trace merge; MAME `trace`).<br/>- Text is formatted only when shown, from a user format of fields.<br/>- **Loop condensation:** `(loop ×N, 3 instructions)`. It is essential, because the firmware spends most of its time in its command-wait loop.<br/>- `traceover` skips subroutine bodies; interrupt entries are shown inline.<br/>- Filters: CPU, ISR only, "while command `#30` is in progress" (a condition on F3). | Trace one frame of a module playing: the card's wait loop collapses to one line per burst, and the ISR entries appear at 37.5 kHz. |
+| X2 | P1 | card (main: a ULA event viewer) | **Event viewer: a whole frame on one canvas.**<br/>- Rows are the card's interrupt periods (about 750 a frame at 37.5 kHz); columns are the card cycle within the period (NeoGS: scaled by the clock and `tim_freq`).<br/>- Dots: host `#B3` / `#BB` accesses in card time, interrupt accepted, **ISR end as a bar**, DAC fetches colored by channel, page-port writes, volume writes, ZX-DMA bytes, SD / MP3 DMA bursts, probe marks (X3).<br/>- Events after the current position are ghosted from the previous frame (Mesen2 event viewer; 8bitanalysers frame trace).<br/>- Categories can be hidden and recolored; a click gives the details. | The ISR bars show the interrupt budget at a glance; a host upload shows as a column of dots. |
+| X3 | P1 | general | **Probes: breakpoints that log or mark and continue.** Every breakpoint gets an action: `stop` (the default), `log` (a formatted line with operands), `mark` (a dot on X2 and the timeline), or `count` (Mesen2 `MarkEvent`; MAME actions ending in `g`; DeZog `LOGPOINT`). This is needed because stopping the card breaks the real-time behavior being debugged. | "Log A and the page at every `#0038` entry" produces a log and never pauses. |
+| X4 | P2 | general | **Forbid ranges:** a PC range plus a condition that suppresses any break whose PC is inside it (Mesen2, FCEUX). | A write breakpoint on a sample buffer that ignores the ISR's own writes. |
+| X5 | P2 | general | **Break before the access**, as an option per memory or port breakpoint. The debugger predicts the instruction's accesses and stops before it, so the registers show the state before the access (Mesen2 predictive breakpoints). The default stays "after the instruction" for card breakpoints (rules §1). | A card `OUT (#03),A` breakpoint in "before" mode shows the reply byte still in A and the flag clear. |
+| X6 | P1 | card (general for TSConf DMA) | **Watchpoints filtered by bus master.** A memory watch fires only for chosen masters: on NeoGS the card CPU, SD-DMA, MP3-DMA or ZX-DMA; on the host, the main CPU or ZX-DMA in Divert. The hit names the master (WinUAE memwatch channel masks). | "SD-DMA writes to card page 7" fires on the DMA block, not on CPU writes. |
+| X7 | P1 | general | **Last writer of each hardware register.**<br/>- For every card port (`#00` page, `#06-#09` volumes, `#03` reply, GSCFG0, `#20-#23`, the DMA registers) and the host ports `#B3` / `#BB` / `#33`: the value, the writer's PC and label, the machine time, and CPU or DMA.<br/>- For DMA, the programmed values against the live ones, and the PC that started the transfer (WinUAE copper `ex`; TSLabs DMA view). | The GS board's MPAG shows `#03 · written by #1284 SETPAGE+4 · frame 412`. |
+| X8 | P1 | general | **Code / data log and coverage, per physical page.**<br/>- One flag byte per ROM, flash and RAM byte: code, data, jump target, subroutine entry, DAC-fetched.<br/>- Keyed by the physical page, because NeoGS runs code copied from flash into RAM.<br/>- Sessions merge (OR).<br/>- Uses: disassembly hints; coverage per command handler; "break on the first execution of new code", to find the handler of an unknown command; checking the F2 tables against the code that actually ran (Mesen2 / FCEUX / BizHawk CDL; MAME `trackpc`). | Play a game's music: the report lists the firmware command handlers it exercised. A merged corpus run lists the handlers no game uses. |
+| X9 | P1 | general | **Function profiler and ISR budget.**<br/>- Per firmware routine (names from L3): calls, inclusive and exclusive cycles, min / max / average. Inclusive time does not leak across interrupts.<br/>- **The card ISR: cycles per interrupt period against the 320 available, as min / avg / max and headroom.**<br/>- The cost of each command handler.<br/>- On NeoGS, the same at each clock, which shows what 20 / 24 MHz buy (Mesen2 profiler; WinUAE `vh`). | GS v1.05a playing a 4-channel module: the ISR uses 212 of 320 cycles on average (66%), and 301 at most. |
+| X10 | P1 | general | **Memory heat map per CPU, by master, with decay.**<br/>- A grid over card RAM (128 KB up to 4 MB; at 4 MB, 64 bytes a pixel on a 256 × 256 grid).<br/>- Channels: fetch, read, write, DAC fetch, SD / MP3-DMA, ZX-DMA.<br/>- The sample being played glows, and an upload sweeps across the grid.<br/>- "Ranges read by DAC fetch in the last N frames" finds the samples (WinUAE heat map; zxsp; Mesen2 access stamps). The main CPU's map gets a ZX-DMA channel. | During playback the playing samples' ranges glow in the DAC color. |
+| X11 | P2 | general | **Reads of RAM never written** since the last card reset: flagged, and a breakpoint kind (Mesen2 `WriteStamp == 0`). | A firmware that reads a variable before initializing it after an NMI is flagged. |
+| X12 | P1 | card | **Hardware-misuse validators**, logged and optionally breaking (WinUAE validators, `debugtest`). They report:<br/>- writes to card ports that are not decoded;<br/>- a page number beyond the fitted RAM (aliasing on a 128 KB card);<br/>- a NeoGS DMA address outside RAM;<br/>- a clock switch or a page change while DMA runs;<br/>- an SD command in the wrong state;<br/>- a flash write in RAM mode.<br/><br/>F4 is the protocol layer; this is the hardware layer. | Setting page 9 on a 128 KB GS logs "page 9 aliases page 1 (128 KB fitted)". |
+| X13 | P1 | general | **Script callbacks on card events**, on every scripting surface: `on_command`, `on_reply`, `on_int`, `on_dac_fetch`, `on_port(card)`, `on_dma_done`, `on_clock_change`. A memory callback may **return a replacement value**, for fault injection: drop a reply, corrupt an upload byte. There is also a **headless test runner** that returns an exit code (Mesen2 Lua and `--testrunner`; MAME taps). | A Lua script counts DAC fetches per channel for 100 frames and exits with 0 when all four are active. |
+| X14 | P2 | general | **Asserts and logpoints in source comments.** `; ASSERT expr` and `; LOGPOINT text` in the firmware sources load with the symbols (L3) and become X3 probes (Mesen2 `assert()` in label comments; DeZog). | An `; ASSERT A < 12` in a command handler stops the card when it fails. |
+| X15 | P2 | general | **Debugger state saved per firmware:** card breakpoints, probes, watches, the CDL (X8), heat-map settings and comments, per firmware SHA-256. Comments are keyed by (address, bytes CRC), so they follow NeoGS code into whichever RAM page it is copied to (Mesen2 workspace; MAME comments by opcode CRC). | Restart and boot the same ROM: the breakpoints and probes are back. |
+| X16 | P2 | general | **Snapshot-diff search in card memory:** snapshot, run, filter bytes by `==`, `!=`, delta. It finds firmware variables for new profiles of unknown firmware (Mesen2 memory search; MAME cheat engine). | Change the volume through the game; the search finds the volume variable in two passes. |
+| X17 | P2 | card | **Logic analyzer for one interrupt period.** Per card cycle: M1 / MREQ / IORQ, the address, the data, and four probes (a DAC latch, `#03`, the INT line, the ZX-DMA wait), drawn as waveforms (vAmiga bus tab). | The 320 cycles of one period show the DAC fetches between the ISR's instructions. |
+| X18 | P2 | card | **Pending-event inspector:** the next card interrupt, the next ZX-DMA slot, SD block done, MP3 DREQ, the next catch-up boundary, each with "due in N cycles" (vAmiga event scheduler inspector). It explains why a stepped card seems not to move. | While the card waits in HALT, the inspector shows the next interrupt 108 cycles away. |
+| X19 | P2 | general | **Differential run:** the same snapshot run twice (LLE against LW, GS v1.05a against v1.05b), reporting the first differing card instruction or reply (zx-m8xxx differential run). It automates W1. | v1.05a vs v1.05b on one game: "first difference: reply to `#20` at frame 3". |
+| X20 | P2 | card | **Activity graphs over time:** card busy / halted %, ISR headroom, DMA busy / stall, commands per frame, as time series next to N7's counters (vAmiga metrics). | During a module load, the commands-per-frame graph spikes and the busy % rises. |
+| X21 | P1 | general | **Per-CPU capability flags and stoppability.** The toolbar and the menus are built from each target's capabilities (Mesen2 feature flags per CPU), so the LW inspector (W5) and the NeoGS-only actions grey out from data. A target can be marked **not stoppable**: its breakpoints stay stored but are not armed, and cost nothing (MAME `ignore`). | Mark `gs` not stoppable: its breakpoints show as disarmed, and the P1 benchmark is unchanged. |
+
+### 4.14 Audio tools (revision 4)
+
+| ID | Pri | Requirement | Check |
+|---|---|---|---|
+| AU1 | P1 | **Channel mute and solo at the output stage**, for the 4 or 8 DAC channels and the whole card. It changes only what the host hears, never the emulated state, so S8 holds (JNext, Xpeccy, WinUAE). | Solo channel 2: only channel 2 is heard; the card RAM hash over 300 frames is unchanged. |
+| AU2 | P1 | **Per-channel oscilloscope:** the last N ms of each channel (latch × volume) for 4 or 8 channels, plus the mixed L / R before coupling. When paused, the window around the stop point with a NOW cursor aligned to the twin timeline. A click on a sample point jumps to the DAC fetch that produced it, through X1 (Spectral, Xpeccy, vAmiga). | Paused mid-sample: the scope's cursor sits on the last fetched value; a click opens the fetch in the trace. |
+| AU3 | P2 | **DAC trace export:** CSV of (main T, card cycle, channel, value, volume), and a WAV per channel. Used to compare LLE, LW and NeoGS output, and firmware versions (JNext `--dac-trace`). | Export 10 s of a module from LLE and LW; a script compares them. |
+| AU4 | P1 | **Sample and module browser with audition and export.**<br/>- Actions on the F5 and W3 objects: **play on the host** (rendered from card RAM with the format in the firmware profile; emulated state unchanged); save a sample as `.pcm` / `.wav`; save a module.<br/>- Play / stop can also be sent as a real command through F6, logged as "sent from debugger".<br/><br/>This keeps what the Unreal GS dialog offers. | Pick sample 4 and play it on the host; save it as WAV; the card is untouched. |
+| AU5 | P2 | **Replayable command-stream capture:** an opt-in capture of the host↔card traffic *including payloads* (F1a drops them by design, so this is a separate mode). It can be replayed into LLE, LW or NeoGS without the game (the GS counterpart of VGM / PSG logs). | Capture a game's music start, replay it into LW; the command logs match (W1). |
+| AU6 | P1 | **Unknown and unimplemented commands seen:** a set with counts and a clear action. On LW: the commands it lacks (its fidelity indicator). On LLE: the commands that land in the firmware's unknown-command stub (the Unreal `badgs[256]` list). | A game sends `#99` on LW: the list shows `#99 ×3`. |
+
+### 4.15 Firmware metadata and uploaded code (revision 4)
+
+From the NedoOS metadata-driven debugging design
+([2026-09-17-nedoos-future-support](../2026-09-17-nedoos-future-support/)) and
+the GS / NeoGS software in the NedoOS tree (GP player, ngsplay with the
+NeoTracker BIOS, the kernel's NeoGS SD driver, Moon Rabbit, gstest).
+
+| ID | Pri | Requirement | Check |
+|---|---|---|---|
+| M1 | P1 | **Firmware structures as data.** A firmware profile (F2) carries `structs[]` (name, fields with offset, type, size, meaning; arrays with a stride; nested structs) and `instances[]` (a struct at a symbol or address, with a count). Examples: the per-channel record, the module header, the sample table, the stream ring pointers. F5 and W3 become renderings of these schemas, not fixed fields (NedoOS struct DSL, CAT §4.2). | The NeoTracker profile declares `smp` × 8 and `MODULE` × 12; the firmware objects view shows them with no NeoTracker-specific code. |
+| M2 | P1 | **Instances bound to a physical page.** A struct instance lives at (page, offset), not at whatever the windows map now (NedoOS DSL §9, the page-switching hazard). Required on NeoGS: 256 pages, all four windows switchable (N3). | A module header at RAM page 5 reads correctly while page 5 is not mapped. |
+| M3 | P1 (channels, samples), P2 (generic) | **A universal struct inspector:** a table whose columns come from the schema; rows are instances. Context menu: go to memory, show in disassembly, watch a field, break on a field write (NedoOS ENH B.1 #1). | The channel table shows 8 rows with sample, position, volume, updated on every pause. |
+| M4 | P1 | **Declared dispatch and a live dispatch-table view.** The profile names the command dispatcher: `{pc, register, table}`, e.g. `COMINT` → `COMTAB`, command in A. The view compares the table in RAM with the ROM baseline and shows patches: `#1E → #1D00 (patched by a 768-byte upload, sha 3fa1…)`. The dispatcher also fills the card PC and label of every log entry, including patched commands (NedoOS ENH A.1 traps). | After the NedoOS kernel installs its SD driver, the view shows `#1E` patched, and `#1E` commands are logged with `card_label = NGSSD`. |
+| M5 | P1 | **Profiles for uploaded code.**<br/>- When a `#14` upload completes, the block is hashed; its address and length come from the parameters. The hash is matched against profile signatures.<br/>- On `#13 <addr>`, the active command table switches to the uploaded code's profile, with the stock profile underneath for the commands the new code passes back.<br/>- An unknown upload is logged as `user code @#4000, 3,212 B, sha …`.<br/>- Known blobs to profile first: GP `gscode.bin` @`#4000`, the kernel's `ngssd.bin` @`#5B00`, NeoTracker `ngsldr` @`#5100`, `ngsdrv` @`#0000` and `neopg2` @`#D000`. | GP's MP3 player: after its upload and jump, commands `#00-#06` are logged by name (`free ring space`, `chip id`, `stream info` …). |
+| M6 | P1 | **The handshake per command, as profile data:**<br/>- whether the host acknowledges by the command flag or the data flag (WC vs WD after `#14` differs between the stock firmware and NeoTracker);<br/>- whether the command is a barrier (`#00` in NeoTracker);<br/>- whether an in-transfer `#BB` write is a strobe, not a new command (the kernel SD read).<br/><br/>F4 uses it to avoid false positives. | The NeoTracker bootstrap raises no F4 anomaly; the same bytes against the stock profile would. |
+| M7 | P1 | **Variables held in registers or in code.** An F5 variable may be "register HL between PC `a` and `b`" (GP's ring pointers) or "the operand byte of the instruction at `symbol`" (self-modifying code, `streaminfobyte = $+1`). | GP's stream view shows the ring's free space from HL / DE while the card is inside its streaming loop. |
+| M8 | P1 (commands), P2 (structs) | **Profiles generated from the firmware sources.** A tool emits the profile JSON: the commands from `COMTAB` / `COMTABH`, the structs from `STRUCT … ENDS` and `EQU` offset blocks (the `gs_defs.a80` style), the symbols (L3) (NedoOS CAT §4.1). | The v1.05a profile is regenerated from the sources and equals the committed one. |
+| M9 | P2 | **Card RAM page allocation map:** one cell per 16 KB page (GS up to 32, NeoGS up to 256), colored by owner (firmware, module slot n, sample, uploaded code, stream ring, free), with a check that module pages are free again after `#F3` (NedoOS ENH B.1 #4). | After loading two modules, the map shows their pages; after `#F3`, they are free. |
+| M10 | P2 | **Struct overlays and hover.** The memory view shades the regions of module, sample, uploaded code and ring buffer. Hovering IX / IY / HL in the card disassembly decodes the struct they point into (NedoOS DSL §3.2). | Hover IX in the NeoTracker channel update: the tooltip shows the channel record. |
+| M11 | P2 | **Metadata on every surface:** read the active profile, register or override a profile at run time, query decoded instances, over the WebAPI, CLI, MCP, Lua and Python (NedoOS ENH A.1-A.3). | A pytest run waits on a protocol breakpoint and asserts the module table through the API. |
+| M12 | P2 | **The NeoGS SD transaction log:** sub-command, LBA, count, status (`#77` OK, `#88`, `#99`, `#EE`), from the `#1E` extension command, next to N8. | The NedoOS kernel reads 4 sectors: 4 entries with LBA and `#77`. |
+
+### 4.16 Validation scenarios from real software (revision 4)
+
+These are the acceptance runs of the command log, the profiles and the
+anomaly checks. They are NedoOS programs, available in the NedoOS tree.
+
+| # | Scenario | What it exercises |
+|---|---|---|
+| V-1 | **gstest** (`kapps/gstest`) | the stock v1.05 vocabulary (`#F4 #20 #FA #0B-#0E #30 #D1 #D2 #31 #F3`), the boot page-count reply, replies read without polling (F4) |
+| V-2 | **GP, a `.mod`** (`gp/`) | one block entry for the upload (F1a), `#60` polled every frame (≈2 commands a frame, the F1c sizing), the end of the song detected by the position decreasing, `#F4` on cancel |
+| V-3 | **GP, an MP3 on NeoGS** | the `#14` / `#13` upload and jump, then a different command set (M5), continuous streaming, software clock switches 10 → 12 → 20 MHz (N2, S9), the IM2 DREQ loop, the card stalling on its own reply (F4) |
+| V-4 | **ngsplay** (NeoTracker BIOS) | three uploads, one of them to `#0000`; two jumps; the NeoTracker `#E0-#EA` set; the request-driven block loader `#E9` / `#EA`; the barrier `#00`; WD vs WC handshakes (M6) |
+| V-5 | **The kernel's NeoGS SD driver** (`kernel/ngssddrv.asm`, `ngsinst.asm`) | the installer upload, the patched `COMTAB[#1E]` (M4), 512-byte sector transfers with `#BB` strobes (M6), the status codes (M12) |
+| V-6 | **Moon Rabbit** (a MOD streamed from the network) | a `#D1`…`#D2` stream open for hundreds of frames (F1a block coalescing across long gaps, F1c) |
+
+**Accuracy checks raised by the same software:**
+- **`SSTAT.MCRDY`.** GP's `gscode.asm` carries a TODO: "why MCRDY polling works fine on real hardware, but not in UnrealSpeccy?". Our model must make MCRDY polling work.
+- **The host-side `IN (#0F)`.** The NedoOS kernel and `nc` detect NeoGS with it: they treat anything other than `#FF` as NeoGS. What our bus returns there must be checked.
 
 ## 5. Worked example: "the game loads music but nothing plays"
 
@@ -437,6 +564,28 @@ Every step uses one requirement: F1, F4, B3/B4, T2, L4, S5/S6, F5.
 | Page size in the debugger | 16K pages everywhere (the Spectrum standard); MPAG's 32K pairs are shown as two 16K pages. Breakpoints and labels are stored by physical address (kind, page, offset). | T3, L2 |
 | Signatures | SHA-256, as the emulator's signature cache and known-ROM table use. | F2, L4 |
 
+### Decided in revision 3 (2026-09-28)
+
+| Question | Decision | Where |
+|---|---|---|
+| Is the current Qt debugger the reference for the UI? | No. The UI is designed from a front-end-independent model (widgets, fields, rules, one protocol). Its content comes from the Unreal monitor (TUI POC); any number of skins may exist. | [debugger model](../2026-09-28-debugger-model/README.md) |
+| Main and card debugger | One design: the card debugger is the main debugger's workspace system bound to the card CPU, plus the card zone. | [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md) |
+| CPU selector name | `cpu` = `main` / `gs` / `neogs`, plus the alias `card` for the fitted card. | [protocol.md](../2026-09-28-debugger-model/protocol.md) §2 |
+| NeoGS timing | NeoGS is in master, so it no longer waits for phase 6: the NeoGS target comes with the GS target, because the target interface must not assume GS (N1). | [design.md](design.md) §10 |
+| Device state in the UI | Device boards published by the devices as data; one generic renderer. | widget catalog §4 |
+
+### Decided in revision 4 (2026-09-28)
+
+| Question | Decision | Where |
+|---|---|---|
+| MAME shows other CPUs up to a scheduler slice ahead (its `cycles` means "remaining in slice") | Keep S4: a CPU is never shown in the future. Our design is stricter on purpose. | S4 |
+| A "hold the card" command (MAME `suspend`) | Not offered: it changes results (S8). If ever added, it is an explicit experiment that TTD records as an input, with a "results differ" badge. | S8 |
+| Where a card memory or port breakpoint stops | After the instruction, as before; "before the access" becomes an option per breakpoint (X5). | rules §1, X5 |
+| The LW inspector is read-only (W5), but the Unreal GS dialog could play samples | Audition on the host (AU4) plus play / stop sent as a real, logged command (F6). W5 stays. | W5, AU4 |
+| Firmware knowledge is data | Extended from commands and variables to structs, instances, the dispatcher, the handshake per command, and profiles for uploaded code (M1-M8). | §4.15 |
+| Spectaculator emulates GS as a plain device with no debug interface, so its card cannot be debugged at all; ZXSpin has no GS | The card's debug interface (`GSDebugAccess`, the debug runner, the events) is part of the card from the start, not an add-on | design §3, §4 |
+| Run until a card event | S7 also runs until: the host writes a command or a data byte, a card interrupt, a sample's playback ends (Spectaculator's run-until-event idea) | S7 |
+
 ### Left to the design
 
 1. How the main CPU is kept within one instruction of the card while card debugging is active (S4), and what it costs (P4).
@@ -455,7 +604,13 @@ Every step uses one requirement: F1, F4, B3/B4, T2, L4, S5/S6, F5.
 | [`docs/inprogress/2026-09-19-general-sound/gs-card-personalities-tdd.md`](../2026-09-19-general-sound/gs-card-personalities-tdd.md) | LLE vs LW cards, runtime switching (relevant to T4, V6) | implemented |
 | [`docs/inprogress/2026-09-19-general-sound/diagnostics-gaps-proposal.md`](../2026-09-19-general-sound/diagnostics-gaps-proposal.md) | Gaps found in live triage: no card disassembly, partial register read-out, fixed banked-RAM window, LW player black box | proposal |
 | [`docs/inprogress/2026-09-19-general-sound/verification-findings-and-bugs.md`](../2026-09-19-general-sound/verification-findings-and-bugs.md) | Playback verification against the firmware sources; protocol pitfalls (relevant to F4) | done |
-| [`docs/inprogress/2026-09-19-general-sound/neogs-tdd.md`](../2026-09-19-general-sound/neogs-tdd.md) | NeoGS hardware and emulation plan: 10/12/20/24 MHz, 2-4 MB RAM (current FPGA 4 MB, fpgaD 2 MB), 512 KB flash, extended paging, 8 channels, DMA, SD, VS1001 (§4.9) | design |
+| [`docs/inprogress/2026-09-19-general-sound/neogs-tdd.md`](../2026-09-19-general-sound/neogs-tdd.md) | NeoGS hardware and emulation: 10/12/20/24 MHz, 2-4 MB RAM (current FPGA 4 MB, fpgaD 2 MB), 512 KB flash, extended paging, 8 channels, DMA, SD (slot `sd.ngs`), VS1001 (§4.9) | implemented, in master |
+| [`docs/inprogress/2026-09-19-general-sound/neogs-zxdma-design.md`](../2026-09-19-general-sound/neogs-zxdma-design.md) | ZX-DMA; §6 its debugger extensions (N6) | implemented (§6 not) |
+| [`docs/inprogress/2026-09-19-general-sound/neogs-automation-design.md`](../2026-09-19-general-sound/neogs-automation-design.md) | GS-slot statistics and counters (N7) | design |
+| [`docs/inprogress/2026-09-28-debugger-model/`](../2026-09-28-debugger-model/) | The debugger model: widgets, rules, protocol, GUI (main + the card delta), device plugins | draft |
+| [`docs/inprogress/2026-09-28-emulator-debugger-survey/`](../2026-09-28-emulator-debugger-survey/) | Debuggers of other emulators: Mesen2, MAME, WinUAE, vAmiga, FCEUX, BizHawk, DeZog, JNext, Xpeccy, ZXMAK2, Spectaculator, ZXSpin and others (§4.13, §4.14) | survey |
+| [`docs/inprogress/2026-09-17-nedoos-future-support/`](../2026-09-17-nedoos-future-support/) | Metadata-driven debugging: struct DSL, struct inspector, trap timelines, page heat maps (§4.15) | design |
+| NedoOS sources (`emulators/github/NedoOS/src`): `gp/ngsdec/*`, `kapps/ngsplay/*`, `kernel/ngssddrv.asm`, `kernel/ngsinst.asm`, `kapps/gstest/*`, `mrabbit-fusion/drivers/general-sound.asm` | Real GS / NeoGS software: protocols, uploaded code, handshakes (§4.15, §4.16) | external |
 | [`docs/inprogress/2026-09-19-general-sound/materials/README.md`](../2026-09-19-general-sound/materials/README.md) | Index of GS / NeoGS reference materials | reference |
 | [`.../materials/gs/gs-programming-guide.md`](../2026-09-19-general-sound/materials/gs/gs-programming-guide.md) | Host-side protocol and command reference (incomplete, see F2) | reference |
 | [`.../materials/gs/gs-firmware/`](../2026-09-19-general-sound/materials/gs/gs-firmware/) | GS firmware sources; command tables `COMTAB` (`firmware/src/COM_L.a80:72`) and `COMTABH` (`firmware/src/TABLES_H.a80`) | reference |

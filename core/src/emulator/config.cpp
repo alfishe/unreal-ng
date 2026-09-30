@@ -160,6 +160,32 @@ const char* Config::IdeSchemeName(IDE_SCHEME scheme)
 	return "?";
 }
 
+bool Config::ParseRamPowerOn(const std::string& value, RamPowerOn& mode)
+{
+	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value)));
+	if (name == "RANDOM")
+	{
+		mode = RamPowerOn::Random;
+		return true;
+	}
+	if (name == "ZERO")
+	{
+		mode = RamPowerOn::Zero;
+		return true;
+	}
+	return false;
+}
+
+const char* Config::RamPowerOnName(RamPowerOn mode)
+{
+	return mode == RamPowerOn::Zero ? "zero" : "random";
+}
+
+std::function<void(CONFIG&)> Config::RamPowerOnOverride(RamPowerOn mode)
+{
+	return [mode](CONFIG& config) { config.ramPowerOn = mode; };
+}
+
 bool Config::ParseEvoFpgaVariant(const char* value)
 {
 	if (value == nullptr || value[0] == '\0')
@@ -703,6 +729,12 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON"), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128);
+	{
+		const char* powerOn = inimanager.GetValue(misc, "RAMPowerOn", "RANDOM");
+		config.ramPowerOn = RamPowerOn::Random;
+		if (!ParseRamPowerOn(powerOn ? powerOn : "", config.ramPowerOn))
+			MLOGWARNING("Config: unknown [MISC] RAMPowerOn='%s' - using RANDOM (RANDOM | ZERO)", powerOn);
+	}
 	
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))

@@ -179,9 +179,9 @@ TEST_F(EvenM1_Test, ScorpionRamAtZeroWaits)
 TEST_F(EvenM1_Test, ScorpionTurboHasNoEvenM1)
 {
     Create("SCORPION");
-    _context->emulatorState.hw_turbo_shift = 1;
+    _context->emulatorState.hw_turbo_ratio = 2;
     EXPECT_EQ(StepAt(0x8000, 20001), 4u) << "the Even M1 terms are gated off in turbo";
-    _context->emulatorState.hw_turbo_shift = 0;
+    _context->emulatorState.hw_turbo_ratio = 1;
 }
 
 TEST_F(EvenM1_Test, OtherMachinesNeverAlign)
@@ -353,3 +353,163 @@ TEST_F(MachineStepHook_Test, WithoutItsBitTheHookIsNotCalled)
 }
 
 /// endregion </Per-step work gate>
+
+/// region <Hardware clock ratio (EmulatorState::hw_turbo_ratio, PLAN #60(b))>
+
+/// The hardware turbo is a ratio 1..8 of the base clock, not a power of two: the
+/// Sprinter's 21 MHz is 6 x 3.5 MHz. A ratio multiplies the CPU T-states inside
+/// the frame; the frame keeps its wall-clock length (the host speed control is
+/// what makes frames shorter). A queued ratio takes effect at the next frame
+/// boundary (Z80::BeginFrame, run by MainLoop::CompleteFrame at the end of each
+/// RunFrame), never inside the running frame
+namespace
+{
+/// Records the frame lengths and, at each rollover, the ratio the finished
+/// frame ran with; optionally queues a new ratio once the frame reaches switchAt
+struct RatioSwitchHook : FakeStepHook
+{
+    EmulatorState* state = nullptr;
+    uint32_t switchAt = UINT32_MAX;
+    uint8_t switchTo = 1;
+    std::vector<uint8_t> appliedAtRollover;
+    std::vector<uint8_t> multiplierAtRollover;
+
+    void OnMachineStep(uint32_t t) override
+    {
+        FakeStepHook::OnMachineStep(t);
+        if (t >= switchAt)
+        {
+            state->hw_turbo_ratio = switchTo;  // what a decoder does on its clock latch
+            switchAt = UINT32_MAX;
+        }
+    }
+    void OnMachineFrameRollover(uint32_t frameLength) override
+    {
+        FakeStepHook::OnMachineFrameRollover(frameLength);
+        appliedAtRollover.push_back(state->hw_turbo_ratio_applied);
+        multiplierAtRollover.push_back(state->current_z80_frequency_multiplier);
+    }
+};
+} // namespace
+
+class Z80ClockRatio_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+    MainLoop_CUT* _mainLoop = nullptr;
+    RatioSwitchHook _hook;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+        _hook.state = &_context->emulatorState;
+        _z80->SetMachineStepHook(&_hook);
+        _mainLoop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
+        _emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
+        _emulator->EnableTurboMode();  // host side only: skips rendering, no pixel assertions here
+    }
+
+    void TearDown() override
+    {
+        if (_z80)
+            _z80->SetMachineStepHook(nullptr);
+        if (_emulator)
+        {
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+};
+
+TEST_F(Z80ClockRatio_Test, RatioSixRunsSixTimesThePentagonFrameInTheSameFrameTime)
+{
+    EmulatorState& state = _context->emulatorState;
+    ASSERT_EQ(_context->config.frame, 71680u);
+    ASSERT_EQ(_context->config.frame_duration_us, 20480u);
+
+    state.hw_turbo_ratio = 6;  // 21 MHz, queued: applied at the end of this frame
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+
+    ASSERT_EQ(_hook.rollovers.size(), 2u);
+    EXPECT_EQ(_hook.rollovers[1], 430080u) << "71 680 x 6 CPU T-states per frame";
+    EXPECT_EQ(_hook.appliedAtRollover[1], 6);
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency * 6) << "21 MHz reporting";
+    EXPECT_EQ(_context->GetFrameTStates(), 430080u);
+
+    // The frame still lasts 20.48 ms: the frame time is the host's, and the
+    // audio budget and the raster descale see the base clock
+    EXPECT_EQ(_context->config.frame_duration_us, 20480u);
+    EXPECT_EQ(state.HostSpeedMultiplier(), 1);
+    EXPECT_EQ(state.AudioTstate(430080u), 71680u);
+    EXPECT_EQ(state.AudioTstate(6u * 12345u), 12345u);
+}
+
+TEST_F(Z80ClockRatio_Test, RatioComposesWithTheHostSpeedMultiplier)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.next_z80_frequency_multiplier = 2;  // host 2x
+    state.hw_turbo_ratio = 3;
+    _mainLoop->RunFramePublic();  // the boundary at its end applies both
+    _mainLoop->RunFramePublic();
+
+    EXPECT_EQ(_hook.rollovers.back(), 71680u * 6u) << "host 2x x ratio 3";
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(state.HostSpeedMultiplier(), 2) << "the audio budget sees the host part only";
+
+    // Same product, other split: the descale must still follow the ratio
+    state.next_z80_frequency_multiplier = 3;
+    state.hw_turbo_ratio = 2;
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+    EXPECT_EQ(_hook.rollovers.back(), 71680u * 6u);
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 2);
+    EXPECT_EQ(state.HostSpeedMultiplier(), 3);
+}
+
+TEST_F(Z80ClockRatio_Test, RatioQueuedMidFrameTakesEffectAtTheFrameBoundary)
+{
+    EmulatorState& state = _context->emulatorState;
+    _hook.switchAt = 30000;  // inside the first frame
+    _hook.switchTo = 6;
+
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+
+    ASSERT_EQ(_hook.rollovers.size(), 2u);
+    EXPECT_EQ(state.hw_turbo_ratio, 6) << "the switch happened";
+    EXPECT_EQ(_hook.rollovers[0], 71680u) << "the frame that queued the switch keeps its length";
+    EXPECT_EQ(_hook.appliedAtRollover[0], 1);
+    EXPECT_EQ(_hook.multiplierAtRollover[0], 1);
+    EXPECT_EQ(_hook.rollovers[1], 430080u) << "the next frame runs at the new ratio";
+    EXPECT_EQ(_hook.appliedAtRollover[1], 6);
+    EXPECT_GT(_hook.stepsPerFrame[1], _hook.stepsPerFrame[0] * 5) << "about 6x the instructions";
+}
+
+TEST_F(Z80ClockRatio_Test, ImmediateApplyRescalesTheInFramePosition)
+{
+    // The mid-frame path a decoder takes when its hardware switches the clock on
+    // the next cycle (Z80::ApplyHardwareTurboNow): the raster instant is kept
+    EmulatorState& state = _context->emulatorState;
+    _mainLoop->RunFramePublic();  // settle: 1x, geometry derived
+    _z80->t = 1000;
+
+    state.hw_turbo_ratio = 6;
+    _z80->ApplyHardwareTurboNow();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 6);
+    EXPECT_EQ(_z80->t, 6000u);
+
+    state.hw_turbo_ratio = 1;
+    _z80->ApplyHardwareTurboNow();
+    EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
+    EXPECT_EQ(_z80->t, 1000u);
+}
+
+/// endregion </Hardware clock ratio>

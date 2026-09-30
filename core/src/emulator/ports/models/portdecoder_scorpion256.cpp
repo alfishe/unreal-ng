@@ -89,7 +89,7 @@ void PortDecoder_Scorpion256::reset()
     state.profrom_bank = 0x00;  // ProfROM quadrant 0 at power-on (design §4.2)
     state.scorpionDosTrigger = 0x00;  // Magic-button DOS trigger cleared by RESET (hardware-reference §9)
     state.scorpion_turbo = 0x00;    // Turbo flip-flop cleared by RESET - 3.5 MHz (hardware-reference 13)
-    state.hw_turbo_shift = 0;       // ... and the model-neutral hardware-turbo multiplier with it
+    state.hw_turbo_ratio = 1;       // ... and the model-neutral hardware clock ratio with it
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
@@ -135,7 +135,7 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
     if (!core || !core->GetZ80() || !_context->pMemory)
         return;
 
-    const bool wanted = _state->hw_turbo_shift == 1;
+    const bool wanted = _state->hw_turbo_ratio == 2;
     if (wanted == _turboWaitsInstalled)
         return;
 
@@ -193,11 +193,11 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     {
         case 0x4021:
             _state->scorpion_turbo = 1;     // IN #7FFD family - 7 MHz
-            _state->hw_turbo_shift = 1;     // CPU 2x per frame (model-neutral view for Z80/audio)
+            _state->hw_turbo_ratio = 2;     // CPU 2x per frame (model-neutral view for Z80/audio)
             break;
         case 0x0021:
             _state->scorpion_turbo = 0;     // IN #1FFD family - 3.5 MHz
-            _state->hw_turbo_shift = 0;
+            _state->hw_turbo_ratio = 1;
             break;
         default:
             break;

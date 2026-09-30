@@ -34,7 +34,7 @@
         props["ignore_later_snapshots"]["type"] = "boolean";
         props["ignore_later_snapshots"]["default"] = false;
         props["ignore_later_snapshots"]["description"] =
-            "Skip snapshot blocks after the first (SkoolKit flag 4); mid-recording snapshots otherwise stop playback";
+            "Skip snapshot blocks after the first (SkoolKit flag 4); by default one between input blocks replaces the machine there";
         props["switch_model"]["type"] = "boolean";
         props["switch_model"]["default"] = true;
         props["switch_model"]["description"] = "Switch to the recording's model when this machine is another one";
@@ -89,7 +89,7 @@
             "loaded, active, path, creator, version, snapshot, state (playing / finished / desynced / stopped), "
             "frame, total_frames, progress, block, blocks, interrupts, desyncs, first_desync {kind, frame, block, "
             "expected, actual, pc, port}, drift / max_drift (T-states between the recorded interrupt and the "
-            "machine's own), keyframes / keyframe_bytes / keyframe_interval (for seeking back), options, reason, summary";
+            "machine's own), snapshots_applied (snapshot blocks between input blocks), keyframes / keyframe_bytes / keyframe_interval (for seeking back), options, reason, summary";
         paths[status]["get"]["tags"].append("RZX Playback");
         paths[status]["get"]["parameters"][0]["name"] = "id";
         paths[status]["get"]["parameters"][0]["in"] = "path";

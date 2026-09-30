@@ -372,7 +372,7 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 - The CPU applies it in `Z80Step` (`core/src/emulator/cpu/z80.cpp`), before the first M1 of an instruction:
 
   ```cpp
-  if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_shift == 0 &&
+  if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
       (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
       cpu.tt += cpu.rate;
   ```

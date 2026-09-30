@@ -51,7 +51,7 @@ void PortDecoder_ATM710::reset()
     // boot clock is derived from the actual latch rather than asserted here.
     // next_z80_frequency_multiplier is deliberately NOT touched: it belongs to
     // the host speed control (see updateTurboMode)
-    _state->hw_turbo_shift = 0;
+    _state->hw_turbo_ratio = 1;
 }
 
 void PortDecoder_ATM710::ApplyBootROMDefaults(ROMModeEnum mode)
@@ -808,19 +808,19 @@ void PortDecoder_ATM710::updateTurboMode()
     // ZX Evo baseconf / Pentevo (Xpeccy pentevo.c evoOut77d), a different
     // machine - ATM 7.10 has no 14 MHz mode and its #EFF7 carries no clock bit.
     //
-    // Only hw_turbo_shift is ours to write. next_z80_frequency_multiplier is
+    // Only hw_turbo_ratio is ours to write. next_z80_frequency_multiplier is
     // the HOST speed control, and Z80::ApplyQueuedFrequencyMultiplier composes
-    //     current = next_z80_frequency_multiplier << hw_turbo_shift
+    //     current = next_z80_frequency_multiplier x hw_turbo_ratio
     // so writing both double-counts the clock (7 MHz became 4x, 14 MHz 16x)
-    // and discards whatever speed the user selected. hw_turbo_shift is also
+    // and discards whatever speed the user selected. hw_turbo_ratio is also
     // what the audio path descales by (EmulatorState::AudioTstate), keeping the
     // AY at its fixed PSG clock while the CPU runs faster.
     //
     // The change is queued: Z80FrameCycle applies it at the next frame
     // boundary, and SoundManager::handleFrameStart re-clocks the synths.
-    _state->hw_turbo_shift = (_state->pFF77 & ATM_FF77_TURBO) ? 1 : 0;
+    _state->hw_turbo_ratio = (_state->pFF77 & ATM_FF77_TURBO) ? 2 : 1;
 
-    MLOGDEBUG("updateTurboMode: hw_turbo_shift=%d (pFF77=0x%02X)", _state->hw_turbo_shift, _state->pFF77);
+    MLOGDEBUG("updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X)", _state->hw_turbo_ratio, _state->pFF77);
 }
 
 /// endregion </Port handlers>

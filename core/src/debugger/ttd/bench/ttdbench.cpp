@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -82,13 +81,19 @@ class Machine
 public:
     Machine(const Configuration& config, std::string& error)
     {
-        // Overlay the peripheral set on the model's config. The hook already
-        // installed (core-tests' sound-card policy) is set aside, not chained:
-        // a case is the same machine in every process that runs it (BR-2), so
-        // the CI gate and core-benchmarks measure identical bytes
+        // A case is the same machine in every process that runs it (BR-2), so
+        // the CI gate and core-benchmarks measure identical bytes: the global
+        // config hook (core-tests' sound-card policy) is set aside while the
+        // machine is created, and the peripheral set goes on top of the
+        // model's config as this instance's override. The override also
+        // zeroes power-on RAM ([MISC] RAMPowerOn): the default noise comes
+        // from the process-global rand(), so the machine would depend on
+        // every case that ran before it in the process
         const Config::ConfigLoadedHook previous = Config::GetConfigLoadedHook();
+        Config::SetConfigLoadedHook({});
         const PeripheralSet set = config.peripherals;
-        Config::SetConfigLoadedHook([set](CONFIG& c) {
+        auto configOverride = [set](CONFIG& c) {
+            c.ramPowerOn = RamPowerOn::Zero;
             switch (set.turboSound)
             {
                 case PeripheralSet::Slot::None: c.sound.turboSoundKind = TurboSoundKind::None; break;
@@ -114,13 +119,13 @@ public:
                 c.trdos_present = set.beta != 0;
             if (set.mouse >= 0)
                 c.input.mouse = set.mouse ? MOUSE_TYPE_KEMPSTON : MOUSE_TYPE_NONE;
-        });
+        };
 
         EmulatorManager* manager = EmulatorManager::GetInstance();
         _emulator = config.ramKB ? manager->CreateEmulatorWithModelAndRAM("ttd-bench", config.model, config.ramKB,
-                                                                          LoggerLevel::LogError, &error)
+                                                                          LoggerLevel::LogError, &error, configOverride)
                                  : manager->CreateEmulatorWithModel("ttd-bench", config.model, LoggerLevel::LogError,
-                                                                    &error);
+                                                                    &error, configOverride);
         Config::SetConfigLoadedHook(previous);
         if (!_emulator && error.empty())
             error = "cannot create " + config.model;
@@ -131,17 +136,6 @@ public:
         if (_emulator)
             if (Ds12887* rtc = RtcAccess::Find(_emulator->GetContext()))
                 rtc->SetFixedTime(kFrozenTime);
-
-        // Nor can it start from the power-on RAM noise: Memory fills pages 5
-        // and 7 from the process-global rand(), so the machine would depend on
-        // every case that ran before it in the process (core/tests/README.md,
-        // "Power-on RAM is a hidden global input"). Zero, as the tests pin it
-        if (_emulator)
-        {
-            Memory* memory = _emulator->GetContext()->pMemory;
-            std::memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
-            std::memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
-        }
     }
 
     static constexpr time_t kFrozenTime = 1767268830;  // 2026-01-01 12:00:30 UTC
@@ -594,7 +588,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm4_resident_bytes"] = resident;
         m["bm4_resident_bpf"] = resident / n;
         // Proof the configuration ran as named: the hardware turbo in effect at the end
-        m["turbo_shift"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_shift);
+        m["turbo_ratio"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_ratio);
 
         // BM-5 / BM-6: random positions, frame-aligned and inside a frame
         const uint64_t first = engine.FirstFrame();

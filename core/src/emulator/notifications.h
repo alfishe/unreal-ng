@@ -436,8 +436,8 @@ public:
 };
 
 /// Payload for NC_RZX_PLAYBACK.
-/// Posted by RzxSession (emulator/rzx/): event is "started", "finished",
-/// "desync", "stopped" or "failed"; message says why (a desync: the frame,
+/// Posted by RzxSession (emulator/rzx/): event is "started", "snapshot" (a
+/// snapshot block applied), "seek", "finished", "desync", "stopped" or "failed"; message says why (a desync: the frame,
 /// expected and actual counts). Example: {"desync", "desync (too_few_ins) in
 /// frame 1200: expected 3, got 2", 1200, 32315, "/games/eric.rzx"}
 class RzxPlaybackPayload : public MessagePayload

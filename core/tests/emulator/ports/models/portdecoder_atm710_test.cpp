@@ -514,9 +514,9 @@ TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_SelectsHardwareClock)
     // select that also reads pEFF7 bit 4 is ZX Evo baseconf / Pentevo and lives
     // in PortDecoder_ATM3.
     //
-    // The decoder owns hw_turbo_shift only. next_z80_frequency_multiplier is the
+    // The decoder owns hw_turbo_ratio only. next_z80_frequency_multiplier is the
     // HOST speed control, and Z80::ApplyQueuedFrequencyMultiplier composes
-    // current = next << hw_turbo_shift, so a decoder writing both double-counts
+    // current = next x hw_turbo_ratio, so a decoder writing both double-counts
     // the clock and discards the user's setting.
     EmulatorState& state = _context->emulatorState;
 
@@ -524,26 +524,26 @@ TEST_F(PortDecoder_ATM710_Test, Turbo_FF77Bit3_SelectsHardwareClock)
     state.next_z80_frequency_multiplier = hostSpeed;
 
     _portDecoder->reset();
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "reset leaves the base clock until pFF77 says otherwise";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "reset leaves the base clock until pFF77 says otherwise";
 
     // Port 0x0077: the xx77 register latches the address bus, so writing #FF77
     // would set CPM (aFF77 bit 9) and close the DOSEN || SYSEN write gate after
     // the first write outside a session - #0077 keeps ~CPM active
     _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "pFF77.3 set is 7 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "pFF77.3 set is 7 MHz";
 
     _portDecoder->DecodePortOut(0x0077, 0x00, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "pFF77.3 clear is 3.5 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "pFF77.3 clear is 3.5 MHz";
 
     // #EFF7 carries no clock bit on 7.10 - it used to inherit Pentevo's
     _portDecoder->DecodePortOut(0x0077, 0x08, 0x0000);
     _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "#EFF7 must not touch the ATM 7.10 clock";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "#EFF7 must not touch the ATM 7.10 clock";
 
     // Boot defaults (mode-neutral reset + RM_DOS block, as m_reset() pairs them)
     _portDecoder->reset();
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "boot defaults leave pFF77.3 clear";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "boot defaults leave pFF77.3 clear";
 
     EXPECT_EQ(state.next_z80_frequency_multiplier, hostSpeed)
         << "the decoder must never write the host speed control";

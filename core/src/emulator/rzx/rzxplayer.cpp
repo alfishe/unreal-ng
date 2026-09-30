@@ -126,6 +126,15 @@ namespace rzx
         _frameIndex++;
         const bool more = EnterFrame();
 
+        // The next input block starts from a snapshot block: the machine is
+        // replaced there (the interrupt that would end this frame is part of
+        // the state the snapshot replaces, as in SkoolKit)
+        if (more && _pendingSnapshot)
+        {
+            Publish();
+            return FrameEnd::Snapshot;
+        }
+
         // Every frame ends with an interrupt when IFF1 is set, the last one too
         // (SkoolKit); flag 2: EI followed by a 1-2 fetch frame means "blocked"
         const bool blockedByEi = more && _options.eiShortFrameBlocksInt && eiShadow && _frame->fetchCount <= 2;
@@ -147,6 +156,24 @@ namespace rzx
         _stopReason = reason;
         _frame = &kEndFrame;
         Publish();
+    }
+
+    bool RzxPlayer::ApplyPendingSnapshot()
+    {
+        const Snapshot* snapshot = _pendingSnapshot;
+        _pendingSnapshot = nullptr;
+        if (!snapshot || _state != PlayerState::Playing)
+            return false;
+
+        std::string error = "no way to apply a snapshot block";
+        if (applySnapshot && applySnapshot(*snapshot, _pendingTstates, error))
+        {
+            _snapshotsApplied++;
+            Publish();
+            return true;
+        }
+        Stop("snapshot block at frame " + std::to_string(_framesDone) + ": " + error);
+        return false;
     }
 
     void RzxPlayer::MaybeKeyframe()
@@ -187,6 +214,7 @@ namespace rzx
         }
         _fetches = cursor.fetches;
         _inPos = cursor.inPos;
+        _pendingSnapshot = nullptr;  // the keyframe's machine already has every snapshot before it
         _keyframes.Rewound(_framesDone);
         Publish();
         return true;
@@ -254,13 +282,14 @@ namespace rzx
     {
         // _orderIndex points at the current input block (or the start snapshot)
         const bool first = _block == nullptr;
-        bool snapshotBetween = false;
+        const Snapshot* snapshotBetween = nullptr;
         for (size_t i = _orderIndex + 1; i < _file->order.size(); i++)
         {
             const BlockRef& ref = _file->order[i];
             if (ref.type == BlockType::Snapshot)
             {
-                snapshotBetween = true;
+                // The last one before the input block wins (SkoolKit)
+                snapshotBetween = &_file->snapshots[ref.index];
                 continue;
             }
 
@@ -268,18 +297,13 @@ namespace rzx
             if (input.frames.empty())
                 continue;
 
-            // A snapshot between input blocks (multiload, rollback point) is
-            // applied at the frame boundary in phase R3; until then only the
-            // "ignore later snapshots" convention plays past it
+            // A snapshot between input blocks (multiload, rollback point)
+            // replaces the machine at this block's start (FrameEnd::Snapshot),
+            // unless later snapshots are ignored (SkoolKit flag 4)
             if (snapshotBetween && !first && !_options.ignoreLaterSnapshots)
             {
-                _state = PlayerState::Stopped;
-                _stopReason = "snapshot block before input block " + std::to_string(_blockNumber + 2) +
-                              " at frame " + std::to_string(_framesDone) +
-                              ": mid-recording snapshots are not supported yet (option ignore_later_snapshots "
-                              "plays past them)";
-                _frame = &kEndFrame;
-                return false;
+                _pendingSnapshot = snapshotBetween;
+                _pendingTstates = input.tstates;
             }
 
             if (!first)
@@ -317,6 +341,7 @@ namespace rzx
         status.stopReason = _stopReason;
         status.drift = _drift;
         status.maxDrift = _maxDrift;
+        status.snapshotsApplied = _snapshotsApplied;
         status.keyframes = _keyframes.Count();
         status.keyframeBytes = _keyframes.Bytes();
         status.keyframeInterval = _keyframes.Interval();

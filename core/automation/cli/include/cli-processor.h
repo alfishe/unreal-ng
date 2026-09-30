@@ -354,6 +354,7 @@ private:
     void HandleTTD(const ClientSession& session, const std::vector<std::string>& args);
     void ShowTTDHelp(const ClientSession& session);
     void HandleTTDStatus(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDFileInfo(const ClientSession& session, const std::string& path);
     void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
                          const std::vector<std::string>& args);
     void HandleTTDStop(const ClientSession& session, EmulatorContext* context);

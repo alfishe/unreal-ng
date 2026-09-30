@@ -76,6 +76,8 @@ The Python bindings do not expose model-selecting instance creation: `ue.Emulato
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```python
 id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
+id2 = zxpoly_start("ZXPOLY-48K", ram_power_on="zero")        # every RAM page of all four modules reads 0
+emu_get(id2).ram_power_on()                                  # "random" | "zero": RAM contents at creation
 status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
 status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
 status["parallel_slaves"], status["pipelined_slaves"]      # how the slaves are scheduled
@@ -775,7 +777,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 | `unreal.rzx_play(path, emulator_id="", desync_mode="strict", ei_short_frame_blocks_int=False, ld_air_parity_quirk=False, ignore_later_snapshots=False, switch_model=True)` | dict `{ok, error, message, emulator_id, model_switched, model, previous_emulator_id, required_model, status}` | Play a recording; a recording made on another model switches to that model first (`emulator_id` is the new machine). `ValueError` on a bad `desync_mode`. |
 | `unreal.rzx_seek(frame, emulator_id="")` | bool | Move to the boundary after `frame` frames (back through keyframes, forward by playing on); `RuntimeError` with the reason when refused. |
 | `unreal.rzx_stop(emulator_id="")` | bool | Stop playing; `False` when nothing played. |
-| `unreal.rzx_status(emulator_id="")` | dict | `loaded`, `active`, `summary`, `path`, `creator`, `version`, `snapshot`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `keyframe_interval`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+| `unreal.rzx_status(emulator_id="")` | dict | `loaded`, `active`, `summary`, `path`, `creator`, `version`, `snapshot`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `keyframe_interval`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
@@ -833,6 +835,11 @@ status = emu.ttd_status()
 #   # Machine the session belongs to
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
+#   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
+#                                     # the recorded machine; None while there is no session
+#   'recorded_by': None,              # the instance that recorded a loaded file
 #
 #   # Timeline
 #   'session_start_frame': 98,
@@ -1010,6 +1017,16 @@ emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)
 # After a load the session is idle: use ttd_seek to position the emulator.
+
+emu.ttd_file_info('/tmp/session.ttd')
+# A .ttd file read without loading it (headers only):
+# -> {'ok': True, 'path', 'file_bytes', 'schema_version', 'flags', 'captured_at_unix_ms', 'recorded_by',
+#     'session_state', 'session_start_frame', 'session_end_frame', 'checkpoint_count', 'page_slot_count',
+#     'sections': {'write_journal': ..., 'port_journals': ..., ...},
+#     'machine': {'model': ..., 'general_sound': ..., 'turbo_sound': ..., 'peripherals': [...], ...},
+#     'peripherals_from_header': ...}
+#    or {'ok': False, 'path': ..., 'error': '...'}
+# Provision the machine it needs first: its model, its General Sound card (machine['general_sound']).
 ```
 
 **Coverage index queries:**

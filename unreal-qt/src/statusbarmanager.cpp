@@ -94,10 +94,10 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
 
     _rzx = new QLabel(_statusBar);
     _rzx->setFont(fpsFont);
-    _rzx->setStyleSheet("padding-top: 1px;");
     _rzx->hide();
     _rzx->setCursor(Qt::PointingHandCursor);
     _rzx->installEventFilter(this);
+    applyRzxStyle();
 
     _ttd = new QLabel(_statusBar);
     _ttd->setFont(fpsFont);
@@ -620,7 +620,11 @@ void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
         _rzx->setText(QString("RZX %1%").arg(percent, 0, 'f', 1));
     else
         _rzx->setText(QString("RZX %1").arg(QString::fromLatin1(rzx::StateName(player.state))));
-    _rzx->setStyleSheet(player.desyncs > 0 ? "QLabel { color: #B22222; padding-top: 1px; }" : "padding-top: 1px;");
+    if (_rzxDesynced != (player.desyncs > 0))
+    {
+        _rzxDesynced = player.desyncs > 0;
+        applyRzxStyle();
+    }
     _rzx->setToolTip(QString::fromStdString(rzx::RzxLauncher::StatusText(status)).trimmed());
     _rzx->show();
 
@@ -656,11 +660,33 @@ bool StatusBarManager::eventFilter(QObject* watched, QEvent* event)
     if (watched == _rzx && event->type() == QEvent::MouseButtonRelease &&
         static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
     {
+        // A toggle: the first click opens the popover, the second closes it;
+        // the label shows the open state whatever closed it
         if (!_rzxPopover)
-            _rzxPopover = new RzxPopover(_statusBar);
-        _rzxPopover->popup(_rzx, _emulator);
+        {
+            _rzxPopover = new RzxPopover(_statusBar->window());
+            connect(_rzxPopover, &RzxPopover::visibilityChanged, this, [this](bool visible) {
+                _rzxPopoverOpen = visible;
+                applyRzxStyle();
+            });
+        }
+        if (_rzxPopover->isVisible())
+            _rzxPopover->hide();
+        else
+            _rzxPopover->popup(_rzx, _emulator);
         return true;
     }
     return QObject::eventFilter(watched, event);
+}
+
+/// The RZX label: highlighted while its popover is open, red text after a desync
+void StatusBarManager::applyRzxStyle()
+{
+    const QString color = _rzxDesynced ? QStringLiteral("color: #B22222;") : QString();
+    const QString open = _rzxPopoverOpen
+                             ? QStringLiteral("background: palette(highlight); border-radius: 3px;") +
+                                   (_rzxDesynced ? QString() : QStringLiteral("color: palette(highlighted-text);"))
+                             : QString();
+    _rzx->setStyleSheet(QStringLiteral("QLabel { padding: 1px 4px 0 4px; ") + color + open + QStringLiteral(" }"));
 }
 

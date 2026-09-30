@@ -1,9 +1,12 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <mutex>
+#include <vector>
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/video/map/videowritelog.h"
 #include "stdafx.h"
 
 class Z80;
@@ -59,6 +62,8 @@ enum VideoModeEnum : uint8_t
     M_SCORPION,  // Scorpion ZS-256 (Sinclair-matching 312-line x 224T raster)
 
     M_PROFIHR,  // Profi 512x240 hi-res (DFFD.7): standard 312-line x 224T beam, 4 px/T in the paper window
+
+    M_TSZX,  // TS ZX mode (TS-Conf's ZX-layout graphics in its own raster and palette)
 
     M_MAX
 };
@@ -471,9 +476,14 @@ public:
         {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
+        // TS-Conf modes (ScreenTSConf; TSConf hardware-spec §4.1): one geometry for every
+        // mode - the 360x288 visible dots (dots 88-447, lines 32-319 of the 448-dot x
+        // 320-line raster) stored at 2 px per dot (TXT pixels are 14 MHz). The
+        // graphics window inside it follows V_CONFIG's geometry, the rest is border.
+        // 32 blank lines + 288 visible = 320 lines x 224 T = 71680 T
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TS16
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TS256
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},  // M_TSTX
         // ATM modes: ZX-compatible 312-line PAL timing at base clock
         // Beam: 448 pixels/line = 224 T-states; 16 vSync + 8 vBlank + 288 visible = 312 lines
         // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
@@ -503,6 +513,7 @@ public:
         // above the standard one (240 lines centred on the 192-line window). Storage is wider than
         // the beam: 48 px side borders at 2 px/T.
         {608, 288, 512, 240, 48, 24, 448, 64, 32, 8, 16},  // M_PROFIHR
+        {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},   // M_TSZX (see M_TS16)
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -524,6 +535,10 @@ protected:
     ModuleLogger* _logger;
 
     uint8_t _activeScreen;
+
+    /// Latches after every video port write of the current and previous frame (cold: port handlers only)
+    videomap::VideoWriteLog _videoWriteLog;
+    void NoteVideoWrite();
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
@@ -643,6 +658,12 @@ public:
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
 
+    /// Video debug translation (PLAN #42 phase 3): the latches the picture's
+    /// geometry and memory depend on now, and their history over the current
+    /// and the previous frame (videowritelog.h)
+    videomap::VideoLatches CaptureVideoLatches() const;
+    const videomap::VideoWriteLog& GetVideoWriteLog() const { return _videoWriteLog; }
+
     /// @brief Read-only access to the calculated raster zone boundaries
     /// (t-state ranges for blank/border/screen areas, vertical and horizontal)
     const RasterState& GetRasterState() const { return _rasterState; }
@@ -685,6 +706,39 @@ public:
 
     virtual void RenderOnlyMainScreen();
 
+    /// region <ZX DLSS plane B>
+    /// Per-pixel meaning of the rendered frame (feature zxdlss), written by the
+    /// renderer in the same pass as the RGBA pixel, same size and layout as the
+    /// framebuffer. One uint16 per pixel:
+    ///   bits 0-7   attribute byte the beam used for this pixel (0 on the border)
+    ///   bits 8-11  color index 0..15 (bright * 8 + color)
+    ///   bit  12    ink (1) / paper (0)
+    ///   bits 13-14 role: 0 not drawn, 1 screen, 2 border
+    /// Only the per-T ZX renderer (ScreenHQ) writes it; other modes leave 0.
+    static constexpr uint16_t kPlaneBInk = 1u << 12;
+    static constexpr uint16_t kPlaneBRoleScreen = 1u << 13;
+    static constexpr uint16_t kPlaneBRoleBorder = 2u << 13;
+    static constexpr uint16_t kPlaneBRoleMask = 3u << 13;
+
+    /// Threading: the live buffer belongs to the thread that renders (the
+    /// emulation thread, or a TTD replay while the emulation thread is paused).
+    /// The zxdlss feature can change on any thread, so UpdateFeatureCache only
+    /// records the wanted state; InitFrame applies it at the next frame start
+    /// on the rendering thread. Other threads read plane B through
+    /// CopyPresentedPlaneB, latched with the framebuffer under _presentMutex.
+    bool IsPlaneBEnabled() const { return _planeBEnabled; }
+    /// Allocates (enabled) or frees (disabled) the buffer; renderers pick their
+    /// plane-B variant here, so the disabled path runs exactly the old code.
+    /// Rendering thread only (or with the emulation thread paused).
+    virtual void SetPlaneBEnabled(bool enabled);
+    /// @return the live plane B (nullptr when disabled); count = pixels.
+    /// Rendering thread only (or with the emulation thread paused).
+    uint16_t* GetPlaneB(size_t* count);
+    /// Any thread: plane B of the frame CopyPresentedFramebuffer serves.
+    /// @return false when plane B is off or nothing is latched yet
+    bool CopyPresentedPlaneB(std::vector<uint16_t>& dst);
+    /// endregion </ZX DLSS plane B>
+
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)
     /// Called by MainLoop::OnFrameEnd() instead of per-t-state Draw() calls.
     /// Override in ScreenZX to use RenderScreen_Batch8 for 25x faster rendering.
@@ -710,6 +764,13 @@ public:
 protected:
     // Cached feature flag (updated by UpdateFeatureCache)
     bool _feature_screenhq_enabled = true;  // Default ON for demo compatibility
+
+    // ZX DLSS plane B (see SetPlaneBEnabled); sized with the framebuffer
+    bool _planeBEnabled = false;
+    std::atomic<bool> _planeBWanted{false};     // set by UpdateFeatureCache on any thread
+    std::vector<uint16_t> _planeB;
+    void ResizePlaneB();
+    void ApplyPlaneBRequest();                  // InitFrame: wanted -> enabled, rendering thread
     /// endregion </Feature cache>
 
     virtual void SaveScreen();
@@ -739,6 +800,10 @@ protected:
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
     std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
     std::mutex _presentMutex;
+    // Plane B latched with each present slot (under _presentMutex); empty while
+    // plane B is off, so the feature-off latch copies nothing
+    std::vector<uint16_t> _presentPlaneB[PRESENT_SLOTS];
+    const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
@@ -818,9 +883,10 @@ public:
     uint16_t GetDisplayWidth() const;
     uint16_t GetDisplayHeight() const;
 
-    /// Get the 16-color RGBA palette used for rendering (ABGR format on little-endian)
-    /// This is useful for GIF encoding where the same palette must be used
-    /// @param colors Output array of 16 ABGR color values
+    /// The 16 ZX colors exactly as the renderer draws them (the first 16 entries of
+    /// the live palette), in the framebuffer format RGBA8888 (LE uint32 0xAABBGGRR).
+    /// The ZX-Poly composer draws with them
+    /// @param colors Output array of 16 color values
     virtual void GetRGBAPalette16(uint32_t* colors);
 
     /// endregion </Framebuffer related>

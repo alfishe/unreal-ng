@@ -53,6 +53,11 @@ inspect_state {"aspects":["ram_size"]}
 ```
 
 - `ram_size` is optional; omit it for the model default (e.g. SCORPION → 256).
+- `ram_power_on` is optional: `"zero"` creates the machine with every RAM page
+  reading 0, so a scripted run gives the same result every time (the default,
+  `"random"`, fills the screen pages 5 and 7 with power-on noise like real
+  DRAM). The identity block reports it as `ram_power_on`; `switch_model` keeps
+  the current machine's mode unless you pass one.
 - `target:"auto"` picks the single existing instance, or creates a 128K
   machine — pin the id for anything model-specific.
 
@@ -65,6 +70,10 @@ curl -s "$BASE/emulator/models" | jq '.models[] | {id, creatable, default_ram_kb
 # Create with model + RAM
 curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
      -d '{"model": "SCORPION", "ram_size": 1024}' | jq '{id, model, ram_kb, config_folder}'
+
+# Reproducible run: every RAM page starts at 0 (CLI: start SCORPION --ram-power-on zero)
+curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
+     -d '{"model": "SCORPION", "ram_power_on": "zero"}' | jq '{id, model, ram_power_on}'
 
 # Identity of an existing instance
 curl -s "$BASE/emulator/$EMU_ID" | jq '{model, model_full_name, ram_kb, config_folder, video_mode, speed_multiplier}'

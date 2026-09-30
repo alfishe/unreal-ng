@@ -1,7 +1,7 @@
 # TTD CI gate baseline (PLAN #40 V0b, requirements BR-7 / BR-8 / BR-9).
 # Read by core/tests/debugger/ttd/bench/ttdbench_test.cpp.
 # Exported by tools/verification/ttd-bench/ttd_bench_compare.py from a run of
-# engine v1, set ci, fdc-clock@06645d11, Release, MacStudio.localdomain.
+# engine v1, set ci, infra-60@ae3cdf46, Release, MacStudio.localdomain.
 # Byte metrics only: timings do not belong in a stored baseline.
 # Columns: <configuration>/<workload> <metric> <value> <tolerance percent>
 # Tolerance 0 = exact; heap metrics follow the allocator's growth policy.

@@ -1,8 +1,20 @@
 # Sound-card CPU debugging (General Sound, NeoGS) — design
 
-- **Date:** 2026-09-27
+- **Date:** 2026-09-27; revisions 2 and 3 on 2026-09-28
 - **Status:** draft for review.
-- **Implements:** [requirements.md](requirements.md) (revision 2, approved).
+- **Implements:** [requirements.md](requirements.md) (revision 4).
+- **Revision 3** adds §8A: the engine for the tracing and analysis tools
+  (X1-X21), the audio tools (AU1-AU6) and the firmware metadata (M1-M12) of
+  requirements §4.13-§4.15. It also adds these to the phases (§10).
+- **Revision 2** does three things:
+  - It aligns the design with NeoGS as built and merged into master (§3.1,
+    §10).
+  - It hands every front-end matter to the debugger model
+    ([2026-09-28-debugger-model](../2026-09-28-debugger-model/)): §7 of this
+    document now only records what the engine gives the model. The protocol
+    (routes, commands, events, surface bindings) is
+    [protocol.md](../2026-09-28-debugger-model/protocol.md).
+  - It moves the NeoGS target from phase 6 into phases 1-2.
   Requirement IDs (T1, S4, F1c, ...) refer to that document. Terms (machine
   time, clock ratio, instruction progress, firmware profile, FSM) are defined
   in its §1.
@@ -146,13 +158,20 @@ folder.
   GDB call the core directly; MCP calls WebAPI over HTTP.
   - MCP already uses the argument name `target` for the emulator instance
     (`mcp/src/target-resolver.h`).
-- The WebAPI WebSocket (`/api/v1/websocket`) is a stub:
-  `publishToSubscribers` has no callers.
+- The WebAPI WebSocket (`/api/v1/websocket`) is a stub. It sends a welcome
+  string and echoes messages. `broadcastEmulatorData` has no callers, and
+  there is no subscription protocol and no event types.
+- There are no `/debug*` WebAPI routes; the debug routes sit at the emulator
+  level (`/step`, `/registers`, `/breakpoints`, `/disasm`, …), and none takes
+  a CPU.
 - DeZog talks to an abstract interface, `dzrp::IDebugInterface`
   (`dzrpserver.h:17-118`). GDB is wired to `EmulatorContext` directly, with a
   single fixed thread.
-- The Qt `DebuggerWindow` is a single instance (`mainwindow.cpp:203`). Its
-  widgets reach into `Emulator` / `Memory` / `Z80` directly.
+- The Qt `DebuggerWindow` is a single instance (`mainwindow.cpp:214`). Its
+  widgets reach into `Emulator` / `Memory` / `Z80` directly. Its breakpoint,
+  label and CPU-step handlers are not subscribed (`debuggerwindow.cpp:215-223`);
+  it learns about breakpoint hits only from the Paused state change. It is
+  not the reference for the new UI (requirements rev. 3, §6).
 
 ## 2. Architecture overview
 
@@ -293,6 +312,22 @@ virtual GSDebugAccess* debugAccess() { return nullptr; }   // GeneralSoundCard
   (current FPGA; the fpgaD revision in our materials addresses 2 MB), which
   still fits the 8-bit page field. NeoGS flash is a new `MemoryBankModeEnum`
   value.
+- **NeoGS already has most of this access** (as built, 2026-09-28):
+  - `SoundChip_NeoGS::peek` / `poke` (no side effects);
+  - `pageRegister(w)`, `windowIsFlash(w)`;
+  - `memory()` (`NeoGSMemory`: `page`, `isFlash`, `physical`, `ram`) and
+    `flash()`;
+  - `cardTicks()`, `cardClockHz()` and `neogsState()`.
+
+  The NeoGS `GSDebugAccess` is therefore mostly a thin adapter. What is
+  still missing:
+  - register read and write through `Z80CpuGetRegisters` /
+    `Z80CpuSetRegisters` on the private `_cpu`;
+  - `setDebugHooks`, and the debug variant of the runner loop (the
+    `GSCardRunner` hooks are templates, not virtual, so the debug loop is a
+    second instantiation).
+
+  The classic GS needs `poke`, page access and the full register file.
 - **NeoGS windows are all switchable.** In its current FPGA, each of the four
   windows has its own 8-bit page register (ports `#20`-`#23`, `ports.v:159-162,
   416-442`; reset values PG0 = 0, PG1 = 3). `MPAG` / `MPAGEX` write PG2 / PG3,
@@ -873,6 +908,21 @@ struct GSFirmwareStateView
 
 ## 7. Front-ends
 
+> **Revision 2.** The front-end side of the debugger is now the debugger
+> model, which covers the main CPU too:
+> - [widget-catalog.md](../2026-09-28-debugger-model/widget-catalog.md)
+>   (widgets and fields);
+> - [rules.md](../2026-09-28-debugger-model/rules.md) (behavior);
+> - [protocol.md](../2026-09-28-debugger-model/protocol.md) (the one
+>   protocol, with a `DebugService` in the core, the WebSocket event
+>   protocol, and bindings for every surface);
+> - [gui-main-debugger.md](../2026-09-28-debugger-model/gui-main-debugger.md)
+>   and [gui-card-debugger.md](../2026-09-28-debugger-model/gui-card-debugger.md)
+>   (the GUI).
+>
+> Where they differ from §7.1-§7.4 below, the model documents win. The
+> subsections are kept as the engine's view of what it must provide.
+
 ### 7.1 CPU selector in automation (A1, A2)
 
 - **Name.** The selector is named `cpu` (`main` | `gs` | `neogs`), not
@@ -966,6 +1016,273 @@ struct GSFirmwareStateView
   search, which replays checkpoints forward and records hits. It runs with
   the `gs` breakpoint manager armed.
 
+## 8A. Tracing, audio tools and firmware metadata (revision 3)
+
+The engine behind requirements §4.13-§4.15. Every piece follows the same two
+rules:
+
+1. **Debug path only.** A piece runs only while its feature is on, through
+   the debug callbacks and the debug runner loop (§4.1). The fast path is
+   untouched (P1).
+2. **One producer, many views.** A piece produces records once; the widgets
+   and every automation surface read them through the `DebugService`
+   ([protocol.md](../2026-09-28-debugger-model/protocol.md)).
+
+### 8A.1 Trace rings (X1)
+
+```cpp
+struct TraceRecord              // 32 bytes
+{
+    double   machineT;          // main T since the session start (the card converts, S9)
+    uint64_t cycles;            // the CPU's own count
+    uint16_t pc; uint8_t pageKind, page;
+    uint16_t af, bc, de, hl;    // a register subset; the full set on request
+    uint16_t accessAddr; uint8_t accessKind, accessValue;   // the instruction's memory / port access, if any
+};
+```
+
+- **One ring per target.**
+  - The main CPU fills it from `RecordInstructionStart`; the card fills it
+    from the debug runner's `onStep`.
+  - The default capacity is 1 M records (32 MB), adjustable.
+  - A ring is on only while a trace view or a trace request is active.
+- **Merge.** A trace view merges the rings by `machineT`. The card converts
+  its cycles with the inverse of `flush` (§5.4), so the order is the one
+  clock's order.
+- **Formatting is lazy.** Text is produced only for the rows on screen, from
+  a user format (`[f{frame} T{mainT} c{cycles}] {pc} {label} {mnemonic}
+  {regs}`).
+- **Loop condensation** happens at format time. A run of records whose PCs
+  repeat a short cycle (up to 8 instructions) becomes one line,
+  `(loop ×N)`.
+- **Filters** use the condition engine (B4) over the record fields, plus
+  "while the F3 command is `#30`", which is taken from the command-log
+  decoder's state at the record's time.
+
+### 8A.2 Breakpoint actions and probes (X3, X4, X5)
+
+- `BreakpointDescriptor` gains:
+  - `action {stop, log, mark, count}`;
+  - `format` (for `log`);
+  - `forbid` (a PC range with a condition).
+- `Handle*` runs the action before any park:
+  - `log` appends a formatted line to the session log, and to the trace as
+    a marker;
+  - `mark` adds a timeline and event-viewer marker;
+  - `count` only counts.
+
+  None of them parks, so the machine keeps running.
+- **Forbid ranges** are checked after a match, before the action. They are a
+  PC-range test.
+- **Break before the access (X5)** is an option on memory and port
+  breakpoints.
+  - For the card: at each step boundary, decode the next instruction (the
+    disassembler already gives its operands), compute its effective memory
+    and port addresses from the current registers, and compare them with the
+    armed watch ranges.
+  - It runs only while such a breakpoint exists.
+
+### 8A.3 Event viewer data (X2)
+
+- The event viewer reuses the card port trace, `GSTraceEvent`
+  (`gsporttrace.h:43`). Its `side` gains `IntAccept`, `IsrEnd`, `PageWrite`,
+  `VolumeWrite`, `DmaBurst` and `Probe`.
+- `IsrEnd` is detected in the debug loop:
+  - a `RETI` / `RETN` through `Z80CpuSetRetiFn` / `Z80CpuSetRetnFn`;
+  - or the firmware's `EI; RET` pattern, found by the profile's ISR exit
+    label when one is declared.
+- The viewer's grid (rows = interrupt periods, columns = the cycle in the
+  period) is computed by the client from `timestamp` and the period length.
+  The period length comes from the target (GS: 320 cycles; NeoGS: from
+  `tim_freq` and the clock at that time).
+
+### 8A.4 Master-tagged accesses (X6, X10)
+
+Every debug memory callback knows who is on the bus:
+
+| Access | Master | Where it is known |
+|---|---|---|
+| card CPU fetch / read / write | `cpu` | the card's debug bus callbacks |
+| DAC fetch (GS `#6000-#7FFF`, NeoGS equivalent) | `dac` | the same callback, by address |
+| NeoGS SD-DMA / MP3-DMA burst | `sd_dma` / `mp3_dma` | `NeoGSDma` burst copy |
+| NeoGS ZX-DMA card side | `zx_dma` | `NeoGSZxDma` access path |
+| host access diverted to card RAM | `zx_dma` (host side) | the ZX-DMA bus overlay |
+
+- **Watchpoints (X6)** carry a master mask. The DMA paths call the target's
+  `HandleMemoryWrite` with the master, only when a watch with that master
+  exists: one flag test.
+- **Heat map (X10):**
+  - One `uint8_t` per 64-byte cell per master (4 MB / 64 = 64 K cells per
+    master), saturating, and decayed once a frame by a shift.
+  - It is allocated when the heat-map view opens, and freed when it closes.
+  - The main CPU's map is the existing `MemoryAccessTracker`, which gains the
+    `zx_dma` master.
+
+### 8A.5 Register writers (X7) and validators (X12)
+
+- **Register writers (X7).**
+  - A per-target table of the card's ports: `{value, pc, machineT, master}`.
+  - It is updated in `cardOut` / `gsOut` on the debug path: one store per
+    port write.
+  - The host ports `#B3` / `#BB` / `#33` are recorded on the main side, in
+    the card's host port handlers.
+  - DMA records its registers' programmed values beside the live ones, and
+    the PC of the `CST` write that started it.
+- **Validators (X12)** are checks in the same debug handlers:
+  - an undecoded card port;
+  - a page beyond the fitted RAM (from the RAM mask);
+  - a DMA address beyond RAM;
+  - GSCFG0 clock or paging writes while `dma.running(any)`;
+  - SD commands against `SdCardSpi` state;
+  - a flash command in RAM mode.
+
+  Each raises a `validator` event (log; optional stop).
+
+### 8A.6 Code / data log (X8), profiler (X9), uninitialized reads (X11)
+
+- **Code / data log (X8).**
+  - One flag byte per physical byte: code, operand, data read, data written,
+    jump target, subroutine entry, DAC-fetched.
+  - The flags are allocated per page space when enabled: GS ROM 32 KB and
+    RAM up to 512 KB; NeoGS flash 512 KB and RAM up to 4 MB.
+  - They are set in the debug callbacks: the `onStep` PC for code, and the
+    access callbacks for data.
+  - They are saved per firmware SHA-256 and merged with OR.
+  - "Break on the first execution of new code" is a probe on the code flag's
+    0 → 1 transition.
+- **Profiler (X9).**
+  - A shadow call stack per target, driven in `onStep` by the instruction
+    class: CALL / RST push, RET pops, and an accepted INT or NMI pushes an
+    interrupt frame.
+  - Per routine (by the label at the entry): calls, inclusive and exclusive
+    cycles, min and max.
+  - Interrupt frames are separate, so inclusive time never leaks across
+    interrupts.
+  - **The ISR budget:** the cycles from the INT accept to its exit (8A.3),
+    per interrupt period, kept as min / avg / max against the period length.
+- **Uninitialized reads (X11):** a "written since the card reset" bit in the
+  code / data log flags. A read of a byte without it raises the event.
+
+### 8A.7 Script callbacks and headless runs (X13)
+
+- The `DebugEventBridge` (protocol §5.4) also feeds the in-process scripting
+  hosts (Lua, Python). Callbacks run **on the emulation thread**:
+  - a script callback is a probe action that calls into the interpreter;
+  - it has a time budget (1 ms); a callback over the budget is logged and
+    disabled.
+- **Value override** is allowed only for card memory reads and card port
+  reads, on the debug path. The callback returns the value the CPU sees.
+- **Headless:** `unreal-ng --headless --script test.lua --exit-on-script`
+  returns the script's exit code.
+
+### 8A.8 Audio tools (AU1-AU6)
+
+- **Mute and solo (AU1)** are applied in `GSAudioOut` / the NeoGS mixer, on
+  the host output only. The card's DAC latches and every emulated value are
+  untouched.
+- **Scopes (AU2).**
+  - A per-channel ring of (card time, latch × volume) is filled by the audio
+    output while the scope view is open.
+  - The NOW cursor maps through the one clock.
+  - A click resolves to the DAC fetch through the trace (8A.1).
+- **Export (AU3):** a CSV and WAV writer over the same ring.
+- **Audition (AU4):**
+  - The sample or module is rendered **on the host thread** from a copy of
+    card RAM taken while paused, using the format fields of the profile
+    (M1): start, length, loop, rate from the note.
+  - It plays through the host audio preview device; nothing is written to
+    the card.
+  - Play / stop as a real command goes through F6.
+- **Capture and replay (AU5):**
+  - A capture file of `{mainT delta, port, direction, value}` records the
+    host port accesses *with* payloads, only while capturing.
+  - Replay feeds `sendCommand` / `sendData` / reads at the recorded times,
+    into any card personality.
+- **Unknown commands (AU6):**
+  - LW: the interpreter's default branch counts the command.
+  - LLE: the profile names the unknown-command stub (`unknownStub`). A probe
+    there counts the command in A.
+
+### 8A.9 Firmware metadata (M1-M12)
+
+**The profile schema grows** (the file form of §6.1; the built-in tables use
+the same structure):
+
+```json
+{
+  "id": "neotracker", "title": "NeoTracker BIOS",
+  "match": [ {"kind": "rom", "sha256": "…"},
+             {"kind": "upload", "addr": "0000", "sha256": "…"} ],
+  "dispatch": { "pc": "COMINT", "register": "A", "table": "COMTAB", "entries": 256, "unknownStub": "BADCOM" },
+  "commands": [ { "number": "E8", "name": "start load", "params": [{"name":"slot","kind":"byte"}],
+                  "handshake": { "ack": "data", "barrier": false }, "transfer": "block256" } ],
+  "structs":  [ { "name": "smp", "size": 24, "fields": [ {"name":"SamplAdr","offset":0,"type":"u16"},
+                                                         {"name":"Vol","offset":6,"type":"u8"} ] } ],
+  "instances":[ { "struct": "smp", "at": "SamplTabl", "count": 8, "page": {"kind":"ram","page":2} } ],
+  "variables":[ { "name": "streamRingFree", "kind": "register", "register": "HL", "pc": ["ringLoop","ringEnd"] },
+                { "name": "streamInfo", "kind": "smc_operand", "at": "streaminfobyte" } ],
+  "isrExit": "INTEND",
+  "symbolFile": "symbols/gs/neotracker.map"
+}
+```
+
+- **Active profile stack (M5).**
+  - The card keeps a stack of active profiles: the ROM's profile at the
+    bottom.
+  - A `#14` upload is tracked by a small decoder: the length and address
+    parameters, then the bytes, hashed as they arrive (SHA-256 is
+    incremental). Only while the log or the debugger is on.
+  - On completion, the hash is looked up among the `upload` matches.
+  - On `#13 <addr>`, the profile whose upload covers `addr` is pushed. A card
+    reset pops back to the ROM's.
+  - The command decoder of §6.3 asks the top profile first, then the ones
+    below, for commands the new code passes back.
+- **Dispatch view (M4).**
+  - The table is read at the profile's `dispatch.table` (in RAM on NeoGS, and
+    after a firmware copy).
+  - It is compared with the ROM baseline, or with the upload baseline; the
+    differing entries are "patched", with the upload that wrote them (from
+    X7's writer data).
+  - The dispatch PC is a probe: its hit records the command and the handler
+    for `card_pc` / `card_label`.
+- **Handshake (M6)** feeds the decoder's anomaly rules:
+  - `ack: data` means the host acknowledges by the data flag, so a command
+    flag still set is not "unconfirmed";
+  - `barrier` commands reset the decoder state;
+  - `strobe` marks `#BB` writes inside a transfer as part of the transfer.
+- **Variables (M7).** `register` variables are valid only while the PC is in
+  the range. `smc_operand` reads the byte after the instruction's opcode at
+  the symbol.
+- **Instances (M2)** read through `peekPage(kind, page, offset)` (§3.1),
+  never through the current windows.
+- **Generator (M8):** `tools/gsfirmware/profile_from_source.py` (next to the
+  mark-up tool of §6.2) parses `COMTAB` / `COMTABH`, `STRUCT … ENDS`,
+  `EQU` offset blocks and the symbols, and writes the JSON. CI regenerates it
+  and compares.
+- **Page map (M9)** combines the instances (M2), the F1a block destinations,
+  the upload records (M5) and the stream ring declared in the profile.
+- **SD transaction log (M12)** is a decoder for the `#1E` extension command,
+  driven by the NeoGS SD driver's profile (its handshake and parameters),
+  writing entries to the command log with `kind = sd`.
+
+### 8A.10 Validation scenarios (requirements §4.16)
+
+- **Fixtures.** NedoOS disk images carrying gstest, GP, ngsplay, the kernel
+  with its NeoGS SD driver, and Moon Rabbit go into
+  `testdata/software/nedoos/`, with a README giving their revision.
+- **Test.** `gs_nedoos_scenarios_test.cpp` runs each scenario headlessly.
+  It asserts:
+  - the command log against a golden text file;
+  - zero unexpected F4 anomalies, and the expected ones for V-1
+    (`reply_read_without_poll`);
+  - the profile switches of V-3 and V-4;
+  - the patched `#1E` of V-5.
+- **Accuracy checks:**
+  - `SSTAT.MCRDY` polling: a test with GP's original polling loop (the one
+    its TODO says fails in UnrealSpeccy) must complete;
+  - host `IN (#0F)`: a test pins what the bus returns on each machine, with
+    and without NeoGS.
+
 ## 9. Testing
 
 | Test (file after the code under test) | Checks |
@@ -983,23 +1300,31 @@ struct GSFirmwareStateView
 
 ## 10. Phases
 
+Revision 2: NeoGS is in master. Its target is built together with the GS
+target, which also proves that the target interface assumes nothing about GS
+(N1). The front-end work follows the debugger model and serves the main CPU
+too.
+
 ```mermaid
 flowchart LR
-    P1["Phase 1<br/>targets + card breakpoints<br/>+ tight mode + one pause"] --> P2["Phase 2<br/>coordinator: steps,<br/>run-to, progress"]
-    P2 --> P3["Phase 3<br/>profiles, symbols,<br/>v1.05b ROM, command log"]
-    P3 --> P4["Phase 4<br/>automation cpu selector,<br/>WebSocket events, Qt card window"]
-    P4 --> P5["Phase 5<br/>DeZog/GDB per CPU,<br/>TTD on card, LW inspector,<br/>firmware objects"]
-    P5 --> P6["Phase 6<br/>NeoGS target, sources,<br/>comparison"]
+    P1["Phase 1<br/>targets gs + neogs,<br/>card breakpoints,<br/>tight mode, one pause"] --> P2["Phase 2<br/>coordinator: steps,<br/>run-to, progress,<br/>clock changes"]
+    P2 --> P3["Phase 3<br/>DebugService + serializer,<br/>WebSocket events,<br/>cpu selector on every surface"]
+    P3 --> P4["Phase 4<br/>profiles, symbols,<br/>v1.05b ROM, command log,<br/>device boards"]
+    P4 --> P5["Phase 5<br/>GUI skin: main and card<br/>debuggers"]
+    P5 --> P6["Phase 6<br/>DeZog / GDB per CPU,<br/>TTD on card, LW inspector,<br/>firmware objects, NeoGS symbols<br/>and GS comparison"]
+    P6 --> P7["Phase 7<br/>trace, event viewer, probes,<br/>CDL, profiler, heat map,<br/>validators, scripts, audio tools"]
 ```
 
 | Phase | Delivers requirements | Done when |
 |---|---|---|
-| 1 | T1-T3, T5, B1, B5, V1-V3 (automation only), S1, S2, S4, P1, P4 | a `gs` breakpoint set through the CLI stops the machine with both positions reported; P1 benchmark within 2% |
-| 2 | S3, S5-S9, B2, B4 | the §5.3 walk-through passes as a test; S8 determinism test passes |
-| 3 | F1-F4, F6, L1-L4, R1, P2 | the command log decodes a real game's module load; symbols auto-load for v1.04 / v1.05a / v1.05b |
-| 4 | A1, A2, A4, U1, U1a, U2, B3, T4 | two Qt windows paused together; a separate process follows events |
-| 5 | A3, D1-D4, F5, F7, V4-V5, L5, W1-W5, U3 | DeZog on port 12001 debugs the card |
-| 6 | N1-N5 | NeoGS target with its own memory map, profile and symbols |
+| 1 | T1-T3, T5, B1, B5, V1-V3 (automation only), S1, S2, S4, N1-N3, P1, P4 | a `gs` and a `neogs` breakpoint set through the CLI stop the machine with both positions reported; P1 benchmark within 2% |
+| 2 | S3, S5-S9, B2, B4, N2, N6 (tight mode through the overlay) | the §5.3 walk-through passes as a test on GS and on NeoGS with a clock change; S8 determinism test passes |
+| 3 | A1, A2, A4, T4 (the protocol: `DebugService`, serializer, events, all surfaces) | the surface-parity test (protocol.md §10) passes; a separate process follows events |
+| 4 | F1-F4, F6, L1-L4, R1, P2, N4, N7, N8 (boards, stats, the SD board) | the command log decodes a real game's module load; symbols auto-load for v1.04 / v1.05a / v1.05b; every NeoGS board reads through `GET /debug/boards` |
+| 5 | U1, U1a, U2, B3 (the GUI skin: gui-main-debugger.md, then gui-card-debugger.md) | two Qt windows paused together; the acceptance checklists of both documents |
+| 4 (rev. 3 additions) | M1-M8 (profiles with structs, dispatch, handshake, uploaded code), AU6, the F4 extensions | the §8A.10 scenarios V-1 to V-6 pass with their golden logs |
+| 6 | A3, D1-D4, F5, F7, V4-V5, L5, N5, W1-W5, U3 | DeZog on port 12001 debugs the card; NeoGS firmware symbols and the GS comparison report |
+| 7 (rev. 3) | X1-X21 (trace, event viewer, probes, CDL, profiler, heat map, validators, scripts, …), AU1-AU5, M9-M12 | the ISR budget of a GS module reads out; a Lua headless test passes; the heat map shows the playing samples; benchmarks: all off = P1 |
 
 ## 11. Risks and open points
 

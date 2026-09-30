@@ -65,6 +65,7 @@ The Lua bindings operate on the existing emulator instance (`get_emulator()`); t
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```lua
 local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
+local id2 = zxpoly_start("ZXPOLY-48K", nil, "zero")  -- third argument: power-on RAM of all four modules, "random" | "zero"
 local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
 print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
 print(status.parallel_slaves, status.pipelined_slaves)   -- how the slaves are scheduled
@@ -385,6 +386,7 @@ id = emu:get_id()
 sym_id = emu:get_symbolic_id()
 emu:set_symbolic_id("name")
 state = emu:get_state()  -- "running", "paused", "stopped"
+ram = emu:ram_power_on()  -- RAM contents at creation: "random" | "zero" ([MISC] RAMPowerOn / ram_power_on)
 
 -- Subsystems
 cpu = emu:get_cpu()
@@ -695,7 +697,7 @@ Play RZX input recordings: the start snapshot loads, then every `IN` returns the
 | `rzx_play(path [, options])` | table `{ok, error, message, emulator_id, model_switched, model, required_model, summary}` | Play a recording. `options`: `desync_mode` (`"strict"` / `"tolerant"`), `ei_short_frame_blocks_int`, `ld_air_parity_quirk`, `ignore_later_snapshots`, `switch_model` (default `true`). The model switches only when the interpreter follows the selected machine; an interpreter bound to one machine gets `error = "model_mismatch"` and `required_model` instead (its machine is never replaced under it). |
 | `rzx_seek(frame)` | `ok, reason` | Move to the boundary after `frame` frames (back through keyframes, forward by playing on). |
 | `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
-| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
 `snapshot_load("game.rzx")` plays a recording on the machine as it is.
 
@@ -746,6 +748,11 @@ local status = ttd_status()
 -- Machine
 -- status.model_id              = 0
 -- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
+-- status.machine               = { model = "PENTAGON", model_id, ram_page_bound, rom_signature = "0x...",
+--                                  peripheral_mask, peripherals = { "betadisk", ... },
+--                                  general_sound = "none"|"z80"|"lw"|"ngs", turbo_sound = "none"|"turbosound"|"tsfm" }
+--                                  -- the recorded machine; nil while there is no session
+-- status.recorded_by           = "emu-..."  -- the instance that recorded a loaded file; nil for a live one
 --
 -- Timeline
 -- status.session_start_frame   = 98
@@ -903,6 +910,16 @@ ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
 -- After a load the session is idle: use ttd_seek to position the emulator.
+
+ttd_file_info("/tmp/session.ttd")
+-- A .ttd file read without loading it (headers only, no emulator needed):
+-- --> { ok = true, path, file_bytes, schema_version, flags, captured_at_unix_ms, recorded_by,
+--       session_state, session_start_frame, session_end_frame, checkpoint_count, page_slot_count,
+--       sections = { write_journal, coverage_index, input_journal, port_journals, ... },
+--       machine = { model, general_sound, turbo_sound, peripherals, rom_signature, ... },
+--       peripherals_from_header }
+--     or { ok = false, path, error = "..." }
+-- Provision the machine it needs first: its model, its General Sound card (machine.general_sound).
 ```
 
 **Coverage index queries:**

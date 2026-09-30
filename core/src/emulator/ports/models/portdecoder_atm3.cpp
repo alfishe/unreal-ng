@@ -615,24 +615,24 @@ bool PortDecoder_ATM3::IsPaletteWriteEnabled()
 ///          - pFF77 bit 3 selects 14 MHz outright, otherwise pEFF7 bit 4 picks
 ///          3.5 MHz over the 7 MHz default.
 ///
-///          Only hw_turbo_shift is written: next_z80_frequency_multiplier is the
+///          Only hw_turbo_ratio is written: next_z80_frequency_multiplier is the
 ///          HOST speed control and Z80::ApplyQueuedFrequencyMultiplier composes
-///          current = next << hw_turbo_shift, so writing both would double-count
+///          current = next x hw_turbo_ratio, so writing both would double-count
 ///          the clock and discard the user's speed setting.
 void PortDecoder_ATM3::updateTurboMode()
 {
-    uint8_t turboShift;
+    uint8_t turboRatio;
     if (_state->pFF77 & ATM_FF77_TURBO)
-        turboShift = 2;                                     // 14 MHz
+        turboRatio = 4;                                     // 14 MHz
     else if (_state->pEFF7 & ATM_EFF7_TURBO_3_5)
-        turboShift = 0;                                     // 3.5 MHz compatibility
+        turboRatio = 1;                                     // 3.5 MHz compatibility
     else
-        turboShift = 1;                                     // 7 MHz default
+        turboRatio = 2;                                     // 7 MHz default
 
-    _state->hw_turbo_shift = turboShift;
+    _state->hw_turbo_ratio = turboRatio;
 
-    MLOGDEBUG("ATM3 updateTurboMode: hw_turbo_shift=%d (pFF77=0x%02X pEFF7=0x%02X)",
-              turboShift, _state->pFF77, _state->pEFF7);
+    MLOGDEBUG("ATM3 updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X pEFF7=0x%02X)",
+              turboRatio, _state->pFF77, _state->pEFF7);
 
     SyncTurboWaits();
 }
@@ -645,7 +645,7 @@ void PortDecoder_ATM3::SyncTurboWaits()
     if (!core || !core->GetZ80() || !_memory)
         return;
 
-    const bool wanted = _state->hw_turbo_shift == 2;
+    const bool wanted = _state->hw_turbo_ratio == 4;
     if (wanted == _turboWaitsInstalled)
         return;
 

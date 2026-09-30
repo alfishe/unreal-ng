@@ -20,7 +20,7 @@ The same emulation runs under every TTD engine (today only `v1`, the current `Ti
   - it runs a number of settle frames before recording starts;
   - it records a fixed number of frames, with scripted key presses at fixed frames;
   - the RTC clock is frozen, so the firmware never reads the host time;
-  - power-on RAM (pages 5 and 7) is zeroed instead of filled from the process-wide `rand()`, so a case does not depend on the cases that ran before it.
+  - every machine is created with zeroed RAM (`RAMPowerOn=ZERO`) instead of the default power-on noise from the process-wide `rand()`, so a case does not depend on the cases that ran before it.
 - **Byte metric**: a size, which is identical on every run. Names end in `_bytes` or `_bpf` (bytes per frame), plus `frames` and `checkpoints`.
 - **Timing metric**: a duration. Timings vary with host load and are reported as percentiles.
 
@@ -71,7 +71,7 @@ Other sessions running on the same machine inflate timings. Check `uptime` befor
 | BM-6 | `bm6_restore_{cpu_chipset,devices,memory,screen}_us_p50` | Checkpoint restore time, split by component |
 | BM-7 | `bm7_file_bytes`, `bm7_file_bpf`, `bm7_{save,load}_s_per_gb`, `bm7_first_seek_ms` | Session file size, save and load speed, and time to the first seek after loading |
 | BM-8 | `bm8_capture_us_dirty{0,1,4,16,64}` | Capture time after writing 0 to 64 pieces of 4 KB each |
-| - | `turbo_shift` | The hardware turbo in effect at the end of the run: proof that the configuration really ran as named |
+| - | `turbo_ratio` | The hardware clock ratio (1 = base clock) in effect at the end of the run: proof that the configuration really ran as named |
 
 Each seek position is measured three times (`seekRepeats`) and the fastest run is kept. The spread between positions (how far the target is from its checkpoint, where it lies in the frame) stays in the data, while a single measurement slowed by the scheduler does not.
 

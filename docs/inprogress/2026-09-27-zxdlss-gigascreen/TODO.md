@@ -11,9 +11,10 @@
 - [prior-art.md](prior-art.md) — other emulators' de-flicker
 - [optimization-ideas.md](optimization-ideas.md) — backlog + SIMD candidates
 - [rollout.md](rollout.md) — phases P0–P10, T0–T4, flags, exit criteria
+- [reference-across-the-edge.md](reference-across-the-edge.md) — recording, clip, first-pass effect map, golden clip candidates
 
 ## Next (value order, per rollout.md)
-1. P0b: record the full Across the Edge TTD; clip format + extractor; synthetic generator.
+1. ~~Record the full Across the Edge TTD; first-pass effect map~~ (done 2026-09-28, prototype extractor in scratch). P0b: clip format + extractor in the tree; synthetic generator (periods 3–5 needed: the demo is period-2 material).
 2. P0a: plane B capture + raw frame copy + `capture/screen/raw`, `capture/planeb`.
 3. P0e: Temporal Effects Manager skeleton; `blend` mode ported with parity test; `adaptive` baseline.
 4. P1 → P2: Metadata Manager core, then GigaScreen analyzer in observe-only mode; whole-demo statistics.

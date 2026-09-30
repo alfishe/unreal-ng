@@ -35,14 +35,15 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
     }
 }
 
-LoaderSNA::~LoaderSNA()
+LoaderSNA::LoaderSNA(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name)
+    : LoaderSNA(context, name)
 {
-    if (_file)
-    {
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
-    }
+    _path = name;
+    _data = std::move(data);
+    _fromMemory = true;
 }
+
+LoaderSNA::~LoaderSNA() = default;
 
 /// endregion </Constructors / destructors>
 
@@ -73,14 +74,22 @@ bool LoaderSNA::validate()
 {
     bool result = false;
 
-    if (FileHelper::FileExists(_path))
+    // The snapshot bytes: given in memory, or the whole file (read once; no
+    // handle stays open)
+    bool haveData = _fromMemory;
+    if (!_fromMemory && FileHelper::FileExists(_path))
     {
-        _file = FileHelper::OpenExistingFile(_path);
-        if (_file != nullptr)
+        const size_t size = FileHelper::GetFileSize(_path);
+        _data.assign(size, 0);
+        haveData = size == 0 || FileHelper::ReadFileToBuffer(_path, _data.data(), size) == size;
+    }
+    if (haveData)
+    {
         {
-            _fileSize = FileHelper::GetFileSize(_file);
+            _fileSize = _data.size();
+            _readPos = 0;
 
-            if (is48kSnapshot(_file))
+            if (is48kSnapshot())
             {
                 _snapshotMode = SNA_48;
                 
@@ -92,7 +101,7 @@ bool LoaderSNA::validate()
                     _snapshotMode = SNA_UNKNOWN;
                 }
             }
-            else if (is128kSnapshot(_file))
+            else if (is128kSnapshot())
             {
                 _snapshotMode = SNA_128;
                 
@@ -167,11 +176,20 @@ bool LoaderSNA::validate()
     return result;
 }
 
-bool LoaderSNA::is48kSnapshot(FILE* file)
+bool LoaderSNA::Read(void* target, size_t size)
+{
+    if (size > _data.size() || _readPos > _data.size() - size)
+        return false;
+    memcpy(target, _data.data() + _readPos, size);
+    _readPos += size;
+    return true;
+}
+
+bool LoaderSNA::is48kSnapshot() const
 {
     bool result = false;
 
-    size_t fileSize = FileHelper::GetFileSize(file);
+    size_t fileSize = _data.size();
     
     // Minimum size check: must have at least header (27 bytes)
     if (fileSize < _snaHeaderSize)
@@ -189,11 +207,11 @@ bool LoaderSNA::is48kSnapshot(FILE* file)
     return result;
 }
 
-bool LoaderSNA::is128kSnapshot(FILE* file)
+bool LoaderSNA::is128kSnapshot() const
 {
     bool result = false;
 
-    size_t fileSize = FileHelper::GetFileSize(file);
+    size_t fileSize = _data.size();
     
     // Minimum size for 128K SNA: header (27) + 3 banks (48KB) + extended header (4)
     const size_t min128kSize = _snaHeaderSize + 3 * PAGE_SIZE + sizeof(sna128Header);
@@ -232,12 +250,6 @@ bool LoaderSNA::loadToStaging()
             break;
     }
 
-    if (_file)
-    {
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
-    }
-
     return result;
 }
 
@@ -245,34 +257,34 @@ bool LoaderSNA::load48kToStaging()
 {
     bool result = false;
 
-    if (_snapshotMode == SNA_48 && _file != nullptr)
+    if (_snapshotMode == SNA_48 && !_data.empty())
     {
         // Ensure we're reading from file start
-        rewind(_file);
+        _readPos = 0;
 
         // Read SNA common header
-        if (fread(&_header, sizeof(_header), 1, _file) != 1)
+        if (!Read(&_header, sizeof(_header)))
         {
             return false;
         }
 
         // Read 48K RAM (3 x 16KB pages)
         // Bank 5 [4000:7FFF]
-        if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1)
+        if (!Read(&_memoryPages[5], PAGE_SIZE))
         {
             return false;
         }
         _memoryPagesUsed[5] = true;
 
         // Bank 2 [8000:BFFF]
-        if (fread(&_memoryPages[2], PAGE_SIZE, 1, _file) != 1)
+        if (!Read(&_memoryPages[2], PAGE_SIZE))
         {
             return false;
         }
         _memoryPagesUsed[2] = true;
 
         // Bank 0 [C000:FFFF]
-        if (fread(&_memoryPages[0], PAGE_SIZE, 1, _file) != 1)
+        if (!Read(&_memoryPages[0], PAGE_SIZE))
         {
             return false;
         }
@@ -291,15 +303,15 @@ bool LoaderSNA::load128kToStaging()
 {
     bool result = true;
 
-    if (_snapshotMode == SNA_128 && _file != nullptr)
+    if (_snapshotMode == SNA_128 && !_data.empty())
     {
         int memoryPagesToLoad = (_fileSize - sizeof(snaHeader) - 3 * PAGE_SIZE - sizeof (sna128Header)) / PAGE_SIZE;
 
         // Ensure we're reading from file start
-        rewind(_file);
+        _readPos = 0;
 
         // Read SNA common header
-        if (fread(&_header, sizeof(_header), 1, _file) != 1)
+        if (!Read(&_header, sizeof(_header)))
         {
             result = false;
         }
@@ -307,7 +319,7 @@ bool LoaderSNA::load128kToStaging()
         // Read Bank 5 [4000:7FFF]
         if (result)
         {
-            if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1)
+            if (!Read(&_memoryPages[5], PAGE_SIZE))
             {
                 result = false;
             }
@@ -320,7 +332,7 @@ bool LoaderSNA::load128kToStaging()
         // Read Bank 2 [8000:BFFF]
         if (result)
         {
-            if (fread(&_memoryPages[2], PAGE_SIZE, 1, _file) != 1)
+            if (!Read(&_memoryPages[2], PAGE_SIZE))
             {
                 result = false;
             }
@@ -334,7 +346,7 @@ bool LoaderSNA::load128kToStaging()
         // It will go to the page mapped by port #7FFD value
         if (result)
         {
-            if (fread(&_memoryPages[0], PAGE_SIZE, 1, _file) != 1)
+            if (!Read(&_memoryPages[0], PAGE_SIZE))
             {
                 result = false;
             }
@@ -347,7 +359,7 @@ bool LoaderSNA::load128kToStaging()
         // Read extended SNA header
         if (result)
         {
-            if (fread(&_ext128Header, sizeof(_ext128Header), 1, _file) != 1)
+            if (!Read(&_ext128Header, sizeof(_ext128Header)))
             {
                 result = false;
             }
@@ -393,7 +405,7 @@ bool LoaderSNA::load128kToStaging()
                         continue;
 
                     // Load next page
-                    if (fread(&_memoryPages[pageNum], PAGE_SIZE, 1, _file) != 1)
+                    if (!Read(&_memoryPages[pageNum], PAGE_SIZE))
                     {
                         result = false;
                         break;

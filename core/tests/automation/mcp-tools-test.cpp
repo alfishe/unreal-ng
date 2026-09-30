@@ -212,6 +212,32 @@ TEST_F(McpTools_Test, EmulatorManage_CreateZXPoly_PostsTheWebApiZXPolyRequest)
     EXPECT_EQ(call->body["zxpoly"]["file"].asString(), "/games/Alien8.zxp");
 }
 
+TEST_F(McpTools_Test, EmulatorManage_CreateAndSwitchModel_ForwardRamPowerOn)
+{
+    Json::Value response;
+    response["id"] = "emu-2";
+    _caller->routes["POST /api/v1/emulator/start"] = {201, response};
+    _caller->routes["POST /api/v1/emulator/emu-1/model"] = {200, response};
+
+    Json::Value create;
+    create["action"] = "create";
+    create["model"] = "PENTAGON";
+    create["ram_power_on"] = "zero";
+    ASSERT_FALSE(RunTool(*_registry, "emulator_manage", create, *_caller).isError);
+    const auto* created = _caller->Last("POST", "/api/v1/emulator/start");
+    ASSERT_NE(created, nullptr);
+    EXPECT_EQ(created->body["ram_power_on"].asString(), "zero");
+
+    Json::Value switchModel;
+    switchModel["action"] = "switch_model";
+    switchModel["model"] = "48K";
+    switchModel["ram_power_on"] = "random";
+    RunTool(*_registry, "emulator_manage", switchModel, *_caller);
+    const auto* switched = _caller->Last("POST", "/api/v1/emulator/emu-1/model");
+    ASSERT_NE(switched, nullptr);
+    EXPECT_EQ(switched->body["ram_power_on"].asString(), "random");
+}
+
 TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/zxpoly"] = {200, Json::Value(Json::objectValue)};
@@ -1671,6 +1697,79 @@ TEST_F(McpTools_Test, TimeTravel_DumpAndLoad_PostPath)
     const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/load");
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["path"].asString(), "/tmp/s.ttd");
+}
+
+TEST_F(McpTools_Test, TimeTravel_FileInfo_GetsWithoutATargetAndSummarizesTheMachine)
+{
+    Json::Value info;
+    info["ok"] = true;
+    info["path"] = "/tmp/s.ttd";
+    info["file_bytes"] = 8192;
+    info["session_start_frame"] = 25;
+    info["session_end_frame"] = 16595;
+    info["checkpoint_count"] = 16571;
+    info["recorded_by"] = "emu-7";
+    info["machine"]["model"] = "PENTAGON";
+    info["machine"]["model_id"] = 1;
+    info["machine"]["general_sound"] = "z80";
+    info["machine"]["turbo_sound"] = "turbosound";
+    info["machine"]["peripherals"].append("betadisk");
+    info["machine"]["peripherals"].append("gs");
+    _caller->routes["GET /api/v1/ttd/file-info?path=%2Ftmp%2Fs.ttd"] = {200, info};
+
+    Json::Value args;
+    args["action"] = "file_info";
+    args["path"] = "/tmp/s.ttd";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    // A file, not a session: the only call is the file-info GET (no target resolution)
+    ASSERT_EQ(_caller->calls.size(), 1u);
+    EXPECT_EQ(_caller->calls[0].path, "/api/v1/ttd/file-info?path=%2Ftmp%2Fs.ttd");
+    EXPECT_NE(result.text.find("on PENTAGON, General Sound z80, TurboSound turbosound"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frames 25..16595"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("devices: betadisk gs"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["machine"]["general_sound"].asString(), "z80");
+}
+
+TEST_F(McpTools_Test, TimeTravel_FileInfo_WithoutPathOrUnreadable)
+{
+    Json::Value args;
+    args["action"] = "file_info";
+    mcp::ToolResult missing = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value refused;
+    refused["ok"] = false;
+    refused["path"] = "/tmp/x.bin";
+    refused["error"] = "not a .ttd file (bad magic)";
+    _caller->routes["GET /api/v1/ttd/file-info?path=%2Ftmp%2Fx.bin"] = {400, refused};
+    args["path"] = "/tmp/x.bin";
+    mcp::ToolResult bad = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(bad.isError);
+    EXPECT_NE(bad.text.find("bad magic"), std::string::npos) << bad.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Status_NamesTheRecordedMachine)
+{
+    Json::Value status;
+    status["ttd_available"] = true;
+    status["state"] = "detached";
+    status["session_start_frame"] = 25;
+    status["current_end_frame"] = 99;
+    status["checkpoint_count"] = 75;
+    status["machine"]["model"] = "ATM710";
+    status["machine"]["model_id"] = 9;
+    status["machine"]["general_sound"] = "ngs";
+    status["machine"]["turbo_sound"] = "none";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("recorded on ATM710, General Sound ngs"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_DumpFailure_IsError)

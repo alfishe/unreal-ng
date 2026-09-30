@@ -42,7 +42,7 @@ The matrix comes in three sets:
 Three things the harness had to fix to make the byte counts repeatable:
 
 - **The RTC clock is frozen.** ZX-Evo's BaseConf firmware reads the CMOS clock while it boots, so with the host time the RAM content differed on every run. The harness sets the Ds12887 to a fixed time before the workload starts.
-- **Power-on RAM is zeroed.** `Memory` fills RAM pages 5 and 7 with noise from the process-wide `rand()` when a machine is created. A case therefore booted differently depending on which cases had run before it in the same process: ZX-Evo idle wrote 439,023 bytes when run alone and 438,995 after one other case. This is the known hidden input described in [core/tests/README.md](../../../core/tests/README.md), "Power-on RAM is a hidden global input". The harness zeroes both pages, as the tests do. The product behavior itself is unchanged.
+- **Power-on RAM is zeroed.** `Memory` fills RAM pages 5 and 7 with noise from the process-wide `rand()` when a machine is created. A case therefore booted differently depending on which cases had run before it in the same process: ZX-Evo idle wrote 439,023 bytes when run alone and 438,995 after one other case. This is the known hidden input described in [core/tests/README.md](../../../core/tests/README.md), "Power-on RAM is a hidden global input". The harness creates every machine with zeroed RAM (`[MISC] RAMPowerOn=ZERO`, the create option every automation surface now offers as `ram_power_on`). The default for users is unchanged.
 - **The configuration comes from the matrix alone.** core-tests installs a config hook that switches off sound cards. The harness used to chain that hook, which gave the gate a different machine than core-benchmarks for the same case. The harness now replaces any hook while it creates a machine.
 
 Exit criterion: a byte comparison of two runs of the same matrix reports 0 differences, for the `ci` set and for the `full` set. The byte metrics were also identical between the high-load and the low-load reruns of the full set. Timings are compared as a change in percent, and only fail a comparison when asked to (`--fail-on-time`).
@@ -103,6 +103,6 @@ About the stored `v1-full.json`: its byte metrics are the reference, and they ma
 ## 5. Limits of this round
 
 - Only one engine exists, so the matrix measures v1 against itself. The v1-vs-v2 comparison (acceptance criterion 4) comes with V1.
-- The Scorpion firmware switches on the Turbo+ mode during boot (`turbo_shift` = 1 on plain `SCORPION` as well). As a result `SCORPION` and `SCORPION-turbo` currently record the same machine.
+- The Scorpion firmware switches on the Turbo+ mode during boot (`turbo_shift` = 1, now metric `turbo_ratio` = 2, on plain `SCORPION` as well). As a result `SCORPION` and `SCORPION-turbo` currently record the same machine.
 - The `none` peripheral set appears as `noay` in case names. The name lists only the TurboSound slot; the other devices are off too.
 - Timings on a shared host vary by 10–30% between runs. The CI gate therefore checks bytes exactly and timing only as the share of capture in the frame (budget 50%; measured 3–14% on the `ci` cases, up to 26% on the full matrix with GS512).

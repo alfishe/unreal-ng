@@ -353,6 +353,11 @@ and where this plan handles them:
    precedence rule. Tracked in [MoonSound TODO](../2026-09-13-moonsound/TODO.md).
 3. **Default memory budget and whether disk mode is on by default** (V4/V5):
    needs measurements on ZX-Evo + GS + MoonSound sessions after V1.
+   **Direction (user, 2026-09-29):** history memory as linked blocks — one
+   64 MB block at the start, more up to the configured limit — with every
+   budget and status counted in memory, never in time; spill to disk and / or
+   memory-mapped blocks ([target-architecture.md §6.1](target-architecture.md#61-memory-as-linked-blocks-direction-2026-09-29)).
+   Open: the default limit, the spill trigger and mechanism.
 4. **Integrity and versioning mechanism** (before V4 starts): open
    investigation, [integrity-and-versioning.md](integrity-and-versioning.md).
 5. **Switching storage mode during a session** (V4/V5): fixed at session start,

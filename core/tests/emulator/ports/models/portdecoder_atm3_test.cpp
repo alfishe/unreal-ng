@@ -302,9 +302,9 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     // two-state ATM 7.10 base (reference: Xpeccy pentevo.c evoOut77d,
     // `compSetHwTurbo(comp, (val & 0x08) ? 4 : ((comp->pEFF7 & 0x10) ? 1 : 2))`).
     //
-    // Asserted on hw_turbo_shift: next_z80_frequency_multiplier is the HOST
+    // Asserted on hw_turbo_ratio: next_z80_frequency_multiplier is the HOST
     // speed control and Z80::ApplyQueuedFrequencyMultiplier composes
-    // current = next << hw_turbo_shift, so the decoder must not write it.
+    // current = next x hw_turbo_ratio, so the decoder must not write it.
     EmulatorState& state = _context->emulatorState;
 
     const uint8_t hostSpeed = 3;
@@ -315,10 +315,10 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     state.pBF = 0x01;
 
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 2) << "pFF77.3 set is 14 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 4) << "pFF77.3 set is 14 MHz";
 
     _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "turbo clear with pEFF7.4 clear is the 7 MHz default";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "turbo clear with pEFF7.4 clear is the 7 MHz default";
 
     // #EFF7 is written only outside shadow (zports.v:716 "EEF7 in shadow mode
     // is abandoned"): drop shaden and leave CP/M so the DOS line is off too
@@ -326,11 +326,11 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
     state.flags &= ~CF_TRDOS;
     _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "pEFF7.4 locks 3.5 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "pEFF7.4 locks 3.5 MHz";
 
     state.pBF = 0x01;
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
-    EXPECT_EQ(state.hw_turbo_shift, 2) << "pFF77.3 overrides the 3.5 MHz lock";
+    EXPECT_EQ(state.hw_turbo_ratio, 4) << "pFF77.3 overrides the 3.5 MHz lock";
 
     EXPECT_EQ(state.next_z80_frequency_multiplier, hostSpeed)
         << "the decoder must never write the host speed control";
@@ -1120,7 +1120,7 @@ protected:
 /// turbo = {0, ~0} = 7 MHz, top.v:401)
 TEST_F(PortDecoder_ATM3_Machine_Test, Reset_Runs7MHz)
 {
-    EXPECT_EQ(_context->emulatorState.hw_turbo_shift, 1);
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 2);
 }
 
 /// #F6 sets border colors 8-15 and leaves the beeper alone; #FC sets the

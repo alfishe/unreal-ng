@@ -135,7 +135,8 @@ const ZXPolyGroup::Configuration* ZXPolyGroup::FindConfiguration(const std::stri
     return nullptr;
 }
 
-bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* error)
+bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* error,
+                         const std::function<void(CONFIG&)>& configOverride)
 {
     const Configuration* configuration = FindConfiguration(modelOrConfiguration);
     const std::string model = configuration ? configuration->baseModel : modelOrConfiguration;
@@ -148,7 +149,7 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
         std::string createError;
         // The master carries the group's name; the slaves are named after it
         const std::string id = m == 0 ? _prefix : StringHelper::Format("%s-cpu%zu", _prefix.c_str(), m);
-        _instances[m] = manager->CreateEmulatorWithModel(id, model, LoggerLevel::LogError, &createError);
+        _instances[m] = manager->CreateEmulatorWithModel(id, model, LoggerLevel::LogError, &createError, configOverride);
         if (!_instances[m])
         {
             if (error)
@@ -1138,7 +1139,7 @@ void ZXPolyGroup::RunSlaveToPosition(size_t module, uint64_t masterFrame, uint32
     // clock multiplier (the host speed control stretches the frame x2..x16)
     const EmulatorState& state = context->emulatorState;
     const unsigned multiplier = std::max<unsigned>(
-        state.current_z80_frequency_multiplier, static_cast<unsigned>(state.next_z80_frequency_multiplier) << state.hw_turbo_shift);
+        state.current_z80_frequency_multiplier, static_cast<unsigned>(state.next_z80_frequency_multiplier) * std::max<unsigned>(state.hw_turbo_ratio, 1u));
     const unsigned limit = context->config.frame * 2u * std::max(multiplier, 1u);
     _instances[module]->RunUntilCondition(
         [&](const Z80State& state) {

@@ -23,7 +23,7 @@ ScorpionTurboOverlay::ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory,
 
 bool ScorpionTurboOverlay::WaitsApply() const
 {
-    return _state->hw_turbo_shift_applied == 1 && _core->IsContentionSwitchOn();
+    return _state->hw_turbo_ratio_applied == 2 && _core->IsContentionSwitchOn();
 }
 
 bool ScorpionTurboOverlay::InPicture(uint32_t e) const

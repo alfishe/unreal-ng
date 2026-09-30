@@ -116,7 +116,7 @@ protected:
         ctx->config.frame = 69888;
         ctx->config.frame_duration_us = 19968;
         ctx->emulatorState.current_z80_frequency_multiplier = 1;
-        ctx->emulatorState.hw_turbo_shift_applied = 0;
+        ctx->emulatorState.hw_turbo_ratio_applied = 1;
         chip = std::make_unique<SoundChip_GSLightweight>(ctx, 512);
     }
 
@@ -358,7 +358,7 @@ TEST(GSLightweight_ModuleHandoff, ReplayRoundTripByteExactAndPlaysBack)
     ctx.config.frame = 69888;
     ctx.config.frame_duration_us = 19968;
     ctx.emulatorState.current_z80_frequency_multiplier = 1;
-    ctx.emulatorState.hw_turbo_shift_applied = 0;
+    ctx.emulatorState.hw_turbo_ratio_applied = 1;
     SoundChip_GSLightweight chip(&ctx, 512);
 
     const auto module = buildTestModule(false);
@@ -386,7 +386,7 @@ TEST(GSLightweight_ModuleHandoff, ReplayEmptyBytesIsNoOp)
     ctx.config.frame = 69888;
     ctx.config.frame_duration_us = 19968;
     ctx.emulatorState.current_z80_frequency_multiplier = 1;
-    ctx.emulatorState.hw_turbo_shift_applied = 0;
+    ctx.emulatorState.hw_turbo_ratio_applied = 1;
     SoundChip_GSLightweight chip(&ctx, 512);
 
     chip.replayModuleUpload({}, true);
@@ -1120,7 +1120,7 @@ struct LleHarness
         ctx.config.frame = 69888;
         ctx.config.frame_duration_us = 19968;
         ctx.emulatorState.current_z80_frequency_multiplier = 1;
-        ctx.emulatorState.hw_turbo_shift_applied = 0;
+        ctx.emulatorState.hw_turbo_ratio_applied = 1;
         chip = std::make_unique<SoundChip_GeneralSound>(&ctx, ramKB, 44100);
         chip->loadROM("rom/gs105a.rom");
     }
@@ -1288,7 +1288,7 @@ TEST(SoundChip_GSLightweight_Fidelity, ReplyBytesMatchLle)
         ctx.config.frame = 69888;
         ctx.config.frame_duration_us = 19968;
         ctx.emulatorState.current_z80_frequency_multiplier = 1;
-        ctx.emulatorState.hw_turbo_shift_applied = 0;
+        ctx.emulatorState.hw_turbo_ratio_applied = 1;
         SoundChip_GSLightweight chip(&ctx, 512);
 
         const auto paramCmd = [&](uint8_t param, uint8_t cmd) {
@@ -1356,7 +1356,7 @@ TEST(SoundChip_GSLightweight_Fidelity, AudioRmsWithinToleranceOfLle)
         ctx.config.frame = 69888;
         ctx.config.frame_duration_us = 19968;
         ctx.emulatorState.current_z80_frequency_multiplier = 1;
-        ctx.emulatorState.hw_turbo_shift_applied = 0;
+        ctx.emulatorState.hw_turbo_ratio_applied = 1;
         SoundChip_GSLightweight chip(&ctx, 512);
 
         chip.sendData(0x01);
@@ -1409,7 +1409,7 @@ protected:
         ctx->config.frame = 69888;
         ctx->config.frame_duration_us = 19968;
         ctx->emulatorState.current_z80_frequency_multiplier = 1;
-        ctx->emulatorState.hw_turbo_shift_applied = 0;
+        ctx->emulatorState.hw_turbo_ratio_applied = 1;
     }
 
     void TearDown() override

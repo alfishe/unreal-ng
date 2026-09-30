@@ -98,7 +98,7 @@ TEST_F(EvoTurboOverlay_Test, TheMapIsRomThenRam)
 {
     SelectClock(true);
     EXPECT_TRUE(_decoder->AreTurboWaitsInstalled());
-    EXPECT_EQ(_context->emulatorState.hw_turbo_shift_applied, 2);
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio_applied, 4);
     EXPECT_TRUE(_memory->IsWindowRom(0));
     EXPECT_FALSE(_memory->IsWindowRom(1));
     EXPECT_FALSE(_memory->IsWindowRom(2));
@@ -267,7 +267,7 @@ TEST_F(EvoTurboOverlay_Test, TtdBlobRestoresTheCacheWords)
     SelectClock(false);
     serializer.TTDSaveState(blob.data());
     SelectClock(true);
-    _context->emulatorState.hw_turbo_shift = 1;
+    _context->emulatorState.hw_turbo_ratio = 2;
     serializer.TTDLoadState(blob.data());
     EXPECT_FALSE(_decoder->AreTurboWaitsInstalled());
 }

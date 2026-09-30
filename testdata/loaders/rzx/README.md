@@ -14,6 +14,7 @@ Fixtures for the RZX reader and player (`core/tests/loaders/rzx/`,
 | `archive/dargonscrypt.rzx` | +2 | Spectaculator 80.3092 | 33678 | the same; `BIT n,(HL)` flags from MEMPTR (frame 3963) |
 | `archive/darkwingduck.rzx` | Pentagon 128 | Spectaculator 70.1310 | 11670 | plays without a desync (SkoolKit has no Pentagon) |
 | `external/ericfloaters-ext.rzx` + `ericfloaters-ext-start.z80` | 48K | cut from ericfloaters (`rzxtrim.py --frames 300 --external`) | 300 | the start snapshot stored next to the recording |
+| `cases/multiload-join.rzx` | 48K | ericfloaters frames 0-299, then SkoolKit's state at frame 300 as a snapshot block and frames 300-599 (`rzxtrim.py`, `rzxjoin.py`) | 600 | a snapshot block between input blocks; `multiload-join-600.z80` / `-450.z80`: SkoolKit on this file (the seek back crosses the block) |
 | `cases/memptr-bit-hl.rzx` | +2 | cut from dargonscrypt at frame 3962 (`rzxtrim.py --frames 2`) | 2 | one frame ending in `BIT 5,(HL)` after a taken `JR`: F = #74 (#5C with a stale MEMPTR) |
 
 `oracle/<name>-300.z80` is SkoolKit's state after 300 frames (`--stop 300`),

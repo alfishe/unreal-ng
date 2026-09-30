@@ -80,7 +80,8 @@ void EmulatorManager::UpdateRealtimeSchedulingLocked()
     }
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& symbolicId, LoggerLevel level)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& symbolicId, LoggerLevel level,
+                                                          std::function<void(CONFIG&)> configOverride)
 {
     // Block new emulator creation during shutdown
     if (_isShuttingDown.load())
@@ -91,6 +92,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
 
     // Create a new emulator with an auto-generated UUID
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
+    if (configOverride)
+        emulator->SetConfigOverride(std::move(configOverride));
 
     // Initialize the emulator
     if (emulator->Init())
@@ -200,12 +203,12 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
     return nullptr;
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
     // A ZX-Poly configuration name creates the whole group; checked before the
     // lock, since the group creates its members through this method
     if (ZXPolyGroup::FindConfiguration(modelName))
-        return CreateZXPolyMachine(symbolicId, modelName, "", outError);
+        return CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
@@ -224,6 +227,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     // Request this model for initialization: Emulator::Init applies it right
     // after config load, before any model-dependent subsystem initializes
     emulator->SetPreferredModel(modelInfo->Model, modelInfo->defaultRAM);
+    if (configOverride)
+        emulator->SetConfigOverride(std::move(configOverride));
 
     // Initialize the emulator. A model the build cannot construct (missing
     // port decoder, missing device support) throws std::logic_error out of
@@ -456,6 +461,7 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
     }
     identity.SpeedMultiplier = context->emulatorState.current_z80_frequency_multiplier;
     identity.ConfigFolder = Config::GetConfigFolderForModel(config.mem_model, config.ramsize);
+    identity.RamPowerOn = Config::RamPowerOnName(config.ramPowerOn);
 
     if (ZXPolyGroup* group = GetInstance()->GetZXPolyGroup(emulator.GetId()))
     {
@@ -476,11 +482,12 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
 
 std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string& symbolicId,
                                                                const std::string& modelName,
-                                                               const std::string& mediaPath, std::string* outError)
+                                                               const std::string& mediaPath, std::string* outError,
+                                                               std::function<void(CONFIG&)> configOverride)
 {
     auto group = std::make_shared<ZXPolyGroup>(symbolicId.empty() ? std::string("zxpoly") : symbolicId);
     std::string error;
-    if (!group->Create(modelName, &error) || !group->LoadMedia(mediaPath, &error))
+    if (!group->Create(modelName, &error, configOverride) || !group->LoadMedia(mediaPath, &error))
     {
         if (outError)
             *outError = error;

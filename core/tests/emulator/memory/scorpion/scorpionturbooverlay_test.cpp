@@ -79,7 +79,7 @@ TEST_F(ScorpionTurboOverlay_Test, TurboInstallsTheOverlay)
     EXPECT_FALSE(_decoder->AreTurboWaitsInstalled());
     Turbo(true);
     EXPECT_TRUE(_decoder->AreTurboWaitsInstalled());
-    EXPECT_EQ(_context->emulatorState.hw_turbo_shift_applied, 1);
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio_applied, 2);
     Turbo(false);
     EXPECT_FALSE(_decoder->AreTurboWaitsInstalled());
     EXPECT_EQ(_core->GetBusOverlayCount(), 0u);

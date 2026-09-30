@@ -42,8 +42,8 @@ From [research-zxevo.md](research-zxevo.md) section A (clocks are 14 MHz T-state
 | I/O cycle, interrupt acknowledge | both words become invalid; an external port (low byte #FD with A15 = 1, or #1F / #3F / #5F / #7F in shadow mode) takes 3 T more |
 
 - Installed by the `ATM3` port decoder (`updateTurboMode` -> `SyncTurboWaits`) while the clock select says
-  14 MHz (`hw_turbo_shift` 2), removed otherwise; it starts with an empty cache. The waits apply while the CPU
-  runs at 14 MHz (`hw_turbo_shift_applied` 2: unreal-ng applies the ATM3's clock select at the next frame, the
+  14 MHz (`hw_turbo_ratio` 4), removed otherwise; it starts with an empty cache. The waits apply while the CPU
+  runs at 14 MHz (`hw_turbo_ratio_applied` 4: unreal-ng applies the ATM3's clock select at the next frame, the
   hardware at the next fetch's refresh, research C.1) and the `contention` feature is on. The cache words are
   kept up to date either way, so switching the feature mid-run needs nothing more. The decoder invalidates the
   cache and adds the external port's 3 T on its own I/O path (before the IDE board's ports, which are I/O
@@ -75,7 +75,7 @@ From [research-scorpion-turbo.md](research-scorpion-turbo.md), the SC15.1 firmwa
 - Installed by the Scorpion port decoder (`SyncTurboWaits`: the turbo strobe, reset, and the TTD restore of the
   `ScorpionProfROM` blob) while turbo is on; the waits apply with the `contention` feature on. The decoder adds
   the I/O cycle's 2 T when the cycle starts in turbo (the strobe that turns turbo off still pays them).
-- Even M1 is already off in turbo (`Z80Step` tests `hw_turbo_shift`); the turbo M1 wait replaces it, as in the
+- Even M1 is already off in turbo (`Z80Step` tests the hardware clock ratio); the turbo M1 wait replaces it, as in the
   equations.
 - Not modeled yet: the drop to 3.5 MHz while /INT is active (the length of /INT was not traced); SC15.3's rule
   (same slots for M1, 1 T per I/O, no Even M1 in normal mode) as a configuration option.

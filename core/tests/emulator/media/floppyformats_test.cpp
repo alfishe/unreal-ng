@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -111,4 +112,81 @@ TEST(FloppyFormats_Test, SaveRetargetsToUdiAndNeverWritesHobeta)
     EXPECT_FALSE(hobeta.saved);
     EXPECT_NE(hobeta.reason.find("Hobeta"), std::string::npos) << hobeta.reason;
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Raw PC floppies (720 KB, 1.44 MB) have no signature: the size names them, whatever the extension, and the
+/// MGT rule for .img (819 200 bytes) is untouched. The files are grown sparse: Probe reads only the head
+TEST(FloppyFormats_Test, RawPcFloppyIsRecognizedBySize)
+{
+    ScratchFolder folder("floppy-rawpc-probe");
+    auto sized = [&](const char* name, size_t size, const std::string& head)
+    {
+        const std::filesystem::path path = folder.File(name, head);
+        std::filesystem::resize_file(path, size);
+        return Utf8(path);
+    };
+    std::string head(0x900, '\xF6');
+    head[0x8E7] = '\x10';  // where a TR-DOS disk has its id: a PC disk may carry the byte too
+
+    EXPECT_EQ(FloppyFormats::Probe(sized("dss.img", 1474560, head)), "rawpc");
+    EXPECT_EQ(FloppyFormats::Probe(sized("cpm.ima", 737280, head)), "rawpc");
+    EXPECT_EQ(FloppyFormats::Probe(sized("disk.dat", 737280, "")), "rawpc");
+    EXPECT_EQ(FloppyFormats::Probe(sized("mgt-sized.img", 819200, "")), "mgt");
+    EXPECT_EQ(FloppyFormats::Probe(sized("big.img", 1474560 + 512, "")), "") << "only the exact sizes";
+    EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/mgt/synthetic.img")), "mgt");
+    EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/mgt/synthetic.mgt")), "mgt");
+    EXPECT_EQ(FloppyFormats::Probe(Fixture("testdata/loaders/trd/EyeAche.trd")), "trd");
+
+    const std::vector<std::string> extensions = FloppyFormats::Extensions();
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "img"), extensions.end());
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "ima"), extensions.end());
+}
+
+/// Load names the format; Save to .img writes a raw PC disk back as a raw dump (not MGT), and a disk the guest
+/// made irregular is refused with the reason, or goes to <stem>.udi when retargeting is allowed
+TEST(FloppyFormats_Test, RawPcFloppyLoadsAndSavesThroughTheRegistry)
+{
+    ScratchFolder folder("floppy-rawpc-save");
+    std::string dd(737280, '\0');
+    for (size_t i = 0; i < dd.size(); i++)
+        dd[i] = static_cast<char>((i / 512) * 7 + i);
+    const std::string source = Utf8(folder.File("cpm.img", dd));
+
+    std::unique_ptr<DiskImage> disk;
+    std::string format;
+    const MediaResult loaded = FloppyFormats::Load(nullptr, source, disk, format);
+    ASSERT_TRUE(loaded.Ok()) << loaded.message;
+    EXPECT_EQ(format, "rawpc");
+    ASSERT_NE(disk, nullptr);
+    EXPECT_EQ(disk->getCylinders(), 80);
+    EXPECT_FALSE(disk->isFortyTrack());
+
+    const std::string copy = Utf8(folder.Path() / "copy.img");
+    const FloppySaveResult saved = FloppyFormats::Save(nullptr, *disk, copy, /*allowRetarget*/ false);
+    ASSERT_TRUE(saved.saved) << saved.reason;
+    EXPECT_EQ(ReadAll(copy), dd);
+
+    disk->getTrackForCylinderAndSide(5, 1)->formatTrack(5, 1, DiskImage::TrackFormatSpec::plusD());  // 10 sectors
+    const FloppySaveResult refused = FloppyFormats::Save(nullptr, *disk, copy, /*allowRetarget*/ false);
+    EXPECT_FALSE(refused.saved);
+    EXPECT_NE(refused.reason.find("cylinder 5 side 1"), std::string::npos) << refused.reason;
+    const FloppySaveResult retargeted = FloppyFormats::Save(nullptr, *disk, copy, /*allowRetarget*/ true);
+    ASSERT_TRUE(retargeted.saved) << retargeted.reason;
+    EXPECT_TRUE(retargeted.retargeted);
+    EXPECT_EQ(retargeted.savedPath, Utf8(folder.Path() / "copy.udi"));
+    EXPECT_EQ(ReadAll(copy), dd) << "the refused file is left alone";
+}
+
+/// .img is shared with MGT: a +D disk saved as .img stays an MGT dump
+TEST(FloppyFormats_Test, MgtDiskSavedAsImgStaysMgt)
+{
+    ScratchFolder folder("floppy-mgt-img");
+    std::unique_ptr<DiskImage> mgt;
+    std::string format;
+    ASSERT_TRUE(FloppyFormats::Load(nullptr, Fixture("testdata/loaders/mgt/synthetic.img"), mgt, format).Ok());
+    EXPECT_EQ(format, "mgt");
+    const std::string copy = Utf8(folder.Path() / "mgt-copy.img");
+    const FloppySaveResult saved = FloppyFormats::Save(nullptr, *mgt, copy, false);
+    ASSERT_TRUE(saved.saved) << saved.reason;
+    EXPECT_EQ(ReadAll(copy), ReadAll(Fixture("testdata/loaders/mgt/synthetic.img")));
 }

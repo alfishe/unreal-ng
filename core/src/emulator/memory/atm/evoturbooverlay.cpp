@@ -7,7 +7,7 @@
 
 bool EvoTurboOverlay::WaitsApply() const
 {
-    return _state->hw_turbo_shift_applied == 2 && _core->IsContentionSwitchOn();
+    return _state->hw_turbo_ratio_applied == 4 && _core->IsContentionSwitchOn();
 }
 
 void EvoTurboOverlay::Read(uint16_t addr, bool opcodeFetch)

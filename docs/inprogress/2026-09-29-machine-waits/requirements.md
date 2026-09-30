@@ -5,7 +5,7 @@
 
 ## 1. What is missing
 
-unreal-ng models a machine's turbo as a clock multiplier only (`EmulatorState::hw_turbo_shift`): every
+unreal-ng models a machine's turbo as a clock multiplier only (`EmulatorState::hw_turbo_ratio`): every
 instruction runs at its nominal length at the higher clock. Real machines add wait states there, and one clone
 emulates Sinclair contention in some modes. From [contention-by-machine.md](../2026-09-28-m1-contention/contention-by-machine.md):
 

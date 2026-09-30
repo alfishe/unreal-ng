@@ -21,7 +21,7 @@
 ///
 /// Installed by the ATM3 port decoder while the clock select says 14 MHz (PortDecoder_ATM3::SyncTurboWaits). It
 /// keeps the cache words up to date always and adds waits only while the CPU runs at 14 MHz
-/// (`hw_turbo_shift_applied`: unreal-ng applies the ATM3's clock select at the next frame) and the `contention`
+/// (`hw_turbo_ratio_applied`: unreal-ng applies the ATM3's clock select at the next frame) and the `contention`
 /// feature is on.
 
 #include <cstdint>

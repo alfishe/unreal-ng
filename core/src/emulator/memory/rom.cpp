@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include "common/collectionhelper.h"
 #include "common/filehelper.h"
 #include "common/signaturecache.h"
@@ -360,10 +361,17 @@ bool ROM::LoadROM()
 			}
 			else if (config.mem_model == MM_TSL)
 			{
-				if (loadedBanks != 32)
+				// TS-Conf ROM (hardware-spec §10): the 512 KB zxevo.rom, or a 64 KB
+				// ts-bios*.rom (group 0 only) with the rest of the 32 pages erased
+				// flash (0xFF). Group 0 = TS-BIOS / TR-DOS / 128 / 48
+				if (loadedBanks < 4 || loadedBanks > 32)
 				{
-					MLOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
+					MLOGERROR("Incorrect ROM size for TS-Conf. Should be 64..512 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
+				}
+				else if (loadedBanks < 32)
+				{
+					std::memset(memory.ROMBase() + loadedBanks * PAGE_SIZE, 0xFF, (32 - loadedBanks) * PAGE_SIZE);
 				}
 			}
             else if (config.mem_model == MM_SPECTRUM48)

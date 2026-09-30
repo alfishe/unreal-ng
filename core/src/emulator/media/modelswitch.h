@@ -18,10 +18,12 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "emulator/media/mediamanager.h"
+#include "emulator/platform.h"
 
 class Emulator;
 
@@ -43,6 +45,9 @@ struct ModelSwitchRequest
     /// Called with the old machine stopped, before it is destroyed (a GUI
     /// unbinds its views here)
     std::function<void(Emulator& old)> beforeRelease;
+    /// Power-on RAM of the new machine; unset = the old machine's mode, so a
+    /// machine created with zeroed RAM stays that way across a model switch
+    std::optional<RamPowerOn> ramPowerOn;
 };
 
 struct ModelSwitchResult

@@ -151,6 +151,32 @@ case Qt::Key_F:
 | `Alt+1-5` | Jump to marked address |
 | `B` | Toggle scroll mode |
 
+### Open design questions (added 2026-09-28)
+
+The sketch above is not yet a buildable design. Settle these before Phase 1 code:
+
+1. **Paging.** History and marks store a bare 16-bit address. On 128K, ATM,
+   Profi and TSConf `#C000` means a different page over time: store the physical
+   page with the address, or an address resolved through the current mapping.
+2. **Marks vs labels.** `LabelManager` (label dialog and editor) already exists.
+   Decide whether the five slots are their own store or a flag on labels, and
+   whether they persist with the symbol files. "Bookmarks" is already taken by
+   TTD time bookmarks (TD-4), so name them "marks".
+3. **What pushes history.** The sketch only says Go to PC does not. Decide for
+   Ctrl+G, follow operand, jump to mark, label click, breakpoint stop; set a
+   depth limit.
+4. **Key conflicts.** `Enter` already emits `enterPressed()` in
+   `DisassemblyTextEdit` (check its listeners before rebinding); `Backspace` and
+   `Home` are text-editing keys; on macOS `Alt+1-5` types characters and `Ctrl`
+   is not `Cmd`.
+5. **Follow operand scope.** `JP (HL)`, `JP (IX)`, `RET` are only meaningful at
+   the current PC where registers are known. Memory operands (`LD A,(nn)`):
+   follow into the memory view?
+6. **Automation parity.** Marks at least belong on CLI, WebAPI, MCP, Lua and
+   Python, with each surface's docs.
+7. **Tests** for history push/pop rules, mark persistence and operand
+   resolution.
+
 ---
 
 ## 3. Flags Widget Enhancement

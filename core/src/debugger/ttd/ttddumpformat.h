@@ -142,6 +142,15 @@ constexpr uint16_t kFlagsHasExternalEvents = 0x0080;
 /// each at most record_count.
 constexpr uint16_t kFlagsHasPortJournals = 0x0100;
 
+/// Bit 9 of header.flags — the header's last 8 bytes (formerly reserved) hold
+/// the peripheral mask: bit i set when peripheral id i (PeripheralId) has a
+/// blob in the checkpoints - the devices fitted when the session was recorded.
+/// A reader learns the recorded machine from the header alone (model, ROM
+/// signature, devices: ttdfileinfo.h) and can provision a matching instance
+/// before the load. Without the bit (older files) the bytes are zero and the
+/// device set is found at the first checkpoint's blob ids.
+constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
+
 /// Bytes per input event on disk (the field-by-field layout above).
 constexpr uint32_t kInputEventRecordSize = 8 + 4 + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
 

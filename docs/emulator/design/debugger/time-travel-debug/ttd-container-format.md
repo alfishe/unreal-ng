@@ -31,7 +31,7 @@ Strictly ordered sections, written in one pass:
 ```
 +---------------------------------------------------+
 | header            fixed layout, ends with 8 B     |
-|                   reserved                        |
+|                   peripheral mask (flag bit 9)    |
 +---------------------------------------------------+
 | page store        page_store_count slot records   |
 |                   each: encoding, refcount,       |

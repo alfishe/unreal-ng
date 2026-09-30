@@ -510,7 +510,7 @@ end
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
-- `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load)
+- `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load, file info before loading)
 
 Full function reference: [lua-interface.md](../emulator/design/control-interfaces/lua-interface.md)
 
