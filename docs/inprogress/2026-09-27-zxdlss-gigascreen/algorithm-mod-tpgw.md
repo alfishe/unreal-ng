@@ -2,9 +2,10 @@
 
 Status: `mod-tpgw` accepted on all golden scenes (2026-09-29), end of the Python POC
 (`tools/poc/019-zxdlss-gigascreen`); `mod-tpgwa` = `mod-tpgw` + the scene stage of
-section 7.8, accepted the same day on the DJ scene; `mod-tpgwafs` (flash veto,
-periods 2..4, detail-based scene trigger, step-aware scene render - sections 5
-and 7.8) is the current baseline. This document specifies the algorithm
+section 7.8, accepted the same day on the DJ scene; then `mod-tpgwafs` (flash
+veto, periods 2..4, detail-based scene trigger, step-aware scene render -
+sections 5 and 7.8) and `mod-tpgwafsd` (+ no border field seeds on stripe tiles,
+section 7.3), the current baseline. This document specifies the algorithm
 completely: an implementation written only from it must reproduce the
 reference implementation's output (Python: `python/mod/`, `python/twopage.py`,
 `python/mixers.py`; C++: `tools/verification/zxdlss/`).
@@ -224,6 +225,16 @@ first, i.e. frames t+3 .. t-3 as available), with `h_k = hist(k)`:
 cand  = (seeds_prev ? alt >= field_off : (alt >= field_on and un >= unexplained)) and set_alt
 seeds = 4-connected components of cand with >= min_tiles tiles (whole tile grid)
 ```
+
+**`mod-tpgwafsd` (the baseline since 2026-09-29, night):** a tile outside the
+paper is no candidate when it is a *horizontal stripe* in frame t: some pixel
+differs from the one below it (`t(y, x) != t(y + 1, x)`, y < H - 1) and no pixel
+differs from its right neighbor (`t(y, x) != t(y, x + 1)`, x < W - 1); the
+compares may reach into the next tile. Hip-hop's scrolling border raster bars
+(one color per row, colors alternating between pages) seeded a 12-tile field
+there and the two-page render doubled the bars; the tunnel's border texture
+keeps nearly all its seeds (missed flicker 0.264 -> 0.267, not visible). Paper
+tiles are not affected. (Paper-only seeds were tried: the tunnel lost more.)
 
 ### 7.4 Growth and the whole-paper mode
 

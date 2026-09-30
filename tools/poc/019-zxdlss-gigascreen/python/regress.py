@@ -22,7 +22,9 @@ except the irregular spiral's snake; mod-tpgw (2026-09-29) - two-page field rend
 mod-tpgwa (2026-09-29) - whole-frame average behind a large static picture, accepted on
 the DJ scene (ate-dj-circles, added to the golden set the same day); mod-tpgwafs
 (2026-09-29 evening) - flash veto, periods 2..4, detail-based scene trigger,
-step-aware scene render (ate-flash-strobe and ate-final-rings added).
+step-aware scene render (ate-flash-strobe and ate-final-rings added); mod-tpgwafsd
+(2026-09-29 night) - no field seeds on horizontal-stripe tiles outside the paper
+(hip-hop's border raster bars were doubled), accepted by eye on hip-hop and tunnel.
 """
 import argparse
 import json

@@ -1,5 +1,5 @@
 {
- "alg": "mod-tpgwafs",
+ "alg": "mod-tpgwafsd",
  "scenes": {
   "ate-pageflip-static": {
    "ghost_pixels": 0.0,
@@ -8,10 +8,10 @@
    "color_error_share": 0.0
   },
   "ate-hiphop-border": {
-   "ghost_pixels": 0.00826,
-   "ghost_moving_flicker": 0.00208,
-   "missed_flicker": 0.1199,
-   "color_error_share": 0.0076
+   "ghost_pixels": 0.00075,
+   "ghost_moving_flicker": 0.00027,
+   "missed_flicker": 0.1237,
+   "color_error_share": 0.0062
   },
   "ate-border-only": {
    "ghost_pixels": 0.0,
@@ -20,16 +20,16 @@
    "color_error_share": 0.0
   },
   "ate-balls-floor": {
-   "ghost_pixels": 0.00015,
+   "ghost_pixels": 0.00011,
    "ghost_moving_flicker": 0.00413,
-   "missed_flicker": 0.0837,
-   "color_error_share": 0.3536
+   "missed_flicker": 0.084,
+   "color_error_share": 0.3534
   },
   "ate-tunnel": {
-   "ghost_pixels": 0.01245,
-   "ghost_moving_flicker": 0.00703,
-   "missed_flicker": 0.2639,
-   "color_error_share": 0.5324
+   "ghost_pixels": 0.01226,
+   "ghost_moving_flicker": 0.00698,
+   "missed_flicker": 0.2666,
+   "color_error_share": 0.5337
   },
   "ate-irregular": {
    "ghost_pixels": 0.04965,
@@ -83,11 +83,11 @@
    "agree": 0.917
   },
   "ate-hiphop-border": {
-   "color_ok": 0.8558,
-   "de_p95": 0.1951,
-   "edge_p95": 2.0993,
-   "shimmer": 0.0192,
-   "agree": 0.8806
+   "color_ok": 0.8501,
+   "de_p95": 0.2014,
+   "edge_p95": 2.1386,
+   "shimmer": 0.02,
+   "agree": 0.9146
   },
   "ate-border-only": {
    "color_ok": 1.0,
@@ -97,18 +97,18 @@
    "agree": 1.0
   },
   "ate-balls-floor": {
-   "color_ok": 0.964,
+   "color_ok": 0.9639,
    "de_p95": 0.003,
    "edge_p95": 1.86,
    "shimmer": 0.0088,
-   "agree": 0.7559
+   "agree": 0.756
   },
   "ate-tunnel": {
-   "color_ok": 0.801,
-   "de_p95": 0.1199,
-   "edge_p95": 3.9568,
-   "shimmer": 0.028,
-   "agree": 0.5229
+   "color_ok": 0.7972,
+   "de_p95": 0.1213,
+   "edge_p95": 3.9665,
+   "shimmer": 0.0287,
+   "agree": 0.5225
   },
   "ate-irregular": {
    "color_ok": 0.9523,

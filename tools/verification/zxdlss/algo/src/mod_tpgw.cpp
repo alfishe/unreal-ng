@@ -189,6 +189,8 @@ struct Variant
     double sceneObject = 0.17;     ///< object group share of the tiles
     double sceneDetail = 0.0;      ///< object tile: horizontal color changes >= this share (0: off)
     bool sceneSteps = false;       ///< scene render: step-aware two-page mix instead of the average
+    bool seedsPaper = false;       ///< field seeds on the paper only (7.3)
+    bool seedsBorderDetail = false;///< no field seeds off the paper on horizontal-stripe tiles (7.3)
 };
 
 class ModTpgw final : public Algorithm
@@ -198,7 +200,8 @@ public:
     /// mod-tpgwaf (section 5: no series with a whole-screen flash, periods 2..4)
     explicit ModTpgw(const Variant& v)
         : _name(v.name), _sceneAverage(v.sceneAverage), _flatVeto(v.flatVeto), _maxPeriod(v.maxPeriod),
-          _sceneObject(v.sceneObject), _sceneDetail(v.sceneDetail), _sceneSteps(v.sceneSteps) {}
+          _sceneObject(v.sceneObject), _sceneDetail(v.sceneDetail), _sceneSteps(v.sceneSteps),
+          _seedsPaper(v.seedsPaper), _seedsBorderDetail(v.seedsBorderDetail) {}
     int delay() const override { return kLookAhead; }
     std::string name() const override { return _name; }
 
@@ -324,6 +327,8 @@ private:
     const int _maxPeriod;
     const double _sceneObject, _sceneDetail;
     const bool _sceneSteps;
+    const bool _seedsPaper;
+    const bool _seedsBorderDetail;
     bool _sceneOn = false;                   // section 7.8 state
     int _sceneOff = 0;
     uint64_t _sceneFrames = 0;
@@ -963,11 +968,36 @@ private:
         for (double& v : un)
             v /= kFieldTile * kFieldTile;
 
+        // no seeds outside the paper on horizontal-stripe tiles of frame t (7.3): color
+        // changes between rows and none along a row - scrolling raster bars
+        std::vector<uint8_t> stripe;
+        if (_seedsBorderDetail)
+        {
+            std::vector<uint8_t> hch(tiles, 0), vch(tiles, 0);
+            const uint8_t* tp = _ring[L]->plane.data();
+            for (int y = 0; y < _th * kFieldTile; ++y)
+            {
+                const size_t row = static_cast<size_t>(y) * _w;
+                for (int x = 0; x < _tw * kFieldTile; ++x)
+                {
+                    const size_t ti = static_cast<size_t>(y / kFieldTile) * _tw + x / kFieldTile;
+                    if (x + 1 < _w && tp[row + x] != tp[row + x + 1])
+                        hch[ti] = 1;
+                    if (y + 1 < _h && tp[row + x] != tp[row + _w + x])
+                        vch[ti] = 1;
+                }
+            }
+            stripe.assign(tiles, 0);
+            for (size_t s = 0; s < tiles; ++s)
+                stripe[s] = !hch[s] && vch[s];
+        }
         std::vector<uint8_t> cand(tiles, 0);
         for (size_t s = 0; s < tiles; ++s)
         {
             const bool c = _seeds[s] ? _alt[s] >= kFieldOff : (_alt[s] >= kFieldOn && un[s] >= kUnexplained);
-            cand[s] = c && _setAlt[s];
+            const bool paperTile = isPaperTile(static_cast<int>(s) / _tw, static_cast<int>(s) % _tw);
+            cand[s] = c && _setAlt[s] && (!_seedsPaper || paperTile) &&
+                      (!_seedsBorderDetail || paperTile || !stripe[s]);
         }
         _seeds = largeComponents(cand, kMinTiles);
 
@@ -1191,6 +1221,34 @@ const Registration kRegistrationAFS("mod-tpgwafs", [] {
     v.sceneObject = 0.04;
     v.sceneDetail = 0.1;
     v.sceneSteps = true;
+    return std::make_unique<ModTpgw>(v);
+});
+// + field seeds on the paper only: the hip-hop border's scrolling raster bars seeded a
+// field and the two-page render doubled them
+const Registration kRegistrationAFSP("mod-tpgwafsp", [] {
+    Variant v;
+    v.name = "mod-tpgwafsp";
+    v.sceneAverage = true;
+    v.flatVeto = true;
+    v.maxPeriod = 4;
+    v.sceneObject = 0.04;
+    v.sceneDetail = 0.1;
+    v.sceneSteps = true;
+    v.seedsPaper = true;
+    return std::make_unique<ModTpgw>(v);
+});
+// + instead: no field seeds off the paper on horizontal-stripe tiles (hip-hop's raster
+// bars lose theirs, the tunnel's border texture keeps its seeds)
+const Registration kRegistrationAFSD("mod-tpgwafsd", [] {
+    Variant v;
+    v.name = "mod-tpgwafsd";
+    v.sceneAverage = true;
+    v.flatVeto = true;
+    v.maxPeriod = 4;
+    v.sceneObject = 0.04;
+    v.sceneDetail = 0.1;
+    v.sceneSteps = true;
+    v.seedsBorderDetail = true;
     return std::make_unique<ModTpgw>(v);
 });
 

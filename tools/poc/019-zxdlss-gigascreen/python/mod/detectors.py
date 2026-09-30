@@ -120,7 +120,8 @@ class FieldDetector(Detector):
 
     def __init__(self, field_on=0.15, field_off=0.08, unexplained=0.25, min_tiles=12, present=4,
                  palette=False, palette_share=0.6, render="avg3", override=False, grow=False, whole=0.0,
-                 grow_min=24, whole_off=0.1, whole_hold=12, refine=False, **params):
+                 grow_min=24, whole_off=0.1, whole_hold=12, refine=False, seeds_paper=False,
+                 seeds_border_detail=False, **params):
         super().__init__(**params)
         self.render, self.override, self.grow = render, override, grow
         self.whole = whole                  # grown field >= this share of the paper tiles -> the whole paper
@@ -131,6 +132,13 @@ class FieldDetector(Detector):
         # for single frames; the mode then blinked between v10 and two-page)
         self.whole_off, self.whole_hold = whole_off, whole_hold
         self.refine = refine                # per-pixel motion vector refinement (twopage.py)
+        # seeds on the paper only (mod-tpgwafsp): 12 border tiles of hip-hop's scrolling
+        # raster bars seeded a field and the two-page render doubled the bars
+        self.seeds_paper = seeds_paper
+        # no seeds outside the paper on horizontal-stripe tiles in frame t (color
+        # changes between rows, none along a row - mod-tpgwafsd): hip-hop's
+        # scrolling raster bars; the tunnel's border tiles keep theirs
+        self.seeds_border_detail = seeds_border_detail
         self.whole_on, self.below = False, 0
         self.field_on, self.field_off, self.unexplained = field_on, field_off, unexplained
         self.min_tiles, self.present = min_tiles, present
@@ -187,11 +195,21 @@ class FieldDetector(Detector):
             if self.seeds is None:
                 self.seeds = np.zeros((th, tw), bool)
             cand = np.where(self.seeds, alt >= self.field_off, (alt >= self.field_on) & (un >= self.unexplained)) & set_alt
-            self.seeds = _large_components(cand, self.min_tiles)
             # growth and the whole-paper switch stay inside the paper: the border's
             # scrolling raster bars (hip-hop) are one page moving, not two pages
-            paper = np.zeros_like(self.seeds)
+            paper = np.zeros_like(cand)
             paper[3:15, 3:19] = True            # 16x16 tiles of the 256x192 paper
+            if self.seeds_paper:
+                cand &= paper
+            if self.seeds_border_detail:
+                # a horizontal stripe tile: color changes between rows, none along a row
+                h = np.zeros(t_plane.shape, bool)
+                h[:, :-1] = t_plane[:, :-1] != t_plane[:, 1:]
+                v = np.zeros(t_plane.shape, bool)
+                v[:-1, :] = t_plane[:-1, :] != t_plane[1:, :]
+                tl = lambda m: m[:th * TILE_FIELD, :tw * TILE_FIELD].reshape(th, TILE_FIELD, tw, TILE_FIELD).any(axis=(1, 3))
+                cand &= paper | ~(~tl(h) & tl(v))
+            self.seeds = _large_components(cand, self.min_tiles)
             region = (alt >= self.field_on) & set_alt & paper
             grown = _grow(_large_components(self.seeds & paper, self.grow_min), region)
             self.field = self.seeds | (_dilate_tiles(grown) & paper)
