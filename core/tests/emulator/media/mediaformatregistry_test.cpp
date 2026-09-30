@@ -93,3 +93,27 @@ TEST(MediaFormatRegistry_Test, ExtensionsPerKind)
     EXPECT_NE(std::find(tape.begin(), tape.end(), "tzx"), tape.end());
     EXPECT_NE(std::find(tape.begin(), tape.end(), "tap"), tape.end());
 }
+
+/// The same 720 KB .img is a raw PC floppy in a floppy slot and a raw block image in a block slot: the slot kind
+/// settles the .img ambiguity (storage manager G9)
+TEST(MediaFormatRegistry_Test, RawPcFloppyImageOpensByTheSlotKind)
+{
+    ScratchFolder folder("registry-rawpc");
+    const std::string image = Utf8(folder.File("cpm.img", std::string(737280, '\xE5')));
+
+    OpenRequest request;
+    request.source.path = image;
+    request.kind = MediaKind::Floppy;
+    std::unique_ptr<Medium> medium;
+    const MediaResult floppy = MediaFormatRegistry::Open(request, medium);
+    ASSERT_TRUE(floppy.Ok()) << floppy.message;
+    EXPECT_EQ(medium->Format(), "rawpc");
+
+    request.kind = MediaKind::Block;
+    ASSERT_TRUE(MediaFormatRegistry::Open(request, medium).Ok());
+    EXPECT_EQ(medium->Format(), "raw");
+
+    const auto extensions = MediaFormatRegistry::Extensions(MediaKind::Floppy);
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "ima"), extensions.end());
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "img"), extensions.end());
+}

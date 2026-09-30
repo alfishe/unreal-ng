@@ -2086,6 +2086,7 @@ void MainWindow::openDiskDialog()
                      buildFilterGroup(tr("DSK Images"), {"dsk"}) + ";;" +
                      buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
                      buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
+                     buildFilterGroup(tr("Raw PC Floppy Images"), {"img", "ima"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
