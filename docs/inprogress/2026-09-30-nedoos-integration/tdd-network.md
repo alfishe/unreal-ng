@@ -632,7 +632,7 @@ use the committed minimal card plus the few network programs they need
 | **N0** | `NetSockets`, `HostNetBridge`, `VirtualNetwork` (DHCP, DNS, gateway, forwarding), `NetEvent` / `NetLinkReset` + payload store in TTD, config, feature, "no adapter" unchanged | unit tests with fake and loopback backends; zero cost when off |
 | **N1a** | ZXNETUSB card + W5300 (TCP, UDP), status on every surface, PortDeviceId | NedoOS full card in the GUI: `wizcfg` lease, zxdb search, browser page, telnet; machine test green; replay sealed |
 | **N1b** | LISTEN / forwarding, IPRAW ping, memory-mapped mode, INT, blob (after the §6.3 decision), control on every surface | 3ws / scrnet reachable from the host browser; `ping`; TTD seek round trip |
-| **N2** | `Uart16550` (Evo, ZX-WiFi), `HostSerialPeer`, `TcpPeer`, `LoopbackPeer` | `cuart` talks to a TCP echo; a real ESP on USB works through `SERIAL:`. **Done** (§15): NedoOS `cuart` holds an AT dialog with a pretend ESP over TCP live; the SERIAL: path is checked on a pseudo-terminal, a real ESP not yet |
+| **N2** | `Uart16550` (Evo, ZX-WiFi), `HostSerialPeer`, `TcpPeer`, `LoopbackPeer` | `cuart` talks to a TCP echo; a real ESP on USB works through `SERIAL:`. **Done** (§15): NedoOS `cuart` holds an AT dialog with a pretend ESP over TCP live; the SERIAL: path is checked on a pseudo-terminal; the real-ESP test is postponed until the hardware is at hand |
 | **N3** | `EspnetModule`, then `AtModule` | `sd_bootesp.$C` + zxdb works; Moon Rabbit `mrfue.com` and an ESPCOM app work |
 | **N4** | ATM Turbo 2+ COM port | NedoOS ATM ESP kernel on ATM710 reaches the network |
 | **N5, N6** | ZiFi (with TS-Conf), AY-UART, ATM2IOESP | per demand |
@@ -709,6 +709,10 @@ Checked live on the ZX-Evo:
   the COM port's TCP link with the card's sockets, and the UART's clock did
   not follow the machine counter restarting at a reset.
 
-Not done: a real ESP on USB through `SERIAL:` (no module at hand). The port path of a
+Postponed: testing with a real ESP on USB through `SERIAL:` (the path is built
+and checked on a pseudo-terminal), with the other real-device bridges
+(Greaseweazle / KryoFlux, PLAN #12) when the hardware is on the desk. Boards,
+wiring, auto-reset circuits, firmware and other emulators' ESP code:
+[reference-evo-com-port.md](reference-evo-com-port.md) §8. The port path of a
 machine without a COM port is unchanged (the low-byte observer table stays
 empty): no A/B needed for it.

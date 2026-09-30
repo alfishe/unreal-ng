@@ -20,7 +20,7 @@ Index: [README.md](README.md).
 
 - Network adapters: N0, N1a, N1b done on branch `network-w5300`
   ([tdd-network.md](tdd-network.md) §15); A/B benchmark: no measurable change; zxdb
-  checked live against the real server. Card INT to the Z80 wired (device INT line). N2 COM port done (branch `com-port`,
+  checked live against the real server. Card INT to the Z80 wired (device INT line). N2 COM port done (on master;
   [tdd-network.md](tdd-network.md) §15, [reference-evo-com-port.md](reference-evo-com-port.md)). Next: N3 ESP modules (ESPNET,
   then AT), N4 ATM2 COM, N5-N6 the rest; debugging per
   [tdd-network-debugging.md](tdd-network-debugging.md) later.
@@ -33,3 +33,7 @@ Index: [README.md](README.md).
 - Side note: AVR hard reset from the PS/2 stream (Ctrl-Alt-Del, F12,
   PrintScreen) and the hard vs. soft reset split (hard reset clears the PS/2
   log) are not emulated.
+- Postponed (hardware on the desk): test a real ESP on USB through `SERIAL:` (ESPNET
+  and AT firmware, auto-reset adapters), sources in
+  [reference-evo-com-port.md](reference-evo-com-port.md) §8; alongside the Greaseweazle /
+  KryoFlux bridge ([PLAN.md](../PLAN.md) #12).
