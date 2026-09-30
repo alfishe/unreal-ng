@@ -535,6 +535,11 @@ void CommandTyper::Step_()
             Fail(Failure::InputLocked, "time travel replay owns the keyboard");
             return;
         }
+        if (_context->rzxPlayer)
+        {
+            Fail(Failure::InputLocked, "an RZX playback owns the keyboard");
+            return;
+        }
         if (keys->IsSequenceRunning())
         {
             Fail(Failure::KeyboardBusy, "other keyboard input is still being typed");

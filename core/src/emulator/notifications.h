@@ -435,6 +435,35 @@ public:
     virtual ~FileLoadedPayload() = default;
 };
 
+/// Payload for NC_RZX_PLAYBACK.
+/// Posted by RzxSession (emulator/rzx/): event is "started", "finished",
+/// "desync", "stopped" or "failed"; message says why (a desync: the frame,
+/// expected and actual counts). Example: {"desync", "desync (too_few_ins) in
+/// frame 1200: expected 3, got 2", 1200, 32315, "/games/eric.rzx"}
+class RzxPlaybackPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    std::string message;
+    uint64_t frame;        // frames played when the event happened
+    uint64_t totalFrames;
+    std::string path;      // the RZX file
+
+    RzxPlaybackPayload(const std::string& id, std::string eventName, std::string text, uint64_t framesPlayed,
+                       uint64_t framesTotal, std::string filePath)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , event(std::move(eventName))
+        , message(std::move(text))
+        , frame(framesPlayed)
+        , totalFrames(framesTotal)
+        , path(std::move(filePath))
+    {}
+
+    virtual ~RzxPlaybackPayload() = default;
+};
+
 /// Payload for NC_DISK_AUTOSTART.
 /// Posted by Emulator::AutostartDisk with the decision taken for a freshly opened disk.
 class DiskAutostartPayload : public MessagePayload

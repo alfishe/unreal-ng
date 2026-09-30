@@ -180,6 +180,9 @@ public:
     /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
     /// mode, speed) is locked by isTtdRecordingActive() alone.
     bool isTtdTimelineBound() const;
+    /// @brief True while an RZX recording plays: fasttape, turbotape and fastdisk
+    /// read as off (they change the CPU path the recording follows)
+    bool isRzxPlaying() const;
 
     EmulatorContext* context() const
     {
@@ -187,7 +190,8 @@ public:
     }
 
 private:
-    /// True when TTD currently forces this feature off (see isTtdTimelineBound / isTtdRecordingActive)
+    /// True when TTD or an RZX playback forces this feature off (see isTtdTimelineBound /
+    /// isTtdRecordingActive / isRzxPlaying)
     bool isMaskedByTtd(const std::string& id) const;
 
     /// Find a feature by id or alias. Caller must hold _mutex.

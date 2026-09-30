@@ -43,6 +43,7 @@ class MediaManager;
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
 namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; }
+namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
 
@@ -207,7 +208,8 @@ public:
         kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelManager::ServiceInput)
         kStepWorkInterruptSource = 1u << 1,  ///< the machine owns INT (Z80::SetInterruptSource)
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
-        // Next free: 1u << 3 (reserved for RZX playback, 2026-09-29-rzx-replay design §5)
+        kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
+        // Next free: 1u << 4
     };
     std::atomic<uint32_t> stepWork{0};
 
@@ -226,6 +228,11 @@ public:
     /// (recorded, or checked). One predictable branch per IN / OUT when null
     ttd::TTDPortJournal* ttdPortReads = nullptr;
     ttd::TTDPortJournal* ttdPortWrites = nullptr;
+
+    /// The RZX player while a recording plays, else null (emulator/rzx/):
+    /// Z80::in hands every IN result to it for the recorded value. Set and
+    /// cleared with kStepWorkRzx, on the emulation thread or with the machine paused
+    rzx::RzxPlayer* rzxPlayer = nullptr;
 
     // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,

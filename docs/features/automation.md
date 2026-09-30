@@ -137,6 +137,10 @@ symbols info            # Show symbol count
 open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension)
 snapshot info           # Current snapshot status
+rzx play <file>         # Play an RZX input recording (switches to its model; command-interface.md §12)
+rzx status              # Frame, progress, desyncs
+rzx seek <frame>        # Back (keyframes) or forward to a frame
+rzx stop                # Stop playing; the machine runs live
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
 tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
@@ -333,6 +337,10 @@ Interactive documentation available at `/api/swagger`
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status |
 | POST | `/api/v1/emulator/{id}/snapshot/transfer` | Move the running state into another instance, in memory ([below](#machine-state-transfer)) |
+| POST | `/api/v1/emulator/{id}/rzx/play` | Play an RZX recording (path or upload; switches to its model) |
+| POST | `/api/v1/emulator/{id}/rzx/seek` | Seek the RZX playback (`{"frame": N}`) |
+| POST | `/api/v1/emulator/{id}/rzx/stop` | Stop RZX playback |
+| GET | `/api/v1/emulator/{id}/rzx/status` | RZX playback status |
 
 #### Tape Control
 Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).

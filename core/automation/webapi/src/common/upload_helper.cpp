@@ -32,7 +32,8 @@ MediaType getMediaTypeFromFilename(const std::string& filename)
                    [](unsigned char c) { return std::tolower(c); });
 
     // Snapshots
-    if (ext == ".sna" || ext == ".z80" || ext == ".szx" || ext == ".sp" || ext == ".snp")
+    // .rzx: an input recording, played from its start snapshot
+    if (ext == ".sna" || ext == ".z80" || ext == ".szx" || ext == ".sp" || ext == ".snp" || ext == ".rzx")
         return MediaType::Snapshot;
 
     // Disks
