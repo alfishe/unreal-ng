@@ -54,6 +54,9 @@ DebugKeyboardManager::~DebugKeyboardManager()
 /// re-executing recorded history (TimeTravelManager::OwnsInput)
 bool DebugKeyboardManager::IsInputOwnedByJournal() const
 {
+    // An RZX playback owns input as well (its recording answers every IN)
+    if (_context && _context->rzxPlayer)
+        return true;
     return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
 }
 

@@ -1,7 +1,7 @@
 # RZX replay integration: requirements
 
 - **Date:** 2026-09-29
-- **Status:** requirements for review. Design: [design.md](design.md).
+- **Status:** v1 (playback, RZ-F1 … RZ-F15 except F9, RZ-U1 … RZ-U4, RZ-T1 … RZ-T3) implemented 2026-09-29; RZ-F9 (mid-recording snapshots) is R3. Design and as-built notes: [design.md](design.md).
 - **PLAN:** row #27 (RZX record / playback and TTD interop, T2); depends on
   #64 (SZX, [2026-09-29-szx-snapshots](../2026-09-29-szx-snapshots/)) for
   machines beyond 48K / 128K.
@@ -80,7 +80,7 @@ disabling loader shortcuts that change the CPU path, refusing live input.
 | RZ-F8 | Repeat frames (IN count 65535) reuse the previous frame's `IN` values |
 | RZ-F9 | Snapshot blocks between input blocks are applied at the frame boundary where they occur, without resetting the playback or the frame numbering |
 | RZ-F10 | Desync detection: too many `IN`s in a frame, too few at the frame end, or a fetch overrun; **strict** mode stops playback at the first desync and reports the frame, expected and actual counts, and the PC; **tolerant** mode continues and counts |
-| RZ-F11 | Conventions as options, defaults chosen for the largest share of files: the interrupt after `EI` (accept at every frame start vs honor a short frame after `EI`), the NMOS `LD A,I` / `LD A,R` parity quirk on interrupt, ignoring later snapshots in files known to need it |
+| RZ-F11 | Conventions as options, defaults chosen for the largest share of files (SkoolKit's): the interrupt after `EI` (default: accept at every frame end; option: honor a short frame after `EI`), the NMOS `LD A,I` / `LD A,R` parity quirk on interrupt (default off), ignoring later snapshots in files known to need it (default off) |
 | RZ-F12 | Play, pause, resume, stop, fast-forward (host speed and turbo do not affect correctness), status (block, frame, total, progress, desyncs, drift against the raster) |
 | RZ-F13 | While playing, loader shortcuts that change the CPU path are off (fast tape, turbo tape, fast disk, disk autostart, command typer); live input is refused; debugger breakpoints, stepping and analyzers work |
 | RZ-F14 | At the end of the recording, playback stops and the machine continues live from the reached state |

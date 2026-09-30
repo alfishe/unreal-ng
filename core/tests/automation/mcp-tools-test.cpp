@@ -443,6 +443,19 @@ TEST_F(McpTools_Test, LoadSoftware_Snapshot_PostsSnapshotLoadWithPath)
               "/games/harrier.sna");
 }
 
+TEST_F(McpTools_Test, LoadSoftware_Rzx_PostsRzxPlay)
+{
+    Json::Value args;
+    args["path"] = "/nonexistent/game.rzx";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr) << "an .rzx plays through rzx/play, which switches the model when needed";
+    EXPECT_EQ(call->body["path"].asString(), "/nonexistent/game.rzx");
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/load"));
+}
+
 TEST_F(McpTools_Test, LoadSoftware_TapeWithPlay_LoadsThenPlays)
 {
     _caller->routes["POST /api/v1/emulator/emu-1/tape/load"] = {200, Json::Value(Json::objectValue)};
@@ -1923,4 +1936,77 @@ TEST_F(McpTools_Test, EmulatorManage_TransferState_RefusalSurfacesReport)
     mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
     EXPECT_TRUE(result.isError);
     EXPECT_NE(result.text.find("page 9"), std::string::npos) << result.text;
+}
+
+// ===========================================================================
+// rzx_playback
+// ===========================================================================
+
+TEST_F(McpTools_Test, RzxPlayback_Play_PostsPathAndOptions)
+{
+    Json::Value args;
+    args["action"] = "play";
+    args["path"] = "/nonexistent/eric.rzx";
+    args["desync_mode"] = "tolerant";
+    args["switch_model"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "rzx_playback", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "/nonexistent/eric.rzx");
+    EXPECT_EQ(call->body["desync_mode"].asString(), "tolerant");
+    EXPECT_FALSE(call->body["switch_model"].asBool());
+    EXPECT_FALSE(call->body.isMember("ld_air_parity_quirk"));
+}
+
+TEST_F(McpTools_Test, RzxPlayback_Status_ReportsTheSummary)
+{
+    Json::Value status;
+    status["loaded"] = true;
+    status["summary"] = "playing frame 1200 / 32315 (3.7%), block 1 / 1, 0 desyncs";
+    _caller->routes["GET /api/v1/emulator/emu-1/rzx/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "rzx_playback", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("frame 1200 / 32315"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, RzxPlayback_StopAndBadInput)
+{
+    Json::Value stop;
+    stop["action"] = "stop";
+    EXPECT_FALSE(RunTool(*_registry, "rzx_playback", stop, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/rzx/stop"));
+
+    _caller->calls.clear();
+    Json::Value noPath;
+    noPath["action"] = "play";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noPath, *_caller).isError);
+    Json::Value badMode;
+    badMode["action"] = "play";
+    badMode["path"] = "x.rzx";
+    badMode["desync_mode"] = "loose";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", badMode, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty()) << "rejected before any HTTP traffic";
+}
+
+TEST_F(McpTools_Test, RzxPlayback_Seek_PostsFrame)
+{
+    Json::Value args;
+    args["action"] = "seek";
+    args["frame"] = 1200;
+    ASSERT_FALSE(RunTool(*_registry, "rzx_playback", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asInt(), 1200);
+
+    _caller->calls.clear();
+    Json::Value noFrame;
+    noFrame["action"] = "seek";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noFrame, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
 }

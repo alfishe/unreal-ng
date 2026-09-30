@@ -18,6 +18,8 @@ class OpcodeProfiler;
 // Disable compiler alignment for packed structures
 #pragma pack(push, 1)
 
+namespace rzx { class RzxPlayer; }
+
 struct Z80Registers
 {
     union
@@ -601,6 +603,11 @@ public:
     /// StepInstruction with rare work around the step (the per-step gate was non-zero)
     StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
 
+    /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
+    /// that an R delta across a step still counts the step's fetches (the
+    /// RZX fetch counter, emulator/rzx/). One subtraction per LD R,A
+    uint8_t rLoadAdjust = 0;
+
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
 
@@ -668,6 +675,11 @@ public:
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
     /// does not see the common frame INT). Local INT is not affected
     bool frameIntMasked = false;
+private:
+    /// StepInstructionWithWork while an RZX recording plays: the frame end at
+    /// the recorded fetch count; true when its interrupt was taken as this step
+    bool RzxFrameEnd(rzx::RzxPlayer& player);
+public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)

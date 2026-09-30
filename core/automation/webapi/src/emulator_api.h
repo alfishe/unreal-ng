@@ -115,6 +115,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
+
+    // RZX input recordings (implementation: api/rzx_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::playRzx, "/api/v1/emulator/{id}/rzx/play", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopRzx, "/api/v1/emulator/{id}/rzx/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekRzx, "/api/v1/emulator/{id}/rzx/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getRzxStatus, "/api/v1/emulator/{id}/rzx/status", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
     // region Capture Commands (implementation: api/capture_api.cpp)
@@ -634,6 +640,16 @@ public:
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void transferState(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // RZX input recordings (api/rzx_api.cpp)
+    void playRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void stopRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void seekRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void getRzxStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
 
     // region Capture Commands Methods (implementation: api/capture_api.cpp)

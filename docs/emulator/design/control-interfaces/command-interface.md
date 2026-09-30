@@ -268,7 +268,7 @@ Commands to manage the connection and emulator instances. These commands are ess
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
 | `list` | | | List all managed emulator instances with their UUIDs, status (Running/Paused/Stopped), and debug state. Stopped instances are removed from this list. |
 | `select <id>` | | `<emulator-id>` | Select the active emulator instance for subsequent commands. The `<id>` can be either the UUID or symbolic ID. All following commands (reset, pause, registers, etc.) will operate on this selected instance. |
-| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
+| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), RZX input recordings (.rzx: played on this machine, see §12), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
 | `exit` | `quit` | | Terminate the control session. For CLI, closes the TCP connection. Does not stop the emulator instances themselves. |
 | `dummy` | | | No-operation command used for connection initialization and testing. Returns a simple acknowledgment. Useful for verifying the connection is alive. |
 
@@ -2944,6 +2944,41 @@ variable), `mouse move` by the difference, `run_frames 1`, check again.
 **Interface mapping:** WebAPI `/api/v1/emulator/{id}/mouse/*` ([webapi-interface.md](./webapi-interface.md#10-mouse-input-injection)),
 Python `emu.mouse_*()`, Lua `mouse_*()`, MCP tool `mouse_input`. Design and decisions:
 [Kempston Mouse automation interfaces](../../../inprogress/2026-09-12-kempston-mouse/automation-interfaces.md).
+
+### 12. RZX Playback
+
+Play RZX input recordings (game completions from the RZX Archive and the like): the recording's start snapshot loads, then every `IN` returns the recorded value and the interrupts come at the recorded instruction counts, so the program follows exactly the path it took when it was recorded. At the end (or at a desync in strict mode, or on `rzx stop`) the machine continues live from the reached state. The same surface exists in the WebAPI (`/rzx/*`), MCP (`rzx_playback`, and `load_software` with an `.rzx` path), Lua (`rzx_play`, `rzx_stop`, `rzx_status`) and Python (`unreal.rzx_play`, `rzx_stop`, `rzx_status`). Design: [docs/inprogress/2026-09-29-rzx-replay](../../../inprogress/2026-09-29-rzx-replay/design.md).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `rzx play <file> [options]` | | `--tolerant`, `--ei-short-frame`, `--ld-air-quirk`, `--ignore-later-snapshots`, `--no-switch` | Play a recording. A recording made on another model switches the selected machine to that model first (a new emulator instance, media kept) unless `--no-switch` is given. `--tolerant` counts desyncs instead of stopping at the first one; the other flags are playback conventions some files need (see below). | ✅ Implemented |
+| `rzx seek <frame>` | | `<frame>` | Move to the boundary after `<frame>` frames (0 = the start). Back: the nearest keyframe is restored and played on from (keyframes are taken every 250 frames, about 5 s, and thinned to a 32 MB budget: every second one goes and the spacing doubles); forward: plays on at full speed. Works after the end or a desync (the playback resumes). Refused while TTD records; a stopped TTD history is dropped. | ✅ Implemented |
+| `rzx stop` | | | Stop playing; the machine continues live. Frees the keyframes (no seeking afterwards). | ✅ Implemented |
+| `rzx status` | | | File, state (`playing` / `finished` / `desynced` / `stopped`), frame and progress, desyncs with the first one's frame, expected and actual counts and PC, interrupt drift against the machine's own raster, options. | ✅ Implemented |
+
+`snapshot load <file.rzx>` and `open <file.rzx>` also play a recording, on the selected machine without switching the model.
+
+**Terms**:
+- *Frame* (RZX): the stretch between two interrupts, measured in opcode fetches (R-register increments); not the 50 Hz video frame.
+- *Desync*: the program left the recorded path - more `IN`s than recorded in a frame, fewer, or more fetches than recorded.
+- *Drift*: T-states between the interrupt the recording forces and the one the emulated machine would raise itself; it only shifts the picture, never the program.
+
+**Conventions** (defaults as SkoolKit `rzxplay.py`):
+- `--ei-short-frame`: a frame of 1-2 fetches right after `EI` means "the interrupt was blocked by EI". Default: the interrupt is taken at every frame end while interrupts are enabled.
+- `--ld-air-quirk`: the NMOS `LD A,I` / `LD A,R` parity-flag quirk on the frame interrupt. Default off: the recording emulators did not apply it.
+- `--ignore-later-snapshots`: skip snapshot blocks after the first. Default: a snapshot block between input blocks (multiload, rollback point) stops playback with a message; applying it is a later phase.
+
+While a recording plays: fast tape, turbo tape and fast disk read as off, the disk autostart is disarmed, live keyboard / mouse input and the command typer are refused. Turbo mode, pausing, breakpoints, stepping and analyzers work. Machines whose interrupt is not the ULA frame interrupt (TSConf, Sprinter) are refused.
+
+**Examples**:
+
+```
+rzx play games/ericfloaters.rzx
+rzx status
+rzx play games/greenberet.rzx --tolerant      # a 128K recording: the 48K becomes a 128K first
+rzx seek 5000                                 # back or forward to frame 5000 (1:40 of play)
+rzx stop
+```
 
 ## Future Capabilities
 
