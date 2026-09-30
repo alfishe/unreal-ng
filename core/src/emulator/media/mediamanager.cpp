@@ -16,6 +16,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/media/blockadvisory.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/notifications.h"
 #include "loaders/tape/writer_tap.h"
@@ -178,6 +179,15 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     MediaResult opened = MediaFormatRegistry::Open(request, medium);
     if (!opened.Ok())
         return opened;
+
+    // Advisory only: does sector 0 look like the layout this slot's boot path
+    // actually reads (MBR-partitioned vs. raw FAT)? Never refuses the insert
+    if ((medium->Kind() == MediaKind::Block) && medium->Block())
+    {
+        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags);
+        if (!mismatch.empty())
+            medium->Report().push_back(std::move(mismatch));
+    }
 
     MediaResult inserted = Insert(slotId, std::move(medium), options);
     inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());

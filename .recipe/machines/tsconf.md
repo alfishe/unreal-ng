@@ -91,5 +91,6 @@ with blank NVRAM (Setup first).
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
 | Wild Commander from SD (TS-BIOS "BD boot.$c") | works (test BOOT-3) |
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
-| VDAC color curves, TSU render timing within the line, cache / I/O wait states at 14 MHz | not yet (implementation-plan phase 8) |
+| 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs | implemented (phase 8) |
+| VDAC color curves, TSU render timing within the line | not yet |
 | Video debug mapper (`/video/*` pixel ↔ memory) for TS modes, TS-specific Qt docks | not yet |

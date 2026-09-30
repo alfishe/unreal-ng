@@ -20,6 +20,19 @@ We enforce a strict **zero-warnings** policy. All builds must compile without tr
 1. Fix the underlying issue rather than suppressing it.
 2. If it is a false positive from a 3rd-party library, isolate the include and suppress the warning only around that specific include block.
 
+## Verifying the Linux Build Locally
+GitHub Actions builds with gcc inside a Docker image; gcc and libstdc++ are stricter than Apple clang
+(a missing `#include <algorithm>` or a deprecated enum-to-enum operation compiles fine on macOS and
+fails on Linux). Reproduce that build on any machine with Docker:
+
+```bash
+docker/linux/build.sh --test          # build core-tests and run them, host-native architecture
+docker/linux/build.sh --platform amd64   # force x86_64 (emulated on Apple Silicon: slow)
+```
+
+The image is multi-arch and runs natively by default, so there is no emulation cost. Details:
+[`docker/linux/README.md`](../../docker/linux/README.md). Windows cross-builds use `docker/windows/`.
+
 ## Development Guidelines
 - **Path Handling**: Never hardcode `\` or `/` for file paths. Always rely on `std::filesystem::path` and its overloaded `/` operator to naturally build paths.
 - **Platform-Specific Code**: Try to avoid platform-specific `#ifdef` macros (e.g., `#ifdef _WIN32` or `#ifdef __APPLE__`) unless absolutely necessary (like OS-specific system calls). Abstract platform-specific logic behind common interfaces.

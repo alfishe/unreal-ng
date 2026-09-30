@@ -96,9 +96,22 @@ everywhere by construction.
   half-changed state. `rendered_rgb` is given only when the framebuffer's
   geometry is that moment's mode (§4.6: a mid-frame switch is drawn in the
   new geometry).
-- **Benchmark budget (open):** the A/B frame benchmark (§7) waits for a
-  quiet machine; merged before it on 2026-09-29 at the user's request. The
-  hot-path addition is one 12-byte compare per `#FE` write.
+- **Benchmark budget: within noise** (A/B run 2026-09-30, after the merge
+  the user asked for on 2026-09-29). The hot-path addition is one 12-byte
+  compare per `#FE` write. A = `fcf9448d` (the parent), B = `4e8e72e2` (the
+  write log), `BM_HostFrame_*` CPU time, rounds A B A B A B B A B A at load
+  7-11 (performance-guidelines §4):
+
+  | Frame | min A µs | min B µs | B vs A, pairs | Mean |
+  |:--|--:|--:|:--|--:|
+  | 48K fast | 1112.4 | 1111.2 | -0.4 +0.1 -0.0 -0.2 +0.5 | -0.0 % |
+  | 48K debug | 1157.7 | 1153.5 | +0.3 -0.9 -1.9 -2.2 +0.1 | -0.9 % |
+  | Pentagon fast | 1498.2 | 1495.7 | +0.5 -0.1 +1.2 -0.9 -0.7 | +0.0 % |
+  | Pentagon debug | 1542.9 | 1545.9 | +0.3 -0.6 +1.1 +0.2 -0.8 | +0.1 % |
+  | Scorpion fast | 1718.5 | 1718.7 | +1.3 +0.0 +1.8 -0.5 +0.2 | +0.6 % |
+  | Scorpion debug | 1805.2 | 1805.5 | -0.9 -0.1 +1.5 -0.9 +0.1 | -0.0 % |
+
+  Minimums within ±0.4 %, no sign holds across the pairs: no measurable cost.
 - Tests: `core/tests/emulator/video/map/videowritelog_test.cpp`;
   `videomapservice_test.cpp` - mid-frame `#FF77` switch (test 6), mid-frame
   border colour, queries from another thread while running (test 7).

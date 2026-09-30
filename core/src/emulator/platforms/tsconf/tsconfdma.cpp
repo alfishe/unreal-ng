@@ -132,9 +132,17 @@ uint32_t TsConfDma::WordCost() const
             return (_ts.dmaFlags & TsConfDmaFlag::Loaded) ? 1 : 2;
         case SpiIn:
         case SpiOut:
-            return 8;  // two 16-fclk SPI bytes
+            // Two SPI bytes of 17 fclk each ([V] spi.v: the start clock + a
+            // 16-clock shift) and the DRAM cycle, aligned to the 4-fclk DRAM
+            // cycle: ~40 fclk = 10 DRAM cycles (phase 8 TIM-3)
+            return 10;
+        case IdeIn:
+        case IdeOut:
+            // The IDE bus cycle (~6 fclk, [V] ide.v) rounded up to 2 DRAM
+            // cycles, then the DRAM cycle (TIM-3)
+            return 3;
         default:
-            return 2;
+            return 2;  // RAM copy (read + write); CRAM / SFILE (a 1-fclk device write + the idle half)
     }
 }
 

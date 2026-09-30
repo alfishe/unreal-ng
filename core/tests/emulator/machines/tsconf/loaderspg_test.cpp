@@ -210,7 +210,9 @@ TEST(LoaderSPG_Test, SpritesExampleDrawsItsFrame)
         FileHelper::SaveBufferToFile(out, reinterpret_cast<uint8_t*>(buffer), size);
         std::printf("dumped %s hash 0x%016llX\n", out.c_str(), static_cast<unsigned long long>(hash));
     }
-    EXPECT_EQ(hash, 13780960561087948685ull);
+    // Re-pinned with the 14 MHz DRAM waits (phase 8 TIM-1): the program runs
+    // at 14 MHz from uncached RAM, so it is further behind after 100 frames
+    EXPECT_EQ(hash, 18274532205990049573ull);
     manager->RemoveEmulator(emulator->GetUUID());
 }
 

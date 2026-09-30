@@ -26,6 +26,11 @@ class TsConfEngine;
 /// line-start latching; BORDER and CRAM act at the dot. The TSU pixels come
 /// from the engine's per-line buffers and are mixed as the video plex does
 /// (NOTSU / NOGFX / GFXOVR, TS window). Not yet: the VDAC curves.
+///
+/// Speed (TS-O1..O3): a range is drawn as one span per raster line - the
+/// graphics of the window into an index buffer (one loop per mode), the TSU
+/// mixed only over the TS window of lines it drew on, then CRAM colors from
+/// a palette rebuilt only when CRAM changed.
 class ScreenTSConf : public ScreenZX
 {
 public:
@@ -61,15 +66,22 @@ public:
 private:
     /// The TS-Conf state (the port decoder owns it; null before it exists)
     const TsConfState* State();
-    /// Color index of one dot (raster dot 0..447) of raster line `line`
-    /// displayed with `set`
-    /// @param sub the half dot (TXT hires pixel 0 or 1)
-    uint8_t DotIndex(const TsConfState& ts, const TsConfLine& set, uint32_t dot, uint32_t line, uint32_t sub) const;
-    /// Graphics color index of window x `wx` (dots from the window's left edge);
-    /// `visible` = the dot counts as "visible" for GFXOVR (ZX ink after flash,
-    /// 16C / 256C index != 0, TXT font bit)
-    uint8_t GraphicsIndex(const TsConfLine& set, uint32_t wx, uint32_t sub, bool& visible) const;
+    /// CRAM -> RGBA for every entry that changed since the last call (TS-O1)
+    void RefreshPalette(const TsConfState& ts);
+    /// Raster dots [dotFrom, dotTo) of raster line `line` into `out` (2 px
+    /// per dot): graphics in the window, the TSU mixed as the video plex does,
+    /// BORDER elsewhere (TS-O2, TS-O3)
+    void DrawLineSpan(const TsConfState& ts, uint32_t line, uint32_t dotFrom, uint32_t dotTo, uint32_t* out) const;
+    /// Graphics color indices of `count` dots from window x `wx` (dots from
+    /// the window's left edge); `visible` = the dot counts as "visible" for
+    /// GFXOVR (ZX ink after flash, 16C / 256C index != 0, TXT font bit).
+    /// `index1` / `visible1`: the second TXT half dot (TXT only)
+    void GraphicsSpan(const TsConfLine& set, uint32_t wx, uint32_t count, uint8_t* index0, uint8_t* index1,
+                      uint8_t* visible0, uint8_t* visible1) const;
 
     const TsConfState* _ts = nullptr;
     const TsConfEngine* _engine = nullptr;
+    uint32_t _palette[256] = {};      ///< RGBA of each CRAM entry
+    uint16_t _paletteCram[256] = {};  ///< the CRAM words _palette was built from
+    bool _paletteValid = false;
 };

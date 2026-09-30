@@ -271,6 +271,26 @@ prefetch ring refills before the window; TSU line buffers are derived).
   that have TSU pixels.
 - TS-O3: skip the per-dot TSU lookup on lines without TSU pixels.
 
+**TS-O1…O3 built 2026-09-30 (branch `tsconf-perf`):** `ScreenTSConf` draws
+one span per raster line (graphics per mode into an index buffer, GFXOVR /
+TSU mixing only over the TS window of lines the TSU drew on, TXT cell
+lookups once per 8 pixels) and converts through a 256-entry palette rebuilt
+only when CRAM changed (a 512-byte compare per call). Proof: test TSO2
+compares it pixel for pixel with the old per-dot renderer (kept in the test
+as the oracle) over 128 random setups covering every mode x geometry x
+NOTSU / NOGFX / GFXOVR, whole and in random chunks. BENCH-1 (minimum of 7,
+load ~100): frame render alone 1368 → 198 µs (TXT Setup), 1450 → 228 µs
+(TSU at its limit); whole frame TSU off 3299 → ~2200 µs = 1.26x Pentagon
+(was 1.89x; target 1.1x not met), TSU on ~2480 µs = 1.13x TSU off. The rest
+of the gap: TXT draws twice the pixels of a ZX frame, and the per-step line
+engine / interrupt hooks (~10% of the frame). Ideas left: SIMD in the 16C /
+256C gathers (tagged SIMD-CANDIDATE), fewer per-step hook calls.
+**BENCH-1 on a quiet machine** (2026-09-30, load 6-8, master `646c2649` with
+phase 8 and the arbiter, minimum of 7, two runs agreeing within 5 µs):
+Pentagon frame 1614 µs, TS-Conf frame TSU off 2063 µs = **1.28x** (target
+1.1x not met), TSU at its limit 2306 µs = 1.12x TSU off (target 2x met);
+frame render alone 188 µs (TXT Setup), 217 µs (TSU at its limit).
+
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
 | GFX-1 | 16C: byte 0x12 at `(V_PAGE&0xF8)<<14` → pixel 0 = `{pal,1}`, pixel 1 = `{pal,2}` (high nibble left); golden per geometry (4) |
@@ -475,6 +495,48 @@ settings. Exit = technical-design §3.19 checklist.
 | TIM-3 | DMA per-word costs per hs §6.2 (copy 2, BLT 3, fill 1, CRAM/SFILE ~2, SPI ~8 slots) replacing ancestor units; DMA-12 re-baselined deliberately |
 | TIM-4 | CPU stall at full video bandwidth (8/8 block) at 3.5/7 MHz |
 | TIM-5 | optional per-dot CRAM write log (risk 4) |
+
+**Built 2026-09-30 (branch `tsconf-phase8`).** Reference survey first: none of
+Unreal TS, MAME or Xpeccy follows the Verilog here (Unreal's cache-miss hook
+is dead code, MAME charges a flat 2 T per miss with a one-line cache, Xpeccy
+has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
+- **TIM-1** (`TsConfMemory::DramWait`): at 14 MHz a CPU read that takes a
+  DRAM cycle (uncached window, or a cache miss) stretches by the zmem.v table
+  - M1 +3..+6 fclk, read +2..+5, writes 0 - by the DRAM phase its request
+  (T1 + 3 fclk) falls in. The 14 MHz clock is not locked to the DRAM phases
+  and every stall shifts it, so the phase comes from the stretched cycle
+  counter itself (2 fclk per clock, frame start = c0; waits added in fclk
+  with `Z80::AddWaitTicks`). The decoder's M1 hook marks the opcode fetch.
+  ROM and cache hits never wait. Tests: a NOP run from DRAM settles at 6
+  clocks, LD (HL),A at 10 (hand-derived from the table); no waits at 3.5 /
+  7 MHz, from ROM or on hits.
+- **TIM-1b, the arbiter** (2026-09-30, branch `tsconf-arbiter`,
+  `TsConfArbiter`): the `cpu_next = 0` case modeled from arbiter.v - blocks
+  of 8 / 4 / 2 DRAM cycles in each line's fetch window (video_go), video
+  1 / 1 / 1 / 4 per block (ZX / 16C / 256C / TXT), the CPU refused when
+  `vid_rem == blk_rem`; a refused read waits for the grant, a write or any
+  non-read cycle freezes the clock for each refused cycle (stall14_cyc);
+  writes now go through a 14 MHz-only write overlay. The same RTL reading
+  corrected the data-read table: +4..+7 fclk, not the comment's +2..+5
+  (hardware-spec §2.5); LD A,(HL) settles at 12 clocks. Checked against an
+  independent fclk-level model of arbiter.v / zmem.v / zclock.v: NOP runs
+  cost 12 fclk in every mode inside the window and out, 256C makes every
+  write lose its own cycle (LD (HL),A 20 → 24 fclk), ZX / 16C never delay
+  the CPU (`tsconfarbiter_test.cpp`). The arbiter state never crosses a
+  frame, so TTD needs nothing. Other emulators model none of it (MAME: a
+  flat 2 T per miss; Unreal: dead code; Xpeccy: nothing). The 3.5 / 7 MHz
+  stall (stall357) never fires in any mode, so it is not modeled.
+- **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
+  (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
+- **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the
+  DRAM cycle), IDE 2 → 3; RAM 2, BLT 3, fill 1 (+1), CRAM / SFILE 2 were
+  already the Verilog's.
+- **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
+  (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
+  at 3.5 / 7 MHz, and the TSU ranks below the CPU.
+- **TIM-5** deferred: CPU CRAM writes are already dot-exact (the video is
+  flushed before each); only DMA → CRAM lands at line granularity.
+The SDK sprite example (14 MHz) re-pinned; the TS-Conf TTD fixture re-recorded.
 
 ## 2. Traceability
 

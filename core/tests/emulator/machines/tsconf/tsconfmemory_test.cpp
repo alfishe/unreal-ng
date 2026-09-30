@@ -109,3 +109,66 @@ TEST_F(TsConfMemory_Test, CCH2_SysConfigCopiesTheCacheBit)
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::CacheConfig], 0x00);
     EXPECT_EQ(_core->GetBusOverlayCount(), 0u);
 }
+
+namespace
+{
+    /// Z80 clocks at the current rate that `run` took
+    template <typename Run>
+    double ClocksOf(Z80* z80, Run run)
+    {
+        const uint32_t before = z80->tt;
+        run();
+        return static_cast<double>(z80->tt - before) / z80->rate;
+    }
+}
+
+/// TIM-1: 14 MHz DRAM waits ([V] zmem.v:154-172, fclk = half a 14 MHz clock).
+/// A straight run of NOPs from uncached RAM settles at M1 phase c2 (+4 fclk):
+/// 6 clocks per NOP. Worked out by hand from the table: NOP starting at fclk
+/// F has its request at F + 3 in phase (F + 3) mod 4 and ends 8 + wait later;
+/// from any start the run reaches F = 3 (mod 4), wait 4, next F = F + 12
+TEST_F(TsConfMemory_Test, TIM1_UncachedRamWaitsAt14MHz)
+{
+    Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, cache off
+    ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 4);
+    std::vector<uint8_t> nops(65, 0x00);
+    _memory->DirectWriteToZ80Memory(0x8000, 0x00);
+    RunCode({0x00});  // settle the phase
+    const double clocks = ClocksOf(_z80, [&] { RunCode(nops); });
+    EXPECT_DOUBLE_EQ(clocks, 65 * 6.0) << "NOP from DRAM: 4 + 2 clocks";
+
+    // LD A,(HL) (M1 + read, a read waits one fclk longer than M1: +4..+7 by
+    // phase, the RTL's release at c2): settles at M1 c1 (+5) and read c2 (+5),
+    // 24 fclk = 12 clocks. LD (HL),A (M1 + write, the write does not wait
+    // outside the fetch window): M1 c0 (+6), 20 fclk = 10 clocks
+    _z80->hl = 0x8800;
+    std::vector<uint8_t> loads;
+    for (int i = 0; i < 32; i++)
+        loads.push_back(0x7E);
+    RunCode(loads);
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(loads); }), 32 * 12.0);
+    std::vector<uint8_t> stores(32, 0x77);
+    RunCode(stores);
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(stores); }), 32 * 10.0);
+}
+
+/// TIM-1: no waits at 3.5 / 7 MHz, from ROM, or on cache hits at 14 MHz
+TEST_F(TsConfMemory_Test, TIM1_NoWaitsOffDram)
+{
+    std::vector<uint8_t> nops(64, 0x00);
+    Reg(TsConfReg::SysConfig, 0x01);  // 7 MHz
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(nops); }), 64 * 4.0) << "7 MHz";
+
+    Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz: ROM (the tagged ROM page 0 is NOPs)
+    _z80->pc = 0x0000;
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] {
+                         for (int i = 0; i < 64; i++)
+                             _z80->Z80Step();
+                     }),
+                     64 * 4.0)
+        << "ROM is a separate chip";
+
+    Reg(TsConfReg::SysConfig, 0x06);  // 14 MHz + cache in every window
+    RunCode(nops);                    // fills
+    EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(nops); }), 64 * 4.0) << "every fetch hits";
+}

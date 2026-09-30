@@ -104,7 +104,15 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   fixed DMA writes missing from TTD dirty pages), BOOT-3 (Wild Commander from SD)
 - [ ] Open: BOOT-4 (IDE fixture), IDE-5; DBG-3 and TS docks with the
   model-first debugger; a `TsConfVideoMapper` for #42
-- [ ] Next: speed TS-O1..O3 (BENCH-1: 1.9x Pentagon, target 1.1x), phase 8 timing
+- [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
+  palette cache, pixel-identical to the old renderer (test TSO2); frame render
+  6.9x faster, whole frame 1.89x → 1.26x Pentagon (1.1x target not met; the
+  rest is TXT's double pixel count and the per-step hooks)
+- [x] Phase 8 timing (2026-09-30, branch `tsconf-phase8`): 14 MHz DRAM
+  waits by the zmem.v phase table, 14 MHz external I/O stall, DMA SPI / IDE
+  word costs; TIM-4 needs nothing (no mode saturates DRAM); TIM-5 deferred.
+  The `cpu_next = 0` arbiter model followed (branch `tsconf-arbiter`), with
+  the data-read wait corrected to the RTL (+4..+7 fclk)
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the
