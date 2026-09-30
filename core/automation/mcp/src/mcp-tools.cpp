@@ -98,6 +98,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+                               "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
                                "gs_stereo_mode"})
@@ -111,7 +112,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "and models_creatable; 'status' reports one instance's details. 'switch_model' replaces the target with "
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
-        "configuration name as 'model' switches to that machine). 'create' with 'zxpoly': true starts a "
+        "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
+        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
+        "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
+        "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
+        "reason when the target cannot hold the state; 'check': true (with 'to') only decides; media are not moved. 'create' with 'zxpoly': true starts a "
         "ZX-Poly machine (four synchronized instances of 'model', default PENTAGON; optional 'zxpoly_file': a "
         ".zxp snapshot, a .prom ROM image or a multiloader disk); the returned id is its master, the slaves are "
         "hidden members. 'zxpoly_status' reports a ZX-Poly machine's modules, platform registers, lock, video "
@@ -130,13 +135,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
-        "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
+        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
         "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
-    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' (e.g. 128, 256, 512)";
+    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' / 'transfer_state' with 'model' (e.g. 128, 256, 512)";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -144,6 +149,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["stranded"]["description"] =
         "switch_model: unsaved writes on media the new model has no slot for - refuse (default: the switch fails "
         "and lists them), save (into their own files), discard, keep (detached media on the new machine)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["description"] =
+        "transfer_state: existing destination emulator id (otherwise 'model' creates a new destination)";
+    schema["properties"]["check"]["type"] = "boolean";
+    schema["properties"]["check"]["description"] =
+        "transfer_state with 'to': only report whether the transfer is possible and what would move; nothing changes";
     schema["properties"]["zxpoly"]["type"] = "boolean";
     schema["properties"]["zxpoly"]["description"] =
         "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
@@ -280,6 +291,45 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "destroy")
                 {
                     ForwardCall("DELETE", Endpoint(id), nullptr, caller, "Destroyed " + id, done);
+                }
+                else if (action == "transfer_state")
+                {
+                    const bool hasTo = args.isMember("to") && args["to"].isString() && !args["to"].asString().empty();
+                    const bool hasModel =
+                        args.isMember("model") && args["model"].isString() && !args["model"].asString().empty();
+                    if (hasTo == hasModel)
+                    {
+                        done(ToolResult::Error("transfer_state needs exactly one of 'to' (an existing emulator id) or "
+                                               "'model' (a new instance, see list_models)"));
+                        return;
+                    }
+                    Json::Value body;
+                    if (hasTo)
+                        body["to"] = args["to"].asString();
+                    else
+                        body["model"] = args["model"].asString();
+                    if (hasModel && args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
+                        body["ram_size"] = args["ram_size"].asUInt();
+                    if (args.isMember("check") && args["check"].asBool())
+                        body["check"] = true;
+                    caller.Call("POST", Endpoint(id, "/snapshot/transfer"), &body, [id, done](int status, Json::Value response) {
+                        // The report carries the per-item reasons on success and on refusal alike
+                        const std::string summary = response.get("summary", "").asString();
+                        if (status >= 200 && status < 300)
+                        {
+                            std::string message = response.get("check", false).asBool()
+                                                      ? "Transfer check " + id + " -> " + response.get("target_id", "").asString()
+                                                      : "Transferred " + id + " -> " + response.get("target_id", "").asString() +
+                                                            (response.get("created", false).asBool() ? " (new instance)" : "");
+                            if (!summary.empty())
+                                message += "\n" + summary;
+                            done(ToolResult::Ok(std::move(message), std::move(response)));
+                            return;
+                        }
+                        std::string message = "Transfer refused (HTTP " + std::to_string(status) + "): " +
+                                              (summary.empty() ? DescribeErrorBody(response) : summary);
+                        done(ToolResult::Error(std::move(message)));
+                    });
                 }
                 else if (action == "switch_model")
                 {

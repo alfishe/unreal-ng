@@ -114,6 +114,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
     // endregion Tape/Disk/Snapshot Control
 
     // region Capture Commands (implementation: api/capture_api.cpp)
@@ -631,6 +632,8 @@ public:
                       const std::string& id) const;
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void transferState(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
 
     // region Capture Commands Methods (implementation: api/capture_api.cpp)

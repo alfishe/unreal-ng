@@ -332,6 +332,7 @@ Interactive documentation available at `/api/swagger`
 | POST | `/emulators/{id}/open` | Load file |
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status |
+| POST | `/api/v1/emulator/{id}/snapshot/transfer` | Move the running state into another instance, in memory ([below](#machine-state-transfer)) |
 
 #### Tape Control
 Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).
@@ -422,6 +423,30 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
 ```
 
 **Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs. The media follow into the same slots, unsaved writes included; see [media.md → Model switch](media.md#model-switch) for media the new model has no slot for (`"stranded": "save" | "discard" | "keep"`). CLI: `model <name> [--stranded ...]`; MCP: `emulator_manage` action `switch_model`.
+
+#### Machine State Transfer
+Copy one instance's running state into another instance in memory, without writing a snapshot file. Unlike a model switch, the source keeps running and nothing is destroyed:
+```bash
+# Into an existing instance: only decide whether it can hold the state (nothing changes)
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"to": "<target-id>", "check": true}'
+
+# Into an existing instance
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"to": "<target-id>"}'
+
+# Into a new Pentagon 512K (it gets the source's sound cards)
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"model": "PENTAGON", "ram_size": 512}'
+```
+
+- **Same model and RAM size**: a full clone - the in-frame position and every device, so both machines continue identically.
+- **Another model**: what the target can express - RAM pages, CPU, the `#7FFD` / `#1FFD` / `#EFF7` paging replayed through the target's port decoder, border, TR-DOS paging, and the devices that do not depend on the machine: TurboSound / TSFM, Covox, General Sound / NeoGS (with its RAM and flash; the flash file is not written), MoonSound (with its wave SRAM), Kempston mouse. Example: a 128K game moved to a Pentagon keeps its pages, paging and sound, and starts at the Pentagon's own frame start.
+- **Refused** (HTTP 422, nothing changes) when the target cannot hold the state: pages the target lacks, +2A/+3 all-RAM modes on a 128K, extended Pentagon / Scorpion paging on another family, ATM / Profi / TSConf on another model, ZX-Poly modules. A 48K target takes a 128K machine only when it is locked in 48K mode.
+- The response is a per-item report: `items[]` with `status` `copied` / `dropped` / `refused` / `note`, plus `summary` as text. A device the target lacks is `dropped`; the rest proceeds.
+- Disk and tape media are not moved. The target's TTD session is dropped (409 while it records).
+
+MCP: `emulator_manage` action `transfer_state` (`to` or `model` + optional `ram_size`, `check`). Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
 
 #### Command Batching
 For VideoWall and bulk operations:

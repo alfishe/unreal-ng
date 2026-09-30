@@ -410,3 +410,27 @@ TEST_F(MachineStateTransfer_Test, cloneWithCardsContinuesIdentically)
         EXPECT_TRUE(SamePage(Ctx(a), Ctx(b), page)) << "page " << page;
     ExpectCardsFollowed(Ctx(a), Ctx(b));
 }
+
+/// A ZX-Poly module runs in lockstep with three others: neither a source nor a target, and a ZX-Poly
+/// configuration name is not a new-instance target
+TEST_F(MachineStateTransfer_Test, refusesZXPolyModules)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine("transfer-test-zxpoly", "48K", "", &error);
+    ASSERT_TRUE(master) << error;
+    _created.push_back(master->GetId());
+    auto plain = Create("48K");
+    ASSERT_TRUE(plain);
+
+    for (const auto& report : {MachineStateTransfer::Transfer(*master, *plain),
+                               MachineStateTransfer::Transfer(*plain, *master)})
+    {
+        EXPECT_FALSE(report.ok);
+        EXPECT_NE(report.reason.find("ZX-Poly"), std::string::npos) << report.reason;
+    }
+
+    MachineStateTransfer::Report report;
+    EXPECT_EQ(MachineStateTransfer::TransferToNewInstance(*plain, "ZXPOLY-48K", 0, report), nullptr);
+    EXPECT_NE(report.reason.find("ZX-Poly"), std::string::npos) << report.reason;
+}

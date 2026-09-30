@@ -1861,3 +1861,66 @@ TEST_F(McpTools_Test, InspectState_VideoAspects_FetchLayoutAndText)
     EXPECT_NE(result.text.find("[video_text] atmtx 80x25"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("\n  HELLO"), std::string::npos) << result.text;
 }
+
+// transfer_state: the resolved target is the source; 'to' or 'model' picks the destination
+TEST_F(McpTools_Test, EmulatorManage_TransferState_PostsToOrModel)
+{
+    Json::Value report;
+    report["ok"] = true;
+    report["target_id"] = "emu-2";
+    report["summary"] = "clone: 12 copied";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {200, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    args["check"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["to"].asString(), "emu-2");
+    EXPECT_TRUE(call->body["check"].asBool());
+    EXPECT_FALSE(call->body.isMember("model"));
+    EXPECT_NE(result.text.find("12 copied"), std::string::npos) << result.text;
+
+    Json::Value create;
+    create["action"] = "transfer_state";
+    create["model"] = "PENTAGON";
+    create["ram_size"] = 512;
+    RunTool(*_registry, "emulator_manage", create, *_caller);
+    const auto* call2 = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call2, nullptr);
+    EXPECT_EQ(call2->body["model"].asString(), "PENTAGON");
+    EXPECT_EQ(call2->body["ram_size"].asUInt(), 512u);
+    EXPECT_FALSE(call2->body.isMember("to"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_TransferState_NeedsExactlyOneDestination)
+{
+    Json::Value args;
+    args["action"] = "transfer_state";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+
+    args["to"] = "emu-2";
+    args["model"] = "48K";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/transfer"));
+}
+
+// A refusal (422) surfaces the report's per-item reasons, not just the status
+TEST_F(McpTools_Test, EmulatorManage_TransferState_RefusalSurfacesReport)
+{
+    Json::Value report;
+    report["ok"] = false;
+    report["reason"] = "the target lacks RAM page 9";
+    report["summary"] = "refused: the target lacks RAM page 9";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {422, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("page 9"), std::string::npos) << result.text;
+}

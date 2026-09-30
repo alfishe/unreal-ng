@@ -1294,6 +1294,7 @@ POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
+POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
 
 ### Time-Travel Debugging
