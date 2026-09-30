@@ -124,8 +124,10 @@ void CLIProcessor::HandleKeyPress(const ClientSession& session, EmulatorContext*
 
     std::string keyName = args[1];
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
+    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
+    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
     
-    if (key == ZXKEY_NONE)
+    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
     {
         session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
         return;
@@ -139,8 +141,8 @@ void CLIProcessor::HandleKeyPress(const ClientSession& session, EmulatorContext*
         return;
     }
 
-    kbdMgr->PressKey(key);
-    session.SendResponse(std::string("Pressed: ") + DebugKeyboardManager::GetKeyDisplayName(key) + NEWLINE);
+    kbdMgr->PressKey(keyName);
+    session.SendResponse(std::string("Pressed: ") + displayName + NEWLINE);
 }
 
 void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContext* context, 
@@ -154,8 +156,10 @@ void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContex
 
     std::string keyName = args[1];
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
+    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
+    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
     
-    if (key == ZXKEY_NONE)
+    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
     {
         session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
         return;
@@ -168,8 +172,8 @@ void CLIProcessor::HandleKeyRelease(const ClientSession& session, EmulatorContex
         return;
     }
 
-    kbdMgr->ReleaseKey(key);
-    session.SendResponse(std::string("Released: ") + DebugKeyboardManager::GetKeyDisplayName(key) + NEWLINE);
+    kbdMgr->ReleaseKey(keyName);
+    session.SendResponse(std::string("Released: ") + displayName + NEWLINE);
 }
 
 void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* context, 
@@ -183,8 +187,10 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
 
     std::string keyName = args[1];
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(keyName);
+    // A PC key name (f1, home, pc.up) reaches a PS/2 machine only; its display name is the name itself
+    const std::string displayName = key != ZXKEY_NONE ? DebugKeyboardManager::GetKeyDisplayName(key) : keyName;
     
-    if (key == ZXKEY_NONE)
+    if (!DebugKeyboardManager::IsKnownKeyName(keyName))
     {
         session.SendResponse(std::string("Error: Unknown key '") + keyName + "'. Use 'key list' to see available keys." + NEWLINE);
         return;
@@ -211,8 +217,8 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
         return;
     }
 
-    kbdMgr->TapKey(key, holdFrames);
-    session.SendResponse(std::string("Tapping: ") + DebugKeyboardManager::GetKeyDisplayName(key) + 
+    kbdMgr->TapKey(keyName, holdFrames);
+    session.SendResponse(std::string("Tapping: ") + displayName + 
                         " for " + std::to_string(holdFrames) + " frames" + NEWLINE);
 }
 

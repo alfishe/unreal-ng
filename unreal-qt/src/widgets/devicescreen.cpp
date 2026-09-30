@@ -394,29 +394,10 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
-
-        // Skip unknown keys
-        if (zxKey != 0)
-        {
-            // Create keyboard event with optional UUID tagging for multi-instance routing
-            KeyboardEvent* keyEvent = nullptr;
-            if (_emulator)
-            {
-                // Tag event with emulator UUID for selective routing (multi-instance support)
-                std::string targetId = _emulator->GetUUID();
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED, targetId);
-            }
-            else
-            {
-                // Fallback to broadcast mode (backward compatible)
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
-            }
-
-            // Send valid key combinations to emulator instance
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(MC_KEY_PRESSED, keyEvent);
-        }
+        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        const std::string targetId = _emulator ? std::string(_emulator->GetUUID()) : std::string();
+        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_PRESSED, targetId))
+            MessageCenter::DefaultMessageCenter().Post(MC_KEY_PRESSED, keyEvent);
     }
 }
 
@@ -436,29 +417,10 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
-
-        // Skip unknown keys
-        if (zxKey != 0)
-        {
-            // Create keyboard event with optional UUID tagging for multi-instance routing
-            KeyboardEvent* keyEvent = nullptr;
-            if (_emulator)
-            {
-                // Tag event with emulator UUID for selective routing (multi-instance support)
-                std::string targetId = _emulator->GetUUID();
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED, targetId);
-            }
-            else
-            {
-                // Fallback to broadcast mode (backward compatible)
-                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
-            }
-
-            // Send valid key combinations to emulator instance
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(MC_KEY_RELEASED, keyEvent);
-        }
+        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        const std::string targetId = _emulator ? std::string(_emulator->GetUUID()) : std::string();
+        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_RELEASED, targetId))
+            MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
     }
 }
 
@@ -497,6 +459,11 @@ void DeviceScreen::wheelEvent(QWheelEvent* event)
 void DeviceScreen::focusOutEvent(QFocusEvent* event)
 {
     _mouseManager->handleFocusOut(event);
+
+    // Keys held while the focus left never send their release here: let a PS/2
+    // machine see them go up
+    KeyboardManager::postHeldKeyReleases(_emulator ? std::string(_emulator->GetUUID()) : std::string());
+
     QWidget::focusOutEvent(event);
 }
 
