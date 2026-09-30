@@ -37,7 +37,13 @@ struct MachineStateTransferOptions
 ///          family, model-specific machines such as ATM / Profi / TSConf on another model), and devices whose
 ///          configuration differs (e.g. a 512 KB GS into a 128 KB GS).
 ///
-///          Media (disk and tape images) are not moved; the report lists that.
+///          Floppies and the tape follow into the same slots as the target's own in-memory copies: same
+///          contents (unsaved writes included), clean, session access, standing for a postfixed file
+///          (game.trd -> game.pentagon-1a2b3c4d.trd) so a save on the target never overwrites the source's image.
+///          Their controllers (Beta 128 / WD1793, uPD765, the tape deck) follow with them, on the source's time axis.
+///
+///          NOT MOVED (by design, for now): SD cards, hard disks and CDs. The target keeps its own, and their
+///          controllers (IDE channel, Z-Controller) keep the target's state. Every report says so explicitly.
 class MachineStateTransfer
 {
 public:

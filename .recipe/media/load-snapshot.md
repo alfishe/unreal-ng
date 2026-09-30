@@ -138,7 +138,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/transfer" \
 #   [copied] paging: 128K state replayed through the Pentagon port decoder
 #   [copied] TSFM: 2008 bytes of state
 #   [copied] NeoGS RAM and flash: 2048 KB RAM + 512 KB flash
-#   [note] media: disk and tape images are not moved
+#   [copied] fdd.a: game.trd -> game.pentagon-1a2b3c4d.trd (in-memory copy, clean; written only by an explicit save)
+#   [note] SD / HDD / CD: not moved (by design, for now): the target keeps its own ...
 ```
 
 HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
