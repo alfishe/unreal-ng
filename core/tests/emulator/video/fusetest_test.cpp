@@ -5,10 +5,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "_helpers/romeditortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/commandtyper.h"
@@ -57,6 +59,7 @@ struct KnownDeviation
 struct Machine
 {
     const char* editor;                                // RomEditorFixture::BootEditor
+    bool hasAy;                                        // an AY on the board (fusetest reads #BFFD / #FFFD)
     std::vector<std::string> commands;                 // typed in order to load the tape
     const char* machineLine;                           // what the program prints after "Machine type: "
     std::map<std::string, std::string> expected;       // test name -> "passed" / "skipped" (the hardware)
@@ -69,15 +72,11 @@ void PrintTo(const Machine& m, std::ostream* os)
     *os << m.editor;
 }
 
-// The floating bus sample point. The Z80 takes the data of an IN at the end of the I/O cycle, after every wait
-// state the ULA inserts. For a port whose high byte is in contended memory (#40xx-#7Fxx) the ULA stretches the
-// cycle after IORQ too (pattern C:1 C:1 C:1 C:1), so the byte is read up to 12 T later than at IORQ. unreal-ng looks
-// the byte up at IORQ (UlaContention::FetchedByte, called from the Z80 port read before the late wait states), which
-// is right only when nothing stretches the cycle after IORQ. fusetest's floating bus test reads #40FF at 43046 T
-// (48K): FUSE samples at 43069 T (the attribute of column 15, the #53 the program planted); unreal-ng samples at
-// 43055 T, an idle phase, and reads #FF
-const char* kLateSample = "floating bus sampled at IORQ, before the late ULA wait states of a contended-high-byte "
-                          "port (the Z80 reads at the end of the stretched I/O cycle)";
+// Three lines once differed from the hardware and are right since the fixes of
+// docs/inprogress/2026-09-30-fusetest-core-defects (checked against the RTL, the 128K service manual and a PAL
+// readout, not against FUSE alone): the floating bus of a port whose high byte is in contended memory is sampled at
+// the end of the stretched I/O cycle ("Floating bus"), an IN from the 128K's #7FFD decode writes the bus byte into
+// the paging latch ("0x3ffd read", "0x7ffd read"), and #BFFD on the +2A / +3 reads the AY register ("0xbffd read")
 
 std::vector<Machine> Machines()
 {
@@ -91,28 +90,11 @@ std::vector<Machine> Machines()
         return e;
     };
     return {
-        { "48K", { "LOAD \"\"" }, "48K", base("passed", "skipped"),
-          { { "Floating bus", { "failed (0xff)", kLateSample } } }, {} },
+        { "48K", false, { "LOAD \"\"" }, "48K", base("passed", "skipped"), {}, {} },
 
-        { "128K-128BASIC", { "LOAD \"\"" }, "128K", base("passed", "passed"),
-          { { "Floating bus", { "failed (0xff)", kLateSample } },
-            // The 128K / +2 paging latch is clocked by IORQ with A15 = 0 and A1 = 0 and does not look at WR: an IN
-            // from #7FFD (or a mirror such as #3FFD) latches whatever is on the data bus, here the floating bus
-            // byte (FUSE periph.c readport, "writeback" for the 128 and +2; ZEsarUX blanks the screen on such a
-            // read too). The program plants attribute bytes 2 and 4 at #5802 / #5803 and expects RAM page 2 / 4
-            // at #C000 afterwards; unreal-ng never latches on IN, so page 0 stays. #7FFD also needs the late
-            // sample above (its high byte is contended): with the latch alone it would read #FF, page 7
-            { "0x3ffd read", { "failed (0x00)", "IN from a #7FFD-decoded port does not latch the bus into #7FFD" } },
-            { "0x7ffd read",
-              { "failed (0x00)", "IN from a #7FFD-decoded port does not latch the bus into #7FFD; and the late "
-                                 "floating bus sample" } } },
-          {} },
+        { "128K-128BASIC", true, { "LOAD \"\"" }, "128K", base("passed", "passed"), {}, {} },
 
-        { "Plus3-3BASIC", { "LOAD \"t:\"", "LOAD \"\"" }, "+3", base("skipped", "skipped"),
-          // The +2A / +3 gate array decodes AY reads with A15 and A1 only: #BFFD reads the selected register like
-          // #FFFD (FUSE ay_ports_plus3; ZEsarUX "BFFD R: +2A/+3 mirror of FFFD"). The program selects register
-          // 11, writes #55 and expects #55 back; unreal-ng returns #FF (printed as #FF - #55)
-          { { "0xbffd read", { "failed (0xaa)", "#BFFD read on the +2A/+3 is not a mirror of #FFFD" } } }, {} },
+        { "Plus3-3BASIC", true, { "LOAD \"t:\"", "LOAD \"\"" }, "+3", base("skipped", "skipped"), {}, {} },
 
         // fusetest cannot test the Pentagon. guessmachine.asm (since FUSE SVN r3852, unchanged in the latest
         // revision) falls through from its Pentagon branch into the TS2068 one (no `jr _end` after
@@ -120,7 +102,7 @@ std::vector<Machine> Machines()
         // (index 4): the contention search gives up ("negative contention?"), the timing tests run with TS2068
         // delays, and the tables with fewer than five entries are read past their end. FUSE 1.6.0 prints exactly
         // the same report. Only the three tests that do not depend on the machine are checked
-        { "Pentagon-128BASIC", { "LOAD \"\"" }, "TS2068", base("passed", "passed"), {},
+        { "Pentagon-128BASIC", true, { "LOAD \"\"" }, "TS2068", base("passed", "passed"), {},
           { "LDIR", "Contended IN", "Floating bus", "Contended memory", "High port contention 1",
             "High port contention 2", "0xbffd read", "0x3ffd read", "0x7ffd read" } },
     };
@@ -177,6 +159,10 @@ protected:
 TEST_P(FuseTest_Test, EveryTestPrintsWhatTheHardwarePrints)
 {
     const Machine& m = GetParam();
+    // The test runner leaves the sound slot empty; the 128K and +3 have their AY on the board, the 48K none
+    std::optional<SoundCardScope> ay;
+    if (m.hasAy)
+        ay.emplace(TestSound::TurboSound);
     BootEditor(m.editor);
     ASSERT_FALSE(HasFatalFailure());
     _context->pFeatureManager->setFeature(Features::kFastTape, true);

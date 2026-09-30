@@ -290,7 +290,7 @@ Families and where they live:
 | ATM | M_ATM16, M_ATMHR, M_ATMTX, M_ATMTL | `video/atm/` |
 | Profi hires | M_PROFIHR | `video/profi/` |
 | Timex / GMX | M_TIMEX, M_GMX | future |
-| TSConf | M_TS16, M_TS256, M_TSTX + tile/sprite layers | `video/tsconf/` (future) |
+| TSConf | M_TSZX, M_TS16, M_TS256, M_TSTX (graphics layer); tile/sprite layers future | `video/tsconf/` |
 | ZX Next | ULA, LoRes, Layer 2, tilemap, sprites | future |
 | Sprinter | block-descriptor graphic/text modes | future |
 | ZX-Poly | modes 0-7 over four modules | future |
@@ -532,8 +532,8 @@ document.
 | ATM3 / ZX-Evo | ATMTL | 80x25 cells | same | 4 | char + attribute in linear 64-byte rows on dedicated **page 8 (vp=5) / page 10**; font as above | rendered |
 | Profi | PROFIHR | 512x240 px | lines 48..287, T 24..151 | 4 (border 2 at sides) | pixel page 4/6 (first byte of each 16-px cell at +0x2000) + attribute page 0x38/0x3A same offset; 16-entry palette, monochrome option (`Register`) | rendered |
 | Timex / GMX | hi-colour 8x1, 512x192 hires, GMX 320x200 | per mode | per mode | 2/4 | pixel + attribute planes; hires ink/paper from port FF (`Register`); GMX via 7EFD | not implemented |
-| TSConf | ZX / 16c / 256c | 256x192, 320x200, 320x240, 360x288 windows over a 512-wide scrolled surface | active origins (dots,lines): 256x192 @ (140,80), 320x200 @ (108,76), 320x240 @ (108,56), 360x288 @ (88,32); converted to §3.1 origin in the TSConf table | 2 | 16c: 1 byte / 2 px; 256c: 1 byte / px from VPage + GX/GY offsets; CRAM (16-bit) | not implemented |
-| TSConf | text | cells | same | **4** | 128 B chars + 128 B attrs per row at VPage, font at VPage^1 | not implemented |
+| TSConf | ZX / 16c / 256c | 256x192, 320x200, 320x240, 360x288 windows over a 512-wide scrolled surface | active origins (dots,lines): 256x192 @ (140,80), 320x200 @ (108,76), 320x240 @ (108,56), 360x288 @ (88,32); converted to §3.1 origin in the TSConf table | 4 (surface in 14 MHz pixels, 2 per dot, as the 720-wide framebuffer) | 16c: 1 byte / 2 px; 256c: 1 byte / px from VPage + GX/GY offsets; CRAM (16-bit) | mapped (`TsConfVideoMapper`, per line with the latched registers) |
+| TSConf | text | cells | same | **4** | 128 B chars + 128 B attrs per row at VPage, font at VPage^1 | mapped |
 | TSConf | tile layers T0, T1 | 64x64 tiles of 8x8, 512x512, scrolled | display window | 2 | tile descriptor (T_MAP_PAGE) + graphic (T0/T1_G_PAGE) + CRAM | future |
 | TSConf | sprites S0..S2 | from 512x512 sheet | display window, 256 descriptors | 2 | SFILE descriptor + graphic (SG_PAGE) + CRAM | future |
 | ZX Next | ULA, LoRes, Layer 2 (256x192 / 320x256 / 640x256), tilemap (40x32 / 80x32, text mode, 512 tiles), sprites (anchors, relative, scale, rotate) | per layer | per layer + clip windows | 2 (up to 4 for 640-wide L2) | per layer; palettes 9-bit; blend/stencil composition | future |

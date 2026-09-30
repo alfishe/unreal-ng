@@ -401,3 +401,20 @@ TEST_F(PortDecoder_TSConf_Test, TIM2_ExternalIoStallAt14MHz)
     Reg(TsConfReg::SysConfig, 0x01);  // 7 MHz
     EXPECT_EQ(clocks([&] { Out(0xFFFD, 0x07); }), 0u);
 }
+
+/// PS2-1: the AVR is the board's PS/2 keyboard controller, as on ATM3 - a
+/// host key reaches its scan code log (AVR extension 2 behind the Gluk cell
+/// #F0), which Wild Commander and NedoOS read instead of the ZX matrix
+TEST_F(PortDecoder_TSConf_Test, PS21_HostKeysReachTheAvrPs2Log)
+{
+    ASSERT_NE(_context->pKeyboard, nullptr);
+    EXPECT_EQ(_context->pKeyboard->GetPs2Sink(), &_decoder->GetEvoAvr());
+    Out(0xEFF7, 0x80);                   // the Gluk ports on
+    Out(0xDFF7, 0xF0);
+    Out(0xBFF7, EvoAvr::kExtPs2Log);     // cell #F0 = the PS/2 log
+    Out(0xDFF7, 0xF0);
+    EXPECT_EQ(In(0xBFF7), 0x00) << "empty log";
+    _context->pKeyboard->ApplyPcKey(PcKey::A, true);  // the TTD apply point, live and replay
+    Out(0xDFF7, 0xF0);
+    EXPECT_EQ(In(0xBFF7), 0x1C) << "set 2 make code of A";
+}

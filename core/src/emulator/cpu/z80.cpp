@@ -1114,13 +1114,24 @@ uint8_t Z80::inFromBus(uint16_t port)
     // Full-decode observer cards are real hardware too - a handled observer
     // port always has a driver on the bus, floating bus must not apply.
     bool fromFloatingBus = false;
+    bool lateWaitsCounted = false;
     if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
         {
-            // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus)
-            uint8_t floatVal = ula->IsGateArray() ? ula->GetGateArrayFloatingBus(port) : ula->GetFloatingBus();
+            // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus). A port whose high
+            // byte is in contended memory has ULA waits after IORQ: FloatingBusAfterLateWaits
+            uint8_t floatVal;
+            if (ula->IsGateArray())
+                floatVal = ula->GetGateArrayFloatingBus(port);
+            else if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(port >> 14))) [[unlikely]]
+            {
+                floatVal = FloatingBusAfterLateWaits(port, ioWait);
+                lateWaitsCounted = true;
+            }
+            else
+                floatVal = ula->GetFloatingBus();
             if (floatVal != 0xFF)
             {
                 result = floatVal;
@@ -1129,11 +1140,18 @@ uint8_t Z80::inFromBus(uint16_t port)
         }
     }
 
-    if (portInterceptor) [[unlikely]]
-        portInterceptor->OnInResult(port, result, fromFloatingBus);
-
-    if (ioContention)
+    if (ioContention && !lateWaitsCounted)
         IoWaitAfterIorq(port, ioWait);
+
+    // One flag for both observers: machines with neither test it once
+    if (_inResultHooks) [[unlikely]]
+    {
+        if (portInterceptor)
+            portInterceptor->OnInResult(port, result, fromFloatingBus);
+        // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)
+        if (readCycleLatch && (port & readCycleLatchMask) == readCycleLatchMatch)
+            readCycleLatch->OnReadCycle(port, result);
+    }
 
     return result;
 }
@@ -1189,6 +1207,17 @@ void Z80::IoWaitAfterIorq(uint16_t port, uint8_t ioWait)
     IncrementCPUCyclesCounter(after);
     if (isDebugMode)
         ioContention->CountAccess(CONTENTION_IO, static_cast<uint8_t>(ioWait + after));
+}
+
+/// The floating bus of an IN from a port whose high byte is in contended memory. The CPU takes the data at the
+/// end of T3, after the ULA's waits after IORQ (C:1 before TW and T3), so the byte on the bus is the one the ULA
+/// fetches then, not at IORQ. The lookup (UlaContention::GetFloatingBus) is calibrated to the uncontended cycle,
+/// T3 two T after IORQ; with the waits counted first the clock is again two T before T3. The caller then skips its
+/// own IoWaitAfterIorq (docs/inprogress/2026-09-30-fusetest-core-defects)
+uint8_t Z80::FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait)
+{
+    IoWaitAfterIorq(port, ioWait);
+    return _context->pUlaContention->GetFloatingBus();
 }
 
 /// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.

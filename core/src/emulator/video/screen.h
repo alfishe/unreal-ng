@@ -977,6 +977,11 @@ public:
     /// Virtual: a model family with its own renderer (TS-Conf) describes its modes
     virtual ScreenState DescribeScreenState() const;
 
+    /// The state a video family's debug mapper reads beyond the shared latches
+    /// (videomap::VideoState::familyView): null for the classic families; a
+    /// family with its own renderer returns a view of its state
+    virtual const void* VideoFamilyView() const { return nullptr; }
+
     /// Horizontal beam geometry (display window, pixel clock) of a mode.
     /// timing is the descriptor the mode's timing comes from (SetVideoMode).
     static LineGeometry GetLineGeometry(VideoModeEnum mode, const RasterDescriptor& timing);

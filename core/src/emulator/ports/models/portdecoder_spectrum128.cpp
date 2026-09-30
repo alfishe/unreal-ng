@@ -4,6 +4,8 @@
 
 #include "portdecoder_spectrum128.h"
 
+#include "emulator/cpu/core.h"
+
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include <map>
@@ -17,6 +19,8 @@ PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context) : Por
 
 PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 {
+    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->readCycleLatch == this)
+        _context->pCore->GetZ80()->SetReadCycleLatch(nullptr);
     MLOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");
 }
 
@@ -58,6 +62,17 @@ void PortDecoder_Spectrum128::reset()
 
     // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
     Port_7FFD_Out(0x7FFD, 0x00, 0x0000);
+
+    // Reads clock the paging latch (OnReadCycle): the Z80 calls it for the #7FFD decode only (IsPort_7FFD)
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->SetReadCycleLatch(this, kPort7FFDMask, kPort7FFDMatch);
+}
+
+void PortDecoder_Spectrum128::OnReadCycle(uint16_t port, uint8_t value)
+{
+    (void)port;  // the Z80 matched the #7FFD decode
+    // The 74LS174 holds bits 0-5; Port_7FFD_Out ignores the write while the lock bit is set
+    Port_7FFD_Out(port, static_cast<uint8_t>(value & 0x3F), _context->pCore->GetZ80()->m1_pc);
 }
 
 uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
@@ -104,10 +119,11 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(0xFFFD);
         disp.decodedPort = 0xFFFD;
     }
-    // AY #BFFD: A15=1, A14=0, A1=0
+    // AY #BFFD: A15=1, A14=0, A1=0. A read is not decoded: the 128K's AY decode (service manual: BDIR and BC1
+    // both low for a #BFFD read) keeps the chip off the bus, so the read floats. The +2A / +3 gate array differs
+    // (its decoder reads the register there). docs/inprogress/2026-09-30-fusetest-core-defects claim 3
     else if ((port & 0xC002) == 0x8000)
     {
-        result = PeripheralPortIn(0xBFFD);
         disp.decodedPort = 0xBFFD;
     }
     else if (IsPort_FE(port))
@@ -287,8 +303,8 @@ bool PortDecoder_Spectrum128::IsPort_7FFD(uint16_t port)
     //    As normal on Sinclair hardware, the port address is in fact only partially decoded.
     //    Mask includes bit2=1 to avoid conflict with SOUNDRIVE ports F1/F9 which have bit2=0.
     static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
-    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0110;  // A15, A2, A1
-    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0100;  // A15=0, A2=1, A1=0
+    static const uint16_t port_7FFD_mask    = kPort7FFDMask;   // A15, A2, A1
+    static const uint16_t port_7FFD_match   = kPort7FFDMatch;  // A15=0, A2=1, A1=0
 
     // Compile-time check
     static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");

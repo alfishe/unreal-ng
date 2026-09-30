@@ -18,6 +18,7 @@ capture/restore and all automation frontends** (WebAPI/MCP/CLI/Lua/Python).
 | [technical-design.md](technical-design.md) | I — what TS-Conf is; II — the machine block by block (diagrams); III — unreal-ng implementation: current state, the four new generic extension points (interrupt source, memory write intercept, M1 hook, ungated step hook), state isolation, decoder, engine scheduling, video, storage, TTD, debugger, automation, decisions D1-D7, risks |
 | [implementation-plan.md](implementation-plan.md) | Phases 0-8 with dependencies and test-first work lists (test IDs, fixtures, expected values traced to the spec) |
 | [references.md](references.md) | Sources with upstream links, local clones, what each is authoritative for |
+| [boot-and-storage-notes.md](boot-and-storage-notes.md) | Field notes from the real firmware: BIOS Setup options and boot devices, Wild Commander (panel drives, PS/2-only keyboard), IDE on TS-Conf (ports, no MBR needed, WC's disk detection, TTD), test data |
 | [TODO.md](TODO.md) | Status marker + progress |
 
 ## Key findings
