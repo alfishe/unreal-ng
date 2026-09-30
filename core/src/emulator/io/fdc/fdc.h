@@ -105,6 +105,35 @@ namespace FDC_Delays
 
 /// endregion </Constants>
 
+/// region <Controller clock and data rate>
+
+/// Clock on the WD1793 CLK input (pin 24). Paces the chip's own timers: step rate, head settle and the bit
+/// rate the chip writes. 1 MHz on every standard Spectrum disk interface; 2 MHz with "turbo VG" or HD mode.
+enum class FdcClock : uint8_t
+{
+    Clock1MHz = 1,
+    Clock2MHz = 2
+};
+
+/// Rate of the external data separator (the bit rate the controller can read), and the recorded rate of a
+/// track. 250 kbit/s = DD (6250 MFM bytes per 300 rpm revolution), 500 kbit/s = HD (12 500 bytes).
+/// Independent of the clock: a DD separator with a 2 MHz clock (ZX-Evo turbo VG) still reads DD disks.
+enum class FdcDataRate : uint8_t
+{
+    Rate250Kbps = 0,
+    Rate500Kbps = 1
+};
+
+/// Who drives the controller clock (set per machine)
+enum class FdcClockPolicy : uint8_t
+{
+    Fixed1MHz = 0,      ///< Always 1 MHz (Beta 128, Pentagon, Scorpion, ATM 7.10, Profi)
+    AutoStepTurbo = 1,  ///< "Turbo VG": a STEP pulse selects 2 MHz, the next DRQ returns to 1 MHz (ZX-Evo BaseConf)
+    Latched = 2         ///< Clock and data rate set together by a machine latch (Sprinter #BD style)
+};
+
+/// endregion </Controller clock and data rate>
+
 /// region <Types>
 class CRCHelper
 {

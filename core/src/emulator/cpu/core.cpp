@@ -413,6 +413,13 @@ bool Core::Init()
                 _context->pPortDecoder = _portDecoder;
                 _state->ttd_clock_units = _portDecoder->TtdClockUnits();
 
+                // The board decides how the WD1793 is clocked ([Beta128] TurboVG= can override it)
+                if (_betaDisk)
+                {
+                    _betaDisk->SetClockPolicy(WD1793::ResolveClockPolicy(_portDecoder->DefaultFdcClockPolicy(),
+                                                                         _context->config.fdcTurboVg));
+                }
+
                 // Prime the porttrace feature cache: the decoder is created after
                 // FeatureManager loaded features.ini, so a persisted porttrace=on
                 // state would otherwise not take effect until the next toggle

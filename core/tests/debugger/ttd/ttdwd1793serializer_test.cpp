@@ -9,7 +9,7 @@
 /// the hardest peripheral audit (impl-plan §3.A1 item 5 note), scheduled
 /// last within the serializer group.
 ///
-/// The blob is 251 bytes = 143 (controller) + 4×27 (FDDs).
+/// The blob is 254 bytes = 146 (controller, incl. clock policy / clock / data rate) + 4×27 (FDDs).
 ///
 /// Note on FDD track initialization: fresh drives start at track 0 (the ctor
 /// used to randomize _track until 2026-09-13). The round-trip is still
@@ -219,10 +219,10 @@ protected:
     }
 };
 
-TEST_F(TTD_WD1793_Serializer_Test, TTDStateSize_IsStable_251Bytes)
+TEST_F(TTD_WD1793_Serializer_Test, TTDStateSize_IsStable_254Bytes)
 {
-    EXPECT_EQ(_harnessA->fdc->TTDStateSize(), 251u)
-        << "WD1793+4×FDD subsystem state size drift (expected 251 = 143 + 4×27)";
+    EXPECT_EQ(_harnessA->fdc->TTDStateSize(), 254u)
+        << "WD1793+4×FDD subsystem state size drift (expected 254 = 146 + 4×27)";
 }
 
 TEST_F(TTD_WD1793_Serializer_Test, RoundTrip_PostResetState_IsByteIdentical)
@@ -404,9 +404,9 @@ TEST(TTD_WD1793_ManagerIntegration_Test, CaptureNow_PopulatesFdcStateBlob_OnBeta
         ASSERT_NE(fdcBlob, cp->peripheralBlobs.end());
         const auto fdcState = ttd::TTDPeripheralRegistry::DecodeBlob(
             static_cast<uint8_t>(ttd::PeripheralId::BetaDisk), fdcBlob->second);
-        EXPECT_EQ(fdcState.size(), 251u)
-            << "fdcState blob must contain the 251-byte FDC subsystem payload "
-            << "(controller 143 + 4×FDD 27) when a WD1793 is present";
+        EXPECT_EQ(fdcState.size(), 254u)
+            << "fdcState blob must contain the 254-byte FDC subsystem payload "
+            << "(controller 146 + 4×FDD 27) when a WD1793 is present";
     }
     // else: fdcState may be empty — that's the valid no-op for a model
     // without Beta Disk interface (e.g. plain Spectrum 48/128).
