@@ -71,6 +71,16 @@ StateNode TsConf(EmulatorContext* context)
     StateNode ret = StateNode::Object();
     ret["available"] = true;
 
+    // The emulated firmware build ([MISC] TS_VDAC, hardware-spec §0.1)
+    {
+        const uint8_t vdac = decoder->VdacVersion();
+        StateNode b = StateNode::Object();
+        b["vdac_ver"] = int(vdac);
+        b["vdac"] = vdac == 0 ? "none (2-bit DAC + PWM)" : (vdac == 1 ? "3-bit" : (vdac == 2 ? "4-bit" : (vdac == 3 ? "5-bit" : "VDAC2")));
+        b["blt2"] = vdac != 0;
+        ret["build"] = b;
+    }
+
     // Memory
     {
         const uint8_t memConfig = r[TsConfReg::MemConfig];
@@ -271,7 +281,7 @@ StateNode TsConfTsu(EmulatorContext* context)
     StateNode cram = StateNode::Array();
     for (uint32_t i = 0; i < 256; i++)
     {
-        const uint32_t rgba = ScreenTSConf::CramToRgba(ts.cram[i]);
+        const uint32_t rgba = ScreenTSConf::CramToRgba(ts.cram[i], context->config.ts_vdac);
         StateNode c = StateNode::Object();
         c["index"] = int(i);
         c["value"] = hex(ts.cram[i], 4);

@@ -176,6 +176,8 @@ void PortDecoder_TSConf::ApplyState()
 {
     if (_memory)
         _dma.Attach(_memory->RAMBase(), &GetIdeAdapter(), _memory);
+    // The VDAC builds are XTR_FEAT builds: they have DMA BLT2 (hardware-spec §0.1)
+    _dma.SetBlt2Built(TsConfDma::kBuildHasBlt2 || _context->config.ts_vdac != 0);
     InstallInterrupts();
     _engine.RebuildLineTable();
     UpdateBanks();
@@ -525,7 +527,7 @@ uint8_t PortDecoder_TSConf::ReadRegister(uint8_t reg)
         case TsConfReg::VConfig:
         {
             // STATUS: [6] PWR_UP (cleared by the read), [2:0] VDAC_VER (§3.3)
-            const uint8_t status = static_cast<uint8_t>((_ts.pwrUp ? 0x40 : 0x00) | kVdacVersion);
+            const uint8_t status = static_cast<uint8_t>((_ts.pwrUp ? 0x40 : 0x00) | VdacVersion());
             _ts.pwrUp = 0;
             return status;
         }

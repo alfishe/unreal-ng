@@ -92,10 +92,10 @@ TEST_F(PortDecoder_TSConf_Test, REG1_OnlyFourRegistersAreReadable)
 /// REG-2 (hs §3.3): STATUS PWR_UP is set until the first read
 TEST_F(PortDecoder_TSConf_Test, REG2_StatusPowerUpClearsAfterTheFirstRead)
 {
-    EXPECT_EQ(In(0x00AF), 0x40 | PortDecoder_TSConf::kVdacVersion);
-    EXPECT_EQ(In(0x00AF), PortDecoder_TSConf::kVdacVersion);
+    EXPECT_EQ(In(0x00AF), 0x40 | _decoder->VdacVersion());
+    EXPECT_EQ(In(0x00AF), _decoder->VdacVersion());
     _decoder->reset();
-    EXPECT_EQ(In(0x00AF), PortDecoder_TSConf::kVdacVersion) << "a warm reset does not set PWR_UP";
+    EXPECT_EQ(In(0x00AF), _decoder->VdacVersion()) << "a warm reset does not set PWR_UP";
 }
 
 /// P7F-1 (hs §2.3): 512K mode

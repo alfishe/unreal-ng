@@ -16,6 +16,7 @@ struct TsConfVideoView
     const TsConfEngine* engine = nullptr;
     const EmulatorState* state = nullptr;  ///< the frame counter (ZX flash)
     const uint8_t* ram = nullptr;          ///< the 4 MB RAM (PixelsFor: which character a text cell holds)
+    uint8_t vdac = 0;                      ///< the build's video DAC (ScreenTSConf::CramToRgba)
 };
 
 /// TS-Conf video debug mapping (PLAN #42 phase 5, design §5 "TSConf"): the

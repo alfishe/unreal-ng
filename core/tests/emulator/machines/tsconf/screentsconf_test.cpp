@@ -354,3 +354,31 @@ TEST_F(ScreenTSConf_Test, TSO2_RendererMatchesTheReference)
     else
         EXPECT_EQ(hash, 0xD8C26F86D5C26DB1ull) << "the renderer's output changed";
 }
+
+/// VDAC ([MISC] TS_VDAC, hs §0.1 / §4.3): with a video DAC, CRAM bit 15 set
+/// sends the channel's bits through the DAC (3 / 4 / 5 bit, full scale 255),
+/// clear gives the PWM-compatible linear curve (0..24, then full); no VDAC
+/// keeps the 2-bit DAC + PWM average. STATUS reports the build, the VDAC
+/// builds have BLT2, and the renderer follows the setting
+TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
+{
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x0010, 0), 0xFFAA0000u) << "no VDAC: unchanged";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(12 << 10, 3), 0xFF00007Fu) << "linear: 12 of 24";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 3), 0xFFFFFFFFu) << "linear saturates from 24";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 3), 0xFF000083u) << "5 bit: 16 of 31";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (31 << 10), 3), 0xFF0000FFu) << "5 bit: 31 is full";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | (16 << 10), 1), 0xFF000091u) << "3 bit: code 4 of 7";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x8000 | 16, 2), 0xFF880000u) << "4 bit: code 8 of 15";
+
+    EXPECT_EQ(In(0x00AF) & 0x07, 0) << "standard build";
+    _context->config.ts_vdac = 3;
+    _decoder->reset();
+    EXPECT_EQ(In(0x00AF) & 0x07, 3) << "quartus_vdac";
+    Reg(TsConfReg::VConfig, 0x41);  // 16C
+    Reg(TsConfReg::VPage, 0x10);
+    Reg(TsConfReg::PalSel, 0x00);
+    Ram(0x10, 0) = 0x10;            // first dot: colour 1
+    _decoder->GetState().cram[1] = static_cast<uint16_t>(0x8000 | (20 << 5));
+    EXPECT_EQ(PixelAfterFrame(Fx(108), Fy(76)), ScreenTSConf::CramToRgba(0x8000 | (20 << 5), 3));
+    _context->config.ts_vdac = 0;
+}
