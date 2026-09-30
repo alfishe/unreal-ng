@@ -21,8 +21,9 @@ namespace
     }
 }
 
-void TsConfTsu::Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t tmLine, MapRing& ring)
+uint32_t TsConfTsu::Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t tmLine, MapRing& ring)
 {
+    uint32_t used = 0;
     const uint8_t* r = ts.regs;
     const uint8_t tConfig = r[TsConfReg::TConfig];
     const uint8_t* map = ram + (static_cast<uint32_t>(r[TsConfReg::TMapPage]) << 14);
@@ -41,11 +42,13 @@ void TsConfTsu::Prefetch(const TsConfState& ts, const uint8_t* ram, uint32_t tmL
             const uint32_t column = burst * 8 + n;
             ring[slot][column][layer] = static_cast<uint16_t>(row[column * 2] | (row[column * 2 + 1] << 8));
         }
+        used += 8;
     }
+    return used;
 }
 
-void TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out)
+bool TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
+                          uint32_t layer, uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
 {
     const uint8_t* r = ts.regs;
     const uint8_t tConfig = r[TsConfReg::TConfig];
@@ -61,24 +64,35 @@ void TsConfTsu::DrawTiles(const TsConfState& ts, const TsConfLine& set, const ui
     const uint32_t slot = tLine >> 3;
     const uint32_t tileLine = tLine & 0x07;
 
-    for (uint32_t x = 0; x < width; x++)
+    // Tiles left to right; the first starts at -(X offset & 7)
+    for (int32_t x0 = -static_cast<int32_t>(xOffs & 7), k = 0; x0 < static_cast<int32_t>(width); x0 += 8, k++)
     {
-        const uint32_t tx = (x + xOffs) & 0x1FF;
-        const uint16_t entry = ring[slot][(tx >> 3) & 0x3F][layer];
+        const uint16_t entry = ring[slot][((xOffs >> 3) + static_cast<uint32_t>(k)) & 0x3F][layer];
         const uint32_t tile = entry & 0x0FFF;
         if (tile == 0 && !drawZero)
-            continue;
+            continue;  // skipped: no graphics fetch
+        if (used + 2 > budget)
+            return false;
+        used += 2;
 
-        const uint32_t fx = (entry & 0x4000) ? 7 - (tx & 7) : (tx & 7);
         const uint32_t fy = (entry & 0x8000) ? 7 - tileLine : tileLine;
-        const uint8_t nibble = BitmapNibble(ram, gPage, (tile & 0x3F) * 8 + fx, (tile >> 6) * 8 + fy);
-        if (nibble)
-            out[x] = static_cast<uint8_t>(bank | (((entry >> 12) & 0x03) << 4) | nibble);
+        const uint8_t index = static_cast<uint8_t>(bank | (((entry >> 12) & 0x03) << 4));
+        for (int32_t px = 0; px < 8; px++)
+        {
+            const int32_t x = x0 + px;
+            if (x < 0 || x >= static_cast<int32_t>(width))
+                continue;
+            const uint32_t fx = (entry & 0x4000) ? 7 - static_cast<uint32_t>(px) : static_cast<uint32_t>(px);
+            const uint8_t nibble = BitmapNibble(ram, gPage, (tile & 0x3F) * 8 + fx, (tile >> 6) * 8 + fy);
+            if (nibble)
+                out[x] = static_cast<uint8_t>(index | nibble);
+        }
     }
+    return true;
 }
 
-void TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t first, uint32_t end, uint32_t y,
-                            uint32_t width, uint8_t* out)
+bool TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t first, uint32_t end, uint32_t y,
+                            uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
 {
     const uint8_t sgPage = ts.regs[TsConfReg::SGPage];
     for (uint32_t d = first; d < end; d++)
@@ -96,6 +110,11 @@ void TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t 
 
         const uint32_t fy = (w0 & 0x8000) ? yMax - line : line;
         const uint32_t spriteWidth = (((w1 >> 9) & 0x07) + 1) * 8;
+        const uint32_t cost = spriteWidth / 4;  // 4 bpp: 4 pixels per word
+        if (used + cost > budget)
+            return false;
+        used += cost;
+
         const bool xFlip = w1 & 0x8000;
         const uint32_t tile = w2 & 0x0FFF;
         const uint8_t pal = static_cast<uint8_t>((w2 >> 12) << 4);
@@ -112,10 +131,11 @@ void TsConfTsu::DrawSprites(const TsConfState& ts, const uint8_t* ram, uint32_t 
                 out[sx] = static_cast<uint8_t>(pal | nibble);
         }
     }
+    return true;
 }
 
 bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const uint8_t* ram, const MapRing& ring,
-                           uint32_t y, uint32_t width, uint8_t* out)
+                           uint32_t y, uint32_t width, uint8_t* out, uint32_t budget, uint32_t& used)
 {
     const uint8_t tConfig = ts.regs[TsConfReg::TConfig];
     if (!(tConfig & (kSpritesEnable | kTile0Enable | kTile1Enable)))
@@ -133,16 +153,18 @@ bool TsConfTsu::RenderLine(const TsConfState& ts, const TsConfLine& set, const u
             bounds[layer++] = d + 1;
     }
 
+    // Processing order S0, T0, S1, T1, S2 is also the drawing order; the
+    // first object that does not fit ends the line
     const bool sprites = tConfig & kSpritesEnable;
+    if (sprites && !DrawSprites(ts, ram, bounds[0], bounds[1], y, width, out, budget, used))
+        return true;
+    if ((tConfig & kTile0Enable) && !DrawTiles(ts, set, ram, ring, 0, y, width, out, budget, used))
+        return true;
+    if (sprites && !DrawSprites(ts, ram, bounds[1], bounds[2], y, width, out, budget, used))
+        return true;
+    if ((tConfig & kTile1Enable) && !DrawTiles(ts, set, ram, ring, 1, y, width, out, budget, used))
+        return true;
     if (sprites)
-        DrawSprites(ts, ram, bounds[0], bounds[1], y, width, out);
-    if (tConfig & kTile0Enable)
-        DrawTiles(ts, set, ram, ring, 0, y, width, out);
-    if (sprites)
-        DrawSprites(ts, ram, bounds[1], bounds[2], y, width, out);
-    if (tConfig & kTile1Enable)
-        DrawTiles(ts, set, ram, ring, 1, y, width, out);
-    if (sprites)
-        DrawSprites(ts, ram, bounds[2], bounds[3], y, width, out);
+        DrawSprites(ts, ram, bounds[2], bounds[3], y, width, out, budget, used);
     return true;
 }

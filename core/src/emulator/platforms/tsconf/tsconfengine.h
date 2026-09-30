@@ -5,6 +5,7 @@
 #include "emulator/cpu/z80.h"
 
 class EmulatorContext;
+class TsConfDma;
 class TsConfInterrupts;
 struct TsConfState;
 
@@ -24,6 +25,8 @@ struct TsConfLine
     uint16_t tsX0 = 0;    ///< TS window: first raster dot
     uint16_t tsW = 0;     ///< TS window width in dots
     bool tsu = false;     ///< the TSU drew something on this line
+    uint16_t videoCost = 0;  ///< DRAM accesses of the graphics fetch on this line
+    uint16_t tsuCost = 0;    ///< DRAM accesses of the TSU (prefetch + objects)
 };
 
 /// TS-Conf line engine (TSConf technical-design §3.8): advances with the CPU
@@ -39,9 +42,11 @@ struct TsConfLine
 ///   line of the graphics window ([V] video_sync.v:176-181);
 /// - records the line's set in the frame's line table, which ScreenTSConf
 ///   draws from.
-/// It also drives the interrupt controller. The per-line DRAM budget
-/// (video / CPU / TSU / DMA) comes with its consumers, the TSU and the DMA
-/// (phases 4-5). All persistent state lives in TsConfState (TTD).
+/// It also drives the interrupt controller and the DMA, which gets what is left
+/// of each line's 448 DRAM accesses (one per 7 MHz dot) after the graphics
+/// fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window dots), the TSU and
+/// the CPU (its DRAM reads, counted by TsConfMemory; its writes are not counted -
+/// a v1 approximation). All persistent state lives in TsConfState (TTD).
 class TsConfEngine : public IMachineStepHook
 {
 public:
@@ -49,8 +54,10 @@ public:
     static constexpr uint32_t kLines = 320;
     static constexpr uint32_t kFrameTacts = kLineTacts * kLines;
 
-    TsConfEngine(EmulatorContext* context, TsConfState& state, TsConfInterrupts& interrupts)
-        : _context(context), _ts(state), _interrupts(interrupts)
+    static constexpr uint32_t kLineAccesses = 448;
+
+    TsConfEngine(EmulatorContext* context, TsConfState& state, TsConfInterrupts& interrupts, TsConfDma& dma)
+        : _context(context), _ts(state), _interrupts(interrupts), _dma(dma)
     {
     }
 
@@ -90,10 +97,15 @@ private:
     /// TS window of the line and its TSU pixels (hs §4.4)
     void RenderTsu(uint32_t line, TsConfLine& set);
     TsConfLine LatchedSet() const;
+    /// Hand the DMA its share of the DRAM cycles from budgetRaster to `raster`
+    void AccountBudget(uint32_t raster);
+    static uint16_t VideoCost(uint8_t vConfig, uint32_t line);
 
     EmulatorContext* _context;
     TsConfState& _ts;
     TsConfInterrupts& _interrupts;
+    TsConfDma& _dma;
+    uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     TsConfLine _lines[kLines];
     uint8_t _tsu[kLines][360] = {};  ///< TSU line buffers of the frame (TsConfTsu::kMaxWidth)
     /// Tilemap prefetch ring (TsConfTsu::MapRing). Not TTD state: every frame

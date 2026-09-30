@@ -291,6 +291,24 @@ prefetch ring refills before the window; TSU line buffers are derived).
 
 ## Phase 5 — DMA · M
 
+**Built 2026-09-30 (branch `tsconf-phase5`).** `TsConfDma`
+(`platforms/tsconf/tsconfdma.*`) follows `dma.v`: live 21-bit word address
+counters, S_ALGN / D_ALGN block wrap and reload, block / transfer counters
+with DMA_LEN reloaded per block, relaunch without INT, the tasks RAM copy,
+BLT1, FILL, CRAM, SFILE, SPI in / out (a pluggable exchange; no card = #FF),
+IDE in / out through `IdeAdapter::DmaReadWord / DmaWriteWord`; BLT2 is built
+but off, as in the emulated standard `quartus` firmware (no XTR_FEAT), so code
+0x6 hangs like the wait port (0x7) and the undefined codes. All state in
+`TsConfState` (TTD). **DRAM budget (ENG-1)** in `TsConfEngine`: 448 accesses per
+line, minus the graphics fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window
+dots, none with NOGFX), the TSU (8 map words per layer, 2 per tile, width / 4
+per sprite line) and the CPU's DRAM reads (counted by `TsConfMemory`; cache
+hits and ROM take none; **CPU writes are not counted - v1 approximation**);
+the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
+previous line and drops what does not fit (**TSU-8**).
+Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,
+TTD-4. Open: DMA-15 (IDE with a disk) with phase 6.
+
 Fixture: raw physical RAM access (`RAMPageAddress`) to seed/verify; helper
 `Dma(src, dst, len, num, ctrl)` writing the registers and running until busy
 clears (with a frame cap).

@@ -49,7 +49,7 @@ protected:
     }
 
     /// Render TS line `y` with the current registers
-    std::vector<uint8_t> Line(uint32_t y, uint32_t width = 256)
+    std::vector<uint8_t> Line(uint32_t y, uint32_t width = 256, uint32_t budget = 448)
     {
         TsConfLine set;
         const TsConfState& ts = _decoder->GetState();
@@ -63,7 +63,8 @@ protected:
         for (int line = static_cast<int>(y) - 24; line <= static_cast<int>(y); line++)
             TsConfTsu::Prefetch(ts, _memory->RAMBase(), static_cast<uint32_t>(line + 16) & 0x1FF, ring);
         std::vector<uint8_t> out(width, 0xEE);
-        if (!TsConfTsu::RenderLine(ts, set, _memory->RAMBase(), ring, y, width, out.data()))
+        uint32_t used = 0;
+        if (!TsConfTsu::RenderLine(ts, set, _memory->RAMBase(), ring, y, width, out.data(), budget, used))
             std::fill(out.begin(), out.end(), 0);
         return out;
     }

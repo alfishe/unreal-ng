@@ -113,8 +113,9 @@ uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal)
     if (enabled && _ts->cacheTag[index] == tag)
     {
         const uint16_t word = _ts->cacheWord[index];
-        return static_cast<uint8_t>((addr & 1) ? (word >> 8) : word);
+        return static_cast<uint8_t>((addr & 1) ? (word >> 8) : word);  // a hit takes no DRAM cycle
     }
+    _ts->cpuAccesses++;
 
     // A DRAM read fills the whole word
     const uint8_t* even = _bank_read[bank] + (addr & 0x3FFE);
@@ -147,6 +148,14 @@ void TsConfMemory::CacheClear()
         tag = 0;
 }
 
+/// A CPU read from RAM takes a DRAM cycle the DMA cannot use (the engine's
+/// budget, technical-design §3.8); ROM is a separate chip
+inline void TsConfMemory::CountDramRead(uint16_t addr)
+{
+    if (_ts && _bank_mode[addr >> 14] == BANK_RAM)
+        _ts->cpuAccesses++;
+}
+
 /// Cache model on the CPU read path. The normal read runs first, so access
 /// tracking, breakpoints and TTD see every read; a hit only changes the byte
 /// the CPU gets. Filling happens only while the cache is active: entries the
@@ -158,6 +167,7 @@ uint8_t TsConfMemory::MemoryReadFast(uint16_t addr, bool isExecution)
     const uint8_t normal = Memory::MemoryReadFast(addr, isExecution);
     if (_cacheActive) [[unlikely]]
         return CacheRead(addr, normal);
+    CountDramRead(addr);
     return normal;
 }
 
@@ -166,6 +176,7 @@ uint8_t TsConfMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
     const uint8_t normal = Memory::MemoryReadDebug(addr, isExecution);
     if (_cacheActive) [[unlikely]]
         return CacheRead(addr, normal);
+    CountDramRead(addr);
     return normal;
 }
 

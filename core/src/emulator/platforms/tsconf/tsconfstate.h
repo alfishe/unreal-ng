@@ -77,6 +77,17 @@ namespace TsConfInt
     constexpr uint8_t WaitPort = 0x08;   ///< vector 0xF9
 }
 
+/// TsConfState::dmaFlags
+namespace TsConfDmaFlag
+{
+    constexpr uint8_t Active = 0x01;     ///< DMA_STATUS[7]
+    constexpr uint8_t Opt = 0x02;        ///< DMA_CTRL[6]: BLT2 saturation
+    constexpr uint8_t SrcAlign = 0x04;   ///< DMA_CTRL[5]
+    constexpr uint8_t DstAlign = 0x08;   ///< DMA_CTRL[4]
+    constexpr uint8_t BlockSize = 0x10;  ///< DMA_CTRL[3] (ASZ): 512-byte blocks, byte granularity in the blitters
+    constexpr uint8_t Loaded = 0x20;     ///< FILL: the fill word was read
+}
+
 /// LCK128 modes (MEM_CONFIG[7:6], hardware-spec §2.3)
 enum class TsConfLck128 : uint8_t
 {
@@ -140,6 +151,23 @@ struct TsConfState
     uint16_t engNextLine;       ///< next raster line (0..320) whose start is not processed yet
     /// endregion
 
+    /// region <DMA (§6) and the DRAM budget, TsConfDma / TsConfEngine>
+    uint32_t dmaSrc;            ///< live source word address (21 bit)
+    uint32_t dmaDst;            ///< live destination word address
+    uint32_t dmaCredit;         ///< DRAM accesses the DMA may still use (budget carry)
+    uint32_t cpuAccesses;       ///< CPU DRAM reads since the engine last accounted them
+    uint32_t budgetRaster;      ///< raster tact the DRAM budget is accounted up to
+    uint16_t dmaData;           ///< the word in flight (FILL: the word being filled)
+    uint16_t dmaBlocks;         ///< block counter, bit 8 set = done
+    uint8_t dmaSrcLow;          ///< source low address as the CPU wrote it (the aligned reload)
+    uint8_t dmaDstLow;          ///< destination low address as the CPU wrote it
+    uint8_t dmaBurst;           ///< words left in the block - 1
+    uint8_t dmaDevice;          ///< {DMA_CTRL[7], DMA_CTRL[2:0]}
+    uint8_t dmaFlags;           ///< TsConfDmaFlag bits
+    uint8_t dmaReserved;        ///< keeps the struct free of padding
+    uint16_t cpuLineAccesses;   ///< CPU DRAM reads of the previous line (the TSU's budget)
+    /// endregion
+
     /// Accessors
     uint8_t Page(uint8_t window) const { return regs[TsConfReg::Page0 + (window & 3)]; }
     uint8_t MemConfig() const { return regs[TsConfReg::MemConfig]; }
@@ -148,4 +176,4 @@ struct TsConfState
     uint16_t FmBase() const { return static_cast<uint16_t>((regs[TsConfReg::FMaps] & 0x0F) << 12); }
 };
 
-static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16, "TsConfState must stay padding-free (TTD blob)");
+static_assert(sizeof(TsConfState) == 2048 + TsConfReg::kCount + 8 + 12 + 16 + 32, "TsConfState must stay padding-free (TTD blob)");

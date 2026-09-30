@@ -111,6 +111,7 @@ void PortDecoder_TSConf::reset()
     _state->pFE = 0xFF;
     _state->border_attr = 0x07;
     _state->hw_turbo_ratio = 1;
+    _dma.Reset();
     _engine.Reset();
 
     // The battery-backed NVRAM comes from [EVO] NvramFile once, at power-on;
@@ -131,6 +132,8 @@ void PortDecoder_TSConf::reset()
 
 void PortDecoder_TSConf::ApplyState()
 {
+    if (_memory)
+        _dma.Attach(_memory->RAMBase(), &GetIdeAdapter());
     InstallInterrupts();
     _engine.RebuildLineTable();
     UpdateBanks();
@@ -388,7 +391,9 @@ uint8_t PortDecoder_TSConf::ReadRegister(uint8_t reg)
         case TsConfReg::Page3:
             return _ts.regs[reg];
         case TsConfReg::DmaCtrl:
-            return 0x00;  // DMA_STATUS: [7] busy - no DMA engine yet (phase 5)
+            // DMA_STATUS: [7] busy, as of this cycle
+            CatchUpEngine();
+            return _dma.Busy() ? 0x80 : 0x00;
         default:
             return 0xFF;
     }
@@ -401,6 +406,8 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
 
     if (IsVideoRegister(reg))
         FlushVideo();
+    else if (reg >= TsConfReg::DmaSAl && reg <= TsConfReg::DmaNum)
+        CatchUpEngine();  // the DMA runs up to the write
     _ts.regs[reg] = value;
 
     switch (reg)
@@ -444,6 +451,17 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
             break;
         case TsConfReg::IntMask:
             _interrupts.OnMaskWrite(value);
+            break;
+        case TsConfReg::DmaSAl:
+        case TsConfReg::DmaSAh:
+        case TsConfReg::DmaSAx:
+        case TsConfReg::DmaDAl:
+        case TsConfReg::DmaDAh:
+        case TsConfReg::DmaDAx:
+            _dma.WriteAddress(reg, value);
+            break;
+        case TsConfReg::DmaCtrl:
+            _dma.Launch(value);
             break;
         default:
             break;
@@ -607,6 +625,13 @@ bool PortDecoder_TSConf::IsVideoRegister(uint8_t reg)
     return reg <= TsConfReg::PalSel || reg == TsConfReg::Border ||
            (reg >= TsConfReg::TMapPage && reg <= TsConfReg::SGPage) ||
            (reg >= TsConfReg::T0XOffsL && reg <= TsConfReg::T1YOffsH);
+}
+
+void PortDecoder_TSConf::CatchUpEngine()
+{
+    Core* core = _context->pCore;
+    if (core && core->GetZ80())
+        _engine.CatchUp(core->GetZ80()->t);
 }
 
 void PortDecoder_TSConf::FlushVideo()
