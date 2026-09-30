@@ -921,34 +921,39 @@ TEST_F(ZXEvoErs_Test, NedoOsShellRunsATypedCommand)
     ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source, options).Ok());
     ASSERT_TRUE(RunToMainMenu());
 
-    auto countInRam = [this](const std::string& needle) {
-        size_t count = 0;
-        for (uint16_t page = 0; page < 256; page++)
+    // The NedoOS terminal draws in the ATM 80x25 text mode (screenatm.cpp M_ATMTX): row r's even columns at
+    // #01C0 + 64 * r of the screen page (5, or 7 with #7FFD bit 3), its odd columns #2000 further on. What the
+    // shell printed is read there: text in RAM is no evidence, the terminal's receive buffer takes the output
+    // in whatever pieces the pipe hands over and overwrites them (with the ZX-Evo's 14 MHz memory waits the
+    // "free" output arrives in two pieces)
+    auto screenHas = [this](const std::string& needle) {
+        const uint16_t page = (_context->emulatorState.p7FFD & 0x08) ? 7 : 5;
+        const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
+        for (int row = 0; row < 25; row++)
         {
-            const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
-            if (!bytes)
-                continue;
-            for (const uint8_t* at = bytes; (at = std::search(at, bytes + PAGE_SIZE, needle.begin(), needle.end())) !=
-                                            bytes + PAGE_SIZE;
-                 at++)
-                count++;
+            std::string line;
+            for (int i = 0; i < 40; i++)
+            {
+                line += static_cast<char>(bytes[0x01C0 + 64 * row + i]);
+                line += static_cast<char>(bytes[0x21C0 + 64 * row + i]);
+            }
+            if (line.find(needle) != std::string::npos)
+                return true;
         }
-        return count;
+        return false;
     };
 
     Tap(ZXKEY_5);  // "5. SDcard boot"
-    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return countInRam("M:/bin>") > 0; }, 800, 20);
-    ASSERT_GT(countInRam("M:/bin>"), 0u) << "the NedoOS shell prompt";
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return screenHas("M:/bin>"); }, 800, 20);
+    ASSERT_TRUE(screenHas("M:/bin>")) << "the NedoOS shell prompt";
     _emulator->RunNFrames(50);
-
-    // "free pages=" is in memory once already: cmd.com's own message. The
-    // command's output adds copies (the terminal's buffer, the screen)
-    const size_t outputBefore = countInRam("free pages=");
+    ASSERT_FALSE(screenHas("free pages=")) << "the command's output before the command";
 
     DebugKeyboardManager* keys = _emulator->GetDebugManager()->GetKeyboardManager();
     ASSERT_NE(keys, nullptr);
     keys->TypeText("free\n");
     _emulator->RunNFrames(200);
 
-    EXPECT_GT(countInRam("free pages="), outputBefore) << "the command ran and printed";
+    EXPECT_TRUE(screenHas("M:/bin>free")) << "the typed command echoed";
+    EXPECT_TRUE(screenHas("free pages=")) << "the command ran and printed";
 }
