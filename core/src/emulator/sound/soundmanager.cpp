@@ -1175,8 +1175,29 @@ void SoundManager::handleFrameEnd()
         // always receives the pure CORE_RATE stream - and BEFORE the device
         // callback. At unity ratio (controller disengaged) this is a
         // bit-exact memcpy bypass.
+        const int16_t* deviceIn = _outBuffer;
+        size_t deviceInFrames = samplesThisFrame;
+        if (_outputDelayFrames > 0 || !_outputDelayLine.empty())
+        {
+            // Whole-frame delay line (temporal video effects): this frame goes in,
+            // the one from _outputDelayFrames ago comes out; silence while it fills
+            _outputDelayLine.emplace_back(_outBuffer, _outBuffer + samplesThisFrame * AUDIO_CHANNELS);
+            while (_outputDelayLine.size() > static_cast<size_t>(_outputDelayFrames) + 1)
+                _outputDelayLine.pop_front();  // the delay shrank: drop the oldest
+            if (_outputDelayLine.size() > static_cast<size_t>(_outputDelayFrames))
+            {
+                _delayedOut = std::move(_outputDelayLine.front());
+                _outputDelayLine.pop_front();
+            }
+            else
+            {
+                _delayedOut.assign(samplesThisFrame * AUDIO_CHANNELS, 0);
+            }
+            deviceIn = _delayedOut.data();
+            deviceInFrames = _delayedOut.size() / AUDIO_CHANNELS;
+        }
         size_t deviceFrames =
-            _drcResampler.process(_outBuffer, samplesThisFrame, _deviceBuffer, DEVICE_BUFFER_FRAMES);
+            _drcResampler.process(deviceIn, deviceInFrames, _deviceBuffer, DEVICE_BUFFER_FRAMES);
 
         try
         {

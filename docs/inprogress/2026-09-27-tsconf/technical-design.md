@@ -643,6 +643,13 @@ generic `IMachineStepHook` registered by the decoder (`Z80::machineStepHook`).
 > (every step with the reached `t`; every frame of a turbo run with render
 > decimation; the rollover length).
 
+> **Built 2026-09-30 (phase 3):** `TsConfEngine` is the registered step hook;
+> it drives `TsConfInterrupts`, processes line starts (latches, graphics row
+> counter, the frame's line table that `ScreenTSConf` draws from) and is
+> caught up by the decoder before any video register write (`FlushVideo`).
+> The budget part below (DRAM counters, TSU / DMA chunks) lands with the TSU
+> and the DMA (phases 4-5).
+
 ```
 per CPU step (after the instruction, t = current frame tact):
   engine.CatchUp(t):

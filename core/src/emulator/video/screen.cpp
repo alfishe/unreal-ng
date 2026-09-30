@@ -19,6 +19,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/soundmanager.h"
 #include "stdafx.h"
 
 /// region <Static methods>
@@ -106,6 +107,8 @@ Screen::Screen(EmulatorContext* context)
 
 Screen::~Screen()
 {
+    // The worker writes into the present slots: stop it before they go
+    _temporal.reset();
     if (_framebuffer.memoryBuffer != nullptr)
     {
         DeallocateFramebuffer();
@@ -1032,7 +1035,24 @@ void Screen::LatchFramebuffer()
             _presentPlaneB[index].assign(_planeB.begin(), _planeB.end());
         else if (!_presentPlaneB[index].empty())
             _presentPlaneB[index].clear();
+        _presentSlotSerial[index] = ++_presentSerial;
         _presentLatchCounter++;
+
+        // Temporal effect: the worker processes this frame and writes an older
+        // one back (WriteTemporalOutput takes _presentMutex: Submit must not)
+        if (_temporal)
+        {
+            // The colors the frame is drawn in now: the live palette, not a copy
+            uint32_t palette[16];
+            GetRGBAPalette16(palette);
+            const bool planeB = _planeBEnabled && !_planeB.empty();
+            _temporalDelayFrames.store(
+                static_cast<uint8_t>(_temporal->Submit(_presentSerial, planeB ? _planeB.data() : nullptr,
+                                                       static_cast<int>(_framebuffer.width),
+                                                       static_cast<int>(_framebuffer.height), palette)),
+                std::memory_order_release);
+        }
+        UpdateAudioDelay();
 
         _lastLatchTimestampUs.store(
             std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1060,7 +1080,12 @@ void Screen::FlushAndPresentFramebuffer()
         _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
     else
         _presentPlaneB[0].clear();
+    _presentSlotSerial[0] = ++_presentSerial;
     _presentLatchCounter = 1;
+
+    // The frame sequence broke: the temporal effect restarts, this frame shows raw
+    if (_temporal)
+        _temporal->Reset();
 
     _lastLatchTimestampUs.store(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1107,7 +1132,7 @@ const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
     // first frames after start/reset the delay is clamped to what exists -
     // the queue "fills" naturally, exactly the 1-2 frame startup buffering.
     const uint64_t newest = _presentLatchCounter - 1;
-    uint64_t delay = _presentDelayFrames.load(std::memory_order_acquire);
+    uint64_t delay = GetEffectivePresentDelayFrames();
     if (delay > newest)
         delay = newest;
 
@@ -1115,6 +1140,102 @@ const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
     if (index)
         *index = slot;
     return _presentSlots[slot];
+}
+
+bool Screen::SetTemporalAlgorithm(const std::string& name)
+{
+    {
+        std::lock_guard<std::mutex> lock(_temporalCreateMutex);
+        if (!_temporal)
+        {
+            if (name.empty())
+                return true;
+            _temporal = std::make_unique<TemporalEffects>(
+                [this](uint64_t serial, const uint8_t* rgb, int width, int height) {
+                    return WriteTemporalOutput(serial, rgb, width, height);
+                });
+        }
+    }
+    const bool wasOn = !_temporal->GetAlgorithm().empty();
+    if (!_temporal->SetAlgorithm(name))
+        return false;
+
+    // The algorithm reads plane B, which only the per-T renderer writes: switch
+    // zxdlss and screenhq on with it, and back to what they were when it goes off
+    FeatureManager* features = _context ? _context->pFeatureManager : nullptr;
+    if (features && !name.empty() && !wasOn)
+    {
+        _temporalRestoreScreenHQ = !features->isEnabled(Features::kScreenHQ);
+        _temporalRestoreZXDLSS = !features->isEnabled(Features::kZXDLSS);
+        features->setFeature(Features::kScreenHQ, true);
+        features->setFeature(Features::kZXDLSS, true);
+    }
+    if (name.empty())
+    {
+        _temporalDelayFrames.store(0, std::memory_order_release);
+        if (features && wasOn)
+        {
+            if (_temporalRestoreZXDLSS)
+                features->setFeature(Features::kZXDLSS, false);
+            if (_temporalRestoreScreenHQ)
+                features->setFeature(Features::kScreenHQ, false);
+        }
+        _temporalRestoreScreenHQ = _temporalRestoreZXDLSS = false;
+    }
+    return true;
+}
+
+std::string Screen::GetTemporalAlgorithm()
+{
+    std::lock_guard<std::mutex> lock(_temporalCreateMutex);
+    return _temporal ? _temporal->GetAlgorithm() : std::string();
+}
+
+TemporalEffects::Stats Screen::GetTemporalStats()
+{
+    std::lock_guard<std::mutex> lock(_temporalCreateMutex);
+    return _temporal ? _temporal->GetStats() : TemporalEffects::Stats{};
+}
+
+/// Worker thread: the algorithm's output (RGB8) for the frame latched with
+/// `serial`, written over that frame's present slot (RGBA8888, alpha opaque)
+bool Screen::WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height)
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _framebuffer.width != static_cast<uint32_t>(width) ||
+        _framebuffer.height != static_cast<uint32_t>(height) ||
+        _presentBufferSize != static_cast<size_t>(width) * height * RGBA_SIZE)
+        return false;
+    for (size_t i = 0; i < PRESENT_SLOTS; i++)
+    {
+        if (_presentSlotSerial[i] != serial)
+            continue;
+        // Framebuffer format: RGBA8888 (LE uint32 0xAABBGGRR), byte order R, G, B, A
+        uint8_t* dst = _presentSlots[i];
+        const size_t pixels = static_cast<size_t>(width) * height;
+        for (size_t p = 0; p < pixels; ++p)  // SIMD-CANDIDATE(O-14): RGB8 -> RGBA8888 expand
+        {
+            dst[p * 4 + 0] = rgb[p * 3 + 0];
+            dst[p * 4 + 1] = rgb[p * 3 + 1];
+            dst[p * 4 + 2] = rgb[p * 3 + 2];
+            dst[p * 4 + 3] = 0xFF;
+        }
+        return true;
+    }
+    return false;
+}
+
+/// Emulation thread: the audio waits as long as the video beyond the configured
+/// A/V delay (the temporal effect's look-ahead), so picture and sound stay in sync
+void Screen::UpdateAudioDelay()
+{
+    const int base = _presentDelayFrames.load(std::memory_order_acquire);
+    const int effective = GetEffectivePresentDelayFrames();
+    const int extra = effective > base ? effective - base : 0;
+    if (extra == _audioExtraDelayFrames || !_context || !_context->pSoundManager)
+        return;
+    _audioExtraDelayFrames = extra;
+    _context->pSoundManager->setOutputDelayFrames(extra);
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()

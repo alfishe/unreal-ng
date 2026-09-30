@@ -43,6 +43,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/keyboardmanager.h"
 #include "emulator/soundcharacterpreferences.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/notifications.h"
@@ -901,6 +902,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
             std::string targetId = _emulator->GetUUID();
             messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_CAPS_SHIFT, KEY_RELEASED, targetId));
             messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+            KeyboardManager::postHeldKeyReleases(targetId);  // physical keys (PS/2 machines)
             qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) on entering fullscreen";
         }
     }
@@ -1391,6 +1393,7 @@ void MainWindow::handleFullScreenShortcut()
 
         // Release SYM_SHIFT (Shift on PC keyboard) as well
         messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+        KeyboardManager::postHeldKeyReleases(targetId);  // physical keys (PS/2 machines)
 
         qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) before fullscreen toggle";
     }
@@ -2927,7 +2930,12 @@ void MainWindow::handleTemporalEffectsRequested()
     if (!_screenWrapper)
         return;
 
-    auto* dialog = new TemporalEffectsDialog(_screenWrapper, this);
+    auto* dialog = new TemporalEffectsDialog(
+        _screenWrapper, [this]() -> Emulator* { return m_binding ? m_binding->emulator() : nullptr; }, this);
+    connect(dialog, &TemporalEffectsDialog::blendingChanged, this, [this](bool enabled) {
+        if (_menuManager)
+            _menuManager->setTemporalBlendingChecked(enabled);
+    });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -3544,6 +3552,11 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
     if (_screenWrapper)
     {
         _screenWrapper->setTemporalBlendingEnabled(enabled);
+    }
+    // One temporal effect at a time: blending a de-flickered picture again smears it
+    if (enabled && m_binding && m_binding->emulator() && m_binding->emulator()->GetContext()->pScreen)
+    {
+        m_binding->emulator()->GetContext()->pScreen->SetTemporalAlgorithm("");
     }
 }
 

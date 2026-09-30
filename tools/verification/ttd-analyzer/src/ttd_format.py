@@ -90,7 +90,7 @@ PORT_JOURNAL_BLOCK_RECORDS = 32768
 
 # TTDInputKind / TTDExternalEventKind names (ttdinputjournal.h, ttdexternalevents.h)
 INPUT_KIND_NAMES = ["Key", "MouseMove", "MouseButtons", "MouseWheel", "MouseCounters",
-                    "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset"]
+                    "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset", "PcKey"]
 EXTERNAL_EVENT_KIND_NAMES = {0: "TapeControl", 1: "DiskWrite", 2: "DebuggerEdit",
                              3: "HardwareReset", 255: "Other"}
 
@@ -210,8 +210,10 @@ PERIPHERAL_ID_NAMES = {
     13: "Plus3Paging",
     14: "Upd765",
     15: "EvoSdCard",
-    # 16: reserved for TSConf (PLAN #41)
+    16: "TsConfPaging",
     17: "AtaChannel",
+    18: "Ds12887",
+    19: "EvoPs2",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

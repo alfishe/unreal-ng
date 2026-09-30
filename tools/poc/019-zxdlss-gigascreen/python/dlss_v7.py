@@ -31,7 +31,6 @@ hot spot (O-series backlog).
 """
 import numpy as np
 
-from common.zxscreen import ZX_RGB
 from python.dlss_v1 import P2, PASS
 
 MOTION_VETO = 8     # class code: red in run.py
@@ -56,7 +55,7 @@ class DeflickerV7:
         self.paper = np.zeros(shape, bool)
         self.paper[self.PAPER_Y0:self.PAPER_Y0 + 192, self.PAPER_X0:self.PAPER_X0 + 256] = True
         # brightness per palette index (Rec. 601 on the sRGB values)
-        self.luma = (ZX_RGB.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
+        self.luma = (mixer.palette_rgb.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
         self.motion_hist = []           # per-frame motion masks, newest first (analysis only)
         self.last_motion = None         # run.py paints it red (per segment)
 

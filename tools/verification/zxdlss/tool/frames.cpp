@@ -2,6 +2,7 @@
 
 #include <zstd.h>
 
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -54,7 +55,27 @@ struct ClipInfo
 {
     int width = 0, height = 0, chunk = 0;
     uint64_t first = 0, frames = 0;
+    bool hasPalette = false;
+    std::array<uint32_t, 16> palette{};   ///< clip.json "palette16" (RGBA8888, 0xAABBGGRR)
 };
+
+/// clip.json "palette16": ["#rrggbb", ...] (16 entries)
+bool jsonPalette16(const std::string& text, std::array<uint32_t, 16>& palette)
+{
+    size_t at = text.find("\"palette16\"");
+    if (at == std::string::npos)
+        return false;
+    for (int c = 0; c < 16; ++c)
+    {
+        at = text.find('#', at);
+        if (at == std::string::npos || at + 7 > text.size())
+            return false;
+        const uint32_t rgb = static_cast<uint32_t>(std::stoul(text.substr(at + 1, 6), nullptr, 16));
+        palette[c] = 0xFF000000u | ((rgb >> 16) & 0xFF) | (rgb & 0xFF00) | ((rgb & 0xFF) << 16);
+        at += 7;
+    }
+    return true;
+}
 
 bool clipInfo(const std::string& dir, ClipInfo& info, std::string& error)
 {
@@ -73,6 +94,7 @@ bool clipInfo(const std::string& dir, ClipInfo& info, std::string& error)
     }
     info = {static_cast<int>(w), static_cast<int>(h), static_cast<int>(c), static_cast<uint64_t>(from),
             static_cast<uint64_t>(frames)};
+    info.hasPalette = jsonPalette16(json, info.palette);
     return true;
 }
 
@@ -98,12 +120,17 @@ std::string readClip(const std::string& dir, uint64_t from, uint64_t to, const F
         return "frame range outside the clip [" + std::to_string(info.first) + ", " +
                std::to_string(info.first + info.frames - 1) + "]";
     const size_t px = static_cast<size_t>(info.width) * info.height;
-    std::vector<uint8_t> chunk;
-    int loaded = -1;
+    std::vector<uint8_t> chunk, rgbaChunk;
+    int loaded = -1, loadedRgba = -1;
     SourceFrame f;
     f.width = info.width;
     f.height = info.height;
     f.planeB.resize(px);
+    // Without "palette16" (clips exported before it): each color index's RGBA as
+    // the frame shows it, taken the first time the index appears
+    uint32_t known = info.hasPalette ? 0xFFFFu : 0u;
+    if (info.hasPalette)
+        f.palette = info.palette;
     for (uint64_t frame = from; frame <= to; ++frame)
     {
         const uint64_t index = frame - info.first;
@@ -118,6 +145,30 @@ std::string readClip(const std::string& dir, uint64_t from, uint64_t to, const F
         if (offset + px * sizeof(uint16_t) > chunk.size())
             return "chunk " + chunkName("planeb", c) + " is short";
         std::memcpy(f.planeB.data(), chunk.data() + offset, px * sizeof(uint16_t));
+        uint32_t used = 0;
+        for (size_t p = 0; p < px; ++p)
+            used |= 1u << ((f.planeB[p] >> 8) & 0x0F);
+        if (used & ~known)
+        {
+            if (c != loadedRgba)
+            {
+                if (!decompress(slurp(std::filesystem::path(dir) / chunkName("rgba", c)), rgbaChunk))
+                    return "clip has no palette16 and cannot read " + chunkName("rgba", c);
+                loadedRgba = c;
+            }
+            const size_t rgbaOffset = (index % info.chunk) * px * 4;
+            if (rgbaOffset + px * 4 > rgbaChunk.size())
+                return "chunk " + chunkName("rgba", c) + " is short";
+            for (size_t p = 0; p < px && (used & ~known); ++p)
+            {
+                const int color = (f.planeB[p] >> 8) & 0x0F;
+                if (known & (1u << color))
+                    continue;
+                const uint8_t* rgba = rgbaChunk.data() + rgbaOffset + p * 4;
+                f.palette[color] = 0xFF000000u | rgba[0] | (rgba[1] << 8) | (rgba[2] << 16);
+                known |= 1u << color;
+            }
+        }
         f.frame = frame;
         if (!cb(f))
             break;

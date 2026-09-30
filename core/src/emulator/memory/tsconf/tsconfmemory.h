@@ -53,6 +53,7 @@ protected:
 private:
     /// The cached byte for a CPU RAM read at addr (fills the entry on a miss)
     uint8_t CacheRead(uint16_t addr, uint8_t normal);
+    void CountDramRead(uint16_t addr);
 
     TsConfState* _ts = nullptr;
     bool _cacheActive = false;

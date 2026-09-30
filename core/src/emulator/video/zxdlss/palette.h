@@ -1,8 +1,9 @@
 #pragma once
 
 /// @file palette.h
-/// @brief The emulator's ZX palette, brightness and the linear-light mixer
-/// (algorithm-mod-tpgw.md sections 3.1 and 8).
+/// @brief The ZX palette an algorithm mixes with - the emulator's active one,
+/// passed with every frame (FrameInput::palette) - its brightness and the
+/// linear-light conversions (algorithm-mod-tpgw.md sections 3.1 and 8).
 
 #include <array>
 #include <cmath>
@@ -16,8 +17,20 @@ struct Palette
     std::array<std::array<uint8_t, 3>, 16> rgb{};
     std::array<std::array<double, 3>, 16> linear{};   ///< srgb_to_linear per channel
     std::array<float, 16> luma{};                      ///< Rec. 601 on the 0..255 values
+    std::array<uint32_t, 16> source{};                 ///< the RGBA8888 values it was built from
 
-    static const Palette& instance();
+    /// From the 16 colors as the emulator draws them: RGBA8888, little-endian
+    /// uint32 0xAABBGGRR (Screen::GetRGBAPalette16)
+    static Palette fromRGBA(const uint32_t* rgba);
+
+    /// The palette these 16 colors make (alpha ignored)
+    bool sameAs(const uint32_t* rgba) const
+    {
+        for (int c = 0; c < 16; ++c)
+            if ((rgba[c] | 0xFF000000u) != source[c])
+                return false;
+        return true;
+    }
 
     static double srgbToLinear(uint8_t c)
     {

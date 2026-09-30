@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "frames.h"
-#include "zxdlss/algorithm.h"
+#include "emulator/video/zxdlss/algorithm.h"
 
 using namespace zxdlss;
 
@@ -39,10 +39,11 @@ int main(int argc, char** argv)
     {
         int w, h;
         std::vector<uint8_t> plane, attr, ink;
+        std::array<uint32_t, 16> palette;
     };
     std::vector<Decoded> frames;
     const std::string err = readClip(clip, from, to, [&](const SourceFrame& f) {
-        Decoded d{f.width, f.height, {}, {}, {}};
+        Decoded d{f.width, f.height, {}, {}, {}, f.palette};
         decodePlaneB(f.planeB.data(), f.planeB.size(), d.plane, d.attr, d.ink);
         frames.push_back(std::move(d));
         return true;
@@ -65,7 +66,7 @@ int main(int argc, char** argv)
         RGBImage out;
         const auto t0 = std::chrono::steady_clock::now();
         for (const Decoded& d : frames)
-            alg->process(FrameInput{d.w, d.h, d.plane.data(), d.attr.data(), d.ink.data()}, out);
+            alg->process(FrameInput{d.w, d.h, d.plane.data(), d.attr.data(), d.ink.data(), 48, 48, d.palette.data()}, out);
         perRun.push_back(1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() /
                          static_cast<double>(frames.size()));
         stats = alg->stats();

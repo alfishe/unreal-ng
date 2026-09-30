@@ -17,6 +17,7 @@ class LinearMean:
     name = "linear-mean"
 
     def __init__(self, palette_rgb):
+        self.palette_rgb = palette_rgb                               # what the detectors' luma comes from
         self.lin = srgb_to_linear(palette_rgb.astype(np.float64))   # 256 x 3
 
     def mix(self, planes, weights):
@@ -32,6 +33,7 @@ class SrgbMean(LinearMean):
     name = "srgb-mean"
 
     def __init__(self, palette_rgb):
+        self.palette_rgb = palette_rgb
         self.lin = palette_rgb.astype(np.float64)
 
     def mix(self, planes, weights):

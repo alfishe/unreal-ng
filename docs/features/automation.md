@@ -105,6 +105,7 @@ find <hex-pattern>      # Search Z80 memory for a byte pattern
 digest                  # Screen-area digest (change detection)
 beam                    # Raster beam position/zone (+ layer pixel under it)
 video layout|pixel|address|text  # What makes a pixel, which pixels a byte feeds, text modes
+video temporal [list|off|<name>]  # ZX DLSS de-flicker status / switch
 frame_cost              # Frame cost stats (halt vs active)
 ```
 
@@ -290,6 +291,7 @@ Interactive documentation available at `/api/swagger`
 | GET | `/api/v1/emulator/{id}/video/pixel` | Sources of a pixel (`x`,`y`[,`layer`] or `t`) |
 | GET | `/api/v1/emulator/{id}/video/address` | Pixels a byte feeds (`page`,`offset` or `z80`) |
 | GET | `/api/v1/emulator/{id}/video/text` | Text grid of a text mode |
+| GET / PUT | `/api/v1/emulator/{id}/video/temporal` | ZX DLSS de-flicker status / switch (`{"algorithm": "<name>"\|""}`) |
 | GET | `/api/v1/emulator/{id}/frame_cost` | Frame cost stats (halt vs active) |
 
 #### Labels & Symbols
@@ -508,6 +510,7 @@ end
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
+- `video_temporal`, `video_temporal_set` - ZX DLSS de-flicker status and switch (the picture and sound are delayed by the algorithm's look-ahead while it is on)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load, file info before loading)
@@ -662,6 +665,7 @@ videowall.set_single_sync(False)
 | Screen Digest / Beam / Frame Cost | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Coverage / AY Log | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Audio/Video Capture | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Temporal effects (ZX DLSS) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Assembler / Source Listings | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 > [!NOTE]

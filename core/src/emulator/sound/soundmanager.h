@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -168,6 +169,14 @@ protected:
     // plus max trim) over the largest frame.
     static constexpr size_t DEVICE_BUFFER_FRAMES = MAX_SAMPLES_PER_FRAME + MAX_SAMPLES_PER_FRAME / 4;
     ResamplerDRC _drcResampler;
+
+    // Output delay line (whole frames): a temporal video effect (ZX DLSS) shows
+    // each frame later than the A/V sync delay; the device stream waits as long.
+    // Sits after the recording and analyzer taps (they stay in emulated time)
+    // and before the DRC resampler. Emulation thread only.
+    int _outputDelayFrames = 0;
+    std::deque<std::vector<int16_t>> _outputDelayLine;
+    std::vector<int16_t> _delayedOut;
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
 
     // Wide mix bus (MoonSound integration design 5.2/D7). Enabled only while
@@ -546,6 +555,13 @@ public:
     void handleFrameStart();
     void handleStep();
     void handleFrameEnd();
+
+    /// Delay the audio sent to the device by whole frames (0 = none), to follow a
+    /// video effect that presents frames later (Screen temporal effects). Growing
+    /// the delay inserts silence, shrinking it drops the oldest frames. Recording
+    /// and analyzers are not delayed. Emulation thread.
+    void setOutputDelayFrames(int frames) { _outputDelayFrames = frames < 0 ? 0 : frames; }
+    int getOutputDelayFrames() const { return _outputDelayFrames; }
     /// endregion </Emulation events>
 
     /// region <Wave file export>

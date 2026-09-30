@@ -13,6 +13,8 @@
 //                    run_frames → result (RMS/peak/dominant frequency, optional WAV)
 //   audio_status   → GET /audio/capture/status
 //   audio_result   → GET /audio/capture/result?wav=
+//   temporal_status → GET /video/temporal (ZX DLSS de-flicker status, one-line summary)
+//   temporal_set    → PUT /video/temporal {algorithm} ("off" / "" switches it off)
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -60,6 +62,37 @@ unsigned ComputeQuantum(const std::vector<std::string>& digests, unsigned maxQua
     return quantum;
 }
 
+/// One-line summary of a /video/temporal status, e.g. "ZX DLSS mod-tpgwafsd active, video +7 frames
+/// (143 ms), audio +5, 4.8 ms/frame, late 0, restarts 0"
+std::string TemporalSummary(const Json::Value& status)
+{
+    std::ostringstream out;
+    const std::string algorithm = status.get("algorithm", "").asString();
+    if (algorithm.empty())
+    {
+        out << "ZX DLSS off, video +" << status.get("video_delay_frames", 0).asInt() << " frames";
+        return out.str();
+    }
+    out << "ZX DLSS " << algorithm;
+    if (status.get("active", false).asBool())
+    {
+        out << " active";
+    }
+    else
+    {
+        const std::string reason = status.get("inactive_reason", "").asString();
+        out << " inactive" << (reason.empty() ? "" : " (" + reason + ")");
+    }
+    out << ", video +" << status.get("video_delay_frames", 0).asInt() << " frames ("
+        << static_cast<long long>(std::llround(status.get("video_delay_ms", 0.0).asDouble())) << " ms), audio +"
+        << status.get("audio_extra_delay_frames", 0).asInt();
+    out.setf(std::ios::fixed);
+    out.precision(1);
+    out << ", " << status.get("average_ms", 0.0).asDouble() << " ms/frame, late " << status.get("late", 0).asUInt64()
+        << ", restarts " << status.get("restarts", 0).asUInt64();
+    return out.str();
+}
+
 void RegisterCaptureMediaImpl(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -67,11 +100,14 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
-                               "record_resume", "audio_capture", "audio_status", "audio_result"})
+                               "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
+                               "temporal_set"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
-    schema["properties"]["action"]["description"] = "Media operation: still capture, digest, video recording session, or audio capture.";
+    schema["properties"]["action"]["description"] =
+        "Media operation: still capture, digest, video recording session, audio capture, or the ZX DLSS de-flicker "
+        "(temporal_status / temporal_set).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
@@ -111,13 +147,19 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["wav"]["type"] = "boolean";
     schema["properties"]["wav"]["default"] = false;
     schema["properties"]["wav"]["description"] = "Export a WAV file alongside the audio analysis (returns wav_path)";
+    schema["properties"]["algorithm"]["type"] = "string";
+    schema["properties"]["algorithm"]["description"] =
+        "temporal_set: ZX DLSS algorithm name (default/recommended mod-tpgwafsd; temporal_status lists all), or "
+        "\"off\" / \"\" to switch it off. While on, video is delayed by the algorithm's look-ahead (7 frames for "
+        "mod-tpgwafsd) and audio by the matching extra frames";
     schema["required"].append("action");
 
     registry.Register(
         "capture_media",
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
         "(GIF native) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
-        "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export).",
+        "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
+        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             std::string action = args["action"].asString();
@@ -548,9 +590,45 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "temporal_status" || action == "temporal_set")
+            {
+                Json::Value body;
+                if (action == "temporal_set")
+                {
+                    if (!args.isMember("algorithm") || !args["algorithm"].isString())
+                    {
+                        done(ToolResult::Error("temporal_set needs 'algorithm': a name (e.g. mod-tpgwafsd) or \"off\""));
+                        return;
+                    }
+                    const std::string algorithm = args["algorithm"].asString();
+                    body["algorithm"] = algorithm == "off" ? std::string() : algorithm;
+                }
+                const bool set = action == "temporal_set";
+                TargetResolver::ResolveFromArgs(args, caller, [set, body, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    auto request = std::make_shared<Json::Value>(body);
+                    caller.Call(set ? "PUT" : "GET", Endpoint(idOrError, "/video/temporal"), set ? request.get() : nullptr,
+                                [request, set, idOrError, done](int status, Json::Value response) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(std::string(set ? "Temporal switch" : "Temporal status") + " failed (HTTP " +
+                                                   std::to_string(status) + "): " + DescribeErrorBody(response)));
+                            return;
+                        }
+                        done(ToolResult::Ok(TemporalSummary(response) + " [target " + idOrError + "]", std::move(response)));
+                    });
+                });
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
-                                            "record_pause, record_resume, audio_capture, audio_status, audio_result"));
+                                            "record_pause, record_resume, audio_capture, audio_status, audio_result, "
+                                            "temporal_status, temporal_set"));
         });
 }
 

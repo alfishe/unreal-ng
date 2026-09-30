@@ -135,6 +135,26 @@ media {"action":"insert","slot":"cd","path":"/home/me/zx/disc.iso"}    # CLI: me
 inspect_state {"aspects":["ide"]}                                         # board, latches, units, sense data
 ```
 
+### NedoOS from the SD card (ZX-Evo)
+
+`ATM3` boots NedoOS from the Z-Controller SD slot `sd.zc`: an SD image, or a host
+folder with the NedoOS release files (`SD_BOOT.$C`, `bin/term.com`, `bin/cmd.com`;
+a minimal set is `testdata/machines/zxevo/nedoos/sdcard/`). In the ERS menu "5.
+SDcard boot" starts it; the shell prompt is `M:/bin>`.
+
+The NedoOS ZX-Evo kernel reads the keyboard **only** from the AVR's PS/2 scan code
+log, never from the ZX matrix. Host keys reach it as physical PC keys (the
+emulator window sends them), and so does automation typing: text is typed as
+US-layout PC keys, and key names accept PC keys too (`f1`, `home`, `esc`,
+`pc.up`).
+
+```text
+media      {"action":"insert","slot":"sd.zc","path":"/home/me/zx/nedoos-sd"}   # a folder or an image
+type_input {"action":"tap","key":"5"}                                           # ERS: SD card boot
+type_input {"action":"type","text":"free\n"}                                    # a shell command
+type_input {"action":"tap","key":"f1"}                                          # a PC key with no ZX key
+```
+
 ### CP/M mode
 
 `#FF77` bit 9 switches the machine into CP/M memory layout. The natural way

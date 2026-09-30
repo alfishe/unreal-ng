@@ -1,15 +1,22 @@
-# zxdlss - ZX DLSS algorithm module and tools
+# zxdlss - ZX DLSS verification tools
 
-C++ implementation of the ZX DLSS GigaScreen de-flicker algorithms, with a tool
-that renders TTD recordings or exported clips through them. Phase 2 of POC 019
+Tools around the ZX DLSS GigaScreen de-flicker algorithms: render TTD recordings
+or exported clips through them, measure their cost, check them bit for bit.
+Phase 2 of POC 019
 ([tools/poc/019-zxdlss-gigascreen](../../poc/019-zxdlss-gigascreen/README.md)).
+
+The algorithms themselves live in the emulator core,
+[core/src/emulator/video/zxdlss](../../../core/src/emulator/video/zxdlss/algorithm.h):
+the emulator runs them live as a temporal effect (Tools -> Temporal Effects ->
+ZX DLSS; `Screen::SetTemporalAlgorithm`, `core/src/emulator/video/temporaleffects.h`),
+and the tools here link the core.
 
 | Part | What it is |
 |---|---|
-| `algo/include/zxdlss/algorithm.h` | the interface every algorithm implements (`delay()`, `process(frame) -> RGB`), the registry (`createAlgorithm(name)`) |
-| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8); `mod-tpgwaf` + flash veto, periods 2..4, detail-based scene trigger; `mod-tpgwafs` + step-aware scene render; `mod-tpgwafsd` + no border field seeds on stripe tiles (the baseline) |
-| `algo/src/mod_tpgw_ref.cpp` | `mod-tpgw-ref`, the literal scalar implementation of the spec |
-| `algo/src/registry.cpp` | registry, plane B decoding, `raw` (no processing) |
+| `core/src/emulator/video/zxdlss/algorithm.h` | the interface every algorithm implements (`delay()`, `process(frame) -> RGB`), the registry (`createAlgorithm(name)`) |
+| `core/src/emulator/video/zxdlss/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8); `mod-tpgwaf` + flash veto, periods 2..4, detail-based scene trigger; `mod-tpgwafs` + step-aware scene render; `mod-tpgwafsd` + no border field seeds on stripe tiles (the baseline) |
+| `algo/src/mod_tpgw_ref.cpp` | `mod-tpgw-ref`, the literal scalar implementation of the spec (stays here: only the tools need it; it registers itself from the tool binaries) |
+| `core/src/emulator/video/zxdlss/registry.cpp` | registry, plane B decoding, `raw` (no processing) |
 | `tool/main.cpp` | `zxdlss-render`: TTD file or clip -> algorithm -> video / exact RGB dump |
 | `tool/bench.cpp` | `zxdlss-bench`: per-frame and per-stage cost |
 | `scripts/compare_dump.py` | frame-exact comparison of two dumps |
@@ -97,13 +104,20 @@ sound) and the frame is printed (`resynced at frame ...`). Clip input
 
 ## Add an algorithm
 
-One `.cpp` in `algo/src/` implementing `zxdlss::Algorithm`, registered with
+One `.cpp` in `core/src/emulator/video/zxdlss/` implementing `zxdlss::Algorithm`,
+with a registration function
 
 ```cpp
-const Registration kRegistration("my-alg", [] { return std::make_unique<MyAlgorithm>(); });
+void registerMyAlg(std::map<std::string, Factory>& registry)
+{
+    registry["my-alg"] = [] { return std::make_unique<MyAlgorithm>(); };
+}
 ```
 
-and listed in `CMakeLists.txt` (`zxdlss_algo`). The tools pick it up by name.
+declared in `registry.h` and called from `registry()` in `registry.cpp`. (The core
+is a static archive: an algorithm registering itself from a static constructor
+would be dropped by the linker, because nothing references its object file.) The
+tools and the emulator's Temporal Effects dialog pick it up by name.
 
 ## Verify
 

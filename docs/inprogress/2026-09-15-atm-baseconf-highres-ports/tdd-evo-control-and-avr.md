@@ -237,7 +237,30 @@ Version record (16 bytes): name (12, zero-padded), date word little-endian
 Z80 side checks it). UF comes from the CMOS base class: host time in normal runs, never set while
 the clock is frozen (tests, TTD-driven runs); a T-state-driven UF is a later refinement.
 
-### 6.1 PS/2 keyboard (phase E2b — deferred, keep this design)
+### 6.1 PS/2 keyboard (phase E2b — done 2026-09-30)
+
+> **Implemented** on branch `zxevo-ps2` (2026-09-30), with two changes to the design below:
+>
+> - **Its own journal event, not a field on the matrix event.** A host key is journaled once as
+>   `TTDInputKind::PcKey` (key = `PcKey`), next to the matrix events it also produces. A field on
+>   the matrix event cannot carry keys that have no matrix event (F1, Home) and is tangled with the
+>   decomposition and press counters (Up = Caps Shift + 7: two matrix events, one physical key).
+>   Still journaled once, still applied at the one input apply point, never derived from the matrix.
+>   Only journaled when the machine has a PS/2 sink, so other models pay nothing.
+> - **Its own blob, `PeripheralId::EvoPs2` = 19** (40 bytes: log, pointers, parser flags, modifier
+>   mask, held keys) instead of growing `AtmPagingState`, as §8 already suggested.
+>
+> The AVR side follows the firmware byte for byte: `ps2keyboard_parse` / `to_log` / `from_log`
+> (`ps2.c`) and the modifier part of `to_zx` (`zx.c`), incl. the 15-byte ring, the overflow `#FF`,
+> "after a reset the first byte logged must start a key", Pause never logged, protocol bytes dropped.
+> Code: `core/src/emulator/io/keyboard/pckey.{h,cpp}` (keys, set-2 encoder, macOS / Windows / Linux
+> host tables, ZX key and US character mappings), `EvoAvr` (`IPs2KeySink`), `Keyboard::SetPs2Sink`,
+> `TTDEvoPs2`, `KeyboardManager::createKeyboardEvent` (Qt). Automation: typed text sends US-layout
+> PC keys; key names accept PC keys (`f1`, `home`, `pc.up`) on WebAPI, CLI, Python and MCP.
+> Tests: `pckey_test.cpp` (PS2-1), `evoavr_test.cpp` (PS2-2, PS2-3, AVR-2), `keyboard_test.cpp`
+> (PS2-5, PS2-6), `ttdevops2_test.cpp` (PS2-4), `zxevo_ers_test.cpp` `NedoOsShellRunsATypedCommand`
+> (NOS-KBD-1). Not done: ERS-KBD-1 (the ERS keyboard test screen); TSConf's `EvoAvr` has no sink
+> yet (its TTD blob would need the PS/2 state too).
 
 **Why it matters.** The NedoOS ZX-Evo kernel is built with `PS2KBD=1` (`kernel/build_kernel_evo.bat`):
 its ZX-matrix scanner `syskey2.asm` is left out (`KEYSCAN` becomes a stub, `syskrnl.asm:526-538`) and
