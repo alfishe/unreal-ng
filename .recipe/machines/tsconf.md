@@ -74,7 +74,11 @@ curl -s -X POST "$BASE/emulator/$EMU/reset"
 ```
 
 The CMOS has no NVRAM file in the ts-conf config: every new instance starts
-with blank NVRAM (Setup first).
+with blank NVRAM (Setup first). From the IDE master instead: insert the image
+into `ide0.master`, then also set "Boot Device" (4 x CAPS SHIFT+6 further, 1 x
+ENTER: SD Z-contr -> IDE Nemo M) before the reset; WC's panels open the drive
+named in `WC/wc.ini` (`DRV=1` for the IDE master). Setup options, boot devices
+and IDE details: `docs/inprogress/2026-09-27-tsconf/boot-and-storage-notes.md`.
 
 ### What works / what doesn't
 
@@ -89,7 +93,8 @@ with blank NVRAM (Setup first).
 | SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS | implemented |
 | SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
-| Wild Commander from SD (TS-BIOS "BD boot.$c") | works (test BOOT-3) |
+| Wild Commander from SD or the Nemo IDE master (TS-BIOS "BD boot.$c", Boot Device) | works (tests BOOT-3, BOOT-4); WC's panels use the drive in `WC/wc.ini` (`DRV=0` SD, `1` IDE master) |
+| PS/2 keyboard (the AVR's scan code log; Wild Commander reads only this) | implemented (host keys and automation typing) |
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
 | 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs | implemented (phase 8) |
 | VDAC color curves, TSU render timing within the line | not yet |

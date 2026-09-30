@@ -7,6 +7,9 @@
 #include <vector>
 
 #include "_helpers/zcsdtesthelper.h"
+#include "_helpers/emulatortesthelper.h"
+#include "debugger/ttd/ide/ttdatachannel.h"
+#include "emulator/emulator.h"
 #include "emulator/io/ide/ata/atadisk.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/spi/spidevice.h"
@@ -244,4 +247,64 @@ TEST_F(TsConfStorage_Test, DMA15_IdeSectorsByDma)
     EXPECT_EQ(disk.Data()[5 * 512 + 1], 0x03) << "low byte at the even address";
     EXPECT_EQ(disk.Data()[5 * 512 + 511], static_cast<uint8_t>(511 * 3));
     _context->pIdeController->Channel().Unit(0)->DetachMedium();
+}
+
+/// IDE-5: TTD in the middle of a Nemo write - between the two halves of a word
+/// (the high byte waits in the #11 latch) and mid-sector. The shared AtaChannel
+/// blob (id 17) taken there and restored continues the transfer exactly: the
+/// sector written after the restore is byte-identical to the first run
+TEST(TsConfIde_Test, IDE5_TtdMidWriteContinuesExactly)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(context->pIdeController && context->pIdeController->Enabled()) << "[HDD] Scheme=NEMO-DIVIDE";
+    MemoryDisk disk(64);
+    context->pIdeController->Channel().Unit(0)->AttachMedium(disk, {});
+    PortDecoder* decoder = context->pPortDecoder;
+    auto out = [&](uint16_t port, uint8_t value) { decoder->DecodePortOut(port, value, 0); };
+    auto in = [&](uint16_t port) { return decoder->DecodePortIn(port, 0); };
+    auto command = [&](uint8_t code, uint8_t lba) {
+        out(0xFFD0, 0xE0);  // master, LBA
+        out(0x0050, 1);
+        out(0x0070, lba);
+        out(0x0090, 0);
+        out(0x00B0, 0);
+        out(0x00F0, code);
+    };
+    auto word = [](int i) { return static_cast<uint16_t>(i * 0x0101 ^ 0x5A3C); };
+
+    command(0x30, 7);  // WRITE SECTORS
+    for (int i = 0; i < 100; i++)
+    {
+        out(0x0011, static_cast<uint8_t>(word(i) >> 8));
+        out(0x0010, static_cast<uint8_t>(word(i)));
+    }
+    out(0x0011, static_cast<uint8_t>(word(100) >> 8));  // word 100: the high byte in the latch
+
+    ttd::TTDAtaChannel blob(context);
+    std::vector<uint8_t> saved(blob.TTDStateSize());
+    blob.TTDSaveState(saved.data());
+    const uint64_t hash = blob.TTDHashState();
+
+    auto finish = [&]() {
+        out(0x0010, static_cast<uint8_t>(word(100)));
+        for (int i = 101; i < 256; i++)
+        {
+            out(0x0011, static_cast<uint8_t>(word(i) >> 8));
+            out(0x0010, static_cast<uint8_t>(word(i)));
+        }
+        std::vector<uint8_t> sector(disk.Data() + 7 * 512, disk.Data() + 8 * 512);
+        return sector;
+    };
+    const std::vector<uint8_t> first = finish();
+    EXPECT_EQ(first[0], 0x3C) << "low byte first";
+    EXPECT_EQ(first[201], static_cast<uint8_t>(word(100) >> 8)) << "the latched high byte of word 100";
+
+    std::memset(disk.Data() + 7 * 512, 0, 512);  // the unit's copy goes: only the blob can bring the words back
+    blob.TTDLoadState(saved.data());
+    EXPECT_EQ(blob.TTDHashState(), hash);
+    EXPECT_EQ(finish(), first) << "the restored transfer writes the same sector";
+    EXPECT_EQ(in(0x00F0) & 0x88, 0x00) << "not busy, no data request: the command completed";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

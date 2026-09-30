@@ -6,6 +6,7 @@
 
 #include <cstring>
 
+#include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/tsconf/ttdtsconfstate.h"
 #include "debugger/ttd/ttdds12887.h"
@@ -48,12 +49,21 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
         _tsMemory->AttachState(&_ts);
     else
         MLOGWARNING("PortDecoder_TSConf: the memory subsystem is not TsConfMemory - windows stay at the reset layout");
+
+    // The AVR is the board's PS/2 keyboard controller, as on ATM3: physical
+    // host keys reach its scan code log (Wild Commander and NedoOS read only
+    // that; the ZX matrix gets the translated keys as before)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_evoAvr);
 }
 
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
     if (_context->pMediaManager)
         _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_evoAvr)
+        _context->pKeyboard->SetPs2Sink(nullptr);
 
     Core* core = _context->pCore;
     if (core)
@@ -972,7 +982,8 @@ void PortDecoder_TSConf::ApplyVideoPage()
 
 std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887};
+    return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887,
+            ttd::PeripheralId::EvoPs2};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTDSerializers() const
@@ -982,6 +993,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDTsConfState>(*self));
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_evoAvr));
+    serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(self->_evoAvr));
     return serializers;
 }
 

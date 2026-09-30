@@ -410,6 +410,15 @@ Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
 (v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
 example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
 the pager / resident addresses and the v1.1 picture; v0.x refused.
+**BOOT-4 and IDE-5 done (2026-09-30, branch `tsconf-ide`):** TS-BIOS boots
+Wild Commander from the Nemo IDE master and WC works its panels on that disk
+(`BOOT4_BootsWildCommanderFromIde`: the SD image as the hard disk, `wc.ini`
+panels on drive 1); a TTD blob taken between the two halves of a Nemo write
+and mid-sector continues the write exactly (`IDE5_TtdMidWriteContinuesExactly`).
+Found on the way: TS-Conf had no PS/2 keyboard - WC reads keys only from the
+AVR's PS/2 log - so the AVR is now the machine's PS/2 sink as on ATM3 (TTD
+blob `EvoPs2`, test PS2-1). Field notes: [boot-and-storage-notes.md](boot-and-storage-notes.md).
+
 **BOOT-3 done in step 7b (2026-09-30):** TS-BIOS boots Wild Commander v1.11
 RC7 from a FAT32 SD image (`tsconf_boot_test.cpp`, skipped without the image:
 the Wild Commander packages and SD images live untracked in
