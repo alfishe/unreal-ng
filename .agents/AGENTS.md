@@ -2,12 +2,24 @@
 
 > **CRITICAL**: NEVER commit changes without explicit user request.
 > - Each commit permission is **one-time only** — no blanket permissions
+> - **Cap build/test parallelism at 50% of logical cores.** Several agents build on this
+>   machine at once — each one launching an unbounded `ninja`/`cmake --build`/`ctest` job
+>   count stacks up across agents and brings the machine to a crawl. Always pass an explicit
+>   `-j` computed as half the logical cores, e.g.:
+>   ```bash
+>   JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+>   ninja -C cmake-build-agent-release -j "$JOBS"
+>   cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"
+>   ```
+>   This cap applies to every build/test command in this file, not just the mandatory
+>   pre-commit one.
 > - Steps before any commit:
 >   1. Run the checks that match what changed:
 >      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
 >        `unreal-videowall/`, `testclient/`, the automation modules in `core/automation/`):
->        **mandatory** full build `ninja -C cmake-build-agent-release` with zero compiler
->        warnings, and `core-tests` must pass (`cmake --build cmake-build-agent-release --target test-parallel`)
+>        **mandatory** full build `ninja -C cmake-build-agent-release -j "$JOBS"` with zero
+>        compiler warnings, and `core-tests` must pass
+>        (`cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"`)
 >      - **Documentation only** (`docs/`, `.recipe/`, other `*.md`): no build, no tests. Verify that
 >        cross-references and links resolve and that no machine-specific absolute paths slipped in
 >        (`python3 tools/fix-absolute-paths.py --path <changed files>`, dry run by default)
@@ -38,13 +50,17 @@
 | **`tools/poc/`** | Proof of Concept directory for isolated throwaway code and experiments. |
 
 ## Building the Project
-We use CMake with Ninja for building:
+We use CMake with Ninja for building. **Cap `-j` at 50% of logical cores** — multiple agents
+build concurrently on this machine, and unbounded job counts pile up and stall everything:
 ```bash
 # Configure the build system
 cmake -S . -B cmake-build-agent-release -G Ninja
 
+# Compute a job cap at 50% of logical cores (min 1)
+JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+
 # Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
-ninja -C cmake-build-agent-release
+ninja -C cmake-build-agent-release -j "$JOBS"
 ```
 
 ## Writing Tests
@@ -71,10 +87,14 @@ Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standa
 # Configure with tests enabled
 cmake -S . -B cmake-build-agent-release -G Ninja -DTESTS=ON
 
+# Job cap at 50% of logical cores (min 1) — keep this below full core count so
+# concurrent agent builds on this machine don't starve each other
+JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
+
 # Run all tests in parallel (automatically builds core-tests on demand)
-cmake --build cmake-build-agent-release --target test-parallel
+cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"
 # Or run tests sequentially:
-ninja -C cmake-build-agent-release core-tests && ./cmake-build-agent-release/bin/core-tests
+ninja -C cmake-build-agent-release -j "$JOBS" core-tests && ./cmake-build-agent-release/bin/core-tests
 
 # Run specific tests
 ./cmake-build-agent-release/bin/core-tests --gtest_filter="*TestName*"
@@ -83,7 +103,7 @@ ninja -C cmake-build-agent-release core-tests && ./cmake-build-agent-release/bin
 cmake -S . -B cmake-build-agent-release -G Ninja -DBENCHMARKS=ON
 
 # Build and run benchmarks
-ninja -C cmake-build-agent-release core-benchmarks
+ninja -C cmake-build-agent-release -j "$JOBS" core-benchmarks
 ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
 
