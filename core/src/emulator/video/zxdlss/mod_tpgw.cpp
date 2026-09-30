@@ -37,6 +37,7 @@
 #include "palette.h"
 #include "registry.h"
 #include "simd.h"
+#include "common/threadpool.h"
 #include "algorithm.h"
 
 namespace zxdlss
@@ -67,28 +68,6 @@ inline void copyShifted(uint8_t* dst, const uint8_t* src, int w, int shift)
     shift = wrap(shift, w);
     std::memcpy(dst + shift, src, static_cast<size_t>(w - shift));
     std::memcpy(dst, src + (w - shift), static_cast<size_t>(shift));
-}
-
-/// f(begin, end) over [0, n) split into `threads` contiguous chunks, in parallel.
-template <class F>
-void parallelFor(int n, int threads, F&& f)
-{
-    if (threads <= 1 || n < 2)
-    {
-        f(0, n);
-        return;
-    }
-    const int chunk = (n + threads - 1) / threads;
-    std::vector<std::thread> pool;
-    for (int t = 1; t < threads; ++t)
-    {
-        const int b = t * chunk, e = std::min(n, b + chunk);
-        if (b < e)
-            pool.emplace_back([&f, b, e] { f(b, e); });
-    }
-    f(0, std::min(n, chunk));
-    for (auto& th : pool)
-        th.join();
 }
 
 int defaultThreads()
@@ -205,6 +184,8 @@ public:
           _seedsPaper(v.seedsPaper), _seedsBorderDetail(v.seedsBorderDetail) {}
     int delay() const override { return kLookAhead; }
     std::string name() const override { return _name; }
+
+    FrameReport lastFrame() const override { return _last; }
 
     std::string stats() const override
     {
@@ -357,6 +338,7 @@ private:
     uint64_t _frames = 0;
     uint64_t _usePixels[5] = {}, _useFrames[5] = {};      // period2..5, field
     uint64_t _fieldRanFrames = 0, _seedFrames = 0, _wholeFrames = 0;
+    FrameReport _last;                                     // the last output frame (countUsage)
 
     int _w = 0, _h = 0, _th = 0, _tw = 0, _paperX = 48, _paperY = 48;
     std::deque<std::unique_ptr<Frame>> _ring;
@@ -369,6 +351,19 @@ private:
     std::vector<uint32_t> _mot;              // rolling: bit i = translation(i)
     std::vector<uint32_t> _c1;               // rolling: bit j = key(j) == key(j + 1)
     int _threads = defaultThreads();
+    // Worker threads that live as long as the algorithm (the caller is the
+    // extra one): starting threads for every stage, several times a frame, cost
+    // a large share of the frame on a loaded machine. The UI's priority, not more
+    std::unique_ptr<ThreadPool> _pool =
+        std::make_unique<ThreadPool>(static_cast<size_t>(_threads > 1 ? _threads - 1 : 0), "zxdlss",
+                                     ThreadPool::Priority::Interactive);
+
+    /// f(begin, end) over [0, n) split into `chunks` contiguous ranges, in parallel
+    template <class F>
+    void parallelFor(int n, int chunks, F&& f)
+    {
+        _pool->ParallelFor(n, chunks, f);
+    }
     std::vector<uint8_t> _shifted, _motion;
     std::vector<int> _cost;
 
@@ -528,6 +523,16 @@ private:
             _usePixels[k] += n[k];
             _useFrames[k] += n[k] != 0;
         }
+        _last = FrameReport{};
+        _last.valid = true;
+        _last.frame = _frames - 1;
+        _last.pixels = static_cast<uint32_t>(_w) * _h;
+        for (int k = 0; k < 4; ++k)
+            _last.periodPixels[k] = static_cast<uint32_t>(n[k]);
+        _last.fieldPixels = static_cast<uint32_t>(n[4]);
+        _last.fieldStage = fieldRan;
+        _last.wholePaper = fieldRan && _wholeOn;
+        _last.sceneAverage = sceneOn;
         _fieldRanFrames += fieldRan;
         if (fieldRan)
         {

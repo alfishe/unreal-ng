@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QElapsedTimer>
 #include <QTimer>
 
 #include <functional>
@@ -57,6 +58,8 @@ private:
 
     void applyEffect();
     void updateGroups();
+    void setLed(bool lit, const QString& text);
+    void showLastDetection();
     std::string currentAlgorithm() const;
 
     DeviceScreenWrapper* _screenWrapper;
@@ -72,6 +75,11 @@ private:
     QLabel* _decayLabel;
     QGroupBox* _dlssGroup;
     QComboBox* _algorithmCombo;
+    QLabel* _correctionLed;      // lit while the frame on screen is the algorithm's output
+    QLabel* _correctionLabel;
     QLabel* _dlssStatus;
+    QLabel* _dlssDetectors;      // the averaging mask of the frame on screen, or the last one
+    QString _lastDetection;      // the last averaging mask seen
+    QElapsedTimer _lastDetectionAge;
     QTimer _statusTimer;
 };

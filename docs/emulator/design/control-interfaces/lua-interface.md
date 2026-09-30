@@ -996,7 +996,10 @@ emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_addres
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
 emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
                                      --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
-                                     --   written, late, restarts, last_ms, average_ms, algorithms = {...},
+                                     --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
+                                     --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,
+                                     --   field, field_stage, whole_paper, scene_average},
+                                     --   algorithms = {...},
                                      --   default_algorithm = "mod-tpgwafsd" }
 emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it off. Returns the new status,
                                      --   or { ok = false, error = "..." } for an unknown name. While on, the

@@ -375,7 +375,7 @@ GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, be
 GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too
 GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture)
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
-GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, written, late, restarts, last_ms, average_ms, algorithms[], default_algorithm
+GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
 PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)

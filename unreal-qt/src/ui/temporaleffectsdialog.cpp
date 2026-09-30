@@ -115,10 +115,28 @@ TemporalEffectsDialog::TemporalEffectsDialog(DeviceScreenWrapper* screenWrapper,
     _algorithmCombo->setToolTip(tr("%1 is the accepted baseline").arg(QString::fromLatin1(kDefaultAlgorithm)));
     algorithmLayout->addWidget(_algorithmCombo, 1);
     dlssLayout->addLayout(algorithmLayout);
+
+    // Correction LED: lit while the frame on screen was corrected - a detector fired
+    // and an averaging mask formed. Dark otherwise: nothing detected (the frame
+    // passes unchanged), raw frames shown (warming up, late), or off
+    auto* ledLayout = new QHBoxLayout();
+    _correctionLed = new QLabel();
+    _correctionLed->setFixedSize(14, 14);
+    ledLayout->addWidget(_correctionLed);
+    _correctionLabel = new QLabel();
+    ledLayout->addWidget(_correctionLabel, 1);
+    dlssLayout->addLayout(ledLayout);
+    setLed(false, tr("Off"));
+
     _dlssStatus = new QLabel();
     _dlssStatus->setWordWrap(true);
     _dlssStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
     dlssLayout->addWidget(_dlssStatus);
+    _dlssDetectors = new QLabel();
+    _dlssDetectors->setWordWrap(true);
+    _dlssDetectors->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _dlssDetectors->setStyleSheet("color: gray;");
+    dlssLayout->addWidget(_dlssDetectors);
     mainLayout->addWidget(_dlssGroup);
 
     auto* infoLabel = new QLabel(tr(
@@ -146,7 +164,7 @@ TemporalEffectsDialog::TemporalEffectsDialog(DeviceScreenWrapper* screenWrapper,
     connect(_decaySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
             &TemporalEffectsDialog::onDecayChanged);
     connect(&_statusTimer, &QTimer::timeout, this, &TemporalEffectsDialog::refreshDlssStatus);
-    _statusTimer.start(500);
+    _statusTimer.start(200);  // the LED should follow what is on screen
 
     updateFromScreen();
 
@@ -244,6 +262,13 @@ void TemporalEffectsDialog::onAlgorithmChanged(int)
     applyEffect();
 }
 
+void TemporalEffectsDialog::setLed(bool lit, const QString& text)
+{
+    _correctionLed->setStyleSheet(lit ? "background-color: #2ecc40; border-radius: 7px; border: 1px solid #1a8f2a;"
+                                      : "background-color: #3a3a3a; border-radius: 7px; border: 1px solid #555;");
+    _correctionLabel->setText(text);
+}
+
 void TemporalEffectsDialog::refreshDlssStatus()
 {
     if (_effectCombo->currentIndex() != EffectDlss)
@@ -252,29 +277,85 @@ void TemporalEffectsDialog::refreshDlssStatus()
     Screen* screen = ScreenOf(emulator);
     if (!screen)
     {
-        _dlssStatus->setText(tr("No emulator."));
+        setLed(false, tr("No emulator"));
+        _dlssStatus->clear();
+        _dlssDetectors->clear();
         return;
     }
     const TemporalEffects::Stats s = screen->GetTemporalStats();
     if (s.algorithm.empty())
     {
-        _dlssStatus->setText(tr("Off."));
+        setLed(false, tr("Off"));
+        _dlssStatus->clear();
+        _dlssDetectors->clear();
         return;
     }
     if (!s.active)
     {
-        _dlssStatus->setText(tr("Waiting: %1").arg(QString::fromStdString(s.inactiveReason)));
+        setLed(false, tr("Waiting: %1").arg(QString::fromStdString(s.inactiveReason)));
+        _dlssStatus->clear();
+        _dlssDetectors->clear();
         return;
     }
     const double frameMs = screen->GetPresentDelayUs() / 1000.0 / std::max<int>(1, screen->GetEffectivePresentDelayFrames());
-    _dlssStatus->setText(tr("Active. Picture and sound delayed %1 frames (%2 ms).\n"
-                            "Processing %3 ms/frame (last %4 ms). Late %5, restarts %6.")
+    _dlssStatus->setText(tr("Picture and sound delayed %1 frames (%2 ms).\n"
+                            "Analysis %3 ms/frame (last %4 ms). Corrected %5 of %6 frames.\n"
+                            "Shown raw %7 (output after the frame was on screen), late %8, restarts %9.")
                              .arg(s.videoDelayFrames)
                              .arg(s.videoDelayFrames * frameMs, 0, 'f', 0)
                              .arg(s.averageMs, 0, 'f', 1)
                              .arg(s.lastMs, 0, 'f', 1)
+                             .arg(s.correctedFrames)
+                             .arg(s.processed)
+                             .arg(s.shownRaw)
                              .arg(s.late)
                              .arg(s.restarts));
+
+    if (!s.showingProcessed)
+    {
+        // Warming up after a restart, or the output came after the frame was shown
+        setLed(false, tr("Raw frames shown (warming up or late)"));
+        showLastDetection();
+        return;
+    }
+    if (!s.correcting)
+    {
+        // Every frame is analyzed; nothing was detected, so the output is the raw frame
+        setLed(false, tr("Idle: nothing detected, frames pass unchanged"));
+        showLastDetection();
+        return;
+    }
+
+    // A detection in the frame on screen: the averaging mask, per detector
+    const zxdlss::FrameReport& r = s.shownFrame;
+    auto share = [&r](uint32_t n) { return 100.0 * n / std::max<uint32_t>(1, r.pixels); };
+    QStringList mask;
+    for (int k = 0; k < 4; ++k)
+        if (r.periodPixels[k])
+            mask << tr("period-%1 %2%").arg(k + 2).arg(share(r.periodPixels[k]), 0, 'f', 1);
+    if (r.fieldPixels)
+        mask << tr("two-page field %1%%2").arg(share(r.fieldPixels), 0, 'f', 1)
+                    .arg(r.wholePaper ? tr(" (whole paper)") : QString());
+    if (r.sceneAverage)
+        mask << tr("scene average (whole frame)");
+    const QString pattern = QString::fromLatin1(zxdlss::patternName(r));
+    setLed(true, tr("Correcting: %1").arg(pattern));
+    _lastDetection = tr("Averaging mask: %1").arg(mask.join(QStringLiteral(", ")));
+    _lastDetectionAge.start();
+    _dlssDetectors->setText(_lastDetection);
+}
+
+/// While nothing is detected: the last detection and how long ago it was
+void TemporalEffectsDialog::showLastDetection()
+{
+    if (_lastDetection.isEmpty() || !_lastDetectionAge.isValid())
+    {
+        _dlssDetectors->setText(tr("No detection yet"));
+        return;
+    }
+    _dlssDetectors->setText(tr("Last detection %1 s ago - %2")
+                                .arg(_lastDetectionAge.elapsed() / 1000.0, 0, 'f', 1)
+                                .arg(_lastDetection));
 }
 
 void TemporalEffectsDialog::onHistorySizeChanged(int value)
