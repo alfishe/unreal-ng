@@ -100,9 +100,10 @@ static void BM_TTD_SerializeSession(benchmark::State& state)
     {
         std::ostringstream out;
         std::string err;
-        const bool ok = s.ttd->SerializeSession(out, err);
+        bool ok = s.ttd->SerializeSession(out, err);
         benchmark::DoNotOptimize(ok);
-        benchmark::DoNotOptimize(out.tellp());
+        std::streampos written = out.tellp();
+        benchmark::DoNotOptimize(written);
     }
     state.counters["file_bytes"] = static_cast<double>(s.file.size());
     state.counters["input_events"] = static_cast<double>(s.inputEvents);
@@ -118,7 +119,7 @@ static void BM_TTD_DeserializeSession(benchmark::State& state)
     {
         std::istringstream in(s.file);
         std::string err;
-        const bool ok = s.ttd->DeserializeSession(in, err);
+        bool ok = s.ttd->DeserializeSession(in, err);
         benchmark::DoNotOptimize(ok);
     }
     state.counters["file_bytes"] = static_cast<double>(s.file.size());

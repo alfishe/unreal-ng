@@ -117,6 +117,24 @@ enum class TTDRecordMode : uint8_t
 
 /// @brief Lightweight session summary returned by GetSessionInfo().
 /// Matches the shape automation clients (WebAPI/Lua/CLI) consume per TDD §10.4.
+/// Timings of the last capture and the last restore, in nanoseconds (the
+/// benchmark harness, PLAN #40 V0b, BM-2 / BM-6). Two clock reads per frame
+/// while recording and a handful per restore - free next to a frame's work
+struct TTDPerfCounters
+{
+    uint64_t lastCaptureNs = 0;              ///< checkpoint capture of the last frame (incl. coverage seal)
+    uint64_t lastRestoreCpuChipsetNs = 0;    ///< CPU registers + chipset latches + frame timing
+    uint64_t lastRestoreDevicesNs = 0;       ///< peripheral blobs (model state, sound, disk, ...)
+    uint64_t lastRestoreMemoryNs = 0;        ///< bank rebuild + RAM pages from the page store
+    uint64_t lastRestoreScreenNs = 0;        ///< screen state resync
+    uint64_t lastReplayNs = 0;               ///< intra-frame re-execution of the last seek (0 = frame-aligned)
+    uint64_t lastPresentNs = 0;              ///< picture of the last seek's position (ComposeDisplay + publish)
+    uint64_t lastRestoreTotalNs() const
+    {
+        return lastRestoreCpuChipsetNs + lastRestoreDevicesNs + lastRestoreMemoryNs + lastRestoreScreenNs;
+    }
+};
+
 struct TTDSessionInfo
 {
     TTDSessionState state = TTDSessionState::Idle;
@@ -731,6 +749,13 @@ public:
     /// not running, the caller is the only thread) it is applied at once.
     /// `ev.time` is ignored: the time is stamped when the event is applied.
     bool SubmitLiveInput(const TTDInputEvent& ev);
+
+    /// @brief A lockstep group (the ZX-Poly master) takes live input itself, to
+    /// give it to every member at one frame boundary. SubmitLiveInput hands each
+    /// event to `interceptor` first; when it returns true the event is consumed
+    /// there. Events it declines (false) take the normal path. An empty function
+    /// removes it
+    void SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor);
 
     /// @brief Run `task` on the machine's thread - for automation actions that
     /// touch a device the executing thread may be using (a NeoGS SD card
@@ -1369,6 +1394,9 @@ public:
     /// @brief Read-only access to the page store (for tests / budget checks).
     inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
 
+    /// @brief Last capture / restore timings (benchmark harness, BM-2 / BM-6).
+    inline const TTDPerfCounters& GetPerfCounters() const { return _perf; }
+
     /// Model-specific peripheral serializers registered for this session.
     /// Exposed so the divergence hash can mix in their contribution without
     /// the hash code knowing which machine is running.
@@ -1702,6 +1730,7 @@ private:
     /// Model-specific peripheral serializers. The framework never names a
     /// machine: it registers whatever the active model provides (see
     /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
+    TTDPerfCounters _perf;
     TTDPeripheralRegistry _peripherals;
 
     /// Serializers owned by this manager for the lifetime of a session. Held
@@ -1801,6 +1830,8 @@ private:
     /// Live input and machine tasks waiting for the machine's thread
     /// (SubmitLiveInput, SubmitMachineTask)
     std::mutex _pendingInputMutex;
+    std::mutex _liveInputInterceptorMutex;
+    std::function<bool(const TTDInputEvent&)> _liveInputInterceptor;    // see SetLiveInputInterceptor
     std::vector<TTDInputEvent> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
 

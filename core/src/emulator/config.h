@@ -125,6 +125,9 @@ public:
 	/// An empty hook (the default) changes nothing
 	using ConfigLoadedHook = std::function<void(CONFIG&)>;
 	static void SetConfigLoadedHook(ConfigLoadedHook hook);
+	/// The hook installed now (empty when none): a caller that overlays its
+	/// own settings for a while chains to it and puts it back afterwards
+	static ConfigLoadedHook GetConfigLoadedHook();
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 

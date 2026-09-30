@@ -293,7 +293,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
     return nullptr;
 }
 
-std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError)
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
     // A ZX-Poly configuration fixes its modules' memory (the base model's default)
     if (ZXPolyGroup::FindConfiguration(modelName))
@@ -330,6 +330,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     // Request this model and RAM size for initialization. Emulator::Init
     // resolves the model config itself: configs/<model>/unreal.ini
     emulator->SetPreferredModel(modelInfo->Model, ramSize);
+    if (configOverride)
+        emulator->SetConfigOverride(std::move(configOverride));
 
     // Initialize the emulator. A model the build cannot construct (missing
     // port decoder, missing device support) throws std::logic_error out of

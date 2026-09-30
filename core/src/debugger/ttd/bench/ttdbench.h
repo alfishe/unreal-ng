@@ -1,0 +1,242 @@
+#pragma once
+
+/// @file ttdbench.h
+/// @brief TTD benchmark harness (PLAN #40 V0b, TTD v2 requirements §5).
+///
+/// One harness for every TTD engine version, so v1, v2 and later versions run
+/// exactly the same emulation and their numbers compare:
+///
+///   - Engine: the TTD implementation under test, chosen by name at run time
+///     (BR-1). "v1" wraps today's TimeTravelManager.
+///   - Configuration: a base model with its default peripherals, optionally
+///     with a peripheral set on top (BR-4, BR-5), plus set-up actions such as
+///     switching the hardware turbo on.
+///   - Workload: a replayable recording (BR-2): a start state (cold boot or a
+///     snapshot or an autostarted disk), a number of settle frames, then the
+///     measured frames with scripted input applied at fixed frames through the
+///     TTD live-input path (journaled like a user's keys).
+///   - Metrics BM-1..BM-8 (requirements §5.2), all under stable names; byte
+///     counts are deterministic, timings are percentiles.
+///
+/// Used by core-benchmarks (the matrix, JSON output) and by core-tests (the
+/// CI-sized gate). Nothing here runs unless a harness calls it.
+
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+class Emulator;
+
+namespace ttd
+{
+namespace bench
+{
+
+/// region <Configuration>
+
+/// Peripheral set on top of a base model's defaults (BR-5). Parsed from
+/// "none" or a '+'-joined list: ay (alias ts: the TurboSound slot as two
+/// AYs), tsfm, gs128, gs512, moon, covox, beta, mouse. Fields left at Keep
+/// keep the model config's value
+struct PeripheralSet
+{
+    enum class Slot : uint8_t
+    {
+        Keep,
+        None,
+        Ay,    // the TurboSound slot as a two-AY pair (AY and TurboSound music)
+        Tsfm,
+    };
+    Slot turboSound = Slot::Keep;
+    int gsRamKB = -1;   // -1 keep, 0 off, 128 / 512 = classic GS card with that RAM
+    int moonSound = -1; // -1 keep, 0 off, 1 on
+    int covox = -1;     // -1 keep, 0 off, 1 = Covox #FB + SoundDrive
+    int beta = -1;      // -1 keep, 0 off, 1 = Beta 128 (TR-DOS)
+    int mouse = -1;     // -1 keep, 0 off, 1 = Kempston mouse
+
+    /// "none" clears every device; an empty string keeps the model's defaults
+    static bool Parse(const std::string& text, PeripheralSet& out, std::string& error);
+    std::string Name() const;  ///< "default" or the canonical '+' list
+};
+
+/// A set-up step applied after the start state, before measuring
+struct SetupAction
+{
+    enum class Kind : uint8_t
+    {
+        PortIn,   // IN (port): the Scorpion turbo flip-flop clocks on reads
+        PortOut,  // OUT (port), value
+        AtmTurbo, // ATM: rewrite #FF77 as it stands with the turbo bit (3) set
+    };
+    Kind kind = Kind::PortOut;
+    uint16_t port = 0;
+    uint8_t value = 0;
+};
+
+struct Configuration
+{
+    std::string name;         ///< matrix name, e.g. "PENTAGON", "ATM3+gs512+moon"
+    std::string model;        ///< model short name for EmulatorManager
+    unsigned ramKB = 0;       ///< RAM size override (Pentagon 512 / 1024); 0 = model default
+    PeripheralSet peripherals;
+    std::vector<SetupAction> setup;
+    bool turbo = false;       ///< runs with a hardware turbo (PR-5 / V1b question)
+};
+
+/// Scripted input at a measured frame (relative to the first measured frame)
+struct ScriptedInput
+{
+    uint32_t frame = 0;
+    uint8_t zxKey = 0;        ///< ZXKeysEnum value
+    bool pressed = false;
+};
+
+struct Workload
+{
+    enum class Start : uint8_t
+    {
+        ColdBoot,
+        Snapshot,
+        DiskAutostart,
+    };
+    std::string name;         ///< "idle", "game", "demo", "music-tsfm", ...
+    Start start = Start::ColdBoot;
+    std::string file;         ///< testdata-relative path for Snapshot / DiskAutostart
+    uint32_t settleFrames = 0;///< run before measuring (boot, loading)
+    uint32_t frames = 0;      ///< measured (recorded) frames
+    std::vector<ScriptedInput> input;
+};
+
+/// One matrix entry
+struct Case
+{
+    Configuration config;
+    Workload workload;
+    std::string Name() const { return config.name + "/" + workload.name; }
+};
+
+/// The configuration x workload matrix. "ci" = the <= 2 minute subset (BR-7),
+/// "full" = every base model, peripheral set and workload (BR-4..BR-6),
+/// "turbo" = the turbo / heavy configurations that decide V1b (PR-5)
+std::vector<Case> Matrix(const std::string& set);
+
+/// endregion </Configuration>
+
+/// region <Engine>
+
+/// Byte streams of a recording (BM-3), totals over the recorded frames
+struct StreamBytes
+{
+    uint64_t ramPayload = 0;      ///< page store payload (compressed RAM content)
+    uint64_t pageRefs = 0;        ///< checkpoint page reference tables
+    uint64_t deviceBlobs = 0;     ///< peripheral / model state blobs
+    uint64_t checkpointCore = 0;  ///< CPU + chipset state per checkpoint
+    uint64_t writeJournal = 0;
+    uint64_t inputJournal = 0;
+    uint64_t coverage = 0;
+    uint64_t Total() const
+    {
+        return ramPayload + pageRefs + deviceBlobs + checkpointCore + writeJournal + inputJournal + coverage;
+    }
+};
+
+/// Restore split of one seek (BM-5 / BM-6), microseconds
+struct SeekTiming
+{
+    double totalUs = 0;
+    double restoreUs = 0;         ///< checkpoint restore (sum of the components below)
+    double replayUs = 0;          ///< re-execution from the checkpoint to the target
+    double presentUs = 0;         ///< building the picture of the position
+    double otherUs = 0;           ///< the rest (search, bookkeeping)
+    double cpuChipsetUs = 0;
+    double devicesUs = 0;
+    double memoryUs = 0;
+    double screenUs = 0;
+};
+
+/// Recording modes (BM-1)
+enum class Mode : uint8_t
+{
+    NoJournal,
+    Journal,
+    JournalCoverage,
+};
+
+/// The TTD implementation under test. Engines are stateless between cases:
+/// every case attaches one to a fresh emulator
+class Engine
+{
+public:
+    virtual ~Engine() = default;
+    virtual std::string Name() const = 0;
+
+    /// Start recording on @p emulator (paused, synchronous run mode)
+    virtual bool Start(Emulator& emulator, Mode mode, std::string& error) = 0;
+    /// Stop recording, keep the history for seeks
+    virtual void Stop() = 0;
+    /// Capture time of the frame that just ended, nanoseconds (BM-2)
+    virtual uint64_t LastCaptureNs() const = 0;
+    virtual size_t Checkpoints() const = 0;
+    virtual uint64_t FirstFrame() const = 0;
+    virtual uint64_t LastFrame() const = 0;
+    virtual uint32_t FrameSpan() const = 0;       ///< TTD time units per frame
+    virtual StreamBytes Bytes() const = 0;
+    virtual uint64_t ResidentBytes() const = 0;   ///< heap of the whole session (BM-4)
+    /// Seek to (frame, tInFrame); false when the engine refused
+    virtual bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) = 0;
+    /// Write the session to @p path; bytes written
+    virtual bool Save(const std::string& path, uint64_t& bytes, std::string& error) = 0;
+    /// Load a session written by Save into @p emulator (same configuration)
+    virtual bool Load(Emulator& emulator, const std::string& path, std::string& error) = 0;
+    /// Drive one capture by hand after writing N 4 KB pieces (BM-8); returns ns
+    virtual uint64_t CaptureNow() = 0;
+};
+
+std::vector<std::string> EngineNames();
+std::unique_ptr<Engine> CreateEngine(const std::string& name);
+
+/// endregion </Engine>
+
+/// region <Runner>
+
+struct Options
+{
+    uint32_t framesOverride = 0;     ///< replace every workload's measured frames (0 = keep)
+    uint32_t seekSamples = 200;      ///< random positions for BM-5
+    uint32_t seekSeed = 0x5EEC;
+    /// Each position is sought this many times and the minimum per component
+    /// kept: the spread between positions (chain length, place in the frame)
+    /// stays, a preempted measurement on a loaded host does not (BR-8)
+    uint32_t seekRepeats = 3;
+    bool overhead = true;            ///< BM-1: run the workload per mode, compare to TTD off
+    bool saveLoad = true;            ///< BM-7
+    bool dirtySweep = false;         ///< BM-8: 0 / 1 / 4 / 16 / 64 dirty 4 KB pieces
+    std::string scratchDir;          ///< where BM-7 writes its session file
+    /// testdata-relative path -> absolute path (the caller knows the tree)
+    std::function<std::string(const std::string&)> resolveTestData;
+};
+
+/// Metric name -> value. Names: see RunCase(); byte metrics end in "_bytes"
+/// or "_bpf" (bytes per frame) and are deterministic, everything else is time
+using Metrics = std::map<std::string, double>;
+
+struct Result
+{
+    bool ok = false;
+    std::string error;
+    Metrics metrics;
+};
+
+/// Run one case with one engine and return BM-1..BM-8
+Result RunCase(Engine& engine, const Case& c, const Options& options);
+
+/// True for a deterministic (byte) metric name
+bool IsByteMetric(const std::string& name);
+
+/// endregion </Runner>
+
+}  // namespace bench
+}  // namespace ttd
