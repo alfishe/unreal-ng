@@ -410,6 +410,13 @@ Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
 (v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
 example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
 the pager / resident addresses and the v1.1 picture; v0.x refused.
+**Video debug mapping (PLAN #42 phase 5) done for the graphics layer
+(2026-09-30, branch `tsconf-videomap`):** `TsConfVideoMapper` answers pixel
+sources, the pixels a byte feeds and text cells for ZX / 16C / 256C / TXT, per
+line with the latched registers (design and tests in
+[video-debug-translation](../2026-09-27-video-debug-translation/TODO.md));
+the TSU layers are the next step.
+
 **BOOT-4 and IDE-5 done (2026-09-30, branch `tsconf-ide`):** TS-BIOS boots
 Wild Commander from the Nemo IDE master and WC works its panels on that disk
 (`BOOT4_BootsWildCommanderFromIde`: the SD image as the hard disk, `wc.ini`

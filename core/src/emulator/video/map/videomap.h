@@ -183,5 +183,8 @@ struct VideoState
     const uint16_t* profiPalette = nullptr; ///< Profi palette cells (16)
     RasterDescriptor layoutDesc{};          ///< framebuffer storage of the mode
     RasterDescriptor timingDesc{};          ///< beam timing of the mode
+    /// The family's own state for its mapper (Screen::VideoFamilyView): TS-Conf
+    /// registers, line table and CRAM; null for the classic families
+    const void* familyView = nullptr;
 };
 } // namespace videomap
