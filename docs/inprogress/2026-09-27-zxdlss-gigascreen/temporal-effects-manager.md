@@ -202,9 +202,11 @@ WebAPI route, with a one-line summary). Status fields: `algorithm`, `active`,
 `last_ms`, `average_ms`, `algorithms` (all but `raw` and `-ref`) and
 `default_algorithm` (`mod-tpgwafsd`).
 
-**Open before this reaches master:**
-- the algorithm starts its threads on every parallel stage (no pool): cost to
-  measure on an idle machine (the tool measured 3-16 ms/frame on a loaded one);
-- the Temporal Blending menu check mark does not follow the dialog;
-- a lower look-ahead would shrink the delay: research in
-  `tools/poc/019-zxdlss-gigascreen/out/` (causal lookahead 0-2).
+**Look-ahead and latency.** The 7 frames of picture delay (5 of them paid by
+the audio) come from the algorithm's 6 frames of look-ahead. A shorter one was
+measured (2026-09-30): with 0, 1 or 2 frames 5-6 of the 12 golden scenes
+regress, so the look-ahead stays 6 (POC `results.md`, "Limited look-ahead").
+
+**Open:**
+- one more frame of margin if the worker still misses its deadline on a loaded
+  machine (`shown_raw` grows): +20 ms of picture and sound.
