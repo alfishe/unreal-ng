@@ -365,3 +365,19 @@ TEST_F(TsConfDma_Test, TTD4_RestoreMidTransfer)
     EXPECT_EQ(RunDma(), lines);
     EXPECT_EQ(std::vector<uint8_t>(&Byte(0x50000), &Byte(0x50000) + 0x1000), result);
 }
+
+/// TIM-3: DRAM cycles per word ([V] dma.v, spi.v): RAM copy 2, BLT 3, fill 1
+/// (2 for the first word), SPI 10 (two 17-fclk bytes + the DRAM cycle)
+TEST_F(TsConfDma_Test, TIM3_WordCosts)
+{
+    Launch(0x40000, 0x50000, 0xFF, 0xFF, 0x01);
+    EXPECT_EQ(Dma().WordCost(), 2u) << "RAM";
+    Dma().Reset();
+    Dma().SetSpi([](bool, uint8_t) -> uint8_t { return 0xFF; });
+    Launch(0, 0x50000, 0xFF, 0xFF, 0x02);
+    EXPECT_EQ(Dma().WordCost(), 10u) << "SPI -> RAM";
+    Dma().Reset();
+    Launch(0x40000, 0x50000, 0xFF, 0xFF, 0x81);  // BLT1 (ASZ)
+    EXPECT_EQ(Dma().WordCost(), 3u) << "blit";
+    Dma().Reset();
+}

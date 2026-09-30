@@ -491,6 +491,34 @@ settings. Exit = technical-design §3.19 checklist.
 | TIM-4 | CPU stall at full video bandwidth (8/8 block) at 3.5/7 MHz |
 | TIM-5 | optional per-dot CRAM write log (risk 4) |
 
+**Built 2026-09-30 (branch `tsconf-phase8`).** Reference survey first: none of
+Unreal TS, MAME or Xpeccy follows the Verilog here (Unreal's cache-miss hook
+is dead code, MAME charges a flat 2 T per miss with a one-line cache, Xpeccy
+has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
+- **TIM-1** (`TsConfMemory::DramWait`): at 14 MHz a CPU read that takes a
+  DRAM cycle (uncached window, or a cache miss) stretches by the zmem.v table
+  - M1 +3..+6 fclk, read +2..+5, writes 0 - by the DRAM phase its request
+  (T1 + 3 fclk) falls in. The 14 MHz clock is not locked to the DRAM phases
+  and every stall shifts it, so the phase comes from the stretched cycle
+  counter itself (2 fclk per clock, frame start = c0; waits added in fclk
+  with `Z80::AddWaitTicks`). The decoder's M1 hook marks the opcode fetch.
+  ROM and cache hits never wait. Tests: a NOP run from DRAM settles at 6
+  clocks, LD A,(HL) and LD (HL),A at 10 (hand-derived from the table); no
+  waits at 3.5 / 7 MHz, from ROM or on hits. Not modeled: the extra wait for
+  a slot while video holds the next DRAM cycle (`cpu_next = 0`, 256C / TXT
+  fetch windows at 14 MHz only).
+- **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
+  (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
+- **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the
+  DRAM cycle), IDE 2 → 3; RAM 2, BLT 3, fill 1 (+1), CRAM / SFILE 2 were
+  already the Verilog's.
+- **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
+  (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
+  at 3.5 / 7 MHz, and the TSU ranks below the CPU.
+- **TIM-5** deferred: CPU CRAM writes are already dot-exact (the video is
+  flushed before each); only DMA → CRAM lands at line granularity.
+The SDK sprite example (14 MHz) re-pinned; the TS-Conf TTD fixture re-recorded.
+
 ## 2. Traceability
 
 | Spec section | Tests |

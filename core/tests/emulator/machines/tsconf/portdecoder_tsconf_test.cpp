@@ -376,3 +376,28 @@ TEST_F(PortDecoder_TSConf_Test, DBG2_PortTraceCodeNames)
     EXPECT_EQ(nameOf(static_cast<uint16_t>(PortDecoder_TSConf::PortArm::Paging7FFD)), "Paging7FFD");
     EXPECT_EQ(nameOf(PortDecoder_TSConf::kTraceRegisterBase + 0x14), "") << "register 0x14 is not built";
 }
+
+/// TIM-2: at 14 MHz an I/O cycle to the AY or an open VG93 port stalls the
+/// CPU 8 fclk = 4 clocks (IN and OUT); other ports, #FF and lower clocks do not
+TEST_F(PortDecoder_TSConf_Test, TIM2_ExternalIoStallAt14MHz)
+{
+    auto clocks = [&](auto access) {
+        const uint32_t before = _z80->tt;
+        access();
+        return (_z80->tt - before) / _z80->rate;
+    };
+    Reg(TsConfReg::SysConfig, 0x02);
+    EXPECT_EQ(clocks([&] { Out(0xFFFD, 0x07); }), 4u) << "AY register select";
+    EXPECT_EQ(clocks([&] { In(0xFFFD); }), 4u) << "AY read";
+    EXPECT_EQ(clocks([&] { Out(0xBFFD, 0x00); }), 4u) << "AY data";
+    EXPECT_EQ(clocks([&] { Out(0x7FFD, 0x10); }), 0u) << "#7FFD is on the board";
+    EXPECT_EQ(clocks([&] { Out(0x00FE, 0x00); }), 0u);
+    EXPECT_EQ(clocks([&] { In(0x001F); }), 0u) << "#1F outside DOS is the joystick";
+    Reg(TsConfReg::FddVirt, 0x80);  // VG_OPEN
+    EXPECT_EQ(clocks([&] { In(0x001F); }), 4u) << "VG93 status";
+    EXPECT_EQ(clocks([&] { Out(0x007F, 0x00); }), 4u) << "VG93 data";
+    EXPECT_EQ(clocks([&] { In(0x00FF); }), 0u) << "the Beta system register is not external";
+
+    Reg(TsConfReg::SysConfig, 0x01);  // 7 MHz
+    EXPECT_EQ(clocks([&] { Out(0xFFFD, 0x07); }), 0u);
+}

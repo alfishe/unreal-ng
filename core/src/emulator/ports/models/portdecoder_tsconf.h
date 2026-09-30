@@ -180,6 +180,7 @@ private:
     void UpdateSdStatus();
     /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
     void ApplyIdeStall();
+    void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
     void RefreshFmWindow();
     void RefreshCache();

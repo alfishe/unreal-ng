@@ -108,7 +108,10 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   palette cache, pixel-identical to the old renderer (test TSO2); frame render
   6.9x faster, whole frame 1.89x → 1.26x Pentagon (1.1x target not met; the
   rest is TXT's double pixel count and the per-step hooks)
-- [ ] Next: phase 8 timing
+- [x] Phase 8 timing (2026-09-30, branch `tsconf-phase8`): 14 MHz DRAM
+  waits by the zmem.v phase table, 14 MHz external I/O stall, DMA SPI / IDE
+  word costs; TIM-4 needs nothing (no mode saturates DRAM); TIM-5 deferred.
+  Open: the `cpu_next = 0` slot wait at 14 MHz in 256C / TXT
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the
