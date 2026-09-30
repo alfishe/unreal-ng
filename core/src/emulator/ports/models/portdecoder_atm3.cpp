@@ -2,6 +2,7 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -9,6 +10,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
 #include "emulator/video/screen.h"
@@ -29,12 +31,20 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 
     if (_context->pMediaManager)
         _context->pMediaManager->RegisterSlot(_sdSlot);
+
+    // The AVR is the board's PS/2 keyboard controller: physical host keys reach
+    // its scan code log (NedoOS reads only that). Other machines attach nothing
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_evoAvr);
 }
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
     if (_context->pMediaManager)
         _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_evoAvr)
+        _context->pKeyboard->SetPs2Sink(nullptr);
 
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
@@ -1182,6 +1192,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
     ids.push_back(ttd::PeripheralId::EvoSdCard);
     ids.push_back(ttd::PeripheralId::Ds12887);
+    ids.push_back(ttd::PeripheralId::EvoPs2);
     return ids;
 }
 
@@ -1193,6 +1204,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     auto& self = const_cast<PortDecoder_ATM3&>(*this);
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self._sdCard, self._zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
+    serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(const_cast<EvoAvr&>(_evoAvr)));
     return serializers;
 }
 

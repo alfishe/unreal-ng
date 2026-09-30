@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/keyboard/pckey.h"
 #include "stdafx.h"
 
 /// region <Static>
@@ -426,6 +427,37 @@ void Keyboard::SubmitHostKey(ZXKeysEnum key, bool pressed)
     else
         ReleaseKey(key);
 }
+void Keyboard::SubmitHostPcKey(PcKey key, bool pressed)
+{
+    // Machines without a PS/2 controller pay nothing: no journal entry, no call
+    if (!_ps2Sink)
+        return;
+
+    if (_context && _context->pTimeTravelManager)
+    {
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::PcKey;
+        ev.key = static_cast<uint8_t>(key);
+        ev.pressed = pressed;
+        _context->pTimeTravelManager->SubmitLiveInput(ev);
+        return;
+    }
+
+    ApplyPcKey(key, pressed);
+}
+
+void Keyboard::ApplyPcKey(PcKey key, bool pressed)
+{
+    if (_ps2Sink && key != PcKey::None)
+        _ps2Sink->OnPcKey(key, pressed);
+}
+
+void Keyboard::ReleaseAllPcKeys()
+{
+    if (_ps2Sink)
+        _ps2Sink->ReleaseAllPcKeys();
+}
+
 void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
 {
     if (message == nullptr || message->obj == nullptr)
@@ -447,6 +479,16 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
 
         // TTD: live host input must not mutate the matrix during replay
         if (IsHostInputSuppressed())
+            return;
+
+        // The physical key reaches the PS/2 controller as its own journaled event,
+        // never derived from the matrix keys below (host Up is Caps Shift + 7 there)
+        const auto pcKey = static_cast<PcKey>(event->pcKeyCode);
+        if (pcKey != PcKey::None)
+            SubmitHostPcKey(pcKey, /*pressed=*/true);
+
+        // A key with no ZX equivalent (F1, Home, ...) carries only the physical key
+        if (event->zxKeyCode == ZXKEY_NONE)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
@@ -502,6 +544,13 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
 
         // TTD: live host input must not mutate the matrix during replay
         if (IsHostInputSuppressed())
+            return;
+
+        const auto pcKey = static_cast<PcKey>(event->pcKeyCode);
+        if (pcKey != PcKey::None)
+            SubmitHostPcKey(pcKey, /*pressed=*/false);
+
+        if (event->zxKeyCode == ZXKEY_NONE)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);

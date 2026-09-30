@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 
+#include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/rtc/ds12887.h"
 
 /// ZX-Evo BaseConf AVR as the Z80 sees it through the Gluk clock ports
@@ -32,7 +33,16 @@
 ///
 /// Version records are the 16-byte tags of the released images (see
 /// kFirmwareVersion / kBootloaderVersion).
-class EvoAvr : public Ds12887
+///
+/// PS/2 keyboard (the AVR's side of it, ps2.c ps2keyboard_parse and the
+/// modifier part of zx.c to_zx): every scan code byte the keyboard sends goes
+/// through the same parser as on the board - protocol bytes dropped, Pause
+/// (E1 + 7 bytes) never logged, after a log reset the first byte logged must
+/// start a key - and lands in a 16-byte ring the Z80 pops through extension
+/// type 2 (0 = empty, #FF = overflow, which then resets the log). Register D
+/// carries the modifier keys the parser saw. The bytes come from IPs2KeySink:
+/// a physical key event, encoded as PS/2 set 2 (pckey.h).
+class EvoAvr : public Ds12887, public IPs2KeySink
 {
 public:
     /// Extension types selected through cells 0xF0-0xFF (AVR main.h)
@@ -58,9 +68,6 @@ public:
     /// NVRAM file: the 256 clock/NVRAM cells followed by the 4 KiB EEPROM
     static constexpr size_t kNvramFileSize = 0x100 + kEepromSize;
 
-public:
-    EvoAvr();
-
     uint8_t ReadRegister(uint8_t index) override;
     void WriteRegister(uint8_t index, uint8_t value) override;
     uint8_t PeekRegister(uint8_t index) const override;
@@ -72,9 +79,38 @@ public:
                "D = #80 | PS/2 modifiers, #F0-#FF = EEPROM window or extension window";
     }
 
+    /// Register D bits (zx.h KB_*_MASK)
+    static constexpr uint8_t kModLeftCtrl = 0x01;
+    static constexpr uint8_t kModRightCtrl = 0x02;
+    static constexpr uint8_t kModLeftAlt = 0x04;
+    static constexpr uint8_t kModRightAlt = 0x08;
+    static constexpr uint8_t kModLeftShift = 0x10;
+    static constexpr uint8_t kModRightShift = 0x20;
+    static constexpr uint8_t kModF12 = 0x40;
+
+    static constexpr size_t kPs2LogSize = 16;
+
+    /// PS/2 state for TTD (PeripheralId::EvoPs2). Fixed layout, no padding
+    struct Ps2State
+    {
+        uint8_t log[kPs2LogSize];  ///< ps2keyboard_log
+        uint8_t logStart;          ///< ps2keyboard_log_start (#FF = reset state)
+        uint8_t logEnd;            ///< ps2keyboard_log_end (#FE = empty after reset, #FF = overflow)
+        uint8_t wasRelease;        ///< parser: F0 seen
+        uint8_t wasE0;             ///< parser: E0 seen
+        uint8_t lastScancode;      ///< parser: typematic filter
+        uint8_t lastScancodeE0;
+        uint8_t skipBytes;         ///< parser: bytes of a Pause sequence still to skip
+        uint8_t modifiers;         ///< kb_ctrl_status (register D bits 6..0)
+        uint8_t held[16];          ///< host side: PcKey bitmap of the keys held down
+    };
+    static_assert(sizeof(Ps2State) == 40, "EvoAvr::Ps2State layout changed");
+
+public:
+    EvoAvr();
+
     /// region <Host side>
     void SetSdStatus(bool present, bool writeProtected);
-    void SetModifiers(uint8_t mask);  ///< register D bits 6..0
     uint8_t GetExtensionType() const { return _extType; }
     uint8_t GetEepromPage() const { return _eepromPage; }
     bool IsEepromMode() const { return _eepromMode; }
@@ -86,16 +122,34 @@ public:
     bool SaveNvram(const std::string& path) const;
     /// endregion </Host side>
 
+    /// region <PS/2 keyboard>
+    void OnPcKey(PcKey key, bool pressed) override;
+    void ReleaseAllPcKeys() override;
+    /// One byte from the keyboard (ps2keyboard_parse): the log and register D
+    void ReceivePs2Byte(uint8_t byte);
+    uint8_t GetPs2Modifiers() const { return _ps2.modifiers; }
+    /// Bytes waiting in the log (0 in the reset state, 15 at most)
+    size_t GetPs2LogCount() const;
+    bool IsPs2LogOverflow() const { return _ps2.logEnd == 0xFF && _ps2.logStart != 0xFF; }
+    /// endregion </PS/2 keyboard>
+
     /// region <TTD>
     /// Volatile AVR state (AtmPagingState). The clock and its cells are the
     /// Ds12887 blob; the 4 KiB EEPROM is not captured (the guest writes it
     /// only when it saves a PS/2 keymap)
     void GetVolatileState(uint8_t& extType, uint8_t& eepromPage, uint8_t& flags) const;
     void SetVolatileState(uint8_t extType, uint8_t eepromPage, uint8_t flags);
+    const Ps2State& GetPs2State() const { return _ps2; }
+    void SetPs2State(const Ps2State& state) { _ps2 = state; }
     /// endregion </TTD>
 
 protected:
     uint8_t ReadExtension(uint8_t index) const;
+    /// ps2keyboard_from_log: pop one byte (0 empty, #FF overflow -> log reset)
+    uint8_t PopPs2Log();
+    uint8_t PeekPs2Log() const;
+    void ResetPs2Log() { _ps2.logStart = 0xFF; }
+    void AppendPs2Log(uint8_t byte);
 
     std::array<uint8_t, kEepromSize> _eeprom{};
     uint8_t _extType = kExtFirmwareVersion;
@@ -105,5 +159,5 @@ protected:
     bool _tapeOutMode = false;
     bool _sdPresent = false;
     bool _sdWriteProtected = false;
-    uint8_t _modifiers = 0;
+    Ps2State _ps2{};
 };

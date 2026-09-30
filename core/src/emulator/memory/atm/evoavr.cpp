@@ -17,6 +17,10 @@ EvoAvr::EvoAvr() : Ds12887(256)
     // An erased AVR EEPROM reads #FF: no user PS/2 keymap ('K','B' signature
     // absent), so the firmware uses its built-in one
     _eeprom.fill(0xFF);
+
+    // Power-on (main.c: ps2keyboard_init, ps2keyboard_reset_log)
+    _ps2.lastScancodeE0 = 1;  // "impossible scancode: E0 00"
+    ResetPs2Log();
 }
 
 void EvoAvr::WriteRegister(uint8_t index, uint8_t val)
@@ -40,6 +44,8 @@ void EvoAvr::WriteRegister(uint8_t index, uint8_t val)
             // LED, bit 7 selects the EEPROM window
             _capsLed = (val & 0x02) != 0;
             _eepromMode = (val & 0x80) != 0;
+            if (val & 0x01)
+                ResetPs2Log();
             return;
         case kRegB:
             // rtc.c keeps only the binary-mode bit: always 24-hour, no SET hold
@@ -59,6 +65,8 @@ uint8_t EvoAvr::ReadRegister(uint8_t index)
     {
         if (_eepromMode)
             return _eeprom[(static_cast<size_t>(_eepromPage) << 4) + (index & 0x0F)];
+        if (_extType == kExtPs2Log)
+            return PopPs2Log();  // a read of any cell pops one byte (version.c:34)
         return ReadExtension(index);
     }
 
@@ -77,7 +85,7 @@ uint8_t EvoAvr::ReadRegister(uint8_t index)
             // rtc.c keeps only the binary-mode bit; bit 1 (24-hour) always reads 1
             return GetCell(kRegB);
         case kRegD:
-            return static_cast<uint8_t>(0x80 | (_modifiers & 0x7F));
+            return static_cast<uint8_t>(0x80 | (_ps2.modifiers & 0x7F));
         default:
             return Ds12887::ReadRegister(index);  // clock registers, NVRAM 0x0E-0xEF
     }
@@ -104,7 +112,7 @@ uint8_t EvoAvr::PeekRegister(uint8_t index) const
                                         (_sdPresent ? 0x08 : 0) | (_sdWriteProtected ? 0x04 : 0) |
                                         (_capsLed ? 0x02 : 0) | (_tapeOutMode ? 0x01 : 0));
         case kRegD:
-            return static_cast<uint8_t>(0x80 | (_modifiers & 0x7F));
+            return static_cast<uint8_t>(0x80 | (_ps2.modifiers & 0x7F));
         default:
             return Ds12887::PeekRegister(index);
     }
@@ -122,7 +130,7 @@ uint8_t EvoAvr::ReadExtension(uint8_t index) const
         case kExtBootloaderVersion:
             return kBootloaderVersion[offset];
         case kExtPs2Log:
-            return 0x00;  // empty log (the PS/2 scancode buffer is ZX-Evo plan phase E2b)
+            return PeekPs2Log();  // a debugger peek: the log is not changed
         case kExtModes:
             // modes_register at cell 0xF0: bit 0 VGA, bit 1 tape-out, bit 2 Caps
             // LED, bits 5:4 raster - the emulator runs the 48K raster
@@ -140,10 +148,182 @@ void EvoAvr::SetSdStatus(bool present, bool writeProtected)
     _sdWriteProtected = writeProtected;
 }
 
-void EvoAvr::SetModifiers(uint8_t mask)
+/// region <PS/2 keyboard>
+
+void EvoAvr::OnPcKey(PcKey key, bool pressed)
 {
-    _modifiers = static_cast<uint8_t>(mask & 0x7F);
+    const size_t index = static_cast<size_t>(key);
+    if (key == PcKey::None || index >= static_cast<size_t>(PcKey::Count))
+        return;
+
+    uint8_t& held = _ps2.held[index >> 3];
+    const uint8_t bit = static_cast<uint8_t>(1u << (index & 7));
+    held = pressed ? static_cast<uint8_t>(held | bit) : static_cast<uint8_t>(held & ~bit);
+
+    for (uint8_t byte : pckey::Ps2Set2Bytes(key, pressed))
+        ReceivePs2Byte(byte);
 }
+
+void EvoAvr::ReleaseAllPcKeys()
+{
+    for (size_t index = 1; index < static_cast<size_t>(PcKey::Count); index++)
+    {
+        if (_ps2.held[index >> 3] & (1u << (index & 7)))
+            OnPcKey(static_cast<PcKey>(index), /*pressed=*/false);
+    }
+}
+
+/// ps2.c ps2keyboard_parse (logging and flags) and the modifier part of zx.c
+/// to_zx. The rest of to_zx (ZX matrix from the AVR keymap, Print Screen NMI,
+/// Ctrl-Alt-Del reset, Scroll Lock video mode) is not the Z80-visible log: the
+/// emulator's matrix comes from the host keys directly
+void EvoAvr::ReceivePs2Byte(uint8_t byte)
+{
+    // Keyboard protocol answers are never keys
+    if (byte == 0xFA || byte == 0xFE || byte == 0xEE || byte == 0xAA)
+        return;
+
+    // Log only whole key data: Pause is not logged, and after a reset the first
+    // byte logged must start a key
+    if (byte != 0xE1 && _ps2.skipBytes == 0)
+    {
+        if (_ps2.logStart == 0xFF)
+        {
+            _ps2.logEnd = 0xFE;
+            _ps2.logStart = 0;
+        }
+        if (_ps2.logEnd != 0xFE || (_ps2.wasRelease == 0 && _ps2.wasE0 == 0))
+            AppendPs2Log(byte);
+    }
+
+    if (_ps2.skipBytes)
+    {
+        _ps2.skipBytes--;
+        return;
+    }
+    if (byte == 0xE0)
+    {
+        _ps2.wasE0 = 1;
+        return;
+    }
+    if (byte == 0xF0)
+    {
+        _ps2.wasRelease = 1;
+        return;
+    }
+    if (byte == 0xE1)  // Pause: skip the next 7 bytes
+    {
+        _ps2.skipBytes = 7;
+        return;
+    }
+
+    // Typematic repeat of the key already down: nothing more to do
+    if (byte == _ps2.lastScancode && _ps2.wasE0 == _ps2.lastScancodeE0)
+    {
+        if (_ps2.wasRelease)
+        {
+            _ps2.lastScancode = 0x00;
+            _ps2.lastScancodeE0 = 1;
+        }
+        else
+        {
+            _ps2.wasE0 = 0;
+            return;
+        }
+    }
+    if (!_ps2.wasRelease)
+    {
+        _ps2.lastScancode = byte;
+        _ps2.lastScancodeE0 = _ps2.wasE0;
+    }
+
+    if (byte == 0x12 && _ps2.wasE0)  // the fake Left Shift of Print Screen and friends
+    {
+        _ps2.wasE0 = 0;
+        _ps2.wasRelease = 0;
+        return;
+    }
+
+    uint8_t mask = 0;
+    if (_ps2.wasE0)
+    {
+        if (byte == 0x11)
+            mask = kModRightAlt;
+        else if (byte == 0x14)
+            mask = kModRightCtrl;
+    }
+    else
+    {
+        switch (byte)
+        {
+            case 0x12: mask = kModLeftShift; break;
+            case 0x59: mask = kModRightShift; break;
+            case 0x14: mask = kModLeftCtrl; break;
+            case 0x11: mask = kModLeftAlt; break;
+            case 0x07: mask = kModF12; break;
+            default: break;
+        }
+    }
+    if (mask)
+        _ps2.modifiers = _ps2.wasRelease ? static_cast<uint8_t>(_ps2.modifiers & ~mask)
+                                         : static_cast<uint8_t>(_ps2.modifiers | mask);
+
+    _ps2.wasE0 = 0;
+    _ps2.wasRelease = 0;
+}
+
+/// ps2.c ps2keyboard_to_log
+void EvoAvr::AppendPs2Log(uint8_t byte)
+{
+    if (_ps2.logEnd == 0xFF)
+        return;  // overflowed: nothing more until the Z80 reads the #FF
+    if (_ps2.logEnd == 0xFE)
+        _ps2.logEnd = _ps2.logStart;  // the first byte after a reset
+
+    _ps2.log[_ps2.logEnd] = byte;
+    _ps2.logEnd = static_cast<uint8_t>((_ps2.logEnd + 1) % kPs2LogSize);
+    if (_ps2.logEnd == _ps2.logStart)
+        _ps2.logEnd = 0xFF;  // the ring caught its own tail
+}
+
+/// ps2.c ps2keyboard_from_log, without its side effects: 0 when empty or in
+/// the reset state, #FF after an overflow, else the oldest byte
+uint8_t EvoAvr::PeekPs2Log() const
+{
+    if (_ps2.logStart == 0xFF)
+        return 0x00;  // reset state
+    if (_ps2.logEnd < kPs2LogSize)
+        return _ps2.logEnd == _ps2.logStart ? 0x00 : _ps2.log[_ps2.logStart];
+    return _ps2.logEnd == 0xFE ? 0x00 : 0xFF;
+}
+
+/// ps2.c ps2keyboard_from_log: pops the byte; reading the overflow #FF resets the log
+uint8_t EvoAvr::PopPs2Log()
+{
+    const uint8_t byte = PeekPs2Log();
+    if (_ps2.logStart == 0xFF)
+        return byte;
+
+    if (_ps2.logEnd < kPs2LogSize)
+    {
+        if (_ps2.logEnd != _ps2.logStart)
+            _ps2.logStart = static_cast<uint8_t>((_ps2.logStart + 1) % kPs2LogSize);
+    }
+    else if (_ps2.logEnd == 0xFF)
+    {
+        ResetPs2Log();  // the Z80 read the overflow mark: the log starts over
+    }
+    return byte;
+}
+
+size_t EvoAvr::GetPs2LogCount() const
+{
+    if (_ps2.logStart == 0xFF || _ps2.logEnd >= kPs2LogSize)
+        return 0;
+    return (_ps2.logEnd + kPs2LogSize - _ps2.logStart) % kPs2LogSize;
+}
+
+/// endregion </PS/2 keyboard>
 
 bool EvoAvr::LoadNvram(const std::string& path)
 {

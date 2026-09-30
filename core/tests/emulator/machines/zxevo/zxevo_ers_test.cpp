@@ -16,6 +16,8 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
+#include <debugger/debugmanager.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
@@ -901,4 +903,52 @@ TEST_F(ZXEvoErs_Test, CdBootSeesTheDiscEjectedAndInsertedAgain)
     EXPECT_FALSE(drive.find("unit_attention")->b) << "the ERS cleared the unit attention";
     EXPECT_EQ(drive.find("sense_key")->i, AtapiCdrom::kSenseUnitAttention) << "the swap was reported";
     EXPECT_EQ(drive.find("asc")->i, AtapiCdrom::kAscMediumChanged);
+}
+
+/// NOS-KBD-1: NedoOS on ZX-Evo reads its keyboard only from the AVR's PS/2 log
+/// (PS2KBD=1 kernel): a command typed through automation runs in the shell.
+/// Slow (~1.5 s): boots the ERS and NedoOS from the SD card, then types
+TEST_F(ZXEvoErs_Test, NedoOsShellRunsATypedCommand)
+{
+    const std::filesystem::path card = TestPathHelper::FindProjectRoot() / "testdata/machines/zxevo/nedoos/sdcard";
+    ASSERT_TRUE(std::filesystem::is_directory(card)) << Utf8(card);
+
+    Create();
+    MediaSource source;
+    source.path = Utf8(card);
+    InsertOptions options;
+    options.freeBytes = 16 * 1024 * 1024;
+    ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source, options).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+
+    auto countInRam = [this](const std::string& needle) {
+        size_t count = 0;
+        for (uint16_t page = 0; page < 256; page++)
+        {
+            const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
+            if (!bytes)
+                continue;
+            for (const uint8_t* at = bytes; (at = std::search(at, bytes + PAGE_SIZE, needle.begin(), needle.end())) !=
+                                            bytes + PAGE_SIZE;
+                 at++)
+                count++;
+        }
+        return count;
+    };
+
+    Tap(ZXKEY_5);  // "5. SDcard boot"
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return countInRam("M:/bin>") > 0; }, 800, 20);
+    ASSERT_GT(countInRam("M:/bin>"), 0u) << "the NedoOS shell prompt";
+    _emulator->RunNFrames(50);
+
+    // "free pages=" is in memory once already: cmd.com's own message. The
+    // command's output adds copies (the terminal's buffer, the screen)
+    const size_t outputBefore = countInRam("free pages=");
+
+    DebugKeyboardManager* keys = _emulator->GetDebugManager()->GetKeyboardManager();
+    ASSERT_NE(keys, nullptr);
+    keys->TypeText("free\n");
+    _emulator->RunNFrames(200);
+
+    EXPECT_GT(countInRam("free pages="), outputBefore) << "the command ran and printed";
 }
