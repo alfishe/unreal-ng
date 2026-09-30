@@ -25,9 +25,10 @@ class Stage:
 
 
 def default_graph(field_palette=False, field_render="avg3", field_override=False, field_grow=False, field_whole=0.0,
-                  field_refine=False, steps=False, scene_avg=False):
+                  field_refine=False, steps=False, scene_avg=False, flat_veto=False, periods=(2, 3, 4, 5)):
+    pv = {"flat_veto": True} if flat_veto else {}
     graph = [
-        Stage("pixel", [("period2", {}), ("period3", {}), ("period4", {}), ("period5", {})]),
+        Stage("pixel", [(f"period{p}", pv) for p in periods]),
         Stage("field", [("field", {"palette": field_palette, "render": field_render, "override": field_override,
                                    "grow": field_grow, "whole": field_whole, "refine": field_refine})],
               when=lambda scene: scene.two_page > 0.0, override=field_override),

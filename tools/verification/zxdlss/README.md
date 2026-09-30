@@ -7,7 +7,7 @@ that renders TTD recordings or exported clips through them. Phase 2 of POC 019
 | Part | What it is |
 |---|---|
 | `algo/include/zxdlss/algorithm.h` | the interface every algorithm implements (`delay()`, `process(frame) -> RGB`), the registry (`createAlgorithm(name)`) |
-| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8) |
+| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8); `mod-tpgwaf` + flash veto, periods 2..4, detail-based scene trigger; `mod-tpgwafs` + step-aware scene render (the baseline) |
 | `algo/src/mod_tpgw_ref.cpp` | `mod-tpgw-ref`, the literal scalar implementation of the spec |
 | `algo/src/registry.cpp` | registry, plane B decoding, `raw` (no processing) |
 | `tool/main.cpp` | `zxdlss-render`: TTD file or clip -> algorithm -> video / exact RGB dump |
@@ -46,11 +46,11 @@ zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --dump out/dump
 zxdlss-render --list          # registered algorithms
 
 # the current baseline, with the per-detector usage and the scene-stage runs
-zxdlss-render --ttd across_the_edge_full.ttd --alg mod-tpgwa --layout raw-out --video ate.mp4 --stats
+zxdlss-render --ttd across_the_edge_full.ttd --alg mod-tpgwafs --layout raw-out --video ate.mp4 --stats
 
 # Pentagon overscan: 352 x 304, the paper centered horizontally (the emulator's
 # Symmetric Horizontal viewport) - demos that draw into the extra border lines
-zxdlss-render --ttd across_the_edge_full.ttd --overscan --alg mod-tpgwa --layout raw-out --video ate-osc.mp4
+zxdlss-render --ttd across_the_edge_full.ttd --overscan --alg mod-tpgwafs --layout raw-out --video ate-osc.mp4
 ```
 
 `--model` names the machine a TTD session was recorded on (default `PENTAGON`).
@@ -67,9 +67,27 @@ written at the machine's frame rate, measured from the sound: 44100 x frames /
 samples, i.e. 48.83 fps on a Pentagon (903.2 samples per frame), so picture and
 sound stay in sync over the whole file.
 
-Limitation: the continuous run does not re-apply key presses recorded after
-`--from`; the sound is exact for demos and test programs, not for recorded
-gameplay input. Clip input (`--clip`) has no sound and stays at 50 fps.
+The sound ends up inside the mp4 (an AAC track next to the H.264 video). On the
+way it passes through a temporary WAV next to the video (`<video>.wav`, removed
+once ffmpeg exits unless `--audio` names it): the whole sound is ready before the
+first picture (its own continuous pass), and ffmpeg's stdin carries the RGB
+frames, so the sound comes in as a second input file (`-i <video>.wav -map 0:v
+-map 1:a -c:a aac -shortest`). A named pipe fed by a writer thread would avoid
+the file (POSIX only; Windows would need its own pipe) - not done, the file is
+small (~60 MB for 6 minutes) and short-lived.
+
+The run steps with `Emulator::RunFrame` (it keeps the position inside the frame;
+`RunNFrames(1)` drifts by the last instruction's overrun and after ~10 000
+frames gave one step two frames of sound). The journaled input of the session
+is played back by the run. A recording can still hold outside changes it did
+not journal, and the run then leaves the recording - Across the Edge's session
+(2026-09-28): the TR-DOS autostart hook rewrote `RUN "boot"` into
+`RUN "ACROSS"` in RAM, and the disk image is not stored in the session, so a
+run from the start boots another program and stays silent. Every 25 frames a
+second emulator seeks to the same position and compares RAM and PC / SP; on a
+mismatch the run is put back onto the recording (one discontinuity in the
+sound) and the frame is printed (`resynced at frame ...`). Clip input
+(`--clip`) has no sound and stays at 50 fps.
 
 ## Add an algorithm
 

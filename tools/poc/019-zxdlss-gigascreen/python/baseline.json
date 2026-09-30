@@ -1,5 +1,5 @@
 {
- "alg": "mod-tpgwa",
+ "alg": "mod-tpgwafs",
  "scenes": {
   "ate-pageflip-static": {
    "ghost_pixels": 0.0,
@@ -56,10 +56,22 @@
    "color_error_share": 0.0
   },
   "ate-dj-circles": {
-   "ghost_pixels": 0.09734,
-   "ghost_moving_flicker": 0.00231,
-   "missed_flicker": 0.1333,
-   "color_error_share": 0.3907
+   "ghost_pixels": 0.04991,
+   "ghost_moving_flicker": 0.00197,
+   "missed_flicker": 0.1482,
+   "color_error_share": 0.3424
+  },
+  "ate-flash-strobe": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 6e-05,
+   "missed_flicker": 0.0789,
+   "color_error_share": 0.368
+  },
+  "ate-final-rings": {
+   "ghost_pixels": 0.12419,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.1201,
+   "color_error_share": 0.2734
   }
  },
  "scenes2": {
@@ -127,11 +139,25 @@
    "agree": 0.9983
   },
   "ate-dj-circles": {
-   "color_ok": 0.9966,
-   "de_p95": 0.0012,
-   "edge_p95": 0.9498,
-   "shimmer": 0.001,
-   "agree": 0.4891
+   "color_ok": 0.9831,
+   "de_p95": 0.0105,
+   "edge_p95": 1.9131,
+   "shimmer": 0.0002,
+   "agree": 0.5702
+  },
+  "ate-flash-strobe": {
+   "color_ok": 0.8016,
+   "de_p95": 0.0974,
+   "edge_p95": 1.3387,
+   "shimmer": 0.0,
+   "agree": 0.8681
+  },
+  "ate-final-rings": {
+   "color_ok": 0.9859,
+   "de_p95": 0.0028,
+   "edge_p95": 4.1196,
+   "shimmer": 0.0,
+   "agree": 0.531
   }
  }
 }

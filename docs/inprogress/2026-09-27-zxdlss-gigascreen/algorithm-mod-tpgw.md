@@ -2,7 +2,9 @@
 
 Status: `mod-tpgw` accepted on all golden scenes (2026-09-29), end of the Python POC
 (`tools/poc/019-zxdlss-gigascreen`); `mod-tpgwa` = `mod-tpgw` + the scene stage of
-section 7.8, accepted the same day on the DJ scene, is the current baseline. This document specifies the algorithm
+section 7.8, accepted the same day on the DJ scene; `mod-tpgwafs` (flash veto,
+periods 2..4, detail-based scene trigger, step-aware scene render - sections 5
+and 7.8) is the current baseline. This document specifies the algorithm
 completely: an implementation written only from it must reproduce the
 reference implementation's output (Python: `python/mod/`, `python/twopage.py`,
 `python/mixers.py`; C++: `tools/verification/zxdlss/`).
@@ -156,6 +158,19 @@ For each run, per pixel not yet claimed by an earlier run of the same detector:
    vetoed: A,B,A,B at 50 Hz is seen as the blend, moving or not.
 5. A pixel passing 1-4 is claimed by this detector with series start b.
 
+**`mod-tpgwaf` and later** (2026-09-29):
+
+- **Flash veto**: a run is skipped (for every pixel) when a frame of its series
+  is *flat* - one color index on >= 99 % of the frame (a whole-screen flash).
+  Across the Edge at 3:22 flashes the screen gray with an accelerating rhythm;
+  three flashes 5 frames apart matched period 5 and mixed the flash into the
+  text, and the last flash frame's cells matched a page of the next scene
+  (period 2, a stripe of mixed rows).
+- **Periods 2..4 only**: over the whole of Across the Edge and the flicker test
+  period 5 fired only on that strobe; a strobe with a 5-frame gap is more likely
+  than a 5-page GigaScreen picture. (Period 4 fires on a few 64-192-pixel
+  patches; kept.)
+
 Proposal: claimed pixels, confidence 1, rank P, recipe = weight `1/P` on each
 frame of the series.
 
@@ -304,17 +319,32 @@ elif on: off_frames += 1; if off_frames >= 12: on = false, off_frames = 0
 While `on`, every pixel of the frame is 1/2 t + 1/4 t-1 + 1/4 t+1 (sources in
 that order - the summation order of the mix), replacing every earlier recipe.
 
+**`mod-tpgwafs` (the baseline since 2026-09-29, evening)** changes two things:
+
+- **Object tiles must be drawn detail**: in addition, the tile's horizontal color
+  changes in frame t (`t(x) != t(x + 1)`, x < W - 1; the last column counts as
+  no change) cover >= 0.1 of its 256 pixels, and the object threshold is 0.04
+  (was 0.17). The balls' sky (raster bars: few horizontal changes) scores at
+  most 0.013, the three figure scenes 0.05..0.15, so the final scene (a smaller
+  jumping figure over pulsing rings, object 0.07 by the old rule) switches on.
+- **Step-aware render** instead of the plain average (the average left trails of
+  the other color phase on the DJ's jumping circles): 1/2 t + 1/4 page_prev +
+  1/4 page_next with the other page per 8x8 block as `twopage.other_page_steps`:
+  the block of t equal to t-2 -> t-1 (both sides if also equal to t+2), equal to
+  t+2 -> t+1, neither -> the midway motion estimate of section 7.7. Sources in
+  the order t, page_prev, page_next.
+
 Measured (Across the Edge): object on the DJ scene 0.184..0.22, on the balls at
 most 0.157; moving on the DJ 0.46..0.55, on the hip-hop scene at most 0.33 (its
 motion is on the border). Over the whole demo the stage is on for 5.6 % of the
 frames: the DJ scene and 28-frame bursts in the next figure scene (a static
 figure over a moving flickering checkerboard; accepted by eye).
 
-**Open (P2, nice to have):** refine the scene detector. The margin between the
-balls (object <= 0.157, stage off) and the figure scenes (>= 0.184) is thin; a
-feature that tells the balls scene (GigaScreen objects moving in front of a
-static background) from a static figure in front of a moving background would
-make the switch robust on other programs.
+**Open (P2, nice to have):** the scene detector. With the detail rule of
+`mod-tpgwafs` the balls score <= 0.013 against the threshold 0.04 (the figure
+scenes 0.05..0.15); the moving share keeps the thinner margin (hip-hop <= 0.344
+against 0.4). Other programs may need a better tell between GigaScreen objects
+moving over a static background and a static figure over a moving one.
 
 ## 8. Render
 
@@ -342,7 +372,7 @@ pixel stage (section 5) -> recipe, explained
 two_page = classifier (section 6)
 if two_page > 0: field stage (section 7) -> override recipe on field pixels
 else: field.skip()
-mod-tpgwa only: scene stage (section 7.8) -> while on, the whole frame is 1/2 t + 1/4 t-1 + 1/4 t+1
+mod-tpgwa and later: scene stage (section 7.8) -> while on, the whole frame is its mix
 return render(recipe)
 ```
 

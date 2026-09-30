@@ -45,8 +45,11 @@ std::string readTtd(const std::string& path, const std::string& model, uint64_t 
 
 /// The machine's sound of frames [from, to] of a TTD file, played continuously
 /// (interleaved stereo int16, 44.1 kHz); min / max samples per frame reported.
+/// resyncs: frames where the run had left the recording (an outside change the
+/// session did not journal) and was put back onto it.
 std::string readTtdAudio(const std::string& path, const std::string& model, uint64_t from, uint64_t to,
-                         std::vector<int16_t>& samples, size_t& minPerFrame, size_t& maxPerFrame);
+                         std::vector<int16_t>& samples, size_t& minPerFrame, size_t& maxPerFrame,
+                         std::vector<uint64_t>* resyncs = nullptr);
 
 /// First and last frame of a TTD file's session.
 bool ttdRange(const std::string& path, const std::string& model, uint64_t& first, uint64_t& last, std::string& error);

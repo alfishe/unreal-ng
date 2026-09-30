@@ -136,7 +136,15 @@ int main(int argc, char** argv)
     const bool withSound = !ttd.empty() && (!audio.empty() || (!video.empty() && !noAudio));
     if (withSound)
     {
-        const std::string a = readTtdAudio(ttd, model, outFrom, outTo, sound, minSamples, maxSamples);
+        std::vector<uint64_t> resyncs;
+        const std::string a = readTtdAudio(ttd, model, outFrom, outTo, sound, minSamples, maxSamples, &resyncs);
+        if (!resyncs.empty())
+        {
+            std::printf("audio: the continuous run left the recording (unjournaled outside change); resynced at frame");
+            for (uint64_t r : resyncs)
+                std::printf(" %llu", static_cast<unsigned long long>(r));
+            std::printf("\n");
+        }
         if (!a.empty())
         {
             std::cerr << a << "\n";

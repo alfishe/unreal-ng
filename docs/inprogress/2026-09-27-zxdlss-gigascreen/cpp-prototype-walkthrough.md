@@ -259,6 +259,12 @@ and cropped to 352 x 304 like the emulator's Symmetric Horizontal viewport.
 a paper tile is one whose center lies on the paper, which keeps the standard
 frame's tiles (rows 3..14, columns 3..18) and the output unchanged.
 
+**Sound in the mp4.** The sound pass runs before the picture walk and writes a
+temporary WAV next to the video; ffmpeg takes the RGB frames on stdin and the WAV
+as a second input and muxes AAC into the same mp4, then the WAV is removed
+(`--audio` keeps it). A named pipe would avoid the file but is POSIX-only; kept
+as a file (see the tool README, "Sound").
+
 `--stats` prints the stage costs, the share of pixels and frames each detector
 mixed, and the runs of the scene stage.
 

@@ -176,15 +176,31 @@ struct Frame
     std::vector<uint8_t> plane;
     std::vector<uint32_t> key;
     std::vector<uint16_t> hist;            // tile histograms: (th x tw) x 16
+    bool flat = false;                     // one color on >= 99 % of the frame (a whole-screen flash)
+};
+
+/// Variant switches (spec sections 5 and 7.8).
+struct Variant
+{
+    const char* name = "mod-tpgw";
+    bool sceneAverage = false;     ///< scene stage (7.8)
+    bool flatVeto = false;         ///< no period series with a whole-screen flash (5)
+    int maxPeriod = 5;             ///< period detectors 2..maxPeriod
+    double sceneObject = 0.17;     ///< object group share of the tiles
+    double sceneDetail = 0.0;      ///< object tile: horizontal color changes >= this share (0: off)
+    bool sceneSteps = false;       ///< scene render: step-aware two-page mix instead of the average
 };
 
 class ModTpgw final : public Algorithm
 {
 public:
-    /// sceneAverage: the scene stage of mod-tpgwa (section 7.8)
-    explicit ModTpgw(bool sceneAverage = false) : _sceneAverage(sceneAverage) {}
+    /// sceneAverage: the scene stage of mod-tpgwa (section 7.8); flatVeto + maxPeriod 4:
+    /// mod-tpgwaf (section 5: no series with a whole-screen flash, periods 2..4)
+    explicit ModTpgw(const Variant& v)
+        : _name(v.name), _sceneAverage(v.sceneAverage), _flatVeto(v.flatVeto), _maxPeriod(v.maxPeriod),
+          _sceneObject(v.sceneObject), _sceneDetail(v.sceneDetail), _sceneSteps(v.sceneSteps) {}
     int delay() const override { return kLookAhead; }
-    std::string name() const override { return _sceneAverage ? "mod-tpgwa" : "mod-tpgw"; }
+    std::string name() const override { return _name; }
 
     std::string stats() const override
     {
@@ -285,7 +301,9 @@ public:
         {
             Timer t(_stage[kScene]);
             sceneOn = sceneStage(L);
-            if (sceneOn)
+            if (sceneOn && _sceneSteps)
+                renderField(L, out, /*wholeFrameSteps=*/true);
+            else if (sceneOn)
                 renderSceneAverage(L, out);
         }
         if (fieldRan && _anyFieldPixel && !sceneOn)
@@ -300,7 +318,12 @@ private:
     enum Stage { kPush, kMotion, kPixel, kRender1, kFeatures, kField, kRenderField, kScene, kStages };
     static constexpr const char* kStageNames[kStages] = {"push+keys", "masks+transl.", "pixel stage", "render stage1",
                                                            "tile features", "field stage", "render field", "scene stage"};
+    const std::string _name;
     const bool _sceneAverage;
+    const bool _flatVeto;
+    const int _maxPeriod;
+    const double _sceneObject, _sceneDetail;
+    const bool _sceneSteps;
     bool _sceneOn = false;                   // section 7.8 state
     int _sceneOff = 0;
     uint64_t _sceneFrames = 0;
@@ -345,14 +368,14 @@ private:
     bool _anyFieldPixel = false;
 
     // ---- section 7.8: scene stage (mod-tpgwa) ---------------------------------
-    static constexpr double kSceneObject = 0.17, kSceneMoving = 0.4, kSceneDyn = 0.05, kSceneStatic = 0.95;
+    static constexpr double kSceneMoving = 0.4, kSceneDyn = 0.05, kSceneStatic = 0.95;
     static constexpr int kSceneHold = 12;
 
     /// Features over t-3..t+3 and the on/off state; true while the whole frame is averaged.
     bool sceneStage(int L)
     {
         const int tiles = _th * _tw;
-        std::vector<int> nStatic(tiles, 0), nDyn(tiles, 0);
+        std::vector<int> nStatic(tiles, 0), nDyn(tiles, 0), nEdge(tiles, 0);
         std::vector<uint16_t> colors(tiles, 0);
         const uint8_t* s[7];
         for (int k = 0; k < 7; ++k)
@@ -380,6 +403,7 @@ private:
                     const int ti = (y / kFieldTile) * _tw + x / kFieldTile;
                     nStatic[ti] += stat;
                     nDyn[ti] += !stat && t[p] != prev[p] && t[p] != next[p];
+                    nEdge[ti] += x + 1 < _w && t[p] != t[p + 1];      // horizontal color change
                     colors[ti] |= c;
                 }
         });
@@ -390,7 +414,8 @@ private:
             for (int tx = 0; tx < _tw; ++tx)
             {
                 const int ti = ty * _tw + tx;
-                object[ti] = nStatic[ti] / area >= kSceneStatic && std::popcount(colors[ti]) >= 3;
+                object[ti] = nStatic[ti] / area >= kSceneStatic && std::popcount(colors[ti]) >= 3 &&
+                             (_sceneDetail <= 0.0 || nEdge[ti] / area >= _sceneDetail);
                 if (isPaperTile(ty, tx))
                 {
                     ++paperTiles;
@@ -399,7 +424,7 @@ private:
             }
         const double obj = static_cast<double>(largestComponent(object)) / tiles;
         const double mov = paperTiles ? static_cast<double>(moving) / paperTiles : 0.0;
-        if (obj >= kSceneObject && mov >= kSceneMoving)
+        if (obj >= _sceneObject && mov >= kSceneMoving)
         {
             _sceneOn = true;
             _sceneOff = 0;
@@ -535,6 +560,12 @@ private:
             f = std::make_unique<Frame>();
         const size_t px = static_cast<size_t>(_w) * _h;
         f->plane.assign(in.plane, in.plane + px);
+        {
+            size_t count[16] = {};
+            for (size_t i = 0; i < px; ++i)
+                ++count[in.plane[i] & 15];
+            f->flat = static_cast<double>(*std::max_element(count, count + 16)) >= 0.99 * static_cast<double>(px);
+        }
         f->key.resize(px);
         for (int y = 0; y < _h; ++y)
         {
@@ -697,10 +728,20 @@ private:
         {
             const int sp = span(P);
             nruns[P - 2] = 0;
+            if (P > _maxPeriod)
+                continue;
             for (int a = std::max(0, L - sp + 1); a <= std::min(L, n - sp); ++a)
-                runs[P - 2][nruns[P - 2]++] = {a, std::max({std::min(L, a + sp - P), a, L - P + 1}),
-                                               ((1u << (sp - P)) - 1) << a, ((1u << (sp - 1)) - 1) << a,
+            {
+                const int b = std::max({std::min(L, a + sp - P), a, L - P + 1});
+                // a series holding a whole-screen flash is no GigaScreen cycle (section 5)
+                bool flat = false;
+                for (int j = 0; j < P && _flatVeto; ++j)
+                    flat |= _ring[b + j]->flat;
+                if (flat)
+                    continue;
+                runs[P - 2][nruns[P - 2]++] = {a, b, ((1u << (sp - P)) - 1) << a, ((1u << (sp - 1)) - 1) << a,
                                                ((1u << (P - 1)) - 1) << a};
+            }
         }
         // a pixel equal to its neighbor frame across the whole ring has no non-constant run
         const uint32_t staticMask = n >= 2 ? (1u << (n - 1)) - 1 : 0;
@@ -711,7 +752,7 @@ private:
             const uint32_t c1 = _c1[p];
             if ((c1 & staticMask) == staticMask)
                 continue;
-            for (int P = 2; P <= 5; ++P)
+            for (int P = 2; P <= _maxPeriod; ++P)
             {
                 const uint32_t eq = _eq[P - 2][p];
                 bool found = false;
@@ -992,7 +1033,10 @@ private:
     }
 
     /// section 7.7 with pre-shifted rows; writes the two-page mix into `out` on field pixels
-    void renderField(int L, RGBImage& out)
+    /// wholeFrameSteps (the scene stage of mod-tpgwafs, spec 7.8): every pixel, and per
+    /// 8x8 block the other page from the neighbor across which t's own page did not
+    /// jump (t == t-2: t-1; t == t+2: t+1; both: both) - twopage.other_page_steps
+    void renderField(int L, RGBImage& out, bool wholeFrameSteps = false)
     {
         const uint8_t* prev = _ring[L + 1]->plane.data();
         const uint8_t* next = _ring[L - 1]->plane.data();
@@ -1067,23 +1111,88 @@ private:
             vy[k] = static_cast<int8_t>(bs / (2 * R + 1) - R);
             vx[k] = static_cast<int8_t>(bs % (2 * R + 1) - R);
         }
+        // page-flip blocks (whole-frame steps render): t's block equal to t-2 / t+2
+        std::vector<uint8_t> back, fwd;
+        if (wholeFrameSteps)
+        {
+            back = blockEqual(t, _ring[L + 2]->plane.data());
+            fwd = blockEqual(t, _ring[L - 2]->plane.data());
+        }
         for (int y = 0; y < _h; ++y)
             for (int x = 0; x < _w; ++x)
             {
-                if (!_field[static_cast<size_t>(y / kFieldTile) * _tw + x / kFieldTile])
+                if (!wholeFrameSteps && !_field[static_cast<size_t>(y / kFieldTile) * _tw + x / kFieldTile])
                     continue;
                 const size_t p = static_cast<size_t>(y) * _w + x;
                 const size_t s = static_cast<size_t>(std::min(y / kBlock, bh - 1)) * bw + std::min(x / kBlock, bw - 1);
                 const int ay = floorDiv2(vy[s]), ax = floorDiv2(vx[s]), by = vy[s] - ay, bx = vx[s] - ax;
-                const uint8_t fp = prevSh[static_cast<size_t>(ax + H) * px + static_cast<size_t>(wrap(y - ay, _h)) * _w + x];
-                const uint8_t fn = nextSh[static_cast<size_t>(bx + H) * px + static_cast<size_t>(wrap(y + by, _h)) * _w + x];
+                uint8_t fp = prevSh[static_cast<size_t>(ax + H) * px + static_cast<size_t>(wrap(y - ay, _h)) * _w + x];
+                uint8_t fn = nextSh[static_cast<size_t>(bx + H) * px + static_cast<size_t>(wrap(y + by, _h)) * _w + x];
+                if (wholeFrameSteps && y < bh * kBlock && x < bw * kBlock)
+                {
+                    const size_t bi = static_cast<size_t>(y / kBlock) * bw + x / kBlock;
+                    const bool b = back[bi], f = fwd[bi];
+                    if (b)                          // only back, or both
+                    {
+                        fp = prev[p];
+                        fn = f ? next[p] : prev[p];
+                    }
+                    else if (f)                     // only forward
+                    {
+                        fp = next[p];
+                        fn = next[p];
+                    }
+                }
                 unpack(_mix.twoPage(t[p], fp, fn), &out[p * 3]);
             }
     }
+
+    /// 8x8 blocks (bh x bw grid from pixel 0) where a and b are equal.
+    std::vector<uint8_t> blockEqual(const uint8_t* a, const uint8_t* b) const
+    {
+        const int bh = _h / kBlock, bw = _w / kBlock;
+        std::vector<uint8_t> eq(static_cast<size_t>(bh) * bw, 1);
+        for (int y = 0; y < bh * kBlock; ++y)
+        {
+            const size_t row = static_cast<size_t>(y) * _w;
+            for (int x = 0; x < bw * kBlock; ++x)
+                if (a[row + x] != b[row + x])
+                    eq[static_cast<size_t>(y / kBlock) * bw + x / kBlock] = 0;
+        }
+        return eq;
+    }
 };
 
-const Registration kRegistration("mod-tpgw", [] { return std::make_unique<ModTpgw>(); });
-const Registration kRegistrationA("mod-tpgwa", [] { return std::make_unique<ModTpgw>(true); });
+const Registration kRegistration("mod-tpgw", [] { return std::make_unique<ModTpgw>(Variant{}); });
+const Registration kRegistrationA("mod-tpgwa", [] {
+    Variant v;
+    v.name = "mod-tpgwa";
+    v.sceneAverage = true;
+    return std::make_unique<ModTpgw>(v);
+});
+// + no series with a whole-screen flash, periods 2..4, detailed object tiles >= 4 %
+const Registration kRegistrationAF("mod-tpgwaf", [] {
+    Variant v;
+    v.name = "mod-tpgwaf";
+    v.sceneAverage = true;
+    v.flatVeto = true;
+    v.maxPeriod = 4;
+    v.sceneObject = 0.04;
+    v.sceneDetail = 0.1;
+    return std::make_unique<ModTpgw>(v);
+});
+// + the scene stage renders the step-aware two-page mix (the accepted baseline, 2026-09-29)
+const Registration kRegistrationAFS("mod-tpgwafs", [] {
+    Variant v;
+    v.name = "mod-tpgwafs";
+    v.sceneAverage = true;
+    v.flatVeto = true;
+    v.maxPeriod = 4;
+    v.sceneObject = 0.04;
+    v.sceneDetail = 0.1;
+    v.sceneSteps = true;
+    return std::make_unique<ModTpgw>(v);
+});
 
 }  // namespace
 }  // namespace zxdlss

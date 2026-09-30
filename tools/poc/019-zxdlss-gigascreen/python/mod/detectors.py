@@ -21,16 +21,17 @@ import numpy as np
 
 from python.mod.context import TILE_FIELD
 from python.mod.registry import Detector, Proposal, register
-from python.twopage import _block_equal, block_shift_exact, other_page, shifted_equal
+from python.twopage import _block_equal, block_shift_exact, other_page, other_page_steps, shifted_equal
 
 
 class PeriodDetector(Detector):
     tags = ("static", "fine", "border")
     P = 2
 
-    def __init__(self, confirm=6, confirm_periods=3, **params):
+    def __init__(self, confirm=6, confirm_periods=3, flat_veto=False, **params):
         super().__init__(**params)
         self.confirm, self.confirm_periods = confirm, confirm_periods
+        self.flat_veto = flat_veto
         self.span = max(2 * self.P, confirm, confirm_periods * self.P)
         self.history = self.span
 
@@ -56,6 +57,11 @@ class PeriodDetector(Detector):
             if not run.any():
                 continue
             b = max(min(L, a + span - p), a, L - p + 1)       # series: P frames of the run containing t
+            if self.flat_veto and any(_flat(ctx, b + j) for j in range(p)):
+                # a whole-screen flash (one color everywhere) is no GigaScreen page: an
+                # accelerating strobe matched period 5 for three periods (Across the Edge
+                # 3:22), and a flash's cells matched a page of the next scene (period 2)
+                continue
             lum = [ctx.luma(b + j) for j in range(p)]
             luma_ok = np.any([lum[j] != lum[0] for j in range(1, p)], axis=0)
             vetoed_luma |= run & ~luma_ok
@@ -75,6 +81,15 @@ class PeriodDetector(Detector):
         return [Proposal(self.name, mask, mask.astype(np.float32), weights,
                          rank=np.full((ctx.h, ctx.w), p, np.int16),
                          info={"vetoed_luma": vetoed_luma & ~mask, "vetoed_motion": vetoed_motion & ~mask})]
+
+
+FLAT_SHARE = 0.99
+
+
+def _flat(ctx, i):
+    """Frame i shows one color on >= 99 % of the screen (a whole-screen flash)."""
+    f = ctx.frames[i]
+    return f.feature("flat", lambda: np.bincount(f.plane.ravel(), minlength=16).max() >= FLAT_SHARE * f.plane.size)
 
 
 @register
@@ -450,9 +465,13 @@ class SceneAverageDetector(Detector):
     tags = ("scene",)
     history = 4
 
-    def __init__(self, min_object=0.17, min_dynamic=0.4, hold=12, **params):
+    def __init__(self, min_object=0.17, min_dynamic=0.4, hold=12, detail=0.0, render="avg3", **params):
         super().__init__(**params)
         self.min_object, self.min_dynamic, self.hold = min_object, min_dynamic, hold
+        # detail > 0 (mod-tpgwaf): an object tile also shows horizontal color changes on
+        # >= detail of its pixels in frame t - a drawn picture, not the balls' raster-bar sky
+        self.detail = detail
+        self.render = render                # "avg3" or "steps" (twopage.other_page_steps)
         self.on, self.off_frames = False, 0
 
     def skip(self):
@@ -478,6 +497,10 @@ class SceneAverageDetector(Detector):
         for c in range(16):
             present[..., c] = np.any(cols == c, axis=2)
         detailed = present.sum(axis=2) >= 3
+        if self.detail > 0:
+            hchg = np.zeros(t.shape, bool)
+            hchg[:, :-1] = t[:, :-1] != t[:, 1:]
+            detailed &= tiles(hchg) >= self.detail
         obj = _largest_component(detailed & (tiles(static) >= 0.95)) / float(th * tw)
         paper = np.zeros((th, tw), bool)
         paper[3:15, 3:19] = True
@@ -497,10 +520,20 @@ class SceneAverageDetector(Detector):
             return []
         shape = (ctx.h, ctx.w)
         mask = np.ones(shape, bool)
+        info = {"object": obj, "moving": moving}
+        if self.render == "steps":
+            # the other page at t from the neighbor across which t's own page did not
+            # jump (fewer trails on lattices moving in steps than the plain average)
+            fp, fn = other_page_steps(ctx.plane(L + 2), ctx.plane(L + 1), ctx.plane(L), ctx.plane(L - 1),
+                                      ctx.plane(L - 2))
+            weights = {L: np.full(shape, 0.5), "scene_prev": np.full(shape, 0.25), "scene_next": np.full(shape, 0.25)}
+            return [Proposal(self.name, mask, mask.astype(np.float32), weights,
+                             sources={"scene_prev": fp, "scene_next": fn},
+                             rank=np.full(shape, 12, np.int16), info=info)]
         # source order t, t-1, t+1: the summation order of the mix (as the two-page mix)
         weights = {L: np.full(shape, 0.5), L + 1: np.full(shape, 0.25), L - 1: np.full(shape, 0.25)}
         return [Proposal(self.name, mask, mask.astype(np.float32), weights,
-                         rank=np.full(shape, 12, np.int16), info={"object": obj, "moving": moving})]
+                         rank=np.full(shape, 12, np.int16), info=info)]
 
 
 def _largest_component(mask):
