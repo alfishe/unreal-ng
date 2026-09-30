@@ -3209,7 +3209,7 @@ bool ReadInputJournalSection(std::istream& in, std::vector<TTDInputEvent>& event
             err = "stream read failed (input event " + std::to_string(i) + ")";
             return false;
         }
-        if (kind > static_cast<uint8_t>(TTDInputKind::GSReset))
+        if (kind > static_cast<uint8_t>(TTDInputKind::PcKey))
         {
             err = "input event " + std::to_string(i) + ": unknown kind " + std::to_string(kind);
             return false;

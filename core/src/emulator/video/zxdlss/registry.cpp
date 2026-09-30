@@ -5,9 +5,19 @@
 namespace zxdlss
 {
 
+namespace
+{
+void registerRaw(std::map<std::string, Factory>& registry);
+}
+
 std::map<std::string, Factory>& registry()
 {
-    static std::map<std::string, Factory> algorithms;
+    static std::map<std::string, Factory> algorithms = [] {
+        std::map<std::string, Factory> builtIn;
+        registerRaw(builtIn);
+        registerModTpgw(builtIn);
+        return builtIn;
+    }();
     return algorithms;
 }
 
@@ -51,16 +61,23 @@ public:
     std::string name() const override { return "raw"; }
     void process(const FrameInput& in, RGBImage& out) override
     {
-        const Palette& pal = Palette::instance();
+        if (!_pal.sameAs(in.palette))
+            _pal = Palette::fromRGBA(in.palette);
         const size_t px = static_cast<size_t>(in.width) * in.height;
         out.resize(px * 3);
         for (size_t p = 0; p < px; ++p)
             for (int k = 0; k < 3; ++k)
-                out[p * 3 + k] = Palette::linearToSrgb(0.0 + pal.linear[in.plane[p]][k]);
+                out[p * 3 + k] = Palette::linearToSrgb(0.0 + _pal.linear[in.plane[p]][k]);
     }
+
+private:
+    Palette _pal;
 };
 
-const Registration kRaw("raw", [] { return std::make_unique<Raw>(); });
+void registerRaw(std::map<std::string, Factory>& registry)
+{
+    registry["raw"] = [] { return std::make_unique<Raw>(); };
+}
 
 }  // namespace
 }  // namespace zxdlss

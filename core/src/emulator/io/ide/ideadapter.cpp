@@ -21,18 +21,29 @@ IDE_SCHEME IdeAdapter::Scheme() const
     return ide ? ide->Scheme() : IDE_NONE;
 }
 
+// Every CPU access that reaches the drive goes through these four helpers,
+// which mark it for LastAccessReachedDrive()
 uint8_t IdeAdapter::ReadRegister(uint8_t reg)
 {
+    _reachedDrive = true;
     return Channel()->ReadRegister(reg);
 }
 
 void IdeAdapter::WriteRegister(uint8_t reg, uint8_t value)
 {
+    _reachedDrive = true;
     Channel()->WriteRegister(reg, value);
+}
+
+void IdeAdapter::WriteDataWord(uint16_t word)
+{
+    _reachedDrive = true;
+    Channel()->WriteData(word);
 }
 
 uint8_t IdeAdapter::ReadDataLow()
 {
+    _reachedDrive = true;
     const uint16_t word = Channel()->ReadData();
     _s.readLatch = static_cast<uint8_t>(word >> 8);
     return static_cast<uint8_t>(word & 0xFF);
@@ -71,6 +82,7 @@ uint8_t IdeAdapter::AtmIntrqBit()
 
 bool IdeAdapter::In(uint16_t port, const Gate& gate, uint8_t& value)
 {
+    _reachedDrive = false;
     if (!Channel())
         return false;
     switch (Scheme())
@@ -94,6 +106,7 @@ bool IdeAdapter::In(uint16_t port, const Gate& gate, uint8_t& value)
 
 bool IdeAdapter::Out(uint16_t port, const Gate& gate, uint8_t value)
 {
+    _reachedDrive = false;
     if (!Channel())
         return false;
     switch (Scheme())
@@ -162,7 +175,7 @@ bool IdeAdapter::NemoOut(uint16_t port, bool a8Latch, uint8_t value)
     if (reg)
         WriteRegister(reg, value);
     else
-        Channel()->WriteData(static_cast<uint16_t>((_s.writeLatch << 8) | value));
+        WriteDataWord(static_cast<uint16_t>((_s.writeLatch << 8) | value));
     return true;
 }
 
@@ -241,7 +254,7 @@ bool IdeAdapter::EvoOut(uint16_t port, uint8_t value)
     {
         if (_s.writeHigh)
         {
-            Channel()->WriteData(static_cast<uint16_t>((_s.writeLatch << 8) | value));
+            WriteDataWord(static_cast<uint16_t>((_s.writeLatch << 8) | value));
             _s.writeHigh = _s.writePair = 0;
         }
         else if (!_s.writePair)
@@ -251,7 +264,7 @@ bool IdeAdapter::EvoOut(uint16_t port, uint8_t value)
         }
         else
         {
-            Channel()->WriteData(static_cast<uint16_t>((value << 8) | _s.writeLatch));
+            WriteDataWord(static_cast<uint16_t>((value << 8) | _s.writeLatch));
             _s.writePair = 0;
         }
         return true;
@@ -261,7 +274,7 @@ bool IdeAdapter::EvoOut(uint16_t port, uint8_t value)
     if (reg)
         WriteRegister(reg, value);
     else
-        Channel()->WriteData(value);
+        WriteDataWord(value);
     return true;
 }
 
@@ -296,7 +309,7 @@ bool IdeAdapter::AtmOut(uint16_t port, uint8_t value)
     if (reg)
         WriteRegister(reg, value);
     else
-        Channel()->WriteData(static_cast<uint16_t>((_s.writeLatch << 8) | value));
+        WriteDataWord(static_cast<uint16_t>((_s.writeLatch << 8) | value));
     return true;
 }
 
@@ -337,7 +350,7 @@ void IdeAdapter::SmucOut(uint16_t port, uint8_t system, uint8_t value)
     if (reg)
         WriteRegister(reg, value);
     else
-        Channel()->WriteData(static_cast<uint16_t>((_s.writeLatch << 8) | value));
+        WriteDataWord(static_cast<uint16_t>((_s.writeLatch << 8) | value));
 }
 
 /// endregion </SMUC>
@@ -379,7 +392,7 @@ bool IdeAdapter::ProfiOut(uint16_t port, uint8_t value)
         if (reg)
             WriteRegister(reg, value);
         else
-            Channel()->WriteData(static_cast<uint16_t>((_s.writeLatch << 8) | value));
+            WriteDataWord(static_cast<uint16_t>((_s.writeLatch << 8) | value));
         return true;
     }
     if (low == 0xAB)
@@ -424,7 +437,7 @@ bool IdeAdapter::DivideOut(uint16_t port, uint8_t value)
         if (_s.writePair)
             _s.writeLatch = value;  // the low byte first
         else
-            Channel()->WriteData(static_cast<uint16_t>((value << 8) | _s.writeLatch));
+            WriteDataWord(static_cast<uint16_t>((value << 8) | _s.writeLatch));
         return true;
     }
     _s.writePair = 0;

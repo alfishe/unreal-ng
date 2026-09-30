@@ -234,6 +234,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getVideoPixel, "/api/v1/emulator/{id}/video/pixel", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getVideoAddress, "/api/v1/emulator/{id}/video/address", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getVideoText, "/api/v1/emulator/{id}/video/text", drogon::Get);
+    // Temporal effects (ZX DLSS de-flicker, api/video_temporal_api.cpp): status, switch algorithm / off
+    ADD_METHOD_TO(EmulatorAPI::getVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Put, drogon::Post);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -276,6 +279,8 @@ public:
     // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
     ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateIdeActive, "/api/v1/emulator/state/ide", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateTsConf, "/api/v1/emulator/{id}/state/tsconf", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateTsConfActive, "/api/v1/emulator/state/tsconf", drogon::Get);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
@@ -867,6 +872,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/video/text[?layer=] — the text grid of a text mode
     void getVideoText(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/temporal — ZX DLSS de-flicker status (algorithm, delays, timing)
+    void getVideoTemporal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/temporal — body {"algorithm": "<name>"|""}; returns the new status
+    void setVideoTemporal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with
@@ -965,6 +976,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateIdeActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateTsConf(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateTsConfActive(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateRtcActive(const drogon::HttpRequestPtr& req,

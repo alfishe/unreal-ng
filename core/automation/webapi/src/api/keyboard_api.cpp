@@ -26,7 +26,7 @@ extern void addCorsHeaders(HttpResponsePtr& resp);
 /// while the OpenAPI contract promises 400). Returns true when a response was sent.
 static bool rejectUnknownKey(const std::string& keyName, const std::function<void(const HttpResponsePtr&)>& callback)
 {
-    if (DebugKeyboardManager::ResolveKeyName(keyName) != ZXKEY_NONE)
+    if (DebugKeyboardManager::IsKnownKeyName(keyName))
         return false;
 
     Json::Value error;

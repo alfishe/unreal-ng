@@ -375,6 +375,8 @@ GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, be
 GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too
 GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture)
 GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
+GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
+PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
@@ -387,11 +389,21 @@ GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels,
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
+GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD (404 on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
+
+The ZX DLSS de-flicker blends frames that flicker between two pictures (a
+"gigascreen" effect) into one steady picture before it is shown. It looks at
+the frames that follow, so while it is on the picture is shown later by the
+algorithm's look-ahead and the sound is delayed by the same extra amount:
+`mod-tpgwafsd` (the default) gives `video_delay_frames` 7 (about 143 ms on a
+Pentagon) with the default A/V delay of 2, and `audio_extra_delay_frames` 5.
+Emulation itself is not delayed. The same status is CLI `video temporal`,
+Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
@@ -1305,6 +1317,8 @@ POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
+
+A file that needs another machine switches the model before it loads: a TS-Conf program (`.spg`) on a Pentagon becomes a TS-Conf (`TSL`, 4096K) instance with the media carried over, then the program loads there. The answer then has `"model_switched": true`, `"model": "TSL"`, `emulator_id` (the new instance; use it from now on) and `previous_emulator_id`. With `"switch_model": false` (body field, or a query parameter with an upload) the load is refused with 409, `required_model` and `required_ram_kb`. MCP `load_software`, CLI `snapshot load`, Lua `snapshot_load` and Python `unreal.snapshot_load` share this rule, and so does opening the file in unreal-qt (menu, drag and drop, command line).
 
 ### RZX Playback
 

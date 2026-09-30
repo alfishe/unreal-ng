@@ -1,6 +1,11 @@
 #include "keyboardmanager.h"
 
 #include <QDebug>
+#include <QKeyEvent>
+
+#include "3rdparty/message-center/messagecenter.h"
+
+std::set<uint8_t> KeyboardManager::_heldPcKeys;
 
 /// Populate mapping from Qt keycodes to unified emulator format
 std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
@@ -131,4 +136,114 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(int qtKey, Qt::Keyboa
     
     result = mapQtKeyToEmulatorKey(qtKey);
     return result;
+}
+
+PcKey KeyboardManager::mapQtKeyToPcKey(int qtKey)
+{
+    if (qtKey >= Qt::Key_A && qtKey <= Qt::Key_Z)
+        return static_cast<PcKey>(static_cast<int>(PcKey::A) + (qtKey - Qt::Key_A));
+    if (qtKey >= Qt::Key_F1 && qtKey <= Qt::Key_F12)
+        return static_cast<PcKey>(static_cast<int>(PcKey::Function1) + (qtKey - Qt::Key_F1));
+
+    switch (qtKey)
+    {
+        case Qt::Key_1: case Qt::Key_Exclam: return PcKey::Digit1;
+        case Qt::Key_2: case Qt::Key_At: return PcKey::Digit2;
+        case Qt::Key_3: case Qt::Key_NumberSign: return PcKey::Digit3;
+        case Qt::Key_4: case Qt::Key_Dollar: return PcKey::Digit4;
+        case Qt::Key_5: case Qt::Key_Percent: return PcKey::Digit5;
+        case Qt::Key_6: case Qt::Key_AsciiCircum: return PcKey::Digit6;
+        case Qt::Key_7: case Qt::Key_Ampersand: return PcKey::Digit7;
+        case Qt::Key_8: case Qt::Key_Asterisk: return PcKey::Digit8;
+        case Qt::Key_9: case Qt::Key_ParenLeft: return PcKey::Digit9;
+        case Qt::Key_0: case Qt::Key_ParenRight: return PcKey::Digit0;
+        case Qt::Key_Escape: return PcKey::Escape;
+        case Qt::Key_QuoteLeft: case Qt::Key_AsciiTilde: return PcKey::Backquote;
+        case Qt::Key_Minus: case Qt::Key_Underscore: return PcKey::Minus;
+        case Qt::Key_Equal: case Qt::Key_Plus: return PcKey::Equal;
+        case Qt::Key_Backspace: return PcKey::Backspace;
+        case Qt::Key_Tab: case Qt::Key_Backtab: return PcKey::Tab;
+        case Qt::Key_BracketLeft: case Qt::Key_BraceLeft: return PcKey::LeftBracket;
+        case Qt::Key_BracketRight: case Qt::Key_BraceRight: return PcKey::RightBracket;
+        case Qt::Key_Backslash: case Qt::Key_Bar: return PcKey::Backslash;
+        case Qt::Key_CapsLock: return PcKey::CapsLock;
+        case Qt::Key_Semicolon: case Qt::Key_Colon: return PcKey::Semicolon;
+        case Qt::Key_Apostrophe: case Qt::Key_QuoteDbl: return PcKey::Quote;
+        case Qt::Key_Return: return PcKey::Enter;
+        case Qt::Key_Enter: return PcKey::KeypadEnter;
+        case Qt::Key_Shift: return PcKey::LeftShift;
+        case Qt::Key_Comma: case Qt::Key_Less: return PcKey::Comma;
+        case Qt::Key_Period: case Qt::Key_Greater: return PcKey::Period;
+        case Qt::Key_Slash: case Qt::Key_Question: return PcKey::Slash;
+        case Qt::Key_Control: return PcKey::LeftCtrl;
+        case Qt::Key_Meta: return PcKey::LeftGui;
+        case Qt::Key_Alt: return PcKey::LeftAlt;
+        case Qt::Key_AltGr: return PcKey::RightAlt;
+        case Qt::Key_Space: return PcKey::Space;
+        case Qt::Key_Menu: return PcKey::Menu;
+        case Qt::Key_Print: return PcKey::PrintScreen;
+        case Qt::Key_ScrollLock: return PcKey::ScrollLock;
+        case Qt::Key_Pause: return PcKey::Pause;
+        case Qt::Key_Insert: return PcKey::Insert;
+        case Qt::Key_Home: return PcKey::Home;
+        case Qt::Key_PageUp: return PcKey::PageUp;
+        case Qt::Key_Delete: return PcKey::Delete;
+        case Qt::Key_End: return PcKey::End;
+        case Qt::Key_PageDown: return PcKey::PageDown;
+        case Qt::Key_Up: return PcKey::Up;
+        case Qt::Key_Left: return PcKey::Left;
+        case Qt::Key_Down: return PcKey::Down;
+        case Qt::Key_Right: return PcKey::Right;
+        case Qt::Key_NumLock: return PcKey::NumLock;
+        default: return PcKey::None;
+    }
+}
+
+PcKey KeyboardManager::mapQtEventToPcKey(const QKeyEvent* event)
+{
+    if (!event)
+        return PcKey::None;
+
+    PcKey key = PcKey::None;
+#if defined(Q_OS_MACOS)
+    key = pckey::FromMacVirtualKey(event->nativeVirtualKey());
+#elif defined(Q_OS_WIN)
+    key = pckey::FromWindowsScanCode(event->nativeScanCode());
+#elif defined(Q_OS_LINUX)
+    // X11 and Wayland keycodes are evdev codes + 8
+    if (event->nativeScanCode() >= 8)
+        key = pckey::FromLinuxEvdev(event->nativeScanCode() - 8);
+#endif
+    if (key == PcKey::None)
+        key = mapQtKeyToPcKey(event->key());
+    return key;
+}
+
+KeyboardEvent* KeyboardManager::createKeyboardEvent(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId)
+{
+    if (!event)
+        return nullptr;
+
+    const quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
+    const PcKey pcKey = mapQtEventToPcKey(event);
+    if (zxKey == ZXKEY_NONE && pcKey == PcKey::None)
+        return nullptr;
+
+    if (pcKey != PcKey::None)
+    {
+        if (type == KEY_PRESSED)
+            _heldPcKeys.insert(static_cast<uint8_t>(pcKey));
+        else
+            _heldPcKeys.erase(static_cast<uint8_t>(pcKey));
+    }
+
+    return new KeyboardEvent(zxKey, static_cast<uint8_t>(pcKey), type, targetId);
+}
+
+void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    for (uint8_t pcKey : _heldPcKeys)
+        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_NONE, pcKey, KEY_RELEASED, targetId));
+    _heldPcKeys.clear();
 }

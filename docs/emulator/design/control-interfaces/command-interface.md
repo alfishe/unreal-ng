@@ -733,6 +733,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
+| TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
@@ -1336,6 +1337,49 @@ the resolution chain — see section 7: connected device rate > `[SOUND] CoreRat
 never be silently mislabeled. The same switch exists as `setting audio_rate`,
 WebAPI `PUT /settings/audio_rate`, Lua/Python `set_audio_rate` and the Lua
 `video_record` `audio_rate` option.
+
+#### 5.9 Temporal Effects (ZX DLSS De-flicker)
+
+Some ZX Spectrum programs show more colors by switching two pictures every
+frame (a "gigascreen" or flicker effect). On a modern display this flickers;
+the ZX DLSS de-flicker blends such frames into one steady picture. It runs on
+every emulated frame just before the frame is shown.
+
+To decide how to blend a frame the algorithm looks at the frames that follow
+it, so while it is on the picture is shown a few frames later. The sound is
+delayed by the same extra amount so picture and sound stay in sync. Example:
+`mod-tpgwafsd` (the default) needs a 7-frame video delay; with the default
+A/V delay of 2 frames the sound is delayed by 5 more frames (about 100 ms at
+50 frames per second). Emulation itself is not delayed: only what you see and
+hear.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `video temporal` / `video temporal status` | | Show the selected algorithm, whether it runs, the video and audio delay it causes, frame counters and processing time. |
+| `video temporal list` | | List the algorithms that can be switched on (the default is `mod-tpgwafsd`). |
+| `video temporal <algorithm>` | algorithm name | Switch the de-flicker on with that algorithm. An unknown name is an error that lists the valid ones. |
+| `video temporal off` | | Switch the de-flicker off (the delays return to the normal A/V delay). |
+
+The same status and switch are available as WebAPI
+`GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
+`video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
+actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
+when off), `active`, `inactive_reason`, `correcting` (a detector fired in the
+frame on screen and an averaging mask formed - the Qt dialog's LED; every frame
+is analyzed, but a frame with nothing detected passes unchanged),
+`showing_processed` (the frame on screen went through the algorithm, changed
+or not), `video_delay_frames`, `video_delay_ms`, `audio_extra_delay_frames`,
+`processed`, `corrected_frames` (outputs with a detection), `written` (outputs
+in their frame's slot before it was shown), `shown_raw` (frames shown raw:
+their output came after they were on screen - the worker was too slow), `late`
+(outputs whose slot was already reused), `restarts`, `last_ms`, `average_ms`,
+`shown_frame` (the averaging mask of the frame on screen: `pattern` -
+"period 2".."period 5", "two-page field", "scene average" or "none" - the
+percent of pixels each detector put in the mask `period2`..`period5`, `field`,
+and `field_stage`, `whole_paper`, `scene_average`; null when unknown),
+`last_frame` (the same for the newest output, 7 frames ahead of the screen),
+`algorithms`,
+`default_algorithm`.
 
 ### 6. System State Inspection
 
@@ -2999,6 +3043,8 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 | `rzx status` | | | File, state (`playing` / `finished` / `desynced` / `stopped`), frame and progress, desyncs with the first one's frame, expected and actual counts and PC, interrupt drift against the machine's own raster, options. | ✅ Implemented |
 
 `snapshot load <file.rzx>` and `open <file.rzx>` also play a recording, on the selected machine without switching the model.
+
+`snapshot load <file.spg>` (a TS-Conf program) switches the selected machine to TS-Conf (`TSL`) first unless `--no-switch` is given, and prints the new instance id; the WebAPI, MCP, Lua, Python and the Qt window do the same ([webapi-interface.md → Snapshots](./webapi-interface.md#snapshots-implemented-separately)).
 
 **Terms**:
 - *Frame* (RZX): the stretch between two interrupts, measured in opcode fetches (R-register increments); not the 50 Hz video frame.

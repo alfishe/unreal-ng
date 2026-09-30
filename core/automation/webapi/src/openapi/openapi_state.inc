@@ -56,7 +56,9 @@
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["responses"]["200"]["description"] =
         "Screen mode information. video_mode is one of the Screen mode names (e.g. ZX, P16, PROFI, PROFIHR); "
-        "PROFIHR (Profi #DFFD bit 7) reports resolution 512x240 in a 608x288 framebuffer.";
+        "PROFIHR (Profi #DFFD bit 7) reports resolution 512x240 in a 608x288 framebuffer. On TS-Conf the name carries "
+        "the geometry: TSZX / TS16 / TS256 / TSTX followed by 256x192, 320x200, 320x240 or 360x288 (TSTX: the text "
+        "columns and rows, resolution in 14 MHz pixels); the framebuffer is 720x288 for every TS mode.";
 
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["summary"] = "Get flash state";
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["tags"].append("Screen State");
@@ -159,6 +161,22 @@
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["200"]["description"] = "IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["404"]["description"] = "No IDE board on this machine";
+
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["summary"] = "Get TS-Conf machine state";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["tags"].append("Machine State");
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["description"] =
+        "The TS-Conf machine (model TSL): memory (MEM_CONFIG decoded, the four window pages, LCK128 mode, lock48, DOS, "
+        "virtual TR-DOS, cache, the FM window), video (V_CONFIG decoded: mode ZX / 16C / 256C / TXT, geometry, NOGFX / "
+        "NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and active sprite count; the raster "
+        "line the engine is on with its latched registers and DRAM use), interrupts (mask, pending sources, frame "
+        "position), DMA (busy, task, live byte addresses, block counters), the CPU clock and the SD card. 404 on other "
+        "machines.";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["200"]["description"] = "TS-Conf machine state";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");

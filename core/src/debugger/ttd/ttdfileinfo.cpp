@@ -119,6 +119,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::TsConfPaging: return "tsconf";
         case PeripheralId::AtaChannel: return "ata";
         case PeripheralId::Ds12887: return "ds12887";
+        case PeripheralId::EvoPs2: return "evo-ps2";
         case PeripheralId::EvoTurboCache: return "evo-turbo-cache";
         case PeripheralId::Count: break;
     }

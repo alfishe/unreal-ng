@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -114,6 +115,22 @@ TEST_F(TTD_ClipExport_Test, ExportedFramesEqualLiveFrames)
     const size_t planeBBytes = static_cast<size_t>(result.width) * result.height * 2;
     ASSERT_EQ(frameBytes, liveRgba.begin()->second.size());
     ASSERT_TRUE(std::filesystem::exists(_dir / "clip.json"));
+    {
+        // The live palette plane B's color indices were drawn in
+        std::ifstream in(_dir / "clip.json");
+        const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        uint32_t palette[16];
+        _screen->GetRGBAPalette16(palette);
+        std::string expected = "\"palette16\": [";
+        for (int c = 0; c < 16; ++c)
+        {
+            char hex[16];
+            std::snprintf(hex, sizeof(hex), "\"#%02x%02x%02x\"", palette[c] & 0xFF, (palette[c] >> 8) & 0xFF,
+                          (palette[c] >> 16) & 0xFF);
+            expected += (c ? ", " : "") + std::string(hex);
+        }
+        EXPECT_NE(json.find(expected + "]"), std::string::npos) << json;
+    }
 
     uint64_t frame = options.fromFrame;
     for (uint32_t chunk = 0; frame <= options.toFrame; ++chunk)

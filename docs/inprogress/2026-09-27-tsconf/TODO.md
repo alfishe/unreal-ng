@@ -1,7 +1,10 @@
 # TODO — ZX-Evo TSConf machine support
 
-**Status marker:** in progress - phases 0-2 done, phase 3 video v1 done
-(2026-09-30): `TSL` is creatable and boots the real ROM (TS-BIOS, TR-DOS).
+**Status marker:** in progress - phases 0-7 done (2026-09-30): `TSL` is
+creatable, in the Qt Machine menu, boots TS-BIOS, TR-DOS and Wild Commander
+from SD, runs SPG programs (opened on any machine: it switches to TS-Conf),
+TTD-complete; open: BOOT-4 / IDE-5, DBG-3 + docks (model-first debugger);
+next: speed optimizations TS-O1..O3 and phase 8 (timing realism).
 Starts after the shared infrastructure and the move of the existing machines onto
 it (PLAN rationale 6); the interrupt source, write intercept and step hook of
 phase 0 are built (PLAN #60(a) + INF-5, [implementation-plan.md](implementation-plan.md) phase 0).
@@ -83,9 +86,33 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 
 ## Remaining
 
-- Phase 3 rest: the engine (per-line budget), line-latched registers, goldens.
-- Phase 4: TSU (tiles, sprites); phase 5 DMA; phase 6 SD / vdos / IDE / SPG;
-  phase 7 surfaces (a `TsConfVideoMapper` for #42, debugger docks); phase 8 timing.
+- [x] Phase 3 rest (2026-09-30, branch `tsconf-phase3`): line engine (latches,
+  row counter, line table), frame goldens, the classic machines' pictures pinned
+  (`ScreenZXFrames_Test`). The per-line DRAM budget moves to phases 4-5.
+- [x] Phase 4 TSU (2026-09-30, branch `tsconf-phase4`): tiles, sprites, layer
+  order, prefetch ring, mixing; BENCH-1 measured (TSU off 1.9x a ZX frame vs
+  the 1.1x target: speed backlog TS-O1…O3 in the implementation plan)
+- [x] Phase 5 DMA (2026-09-30, branch `tsconf-phase5`): every task of the
+  standard build, the per-line DRAM budget (video / TSU / CPU reads / DMA),
+  TSU starvation
+- [x] Phase 6 (2026-09-30, branch `tsconf-phase6`): SD card (`sd.zc`), vdos,
+  Nemo IDE + stall, SPG v1.0 / v1.1 with the MegaLZ / Hrust depackers
+- [x] Phase 7 (2026-09-30, branches `tsconf-phase7`, `tsconf-phase7b`): the
+  state report on every surface, the shared sound DAC, port-trace names, screen
+  mode names, MCP `unreal://machine/tsconf`, SPG opening on any machine (one
+  rule on every surface and in Qt), the Qt menu entry, TTD-5 fixture (found and
+  fixed DMA writes missing from TTD dirty pages), BOOT-3 (Wild Commander from SD)
+- [ ] Open: BOOT-4 (IDE fixture), IDE-5; DBG-3 and TS docks with the
+  model-first debugger; a `TsConfVideoMapper` for #42
+- [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
+  palette cache, pixel-identical to the old renderer (test TSO2); frame render
+  6.9x faster, whole frame 1.89x → 1.26x Pentagon (1.1x target not met; the
+  rest is TXT's double pixel count and the per-step hooks)
+- [x] Phase 8 timing (2026-09-30, branch `tsconf-phase8`): 14 MHz DRAM
+  waits by the zmem.v phase table, 14 MHz external I/O stall, DMA SPI / IDE
+  word costs; TIM-4 needs nothing (no mode saturates DRAM); TIM-5 deferred.
+  The `cpu_next = 0` arbiter model followed (branch `tsconf-arbiter`), with
+  the data-read wait corrected to the RTL (+4..+7 fclk)
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the

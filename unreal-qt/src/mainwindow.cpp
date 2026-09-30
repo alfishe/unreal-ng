@@ -43,6 +43,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/keyboardmanager.h"
 #include "emulator/soundcharacterpreferences.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/notifications.h"
@@ -68,6 +69,7 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
 #include "loaders/rzx/rzxreader.h"
+#include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
@@ -229,7 +231,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
 
     _dockingManager = new DockingManager(this);
-    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
+    // Glue the docked debugger to the main window at the OS level where
+    // possible (macOS child window) so it follows without lagging behind
+    // move events while dragging
+    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge, /*useNativeChildWindow=*/true);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
     // Instantiate tape manager window (design §9.4): one instance per app
@@ -898,6 +903,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
             std::string targetId = _emulator->GetUUID();
             messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_CAPS_SHIFT, KEY_RELEASED, targetId));
             messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+            KeyboardManager::postHeldKeyReleases(targetId);  // physical keys (PS/2 machines)
             qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) on entering fullscreen";
         }
     }
@@ -1247,7 +1253,7 @@ void MainWindow::toggleEmulatorStartStop()
         // from this app was labelled with.
         auto newEmulator = _nextEmulatorModel.empty()
             ? _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo)
-            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, 128, LoggerLevel::LogInfo);
+            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, _nextEmulatorRamKb, LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
@@ -1388,6 +1394,7 @@ void MainWindow::handleFullScreenShortcut()
 
         // Release SYM_SHIFT (Shift on PC keyboard) as well
         messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+        KeyboardManager::postHeldKeyReleases(targetId);  // physical keys (PS/2 machines)
 
         qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) before fullscreen toggle";
     }
@@ -1909,6 +1916,7 @@ void MainWindow::openSnapshotDialog()
                      buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
                      buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
+                     buildFilterGroup(tr("SPG Programs (TS-Conf)"), {"spg"}) + ";;" +
                      buildFilterGroup(tr("RZX Recordings"), {"rzx"}) + ";;" +
                      tr("All Files (*)");
 
@@ -2125,9 +2133,17 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
         // A disk to autostart needs TR-DOS: with no emulator at all the default machine is Pentagon 128K
         if (category == FileDisk && _autostartDisks && !mountOnly)
             _nextEmulatorModel = "Pentagon";
+        // An SPG program starts TS-Conf directly (every entry - menus, drag and drop,
+        // command line, automation's open request - comes through here)
+        if (category == FileSnapshot && filePath.toLower().endsWith(".spg"))
+        {
+            _nextEmulatorModel = LoaderSPG::kModel;
+            _nextEmulatorRamKb = LoaderSPG::kRamKb;
+        }
 
         toggleEmulatorStartStop();
         _nextEmulatorModel.clear();
+        _nextEmulatorRamKb = 128;
     }
 
     switch (category)
@@ -2165,6 +2181,22 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
                             << "- replacing the running"
                             << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
                     if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
+                        break;
+                }
+            }
+            // An SPG is a TS-Conf program: another model is replaced by TS-Conf first
+            if (_emulator && filePath.toLower().endsWith(".spg"))
+            {
+                std::string error;
+                if (!LoaderSPG::Probe(file, error))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
+                    break;
+                }
+                if (_emulator->GetContext()->config.mem_model != MM_TSL)
+                {
+                    qInfo() << "SPG program - replacing the running machine by TS-Conf";
+                    if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
                         break;
                 }
             }
@@ -2924,7 +2956,12 @@ void MainWindow::handleTemporalEffectsRequested()
     if (!_screenWrapper)
         return;
 
-    auto* dialog = new TemporalEffectsDialog(_screenWrapper, this);
+    auto* dialog = new TemporalEffectsDialog(
+        _screenWrapper, [this]() -> Emulator* { return m_binding ? m_binding->emulator() : nullptr; }, this);
+    connect(dialog, &TemporalEffectsDialog::blendingChanged, this, [this](bool enabled) {
+        if (_menuManager)
+            _menuManager->setTemporalBlendingChecked(enabled);
+    });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -3541,6 +3578,11 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
     if (_screenWrapper)
     {
         _screenWrapper->setTemporalBlendingEnabled(enabled);
+    }
+    // One temporal effect at a time: blending a de-flickered picture again smears it
+    if (enabled && m_binding && m_binding->emulator() && m_binding->emulator()->GetContext()->pScreen)
+    {
+        m_binding->emulator()->GetContext()->pScreen->SetTemporalAlgorithm("");
     }
 }
 

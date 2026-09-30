@@ -717,6 +717,9 @@ public:
     /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
     /// Called from a host bus overlay; the plain memory paths never call it.
     void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
+    /// The same in counter ticks (256 per 3.5 MHz T): a wait shorter than one
+    /// CPU clock of a turbo machine (TSConf's 28 MHz fclk waits at 14 MHz)
+    void AddWaitTicks(uint32_t ticks) { tt += ticks; }
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters

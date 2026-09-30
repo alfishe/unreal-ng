@@ -4,6 +4,7 @@
 /// @brief Frame sources (a core-exported clip, a TTD file) and sinks (an ffmpeg
 /// video, an RGB dump for comparing implementations) of zxdlss-render.
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -21,6 +22,10 @@ struct SourceFrame
     int height = 0;
     int paperX = 48, paperY = 48;     ///< top-left of the 256 x 192 paper in this frame
     std::vector<uint16_t> planeB;
+    /// The 16 ZX colors the frame is drawn in (RGBA8888, 0xAABBGGRR): TTD - the
+    /// emulator's palette; clip - clip.json "palette16", or recovered from the
+    /// clip's RGBA (older clips)
+    std::array<uint32_t, 16> palette{};
     /// TTD input only: the machine's sound while this frame was replayed -
     /// interleaved stereo int16 at 44.1 kHz, ~903 samples per Pentagon frame
     std::vector<int16_t> audio;
@@ -29,7 +34,8 @@ struct SourceFrame
 using FrameCallback = std::function<bool(const SourceFrame&)>;   ///< false stops
 
 /// Frames [from, to] of a clip written by POST /ttd/export-clip (format
-/// "unreal-ng-clip" v2: clip.json, meta.jsonl, planeb_NNNN.zst).
+/// "unreal-ng-clip" v2: clip.json, meta.jsonl, planeb_NNNN.zst; rgba_NNNN.zst
+/// only for a clip without "palette16", to recover the palette).
 /// @return empty on success, otherwise the reason
 std::string readClip(const std::string& dir, uint64_t from, uint64_t to, const FrameCallback& cb);
 

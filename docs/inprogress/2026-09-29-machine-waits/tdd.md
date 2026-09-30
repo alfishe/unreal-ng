@@ -54,7 +54,7 @@ From [research-zxevo.md](research-zxevo.md) section A (clocks are 14 MHz T-state
 - Not modeled (research A.6): the TR-DOS ROM entry stall (derived, not simulated) and the AVR /WAIT ports (their
   length depends on the AVR firmware).
 - TTD: the two cache words and their valid flags (6 bytes) are machine state that changes timing. They go into a
-  new TTD peripheral (`EvoTurboCache` = 19), captured and restored with the other ATM state; a recording without
+  new TTD peripheral (`EvoTurboCache` = 20), captured and restored with the other ATM state; a recording without
   it starts with an empty cache. The chipset state (the clock) is restored first, as a field copy that does not
   run the decoder, so the blob's restore also installs or removes the overlay (`SyncTurboWaits`).
 

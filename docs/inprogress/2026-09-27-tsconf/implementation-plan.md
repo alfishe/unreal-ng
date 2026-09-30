@@ -200,8 +200,29 @@ GFX-1, GFX-3, CRAM colors) and **BOOT-1 / BOOT-2** in `tsconf_boot_test.cpp`:
 blank NVRAM → TS-BIOS Setup (TXT, page #F6); ENTER saves NVRAM, reset → TR-DOS
 5.04T prompt. BOOT-2 as planned (menu → 128 BASIC) is replaced by the TR-DOS
 boot the BIOS defaults select.
-Open: the engine (ENG-1…4, per-line budget), line-latched registers (a change
-now takes effect at the dot the beam is on), VID-2 golden, VID-5…7, the TSU.
+
+**Engine and the rest of phase 3 built 2026-09-30 (branch `tsconf-phase3`).**
+`TsConfEngine` (`platforms/tsconf/tsconfengine.*`) is the step hook: at every
+line start it latches V_CONFIG, V_PAGE, G_X_OFFS, PAL_SEL, T0/T1_G_PAGE and
+T0/T1_X_OFFS, moves the graphics row counter (reload with G_Y_OFFS after line
+31 and after a G_Y_OFFS write, +1 per window line) and records the set in the
+frame's line table the screen draws from; #7FFD writes V_PAGE into the current
+line at once. The latches, the row counter and the line position are in
+`TsConfState` (TTD). The decoder brings the engine and the screen up to a
+write before any register the picture depends on changes (`FlushVideo`).
+Tests `tsconfengine_test.cpp`: ENG-2 (latched register from the next line;
+BORDER inside the line), ENG-3 (row counter reload with the written value,
+9-bit wrap, window geometry), ENG-4 (same state rendered or decimated, real
+ROM), VID-7; `screentsconf_test.cpp` VID-5; frame goldens of the Setup (TXT)
+and TR-DOS (ZX) screens in `tsconf_boot_test.cpp` (VID-2; re-record with
+`UNREALNG_DUMP_TSCONF_FRAMES=1`, which dumps the frames).
+**Other machines unchanged**: `ScreenZXFrames_Test` pins the framebuffer of
+12 classic setups (48K … ATM3, Pentagon with a border / multicolor demo) in
+both render paths (per-T and batch), recorded on master 686fd0d4 before
+TS-Conf had its own renderer; no shared hot path changed, so no A/B benchmark.
+Moved: **ENG-1** (per-line DRAM budget) to phase 4/5 with its consumers (TSU,
+DMA); **VID-6** (VDAC curves) with a `TS_VDAC` config key; BENCH-1 (TS frame
+cost) in phase 4.
 
 | ID | Asserts |
 |:--|:--|
@@ -223,6 +244,53 @@ Exit: 128K software and demos in ZX mode display correctly; `/state/screen/mode`
 
 ## Phase 4 — Graphics modes and TSU · L
 
+**Built 2026-09-30 (branch `tsconf-phase4`).** 16C / 256C / TXT came with the
+video v1 (phase 3). `TsConfTsu` (`platforms/tsconf/tsconftsu.*`): two tile
+layers and three sprite layers (S0 < T0 < S1 < T1 < S2, LEAP, the 85-descriptor
+cap, flips, TxZ, palette indices) rendered by the engine at every line start
+into per-frame line buffers, independent of the screen; the tilemap goes
+through the hardware's 4-row prefetch ring (coarse Y ~16 lines late, fine Y at
+once). `ScreenTSConf` mixes it like the video plex (NOTSU, NOGFX, GFXOVR, the
+TS window, the 360x288 window over the border with `T_CONFIG[0]`, TXT 4-bit
+flattening). Tests `tsconftsu_test.cpp`: TSU-1…5, TSU-7, GFX-5.
+**BENCH-1** (`core/benchmarks/emulator/video/screentsconfbenchmark.cpp`,
+2026-09-30, load ~35, medians of 3): Pentagon frame 1.80 ms, TS-BIOS Setup TSU
+off 3.42 ms (1.9x, target 1.1x), TSU at its limit (both tile layers, 85
+sprites of 64x64) 4.07 ms (1.19x TSU off, target 2x met). The gap is the
+per-dot renderer: backlog TS-O1 / TS-O2 below.
+Open: TSU-6 (the line renders at its start, not during the previous line
+from `ts_start`), TSU-8 and ENG-1 (DRAM budget and starvation, with the DMA
+in phase 5), TTD-3 needs nothing extra (checkpoints are frame boundaries, the
+prefetch ring refills before the window; TSU line buffers are derived).
+
+**Speed backlog (naive first, measured above):**
+- TS-O1: CRAM → RGBA LUT, refreshed on CRAM writes (FM, DMA) instead of the
+  PWM curve per dot.
+- TS-O2 (SIMD candidate): a per-line span renderer: border / window spans,
+  one loop per mode, 8-pixel character spans in TXT, TSU mixing only on lines
+  that have TSU pixels.
+- TS-O3: skip the per-dot TSU lookup on lines without TSU pixels.
+
+**TS-O1…O3 built 2026-09-30 (branch `tsconf-perf`):** `ScreenTSConf` draws
+one span per raster line (graphics per mode into an index buffer, GFXOVR /
+TSU mixing only over the TS window of lines the TSU drew on, TXT cell
+lookups once per 8 pixels) and converts through a 256-entry palette rebuilt
+only when CRAM changed (a 512-byte compare per call). Proof: test TSO2
+compares it pixel for pixel with the old per-dot renderer (kept in the test
+as the oracle) over 128 random setups covering every mode x geometry x
+NOTSU / NOGFX / GFXOVR, whole and in random chunks. BENCH-1 (minimum of 7,
+load ~100): frame render alone 1368 → 198 µs (TXT Setup), 1450 → 228 µs
+(TSU at its limit); whole frame TSU off 3299 → ~2200 µs = 1.26x Pentagon
+(was 1.89x; target 1.1x not met), TSU on ~2480 µs = 1.13x TSU off. The rest
+of the gap: TXT draws twice the pixels of a ZX frame, and the per-step line
+engine / interrupt hooks (~10% of the frame). Ideas left: SIMD in the 16C /
+256C gathers (tagged SIMD-CANDIDATE), fewer per-step hook calls.
+**BENCH-1 on a quiet machine** (2026-09-30, load 6-8, master `646c2649` with
+phase 8 and the arbiter, minimum of 7, two runs agreeing within 5 µs):
+Pentagon frame 1614 µs, TS-Conf frame TSU off 2063 µs = **1.28x** (target
+1.1x not met), TSU at its limit 2306 µs = 1.12x TSU off (target 2x met);
+frame render alone 188 µs (TXT Setup), 217 µs (TSU at its limit).
+
 | ID | Asserts (hs §4.2, §4.4) |
 |:--|:--|
 | GFX-1 | 16C: byte 0x12 at `(V_PAGE&0xF8)<<14` → pixel 0 = `{pal,1}`, pixel 1 = `{pal,2}` (high nibble left); golden per geometry (4) |
@@ -242,6 +310,24 @@ Exit: 128K software and demos in ZX mode display correctly; `/state/screen/mode`
 | BENCH-1 | `BM_TsConfFrame_TsuOff/On` — TSU on ≤ 2× TSU off; TSU off ≤ 1.1× ZX 128 frame |
 
 ## Phase 5 — DMA · M
+
+**Built 2026-09-30 (branch `tsconf-phase5`).** `TsConfDma`
+(`platforms/tsconf/tsconfdma.*`) follows `dma.v`: live 21-bit word address
+counters, S_ALGN / D_ALGN block wrap and reload, block / transfer counters
+with DMA_LEN reloaded per block, relaunch without INT, the tasks RAM copy,
+BLT1, FILL, CRAM, SFILE, SPI in / out (a pluggable exchange; no card = #FF),
+IDE in / out through `IdeAdapter::DmaReadWord / DmaWriteWord`; BLT2 is built
+but off, as in the emulated standard `quartus` firmware (no XTR_FEAT), so code
+0x6 hangs like the wait port (0x7) and the undefined codes. All state in
+`TsConfState` (TTD). **DRAM budget (ENG-1)** in `TsConfEngine`: 448 accesses per
+line, minus the graphics fetch (ZX 1/8, 16C 1/4, 256C and TXT 1/2 of the window
+dots, none with NOGFX), the TSU (8 map words per layer, 2 per tile, width / 4
+per sprite line) and the CPU's DRAM reads (counted by `TsConfMemory`; cache
+hits and ROM take none; **CPU writes are not counted - v1 approximation**);
+the DMA gets the rest. The TSU gets 448 minus video minus the CPU of its
+previous line and drops what does not fit (**TSU-8**).
+Tests `tsconfdma_test.cpp`: DMA-1…14 (DMA-3 also the in-block wrap), TSU-8,
+TTD-4. Open: DMA-15 (IDE with a disk) with phase 6.
 
 Fixture: raw physical RAM access (`RAMPageAddress`) to seed/verify; helper
 `Dma(src, dst, len, num, ctrl)` writing the registers and running until busy
@@ -291,6 +377,41 @@ clears (with a frame cap).
 > their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
 > methods; do them first in this phase or move them into phase 5.
 
+**Storage built 2026-09-30 (branch `tsconf-phase6`, step 6a).**
+- SD: the decoder owns `SdCardSpi` + `ZControllerSpi` and registers the
+  media manager's `sd.zc` slot (card detect / write protect through `EvoAvr`
+  register C); the SPI DMA shares the Z-Controller as the board's SPI master
+  does - a DMA read is pipelined like `IN #57` (the previous exchange's byte,
+  then a new exchange sending #FF: `spi_stb` is the start strobe, [V] top.v).
+  TTD: the shared `EvoSdCard` blob (15), now built from the card and the
+  controller instead of the ATM3 decoder.
+- Virtual TR-DOS: the VG93 is selected only outside vdos and for a real
+  drive; #FF drive bits always latch; the trap starts vdos at the next M1, a
+  VG93 register access ends it ([V] zports.v:638-651). State `vgDrive`,
+  `preVdos` in `TsConfState`.
+- Nemo IDE: `[HDD] IdeStall` (0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
+  (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
+- Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
+  read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).
+**SPG built (step 6b).** `LoaderSPG` (`loaders/snapshot/loaderspg.*`): v1.0 and
+v1.1 (the ancestor refused 1.1), parse and depack first, then commit to a
+TS-Conf machine; `ZxDepack::MegaLz / Hrust` (`zxdepackers.*`, a bounds-checked
+port of lvd's mhmt depackers). Wired into `Emulator::LoadSnapshot` / the
+in-memory path, the supported-extension list, the Qt dialog and file manager,
+the GDB server and MCP. Test programs from the TS-Conf SDK in
+`testdata/machines/tsconf/spg` (public domain, README there); every compressed
+block was compared byte for byte with the mhmt reference depacker (26 blocks).
+Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
+(v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
+example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
+the pager / resident addresses and the v1.1 picture; v0.x refused.
+**BOOT-3 done in step 7b (2026-09-30):** TS-BIOS boots Wild Commander v1.11
+RC7 from a FAT32 SD image (`tsconf_boot_test.cpp`, skipped without the image:
+the Wild Commander packages and SD images live untracked in
+`testdata/machines/tsconf/wildcommander/`, README there). Still open:
+BOOT-4 (no IDE fixture yet) and IDE-5 (the shared `AtaChannel` blob 17 is
+covered by the IDE suites; a TS-Conf mid-DMA capture is not).
+
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |
@@ -318,6 +439,39 @@ clears (with a frame cap).
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
 
+**Step 7a built 2026-09-30 (branch `tsconf-phase7`):** **DBG-1** -
+`DeviceState::TsConf` (built in `platforms/tsconf/tsconfdevicestate.cpp`) on
+every surface: WebAPI `GET /state/tsconf` (+ OpenAPI), CLI `state tsconf`,
+Lua / Python `tsconf_state()`, MCP `inspect_state` aspect `tsconf`; the
+interface docs updated; test `tsconfdevicestate_test.cpp`. AGENTS.md lists `TSL`
+as creatable; recipe `.recipe/machines/tsconf.md`.
+
+**Step 7b built 2026-09-30 (branch `tsconf-phase7b`):**
+- **SND-1…3** (`tsconfsound_test.cpp`): the board's one 8-bit DAC emulated as
+  the hardware has it: `#FB` and the `#FE` beeper bit both write the shared
+  Covox device (all four channels; the beeper writes 0 / 255, the last write
+  wins, as sound.v), the ts-conf ini enables `CovoxFB`; the classic beeper
+  path stays silent on TS-Conf. AY decode by A15, GS / ZXM ports reach the bus.
+- **DBG-2**: the port trace names TS registers (`#01AF` → `V_PAGE`), the Covox
+  arm is "SoundDac".
+- **AUTO-1**: `Screen::DescribeScreenState()` (virtual; ScreenTSConf reports
+  `TS16 320x200` etc. with the active pages per mode); the MCP resource
+  `unreal://machine/tsconf`.
+- **SPG everywhere, one rule**: `SnapshotLauncher` (core) switches the machine
+  to TS-Conf before an `.spg` loads (ModelSwitch, media kept) - WebAPI
+  `snapshot/load` (+ `switch_model`), MCP `load_software`, CLI `snapshot load
+  [--no-switch]`, Lua `snapshot_load`, Python `unreal.snapshot_load`; the Qt
+  window does the same for every way a file arrives (menus, drag and drop,
+  command line, automation's open request) and starts TS-Conf directly when no
+  machine runs. Test SPG-4. TS-Conf is in the Qt Machine menu.
+- **TTD-5**: fixture `testdata/machines/tsconf/ttd/sprites.ttd` (the SDK sprite
+  example: a DMA copy every frame) in `TTD_Corpus_Test`, which now runs each
+  fixture on its recorded model. It found a real bug: DMA writes bypassed TTD's
+  dirty pages (fixed: `TsConfDma` marks the page through `Memory`). No program
+  at hand uses the TSU or line INTs; the fixture covers DMA + 16C.
+- **DBG-3 and the Qt docks** are deferred to the model-first debugger
+  (docs/inprogress/2026-09-28-debugger-model), which replaces per-machine docks.
+
 | ID | Asserts |
 |:--|:--|
 | SND-1 | AY on `#FFFD/#BFFD` only with A15 = 1; clock 1.75 MHz regardless of `SYS_CONFIG[4:3]` (D5) |
@@ -341,6 +495,48 @@ settings. Exit = technical-design §3.19 checklist.
 | TIM-3 | DMA per-word costs per hs §6.2 (copy 2, BLT 3, fill 1, CRAM/SFILE ~2, SPI ~8 slots) replacing ancestor units; DMA-12 re-baselined deliberately |
 | TIM-4 | CPU stall at full video bandwidth (8/8 block) at 3.5/7 MHz |
 | TIM-5 | optional per-dot CRAM write log (risk 4) |
+
+**Built 2026-09-30 (branch `tsconf-phase8`).** Reference survey first: none of
+Unreal TS, MAME or Xpeccy follows the Verilog here (Unreal's cache-miss hook
+is dead code, MAME charges a flat 2 T per miss with a one-line cache, Xpeccy
+has no timing), so the model follows `zmem.v` / `zclock.v` / `dma.v` directly.
+- **TIM-1** (`TsConfMemory::DramWait`): at 14 MHz a CPU read that takes a
+  DRAM cycle (uncached window, or a cache miss) stretches by the zmem.v table
+  - M1 +3..+6 fclk, read +2..+5, writes 0 - by the DRAM phase its request
+  (T1 + 3 fclk) falls in. The 14 MHz clock is not locked to the DRAM phases
+  and every stall shifts it, so the phase comes from the stretched cycle
+  counter itself (2 fclk per clock, frame start = c0; waits added in fclk
+  with `Z80::AddWaitTicks`). The decoder's M1 hook marks the opcode fetch.
+  ROM and cache hits never wait. Tests: a NOP run from DRAM settles at 6
+  clocks, LD (HL),A at 10 (hand-derived from the table); no waits at 3.5 /
+  7 MHz, from ROM or on hits.
+- **TIM-1b, the arbiter** (2026-09-30, branch `tsconf-arbiter`,
+  `TsConfArbiter`): the `cpu_next = 0` case modeled from arbiter.v - blocks
+  of 8 / 4 / 2 DRAM cycles in each line's fetch window (video_go), video
+  1 / 1 / 1 / 4 per block (ZX / 16C / 256C / TXT), the CPU refused when
+  `vid_rem == blk_rem`; a refused read waits for the grant, a write or any
+  non-read cycle freezes the clock for each refused cycle (stall14_cyc);
+  writes now go through a 14 MHz-only write overlay. The same RTL reading
+  corrected the data-read table: +4..+7 fclk, not the comment's +2..+5
+  (hardware-spec §2.5); LD A,(HL) settles at 12 clocks. Checked against an
+  independent fclk-level model of arbiter.v / zmem.v / zclock.v: NOP runs
+  cost 12 fclk in every mode inside the window and out, 256C makes every
+  write lose its own cycle (LD (HL),A 20 → 24 fclk), ZX / 16C never delay
+  the CPU (`tsconfarbiter_test.cpp`). The arbiter state never crosses a
+  frame, so TTD needs nothing. Other emulators model none of it (MAME: a
+  flat 2 T per miss; Unreal: dead code; Xpeccy: nothing). The 3.5 / 7 MHz
+  stall (stall357) never fires in any mode, so it is not modeled.
+- **TIM-2**: 14 MHz I/O to the AY (#FD with A15 = 1) or an open VG93
+  (#1F/#3F/#5F/#7F, not #FF) stalls 8 fclk = 4 clocks, IN and OUT.
+- **TIM-3**: DMA DRAM cycles per word: SPI 8 → 10 (two 17-fclk bytes + the
+  DRAM cycle), IDE 2 → 3; RAM 2, BLT 3, fill 1 (+1), CRAM / SFILE 2 were
+  already the Verilog's.
+- **TIM-4**: nothing to add - no stock video mode takes 8 of 8 DRAM cycles
+  (ZX 1, 16C 2, 256C 4, TXT 4 per block, video_mode.v), so the CPU never stalls
+  at 3.5 / 7 MHz, and the TSU ranks below the CPU.
+- **TIM-5** deferred: CPU CRAM writes are already dot-exact (the video is
+  flushed before each); only DMA → CRAM lands at line granularity.
+The SDK sprite example (14 MHz) re-pinned; the TS-Conf TTD fixture re-recorded.
 
 ## 2. Traceability
 

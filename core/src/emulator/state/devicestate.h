@@ -71,6 +71,16 @@ StateNode Ide(EmulatorContext* context);
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
 
+/// TS-Conf machine state (TSConf technical-design §3.14): the memory map
+/// (MEM_CONFIG decoded, the four windows, LCK128 / lock48, DOS / vdos, cache),
+/// video (V_CONFIG decoded: mode, geometry, NOGFX / NOTSU / GFXOVR; V_PAGE,
+/// PAL_SEL, BORDER, offsets, T_CONFIG and the TSU pages; the line the engine is
+/// on with its latched set), interrupts (mask, pending sources, frame position),
+/// DMA (busy, task, live addresses, counters), the CPU clock, the FM window and
+/// the SD card. Unavailable on every other machine. Built beside the TS-Conf
+/// platform code (tsconfdevicestate.cpp), so shared code names no TS-Conf type
+StateNode TsConf(EmulatorContext* context);
+
 /// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
 /// guest access or frame run - reading it never advances the chip.
 /// - `MoonSound()`: NEW / NEW2, status, the guest address latches, the block

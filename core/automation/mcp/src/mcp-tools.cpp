@@ -2,7 +2,7 @@
 //
 // Tools orchestrate existing WebAPI endpoints over the loopback IApiCaller:
 //   1. emulator_manage    — lifecycle: create/list/start/stop/pause/resume/reset/destroy
-//   2. load_software      — auto-detect .sna/.z80/.szx/.rzx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
+//   2. load_software      — auto-detect .sna/.z80/.szx/.spg/.rzx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
 //   3. control_execution  — stepping/running + breakpoint management
 //   4. inspect_state      — multi-aspect state inspection (registers/memory/disasm/...)
 //   5. type_input         — keyboard: type/tap/press/release/combo/macro
@@ -522,7 +522,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
     registry.Register(
         "load_software",
-        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
+        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), TS-Conf programs (.spg, switches the machine to model TSL: the answer's emulator_id is then the new one), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
         "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
@@ -540,14 +540,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "rzx";
+            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx";
             const auto& tapeExtensions = TapeExtensions();
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
@@ -555,7 +555,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx .spg (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img .ima (disk)"));
                 return;
             }
@@ -1057,7 +1057,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
-                               "ttd", "contention"})
+                               "ttd", "contention", "tsconf"})
     {
         allowed.append(aspect);
     }
@@ -1152,11 +1152,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "tsconf")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention, tsconf"));
                     return;
                 }
             }
@@ -1417,6 +1418,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Ide via the WebAPI; 404 = no IDE board
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/ide"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "tsconf")
+                        {
+                            // Core DeviceState::TsConf via the WebAPI; 404 = not a TS-Conf machine
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/tsconf"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1689,6 +1701,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                 else
                                     out << "\n[rtc] " << value["chip"].asString() << ", " << value["time"]["text"].asString()
                                         << " (" << value["time_mode"].asString() << " time), " << value["cells"].asInt() << " cells";
+                            }
+                            else if (aspect == "tsconf")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[tsconf] " << value["description"].asString();
+                                else
+                                    out << "\n[tsconf] " << value["video"]["mode"].asString() << " " << value["video"]["geometry"].asString()
+                                        << ", page " << value["video"]["v_page"].asInt() << ", " << value["cpu_clock"].asString()
+                                        << ", DMA " << (value["dma"]["busy"].asBool() ? value["dma"]["task"].asString() : std::string("idle"))
+                                        << ", sprites " << value["video"]["tsu"]["active_sprites"].asInt();
                             }
                             else if (aspect == "ide")
                             {

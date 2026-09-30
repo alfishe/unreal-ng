@@ -26,7 +26,7 @@ protected:
 TEST_F(TsConfInterrupts_Test, InstalledOnTheCpu)
 {
     EXPECT_EQ(_z80->GetInterruptSource(), &Ints());
-    EXPECT_EQ(_z80->GetMachineStepHook(), &Ints());
+    EXPECT_EQ(_z80->GetMachineStepHook(), &_decoder->GetEngine()) << "the engine drives the interrupt controller";
 }
 
 /// INT-1: after reset one frame INT at tact 1, vector 0xFF, a 32-clock pulse

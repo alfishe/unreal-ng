@@ -86,16 +86,24 @@ public:
     IDE_SCHEME Scheme() const;
     bool Active() const { return Channel() != nullptr; }
 
+    /// Did the last In / Out drive a bus cycle to the drive (a register or the
+    /// data word), rather than being served by the board's latch? TS-Conf
+    /// stalls the CPU for such cycles ([HDD] IdeStall). Transient: set by the
+    /// access, not state
+    bool LastAccessReachedDrive() const { return _reachedDrive; }
+
     const IdeAdapterState& State() const { return _s; }
     void SetState(const IdeAdapterState& state) { _s = state; }
 
 private:
     AtaChannel* Channel() const;
+    bool _reachedDrive = false;
 
     uint8_t ReadRegister(uint8_t reg);
     void WriteRegister(uint8_t reg, uint8_t value);
     /// 16-bit read: returns the low byte, the high byte goes to the read latch
     uint8_t ReadDataLow();
+    void WriteDataWord(uint16_t word);
 
     bool NemoIn(uint16_t port, bool a8Latch, uint8_t& value);
     bool NemoOut(uint16_t port, bool a8Latch, uint8_t value);

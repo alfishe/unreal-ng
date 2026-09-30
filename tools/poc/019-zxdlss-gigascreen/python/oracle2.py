@@ -35,7 +35,6 @@ from scipy import ndimage
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.clip import ClipV2  # noqa: E402
-from common.zxscreen import ZX_RGB  # noqa: E402
 from python.mixers import MIXERS  # noqa: E402
 from python.quality import Oracle, _oklab  # noqa: E402
 from python.twopage import two_page_mix  # noqa: E402
@@ -63,7 +62,7 @@ def edges(l):
 class Oracle2Accumulator:
     def __init__(self, clip, mixer, strict=None):
         self.clip, self.mixer = clip, mixer
-        self.strict = strict if strict is not None else Oracle(clip, ZX_RGB)
+        self.strict = strict if strict is not None else Oracle(clip, clip.zx_palette)
         self.acc = {k: [] for k in ("color_ok", "color_ok_any", "de_p50", "de_p95", "edge_p95", "shimmer")}
         self.prev_out = self.prev_ref = None
         self.seen = 0
@@ -80,7 +79,7 @@ class Oracle2Accumulator:
             self.prev_out, self.prev_ref = out, None
             return None
         cur, prv, nxt = clip.plane(i), clip.plane(i - 1), clip.plane(i + 1)
-        raw = ZX_RGB[cur]
+        raw = self.clip.zx_palette[cur]
         refs = [self.mixer.mix(np.stack([prv, cur, nxt]), np.stack([np.full(cur.shape, w) for w in (0.25, 0.5, 0.25)])),
                 two_page_mix(self.mixer, cur, prv, nxt)]
         labs = [lab(r) for r in refs]
@@ -154,7 +153,7 @@ def main():
     from python.run_algorithms import ALGORITHMS
     from python.video import SideBySide
     clip = ClipV2(args.clip)
-    mixer = MIXERS["linear-mean"](ZX_RGB)
+    mixer = MIXERS["linear-mean"](clip.zx_palette)
     alg = ALGORITHMS[args.alg]((clip.h, clip.w), mixer)
     delay = getattr(alg, "delay", 0)
     acc = Oracle2Accumulator(clip, mixer)
@@ -173,7 +172,7 @@ def main():
         i = clip.index_of_frame(f)
         err = acc.add(i, out)
         if video and err is not None:
-            video.add(ZX_RGB[clip.plane(i)], out, acc.last_reference, err)
+            video.add(clip.zx_palette[clip.plane(i)], out, acc.last_reference, err)
     if video:
         video.close()
     res = acc.report()

@@ -38,6 +38,7 @@ protected:
     PortDecoder_TSConf* _decoder = nullptr;
     std::string _romPath;
     uint16_t _romPages = 32;
+    IDE_SCHEME _ideScheme = IDE_NONE;  // a test sets it before RebuildWithRomPages to fit the board
 
     void SetUp() override
     {
@@ -96,6 +97,7 @@ private:
         config.mem_model = MM_TSL;
         config.ramsize = 4096;
         config.trdos_present = true;
+        config.ide_scheme = _ideScheme;
 
         Config configHelper(_context);
         configHelper.ApplyModelTimingDefaults(config, true /* canonicalGeometry */);

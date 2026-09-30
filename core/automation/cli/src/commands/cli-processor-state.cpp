@@ -58,6 +58,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
+        ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
@@ -80,6 +81,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
+        ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
@@ -190,6 +192,13 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         std::stringstream ide;
         ide << "IDE board" << NEWLINE << "=========" << NEWLINE << DeviceState::ToText(DeviceState::Ide(context));
         session.SendResponse(ide.str());
+        return;
+    }
+    else if (subsystem == "tsconf" || subsystem == "ts")
+    {
+        std::stringstream ts;
+        ts << "TS-Conf" << NEWLINE << "=======" << NEWLINE << DeviceState::ToText(DeviceState::TsConf(context));
+        session.SendResponse(ts.str());
         return;
     }
     else if (subsystem == "rtc" || subsystem == "cmos")

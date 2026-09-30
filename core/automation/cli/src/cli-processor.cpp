@@ -663,6 +663,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  paging                 - Paging state: latches + bank table" << NEWLINE;
     oss << "  beam                   - Raster beam position and zone" << NEWLINE;
     oss << "  video layout|pixel|address|text [args] - What makes a pixel, which pixels a byte feeds" << NEWLINE;
+    oss << "  video temporal [status|list|off|<name>] - ZX DLSS de-flicker: status, algorithms, switch" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;

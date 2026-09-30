@@ -87,7 +87,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 | `manage_symbols` | load_labels / list / resolve / load_listing / source_at / step_line / run_to_line (sjasmplus `.lst` support) |
 | `debug_code` | disassemble / assemble (`Z80TextAssembler`) / find_bytes / trace (calltrace sessions) / porttrace |
 | `analyze_performance` | coverage_* (executed-address map + gaps), frame_cost, profiler suites (calltrace/porttrace/memory) |
-| `capture_media` | screenshot, screen_digest, record_video (GIF; `every_nth:"auto"` samples the digest quantum), audio_capture (RMS/peak/dominant-Hz, WAV) |
+| `capture_media` | screenshot, screen_digest, record_video (GIF; `every_nth:"auto"` samples the digest quantum), audio_capture (RMS/peak/dominant-Hz, WAV), temporal_status / temporal_set (ZX DLSS de-flicker via GET / PUT `/video/temporal`; `algorithm` = name or `"off"`; summary names the video / audio delay it causes) |
 | `media` | every media slot (floppy drives, SD card, ...): list / info / formats / insert / swap / eject / save / export / discard / rescan / create / protect over the WebAPI `/media` routes; `slot` takes `A`, `fdd.b`, `sd`, `tag:…` or `auto`; a dirty medium leaves only with `save` / `export` / `discard` ([docs/features/media.md](../../../docs/features/media.md)) |
 
 Every tool accepts `target` (emulator id or `auto`; `auto` creates a 128K
@@ -99,7 +99,7 @@ never JSON-RPC errors.
 ## Resources
 
 `unreal://keyboard-layout`, `unreal://basic-reference`, `unreal://z80-isa`,
-`unreal://trdos-commands`, `unreal://memory-map`, `unreal://machine/profi` (embedded markdown) and
+`unreal://trdos-commands`, `unreal://memory-map`, `unreal://machine/profi`, `unreal://machine/tsconf` (embedded markdown) and
 `unreal://emulator-state` (dynamic instance overview).
 
 ## Quick test

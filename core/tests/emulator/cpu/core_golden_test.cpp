@@ -62,7 +62,7 @@ const Golden kGolden[] = {
     {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE360A9F00E0771B9ull, 10483200ull},
     // ATM3 re-recorded 2026-09-30 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
     // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)
-    {"ATM3", nullptr, 0xBAFE4D4366FEBF79ull, 0x2E7C3DA03E7B4F3Dull, 9434880ull},
+    {"ATM3", nullptr, 0x6824EF056B8D72E9ull, 0xBAFAE3005C816E0Dull, 9434880ull},
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 

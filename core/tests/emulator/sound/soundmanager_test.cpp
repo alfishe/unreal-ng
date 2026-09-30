@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include <cstring>
+#include <functional>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -287,3 +288,101 @@ TEST_F(SoundManagerVoicing_Test, DirectChainEditIsNotReverted)
     RunFrames(sound, 2);
     EXPECT_EQ(sound.getAYChain().getRoomMode(), AudioCharacterChain::RoomMode::Room_6dB);
 }
+
+
+/// region <Output delay line (temporal video effects)>
+
+namespace
+{
+/// Everything the device callback received, one entry per frame
+struct DelayCapture
+{
+    std::vector<std::vector<int16_t>> frames;
+    static void callback(void* obj, int16_t* samples, size_t count)
+    {
+        static_cast<DelayCapture*>(obj)->frames.emplace_back(samples, samples + count);
+    }
+};
+
+/// Frames with a beeper tone on frames 0, 3, 6, ... and silence otherwise (so a
+/// shifted stream is told apart by content, not only by length). Returns what the
+/// device got; `delayAt` maps a frame index to the output delay set before it.
+std::vector<std::vector<int16_t>> RunBeeperFrames(EmulatorContext* context, int frames,
+                                                  const std::function<int(int)>& delayAt)
+{
+    DelayCapture capture;
+    context->pAudioCallback.store(&DelayCapture::callback, std::memory_order_release);
+    context->pAudioManagerObj.store(&capture, std::memory_order_release);
+    SoundManager sound(context);
+    sound.reset();
+    sound.getBeeperChain().setPunchEnabled(false);
+    Z80* z80 = context->pCore->GetZ80();
+    for (int f = 0; f < frames; ++f)
+    {
+        sound.setOutputDelayFrames(delayAt(f));
+        z80->tt = 0;
+        sound.handleFrameStart();
+        if (f % 3 == 0)
+            for (int i = 0; i < 100; i++)
+                sound.getBeeper().handlePortOut((i & 1) ? 0x10 : 0x00, 500 + i * 600);
+        z80->tt = static_cast<uint64_t>(context->config.frame) << 8;
+        sound.handleStep();
+        sound.handleFrameEnd();
+    }
+    context->pAudioCallback.store(nullptr, std::memory_order_release);
+    context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+    return capture.frames;
+}
+
+bool Silent(const std::vector<int16_t>& v)
+{
+    for (int16_t s : v)
+        if (s != 0)
+            return false;
+    return true;
+}
+}  // namespace
+
+TEST(SoundManagerOutputDelay_Test, DeviceGetsTheFrameFromDelayFramesAgo)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+
+    const auto plain = RunBeeperFrames(context, 12, [](int) { return 0; });
+    const auto delayed = RunBeeperFrames(context, 12, [](int) { return 2; });
+    ASSERT_EQ(plain.size(), 12u);
+    ASSERT_EQ(delayed.size(), 12u);
+    ASSERT_FALSE(Silent(plain[0])) << "the beeper frames must be audible for this test";
+    ASSERT_FALSE(plain[0] == plain[1]) << "the frames must differ for a shift to show";
+
+    // Filling: silence as long as the frame itself
+    for (int f = 0; f < 2; ++f)
+    {
+        EXPECT_TRUE(Silent(delayed[f])) << "frame " << f;
+        EXPECT_EQ(delayed[f].size(), plain[f].size()) << "frame " << f;
+    }
+    for (int f = 2; f < 12; ++f)
+        EXPECT_TRUE(delayed[f] == plain[f - 2]) << "frame " << f << " must carry frame " << f - 2;
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(SoundManagerOutputDelay_Test, ShrinkingTheDelayDropsTheOldestFrames)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+
+    const auto plain = RunBeeperFrames(context, 10, [](int) { return 0; });
+    // Delay 2 for frames 0..5, then none: frame 6 plays itself at once
+    const auto out = RunBeeperFrames(context, 10, [](int f) { return f < 6 ? 2 : 0; });
+    ASSERT_EQ(out.size(), 10u);
+    EXPECT_TRUE(out[5] == plain[3]);
+    for (int f = 6; f < 10; ++f)
+        EXPECT_TRUE(out[f] == plain[f]) << "frame " << f;
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Output delay line>

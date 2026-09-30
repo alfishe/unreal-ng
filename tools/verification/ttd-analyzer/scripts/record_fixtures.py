@@ -78,8 +78,21 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # TurboSound FM (the Pentagon's TurboSound slot is TSFM): a tune already
     # playing in the snapshot, so FM and SSG registers change every frame
     ("tsfm_tech_support", "PENTAGON", "testdata/sound/tsfm/tech_support.sna", 0),
+    # TS-Conf (TSConf implementation-plan TTD-5): the SDK sprite example draws
+    # its 16C frame with a DMA RAM copy every frame (TS-Conf blob 16, DMA live
+    # counters, per-line DRAM budget)
+    ("tsconf_sprites", "TSL", "testdata/machines/tsconf/spg/sprites.spg", 50),
 ]
 CORPUS_DIR = "testdata/ttd"
+
+# Per-fixture extras. "out": where the fixture lives when it is not a Pentagon
+# corpus file (testdata/machines/<machine>/ttd, next to the machine's other
+# test data; TTD_Corpus_Test picks those up too). "gs": the General Sound card
+# swapped in before loading - NeoGS keeps its RAM outside TTD so far, so a
+# fixture recorded with it cannot replay exactly; the classic card can
+FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
+    "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
+}
 
 # /run_frames runs at most this many frames per call
 RUN_FRAMES_LIMIT = 10000
@@ -301,13 +314,22 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)  # the emulator's dump does not create directories
 
     for name, model, snapshot, settle in fixtures:
+        options = FIXTURE_OPTIONS.get(name, {})
         out_path = os.path.join(out_dir, f"{name}.ttd")
+        if "out" in options and args.out_dir == CORPUS_DIR:
+            out_path = from_root(options["out"])
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
         print(f"\n[{name}]")
         emu_id = args.emulator_id
         try:
             if emu_id is None:
                 emu_id = api.create_instance(model)
                 print(f"  fresh {model} instance: {emu_id}")
+            if "gs" in options:
+                api.post(f"/emulator/{emu_id}/control/audio/gs",
+                         {"action": "switch_personality", "personality": options["gs"]})
+                run_frames(api, f"/emulator/{emu_id}", 2)  # the swap lands at a frame boundary
+                print(f"  General Sound card: {options['gs']}")
             record_session(api, emu_id, out_path, args.frames,
                            from_root(snapshot) if snapshot else None, settle,
                            fresh=args.emulator_id is None)

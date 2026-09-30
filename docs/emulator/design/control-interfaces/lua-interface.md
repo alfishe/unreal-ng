@@ -341,6 +341,7 @@ msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register bank
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
@@ -699,7 +700,7 @@ Play RZX input recordings: the start snapshot loads, then every `IN` returns the
 | `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
 | `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
-`snapshot_load("game.rzx")` plays a recording on the machine as it is.
+`snapshot_load("game.rzx")` plays a recording on the machine as it is. `snapshot_load` returns `ok, reason, emulator_id`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first when the script is not bound to one machine (`emulator_id` is then the new instance), and is refused with the reason when it is.
 
 ```lua
 local r = rzx_play("games/ericfloaters.rzx", {desync_mode = "tolerant"})
@@ -994,6 +995,18 @@ emu.video_pixel(x, y [, layer])      -- sources (space, page, offset, bit_mask, 
 emu.video_pixel_at(t)                -- the same for the point under the beam at frame T (layer pixel or border)
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+                                     --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
+                                     --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
+                                     --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,
+                                     --   field, field_stage, whole_paper, scene_average},
+                                     --   algorithms = {...},
+                                     --   default_algorithm = "mod-tpgwafsd" }
+emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it off. Returns the new status,
+                                     --   or { ok = false, error = "..." } for an unknown name. While on, the
+                                     --   picture is shown later by the algorithm's look-ahead (7 frames for
+                                     --   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
+                                     --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 
 -- Coverage analyzer

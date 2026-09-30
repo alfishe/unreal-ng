@@ -395,6 +395,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.ide_scheme = IDE_NONE;
 		if (const char* scheme = inimanager.GetValue(hdd, "Scheme", nullptr); scheme && !ParseIdeScheme(scheme, config.ide_scheme))
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
+		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
+		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
 		for (int unit = 0; unit < 2; unit++)
 		{
 			IDE_CONFIG& ide = config.ide[unit];

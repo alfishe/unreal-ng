@@ -140,7 +140,8 @@ types:
           event (21 bytes) u64 frame, u32 tInFrame, u8 kind
           (TTDInputKind: 0 Key, 1 MouseMove, 2 MouseButtons, 3 MouseWheel,
           4 MouseCounters, 5 KeyboardReset, 6 GSCommand, 7 GSData, 8 GSNmi,
-          9 GSResetCard, 10 GSReset), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          9 GSResetCard, 10 GSReset, 11 PcKey - a physical PC key for the PS/2
+          controller, key = PcKey), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -521,8 +522,10 @@ types:
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
           16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
-          ATM3, Profi, Scorpion SMUC),
-          19 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes).
+          ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
+          16-byte scan code log, its pointers, the parser flags, the modifier
+          mask and the held keys),
+          20 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

@@ -9,7 +9,7 @@
 | Research: Scorpion turbo waits from the SC15.1 equations | done 2026-09-29: [research-scorpion-turbo.md](research-scorpion-turbo.md) (JED decoded, schematic traced, simulated) |
 | Design | done 2026-09-29: [tdd.md](tdd.md) |
 | Overlay opcode-fetch entry, interrupt acknowledge | done 2026-09-29: `HostBusOverlay::onReadM1` / `onInterruptAcknowledge`, `Memory::MemoryReadOverlayM1` |
-| ZX-Evo 14 MHz waits (`EvoTurboOverlay`), TTD cache state | done 2026-09-29: TTD peripheral `EvoTurboCache` = 19 |
+| ZX-Evo 14 MHz waits (`EvoTurboOverlay`), TTD cache state | done 2026-09-29: TTD peripheral `EvoTurboCache` = 20 |
 | Scorpion turbo waits (`ScorpionTurboOverlay`) | done 2026-09-29: SC15.1 |
 | Tests | done 2026-09-29: `EvoTurboOverlay_Test` (11), `ScorpionTurboOverlay_Test` (6); full suite green |
 | Changed baselines | ATM3 only (its BIOS runs at 14 MHz): the `CoreGolden` row, the TTD CI gate's four exact `ATM3/idle` rows; `ScorpionTurbo_Test.TurboStrobeAppliesMidFrame` (the turbo-off `IN` pays its 2 T); `Core_Test`'s plain-interface list without ATM3 |

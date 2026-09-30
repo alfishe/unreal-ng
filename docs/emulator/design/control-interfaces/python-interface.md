@@ -136,6 +136,12 @@ class Emulator:
         units[2] (kind, slot, medium, translation, task_file with decoded bits,
         command, atapi sense on a CD drive). available=False without a board"""
 
+    def tsconf_state(self) -> dict:
+        """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
+        lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /
+        notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
+        line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
+
     def rtc_state(self) -> dict:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
@@ -781,6 +787,8 @@ Module functions, by emulator id (default: the selected machine). A model switch
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
+`unreal.snapshot_load(path, emulator_id="", switch_model=True)` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first (`emulator_id` is the new one). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
+
 ```python
 r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K
 emu = unreal.emu_get(r["emulator_id"])
@@ -1101,6 +1109,18 @@ emu.video_pixel(x, y, layer=0)       # sources (space, page, offset, bit_mask, r
 emu.video_pixel_at(t)                # the same for the point under the beam at frame T (layer pixel or border)
 emu.video_address(page, offset)      # areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_text(layer=0)              # exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
+emu.video_temporal()                 # ZX DLSS de-flicker status: {'algorithm' ('' = off), 'active', 'inactive_reason',
+                                     #   'video_delay_frames', 'video_delay_ms', 'audio_extra_delay_frames', 'processed',
+                                     #   'correcting', 'showing_processed', 'corrected_frames', 'written', 'shown_raw', 'late',
+                                     #   'restarts', 'last_ms', 'average_ms', 'shown_frame' / 'last_frame': {'pattern',
+                                     #   'period2'..'period5', 'field', 'field_stage', 'whole_paper', 'scene_average'},
+                                     #   'algorithms': [...],
+                                     #   'default_algorithm': 'mod-tpgwafsd'}
+emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it off. Returns the new status,
+                                     #   or {'ok': False, 'error': '...'} for an unknown name. While on, the
+                                     #   picture is shown later by the algorithm's look-ahead (7 frames for
+                                     #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
+                                     #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.frame_cost()                     # per-frame halt/run cost accounting
 
 # Coverage analyzer
