@@ -149,7 +149,7 @@ vector table entry at `I=0x80`).
 | INT-7 | 14 MHz: frame pulse = 32 CPU clocks = 8 raster tacts (`EI` 9 tacts after the event misses it) |
 | INT-8 | vdos gating (with P6's vdos or a test hook setting vdos): frame, line and DMA events during vdos are **not lost** — they fire right after vdos exits, in priority order |
 | CLK-1 | `OUT #20AF,1` → CPU runs 2× T per raster tact **from the next instruction**; `2` and `3` → 4× (hs §3.2, §11) |
-| CLK-2 | clock switch mid-frame does not move raster events (frame INT tact unchanged); audio/video descaling via `hw_turbo_shift_applied` stays consistent (existing turbo tests pattern `atmturbo_test.cpp`) |
+| CLK-2 | clock switch mid-frame does not move raster events (frame INT tact unchanged); audio/video descaling via `hw_turbo_ratio_applied` stays consistent (existing turbo tests pattern `atmturbo_test.cpp`) |
 | TTD-2 | blob round-trip includes INT latches + frame-pulse counter; restore mid-pulse → same INT outcome |
 
 ## Phase 3 — Engine budget, ZX video, palette, border · L

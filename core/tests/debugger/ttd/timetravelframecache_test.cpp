@@ -220,20 +220,21 @@ TEST_F(TTD_FrameCache_Test, FreedOnInvalidate)
 
 TEST_F(TTD_FrameCache_Test, ScalesWithCpuFrequencyMultiplier)
 {
-    // At 56 MHz the Z80 runs 16x the base 3.5 MHz clock, so a frame holds ~16x
-    // the instructions and the cache must capture the WHOLE turbo frame (not
-    // just 1/multiplier of it) with the reserve sized accordingly.
-    const uint8_t kMultiplier = 16;  // 3.5 MHz * 16 = 56 MHz
+    // At 28 MHz the Z80 runs 8x the base 3.5 MHz clock (the top hardware clock
+    // ratio), so a frame holds ~8x the instructions and the cache must capture
+    // the WHOLE turbo frame (not just 1/multiplier of it) with the reserve
+    // sized accordingly.
+    const uint8_t kMultiplier = 8;  // 3.5 MHz * 8 = 28 MHz
     // Through the emulated hardware turbo, the only way a recording runs
     // faster than 1x: the host speed control is forced to 1x by the recording
     // lock. Set the active multiplier directly (a queued change would only
     // apply at the next frame boundary, leaving the current frame at 1x), with
-    // host 1x << shift 4 so the boundary's queued-change check leaves it in
+    // host 1x x ratio 8 so the boundary's queued-change check leaves it in
     // place, then re-derive the CPU frame geometry the way every direct state
-    // write must (the TTD restore does the same): RunNFrames uses a 16x frameLimit.
+    // write must (the TTD restore does the same): RunNFrames uses an 8x frameLimit.
     _context->emulatorState.next_z80_frequency_multiplier = 1;
-    _context->emulatorState.hw_turbo_shift = 4;
-    _context->emulatorState.hw_turbo_shift_applied = 4;
+    _context->emulatorState.hw_turbo_ratio = kMultiplier;
+    _context->emulatorState.hw_turbo_ratio_applied = kMultiplier;
     _context->emulatorState.current_z80_frequency_multiplier = kMultiplier;
     _context->pCore->GetZ80()->RecomputeFrameTiming();
     ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, kMultiplier);
@@ -247,9 +248,9 @@ TEST_F(TTD_FrameCache_Test, ScalesWithCpuFrequencyMultiplier)
     const ttd::TTDFrameCache* c = _ttd->GetFrameCache(frame);
     ASSERT_NE(c, nullptr);
 
-    // A 1x busy frame is ~13.5k instructions; at 16x expect well over 100k —
+    // A 1x busy frame is ~7.5k instructions; at 8x expect well over 40k —
     // proving the full turbo frame was replayed, not a base-length slice.
-    EXPECT_GT(c->entries.size(), 100000u) << "captured only " << c->entries.size()
+    EXPECT_GT(c->entries.size(), 40000u) << "captured only " << c->entries.size()
                                           << " instructions — turbo frame under-replayed";
 
     // The pre-reservation is sized to the largest possible frame

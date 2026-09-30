@@ -172,7 +172,7 @@ SUMMARY_COLUMNS = [
     ("replay p99", "bm5_offset_replay_us_p99"),
     ("restore p99", "bm5_offset_restore_us_p99"),
     ("bm1 cov %", "bm1_overhead_journal_cov_pct"),
-    ("turbo", "turbo_shift"),
+    ("turbo", "turbo_ratio"),
 ]
 
 

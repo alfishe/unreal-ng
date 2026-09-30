@@ -138,7 +138,7 @@ struct Card
         ctx.config.frame = 69888;
         ctx.config.frame_duration_us = 19968;
         ctx.emulatorState.current_z80_frequency_multiplier = 1;
-        ctx.emulatorState.hw_turbo_shift_applied = 0;
+        ctx.emulatorState.hw_turbo_ratio_applied = 1;
         image = MakeNeoGSTestSd(layout);
         strncpy(config.sdCardPath, image->path().c_str(), sizeof config.sdCardPath - 1);
         config.sdType = type;

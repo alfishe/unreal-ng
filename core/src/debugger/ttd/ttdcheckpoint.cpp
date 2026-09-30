@@ -169,8 +169,8 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFra
     std::memcpy(dst.ulaplus_cram, src.ulaplus_cram, sizeof(dst.ulaplus_cram));
 
     // CPU clock (model-neutral; see the struct comment)
-    dst.hw_turbo_shift = src.hw_turbo_shift;
-    dst.hw_turbo_shift_applied = src.hw_turbo_shift_applied;
+    dst.hw_turbo_ratio = src.hw_turbo_ratio;
+    dst.hw_turbo_ratio_applied = src.hw_turbo_ratio_applied;
     dst.current_z80_frequency_multiplier = src.current_z80_frequency_multiplier;
     dst.next_z80_frequency_multiplier = src.next_z80_frequency_multiplier;
 
@@ -208,10 +208,10 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     dst->ulaplus_reg = src.ulaplus_reg;
     std::memcpy(dst->ulaplus_cram, src.ulaplus_cram, sizeof(dst->ulaplus_cram));
 
-    // CPU clock. A zero multiplier means "recorded before this was captured";
-    // fall back to 1x rather than stalling the CPU at zero speed.
-    dst->hw_turbo_shift = src.hw_turbo_shift;
-    dst->hw_turbo_shift_applied = src.hw_turbo_shift_applied;
+    // CPU clock. A zero multiplier or ratio is not a valid clock (the CPU would
+    // stall and the audio descale divide by zero); fall back to 1x.
+    dst->hw_turbo_ratio = src.hw_turbo_ratio ? src.hw_turbo_ratio : 1;
+    dst->hw_turbo_ratio_applied = src.hw_turbo_ratio_applied ? src.hw_turbo_ratio_applied : 1;
     dst->current_z80_frequency_multiplier =
         src.current_z80_frequency_multiplier ? src.current_z80_frequency_multiplier : 1;
     dst->next_z80_frequency_multiplier =

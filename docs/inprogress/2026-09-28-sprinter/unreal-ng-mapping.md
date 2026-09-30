@@ -30,7 +30,7 @@ unchanged, what it extends, and what is new.
 
 | Piece | Today | Change for the Sprinter | Also needed by | Spec |
 |---|---|---|---|---|
-| CPU clock multiplier | `hw_turbo_shift` / `hw_turbo_shift_applied` = log2, so 2× / 4× only (`platform.h:960-980`, `z80.cpp:602`; TTD checkpoint `ttdcheckpoint.h:190`) | replaced everywhere by `hw_turbo_ratio` / `hw_turbo_ratio_applied` 1-8 (21 MHz = ×6); no converter, TTD fixtures re-recorded; PLAN #60 | ATM710, ATM3, Scorpion (ratio 2/4) | technical design §3 |
+| CPU clock multiplier | **built (PLAN #60(b), 2026-09-29)**; was `hw_turbo_shift` / `hw_turbo_shift_applied` = log2, so 2× / 4× only | replaced everywhere by `hw_turbo_ratio` / `hw_turbo_ratio_applied` 1-8 (21 MHz = ×6); no converter, TTD fixtures re-recorded; PLAN #60 | ATM710, ATM3, Scorpion (ratio 2/4) | technical design §3 |
 | Wait states | ULA contention only (`memory.h:356`, `video/ulacontention.h:66`) | per-bank "has waits" flag; the cost from `SprinterWaits::ExtraClocks(kind, t)` (phase-dependent); PLAN #60 | ATM3 E9 rasters (contention by clock) | technical design §4 |
 | Memory write path | non-virtual, "no model reacts to writes" (`memory.h:286-296`) | a write-only `HostBusOverlay` (built, PLAN #60(a); zero cost while not installed, several overlays chained) | TSConf P0 (FM window), ATM3 E8 (flash writes) | TSConf technical design §3.5 item 2 |
 | Interrupts | fixed `intstart/intlen` window, vector always `#FF` | `IInterruptSource` with `OnReti()` for the Z84C15 daisy chain (built, PLAN #60(a)) | TSConf P0 | TSConf technical design §3.4; [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §5.1 |

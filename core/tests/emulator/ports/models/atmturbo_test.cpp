@@ -12,9 +12,9 @@
 /// ATM Turbo 2+ v7.10 clock select.
 ///
 /// Contract shared with every hardware turbo (see ScorpionTurbo_Test):
-///     current_z80_frequency_multiplier = next_z80_frequency_multiplier << hw_turbo_shift
-/// next_ is the HOST speed control; hw_turbo_shift is the guest's hardware
-/// clock. A model decoder owns hw_turbo_shift ONLY - writing next_ as well both
+///     current_z80_frequency_multiplier = next_z80_frequency_multiplier x hw_turbo_ratio
+/// next_ is the HOST speed control; hw_turbo_ratio is the guest's hardware
+/// clock. A model decoder owns hw_turbo_ratio ONLY - writing next_ as well both
 /// double-counts the clock and discards the user's speed setting.
 ///
 /// The decoder half is tested without a CPU on purpose: on a running machine
@@ -40,18 +40,18 @@ TEST_F(AtmTurboDecoder_Test, Ff77Bit3SelectsTheHardwareClock)
     EmulatorState& state = _context->emulatorState;
 
     WriteFF77(0x00);
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "bit 3 clear is 3.5 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "bit 3 clear is 3.5 MHz";
 
     WriteFF77(FF77_TURBO);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "bit 3 set is 7 MHz";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "bit 3 set is 7 MHz";
 
     WriteFF77(0x00);
-    EXPECT_EQ(state.hw_turbo_shift, 0) << "turbo off must reach the clock";
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "turbo off must reach the clock";
 }
 
 /// @brief The decoder must not touch the host speed control. This is what made
 ///        the BIOS turbo toggle look inert: writing both fields composed
-///        next << shift, so 7 MHz became 4x and the host setting was lost
+///        next x ratio, so 7 MHz became 4x and the host setting was lost
 TEST_F(AtmTurboDecoder_Test, DecoderLeavesHostSpeedMultiplierAlone)
 {
     EmulatorState& state = _context->emulatorState;
@@ -73,17 +73,17 @@ TEST_F(AtmTurboDecoder_Test, Eff7CarriesNoClockBit)
     EmulatorState& state = _context->emulatorState;
 
     WriteFF77(FF77_TURBO);
-    ASSERT_EQ(state.hw_turbo_shift, 1);
+    ASSERT_EQ(state.hw_turbo_ratio, 2);
 
     WriteEFF7(EFF7_PENTEVO_3_5);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "#EFF7 must not drop the ATM 7.10 clock";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "#EFF7 must not drop the ATM 7.10 clock";
 
     WriteEFF7(0x00);
-    EXPECT_EQ(state.hw_turbo_shift, 1) << "#EFF7 must not raise it either";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "#EFF7 must not raise it either";
 }
 
 /// @brief There is no 14 MHz on ATM 7.10: no combination of the two latches may
-///        produce a shift above 1
+///        produce a ratio above 2
 TEST_F(AtmTurboDecoder_Test, NoCombinationReachesFourteenMegahertz)
 {
     EmulatorState& state = _context->emulatorState;
@@ -94,7 +94,7 @@ TEST_F(AtmTurboDecoder_Test, NoCombinationReachesFourteenMegahertz)
         for (uint8_t ff77 : {uint8_t(0x00), FF77_TURBO})
         {
             WriteFF77(ff77);
-            EXPECT_LE(state.hw_turbo_shift, 1)
+            EXPECT_LE(state.hw_turbo_ratio, 2)
                 << "pFF77=0x" << std::hex << int(ff77) << " pEFF7=0x" << int(eff7);
         }
     }
@@ -137,7 +137,7 @@ protected:
     /// One frame through the running emulator's path (CPU frame, then the
     /// frame boundary MainLoop::CompleteFrame whose Z80::BeginFrame applies
     /// the queued multiplier). The running BIOS reprograms #FF77 - and with it
-    /// hw_turbo_shift - during the frame, so the clock under test is planted
+    /// hw_turbo_ratio - during the frame, so the clock under test is planted
     /// AT the boundary: after the frame's code ran, before the boundary
     /// applies it. That is exactly when a decoder write would be picked up
     template <typename Plant>
@@ -149,18 +149,18 @@ protected:
     }
 };
 
-TEST_F(AtmTurboClock_Test, HardwareShiftReachesTheCpuAndTheReportedFrequency)
+TEST_F(AtmTurboClock_Test, HardwareRatioReachesTheCpuAndTheReportedFrequency)
 {
     EmulatorState& state = _context->emulatorState;
     state.next_z80_frequency_multiplier = 1;   // host at 1x
 
     // what the decoder sets for 7 MHz
-    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 1; });
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_ratio = 2; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 2);
     EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency * 2) << "7 MHz reporting";
 
     // BIOS turbo off
-    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 0; });
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_ratio = 1; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
     EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency) << "3.5 MHz reporting";
 }
@@ -170,10 +170,10 @@ TEST_F(AtmTurboClock_Test, HardwareClockComposesWithHostSpeedMultiplier)
     EmulatorState& state = _context->emulatorState;
     state.next_z80_frequency_multiplier = 4;   // host asks for 4x
 
-    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 1; });
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_ratio = 2; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 8) << "host 4x x hardware 2x";
 
-    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 0; });
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_ratio = 1; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 4) << "turbo off returns to the host setting";
     EXPECT_EQ(state.next_z80_frequency_multiplier, 4) << "host intent preserved across toggles";
 }

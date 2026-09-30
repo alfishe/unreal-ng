@@ -586,8 +586,8 @@ variant configuration, decode scratch (`ttdcheckpoint.h:21-28`,
 | 44 | 1 | `ulaplus_mode` | |
 | 45 | 1 | `ulaplus_reg` | |
 | 46 | 64 | `ulaplus_cram[64]` | |
-| 110 | 1 | `hw_turbo_shift` | queued hardware turbo, log2 |
-| 111 | 1 | `hw_turbo_shift_applied` | |
+| 110 | 1 | `hw_turbo_ratio` | queued hardware clock ratio, 1..8 (1 = base clock; 0 is read as 1) |
+| 111 | 1 | `hw_turbo_ratio_applied` | the ratio the frame runs with (0 is read as 1) |
 | 112 | 1 | `current_z80_frequency_multiplier` | 0 in old files is read as 1 (`ttdcheckpoint.cpp:215`) |
 | 113 | 1 | `next_z80_frequency_multiplier` | |
 | 114 | 3 | `cpu_t_in_frame` | `z80.t` at capture, 24-bit little-endian (the overshoot) |

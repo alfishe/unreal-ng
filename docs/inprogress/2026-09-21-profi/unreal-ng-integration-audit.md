@@ -154,7 +154,7 @@ convention; confirm against the Profi ROM decode (CPU sees page N at #0000 via `
 
 Facts:
 - `TTDChipsetState` (`ttd/ttdcheckpoint.h:~149-190`) carries: `p7FFD, pFE, pEFF7, pBFFD, pFFFD, pFF77, border_attr, flags,
-  wd_shadow[4], comp_pal[16], ulaplus_*, hw_turbo_shift*, freq multipliers, t_states, frame_counter`. It has **no `pDFFD`**
+  wd_shadow[4], comp_pal[16], ulaplus_*, hw_turbo_ratio*, freq multipliers, t_states, frame_counter`. It has **no `pDFFD`**
   (nor `p1FFD`). `EmulatorState::pDFFD` lives at `platform.h:905`.
 - Framework contract (`timetravelmanager.cpp:1046-1097` `RegisterModelPeripherals`): core devices are registered
   (TurboSound/TSFM, Covox, Tape, KempstonMouse, BetaDisk); then `decoder->CreateTTDSerializers()` are registered and every id in

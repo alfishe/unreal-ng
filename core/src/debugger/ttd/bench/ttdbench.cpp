@@ -594,7 +594,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm4_resident_bytes"] = resident;
         m["bm4_resident_bpf"] = resident / n;
         // Proof the configuration ran as named: the hardware turbo in effect at the end
-        m["turbo_shift"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_shift);
+        m["turbo_ratio"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_ratio);
 
         // BM-5 / BM-6: random positions, frame-aligned and inside a frame
         const uint64_t first = engine.FirstFrame();

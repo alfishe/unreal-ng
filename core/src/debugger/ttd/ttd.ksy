@@ -459,14 +459,15 @@ types:
       - id: ulaplus_cram
         size: 64
         doc: ULAplus palette entries.
-      - id: hw_turbo_shift
+      - id: hw_turbo_ratio
         type: u1
         doc: |
-          Model-neutral HARDWARE turbo: log2 of the guest-visible CPU multiplier.
+          Model-neutral HARDWARE turbo: the guest-visible CPU clock ratio, 1..8
+          (1 = base clock, 2 = 7 MHz, 4 = 14 MHz, 6 = 21 MHz).
           A hardware turbo keeps the 20 ms frame and only multiplies the CPU
           T-states inside it, so the audio path descales by this (the AY, beeper
           and Covox clocks are unchanged). Queued value.
-      - id: hw_turbo_shift_applied
+      - id: hw_turbo_ratio_applied
         type: u1
         doc: As composed into current_z80_frequency_multiplier at the frame boundary.
       - id: current_z80_frequency_multiplier

@@ -187,9 +187,9 @@ struct TTDChipsetState
     // z80.cpp), and RestoreCheckpoint re-runs the paging decode but not that.
     // Without these a seek across a speed change left the CPU at whatever
     // clock the live machine happened to be at - and, since the audio path
-    // descales by hw_turbo_shift_applied, produced wrong AY/beeper pitch too.
-    uint8_t hw_turbo_shift = 0;
-    uint8_t hw_turbo_shift_applied = 0;
+    // descales by hw_turbo_ratio_applied, produced wrong AY/beeper pitch too.
+    uint8_t hw_turbo_ratio = 1;          // CPU clock ratio 1..8 (1 = base clock)
+    uint8_t hw_turbo_ratio_applied = 1;
     uint8_t current_z80_frequency_multiplier = 1;
     uint8_t next_z80_frequency_multiplier = 1;
 

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/covox.h"
@@ -233,25 +235,25 @@ TEST_F(SoundAdaptivity_Test, Beeper_TurboSwitchFrame_StaysInLockstepWithAccumula
     _context->config.frame_duration_us = 19968;
     const size_t expected = expectedSamplesFromUs(_context->config.frame_duration_us);
 
-    // Settle at x1. hw_turbo_shift is the model-neutral view of a HARDWARE
+    // Settle at x1. hw_turbo_ratio is the model-neutral view of a HARDWARE
     // clock change: the audio path descales the CPU T-state position by it
     // (EmulatorState::AudioTstate) so the synths always render at base
     // frequency. The real ATM710 turbo write sets it alongside the multiplier,
     // so this replay must too.
     state.next_z80_frequency_multiplier = 1;
-    state.hw_turbo_shift = 0;
+    state.hw_turbo_ratio = 1;
     sound->handleFrameStart();
     state.current_z80_frequency_multiplier = 1;  // queue applied by Z80FrameCycle
-    state.hw_turbo_shift_applied = 0;
+    state.hw_turbo_ratio_applied = 1;
     sound->handleFrameEnd();
 
     // Queue x2 exactly like the ATM710 turbo port write does, then replay
     // the MainLoop ordering of the switch frame
     state.next_z80_frequency_multiplier = 2;
-    state.hw_turbo_shift = 1;                    // 7 MHz: CPU 2x inside a 20 ms frame
+    state.hw_turbo_ratio = 2;                    // 7 MHz: CPU 2x inside a 20 ms frame
     sound->handleFrameStart();
     state.current_z80_frequency_multiplier = 2;  // Z80::Z80FrameCycle applies here
-    state.hw_turbo_shift_applied = 1;
+    state.hw_turbo_ratio_applied = 2;
     sound->handleFrameEnd();
 
     // The switch frame itself must deliver realtime samples, not 2x
@@ -265,6 +267,68 @@ TEST_F(SoundAdaptivity_Test, Beeper_TurboSwitchFrame_StaysInLockstepWithAccumula
     EXPECT_NEAR(static_cast<double>(sound->getBeeper().getLastSamplesRead()),
                 static_cast<double>(expected), 1.0)
         << "frame after the turbo switch";
+}
+
+/// A hardware clock ratio (hw_turbo_ratio, also the non-power-of-two 3 and 6)
+/// must not change the pitch: a guest that toggles the beeper every P base
+/// T-states spends P x ratio CPU T-states per half period at the higher clock,
+/// and the audio path must hear exactly the ratio-1 tone. Driven through the
+/// port decoder's OUT (#FE), the path the CPU takes, so the descale by
+/// EmulatorState::AudioTstate and the frame budget by HostSpeedMultiplier are
+/// both on it. The rendered frames must be bit-identical
+TEST_F(SoundAdaptivity_Test, Beeper_ClockRatioKeepsThePitch)
+{
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _context->pCore->GetZ80();
+    const uint32_t frame = _context->config.frame;
+    constexpr uint32_t kHalfPeriod = 1000;  // base T-states: 1.75 kHz at 3.5 MHz
+    constexpr int kFrames = 3;
+
+    auto render = [&](uint8_t ratio)
+    {
+        sound->reset();
+        state.next_z80_frequency_multiplier = 1;
+        state.hw_turbo_ratio = ratio;
+        state.hw_turbo_ratio_applied = ratio;
+        state.current_z80_frequency_multiplier = ratio;
+
+        std::vector<int16_t> out;
+        bool ear = false;
+        for (int f = 0; f < kFrames; f++)
+        {
+            sound->handleFrameStart();
+            for (uint32_t base = kHalfPeriod; base < frame; base += kHalfPeriod)
+            {
+                ear = !ear;
+                z80->t = base * ratio;  // the CPU position at this clock
+                _context->pPortDecoder->DecodePortOut(0x00FE, ear ? 0x10 : 0x00, 0x8000);
+            }
+            sound->handleFrameEnd();
+            const size_t samples = static_cast<size_t>(sound->getBeeper().getLastSamplesRead());
+            const int16_t* buffer = sound->deviceBuffer(AudioSourceType::Beeper);
+            out.insert(out.end(), buffer, buffer + samples * AUDIO_CHANNELS);
+        }
+        z80->t = 0;
+        return out;
+    };
+
+    const std::vector<int16_t> reference = render(1);
+    ASSERT_GT(reference.size(), static_cast<size_t>(kFrames) * 800 * AUDIO_CHANNELS);
+    ASSERT_TRUE(std::any_of(reference.begin(), reference.end(), [](int16_t s) { return std::abs(s) > 1000; }))
+        << "the tone must be audible";
+
+    for (uint8_t ratio : {uint8_t(3), uint8_t(6)})
+    {
+        const std::vector<int16_t> turbo = render(ratio);
+        ASSERT_EQ(turbo.size(), reference.size()) << "ratio " << int(ratio) << ": samples per frame must not change";
+        EXPECT_TRUE(turbo == reference) << "ratio " << int(ratio) << ": the tone must be bit-identical";
+    }
+
+    state.hw_turbo_ratio = 1;
+    state.hw_turbo_ratio_applied = 1;
+    state.current_z80_frequency_multiplier = 1;
 }
 
 /// endregion </Beeper>
