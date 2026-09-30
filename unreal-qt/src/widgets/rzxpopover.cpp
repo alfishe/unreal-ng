@@ -18,6 +18,7 @@
 
 #include "emulator/emulator.h"
 #include "emulator/rzx/rzxlauncher.h"
+#include "platform/childwindow.h"
 
 namespace
 {
@@ -159,6 +160,10 @@ bool RzxPopover::eventFilter(QObject* watched, QEvent* event)
     switch (event->type())
     {
         case QEvent::Move:
+            // Glued by the OS: it moves with the window already
+            if (watched == window && !_attached)
+                reposition();
+            break;
         case QEvent::Resize:
         case QEvent::LayoutRequest:
             if (watched == window)
@@ -201,9 +206,21 @@ bool RzxPopover::eventFilter(QObject* watched, QEvent* event)
     return QFrame::eventFilter(watched, event);
 }
 
+void RzxPopover::setVisible(bool visible)
+{
+    if (!visible && _attached)
+    {
+        ChildWindow::Detach(parentWidget(), this);
+        _attached = false;
+    }
+    QFrame::setVisible(visible);
+}
+
 void RzxPopover::showEvent(QShowEvent* event)
 {
     QFrame::showEvent(event);
+    // Glue it to the main window where the OS can (it then moves with it)
+    _attached = ChildWindow::Attach(parentWidget(), this);
     _timer.start();
     installEventFilter(this);
     if (QWidget* window = parentWidget())
