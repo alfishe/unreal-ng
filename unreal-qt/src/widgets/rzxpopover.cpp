@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QKeyEvent>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QStyle>
@@ -50,9 +51,18 @@ namespace
     };
 }  // namespace
 
-RzxPopover::RzxPopover(QWidget* parent) : QFrame(parent, Qt::Popup)
+RzxPopover::RzxPopover(QWidget* parent) : QFrame(parent, Qt::Tool | Qt::FramelessWindowHint)
 {
+    setAutoFillBackground(true);
     setFrameShape(QFrame::StyledPanel);
+    setStyleSheet("RzxPopover { border: 1px solid palette(mid); background: palette(window); }");
+    hide();
+
+    // Another application in front: the popover goes (it lives with its window)
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive)
+            hide();
+    });
     setMinimumWidth(420);
 
     auto* layout = new QVBoxLayout(this);
@@ -113,14 +123,105 @@ RzxPopover::RzxPopover(QWidget* parent) : QFrame(parent, Qt::Popup)
 void RzxPopover::popup(QWidget* anchor, std::weak_ptr<Emulator> emulator)
 {
     _emulator = std::move(emulator);
+    _anchor = anchor;
     refresh();
     adjustSize();
-
-    // Above the anchor, right-aligned with it, kept on the anchor's screen
-    const QPoint anchorTopRight = anchor->mapToGlobal(QPoint(anchor->width(), 0));
-    move(anchorTopRight.x() - width(), anchorTopRight.y() - height() - 4);
+    reposition();
     show();
+    raise();
+}
+
+void RzxPopover::reposition()
+{
+    QWidget* window = parentWidget();
+    if (!window || !_anchor)
+        return;
+    const QPoint anchorTopRight = _anchor->mapToGlobal(QPoint(_anchor->width(), 0));
+    const QRect frame = window->frameGeometry();
+    const int x = std::max(frame.left() + 4, std::min(anchorTopRight.x() - width(), frame.right() - width() - 4));
+    const int y = std::max(frame.top() + 4, anchorTopRight.y() - height() - 4);
+    move(x, y);
+}
+
+void RzxPopover::closeUnlessActive()
+{
+    QWidget* active = QApplication::activeWindow();
+    if (active != this && active != parentWidget())
+        hide();
+}
+
+bool RzxPopover::eventFilter(QObject* watched, QEvent* event)
+{
+    if (!isVisible())
+        return QFrame::eventFilter(watched, event);
+
+    QWidget* window = parentWidget();
+    switch (event->type())
+    {
+        case QEvent::Move:
+        case QEvent::Resize:
+        case QEvent::LayoutRequest:
+            if (watched == window)
+                reposition();
+            break;
+        case QEvent::WindowStateChange:
+            if (watched == window && window->isMinimized())
+                hide();
+            break;
+        case QEvent::Hide:
+            if (watched == window)
+                hide();
+            break;
+        case QEvent::WindowDeactivate:
+            // Clicking the popover deactivates the main window and the other
+            // way round: close only when neither is active once it settles
+            if (watched == window || watched == this)
+                QTimer::singleShot(0, this, &RzxPopover::closeUnlessActive);
+            break;
+        case QEvent::MouseButtonPress:
+        {
+            // Outside the popover and its anchor (a click on the anchor toggles it)
+            const QPoint global = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+            const bool inside = frameGeometry().contains(global);
+            const bool onAnchor = _anchor && _anchor->rect().contains(_anchor->mapFromGlobal(global));
+            if (!inside && !onAnchor)
+                hide();
+            break;
+        }
+        case QEvent::KeyPress:
+            if (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
+            {
+                hide();
+                return true;
+            }
+            break;
+        default:
+            break;
+    }
+    return QFrame::eventFilter(watched, event);
+}
+
+void RzxPopover::showEvent(QShowEvent* event)
+{
+    QFrame::showEvent(event);
     _timer.start();
+    installEventFilter(this);
+    if (QWidget* window = parentWidget())
+        window->installEventFilter(this);
+    qApp->installEventFilter(this);
+    emit visibilityChanged(true);
+}
+
+void RzxPopover::hideEvent(QHideEvent* event)
+{
+    _timer.stop();
+    _dragging = false;
+    qApp->removeEventFilter(this);
+    removeEventFilter(this);
+    if (QWidget* window = parentWidget())
+        window->removeEventFilter(this);
+    QFrame::hideEvent(event);
+    emit visibilityChanged(false);
 }
 
 QString RzxPopover::FrameTime(uint64_t frame)
