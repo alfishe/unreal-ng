@@ -728,13 +728,9 @@ private:
         const size_t px = static_cast<size_t>(_w) * _h;
         _period.assign(px, 0);
         _start.assign(px, 0);
-        const uint32_t* key[kDepth];
         const uint8_t* pl[kDepth];
         for (int i = 0; i < n; ++i)
-        {
-            key[i] = _ring[i]->key.data();
             pl[i] = _ring[i]->plane.data();
-        }
         struct Run
         {
             int a, b;
