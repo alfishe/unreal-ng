@@ -94,8 +94,23 @@ curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?mode=z80" | jq '.counte
 ```
 
 Each of `reads`/`writes`/`executes` is a flat `uint32[]` (16 384 entries in
-physical mode, 65 536 in z80 mode) — index = offset (or address). Post-process
-for hotspots:
+physical mode, 65 536 in z80 mode) — index = offset from `start` (0 by
+default). `mode` defaults to `z80`; `physical` needs `page=N`, the absolute
+page index `/pages` lists.
+
+Narrow the window and ask only for touched addresses — far smaller for a game:
+
+```bash
+# only the addresses a routine or game touched, as [address, reads, writes, executes]
+curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?mode=z80&start=0x5B00&end=0xFFFF&format=sparse" \
+  | jq '.count, .addresses[:5]'
+```
+
+A typical use: after a session covering play, addresses that are **read but
+never executed or written** are the game's constant data (graphics, fonts,
+maps, tables); addresses that are **written** are variables and buffers.
+
+Post-process the dense arrays for hotspots:
 
 ```bash
 curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?page=5&mode=physical" \
@@ -115,6 +130,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/memory/save" \
      -H 'Content-Type: application/json' \
      -d '{"path": "scratch/memprofile.yaml", "format": "yaml"}' | jq .
 ```
+
+`single_file: true` writes one file; the default writes a directory of files
+next to `path`. The reply's `path` names what was written.
 
 Legacy aggregate view (whole-tracker snapshot, useful in a pinch):
 

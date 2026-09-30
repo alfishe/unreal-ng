@@ -501,6 +501,10 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
                         ((*json)["zxpoly"].isBool() ? (*json)["zxpoly"].asBool() : (*json)["zxpoly"].isObject());
     const std::string zxpolyFile = zxpoly && (*json)["zxpoly"].isObject() ? (*json)["zxpoly"]["file"].asString() : "";
 
+    // "select": false leaves the selection alone: the front end does not adopt
+    // the new machine (automation farms, scripted analysis runs)
+    const bool select = !(json && json->isMember("select") && (*json)["select"].isBool() && !(*json)["select"].asBool());
+
     try
     {
         std::shared_ptr<Emulator> emulator;
@@ -552,7 +556,8 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         bool started = manager->StartEmulatorAsync(emulatorId);
 
         // Explicitly select this emulator since it was explicitly started via WebAPI
-        if (started)
+        // (unless the caller asked not to)
+        if (started && select)
         {
             manager->SetSelectedEmulatorId(emulatorId);
         }

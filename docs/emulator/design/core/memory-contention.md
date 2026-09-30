@@ -138,6 +138,25 @@ worked-out side effects on the rest of the engine; its README explains both. A S
 The same holds for demo code that synchronizes on `HALT` and counts T-states: on a Scorpion the T-state after
 `HALT` is always even, and odd-length sequences in RAM are rounded up.
 
+## Snow: when the refresh meets the ULA's fetch
+
+The same shared DRAM has one more effect on the Ferranti ULA machines (16K, 48K, 128K, +2). Every opcode fetch
+ends with a refresh cycle whose address is `I`:`R`. When `I` points into the slow memory (#40-#7F; on the
+128K / +2 also #C0-#FF with an odd page there), the refresh goes to the screen's DRAM chips. If its first tick
+(T3) falls on the tick the ULA fetches a group's first pixel byte, the ULA takes the low 7 address bits of that
+pixel byte and its attribute from `R`: the cell shows another cell's contents ("snow"). If T3 falls on the
+second pixel byte's fetch, the second pair is not read and the second cell repeats the first ("double"). The
++2A / +3 and the clones do not snow.
+
+In unreal-ng: `Z80::NoteRefresh` (every M1, the INT and NMI acknowledge) calls `UlaContention::NoteRefresh`
+when `ioContention` is set (the Ferranti ULA machines) and `I` points into a slow slot. The ULA model marks the
+cell for the frame; the renderer (`ScreenZX::DrawRangeZX`, `RenderScreen_Batch8`) and the floating bus use the
+bytes the ULA really fetched (`UlaContention::SnowOffsets`). The tick and the value of `R` (before its increment)
+were fixed on photos of the test program Snow Hold from three real 48K machines; the test program
+[snowtest](../../../../tools/verification/contention/snowtest/README.md) shows the effect next to a drawing of
+what it should look like. Research, design and tests:
+[docs/inprogress/2026-09-29-ula-snow](../../../inprogress/2026-09-29-ula-snow/research.md).
+
 ## Open questions
 
 - Which Scorpion boards have Even M1: the 1996 turbo-board equations have it, a 2007 re-creation of that chip

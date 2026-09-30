@@ -690,6 +690,9 @@ struct ArchiveCase
 {
     const char* name;
     const char* model;
+    /// "archive": the original recordings (.z80 start snapshots); "szx": the
+    /// same recordings re-written by libspectrum with SZX start snapshots
+    const char* folder = "archive";
 };
 
 class RzxArchive_Test : public RzxSession_Test, public ::testing::WithParamInterface<ArchiveCase>
@@ -699,7 +702,7 @@ protected:
     {
         const ArchiveCase& param = GetParam();
         Create(param.model);
-        const PlayResult result = _emulator->PlayRzx(Fixture(std::string("archive/") + param.name + ".rzx"));
+        const PlayResult result = _emulator->PlayRzx(Fixture(std::string(param.folder) + "/" + param.name + ".rzx"));
         ASSERT_TRUE(result.Ok()) << result.message;
         PlayToFrame(frames);
         CompareWith(Fixture("oracle/" + oracle), param.model);
@@ -728,6 +731,17 @@ INSTANTIATE_TEST_SUITE_P(Recordings, RzxArchive_Test,
                          ::testing::Values(ArchiveCase{"ericfloaters", "48K"}, ArchiveCase{"garfield", "48K"},
                                            ArchiveCase{"greenberet", "128K"}, ArchiveCase{"thundercats", "128K"},
                                            ArchiveCase{"dargonscrypt", "PLUS2"}),
+                         [](const ::testing::TestParamInfo<ArchiveCase>& info) {
+                             return std::string(info.param.name);
+                         });
+
+/// The same recordings with SZX start snapshots (testdata/loaders/rzx/szx,
+/// re-written by libspectrum): the SZX loader must start them exactly where
+/// the .z80 did, so they match the same oracles
+INSTANTIATE_TEST_SUITE_P(SzxStart, RzxArchive_Test,
+                         ::testing::Values(ArchiveCase{"ericfloaters", "48K", "szx"}, ArchiveCase{"garfield", "48K", "szx"},
+                                           ArchiveCase{"greenberet", "128K", "szx"}, ArchiveCase{"thundercats", "128K", "szx"},
+                                           ArchiveCase{"dargonscrypt", "PLUS2", "szx"}),
                          [](const ::testing::TestParamInfo<ArchiveCase>& info) {
                              return std::string(info.param.name);
                          });

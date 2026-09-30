@@ -2,9 +2,10 @@
 
 **Status (2026-09-29):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
 probe suite, the co-emulation harness (eight runners incl. SkoolKit) and the probe's Even M1 mode, all on
-master (see Done). **Where we stopped:** the six follow-ups in "Remaining", item 1 done,
-item 2 (snow test) next. PLAN.md row #61.
+master (see Done). **Where we stopped:** the six follow-ups in "Remaining": items 1, 2, 3 and 6 done,
+item 4 (not modeled yet) next. PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
+How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such tests: [test-writing-guide.md](test-writing-guide.md).
 
 ## Done
 - **Phase 1a — baselines** (2026-09-28): per-model timing fingerprints on every creatable model in five
@@ -74,11 +75,13 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
 
 ## Remaining (value order, the six follow-ups agreed 2026-09-29)
 1. ~~**Probe engine for Even M1 machines**~~ - done (`3952bdc8`, see Done).
-2. **Snow test** (next): a visual test in the style of Snow Hold (hardware photos exist) plus an analytic
-   floating-bus / fetch-timing check with numbers; unreal-ng has no snow emulation.
-3. **Real-hardware kit**: ready-to-run programs and instructions for what only hardware can settle - P-05
-   (a port's high byte in an odd page at #C000 on the 128K), which Scorpion boards have Even M1, the
-   Scorpion's turbo waits, the Even M1 start offset (P-02 on a real Scorpion).
+2. ~~**Snow**~~ - done 2026-09-29 on branch `ula-snow`: snow and double in the core, anchored on Snow Hold's
+   photos from three real 48K machines; the visual test program snowtest; the floating-bus check dropped as not
+   observable ([2026-09-29-ula-snow](../2026-09-29-ula-snow/TODO.md)). Next: follow-up 3.
+3. ~~**Real-hardware kit**~~ - done 2026-09-29: [tools/verification/contention/README.md](../../../tools/verification/contention/README.md)
+   lists what only hardware settles (P-05 on the 128K, Even M1 per Scorpion board, the Even M1 start offset,
+   snow on the 128K / +2 and on the +2A / +3 / clones), what to run with ctprobe and snowtest, what to send
+   back. Not covered by a program: the Scorpion's turbo waits. Waiting for results from real machines.
 4. **Not modeled yet**: the Scorpion's turbo slot waits, the ZX-Evo's 14 MHz waits and its optional 48K / 128K
    raster contention, TS-Conf cache misses.
 5. **Harness follow-ups**: why MAME's `scorpio` crashed earlier (it now runs), further runners (Kozynax,
