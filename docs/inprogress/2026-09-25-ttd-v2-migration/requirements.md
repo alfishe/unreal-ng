@@ -63,7 +63,8 @@ written justification; **MAY** = allowed, not required.
   zero-filled memory is forbidden.
 - **FR-8 (MUST)** Step back / forward (frame, instruction, T-state), reverse
   continue, find-last-access and resume-recording-from-here keep working with
-  the same semantics as v1.
+  the same semantics as v1 (resume-from-here stops truncating once branches
+  land: FR-24).
 - **FR-9 (MUST)** After *resume recording from here*, the new recording is
   exact from that point (the v1 stale-cache risk must be covered by a test that
   compares memory).
@@ -138,6 +139,27 @@ no media file or host device. Two parts of a fully sealed replay are v2 work:
   classic clones do not drive IM2 vectors from outside). Until then the port-read
   journal is off on these configurations and the session reports why
   (`port_journal_off_reason`).
+
+### 2.6 Branches and forks (proposed 2026-09-29)
+
+From the [model what-if and branched history design](../2026-09-29-model-what-if/design.md)
+(§8 checks it against this document). v2 does not build branches; it must not
+close the door on them:
+
+- **FR-22 (SHOULD)** The storage keeps sharing possible: a checkpoint may
+  reference pieces and blobs of an earlier checkpoint that is not its
+  predecessor (a branch's first checkpoint shares its fork point's). Reference
+  counts, chain caps and copy-on-write reference blocks (V1) already allow it;
+  nothing in V1-V4 may assume a strictly linear timeline.
+- **FR-23 (SHOULD)** The V5 container reserves stream ids for branch data
+  (branch table, non-trunk checkpoints and events, the parent link of a forked
+  session) and keeps the rule that readers skip unknown streams, so a reader
+  without branch support opens a branched file as its trunk.
+- **FR-24 (MUST)** No truncation (user, 2026-09-29): `ResumeRecordingFrom` keeps
+  every route (QR-8) and starts a branch instead of deleting the future; history
+  is discarded only by an explicit branch delete; stopping TTD leaves the
+  machine free-running. Until branches land (PLAN #76 W1) v1 keeps truncating;
+  nothing in V1-V4 may add new truncating paths.
 
 ## 3. Performance requirements
 

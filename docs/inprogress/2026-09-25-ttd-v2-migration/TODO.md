@@ -26,4 +26,5 @@ Requirements: [requirements.md](requirements.md).
 - [ ] V4: memory budget
 - [ ] V5: container v2 + disk mode (format becomes versioned)
 - [ ] Media (2026-09-28): storage in TTD v2 through the unified media manager (PLAN #58, [technical design](../2026-09-28-storage-manager/technical-design.md)): media identity per session, the journaled session layer (manager phase M7). Requirements: roadmap [§6 ST-1…ST-6](../2026-09-21-roadmap/01-roadmap-and-machine-state.md). TTD v1 stays media-agnostic (port-level recording)
+- [ ] Branch readiness (FR-22 … FR-24, proposed 2026-09-29): no linear-timeline assumption in V1-V4; stream ids for branches reserved in V5. Branches themselves: PLAN #76 ([design](../2026-09-29-model-what-if/design.md))
 - [ ] V6: cleanup, TDD truth pass, move folder to DONE
