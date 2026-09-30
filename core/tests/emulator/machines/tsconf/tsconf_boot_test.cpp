@@ -176,3 +176,52 @@ TEST_F(TsConfBoot_Test, BOOT2_SavedNvramBootsTrDos)
     _emulator->RunNFrames(100, true);
     EXPECT_EQ(FrameHash("tsconf-trdos"), 4746447736014558365ull);
 }
+
+/// BOOT-3: TS-BIOS boots Wild Commander from the SD card (Z-Controller, FAT32
+/// image, WC is the file boot.$C in the root). Setup: "Reset to" set to
+/// "BD boot.$c" (ROM #00 -> ROM #04 -> RAM #F8 -> BD boot.$c), then a reset.
+/// The image is not in the repository (testdata/machines/tsconf/wildcommander,
+/// README there, fetched on demand): skipped without it. The card is mounted
+/// with session writes, the image stays unchanged
+TEST_F(TsConfBoot_Test, BOOT3_BootsWildCommanderFromSd)
+{
+    const std::string image = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "tsconf" / "wildcommander" /
+                               "sd-images" / "wc-tslabs-v1.11rc7.img")
+                                  .string();
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "Wild Commander SD image not present: " << image;
+    ASSERT_TRUE(_decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session));
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return SetupMenuShown() && InSetupKeyLoop(); }, 150);
+    ASSERT_TRUE(SetupMenuShown());
+    for (int down = 0; down < 3; down++)  // CPU speed -> CPU cache -> #7FFD span -> Reset to
+    {
+        _context->pKeyboard->PressKey(ZXKEY_CAPS_SHIFT);
+        _context->pKeyboard->PressKey(ZXKEY_6);
+        _emulator->RunNFrames(3, true);
+        _context->pKeyboard->ReleaseKey(ZXKEY_6);
+        _context->pKeyboard->ReleaseKey(ZXKEY_CAPS_SHIFT);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return InSetupKeyLoop(); }, 50, 1);
+    }
+    for (int press = 0; press < 3; press++)
+        TapEnter();
+
+    _emulator->Reset();
+    const TsConfState& ts = _decoder->GetState();
+    auto wildCommander = [&] {
+        if ((ts.regs[TsConfReg::VConfig] & 0x03) != 0x03)
+            return false;
+        for (uint8_t row = 0; row < 4; row++)
+            if (TextRow(ts.regs[TsConfReg::VPage], row).find("Wild Commander") != std::string::npos)
+                return true;
+        return false;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), wildCommander, 500);
+    ASSERT_TRUE(wildCommander()) << "pc=" << std::hex << Cpu().pc << " vconf=" << int(ts.regs[TsConfReg::VConfig])
+                                 << " vpage=" << int(ts.regs[TsConfReg::VPage]);
+    // Its panels list the card's root
+    bool listsBoot = false;
+    for (uint8_t row = 0; row < 30 && !listsBoot; row++)
+        listsBoot = TextRow(ts.regs[TsConfReg::VPage], row).find("boot.$c") != std::string::npos;
+    EXPECT_TRUE(listsBoot) << "the file panel lists boot.$c";
+}

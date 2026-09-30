@@ -118,3 +118,29 @@ TEST_F(ScreenTSConf_Test, VID5_ZxInFullWindowWrapsColumns)
     EXPECT_EQ(PixelAfterFrame(Fx(88 + 256), Fy(32)), ScreenTSConf::CramToRgba(0x7C00)) << "column wrap";
     EXPECT_EQ(PixelAfterFrame(Fx(89), Fy(32)), ScreenTSConf::CramToRgba(ts.cram[0xF0])) << "paper";
 }
+
+/// AUTO-1: the screen report names the TS mode with its geometry, its format
+/// and the RAM pages it reads
+TEST_F(ScreenTSConf_Test, AUTO1_ScreenModeReport)
+{
+    Reg(TsConfReg::VConfig, 0x41);  // 16C, 320x200
+    Reg(TsConfReg::VPage, 0x0A);
+    ScreenState s = Screen()->DescribeScreenState();
+    EXPECT_EQ(s.videoMode, "TS16 320x200");
+    EXPECT_EQ(s.width, 320);
+    EXPECT_EQ(s.height, 200);
+    EXPECT_EQ(s.format.bpp, 4);
+    ASSERT_EQ(s.activeRamPages.size(), 8u);
+    EXPECT_EQ(s.activeRamPages[0], 0x08);
+
+    Reg(TsConfReg::VConfig, 0x83);  // TXT, 320x240
+    s = Screen()->DescribeScreenState();
+    EXPECT_EQ(s.videoMode, "TSTX 320x240");
+    EXPECT_EQ(s.format.textColumns, 80);
+    EXPECT_EQ(s.format.textRows, 30);
+
+    Reg(TsConfReg::VConfig, 0xC2);
+    EXPECT_EQ(Screen()->DescribeScreenState().videoMode, "TS256 360x288");
+    Reg(TsConfReg::VConfig, 0x00);
+    EXPECT_EQ(Screen()->DescribeScreenState().videoMode, "TSZX 256x192");
+}

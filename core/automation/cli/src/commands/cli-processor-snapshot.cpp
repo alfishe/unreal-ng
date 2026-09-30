@@ -8,6 +8,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <common/filehelper.h>
+#include <loaders/snapshot/snapshotlauncher.h>
 
 #include <sstream>
 
@@ -68,6 +69,17 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     }
 
     std::string filepath = args[1];
+    bool switchModel = true;
+    for (size_t i = 2; i < args.size(); i++)
+    {
+        if (args[i] == "--no-switch")
+            switchModel = false;
+        else
+        {
+            session.SendResponse("Error: Unknown option '" + args[i] + "'" + NEWLINE);
+            return;
+        }
+    }
 
     // TTD refuses a snapshot load while recording (it would drop the history)
     if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
@@ -76,17 +88,29 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
         return;
     }
 
-    // Use existing LoadSnapshot method (includes path validation)
-    bool success = emulator->LoadSnapshot(filepath);
+    // A file that needs another model (an SPG: TS-Conf) switches it first,
+    // as on every surface (snapshotlauncher.h)
+    SnapshotLoadRequest request;
+    request.emulatorId = emulator->GetId();
+    request.path = filepath;
+    request.switchModel = switchModel;
+    emulator.reset();
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
 
-    if (success)
+    std::stringstream ss;
+    if (!result.ok)
     {
-        session.SendResponse(std::string("Snapshot loaded: ") + filepath + NEWLINE);
+        ss << "Error: " << result.message << NEWLINE;
+        if (result.modelMismatch)
+            ss << "Switch with 'model " << result.requiredModel << "', or load without --no-switch" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
     }
-    else
-    {
-        session.SendResponse(std::string("Error: Failed to load snapshot: ") + filepath + NEWLINE);
-    }
+    if (result.modelSwitched)
+        ss << "Switched to " << result.requiredModel << " for the file" << NEWLINE
+           << "New emulator instance: " << result.emulator->GetId() << NEWLINE;
+    ss << "Snapshot loaded: " << filepath << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context)
@@ -114,7 +138,9 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "Snapshot Commands" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  snapshot load <file>           Load snapshot from file (.z80, .sna, .szx; .rzx plays on this machine)" << NEWLINE;
+    ss << "  snapshot load <file> [--no-switch]" << NEWLINE;
+    ss << "                                 Load snapshot from file (.z80, .sna, .szx; .rzx plays on this machine;" << NEWLINE;
+    ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch)" << NEWLINE;
     ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx: by extension)" << NEWLINE;
     ss << "  snapshot info                  Get current snapshot status" << NEWLINE;
     ss << NEWLINE;

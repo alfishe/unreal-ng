@@ -26,10 +26,14 @@ All paths in this file are relative to the project root.
 | `demo_7threality.ttd` | Pentagon 128K | `testdata/loaders/sna/7threality.sna` | 100 |
 | `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
 | `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
+| [`../machines/tsconf/ttd/sprites.ttd`](../machines/tsconf/ttd/sprites.ttd) (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
 
 Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
-add or change a fixture, edit that list and this table together.
+add or change a fixture, edit that list and this table together. A fixture of
+another machine lives in `testdata/machines/<machine>/ttd/` (the script's
+`FIXTURE_OPTIONS`); `TTD_Corpus_Test` runs it on a fresh machine of its
+recorded model.
 
 ## Port-journal fixtures (`port-journals/`)
 

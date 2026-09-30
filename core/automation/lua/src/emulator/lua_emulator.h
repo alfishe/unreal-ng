@@ -5,6 +5,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
+#include <loaders/snapshot/snapshotlauncher.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -1516,13 +1517,21 @@ public:
         });
 
         // Snapshot operations
-        // ok, reason: the reason is set when TTD refuses the load (recording)
-        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
+        // ok, reason, emulator_id: the reason is set when TTD refuses the load
+        // (recording) or the load fails. A file that needs another model (an
+        // SPG: TS-Conf) switches it first when this Lua is not bound to one
+        // machine (as rzx_play); emulator_id is then the new instance
+        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
+            if (!emulator) return {false, "no emulator", ""};
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-                return {false, refusal};
-            return {emulator->LoadSnapshot(path), ""};
+                return {false, refusal, emulator->GetId()};
+            SnapshotLoadRequest request;
+            request.emulatorId = emulator->GetId();
+            request.path = path;
+            request.switchModel = _emulator == nullptr;
+            const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+            return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};
         });
 
         // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,

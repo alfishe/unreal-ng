@@ -974,7 +974,8 @@ public:
     static const VideoModeInfo& GetVideoModeInfo(VideoModeEnum mode);
 
     /// Current screen state - the single source for every automation module
-    ScreenState DescribeScreenState() const;
+    /// Virtual: a model family with its own renderer (TS-Conf) describes its modes
+    virtual ScreenState DescribeScreenState() const;
 
     /// Horizontal beam geometry (display window, pixel clock) of a mode.
     /// timing is the descriptor the mode's timing comes from (SetVideoMode).

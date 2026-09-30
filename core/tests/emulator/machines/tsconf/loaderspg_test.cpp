@@ -24,6 +24,7 @@
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/screen.h"
 #include "loaders/snapshot/loaderspg.h"
+#include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/zxdepackers.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -211,4 +212,53 @@ TEST(LoaderSPG_Test, SpritesExampleDrawsItsFrame)
     }
     EXPECT_EQ(hash, 13780960561087948685ull);
     manager->RemoveEmulator(emulator->GetUUID());
+}
+
+/// SPG-4: every surface opens an SPG the same way (SnapshotLauncher): on
+/// another model the machine is switched to TS-Conf first and the program
+/// loads there; with switching off the load is refused and names the model
+TEST(LoaderSPG_Test, SPG4_LauncherSwitchesToTsConf)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    const std::string path = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "tsconf" / "spg" / "empty.spg").string();
+    auto pentagon = manager->CreateEmulatorWithModel("spg-launch", "PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    const std::string pentagonId = pentagon->GetId();
+    pentagon.reset();
+
+    SnapshotLoadRequest refuse;
+    refuse.emulatorId = pentagonId;
+    refuse.path = path;
+    refuse.switchModel = false;
+    const SnapshotLoadResult refused = SnapshotLauncher::Load(refuse);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_TRUE(refused.modelMismatch);
+    EXPECT_EQ(refused.requiredModel, "TSL");
+    EXPECT_EQ(refused.requiredRamKb, 4096u);
+    EXPECT_FALSE(refused.modelSwitched);
+
+    SnapshotLoadRequest request = refuse;
+    request.switchModel = true;
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+    ASSERT_TRUE(result.ok) << result.message;
+    ASSERT_NE(result.emulator, nullptr);
+    EXPECT_TRUE(result.modelSwitched);
+    EXPECT_EQ(result.previousEmulatorId, pentagonId);
+    EXPECT_EQ(manager->GetEmulator(pentagonId), nullptr) << "the Pentagon was replaced";
+    EmulatorContext* context = result.emulator->GetContext();
+    EXPECT_EQ(context->config.mem_model, MM_TSL);
+    EXPECT_EQ(context->config.ramsize, 4096u);
+    EXPECT_EQ(context->pCore->GetZ80()->pc, 0xE000);
+
+    // On TS-Conf itself it just loads; a non-SPG file is refused by its probe
+    request.emulatorId = result.emulator->GetId();
+    const SnapshotLoadResult again = SnapshotLauncher::Load(request);
+    EXPECT_TRUE(again.ok) << again.message;
+    EXPECT_FALSE(again.modelSwitched);
+    std::string model, error;
+    uint32_t ramKb = 0;
+    EXPECT_TRUE(SnapshotLauncher::RequiredModel("game.sna", model, ramKb, error));
+    EXPECT_TRUE(model.empty());
+    EXPECT_FALSE(SnapshotLauncher::RequiredModel("missing.spg", model, ramKb, error));
+    manager->RemoveEmulator(result.emulator->GetUUID());
 }

@@ -99,7 +99,7 @@ never JSON-RPC errors.
 ## Resources
 
 `unreal://keyboard-layout`, `unreal://basic-reference`, `unreal://z80-isa`,
-`unreal://trdos-commands`, `unreal://memory-map`, `unreal://machine/profi` (embedded markdown) and
+`unreal://trdos-commands`, `unreal://memory-map`, `unreal://machine/profi`, `unreal://machine/tsconf` (embedded markdown) and
 `unreal://emulator-state` (dynamic instance overview).
 
 ## Quick test

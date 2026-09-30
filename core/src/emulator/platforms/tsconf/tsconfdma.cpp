@@ -1,6 +1,7 @@
 #include "tsconfdma.h"
 
 #include "emulator/io/ide/ideadapter.h"
+#include "emulator/memory/memory.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 
@@ -145,9 +146,12 @@ uint16_t TsConfDma::ReadWord(uint32_t wordAddress) const
 
 void TsConfDma::WriteWord(uint32_t wordAddress, uint16_t value)
 {
-    uint8_t* p = _ram + (wordAddress & kWordMask) * 2;
+    const uint32_t byteAddress = (wordAddress & kWordMask) * 2;
+    uint8_t* p = _ram + byteAddress;
     p[0] = static_cast<uint8_t>(value);
     p[1] = static_cast<uint8_t>(value >> 8);
+    if (_memory)
+        _memory->MarkRamPageEdited(static_cast<uint16_t>(byteAddress >> 14));
 }
 
 /// [V] dma.v:343-349: linear, or aligned - the low 7 / 8 word bits wrap in the

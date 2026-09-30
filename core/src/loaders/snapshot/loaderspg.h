@@ -53,6 +53,13 @@ public:
     const std::string& GetError() const { return _error; }
     const Image& GetImage() const { return _image; }
 
+    /// Is this file an SPG we can load (the header only)? Opening one on another
+    /// machine switches to the TS-Conf model first (the Qt window does, as for SZX)
+    static bool Probe(const std::string& path, std::string& error);
+    /// The model an SPG runs on (short name, RAM in KB)
+    static constexpr const char* kModel = "TSL";
+    static constexpr int kRamKb = 4096;
+
     /// Parse and depack an SPG image (no machine needed)
     static bool Parse(const std::vector<uint8_t>& data, Image& image, std::string& error);
     /// Apply a parsed image to a TS-Conf machine

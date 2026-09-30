@@ -56,7 +56,9 @@
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["responses"]["200"]["description"] =
         "Screen mode information. video_mode is one of the Screen mode names (e.g. ZX, P16, PROFI, PROFIHR); "
-        "PROFIHR (Profi #DFFD bit 7) reports resolution 512x240 in a 608x288 framebuffer.";
+        "PROFIHR (Profi #DFFD bit 7) reports resolution 512x240 in a 608x288 framebuffer. On TS-Conf the name carries "
+        "the geometry: TSZX / TS16 / TS256 / TSTX followed by 256x192, 320x200, 320x240 or 360x288 (TSTX: the text "
+        "columns and rows, resolution in 14 MHz pixels); the framebuffer is 720x288 for every TS mode.";
 
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["summary"] = "Get flash state";
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["tags"].append("Screen State");

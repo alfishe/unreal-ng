@@ -700,7 +700,7 @@ Play RZX input recordings: the start snapshot loads, then every `IN` returns the
 | `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
 | `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `snapshots_applied`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
 
-`snapshot_load("game.rzx")` plays a recording on the machine as it is.
+`snapshot_load("game.rzx")` plays a recording on the machine as it is. `snapshot_load` returns `ok, reason, emulator_id`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first when the script is not bound to one machine (`emulator_id` is then the new instance), and is refused with the reason when it is.
 
 ```lua
 local r = rzx_play("games/ericfloaters.rzx", {desync_mode = "tolerant"})

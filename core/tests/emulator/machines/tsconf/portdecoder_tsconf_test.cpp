@@ -359,3 +359,20 @@ TEST_F(PortDecoder_TSConf_Test, BOOT0_RealRomShowsTsBios)
         text += static_cast<char>(_memory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x0B05 + i)));
     EXPECT_EQ(text, "TS-BIOS");
 }
+
+/// DBG-2: the port trace names the TS registers and the decode arms
+TEST_F(PortDecoder_TSConf_Test, DBG2_PortTraceCodeNames)
+{
+    const auto table = _decoder->GetPortTraceCodeTable();
+    auto nameOf = [&](uint16_t code) {
+        for (const auto& entry : table)
+            if (entry.code == code)
+                return entry.name;
+        return std::string();
+    };
+    EXPECT_EQ(nameOf(PortDecoder_TSConf::kTraceRegisterBase + 0x01), "V_PAGE");
+    EXPECT_EQ(nameOf(PortDecoder_TSConf::kTraceRegisterBase + 0x21), "MEM_CONFIG");
+    EXPECT_EQ(nameOf(PortDecoder_TSConf::kTraceRegisterBase + 0x27), "DMA_CTRL");
+    EXPECT_EQ(nameOf(static_cast<uint16_t>(PortDecoder_TSConf::PortArm::Paging7FFD)), "Paging7FFD");
+    EXPECT_EQ(nameOf(PortDecoder_TSConf::kTraceRegisterBase + 0x14), "") << "register 0x14 is not built";
+}

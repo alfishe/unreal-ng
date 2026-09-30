@@ -1,6 +1,6 @@
     // Snapshot control endpoints
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["summary"] = "Load snapshot file";
-    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["description"] = "Load snapshot from path or embedded content. Accepts: JSON with path, multipart/form-data with file, or raw body with X-Filename header. Max size: 4 MB.";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["description"] = "Load snapshot from path or embedded content. Accepts: JSON with path, multipart/form-data with file, or raw body with X-Filename header. Max size: 4 MB. A file that needs another machine (a TS-Conf .spg program) switches the model first (ModelSwitch, media kept): the answer's emulator_id is then the new instance, model_switched = true, previous_emulator_id the released one. switch_model = false refuses instead (409 with required_model).";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["tags"].append("Snapshot Control");
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["parameters"][0]["in"] = "path";
@@ -10,7 +10,12 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna, .szx; an .rzx recording plays on this machine, see rzx/play)";
+         ["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna, .szx, .spg - a TS-Conf program, switches to model TSL; an .rzx recording plays on this machine, see rzx/play)";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["switch_model"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["switch_model"]["description"] =
+        "A file that needs another model (.spg: TSL): switch the model first (true, default) or refuse (false). Also a query parameter for uploads";
     // Multipart upload option
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
          ["properties"]["file"]["type"] = "string";
@@ -31,7 +36,7 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["413"]["description"] =
         "File too large (max 4 MB)";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["409"]["description"] =
-        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
+        "A TTD recording is running (the message says why the action would destroy it; stop the recording first), or the file needs another model and switch_model is false (required_model, required_ram_kb)";
 
     // POST /api/v1/emulator/{id}/snapshot/save - Save snapshot file
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";

@@ -3044,6 +3044,8 @@ Play RZX input recordings (game completions from the RZX Archive and the like): 
 
 `snapshot load <file.rzx>` and `open <file.rzx>` also play a recording, on the selected machine without switching the model.
 
+`snapshot load <file.spg>` (a TS-Conf program) switches the selected machine to TS-Conf (`TSL`) first unless `--no-switch` is given, and prints the new instance id; the WebAPI, MCP, Lua, Python and the Qt window do the same ([webapi-interface.md → Snapshots](./webapi-interface.md#snapshots-implemented-separately)).
+
 **Terms**:
 - *Frame* (RZX): the stretch between two interrupts, measured in opcode fetches (R-register increments); not the 50 Hz video frame.
 - *Desync*: the program left the recorded path - more `IN`s than recorded in a frame, fewer, or more fetches than recorded.
