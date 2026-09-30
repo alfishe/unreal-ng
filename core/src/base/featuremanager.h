@@ -109,7 +109,8 @@ constexpr const char* const kGSLightweightDesc =
 
 constexpr const char* const kContentionDesc =
     "Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits "
-    "for the screen fetches. Off runs those machines uncontended, for comparison. No effect on machines without "
+    "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
+    "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
 // Categories

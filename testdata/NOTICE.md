@@ -18,6 +18,7 @@ Fixtures with a known license:
 | ZX Diagnostics (`data/testrom/zx-diagnostics.rom`) | Brendan Alford | GPL-3.0 |
 | Timing Test v0.3 (`testdata/contention/rak-timing-test/`, source and tape) | Patrik Rak, after Jan Bobrowski's zxtests | GPL (stated in `timing.bas`, no version: any GPL version) |
 | ctprobe (`tools/verification/contention/ctprobe/`, outside testdata but listed here with the Timing Test it derives from): `engine.asm` is the Timing Test's measuring engine ported to the in-tree assembler, `ctprobe.asm` the project's case table and driver; `ctprobe.tap` / `ctprobe.trd` are built from them | engine: Jan Bobrowski, Patrik Rak; driver and cases: unreal-ng | engine GPL (as the Timing Test); the probe as a whole is GPL |
+| Snow Hold (`testdata/contention/snow-hold/`: the release and the beta tape, source) | Mark Woodmass | GPL (`COPYING` there) |
 | ZX Spectrum Timing Tests 48K v1.0 (`testdata/loaders/sna/Timing_Tests-48k_v1.0.sna`) | Richard and Tim Butler | none stated (test material) |
 | RZX expected states (`testdata/loaders/rzx/oracle/`, `cases/*.z80`): written by SkoolKit `rzxplay.py` from the recordings named in that folder's `README.md`; the cut recordings in `external/` and `cases/` are made from those recordings | unreal-ng (tools), the recordings' authors (contents) | as their sources |
 | SZX reference files (`testdata/loaders/szx/libspectrum/`): written by libspectrum from known values or from the snapshots named in that folder's `README.md` | unreal-ng (values), the snapshot authors (contents) | as their sources |
