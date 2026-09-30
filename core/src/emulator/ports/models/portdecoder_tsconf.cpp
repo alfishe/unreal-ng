@@ -175,6 +175,7 @@ void PortDecoder_TSConf::reset()
 
 void PortDecoder_TSConf::ApplyState()
 {
+    _cramVersion++;  // a reset or a state load replaced CRAM
     if (_memory)
         _dma.Attach(_memory->RAMBase(), &GetIdeAdapter(), _memory);
     // The VDAC builds are XTR_FEAT builds: they have DMA BLT2 (hardware-spec §0.1)
@@ -903,7 +904,10 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
         const uint16_t word = static_cast<uint16_t>((value << 8) | ts.fmStash);
         _owner.FlushVideo();  // CRAM is read per dot; SFILE per line (TSU)
         if (offset < 0x200)
+        {
             ts.cram[index] = word;
+            _owner._cramVersion++;
+        }
         else
             ts.sfile[index] = word;
     }

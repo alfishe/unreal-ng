@@ -107,6 +107,10 @@ public:
 
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
+    /// Changes when CRAM may have changed (port / FM-window writes, DMA, a state
+    /// load): the screen rebuilds its palette only then. Direct writes into
+    /// GetState().cram are seen by the whole-frame renders only
+    uint32_t CramVersion() const { return _cramVersion + _dma.CramWrites(); }
     RtcBinding GetRtcBinding() override;
 
     void BeforeMachineM1(uint16_t address) override;
@@ -223,6 +227,7 @@ private:
     TsConfEngine _engine{_context, _ts, _interrupts, _dma};
     TsConfArbiter _arbiter{_engine};
     TsConfMemory* _tsMemory = nullptr;
+    uint32_t _cramVersion = 0;
     bool _poweredOn = false;
 
     FmWindow _fmWindow{*this};

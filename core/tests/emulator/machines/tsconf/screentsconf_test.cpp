@@ -396,8 +396,16 @@ TEST_F(ScreenTSConf_Test, TIM5_DmaCramWriteLandsAtItsDot)
     Reg(TsConfReg::PalSel, 0x09);    // bank 9: nibble 6 = CRAM 150
     for (uint16_t page = 0x10; page < 0x18; page++)
         std::memset(_memory->RAMPageAddress(page), 0x66, PAGE_SIZE);
-    for (uint16_t& c : ts.cram)
-        c = 0x7C00;                  // red
+    // CRAM all red, written as a program does (the FM window at #4000): the
+    // palette cache follows port and DMA writes
+    Reg(TsConfReg::FMaps, 0x14);
+    for (uint32_t i = 0; i < 256; i++)
+    {
+        Poke(static_cast<uint16_t>(0x4000 + i * 2), 0x00);
+        Poke(static_cast<uint16_t>(0x4000 + i * 2 + 1), 0x7C);
+    }
+    Reg(TsConfReg::FMaps, 0x00);
+    ASSERT_EQ(ts.cram[150], 0x7C00);
     for (uint32_t w = 0; w < 200; w++)
     {
         Ram(0x10 + 0x10, w * 2) = 0x1F;  // page #20: blue words

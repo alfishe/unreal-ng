@@ -70,6 +70,8 @@ public:
 
     /// The running transfer writes CRAM, which the picture reads at the dot (TIM-5)
     bool WritesCram() const;
+    /// CRAM words the DMA has written (the screen's palette cache)
+    uint32_t CramWrites() const { return _cramWrites; }
     /// Run, calling `before(used)` ahead of each word with the accesses used so
     /// far (the engine places each CRAM write in time)
     template <typename Before>
@@ -116,4 +118,5 @@ private:
     Memory* _memory = nullptr;
     std::function<uint8_t(bool, uint8_t)> _spi;
     bool _blt2 = kBuildHasBlt2;
+    uint32_t _cramWrites = 0;
 };
