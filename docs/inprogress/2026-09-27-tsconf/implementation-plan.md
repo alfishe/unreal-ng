@@ -263,8 +263,12 @@ flattening). Tests `tsconftsu_test.cpp`: TSU-1…5, TSU-7, GFX-5.
 off 3.42 ms (1.9x, target 1.1x), TSU at its limit (both tile layers, 85
 sprites of 64x64) 4.07 ms (1.19x TSU off, target 2x met). The gap is the
 per-dot renderer: backlog TS-O1 / TS-O2 below.
-Open: TSU-6 (the line renders at its start, not during the previous line
-from `ts_start`). Closed: TSU-8 (phase 5), ENG-1 (the per-line budget with
+TSU-6 done (2026-09-30, branch `tsconf-tsu6`): the engine draws TSU line L
+at `ts_start` of line L - 1 with that line's latches (`TSU6_TsuDrawsDuringThePreviousLine`:
+a `T_CONFIG` write before / after `ts_start` of line 99 acts on line 100 / 101;
+a tile X offset written in line 99 acts on the TSU from line 101); the DRAM
+budget of the draw is the previous line's video share and the CPU reads of
+the last full line. Closed: TSU-8 (phase 5), ENG-1 (the per-line budget with
 the DMA share, `ENG1_LineBudget`, 2026-09-30 review). TTD-3 needs nothing extra (checkpoints are frame boundaries, the
 prefetch ring refills before the window; TSU line buffers are derived).
 

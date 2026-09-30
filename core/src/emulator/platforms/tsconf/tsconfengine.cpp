@@ -35,7 +35,24 @@ void TsConfEngine::RebuildLineTable()
     for (TsConfLine& line : _lines)
         line = set;
     if (_ts.engNextLine > 0)
-        RenderTsu(_ts.engNextLine - 1u, _lines[_ts.engNextLine - 1u]);
+    {
+        // The TSU lines of the current line and, when its ts_start passed, the
+        // next one (the latches of the previous lines are gone: the current set)
+        const uint32_t current = _ts.engNextLine - 1u;
+        RenderTsu(current, _lines[current]);
+        if (_ts.engNextLine < kLines && _ts.budgetRaster > current * kLineTacts + TsStartTact())
+            RenderTsu(_ts.engNextLine, _lines[current]);
+    }
+}
+
+uint32_t TsConfEngine::TsStartTact() const
+{
+    // [V] video_sync.v:130: ts_start at hcount == hpix_beg_ts - 1, hpix_beg_ts =
+    // the start of the graphics window of the latched geometry, or dot 88 with
+    // T_CONFIG[0] (video_mode.v:196); 2 dots per tact
+    const uint32_t start = (_ts.regs[TsConfReg::TConfig] & 0x01) ? TsConfGeometry::kWindows[3].x0
+                                                                 : TsConfGeometry::WindowOf(_ts.latVConfig).x0;
+    return (start - 1u) / 2u;
 }
 
 uint16_t TsConfEngine::VideoCost(uint8_t vConfig, uint32_t line)
@@ -47,11 +64,12 @@ uint16_t TsConfEngine::VideoCost(uint8_t vConfig, uint32_t line)
     return static_cast<uint16_t>(TsConfGeometry::WindowOf(vConfig).w >> kShift[vConfig & 0x03]);
 }
 
-void TsConfEngine::RenderTsu(uint32_t line, TsConfLine& set)
+void TsConfEngine::RenderTsu(uint32_t line, const TsConfLine& latch)
 {
     // The TS window: the graphics window, or all 360x288 with T_CONFIG[0]
+    TsConfLine& set = _lines[line];
     const uint8_t tConfig = _ts.regs[TsConfReg::TConfig];
-    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(set.vConfig);
+    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(latch.vConfig);
     set.tsX0 = win.x0;
     set.tsW = win.w;
     set.tsu = false;
@@ -74,7 +92,7 @@ void TsConfEngine::RenderTsu(uint32_t line, TsConfLine& set)
         // leave; objects beyond that are dropped (TSU-8)
         const uint32_t taken = static_cast<uint32_t>(VideoCost(_lines[previous].vConfig, previous)) + _ts.cpuLineAccesses;
         const uint32_t budget = taken < kLineAccesses ? kLineAccesses - taken : 0;
-        set.tsu = TsConfTsu::RenderLine(_ts, set, ram, _mapRing, line - win.y0, win.w, _tsu[line], budget, used);
+        set.tsu = TsConfTsu::RenderLine(_ts, latch, ram, _mapRing, line - win.y0, win.w, _tsu[line], budget, used);
     }
     set.tsuCost = static_cast<uint16_t>(used);
 }
@@ -84,10 +102,12 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
     if (line >= kLines || !_context->pMemory)
         return false;
     const TsConfLine& set = _lines[line];
-    if (!set.tsu)
+    if (!set.tsu || line == 0)
         return false;
+    // Drawn during the previous line with its latches (TSU-6)
+    const TsConfLine& latch = _lines[line - 1];
     const uint8_t tConfig = _ts.regs[TsConfReg::TConfig];
-    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(set.vConfig);
+    const TsConfGeometry::Window& win = (tConfig & 0x01) ? TsConfGeometry::kWindows[3] : TsConfGeometry::WindowOf(latch.vConfig);
     if (line < win.y0 || line >= static_cast<uint32_t>(win.y0 + win.h))
         return false;
     const uint8_t* ram = _context->pMemory->RAMBase();
@@ -109,7 +129,7 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
         }
     }
     // The budget the line used: an object that fitted then fits now, the first dropped one is dropped again
-    return TsConfTsu::ProbeLine(_ts, set, ram, ring, line - win.y0, win.w, indices, sources, set.tsuCost, used);
+    return TsConfTsu::ProbeLine(_ts, latch, ram, ring, line - win.y0, win.w, indices, sources, set.tsuCost, used);
 }
 
 void TsConfEngine::AccountBudget(uint32_t raster)
@@ -201,9 +221,17 @@ void TsConfEngine::LineStart(uint32_t line)
     _ts.cpuLineAccesses = static_cast<uint16_t>(std::min<uint32_t>(_cpuLineRunning, 0xFFFF));
     _cpuLineRunning = 0;
 
+    // The TSU drew this line during the previous one (TSU-6): keep its result
+    const TsConfLine rendered = _lines[line];
     _lines[line] = LatchedSet();
     _lines[line].videoCost = VideoCost(_lines[line].vConfig, line);
-    RenderTsu(line, _lines[line]);
+    if (line > 0)
+    {
+        _lines[line].tsX0 = rendered.tsX0;
+        _lines[line].tsW = rendered.tsW;
+        _lines[line].tsu = rendered.tsu;
+        _lines[line].tsuCost = rendered.tsuCost;
+    }
 }
 
 void TsConfEngine::CatchUp(uint32_t t)
@@ -211,10 +239,36 @@ void TsConfEngine::CatchUp(uint32_t t)
     const uint32_t raster = RasterAt(t);
     // Line by line: the budget of a line is accounted before the next line
     // starts (the CPU reads of that line feed the TSU budget)
-    while (_ts.engNextLine < kLines && _ts.engNextLine * kLineTacts <= raster)
+    // Events in raster order: line starts, and ts_start of the current line,
+    // where the TSU draws the next line (TSU-6). A ts_start has happened once
+    // the budget was accounted past it, which TTD restores with the state
+    for (;;)
     {
-        AccountBudget(_ts.engNextLine * kLineTacts);
-        LineStart(_ts.engNextLine++);
+        uint32_t next = UINT32_MAX;
+        bool tsStart = false;
+        if (_ts.engNextLine < kLines)
+            next = _ts.engNextLine * kLineTacts;
+        if (_ts.engNextLine >= 1 && _ts.engNextLine < kLines)
+        {
+            const uint32_t event = (_ts.engNextLine - 1u) * kLineTacts + TsStartTact();
+            if (_ts.budgetRaster <= event && event < next)
+            {
+                next = event;
+                tsStart = true;
+            }
+        }
+        if (next == UINT32_MAX || next > raster)
+            break;
+        if (tsStart)
+        {
+            AccountBudget(next + 1);
+            RenderTsu(_ts.engNextLine, _lines[_ts.engNextLine - 1u]);
+        }
+        else
+        {
+            AccountBudget(next);
+            LineStart(_ts.engNextLine++);
+        }
     }
     AccountBudget(raster);
 }

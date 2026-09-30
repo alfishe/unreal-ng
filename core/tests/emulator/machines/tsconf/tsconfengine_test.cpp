@@ -195,3 +195,65 @@ TEST_F(TsConfEngine_Test, ENG1_LineBudget)
         _decoder->GetDma().Reset();
     }
 }
+
+/// TSU-6: the TSU draws line L during line L - 1 from ts_start ([V]
+/// video_sync.v:130; 16C 320x200: dot 107 = tact 53). T_CONFIG written before
+/// ts_start of line 99 acts on line 100; written after it, from line 101.
+/// A tile X offset written in line 99 is latched at line 100 and acts on the
+/// TSU from line 101 (the TSU works with the previous line's latches)
+TEST_F(TsConfEngine_Test, TSU6_TsuDrawsDuringThePreviousLine)
+{
+    TsConfState& ts = _decoder->GetState();
+    std::memset(ts.sfile, 0, sizeof(ts.sfile));
+    for (uint16_t page = 0x20; page < 0x38; page++)
+        std::memset(_memory->RAMPageAddress(page), 0, PAGE_SIZE);
+    Reg(TsConfReg::VConfig, 0x41);  // 16C 320x200: lines 76..275, window dot 108
+    Reg(TsConfReg::SGPage, 0x20);
+    // Sprite 0: 16x64 at TS (0, 0) - lines 76..139, dots 108..123; graphics all colour 3
+    ts.sfile[0] = static_cast<uint16_t>(0x2000 | (7 << 9));
+    ts.sfile[1] = static_cast<uint16_t>(1 << 9);
+    for (uint32_t row = 0; row < 64; row++)
+        for (uint32_t b = 0; b < 8; b++)
+            Ram(0x20, row * 256 + b) = 0x33;
+
+    auto drawn = [&](uint32_t line) { return Engine().TsuPixel(line, 110) != 0; };
+
+    // Before ts_start of line 99: line 100 already without the TSU
+    Reg(TsConfReg::TConfig, 0x80);
+    NewFrame();
+    RunTo(T(99, 30));
+    ASSERT_EQ(Engine().TsStartTact(), 53u);
+    Reg(TsConfReg::TConfig, 0x00);
+    RunTo(T(102, 0));
+    EXPECT_TRUE(drawn(99));
+    EXPECT_FALSE(drawn(100)) << "written before ts_start of line 99";
+
+    // After ts_start of line 99: line 100 still drawn, 101 not
+    Reg(TsConfReg::TConfig, 0x80);
+    NewFrame();
+    RunTo(T(99, 100));
+    Reg(TsConfReg::TConfig, 0x00);
+    RunTo(T(102, 0));
+    EXPECT_TRUE(drawn(100)) << "line 100 was drawn at ts_start of line 99";
+    EXPECT_FALSE(drawn(101));
+
+    // Tile X offset: tile layer 0, one tile (map column 1) of colour 5 at TS x 8..15
+    Reg(TsConfReg::TMapPage, 0x30);
+    Reg(TsConfReg::T0GPage, 0x28);
+    for (uint32_t row = 0; row < 64; row++)
+    {
+        Ram(0x30, row * 256 + 2) = 1;  // column 1 = tile 1 (bitmap x 8..15)
+        for (uint32_t b = 4; b < 8; b++)
+            Ram(0x28, (row & 7) * 256 + b) = 0x55;
+    }
+    Reg(TsConfReg::TConfig, 0x20);
+    Reg(0x40, 0);
+    NewFrame();
+    RunTo(T(99, 30));
+    Reg(0x40, 4);  // T0 X offset 4: the tile moves 4 dots left
+    RunTo(T(103, 0));
+    const uint32_t x0 = Engine().Line(100).tsX0;
+    EXPECT_EQ(Engine().TsuPixel(100, x0 + 8) & 0x0F, 5) << "line 100: drawn with line 99's latch";
+    EXPECT_EQ(Engine().TsuPixel(101, x0 + 4) & 0x0F, 5) << "line 101: the offset latched at line 100";
+    EXPECT_EQ(Engine().TsuPixel(101, x0 + 12), 0);
+}
