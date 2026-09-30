@@ -22,6 +22,7 @@ Fixtures with a known license:
 | ZX Spectrum Timing Tests 48K v1.0 (`testdata/loaders/sna/Timing_Tests-48k_v1.0.sna`) | Richard and Tim Butler | none stated (test material) |
 | RZX expected states (`testdata/loaders/rzx/oracle/`, `cases/*.z80`): written by SkoolKit `rzxplay.py` from the recordings named in that folder's `README.md`; the cut recordings in `external/` and `cases/` are made from those recordings | unreal-ng (tools), the recordings' authors (contents) | as their sources |
 | SZX reference files (`testdata/loaders/szx/libspectrum/`): written by libspectrum from known values or from the snapshots named in that folder's `README.md` | unreal-ng (values), the snapshot authors (contents) | as their sources |
+| RZX recordings with SZX start snapshots (`testdata/loaders/rzx/szx/`): the `archive/` recordings re-written by libspectrum | the recordings' authors | as `testdata/loaders/rzx/archive/` |
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,
 Satisfaction, Insult, Echology, Across the Edge, 7th Reality, the TR-DOS / FDI / UDI disk images, the TurboSound FM

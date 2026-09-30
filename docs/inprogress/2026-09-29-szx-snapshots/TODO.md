@@ -25,7 +25,7 @@ Scorpion 1024) cannot save SZX; no private blocks.
 - [x] Read and reported, not applied (hardware we do not emulate): Issue 2 keyboard, keyboard joysticks, JOY, SpecDrum (DRUM), the AMX mouse, NeoGS for a GS block, and IF1, Multiface, printers, Timex, +D, Opus, LEC and the other interfaces. A TurboSound FM config (YM2203) has no AY-3-8910: the AY block is reported, not applied.
 - [x] HALT: PC stays on the HALT while halted (as in Fuse); a file with PC past the HALT is moved back onto it (design §20 R11); `LoaderSZXHalt_Test`.
 - [x] ~~S4 private blocks and the no-id machine policy~~ - dropped: models without an SZX id refuse SZX.
-- [ ] S5: RZX integration with #27.
+- [x] S5: RZX integration (2026-09-29): RZX playback (#27) starts SZX snapshots through `Emulator::LoadSnapshot`, converts the start T-states with `LoaderSZX::FramePositionFromIntCount`, and its seek keyframes are our SZX (`Capture` / `SzxWriter`, `SzxReader` / `Commit`). Verified with real recordings: the five archive RZX files re-written by libspectrum with SZX start snapshots (`testdata/loaders/rzx/szx`, `szxtool rzx-resnap`) match the SkoolKit oracles after 300 frames and to the end, exactly like their `.z80` originals.
 - [x] Corrected the early SZX claims (snapshot-loading DONE.md, automation action plan) and the #EFF7 claim (Pentagon 1024 16-color design and DONE, PLAN #53: closed).
 
 ## Pointers
