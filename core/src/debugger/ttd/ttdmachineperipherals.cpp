@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "network/ttdzxnetusb.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
@@ -77,6 +78,14 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto ide = std::make_unique<TTDAtaChannel>(context);
         registry.Register(PeripheralId::AtaChannel, ide.get());
         ownedSerializers.push_back(std::move(ide));
+    }
+
+    // Network adapters (network TDD §6.3): while a card is fitted
+    if (context->pZxNetUsb)
+    {
+        auto network = std::make_unique<TTDZxNetUsb>(context);
+        registry.Register(PeripheralId::ZxNetUsb, network.get());
+        ownedSerializers.push_back(std::move(network));
     }
 
     // --- Model-specific state (TDD 6.4) ---

@@ -101,6 +101,7 @@ private:
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
     static std::string RtcReportText(EmulatorContext* context);
+    void HandleNetwork(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 
     // Memory command helpers

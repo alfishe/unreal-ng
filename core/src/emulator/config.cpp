@@ -738,6 +738,26 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [MISC] RAMPowerOn='%s' - using RANDOM (RANDOM | ZERO)", powerOn);
 	}
 	
+	// NETWORK section (network adapters TDD §8). Card= fits a card on the
+	// ZX-Bus; the runtime feature "network" can still unplug it.
+	char netValue[64] = {};
+	CopyStringValue(inimanager.GetValue(network, "Card", nullptr), netValue, sizeof netValue);
+	config.network.card = (StringHelper::CompareCaseInsensitive(netValue, "ZXNETUSB", strlen("ZXNETUSB")) == 0) ? 1 : 0;
+	if (netValue[0] != '\0' && config.network.card == 0 && StringHelper::CompareCaseInsensitive(netValue, "NONE", strlen("NONE")) != 0)
+		MLOGWARNING("Config: unknown [NETWORK] Card=%s, no card fitted", netValue);
+	config.network.hostAccess = (inimanager.GetLongValue(network, "HostAccess", 1) != 0) ? 1 : 0;
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "DnsMode", nullptr), netValue, sizeof netValue);
+	config.network.dnsPass = (StringHelper::CompareCaseInsensitive(netValue, "PASS", strlen("PASS")) == 0) ? 1 : 0;
+	config.network.hosts[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Hosts", nullptr), config.network.hosts, sizeof config.network.hosts);
+	config.network.forwards[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Forward", nullptr), config.network.forwards, sizeof config.network.forwards);
+	{
+		long timeout = inimanager.GetLongValue(network, "ConnectTimeoutMs", 10000);
+		config.network.connectTimeoutMs = static_cast<unsigned>(std::clamp(timeout, 500L, 120000L));
+	}
+
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))
 	{

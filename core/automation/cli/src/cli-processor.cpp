@@ -104,6 +104,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
+                        {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
+                        {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
@@ -620,6 +622,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Network adapters (ZXNETUSB / W5300, [NETWORK] Card=):" << NEWLINE;
+    oss << "  network | net | state network - Card, W5300 sockets, virtual network (DHCP, sockets, activity)" << NEWLINE;
+    oss << "  network set key=value ..     - card=zxnetusb|none host_access=on|off dns_mode=host|pass" << NEWLINE;
+    oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;

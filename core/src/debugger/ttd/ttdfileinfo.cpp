@@ -120,6 +120,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::AtaChannel: return "ata";
         case PeripheralId::Ds12887: return "ds12887";
         case PeripheralId::EvoPs2: return "evo-ps2";
+        case PeripheralId::ZxNetUsb: return "zxnetusb";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

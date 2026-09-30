@@ -141,7 +141,9 @@ types:
           (TTDInputKind: 0 Key, 1 MouseMove, 2 MouseButtons, 3 MouseWheel,
           4 MouseCounters, 5 KeyboardReset, 6 GSCommand, 7 GSData, 8 GSNmi,
           9 GSResetCard, 10 GSReset, 11 PcKey - a physical PC key for the PS/2
-          controller, key = PcKey), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          controller, key = PcKey, 12 NetEvent - a host network answer for a
+          virtual-network socket, 13 NetLinkReset - every host connection
+          gone; their network fields live in the bit-10 section), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -169,7 +171,8 @@ types:
           or host device. Replay data, like bits 6 and 7.
 
           The flag-gated trailing sections (write journal, coverage index,
-          bookmarks, input journal, external events, port journals) are
+          bookmarks, input journal, external events, port journals, network
+          inputs) are
           not yet modeled in
           this schema's top-level seq;
           the C++ writer/reader pair (TimeTravelManager::SerializeSession /
@@ -178,7 +181,15 @@ types:
           session, without the accelerators, annotations and replay inputs.
           Bit 9 (0x0200) = the header's last 8 bytes hold the peripheral
           mask (see `peripheral_mask`); older files leave them zero.
-          Bits 10-15 reserved (must be 0).
+          Bit 10 (0x0400) = a network-input section follows the port
+          journals (the last section; only when the session has NetEvents):
+          u32 count, then per NetEvent input in journal order u32 event_index, u16 socket,
+          u8 event (1 Connected, 2 ConnectFailed, 3 Data, 4 PeerClosed,
+          5 Reset, 6 Accepted, 7 Datagram, 8 EchoReply, 9 ListenFailed),
+          u8 status, u32 addr, u16 port, u32 payload_offset,
+          u32 payload_length; then u32 payload_size and the payload bytes
+          (what the machine received from the host network).
+          Bits 11-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
@@ -524,7 +535,10 @@ types:
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
-          mask and the held keys).
+          mask and the held keys), 20 ZxNetUsb (ZXNETUSB card ports, W5300
+          registers and socket states, unsent bytes, and journal references
+          for the received bytes; the virtual network's guest-side tables -
+          netstate.h).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

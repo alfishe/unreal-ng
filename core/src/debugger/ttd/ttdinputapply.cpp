@@ -8,6 +8,7 @@
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/network/virtualnetwork.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -21,10 +22,12 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.keyboard = context->pKeyboard;
     devices.mouse = context->pMouse;
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
+    devices.network = context->pVirtualNetwork;
     return devices;
 }
 
-bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices)
+bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, const TTDNetInput* net,
+                     const uint8_t* payload)
 {
     Keyboard* keyboard = devices.keyboard;
     Mouse* mouse = devices.mouse;
@@ -112,6 +115,18 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices)
             if (!generalSound)
                 return false;
             generalSound->reset();
+            break;
+
+        case TTDInputKind::NetEvent:
+            if (!devices.network || !net)
+                return false;
+            devices.network->ApplyHostEvent(*net, payload);
+            break;
+
+        case TTDInputKind::NetLinkReset:
+            if (!devices.network)
+                return false;
+            devices.network->ApplyLinkReset();
             break;
     }
     return true;

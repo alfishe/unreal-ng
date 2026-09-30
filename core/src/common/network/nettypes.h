@@ -1,0 +1,92 @@
+#pragma once
+
+/// @file nettypes.h
+/// @brief Types shared by the network adapters, the virtual network and the
+/// host bridge (network adapters TDD, docs/inprogress/2026-09-30-nedoos-integration/tdd-network.md).
+///
+/// Addresses are IPv4 in host byte order: a.b.c.d = 0xAABBCCDD. Ports are host
+/// byte order too. Nothing here depends on host socket headers.
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+/// What a host (or the virtual network itself) reports about one socket.
+/// Journaled as TTDInputEvent::netEvent: values are part of the .ttd format.
+enum class NetEventType : uint8_t
+{
+    None = 0,
+    Connected = 1,       ///< TCP connect finished (netAddr/netPort: peer)
+    ConnectFailed = 2,   ///< TCP connect failed (netStatus says why)
+    Data = 3,            ///< TCP bytes arrived (payload)
+    PeerClosed = 4,      ///< TCP peer sent FIN: no more data will come
+    Reset = 5,           ///< TCP connection is gone (RST, host error, link reset)
+    Accepted = 6,        ///< a host client connected to a listener: netSocket = listener, payload = new id (u16 LE)
+    Datagram = 7,        ///< UDP datagram arrived (netAddr/netPort: sender, payload: data)
+    EchoReply = 8,       ///< ICMP echo reply (netAddr: sender, payload: echo data)
+    ListenFailed = 9,    ///< the host could not listen for a guest server
+};
+
+/// Why a network operation failed. Journaled as TTDInputEvent::netStatus.
+enum class NetEventStatus : uint8_t
+{
+    Ok = 0,
+    Refused = 1,
+    Timeout = 2,
+    Unreachable = 3,
+    AddressInUse = 4,
+    Denied = 5,          ///< blocked by the virtual network's allow / deny rules
+    Error = 6,
+};
+
+enum class NetProto : uint8_t
+{
+    Tcp = 0,
+    Udp = 1,
+    Icmp = 2,
+};
+
+struct NetEndpoint
+{
+    uint32_t addr = 0;
+    uint16_t port = 0;
+};
+
+inline bool operator==(const NetEndpoint& a, const NetEndpoint& b)
+{
+    return a.addr == b.addr && a.port == b.port;
+}
+
+/// Build an address from its dotted parts
+constexpr uint32_t NetIp(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+{
+    return (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(b) << 16) | (static_cast<uint32_t>(c) << 8) | d;
+}
+
+std::string NetIpToString(uint32_t addr);
+bool NetIpFromString(const std::string& text, uint32_t& addr);
+
+/// One event from the host bridge to the virtual network (bridge thread ->
+/// emulation thread). Becomes a TTD NetEvent when applied.
+struct HostNetEvent
+{
+    NetEventType type = NetEventType::None;
+    NetEventStatus status = NetEventStatus::Ok;
+    uint16_t socket = 0;
+    NetEndpoint peer;
+    std::vector<uint8_t> data;
+};
+
+/// The guest side of a virtual-network socket: an adapter (W5300 socket, ESP
+/// module socket) that receives the socket's events.
+class INetGuest
+{
+public:
+    /// Delivered on the emulation thread. `data` is valid only during the call.
+    /// `source` names where the bytes came from: the 1-based TTD journal index
+    /// of the network record (0 = not journaled), so a device can checkpoint
+    /// references to its buffered bytes instead of the bytes.
+    virtual void OnNetEvent(uint32_t cookie, NetEventType type, NetEventStatus status, const NetEndpoint& peer,
+                            const uint8_t* data, uint32_t length, uint32_t source) = 0;
+    virtual ~INetGuest() = default;
+};

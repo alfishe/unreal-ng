@@ -71,6 +71,15 @@ StateNode Ide(EmulatorContext* context);
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
 
+/// Network adapters (network adapters TDD §9): `Network()` the fitted card
+/// (ZXNETUSB: its ports, the W5300 held in reset or running, the chip's
+/// address registers and per socket mode / state / ports / buffers), the
+/// virtual network (addresses, DNS mode, hosts, forwarding, DHCP leases,
+/// sockets with their remote end and byte counts, guest servers), counters
+/// and the recent socket activity. A snapshot taken at the last frame
+/// boundary. Unavailable, with the reason, when no adapter is fitted
+StateNode Network(EmulatorContext* context);
+
 /// TS-Conf machine state (TSConf technical-design §3.14): the memory map
 /// (MEM_CONFIG decoded, the four windows, LCK128 / lock48, DOS / vdos, cache),
 /// video (V_CONFIG decoded: mode, geometry, NOGFX / NOTSU / GFXOVR; V_PAGE,

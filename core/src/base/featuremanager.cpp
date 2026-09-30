@@ -551,6 +551,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kNetwork,
+                     Features::kNetworkAlias,
+                     Features::kNetworkDesc,
+                     true,  // ON by default - whether a card is fitted is decided by the machine config
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kContention,
                      Features::kContentionAlias,
                      Features::kContentionDesc,
@@ -688,6 +696,12 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     if (_context && _context->pMouse)
     {
         _context->pMouse->ApplyConfiguration();
+    }
+
+    // Network adapters follow the network feature
+    if (_context && _context->pCore)
+    {
+        _context->pCore->ApplyNetworkConfiguration();
     }
 
     // Update feature cache in Screen (for ScreenHQ toggle) if it exists

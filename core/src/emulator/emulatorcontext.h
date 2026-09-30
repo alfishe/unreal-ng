@@ -19,6 +19,8 @@ class Core;
 class Emulator;
 class Keyboard;
 class Mouse;
+class VirtualNetwork;
+class ZxNetUsb;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -89,6 +91,13 @@ public:
 
 	// Mouse controller instance
 	Mouse* pMouse = nullptr;
+
+	// Virtual network of this machine (network adapters TDD §5): present only
+	// while a network adapter is fitted
+	VirtualNetwork* pVirtualNetwork = nullptr;
+
+	// ZXNETUSB network card on the ZX-Bus (W5300), when fitted
+	ZxNetUsb* pZxNetUsb = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

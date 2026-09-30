@@ -37,6 +37,7 @@ private:
     static constexpr const char* rom = "ROM";
     static constexpr const char* ngs = "NGS";
     static constexpr const char* zc = "ZC";
+    static constexpr const char* network = "NETWORK";
 
     // Separate ROM file variables within ROMSET profile
     static constexpr const char* romset_128 = "128";

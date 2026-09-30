@@ -1789,9 +1789,24 @@ void TimeTravelManager::SetLiveInputInterceptor(std::function<bool(const TTDInpu
 
 bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
 {
+    return SubmitLiveInputImpl(ev, nullptr, nullptr, 0);
+}
+
+bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev, const TTDNetInput& net, const uint8_t* payload,
+                                        uint32_t length)
+{
+    return SubmitLiveInputImpl(ev, &net, payload, length);
+}
+
+bool TimeTravelManager::SubmitLiveInputImpl(const TTDInputEvent& ev, const TTDNetInput* net, const uint8_t* payload,
+                                            uint32_t length)
+{
     if (!_context || OwnsInput())
         return false;
 
+    // A lockstep group takes plain input; network events are not shared
+    // across a group and take the normal path
+    if (!net)
     {
         std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
         if (_liveInputInterceptor && _liveInputInterceptor(ev))
@@ -1809,13 +1824,22 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
     {
         {
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
-            _pendingInput.push_back(ev);
+            PendingInput pending;
+            pending.ev = ev;
+            if (net)
+            {
+                pending.hasNet = true;
+                pending.net = *net;
+            }
+            if (payload && length)
+                pending.payload.assign(payload, payload + length);
+            _pendingInput.push_back(std::move(pending));
         }
         _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return true;
     }
 
-    ApplyLiveInput(ev);
+    ApplyLiveInput(ev, net, payload, payload ? length : 0);
     return true;
 }
 
@@ -1841,15 +1865,31 @@ TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::f
     return MachineTaskResult::RanNow;
 }
 
-void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
+void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* net, const uint8_t* payload,
+                                       uint32_t length)
 {
     // Journal BEFORE applying: the entry's time point is the moment of mutation
+    TTDNetInput applied;
+    if (net)
+    {
+        applied = *net;
+        applied.payloadLength = payload ? length : 0;
+    }
     if (_state == TTDSessionState::Recording)
     {
         ev.time = InputEventTimeNow(_context);
-        _inputJournal.Record(ev);
+        if (net)
+        {
+            _inputJournal.Record(ev, applied, payload, applied.payloadLength);
+            applied.journalIndex = static_cast<uint32_t>(_inputJournal.NetInputs().size());
+            applied.payloadOffset = _inputJournal.NetInputs().back().payloadOffset;
+        }
+        else
+        {
+            _inputJournal.Record(ev);
+        }
     }
-    ApplyInputEvent(ev, InputDevicesOf(_context));
+    ApplyInputEvent(ev, InputDevicesOf(_context), net ? &applied : nullptr, payload);
 }
 
 void TimeTravelManager::ServiceInput()
@@ -1864,7 +1904,9 @@ void TimeTravelManager::ServiceInput()
         const auto& events = _inputJournal.Events();
         while (_inputCursor < events.size() && !(now < events[_inputCursor].time))
         {
-            ApplyInputEvent(events[_inputCursor], InputDevicesOf(_context));
+            const TTDInputEvent& ev = events[_inputCursor];
+            const TTDNetInput* net = _inputJournal.NetOf(ev);
+            ApplyInputEvent(ev, InputDevicesOf(_context), net, net ? _inputJournal.PayloadOf(*net) : nullptr);
             ++_inputCursor;
         }
         if (_inputCursor >= events.size())
@@ -1873,15 +1915,16 @@ void TimeTravelManager::ServiceInput()
 
     // 2. Live input queued by other threads: applied (and journaled) here, or
     //    dropped when the journal took over input while it waited
-    std::vector<TTDInputEvent> pending;
+    std::vector<PendingInput> pending;
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending.swap(_pendingInput);
     }
     if (!pending.empty() && !OwnsInput())
     {
-        for (const TTDInputEvent& ev : pending)
-            ApplyLiveInput(ev);
+        for (const PendingInput& p : pending)
+            ApplyLiveInput(p.ev, p.hasNet ? &p.net : nullptr, p.payload.empty() ? nullptr : p.payload.data(),
+                           static_cast<uint32_t>(p.payload.size()));
     }
 
     // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
@@ -3209,7 +3252,7 @@ bool ReadInputJournalSection(std::istream& in, std::vector<TTDInputEvent>& event
             err = "stream read failed (input event " + std::to_string(i) + ")";
             return false;
         }
-        if (kind > static_cast<uint8_t>(TTDInputKind::PcKey))
+        if (kind > static_cast<uint8_t>(kLastTTDInputKind))
         {
             err = "input event " + std::to_string(i) + ": unknown kind " + std::to_string(kind);
             return false;
@@ -3227,6 +3270,123 @@ bool ReadInputJournalSection(std::istream& in, std::vector<TTDInputEvent>& event
             return false;
         }
         events.push_back(ev);
+    }
+    return true;
+}
+
+/// @brief Network-input section (header bit 10, ttddumpformat.h kFlagsHasNetInputs)
+bool WriteNetInputSection(std::ostream& out, const std::vector<TTDInputEvent>& events,
+                          const std::vector<TTDNetInput>& net, const std::vector<uint8_t>& payload, std::string& err)
+{
+    uint32_t count = 0;
+    for (const TTDInputEvent& ev : events)
+        count += (ev.netIndex != 0 && ev.netIndex <= net.size()) ? 1 : 0;
+    if (!WritePod(out, count, err))
+        return false;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(events.size()); ++i)
+    {
+        const TTDInputEvent& ev = events[i];
+        if (ev.netIndex == 0 || ev.netIndex > net.size())
+            continue;
+        const TTDNetInput& n = net[ev.netIndex - 1];
+        if (!WritePod(out, i, err) || !WritePod(out, n.socket, err) || !WritePod(out, n.event, err) ||
+            !WritePod(out, n.status, err) || !WritePod(out, n.addr, err) || !WritePod(out, n.port, err) ||
+            !WritePod(out, n.payloadOffset, err) || !WritePod(out, n.payloadLength, err))
+        {
+            err = "stream write failed (network input section)";
+            return false;
+        }
+    }
+    const uint32_t size = static_cast<uint32_t>(payload.size());
+    if (!WritePod(out, size, err))
+        return false;
+    if (size)
+    {
+        out.write(reinterpret_cast<const char*>(payload.data()), size);
+        if (!out)
+        {
+            err = "stream write failed (network payload)";
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @brief Read the network-input section: the records of the NetEvents the
+/// input journal section already staged, and the payload store. Refuses
+/// records that point at a non-NetEvent, out of order, or outside the store.
+bool ReadNetInputSection(std::istream& in, std::vector<TTDInputEvent>& events, std::vector<TTDNetInput>& net,
+                         std::vector<uint8_t>& payload, std::string& err)
+{
+    uint32_t count = 0;
+    if (!ReadPod(in, count, err))
+    {
+        err = "stream read failed (network input count)";
+        return false;
+    }
+    if (count > events.size())
+    {
+        err = "implausible network input count " + std::to_string(count);
+        return false;
+    }
+    int64_t lastIndex = -1;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        uint32_t index = 0;
+        TTDNetInput n;
+        if (!ReadPod(in, index, err) || !ReadPod(in, n.socket, err) || !ReadPod(in, n.event, err) ||
+            !ReadPod(in, n.status, err) || !ReadPod(in, n.addr, err) || !ReadPod(in, n.port, err) ||
+            !ReadPod(in, n.payloadOffset, err) || !ReadPod(in, n.payloadLength, err))
+        {
+            err = "stream read failed (network input " + std::to_string(i) + ")";
+            return false;
+        }
+        if (index >= events.size() || static_cast<int64_t>(index) <= lastIndex ||
+            events[index].kind != TTDInputKind::NetEvent)
+        {
+            err = "network input " + std::to_string(i) + ": bad event index " + std::to_string(index);
+            return false;
+        }
+        lastIndex = index;
+        net.push_back(n);
+        events[index].netIndex = static_cast<uint32_t>(net.size());
+    }
+    uint32_t size = 0;
+    if (!ReadPod(in, size, err))
+    {
+        err = "stream read failed (network payload size)";
+        return false;
+    }
+    if (size > ttd::dump::kMaxNetPayloadBytes)
+    {
+        err = "implausible network payload size " + std::to_string(size);
+        return false;
+    }
+    payload.resize(size);
+    if (size)
+    {
+        in.read(reinterpret_cast<char*>(payload.data()), size);
+        if (!in)
+        {
+            err = "stream read failed (network payload)";
+            return false;
+        }
+    }
+    for (const TTDNetInput& n : net)
+    {
+        if (n.payloadLength && static_cast<uint64_t>(n.payloadOffset) + n.payloadLength > size)
+        {
+            err = "network input payload outside the store";
+            return false;
+        }
+    }
+    for (const TTDInputEvent& ev : events)
+    {
+        if (ev.kind == TTDInputKind::NetEvent && ev.netIndex == 0)
+        {
+            err = "a network event without its network record";
+            return false;
+        }
     }
     return true;
 }
@@ -3446,6 +3606,10 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
                 peripheralMask |= uint64_t(1) << blob.first;
     }
     flags |= ttd::dump::kFlagsHasPeripheralMask;
+    // Network inputs only when the session has them: sessions without a
+    // network adapter stay byte-identical to the older layout
+    if (!_inputJournal.NetInputs().empty())
+        flags |= ttd::dump::kFlagsHasNetInputs;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -3705,6 +3869,11 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!_portReads.Serialize(out, readCursors, err) || !_portWrites.Serialize(out, writeCursors, err))
             return false;
     }
+
+    // --- Network inputs (bit 10), the last section, only when the session has them ---
+    if ((flags & ttd::dump::kFlagsHasNetInputs) &&
+        !WriteNetInputSection(out, _inputJournal.Events(), _inputJournal.NetInputs(), _inputJournal.Payload(), err))
+        return false;
 
     return true;
 }
@@ -4320,6 +4489,24 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
                            !stagedWrites.Deserialize(in, timelineCount, stagedWriteCursors, err)))
         return false;
 
+    // --- Network inputs (bit 10): fields and bytes of the NetEvent inputs ---
+    std::vector<TTDNetInput> stagedNet;
+    std::vector<uint8_t> stagedNetPayload;
+    const bool hasNetInputs = (flags & ttd::dump::kFlagsHasNetInputs) != 0;
+    if (hasNetInputs && !ReadNetInputSection(in, stagedInputs, stagedNet, stagedNetPayload, err))
+        return false;
+    if (!hasNetInputs)
+    {
+        for (const TTDInputEvent& ev : stagedInputs)
+        {
+            if (ev.kind == TTDInputKind::NetEvent)
+            {
+                err = "network events without the network-input section";
+                return false;
+            }
+        }
+    }
+
     // A search of the file: hand the journals out, commit nothing
     if (journalsOnly)
     {
@@ -4340,9 +4527,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _timeline      = std::move(stagedTimeline);
     _pageStore     = std::move(stagedStore);
     _modelRamPages = modelRamPages;
-    _inputJournal.Clear();
-    for (const TTDInputEvent& ev : stagedInputs)
-        _inputJournal.Record(ev);
+    _inputJournal.Assign(std::move(stagedInputs), std::move(stagedNet), std::move(stagedNetPayload));
     DisarmInputPlayback();
     _externalEvents.Clear();
     for (const TTDExternalEvent& marker : stagedMarkers)

@@ -33,6 +33,7 @@ class TapeTurboController;
 class DiskFastLoad;
 class DiskAutostart;
 class HostBusOverlay;
+class NetworkManager;
 
 class Core
 {
@@ -75,6 +76,7 @@ protected:
     RecordingManager* _recordingManager = nullptr;
 #endif
     IdeController* _ide = nullptr;
+    NetworkManager* _networkManager = nullptr;  // network adapters (ZXNETUSB); empty unless fitted
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
@@ -110,6 +112,16 @@ public:
     /// media of units that come back are attached again, the others park.
     /// The emulator must not be running
     void RefitIde();
+
+    /// Fit or unplug the network adapters to match [NETWORK] Card= and the
+    /// "network" feature (deferred to the next frame boundary while the
+    /// machine runs on another thread)
+    void ApplyNetworkConfiguration();
+
+    /// Frame boundary work of the network adapters (machine thread)
+    void OnNetworkFrame();
+
+    NetworkManager* GetNetworkManager() { return _networkManager; }
     /// endregion </Peripherals>
 
     /// region <Properties>

@@ -87,11 +87,20 @@ enum class TTDInputKind : uint8_t
     GSResetCard,        ///< #33 bit 7: card reset, host mailbox kept
     GSReset,            ///< full card power-on reset, mailbox included
 
-    PcKey               ///< physical PC key press / release (key = PcKey, pressed) for the
+    PcKey,              ///< physical PC key press / release (key = PcKey, pressed) for the
                         ///< machine's PS/2 controller (ZX-Evo AVR); journaled only when one
                         ///< is attached. Its own event, not derived from Key: host Up is
                         ///< Caps Shift + 7 on the matrix but E0 75 on PS/2
+
+    // Network (network adapters TDD §6): what the host network answered, as
+    // the machine's virtual network sees it. The bytes (received data) live in
+    // the journal's payload store, referenced by payloadOffset / payloadLength
+    NetEvent,           ///< host network event for one virtual-network socket (net* fields + payload)
+    NetLinkReset        ///< every host connection of the virtual network is gone (seek / resume from the past)
 };
+
+/// Last valid kind: the file reader refuses anything above it
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NetLinkReset;
 
 struct TTDInputEvent
 {
@@ -104,6 +113,30 @@ struct TTDInputEvent
     uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask
     int8_t       wheelSteps = 0;     ///< MouseWheel: notches
     uint8_t      value = 0;          ///< GSCommand / GSData: the byte written
+
+    /// NetEvent: 1-based index of its record in the journal's network table
+    /// (TTDNetInput); 0 = none. Network fields live outside the event so the
+    /// journal of a machine without a network adapter does not grow
+    uint32_t     netIndex = 0;
+};
+
+/// @brief What a NetEvent carries (network adapters TDD §6): the virtual-network
+/// socket, the event (NetEventType), its status (NetEventStatus), the peer
+/// (IPv4 host byte order, port) and the received bytes in the payload store.
+struct TTDNetInput
+{
+    uint16_t socket = 0;
+    uint8_t  event = 0;
+    uint8_t  status = 0;
+    uint32_t addr = 0;
+    uint16_t port = 0;
+    uint32_t payloadOffset = 0;
+    uint32_t payloadLength = 0;
+
+    /// 1-based position in the journal's network table, set by the journal
+    /// (0 = not journaled: TTD not recording). Lets a device name where its
+    /// buffered bytes came from, so a checkpoint stores references, not bytes
+    uint32_t journalIndex = 0;
 };
 
 /// @brief Append-only journal of TTDInputEvents, queryable by TTDTimePoint.
@@ -134,6 +167,30 @@ public:
     /// sense that recording the same event twice produces two entries; the
     /// caller's monotonicity guard rejects the second one before it gets here.
     void Record(TTDInputEvent ev);
+
+    /// @brief Append a NetEvent: its network record goes to the network table,
+    /// its bytes to the payload store, and the event points at the record.
+    void Record(TTDInputEvent ev, TTDNetInput net, const uint8_t* payload, uint32_t length);
+
+    /// @brief The network record of a journaled NetEvent (nullptr when none)
+    const TTDNetInput* NetOf(const TTDInputEvent& ev) const;
+
+    /// @brief The bytes of a network record (nullptr when it has none)
+    const uint8_t* PayloadOf(const TTDNetInput& net) const;
+
+    /// @brief Network record by its 1-based journal index (nullptr when out of range)
+    const TTDNetInput* NetAt(uint32_t journalIndex) const
+    {
+        return (journalIndex == 0 || journalIndex > _net.size()) ? nullptr : &_net[journalIndex - 1];
+    }
+
+    /// @brief Network table and payload store (file writer, tests)
+    inline const std::vector<TTDNetInput>& NetInputs() const { return _net; }
+    inline const std::vector<uint8_t>& Payload() const { return _payload; }
+
+    /// @brief Replace events, network table and payload store together (file
+    /// reader). The caller validated every index and payload range.
+    void Assign(std::vector<TTDInputEvent> events, std::vector<TTDNetInput> net, std::vector<uint8_t> payload);
 
     // -----------------------------------------------------------------------
     // Replay path (control thread; emulator paused between RunTStates batches)
@@ -181,6 +238,11 @@ public:
 
 private:
     std::vector<TTDInputEvent> _events;
+
+    /// Network records of NetEvents and their bytes, in journal order
+    /// (append-only; DropAfter cuts both back to the last kept event)
+    std::vector<TTDNetInput> _net;
+    std::vector<uint8_t> _payload;
 };
 
 } // namespace ttd
