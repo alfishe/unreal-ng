@@ -96,6 +96,9 @@ everywhere by construction.
   half-changed state. `rendered_rgb` is given only when the framebuffer's
   geometry is that moment's mode (§4.6: a mid-frame switch is drawn in the
   new geometry).
+- **Benchmark budget (open):** the A/B frame benchmark (§7) waits for a
+  quiet machine; merged before it on 2026-09-29 at the user's request. The
+  hot-path addition is one 12-byte compare per `#FE` write.
 - Tests: `core/tests/emulator/video/map/videowritelog_test.cpp`;
   `videomapservice_test.cpp` - mid-frame `#FF77` switch (test 6), mid-frame
   border colour, queries from another thread while running (test 7).
