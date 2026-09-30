@@ -6,16 +6,33 @@ firmware emulates it, the ZX-WiFi card's real 16550, and how NedoOS and other
 software drive them. Research of 2026-09-30; every fact carries its source.
 
 Paths are relative to the emulator source collection (a local archive of
-emulator and firmware sources outside this repository). Abbreviations:
+emulator and firmware sources outside this repository); every root has a
+public upstream, so a cited file is one click away. Abbreviations:
 
-| Tag | Path | What it is |
-|---|---|---|
-| `BC-AVR` | `svn/pentevo/avr/baseconf/trunk/src/` | Official BaseConf AVR firmware (svn r1325, 2026-01). **This is the one that pairs with the BaseConf FPGA.** |
-| `BC-FPGA` | `svn/pentevo/fpga/baseconf/trunk/` | Official BaseConf FPGA |
-| `TS-AVR` | `github/zx-evo/pentevo/avr/current/` | TSLabs AVR firmware (TS-Conf, also boots Base/Egg). Has ZiFi + larger buffers. |
-| `TS-AVR@167199ba` | `git -C github/zx-evo show 167199ba:pentevo/avr/current/zx.c` | Last revision that still contains `zx_wait_task()`; HEAD (e9256bd0, 2026-05-19) dropped the body while `zx.h:231-232` and `main.c:73-86` still reference it |
-| `TS-FPGA` | `github/zx-evo/pentevo/fpga/current/` | TS-Conf FPGA |
-| `NOS` | `svn/nedoos/nedoos/` | NedoOS |
+| Tag | Path | Upstream | What it is |
+|---|---|---|---|
+| `BC-AVR` | `svn/pentevo/avr/baseconf/trunk/src/` | [pentevo/avr/baseconf/trunk/src](https://github.com/alfishe/pentevo/tree/master/avr/baseconf/trunk/src) | Official BaseConf AVR firmware (svn r1325, 2026-01). **This is the one that pairs with the BaseConf FPGA.** |
+| `BC-FPGA` | `svn/pentevo/fpga/baseconf/trunk/` | [pentevo/fpga/baseconf/trunk](https://github.com/alfishe/pentevo/tree/master/fpga/baseconf/trunk) | Official BaseConf FPGA |
+| `TS-AVR` | `github/zx-evo/pentevo/avr/current/` | [tslabs/zx-evo: pentevo/avr/current](https://github.com/tslabs/zx-evo/tree/master/pentevo/avr/current) | TSLabs AVR firmware (TS-Conf, also boots Base/Egg). Has ZiFi + larger buffers. |
+| `TS-AVR@167199ba` | `git -C github/zx-evo show 167199ba:pentevo/avr/current/zx.c` | [zx.c at 167199ba](https://github.com/tslabs/zx-evo/blob/167199ba/pentevo/avr/current/zx.c) | Last revision that still contains `zx_wait_task()`; HEAD (e9256bd0, 2026-05-19) dropped the body while `zx.h:231-232` and `main.c:73-86` still reference it |
+| `TS-FPGA` | `github/zx-evo/pentevo/fpga/current/` | [tslabs/zx-evo: pentevo/fpga/current](https://github.com/tslabs/zx-evo/tree/master/pentevo/fpga/current) | TS-Conf FPGA |
+| `NOS` | `svn/nedoos/nedoos/` | [NedoOS](https://github.com/alfishe/NedoOS) (`src/`, `release/`) | NedoOS |
+
+The pentevo tree is the NedoPC Subversion repository `svn://svn.nedopc.com/pentevo`
+(mirrored on GitHub above; line numbers are for r1325, the mirror can be newer).
+
+Other repositories cited by path below:
+
+| Path prefix | Upstream |
+|---|---|
+| `github/zx-evo-docs/` | [tslabs/zx-evo-docs](https://github.com/tslabs/zx-evo-docs) |
+| `github/zx-evo-unreal/` | [tslabs/zx-evo-unreal](https://github.com/tslabs/zx-evo-unreal) (TSLabs Unreal: `Unreal/zf232.cpp`, `Unreal/io.cpp`, `Unreal/zifi32/`) |
+| `github/unreal-speccy/` | [unreal-speccy](https://github.com/alfishe/unreal-speccy) (`modem.cpp`) |
+| `github/ZXMAK2/` | [zxmak/ZXMAK2](https://github.com/zxmak/ZXMAK2) (`src/ZXMAK2.Hardware/General/HayesModem.cs`) |
+| `github/pico-spec/` | [drewpo28/pico-spec](https://github.com/drewpo28/pico-spec) (`src/Ports.cpp`, `src/ZiFi.cpp`, `src/ZiFiAT.cpp`) |
+| Xpeccy `src/libxpeccy/` | [samstyle/Xpeccy](https://github.com/samstyle/Xpeccy/tree/master/src/libxpeccy) |
+| `svn/pentevo/tools/unreal_fix/0.39.0/Unreal_NS/` | [Unreal_NS in pentevo](https://github.com/aaydev/zxevo.pentevo/tree/main/tools/unreal_fix/0.39.0/Unreal_NS) |
+| NedoOS ESPNET firmware (`espnet/`, `PROTOCOL.md`, `pins.h`, `host_uart.cpp`) | [NOS/src/kapps/common/espnet](https://github.com/alfishe/NedoOS/tree/main/src/kapps/common/espnet) |
 
 Files are CP866/CP1251. Line numbers are for the file as it is on disk.
 
@@ -233,7 +250,7 @@ MCR  #FCEF <- 0x2F   ; "Enable AFE" -> on Evo becomes 0x0F: RTS asserted
 
 ### Other software
 
-- `cuart` (NedoOS UART terminal, `NOS/src/kapps/cuart/main.c`, the UART calls from `NOS/src/kapps/common/esp-com.c`): reads `ini/espcom.ini`, `uart_init(divider)` as above, sends with `uart_write` (THRE poll, then THR), receives in `getdata()`: when LSR.DR is 0 it pulses RTS once (`uart_setrts(2)`: DI, `MCR 2`, `MCR 0`, EI), then reads RBR while DR is 1. After start it shows a hello box and waits for one key (`getchar()`). F1..F10 set divisors 1, 2, 3, 4, 6, 8, 12, 24, 48, 96; PgUp / PgDn page the log (the shipped `cuart.txt` still says PgUp sends `AT+GMR`); End toggles sending each key at once.
+- `cuart` (NedoOS UART terminal, [NOS/src/kapps/cuart/main.c](https://github.com/alfishe/NedoOS/blob/main/src/kapps/cuart/main.c), the UART calls from [NOS/src/kapps/common/esp-com.c](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/esp-com.c)): reads `ini/espcom.ini`, `uart_init(divider)` as above, sends with `uart_write` (THRE poll, then THR), receives in `getdata()`: when LSR.DR is 0 it pulses RTS once (`uart_setrts(2)`: DI, `MCR 2`, `MCR 0`, EI), then reads RBR while DR is 1. After start it shows a hello box and waits for one key (`getchar()`). F1..F10 set divisors 1, 2, 3, 4, 6, 8, 12, 24, 48, 96; PgUp / PgDn page the log (the shipped `cuart.txt` still says PgUp sends `AT+GMR`); End toggles sending each key at once.
 - No `zx-net-tools` sources were found in the local collection.
 - ZiFi-API software (TS firmware only): `SETAPI 0xF1` then `GETVER 0xFF` on #C7EF, then `INIR` from #xxEF (`zx-evo-docs/ZiFi/zifi.md:81-110`).
 
@@ -313,8 +330,8 @@ other real-device bridges (Greaseweazle / KryoFlux: PLAN #12).
 
 | What | Source | Notes |
 |---|---|---|
-| ZX-WiFi (16550 + ESP-12F on the ZX-Bus) pinout, flashing jumpers | `NOS/src/kapps/common/espnet/PROTOCOL.md` ("Pins"), `pins.h`, `host_uart.cpp` | ESP TX GPIO1 -> 16550 SIN, RX GPIO3 <- SOUT, CTS GPIO13 <- 16550 RTS, RTS GPIO15 -> 16550 CTS; v1.6: flash via X2 (3.3 V TTL) with SW1 = ESP, X5 / X6 open while programming. No published schematic found; the community thread is [zx-pk.ru: NedoOS](https://zx-pk.ru/threads/30190-nedoos.html) (ESP on the ATM / Evo COM port, 16550 + ESP above 38400 baud) |
-| ESPNET-capable boards: ESP32 WROOM, ESP32-C3 Super Mini, ESP8266 D1 mini | `PROTOCOL.md` "Pins" table, `README.txt` (Arduino IDE setup, board packages) | UART pins per board; ESP8266 D1 mini uses the swapped UART (GPIO15 / 13) |
+| ZX-WiFi (16550 + ESP-12F on the ZX-Bus) pinout, flashing jumpers | [PROTOCOL.md](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/PROTOCOL.md) ("Pins"), [pins.h](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/pins.h), [host_uart.cpp](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/host_uart.cpp) | ESP TX GPIO1 -> 16550 SIN, RX GPIO3 <- SOUT, CTS GPIO13 <- 16550 RTS, RTS GPIO15 -> 16550 CTS; v1.6: flash via X2 (3.3 V TTL) with SW1 = ESP, X5 / X6 open while programming. No published schematic found; the community thread is [zx-pk.ru: NedoOS](https://zx-pk.ru/threads/30190-nedoos.html) (ESP on the ATM / Evo COM port, 16550 + ESP above 38400 baud) |
+| ESPNET-capable boards: ESP32 WROOM, ESP32-C3 Super Mini, ESP8266 D1 mini | [PROTOCOL.md](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/PROTOCOL.md) "Pins" table, [README.txt](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/README.txt) (Arduino IDE setup, board packages) | UART pins per board; ESP8266 D1 mini uses the swapped UART (GPIO15 / 13) |
 | USB-serial adapters and the auto-reset circuit (why RTS / DTR must not follow the ZX by default) | [esptool: Boot Mode Selection (ESP8266)](https://docs.espressif.com/projects/esptool/en/latest/esp8266/advanced-topics/boot-mode-selection.html), [ESP32](https://docs.espressif.com/projects/esptool/en/latest/esp32/advanced-topics/boot-mode-selection.html); [Espressif's Automatic Reset](https://qsantos.fr/2025/05/09/espressifs-automatic-reset/) | DTR / RTS of the FTDI / CP210x / CH340 drive GPIO0 and EN through two cross-coupled transistors: DTR 1 RTS 0 holds the chip in reset, DTR 0 RTS 1 enters the bootloader. `ComModemLines=0` (the default) keeps the emulator off these lines |
 | CH340 adapter with auto-reset, schematic | [USB-C-CH340K-Auto-Reset-Programmer](https://github.com/mariusmym/USB-C-CH340K-Auto-Reset-Programmer), [CH340C programmer with auto-reset (PCBWay)](https://www.pcbway.com/project/shareproject/CH340C_with_Auto_Reset_104b447f.html), [ESP-01 on a CH340 dongle](https://cmheong.blogspot.com/2018/05/using-ch340-usb-dongle-as-esp-01s.html) | the ESP-01 "USB programmer" boards; many need a mod to program, none to run |
 
@@ -322,16 +339,16 @@ other real-device bridges (Greaseweazle / KryoFlux: PLAN #12).
 
 | Firmware | Source | Used by |
 |---|---|---|
-| ESPNET 1.2x (binary socket protocol, frames `#A5`, 8 sockets on ESP32, 4 on ESP8266) | `NOS/src/kapps/common/espnet/` (`espnet.ino`, `protocol.h`, `PROTOCOL.md`, `README.txt`) | NedoOS `sd_bootesp.$C`, `_sdk/espnet.asm` (network TDD N3 `EspnetModule`) |
+| ESPNET 1.2x (binary socket protocol, frames `#A5`, 8 sockets on ESP32, 4 on ESP8266) | [NOS/src/kapps/common/espnet](https://github.com/alfishe/NedoOS/tree/main/src/kapps/common/espnet) ([espnet.ino](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/espnet.ino), [protocol.h](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/protocol.h), [PROTOCOL.md](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/PROTOCOL.md), [README.txt](https://github.com/alfishe/NedoOS/blob/main/src/kapps/common/espnet/README.txt)) | NedoOS `sd_bootesp.$C`, [_sdk/espnet.asm](https://github.com/alfishe/NedoOS/blob/main/src/_sdk/espnet.asm) (network TDD N3 `EspnetModule`) |
 | Espressif ESP-AT (current AT firmware, all chips) | [espressif/esp-at](https://github.com/espressif/esp-at/releases) | NedoOS ESPCOM apps, Moon Rabbit, `cuart` (N3 `AtModule`) |
 | Espressif NonOS AT 1.7.x (legacy ESP8266 AT, what most ZX software was written against) | [ESP8266_NONOS_SDK releases](https://github.com/espressif/ESP8266_NONOS_SDK/releases), [ESP8266 AT Instruction Set (PDF)](https://www.espressif.com/sites/default/files/documentation/4a-esp8266_at_instruction_set_en.pdf); flashing notes: [AT firmware on an ESP-01S](https://www.sigmdel.ca/michel/ha/esp8266/ESP01_AT_Firmware_en.html) | the same software; `AT+GMR` answers `AT version:1.7.x` |
-| ZiFi (TS-Conf AVR API over the same ports) | `github/zx-evo-docs/ZiFi/zifi.md` ([tslabs/zx-evo-docs](https://github.com/tslabs/zx-evo-docs)) | TS-Conf software (network TDD N5) |
+| ZiFi (TS-Conf AVR API over the same ports) | [ZiFi/zifi.md](https://github.com/tslabs/zx-evo-docs/blob/main/ZiFi/zifi.md) | TS-Conf software (network TDD N5) |
 
 ### Emulations to learn from (N3)
 
 | Emulator | Source | What it has |
 |---|---|---|
-| TSLabs Unreal | `github/zx-evo-unreal/Unreal/zifi32/` (`esp32_emul.cpp`, `zifi32.cpp`; [tslabs/zx-evo-unreal](https://github.com/tslabs/zx-evo-unreal)) | an ESP32 emulation behind ZiFi |
-| pico-spec | `github/pico-spec/src/ZiFiAT.cpp`, `ZiFiSock.cpp` ([drewpo28/pico-spec](https://github.com/drewpo28/pico-spec)) | an AT command emulation over sockets |
-| Unreal_NS | `svn/pentevo/tools/unreal_fix/0.39.0/Unreal_NS/SRC/modem.h`, `config.cpp` (`[MISC] Modem=COMn`) | host COM port passthrough only, no ESP emulation: the reason real ESPs on USB were used with it |
+| TSLabs Unreal | [Unreal/zifi32](https://github.com/tslabs/zx-evo-unreal/tree/main/Unreal/zifi32) ([esp32_emul.cpp](https://github.com/tslabs/zx-evo-unreal/blob/main/Unreal/zifi32/esp32_emul.cpp), [zifi32.cpp](https://github.com/tslabs/zx-evo-unreal/blob/main/Unreal/zifi32/zifi32.cpp)) | an ESP32 emulation behind ZiFi |
+| pico-spec | [ZiFiAT.cpp](https://github.com/drewpo28/pico-spec/blob/main/src/ZiFiAT.cpp), [ZiFiSock.cpp](https://github.com/drewpo28/pico-spec/blob/main/src/ZiFiSock.cpp) | an AT command emulation over sockets |
+| Unreal_NS | [SRC/modem.h](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/Unreal_NS/SRC/modem.h), [SRC/config.cpp](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/Unreal_NS/SRC/config.cpp) (`[MISC] Modem=COMn`) | host COM port passthrough only, no ESP emulation: the reason real ESPs on USB were used with it |
 
