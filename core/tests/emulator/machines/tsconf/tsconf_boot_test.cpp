@@ -23,10 +23,14 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
+#include "emulator/media/mediamanager.h"
 
 #include "_helpers/emulatortesthelper.h"
 #include "pch.h"
@@ -224,4 +228,84 @@ TEST_F(TsConfBoot_Test, BOOT3_BootsWildCommanderFromSd)
     for (uint8_t row = 0; row < 30 && !listsBoot; row++)
         listsBoot = TextRow(ts.regs[TsConfReg::VPage], row).find("boot.$c") != std::string::npos;
     EXPECT_TRUE(listsBoot) << "the file panel lists boot.$c";
+}
+
+/// BOOT-4: TS-BIOS boots from the Nemo IDE master ("Boot Device: IDE Nemo M")
+/// and Wild Commander works its panels on that disk. The SD image of BOOT-3
+/// serves as the hard disk (a FAT32 volume from sector 0: neither the BIOS
+/// nor WC needs a partition table) with WC's panels set to drive 1 (wc.ini
+/// DRV=1, IDE Nemo master; the file is patched in a scratch copy, same
+/// length). Skipped without the untracked image. Session writes only.
+/// Slow (~0.3 s): the real BIOS boots twice and WC reads its disk by DMA
+TEST_F(TsConfBoot_Test, BOOT4_BootsWildCommanderFromIde)
+{
+    const std::string image = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "tsconf" / "wildcommander" /
+                               "sd-images" / "wc-tslabs-v1.11rc7.img")
+                                  .string();
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "Wild Commander SD image not present: " << image;
+
+    // A scratch copy with both panels on drive 1 (IDE Nemo master)
+    std::vector<uint8_t> bytes(FileHelper::GetFileSize(image));
+    ASSERT_EQ(FileHelper::ReadFileToBuffer(image, bytes.data(), bytes.size()), bytes.size());
+    const std::string from = "DRV=0;";
+    int patched = 0;
+    for (size_t i = 0; i + from.size() <= bytes.size(); i++)
+    {
+        if (std::memcmp(bytes.data() + i, from.data(), from.size()) == 0)
+        {
+            bytes[i + 4] = '1';
+            patched++;
+        }
+    }
+    ASSERT_EQ(patched, 2) << "wc.ini: [LPANEL] and [RPANEL] DRV";
+    const std::string disk = TestPathHelper::GetUniqueTestScratchPath("tsconf-wc-ide.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(disk, bytes.data(), bytes.size()));
+
+    MediaSource source;
+    source.path = disk;
+    InsertOptions options;
+    options.access = AccessMode::Session;
+    options.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.master", source, options).Ok());
+
+    // Setup: "Reset to" -> BD boot.$c (as BOOT-3), "Boot Device" SD -> IDE Nemo M
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return SetupMenuShown() && InSetupKeyLoop(); }, 150);
+    ASSERT_TRUE(SetupMenuShown());
+    auto down = [&](int count) {
+        for (int i = 0; i < count; i++)
+        {
+            _context->pKeyboard->PressKey(ZXKEY_CAPS_SHIFT);
+            _context->pKeyboard->PressKey(ZXKEY_6);
+            _emulator->RunNFrames(3, true);
+            _context->pKeyboard->ReleaseKey(ZXKEY_6);
+            _context->pKeyboard->ReleaseKey(ZXKEY_CAPS_SHIFT);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return InSetupKeyLoop(); }, 50, 1);
+        }
+    };
+    down(3);  // Reset to
+    for (int press = 0; press < 3; press++)
+        TapEnter();
+    down(4);  // bank, CS Reset to, bank, Boot Device
+    TapEnter();
+
+    _emulator->Reset();
+    const TsConfState& ts = _decoder->GetState();
+    auto panelsOnIde = [&] {
+        if ((ts.regs[TsConfReg::VConfig] & 0x03) != 0x03)
+            return false;
+        bool title = false, file = false, drive = false;
+        for (uint8_t row = 0; row < 30; row++)
+        {
+            const std::string text = TextRow(ts.regs[TsConfReg::VPage], row);
+            title = title || text.find("Wild Commander") != std::string::npos;
+            file = file || text.find("boot.$c") != std::string::npos;
+            drive = drive || text.find("1:\\") != std::string::npos;
+        }
+        return title && file && drive;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), panelsOnIde, 600);
+    EXPECT_TRUE(panelsOnIde()) << "WC on drive 1: (IDE Nemo master) listing the disk's root; pc=" << std::hex << Cpu().pc;
+    std::error_code ec;
+    std::filesystem::remove(disk, ec);
 }

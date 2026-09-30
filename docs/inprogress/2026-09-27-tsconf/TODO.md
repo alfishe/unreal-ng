@@ -105,7 +105,10 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Review of the plan's "Open" notes (2026-09-30): INT-6, CLK-2, ENG-1
   tested; INT-8, TSU-8, DMA-15 were done; MRG-1 and the paging latches are
   covered by MEM / P7F and `/state/tsconf`
-- [ ] Open: BOOT-4 (IDE fixture), IDE-5; a `TsConfVideoMapper` for #42;
+- [x] BOOT-4, IDE-5 (2026-09-30, branch `tsconf-ide`); the PS/2 keyboard
+  (the AVR as the PS/2 sink, TTD `EvoPs2`) - Wild Commander reads keys only
+  there; notes in [boot-and-storage-notes.md](boot-and-storage-notes.md)
+- [ ] Open: a `TsConfVideoMapper` for #42;
   TSU-6; VDAC curves; TIM-5; the 1.1x speed target; DBG-3 and TS docks with
   the model-first debugger
 - [x] Speed TS-O1..O3 (2026-09-30, branch `tsconf-perf`): span renderer +
