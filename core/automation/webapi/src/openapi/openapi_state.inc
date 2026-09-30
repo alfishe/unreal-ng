@@ -160,6 +160,22 @@
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["200"]["description"] = "IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["responses"]["404"]["description"] = "No IDE board on this machine";
 
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["summary"] = "Get TS-Conf machine state";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["tags"].append("Machine State");
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["description"] =
+        "The TS-Conf machine (model TSL): memory (MEM_CONFIG decoded, the four window pages, LCK128 mode, lock48, DOS, "
+        "virtual TR-DOS, cache, the FM window), video (V_CONFIG decoded: mode ZX / 16C / 256C / TXT, geometry, NOGFX / "
+        "NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and active sprite count; the raster "
+        "line the engine is on with its latched registers and DRAM use), interrupts (mask, pending sources, frame "
+        "position), DMA (busy, task, live byte addresses, block counters), the CPU clock and the SD card. 404 on other "
+        "machines.";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["200"]["description"] = "TS-Conf machine state";
+    paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
+
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["description"] =

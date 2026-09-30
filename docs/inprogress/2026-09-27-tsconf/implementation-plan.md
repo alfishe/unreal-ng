@@ -357,6 +357,37 @@ clears (with a frame cap).
 > their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
 > methods; do them first in this phase or move them into phase 5.
 
+**Storage built 2026-09-30 (branch `tsconf-phase6`, step 6a).**
+- SD: the decoder owns `SdCardSpi` + `ZControllerSpi` and registers the
+  media manager's `sd.zc` slot (card detect / write protect through `EvoAvr`
+  register C); the SPI DMA shares the Z-Controller as the board's SPI master
+  does - a DMA read is pipelined like `IN #57` (the previous exchange's byte,
+  then a new exchange sending #FF: `spi_stb` is the start strobe, [V] top.v).
+  TTD: the shared `EvoSdCard` blob (15), now built from the card and the
+  controller instead of the ATM3 decoder.
+- Virtual TR-DOS: the VG93 is selected only outside vdos and for a real
+  drive; #FF drive bits always latch; the trap starts vdos at the next M1, a
+  VG93 register access ends it ([V] zports.v:638-651). State `vgDrive`,
+  `preVdos` in `TsConfState`.
+- Nemo IDE: `[HDD] IdeStall` (0 = bypass) with `IdeAdapter::LastAccessReachedDrive`
+  (+1 / +2 / +3 T at 3.5 / 7 / 14 MHz); DMA 0x3 / 0xB end to end.
+- Tests `tsconfstorage_test.cpp` (SPI-1, SD-0 on TS-Conf, the SPI DMA sector
+  read, VDOS-1, VDOS-2, IDE-4, DMA-15) and `tsconfslot_test.cpp` (SLOT-1).
+**SPG built (step 6b).** `LoaderSPG` (`loaders/snapshot/loaderspg.*`): v1.0 and
+v1.1 (the ancestor refused 1.1), parse and depack first, then commit to a
+TS-Conf machine; `ZxDepack::MegaLz / Hrust` (`zxdepackers.*`, a bounds-checked
+port of lvd's mhmt depackers). Wired into `Emulator::LoadSnapshot` / the
+in-memory path, the supported-extension list, the Qt dialog and file manager,
+the GDB server and MCP. Test programs from the TS-Conf SDK in
+`testdata/machines/tsconf/spg` (public domain, README there); every compressed
+block was compared byte for byte with the mhmt reference depacker (26 blocks).
+Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
+(v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
+example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
+the pager / resident addresses and the v1.1 picture; v0.x refused.
+Open in phase 6: BOOT-3 / BOOT-4 (TS-BIOS booting an SD folder / IDE image),
+IDE-5.
+
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |
@@ -383,6 +414,14 @@ clears (with a frame cap).
 | IDE-1 | `[HDD] Scheme=NEMO-DIVIDE` (D2): the decoder reaches the IDE registers through `TryIdePortIn/Out`; DMA 0x3 / 0xB move whole words through `GetIdeAdapter().DmaReadWord/DmaWriteWord` (IDENTIFY sector lands in RAM; a written sector reads back) |
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
+
+**Step 7a built 2026-09-30 (branch `tsconf-phase7`):** **DBG-1** -
+`DeviceState::TsConf` (built in `platforms/tsconf/tsconfdevicestate.cpp`) on
+every surface: WebAPI `GET /state/tsconf` (+ OpenAPI), CLI `state tsconf`,
+Lua / Python `tsconf_state()`, MCP `inspect_state` aspect `tsconf`; the
+interface docs updated; test `tsconfdevicestate_test.cpp`. AGENTS.md lists `TSL`
+as creatable; recipe `.recipe/machines/tsconf.md`. Open: SND-1…3, DBG-2 / DBG-3,
+AUTO-1 (the MCP machine resource, screen mode names per geometry), TTD-5, Qt docks.
 
 | ID | Asserts |
 |:--|:--|

@@ -4,7 +4,8 @@
 
 #include <vector>
 
-#include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
 
 namespace ttd
 {
@@ -24,12 +25,12 @@ size_t TTDEvoSdCard::TTDStateSize() const
 
 void TTDEvoSdCard::TTDSaveState(uint8_t* dst) const
 {
-    const ZControllerSpi::State& zc = _decoder.GetZController().GetState();
+    const ZControllerSpi::State& zc = _controller.GetState();
     dst[0] = kVersion;
     dst[1] = zc.csN;
     dst[2] = zc.rxLatch;
     dst[3] = 0;
-    _decoder.GetSdCard().saveState(dst + kHeader);
+    _card.saveState(dst + kHeader);
 }
 
 void TTDEvoSdCard::TTDLoadState(const uint8_t* src)
@@ -37,11 +38,11 @@ void TTDEvoSdCard::TTDLoadState(const uint8_t* src)
     if (src[0] != kVersion)
         return;
     // The card first: SetState re-announces the chip select to it
-    _decoder.GetSdCard().loadState(src + kHeader);
+    _card.loadState(src + kHeader);
     ZControllerSpi::State zc;
     zc.csN = src[1];
     zc.rxLatch = src[2];
-    _decoder.GetZController().SetState(zc);
+    _controller.SetState(zc);
 }
 
 uint64_t TTDEvoSdCard::TTDHashState() const

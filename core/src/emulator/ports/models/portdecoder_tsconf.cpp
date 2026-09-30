@@ -6,8 +6,11 @@
 
 #include <cstring>
 
+#include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/tsconf/ttdtsconfstate.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
@@ -19,6 +22,23 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 {
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
+    // SD card: the Z-Controller registers and the DMA share the board's SPI
+    // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the
+    // media manager's rule)
+    _zc.SetDevice(&_sdCard);
+    _dma.SetSpi([this](bool read, uint8_t out) -> uint8_t {
+        if (read)
+            return _zc.ReadData();
+        _zc.WriteData(out);
+        return 0xFF;
+    });
+    _sdCard.setWriteListener([this](uint64_t) {
+        if (_context->pMediaManager)
+            _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
+    });
+    if (_context->pMediaManager)
+        _context->pMediaManager->RegisterSlot(_sdSlot);
+
     // Core creates TsConfMemory for this model; the windows are mapped from our state
     _tsMemory = dynamic_cast<TsConfMemory*>(_memory);
     if (_tsMemory)
@@ -29,6 +49,9 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
+    if (_context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
     Core* core = _context->pCore;
     if (core)
     {
@@ -103,6 +126,7 @@ void PortDecoder_TSConf::reset()
     _ts.eff7 = 0;
     _ts.dos = 0;
     _ts.vdos = 0;
+    _ts.preVdos = 0;
     _ts.lock48 = 0;
     _ts.opcodeLatch128 = 0;
 
@@ -126,6 +150,10 @@ void PortDecoder_TSConf::reset()
 
     if (_screen)
         _screen->SetBorderColor(COLOR_WHITE);
+
+    // The card and its session writes survive a reset; the controller
+    // deselects it ([V] zports.v: SPI chip selects reset to 1)
+    _zc.Reset();
 
     ApplyState();
 }
@@ -230,7 +258,10 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
 {
     // The Nemo IDE decodes first (technical-design §3.11)
     if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+    {
+        ApplyIdeStall();
         return ideValue;
+    }
 
     uint8_t result = 0xFF;
     const PortArm arm = ClassifyPort(port);
@@ -262,7 +293,7 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             result = (port & 0x4000) ? PeripheralPortIn(PORT_FFFD) : 0xFF;
             break;
         case PortArm::Fdc:
-            result = PeripheralPortIn(static_cast<uint16_t>(port & 0x00FF));
+            result = FdcAccess(static_cast<uint8_t>(port), /*isWrite*/ false, 0);
             break;
         case PortArm::Joystick:
             // Kempston joystick outside DOS; no joystick model is attached (as ATM3)
@@ -279,13 +310,17 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             break;
         }
         case PortArm::SdConfig:
-            // Constant "card present, writable" ([V] zports.v:460-465)
+            // Constant "card present, writable" ([V] zports.v:460-465); the
+            // real detect / write-protect switches are in AVR register C
             result = 0x00;
             break;
         case PortArm::SdData:
+            CatchUpEngine();  // a running SPI DMA owns the master up to now
+            result = _zc.ReadData();
+            break;
         case PortArm::ComPort:
         case PortArm::Paging7FFD:
-            // SD card (phase 6) and COM port (not emulated) read #FF; #7FFD is write-only
+            // COM port (not emulated) reads #FF; #7FFD is write-only
             result = 0xFF;
             break;
         case PortArm::Covox:
@@ -310,7 +345,10 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     if (TryIdePortOut(port, value, pc))
+    {
+        ApplyIdeStall();
         return;
+    }
 
     const PortArm arm = ClassifyPort(port);
 
@@ -345,17 +383,24 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             DispatchSelfDecodingOut(port, value);
             break;
         case PortArm::Fdc:
-            PeripheralPortOut(static_cast<uint16_t>(port & 0x00FF), value);
+            FdcAccess(static_cast<uint8_t>(port), /*isWrite*/ true, value);
             break;
         case PortArm::Gluk:
             DecodeF7Out(port, value);
             break;
+        case PortArm::SdData:
+            CatchUpEngine();
+            _zc.WriteData(value);
+            break;
+        case PortArm::SdConfig:
+            // [1] SD /CS; [2] FT812, [3] SD2, [4] ESP chip selects are not fitted
+            CatchUpEngine();
+            _zc.WriteConfig(value);
+            break;
         case PortArm::Joystick:
         case PortArm::Mouse:
-        case PortArm::SdData:
-        case PortArm::SdConfig:
         case PortArm::ComPort:
-            // No write side emulated yet (SD: phase 6); swallowed, never reaches the ZX-Bus
+            // No write side; swallowed, never reaches the ZX-Bus
             break;
         case PortArm::ZxBus:
         default:
@@ -515,6 +560,49 @@ void PortDecoder_TSConf::Write7FFD(uint8_t value)
 
 /// endregion </Registers>
 
+/// region <Beta-128 and the virtual TR-DOS (hardware-spec §8.2)>
+
+/// One cycle on #1F/#3F/#5F/#7F (VG93) or #FF (system register), reached while
+/// DOS || VG_OPEN ([V] zports.v:638-651):
+/// - the VG93 is selected only outside vdos and when the latched drive is not
+///   virtual (FDD_VIRT bit); the drive select bits of a #FF write latch always;
+/// - vdos starts at the next M1 after any such access in DOS to a virtual
+///   drive, and ends at once on a VG93 register access (not #FF) inside vdos.
+/// The virtual drive is Z80 code in RAM page #FF (placed by the BIOS); the
+/// emulator only swaps it in
+uint8_t PortDecoder_TSConf::FdcAccess(uint8_t port, bool isWrite, uint8_t value)
+{
+    const bool systemPort = port == 0xFF;
+    const bool virtualDrive = (_ts.regs[TsConfReg::FddVirt] >> (_ts.vgDrive & 0x03)) & 1;
+    const bool chipSelected = !_ts.vdos && !virtualDrive;
+
+    uint8_t result = 0xFF;  // an unselected VG93 leaves the bus floating
+    if (chipSelected)
+    {
+        if (isWrite)
+            PeripheralPortOut(port, value);
+        else
+            result = PeripheralPortIn(port);
+    }
+    if (isWrite && systemPort)
+        _ts.vgDrive = value & 0x03;
+
+    if (_ts.dos && !_ts.vdos && virtualDrive)
+    {
+        _ts.preVdos = 1;
+        RefreshM1Hook();
+    }
+    else if (_ts.vdos && !systemPort)
+    {
+        _ts.vdos = 0;
+        UpdateBanks();
+        RefreshM1Hook();
+    }
+    return result;
+}
+
+/// endregion </Beta-128>
+
 /// region <Gluk CMOS and #EFF7 (hardware-spec §9)>
 
 /// Reachable when (EFF7[7] || DOS) && (!DOS || vdos): not from the TR-DOS ROM,
@@ -576,7 +664,7 @@ void PortDecoder_TSConf::RefreshM1Hook()
 
     const uint8_t memConfig = _ts.MemConfig();
     const bool trapArmed = !(memConfig & TsConfMemConfig::W0NoMap) && (memConfig & TsConfMemConfig::Rom128);
-    const bool needed = _ts.Lck128() == TsConfLck128::Auto || trapArmed || _ts.dos;
+    const bool needed = _ts.Lck128() == TsConfLck128::Auto || trapArmed || _ts.dos || _ts.preVdos;
 
     Z80* z80 = core->GetZ80();
     if (needed)
@@ -591,6 +679,14 @@ void PortDecoder_TSConf::RefreshM1Hook()
 ///   off: fetch at >= #4000, not while vdos
 void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
 {
+    // A trapped FDC access enters vdos at the next M1 ([V] zmem.v pre_vdos)
+    if (_ts.preVdos)
+    {
+        _ts.preVdos = 0;
+        _ts.vdos = 1;
+        UpdateBanks();
+    }
+
     if (!_ts.dos)
     {
         const uint8_t memConfig = _ts.MemConfig();
@@ -762,7 +858,7 @@ void PortDecoder_TSConf::ApplyVideoPage()
 
 std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::Ds12887};
+    return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTDSerializers() const
@@ -770,8 +866,137 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     auto* self = const_cast<PortDecoder_TSConf*>(this);
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDTsConfState>(*self));
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_evoAvr));
     return serializers;
 }
 
 /// endregion </TTD>
+
+/// region <SD card>
+
+namespace
+{
+    AccessMode AccessOf(SdCardSpi::WriteMode mode)
+    {
+        switch (mode)
+        {
+            case SdCardSpi::WriteMode::Persist: return AccessMode::WriteThrough;
+            case SdCardSpi::WriteMode::Off: return AccessMode::ReadOnly;
+            default: return AccessMode::Session;
+        }
+    }
+}  // namespace
+
+bool PortDecoder_TSConf::InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
+        const MediaResult result = manager->Insert(_sdSlot.Descriptor().id, source, options);
+        if (!result.Ok())
+            MLOGWARNING("PortDecoder_TSConf: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
+        return result.Ok();
+    }
+    const bool inserted = _sdCard.open(path, mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+bool PortDecoder_TSConf::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.type = MediaSourceType::Blank;
+        InsertOptions options;
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
+        auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
+        return manager->Insert(_sdSlot.Descriptor().id, std::move(medium), options).Ok();
+    }
+    const bool inserted = _sdCard.insert(std::move(media), mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+void PortDecoder_TSConf::EjectSdCard()
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;
+        manager->Eject(_sdSlot.Descriptor().id, options);
+        return;
+    }
+    _sdCard.close();
+    UpdateSdStatus();
+}
+
+void PortDecoder_TSConf::UpdateSdStatus()
+{
+    // AVR register C: b3 card present, b2 write-protected (the slot's switches)
+    _evoAvr.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+}
+
+PortDecoder_TSConf::SdSlot::SdSlot(PortDecoder_TSConf& owner) : _owner(owner)
+{
+    _descriptor.id = "sd.zc";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (Z-Controller)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.defaultFs = FatType::Fat16;
+    _descriptor.hasCardDetect = true;          // AVR register C bit 3
+    _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "the SD card of TS-BIOS (Boot Device: SD Z-contr) and Wild Commander";
+}
+
+void PortDecoder_TSConf::SdSlot::Attach(Medium& medium)
+{
+    _owner._sdCard.attach(*medium.Block());
+    _owner._sdCard.select(_owner._zc.IsSelected());
+    _owner.UpdateSdStatus();
+}
+
+void PortDecoder_TSConf::SdSlot::Detach()
+{
+    _owner._sdCard.detach();
+    _owner.UpdateSdStatus();
+}
+
+bool PortDecoder_TSConf::SdSlot::IsBusy() const
+{
+    return _owner._sdCard.busy();
+}
+
+void PortDecoder_TSConf::SdSlot::SetWriteProtectSwitch(bool on)
+{
+    _owner._sdWriteProtect = on;
+    _owner.UpdateSdStatus();
+}
+
+/// endregion </SD card>
+
+/// A CPU access that reached the drive (a register or the data word, not a
+/// latch) freezes the Z80 for the IDE bus cycle: +1 / +2 / +3 T at 3.5 / 7 /
+/// 14 MHz ([V] zclock.v ide_stall; hardware-spec §8.3). Off by default
+void PortDecoder_TSConf::ApplyIdeStall()
+{
+    static constexpr uint8_t kStall[4] = {1, 2, 3, 3};
+    if (!_context->config.ide_stall || !GetIdeAdapter().LastAccessReachedDrive())
+        return;
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->AddWaitStates(kStall[_ts.regs[TsConfReg::SysConfig] & 0x03]);
+}

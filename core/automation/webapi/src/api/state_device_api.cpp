@@ -260,6 +260,29 @@ void EmulatorAPI::getStateIdeActive(const HttpRequestPtr& req, std::function<voi
     getStateIde(req, std::move(callback), emulator->GetId());
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/tsconf - the TS-Conf machine (DeviceState::TsConf); 404 on other machines
+void EmulatorAPI::getStateTsConf(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::TsConf(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateTsConfActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/tsconf"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateTsConf(req, std::move(callback), emulator->GetId());
+}
+
 
 /// region <CMOS clock>
 

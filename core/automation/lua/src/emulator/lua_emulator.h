@@ -2131,6 +2131,12 @@ public:
             return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
         });
 
+        lua.set_function("tsconf_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::TsConf(emulator->GetContext()));
+        });
+
         // CMOS clock: the same report and cell access every interface uses
         // (DeviceState::Rtc, RtcAccess). Cells are numbered as the guest numbers them
         lua.set_function("rtc_state", [this](sol::this_state s) -> sol::object {

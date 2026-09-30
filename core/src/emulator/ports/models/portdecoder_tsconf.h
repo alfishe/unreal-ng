@@ -1,7 +1,13 @@
 #pragma once
 #include "stdafx.h"
 
+#include <memory>
+#include <string>
+
 #include "emulator/cpu/z80.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
@@ -28,7 +34,7 @@ class TsConfMemory;
 ///   #1F..#FF  Beta-128 while DOS or FDD_VIRT[7]; #1F is the joystick otherwise (§8.2)
 ///   #xxF7     A8 = 1: #EFF7 and the Gluk CMOS (EvoAvr, the board's AVR) (§9)
 ///   #xxDF     Kempston mouse
-///   #57/#77   SD card SPI (phase 6: no card yet)
+///   #57/#77   SD card SPI: the Z-Controller registers (media slot "sd.zc")
 ///   #xxEF     COM port / ZiFi (not emulated: reads #FF)
 ///   Nemo IDE  checked first (TryIdePortIn / TryIdePortOut)
 ///
@@ -81,6 +87,18 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
+    /// region <SD card (hardware-spec §8.1)>
+    /// The card is the media manager's slot "sd.zc", as on the ZX-Evo
+    /// BaseConf; it outlives Core::Reset() like the board's
+    SdCardSpi& GetSdCard() { return _sdCard; }
+    ZControllerSpi& GetZController() { return _zc; }
+    /// Insert an image file / a medium through the media manager (directly
+    /// when the context has none: bare decoder tests)
+    bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    void EjectSdCard();
+    /// endregion
 
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
@@ -152,6 +170,9 @@ private:
     };
 
     void RefreshM1Hook();
+    void UpdateSdStatus();
+    /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
+    void ApplyIdeStall();
     void InstallInterrupts();
     void RefreshFmWindow();
     void RefreshCache();
@@ -159,6 +180,7 @@ private:
     void ApplyVideoPage();
     void UpdateBanks();
 
+    uint8_t FdcAccess(uint8_t port, bool isWrite, uint8_t value);
     uint8_t DecodeF7In(uint16_t port);
     void DecodeF7Out(uint16_t port, uint8_t value);
     bool CmosReachable() const;
@@ -180,4 +202,25 @@ private:
     // contents survive Core::Reset() like the battery
     EvoAvr _evoAvr;
     bool _nvramLoaded = false;
+
+    /// The "sd.zc" media slot
+    class SdSlot : public IMediaSlot
+    {
+    public:
+        explicit SdSlot(PortDecoder_TSConf& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+        SlotDescriptor _descriptor;
+    };
+
+    SdCardSpi _sdCard;
+    ZControllerSpi _zc;
+    SdSlot _sdSlot{*this};
+    bool _sdWriteProtect = false;
 };

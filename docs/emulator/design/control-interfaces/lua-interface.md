@@ -341,6 +341,7 @@ msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register bank
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)

@@ -1,6 +1,6 @@
 # Recipe: Load / Save Snapshots
 
-Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file, save states back out,
+Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file (or run a TS-Conf `.spg` program), save states back out,
 and verify a snapshot actually took effect.
 
 An `.rzx` input recording loads the same way and then plays: see
@@ -84,6 +84,12 @@ Snapshot format notes:
   lists what each block did (applied, approximated, ignored). Saving picks the
   format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.
+- `.spg` (TS-Conf "Spectrum Prog", the TS-Conf SDK's program format, v1.0 and
+  v1.1) — loads on the TS-Conf machine only (`TSL`; any other model refuses it
+  with "an SPG program runs on the TS-Conf machine"). Blocks may be MegaLZ or
+  Hrust packed. The machine is reset, BASIC-48 ROM at `#0000`, RAM 5 / 2 / the
+  header's page, the header's PC, SP, CPU clock and INT enable; a corrupt file
+  changes nothing. Load only - there is no SPG writer.
 
 ### Save a snapshot
 
