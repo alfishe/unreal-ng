@@ -284,17 +284,17 @@ TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 // resources
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ResourcesList_ContainsSevenResources)
+TEST_F(McpDispatcher_Test, ResourcesList_ContainsEightResources)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/list"));
 
     const Json::Value& resources = response["result"]["resources"];
     ASSERT_TRUE(resources.isArray());
-    EXPECT_EQ(resources.size(), 7u);
+    EXPECT_EQ(resources.size(), 8u);
 
     const char* expectedUris[] = {"unreal://keyboard-layout", "unreal://basic-reference", "unreal://z80-isa",
                                   "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state",
-                                  "unreal://machine/profi"};
+                                  "unreal://machine/profi",   "unreal://machine/tsconf"};
     for (const char* uri : expectedUris)
     {
         bool found = false;
@@ -324,6 +324,20 @@ TEST_F(McpDispatcher_Test, ResourcesRead_MachineProfi_DescribesPortsAndVideoMode
     const std::string text = contents[0]["text"].asString();
     EXPECT_NE(text.find("#DFFD"), std::string::npos);
     EXPECT_NE(text.find("PROFIHR"), std::string::npos);
+}
+
+TEST_F(McpDispatcher_Test, ResourcesRead_MachineTsConf_DescribesRegistersAndSpg)
+{
+    Json::Value params;
+    params["uri"] = "unreal://machine/tsconf";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/read", params));
+
+    const Json::Value& contents = response["result"]["contents"];
+    ASSERT_TRUE(contents.isArray());
+    ASSERT_EQ(contents.size(), 1u);
+    const std::string text = contents[0]["text"].asString();
+    EXPECT_NE(text.find("#nnAF"), std::string::npos);
+    EXPECT_NE(text.find(".spg"), std::string::npos);
 }
 
 TEST_F(McpDispatcher_Test, ResourcesRead_EmbeddedResource_ReturnsMarkdownText)

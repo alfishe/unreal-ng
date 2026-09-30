@@ -31,6 +31,24 @@ LoaderSPG::LoaderSPG(EmulatorContext* context, std::vector<uint8_t> data, const 
 {
 }
 
+bool LoaderSPG::Probe(const std::string& path, std::string& error)
+{
+    std::vector<uint8_t> header(kHeaderSize, 0);
+    if (!FileHelper::FileExists(path) || FileHelper::ReadFileToBuffer(path, header.data(), header.size()) != header.size() ||
+        std::memcmp(header.data() + 0x20, "SpectrumProg", 12) != 0)
+    {
+        error = "not an SPG file: " + path;
+        return false;
+    }
+    if ((header[0x2C] & 0xF0) != 0x10)
+    {
+        error = "SPG version " + std::to_string(header[0x2C] >> 4) + "." + std::to_string(header[0x2C] & 0x0F) +
+                " is not supported (1.0 and 1.1 are)";
+        return false;
+    }
+    return true;
+}
+
 bool LoaderSPG::Parse(const std::vector<uint8_t>& data, Image& image, std::string& error)
 {
     if (data.size() < kHeaderSize || std::memcmp(data.data() + 0x20, "SpectrumProg", 12) != 0)

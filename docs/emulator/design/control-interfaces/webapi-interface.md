@@ -1318,6 +1318,8 @@ POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
 
+A file that needs another machine switches the model before it loads: a TS-Conf program (`.spg`) on a Pentagon becomes a TS-Conf (`TSL`, 4096K) instance with the media carried over, then the program loads there. The answer then has `"model_switched": true`, `"model": "TSL"`, `emulator_id` (the new instance; use it from now on) and `previous_emulator_id`. With `"switch_model": false` (body field, or a query parameter with an upload) the load is refused with 409, `required_model` and `required_ram_kb`. MCP `load_software`, CLI `snapshot load`, Lua `snapshot_load` and Python `unreal.snapshot_load` share this rule, and so does opening the file in unreal-qt (menu, drag and drop, command line).
+
 ### RZX Playback
 
 Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recorded fetch counts until the end, a desync (strict mode) or `rzx/stop`. The machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).

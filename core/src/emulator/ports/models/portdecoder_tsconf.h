@@ -127,6 +127,13 @@ public:
     /// Classify one I/O cycle
     PortArm ClassifyPort(uint16_t port) const;
 
+    /// Port trace internal codes: each PortArm, and #100 + n for TS register n
+    /// (#xxAF) with the register's name
+    static constexpr uint16_t kTraceRegisterBase = 0x100;
+    std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
+    /// The register's name (V_CONFIG, PAGE3, DMA_CTRL ...), empty when not built
+    static const char* RegisterName(uint8_t reg);
+
     /// `OUT (reg << 8 | #AF), value` - also reached through the FM window (§2.4)
     void WriteRegister(uint8_t reg, uint8_t value);
     /// `IN (reg << 8 | #AF)`: only 0x00, 0x12, 0x13, 0x27 are readable (§3.2)
@@ -181,6 +188,10 @@ private:
     void UpdateBanks();
 
     uint8_t FdcAccess(uint8_t port, bool isWrite, uint8_t value);
+    /// #FE write: border, tape out, and the beeper bit into the sound DAC
+    void PortFeOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// The board's one 8-bit sound DAC (hardware-spec §7, [V] sound.v)
+    void DacWrite(uint8_t value);
     uint8_t DecodeF7In(uint16_t port);
     void DecodeF7Out(uint16_t port, uint8_t value);
     bool CmosReachable() const;

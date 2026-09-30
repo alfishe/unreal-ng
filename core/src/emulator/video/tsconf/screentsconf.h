@@ -42,6 +42,9 @@ public:
 
     /// Mode and window from TsConfState (V_CONFIG)
     void InitRaster() override;
+    /// The TS mode with its geometry ("TS16 320x200"), its pixel format and
+    /// the RAM pages it reads (V_PAGE based)
+    ScreenState DescribeScreenState() const override;
     void SetVideoMode(VideoModeEnum mode) override;
     void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
     void SetBorderColor(uint8_t color) override;

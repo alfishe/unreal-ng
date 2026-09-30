@@ -11,6 +11,9 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/io/tape/tape.h"
+#include "emulator/sound/covox.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
@@ -161,7 +164,7 @@ void PortDecoder_TSConf::reset()
 void PortDecoder_TSConf::ApplyState()
 {
     if (_memory)
-        _dma.Attach(_memory->RAMBase(), &GetIdeAdapter());
+        _dma.Attach(_memory->RAMBase(), &GetIdeAdapter(), _memory);
     InstallInterrupts();
     _engine.RebuildLineTable();
     UpdateBanks();
@@ -213,10 +216,92 @@ PortDecoder_TSConf::PortArm PortDecoder_TSConf::ClassifyPort(uint16_t port) cons
     }
 }
 
+const char* PortDecoder_TSConf::RegisterName(uint8_t reg)
+{
+    switch (reg)
+    {
+        case 0x00: return "V_CONFIG";
+        case 0x01: return "V_PAGE";
+        case 0x02: return "G_X_OFFS_L";
+        case 0x03: return "G_X_OFFS_H";
+        case 0x04: return "G_Y_OFFS_L";
+        case 0x05: return "G_Y_OFFS_H";
+        case 0x06: return "T_CONFIG";
+        case 0x07: return "PAL_SEL";
+        case 0x0F: return "BORDER";
+        case 0x10: return "PAGE0";
+        case 0x11: return "PAGE1";
+        case 0x12: return "PAGE2";
+        case 0x13: return "PAGE3";
+        case 0x15: return "FMAPS";
+        case 0x16: return "T_MAP_PAGE";
+        case 0x17: return "T0_G_PAGE";
+        case 0x18: return "T1_G_PAGE";
+        case 0x19: return "SG_PAGE";
+        case 0x1A: return "DMAS_AL";
+        case 0x1B: return "DMAS_AH";
+        case 0x1C: return "DMAS_AX";
+        case 0x1D: return "DMAD_AL";
+        case 0x1E: return "DMAD_AH";
+        case 0x1F: return "DMAD_AX";
+        case 0x20: return "SYS_CONFIG";
+        case 0x21: return "MEM_CONFIG";
+        case 0x22: return "HS_INT";
+        case 0x23: return "VS_INT_L";
+        case 0x24: return "VS_INT_H";
+        case 0x25: return "DMA_WPD";
+        case 0x26: return "DMA_LEN";
+        case 0x27: return "DMA_CTRL";
+        case 0x28: return "DMA_NUM";
+        case 0x29: return "FDD_VIRT";
+        case 0x2A: return "INT_MASK";
+        case 0x2B: return "CACHE_CONFIG";
+        case 0x2D: return "DMA_WPA";
+        case 0x40: return "T0_X_OFFS_L";
+        case 0x41: return "T0_X_OFFS_H";
+        case 0x42: return "T0_Y_OFFS_L";
+        case 0x43: return "T0_Y_OFFS_H";
+        case 0x44: return "T1_X_OFFS_L";
+        case 0x45: return "T1_X_OFFS_H";
+        case 0x46: return "T1_Y_OFFS_L";
+        case 0x47: return "T1_Y_OFFS_H";
+        default: return "";
+    }
+}
+
+std::vector<PortTraceCodeName> PortDecoder_TSConf::GetPortTraceCodeTable() const
+{
+    std::vector<PortTraceCodeName> table = {
+        {static_cast<uint16_t>(PortArm::ZxBus), "ZxBus"},
+        {static_cast<uint16_t>(PortArm::TsRegister), "TsRegister"},
+        {static_cast<uint16_t>(PortArm::Paging7FFD), "Paging7FFD"},
+        {static_cast<uint16_t>(PortArm::Ay), "Ay"},
+        {static_cast<uint16_t>(PortArm::KeyboardBorder), "KeyboardBorder"},
+        {static_cast<uint16_t>(PortArm::Covox), "SoundDac"},
+        {static_cast<uint16_t>(PortArm::Fdc), "Fdc"},
+        {static_cast<uint16_t>(PortArm::Joystick), "Joystick"},
+        {static_cast<uint16_t>(PortArm::Gluk), "Gluk"},
+        {static_cast<uint16_t>(PortArm::Mouse), "Mouse"},
+        {static_cast<uint16_t>(PortArm::SdData), "SdData"},
+        {static_cast<uint16_t>(PortArm::SdConfig), "SdConfig"},
+        {static_cast<uint16_t>(PortArm::ComPort), "ComPort"},
+    };
+    for (uint32_t reg = 0; reg < 0x100; reg++)
+    {
+        const char* name = RegisterName(static_cast<uint8_t>(reg));
+        if (name[0])
+            table.push_back({static_cast<uint16_t>(kTraceRegisterBase + reg), name});
+    }
+    return table;
+}
+
 PortDecodeDisposition PortDecoder_TSConf::TraceDisposition(PortArm arm, uint16_t port)
 {
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    // The internal code: the register for #xxAF, else the decode arm
+    disp.internalCode = arm == PortArm::TsRegister ? static_cast<uint16_t>(kTraceRegisterBase + (port >> 8))
+                                                   : static_cast<uint16_t>(arm);
     switch (arm)
     {
         case PortArm::TsRegister:
@@ -373,14 +458,13 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             break;
         case PortArm::KeyboardBorder:
             FlushVideo();
-            Default_Port_FE_Out(port, value, pc);
+            PortFeOut(port, value, pc);
             // BORDER = {PAL_SEL[3:0], 0, D[2:0]} with the latched PAL_SEL (§3.4)
             _ts.regs[TsConfReg::Border] =
                 static_cast<uint8_t>(((_ts.regs[TsConfReg::PalSel] & 0x0F) << 4) | (value & 0x07));
             break;
         case PortArm::Covox:
-            // The shared beeper / Covox DAC (§7): the self-decoding Covox device owns it
-            DispatchSelfDecodingOut(port, value);
+            DacWrite(value);  // any #xxFB, never gated ([V] zports.v:490)
             break;
         case PortArm::Fdc:
             FdcAccess(static_cast<uint8_t>(port), /*isWrite*/ true, value);
@@ -1000,3 +1084,40 @@ void PortDecoder_TSConf::ApplyIdeStall()
     if (_context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->AddWaitStates(kStall[_ts.regs[TsConfReg::SysConfig] & 0x03]);
 }
+
+/// region <Sound DAC (hardware-spec §7)>
+
+/// TS-Conf has no separate beeper: one 8-bit register feeds the board's PWM
+/// output ([V] sound/sound.v). #FB writes the byte; an #FE write sets it to
+/// #FF / #00 from bit 4 (bit 3 when the AVR's "beeper mux" setting selects the
+/// tape out - off by default, not modeled); the last write wins. The shared
+/// Covox device is that register here (all four channels: a mono DAC, its
+/// state already travels in TTD), so the generic beeper stays silent on this
+/// machine. Without a Covox in the config the beeper plays bit 4 instead
+void PortDecoder_TSConf::DacWrite(uint8_t value)
+{
+    Covox* covox = _soundManager ? _soundManager->getCovox() : nullptr;
+    if (!covox)
+        return;
+    for (uint16_t channel : {Covox::PORT_LEFT_A, Covox::PORT_LEFT_B, Covox::PORT_RIGHT_A, Covox::PORT_RIGHT_B})
+        covox->portDeviceOutMethod(channel, value);
+}
+
+void PortDecoder_TSConf::PortFeOut(uint16_t port, uint8_t value, uint16_t pc)
+{
+    const bool dac = _soundManager && _soundManager->hasCovox();
+    if (!dac)
+    {
+        Default_Port_FE_Out(port, value, pc);
+        return;
+    }
+
+    // Default_Port_FE_Out without the beeper: border, tape MIC out
+    _context->emulatorState.pFE = value;
+    _context->emulatorState.border_attr = value & 0x07;
+    _tape->handlePortOut(value);
+    _screen->SetBorderColor(value & 0x07);
+    DacWrite((value & 0x10) ? 0xFF : 0x00);
+}
+
+/// endregion </Sound DAC>

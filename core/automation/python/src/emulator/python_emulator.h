@@ -7,6 +7,7 @@
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
+#include <loaders/snapshot/snapshotlauncher.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -416,6 +417,30 @@ namespace PythonBindings
             auto emu = mgr->GetEmulator(selectedId);
             return emu.get();
         }, py::return_value_policy::reference, "Get currently selected emulator");
+
+        // Snapshots by emulator id (default: the selected one). A file that
+        // needs another model (an SPG: TS-Conf) switches it: emulator_id is the new one
+        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel) -> py::dict {
+            SnapshotLoadRequest request;
+            request.emulatorId = python_rzx::ResolveId(emulatorId);
+            request.path = path;
+            request.switchModel = switchModel;
+            if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(request.emulatorId))
+            {
+                if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+                    throw std::runtime_error(refusal);
+            }
+            const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+            py::dict d;
+            d["ok"] = result.ok;
+            d["message"] = result.message;
+            d["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            d["model_switched"] = result.modelSwitched;
+            d["previous_emulator_id"] = result.previousEmulatorId;
+            d["required_model"] = result.requiredModel;
+            return d;
+        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true);
 
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
@@ -1235,8 +1260,17 @@ namespace PythonBindings
             .def("snapshot_load", [](Emulator& self, const std::string& path) -> bool {
                 if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
-                return self.LoadSnapshot(path);
-            }, "Load snapshot file (RuntimeError while TTD records)", py::arg("path"))
+                // This object is one machine: a file for another model (an SPG:
+                // TS-Conf) is refused; unreal.snapshot_load switches the model
+                SnapshotLoadRequest request;
+                request.emulatorId = self.GetId();
+                request.path = path;
+                request.switchModel = false;
+                const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+                if (result.modelMismatch)
+                    throw std::runtime_error(result.message + " (unreal.snapshot_load switches it)");
+                return result.ok;
+            }, "Load snapshot file (RuntimeError while TTD records or when the file needs another model)", py::arg("path"))
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
             .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")

@@ -70,6 +70,67 @@ void ScreenTSConf::InitRaster()
         SetVideoMode(mode);
 }
 
+ScreenState ScreenTSConf::DescribeScreenState() const
+{
+    ScreenState s = Screen::DescribeScreenState();
+    auto* decoder = _context ? dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return s;
+
+    const TsConfState& ts = decoder->GetState();
+    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint8_t vPage = ts.regs[TsConfReg::VPage];
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
+    const uint8_t mode = vConfig & 0x03;
+
+    s.width = win.w;
+    s.height = win.h;
+    s.videoMode = GetVideoModeName(ModeOf(vConfig)) + " " + std::to_string(win.w) + "x" + std::to_string(win.h);
+    s.activeRamPage = vPage;
+    s.activeScreen = vPage == 7 ? 1 : 0;
+    s.activeRamPages.clear();
+
+    VideoModeInfo f;
+    switch (mode)
+    {
+        case 0:  // ZX layout at V_PAGE
+            f = GetVideoModeInfo(M_ZX48);
+            s.activeRamPages = {vPage};
+            break;
+        case 1:  // 16C: 512 x 512 at 4 bpp = 128 KB from V_PAGE & #F8
+            f.colorDepth = "4 bpp (16 colors per pixel, PAL_SEL bank)";
+            f.colors = 16;
+            f.bpp = 4;
+            f.attributeSize = "per pixel";
+            f.pixelDataBytes = 512u * 512u / 2u;
+            f.totalBytes = f.pixelDataBytes;
+            for (uint16_t p = 0; p < 8; p++)
+                s.activeRamPages.push_back(static_cast<uint16_t>((vPage & 0xF8) + p));
+            break;
+        case 2:  // 256C: 512 x 512 at 8 bpp = 256 KB from V_PAGE & #F0
+            f.colorDepth = "8 bpp (256 colors per pixel)";
+            f.colors = 256;
+            f.bpp = 8;
+            f.attributeSize = "per pixel";
+            f.pixelDataBytes = 512u * 512u;
+            f.totalBytes = f.pixelDataBytes;
+            for (uint16_t p = 0; p < 16; p++)
+                s.activeRamPages.push_back(static_cast<uint16_t>((vPage & 0xF0) + p));
+            break;
+        default:  // TXT: character / attribute rows at V_PAGE, font at V_PAGE ^ 1, 14 MHz pixels
+            f.colorDepth = "text, 16-color ink/paper per character (PAL_SEL bank)";
+            f.colors = 16;
+            f.attributeSize = "8x8 pixels (1 character cell)";
+            f.textColumns = static_cast<uint8_t>(win.w * 2 / 8);
+            f.textRows = static_cast<uint8_t>(win.h / 8);
+            s.width = static_cast<uint16_t>(win.w * 2);
+            s.activeRamPages = {vPage, static_cast<uint16_t>(vPage ^ 1)};
+            break;
+    }
+    s.format = f;
+    return s;
+}
+
 void ScreenTSConf::SetVideoMode(VideoModeEnum mode)
 {
     // The raster state and framebuffer come from the descriptor; the ZX

@@ -5,6 +5,7 @@
 
 struct TsConfState;
 class IdeAdapter;
+class Memory;
 class TsConfInterrupts;
 
 /// TS-Conf DMA engine (hardware-spec §6, [V] common/dma.v).
@@ -36,8 +37,14 @@ public:
 
     TsConfDma(TsConfState& state, TsConfInterrupts& interrupts) : _ts(state), _interrupts(interrupts) {}
 
-    /// Memory and devices the DMA reaches
-    void Attach(uint8_t* ram, IdeAdapter* ide) { _ram = ram; _ide = ide; }
+    /// Memory and devices the DMA reaches. `memory` learns every RAM page a
+    /// DMA write touches (TTD's dirty pages: the writes bypass the CPU path)
+    void Attach(uint8_t* ram, IdeAdapter* ide, Memory* memory = nullptr)
+    {
+        _ram = ram;
+        _ide = ide;
+        _memory = memory;
+    }
     /// The board's SPI master, shared with the CPU's #57 ([V] top.v:1056-1062,
     /// spi.v): a DMA read takes the byte of the PREVIOUS exchange and starts a
     /// new one sending #FF (as IN #57 does); a DMA write starts an exchange
@@ -87,6 +94,7 @@ private:
     TsConfInterrupts& _interrupts;
     uint8_t* _ram = nullptr;
     IdeAdapter* _ide = nullptr;
+    Memory* _memory = nullptr;
     std::function<uint8_t(bool, uint8_t)> _spi;
     bool _blt2 = kBuildHasBlt2;
 };

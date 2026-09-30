@@ -35,7 +35,9 @@ inspect_state {"aspects":["tsconf"]}
 #     interrupts, DMA, CPU clock, SD card
 
 load_software {"path":".../program.spg"}              # a TS-Conf SDK program
-#   → SPG v1.0 / v1.1, MegaLZ / Hrust blocks; TS-Conf only
+#   → SPG v1.0 / v1.1, MegaLZ / Hrust blocks. On another model the machine is
+#     switched to TSL first (media kept): the answer's emulator_id is the NEW
+#     instance - use it from then on (model_switched, previous_emulator_id)
 
 capture_media {"type":"screenshot"}                  # 720x288 for every TS mode
 ```
@@ -47,13 +49,32 @@ EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json'
       -d '{"model":"TSL"}' | jq -r .id)
 curl -s "$BASE/emulator/$EMU/state/tsconf" | jq '.video, .memory.pages'
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \
-     -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}'
+     -d '{"path":"testdata/machines/tsconf/spg/sprites.spg"}' | jq .emulator_id
+# (from any model: switches to TSL; "switch_model":false refuses with 409)
 # The SD card is the media manager's slot "sd.zc" (image or host folder):
 curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: application/json' \
      -d '{"path":"/path/to/sdcard-or-folder"}'
 ```
 
-CLI: `state tsconf`; Lua / Python: `tsconf_state()`.
+CLI: `state tsconf`, `snapshot load x.spg [--no-switch]`; Lua / Python:
+`tsconf_state()`, `snapshot_load` / `unreal.snapshot_load`. unreal-qt: Machine
+menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
+
+### Wild Commander (the TS-Conf shell) from the SD card
+
+```bash
+# The packages and ready SD images are untracked test data:
+#   testdata/machines/tsconf/wildcommander/ (README there)
+curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: application/json' \
+     -d '{"path":"testdata/machines/tsconf/wildcommander/sd-images/wc-tslabs-v1.11rc7.img"}'
+# Blank CMOS -> TS-BIOS Setup. Select "Reset to" (3 x CAPS SHIFT+6) and press
+# ENTER 3 x (ROM #00 -> ROM #04 -> RAM #F8 -> BD boot.$c); ENTER saves NVRAM.
+# Then reset: WC (text mode) comes up with both panels on the card's root.
+curl -s -X POST "$BASE/emulator/$EMU/reset"
+```
+
+The CMOS has no NVRAM file in the ts-conf config: every new instance starts
+with blank NVRAM (Setup first).
 
 ### What works / what doesn't
 
@@ -66,7 +87,9 @@ CLI: `state tsconf`; Lua / Python: `tsconf_state()`.
 | TSU: tile layers with the prefetch ring, sprites (layers, LEAP, 85 cap), mixing (NOTSU / NOGFX / GFXOVR, 360-wide window) | implemented |
 | DMA: RAM copy, BLT1, fill, CRAM, SFILE, SPI, IDE; the per-line DRAM budget (video, TSU, CPU reads); TSU starvation | implemented (CPU writes are not counted in the budget) |
 | SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS | implemented |
-| SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used) |
-| TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17 | implemented |
-| VDAC colour curves, TSU render timing within the line, cache / I/O wait states at 14 MHz | not yet (implementation-plan phases 7-8) |
+| SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
+| Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
+| Wild Commander from SD (TS-BIOS "BD boot.$c") | works (test BOOT-3) |
+| TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
+| VDAC color curves, TSU render timing within the line, cache / I/O wait states at 14 MHz | not yet (implementation-plan phase 8) |
 | Video debug mapper (`/video/*` pixel ↔ memory) for TS modes, TS-specific Qt docks | not yet |

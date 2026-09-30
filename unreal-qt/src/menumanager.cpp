@@ -126,7 +126,7 @@ void MenuManager::createFileMenu()
     // Open Snapshot
     _openSnapshotAction = _fileMenu->addAction(tr("Open &Snapshot..."));
     _openSnapshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx)"));
+    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) or a TS-Conf program (.spg)"));
     connect(_openSnapshotAction, &QAction::triggered, this, &MenuManager::openSnapshotRequested);
 
     // Open Tape
@@ -656,7 +656,8 @@ void MenuManager::createMachineMenu()
                           // docs/inprogress/2026-09-07-scorpion-zs256-clone)
         MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
                           // quadrant switching + #7EFD window; same design doc)
-        MM_PROFI          // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
+        MM_PROFI,         // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
+        MM_TSL            // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
     };
 
     for (const auto& model : models)

@@ -69,6 +69,7 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
 #include "loaders/rzx/rzxreader.h"
+#include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
@@ -1252,7 +1253,7 @@ void MainWindow::toggleEmulatorStartStop()
         // from this app was labelled with.
         auto newEmulator = _nextEmulatorModel.empty()
             ? _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo)
-            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, 128, LoggerLevel::LogInfo);
+            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, _nextEmulatorRamKb, LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
@@ -2132,9 +2133,17 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
         // A disk to autostart needs TR-DOS: with no emulator at all the default machine is Pentagon 128K
         if (category == FileDisk && _autostartDisks && !mountOnly)
             _nextEmulatorModel = "Pentagon";
+        // An SPG program starts TS-Conf directly (every entry - menus, drag and drop,
+        // command line, automation's open request - comes through here)
+        if (category == FileSnapshot && filePath.toLower().endsWith(".spg"))
+        {
+            _nextEmulatorModel = LoaderSPG::kModel;
+            _nextEmulatorRamKb = LoaderSPG::kRamKb;
+        }
 
         toggleEmulatorStartStop();
         _nextEmulatorModel.clear();
+        _nextEmulatorRamKb = 128;
     }
 
     switch (category)
@@ -2172,6 +2181,22 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
                             << "- replacing the running"
                             << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
                     if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
+                        break;
+                }
+            }
+            // An SPG is a TS-Conf program: another model is replaced by TS-Conf first
+            if (_emulator && filePath.toLower().endsWith(".spg"))
+            {
+                std::string error;
+                if (!LoaderSPG::Probe(file, error))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
+                    break;
+                }
+                if (_emulator->GetContext()->config.mem_model != MM_TSL)
+                {
+                    qInfo() << "SPG program - replacing the running machine by TS-Conf";
+                    if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
                         break;
                 }
             }

@@ -385,8 +385,12 @@ Tests `loaderspg_test.cpp`: SPG-1/2 (header, pinned depacked hashes), SPG-3
 (v1.1, refusals), the SDK empty project runs to its `DI : HALT`, the sprite
 example's 16C frame pinned (EVO SDK sprites are software sprites). Not used:
 the pager / resident addresses and the v1.1 picture; v0.x refused.
-Open in phase 6: BOOT-3 / BOOT-4 (TS-BIOS booting an SD folder / IDE image),
-IDE-5.
+**BOOT-3 done in step 7b (2026-09-30):** TS-BIOS boots Wild Commander v1.11
+RC7 from a FAT32 SD image (`tsconf_boot_test.cpp`, skipped without the image:
+the Wild Commander packages and SD images live untracked in
+`testdata/machines/tsconf/wildcommander/`, README there). Still open:
+BOOT-4 (no IDE fixture yet) and IDE-5 (the shared `AtaChannel` blob 17 is
+covered by the IDE suites; a TS-Conf mid-DMA capture is not).
 
 | ID | Asserts |
 |:--|:--|
@@ -420,8 +424,33 @@ IDE-5.
 every surface: WebAPI `GET /state/tsconf` (+ OpenAPI), CLI `state tsconf`,
 Lua / Python `tsconf_state()`, MCP `inspect_state` aspect `tsconf`; the
 interface docs updated; test `tsconfdevicestate_test.cpp`. AGENTS.md lists `TSL`
-as creatable; recipe `.recipe/machines/tsconf.md`. Open: SND-1…3, DBG-2 / DBG-3,
-AUTO-1 (the MCP machine resource, screen mode names per geometry), TTD-5, Qt docks.
+as creatable; recipe `.recipe/machines/tsconf.md`.
+
+**Step 7b built 2026-09-30 (branch `tsconf-phase7b`):**
+- **SND-1…3** (`tsconfsound_test.cpp`): the board's one 8-bit DAC emulated as
+  the hardware has it: `#FB` and the `#FE` beeper bit both write the shared
+  Covox device (all four channels; the beeper writes 0 / 255, the last write
+  wins, as sound.v), the ts-conf ini enables `CovoxFB`; the classic beeper
+  path stays silent on TS-Conf. AY decode by A15, GS / ZXM ports reach the bus.
+- **DBG-2**: the port trace names TS registers (`#01AF` → `V_PAGE`), the Covox
+  arm is "SoundDac".
+- **AUTO-1**: `Screen::DescribeScreenState()` (virtual; ScreenTSConf reports
+  `TS16 320x200` etc. with the active pages per mode); the MCP resource
+  `unreal://machine/tsconf`.
+- **SPG everywhere, one rule**: `SnapshotLauncher` (core) switches the machine
+  to TS-Conf before an `.spg` loads (ModelSwitch, media kept) - WebAPI
+  `snapshot/load` (+ `switch_model`), MCP `load_software`, CLI `snapshot load
+  [--no-switch]`, Lua `snapshot_load`, Python `unreal.snapshot_load`; the Qt
+  window does the same for every way a file arrives (menus, drag and drop,
+  command line, automation's open request) and starts TS-Conf directly when no
+  machine runs. Test SPG-4. TS-Conf is in the Qt Machine menu.
+- **TTD-5**: fixture `testdata/machines/tsconf/ttd/sprites.ttd` (the SDK sprite
+  example: a DMA copy every frame) in `TTD_Corpus_Test`, which now runs each
+  fixture on its recorded model. It found a real bug: DMA writes bypassed TTD's
+  dirty pages (fixed: `TsConfDma` marks the page through `Memory`). No program
+  at hand uses the TSU or line INTs; the fixture covers DMA + 16C.
+- **DBG-3 and the Qt docks** are deferred to the model-first debugger
+  (docs/inprogress/2026-09-28-debugger-model), which replaces per-machine docks.
 
 | ID | Asserts |
 |:--|:--|
