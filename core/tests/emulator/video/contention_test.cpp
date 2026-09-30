@@ -168,6 +168,21 @@ protected:
 
 /// region <ZX-Spectrum 48K>
 
+/// fusetest's floating bus test (docs/inprogress/2026-09-30-fusetest-core-defects/research.md claim 1): `IN A,(C)`
+/// with BC = #40FF, its fetch at INT + 43046. The port's high byte is in contended memory, so the ULA holds the
+/// cycle after IORQ too (C:1 four times: 0, 6, 0, 6 waits) and the CPU takes the byte at the end of T3, at 43069:
+/// line 128, 62 T into it, the attribute of column 15 (#5A0F). At IORQ (43055) the bus is idle
+TEST_F(Contention48K_Test, FloatingBusOfAContendedHighBytePortIsSampledAfterTheWaits)
+{
+    _context->config.floatbus = 1;
+    _memory->DirectWriteToZ80Memory(0x5A0E, 0x35);
+    _memory->DirectWriteToZ80Memory(0x5A0F, 0x53);
+    _z80->bc = 0x40FF;
+    _z80->a = 0;
+    EXPECT_EQ(runAt(0x8000, { 0xED, 0x78 }, _firstContendedT - 14335 + 43046), 12u + 12u) << "the two 6-T waits";
+    EXPECT_EQ(_z80->a, 0x53) << "the attribute on the bus at the end of T3";
+}
+
 TEST_F(Contention48K_Test, MachineGeometry)
 {
     const ContentionRaster& raster = _ula->GetRaster();
@@ -332,6 +347,18 @@ TEST_F(Contention48K_Test, M1_CodeAndDataInContendedRam)
 /// endregion </ZX-Spectrum 48K>
 
 /// region <ZX-Spectrum 128K>
+
+/// The same on the 128K (fusetest at INT + 43584): T3 at 43607, line 128, 62 T in, the attribute at #5A0F
+TEST_F(Contention128K_Test, FloatingBusOfAContendedHighBytePortIsSampledAfterTheWaits)
+{
+    _context->config.floatbus = 1;
+    _memory->DirectWriteToZ80Memory(0x5A0E, 0x35);
+    _memory->DirectWriteToZ80Memory(0x5A0F, 0x53);
+    _z80->bc = 0x40FF;
+    _z80->a = 0;
+    EXPECT_EQ(runAt(0x8000, { 0xED, 0x78 }, _firstContendedT - 14361 + 43584), 12u + 12u) << "the two 6-T waits";
+    EXPECT_EQ(_z80->a, 0x53) << "the attribute on the bus at the end of T3";
+}
 
 TEST_F(Contention128K_Test, MachineGeometry)
 {

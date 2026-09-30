@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "_helpers/soundcardscope.h"
 
 #include <vector>
 
@@ -164,3 +165,17 @@ TEST_F(Spectrum3Paging_Test, OnlyThePlus3HasTheFloppyController)
     EXPECT_EQ(other->GetContext()->pUPD765, nullptr);
     EmulatorManager::GetInstance()->RemoveEmulator(other->GetUUID());
 }
+
+/// The +2A / +3 gate array lets the AY answer a read of #BFFD like #FFFD: the selected register
+/// (docs/inprogress/2026-09-30-fusetest-core-defects/research.md claim 3; fusetest "0xbffd read")
+TEST_F(Spectrum3Paging_Test, BFFDReadReadsTheSelectedAyRegister)
+{
+    SoundCardScope ay(TestSound::TurboSound);  // the machine's AY (the test runner leaves the slot empty)
+    Create(RM_128);
+    Out(0xFFFD, 11);
+    Out(0xBFFD, 0x55);
+    EXPECT_EQ(In(0xFFFD), 0x55);
+    EXPECT_EQ(In(0xBFFD), 0x55);
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded()) << "the AY drives the bus: no floating bus";
+}
+

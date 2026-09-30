@@ -290,6 +290,17 @@ struct Z80DecodedOperation
 
 /// Instruction-boundary state: what the CPU carries from one instruction
 /// boundary to the next beyond the registers, i.e. what decides the next
+/// Model-side latch clocked by I/O read cycles (see Z80::readCycleLatch): the 128K's paging latch, whose
+/// decode does not tell a read from a write (docs/inprogress/2026-09-30-fusetest-core-defects)
+class IReadCycleLatch
+{
+public:
+    virtual ~IReadCycleLatch() = default;
+    /// An IN has finished: `value` is the byte the CPU took from the data bus at the end of the cycle (a
+    /// device's, or the floating bus)
+    virtual void OnReadCycle(uint16_t port, uint8_t value) = 0;
+};
+
 /// Model-side observer of Z80 M1 cycles (see Z80::machineM1Hook)
 class IMachineM1Hook
 {
@@ -532,6 +543,7 @@ public:
     /// Second part of the I/O contention: the waits after IORQ (C:3, or C:1 x3), before the handler's
     /// remaining 3 T. `ioWait` is the first part, added for the debug access counter
     void IoWaitAfterIorq(uint16_t port, uint8_t ioWait);
+    uint8_t FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait);  // cold: an undecoded port with a contended high byte
 
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus
@@ -543,8 +555,13 @@ public:
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
 
     /// Optional pre-decode port hook (see IPortInterceptor); null on stock
-    /// machines - one pointer check per IN/OUT
+    /// machines - one pointer check per IN/OUT. Set it with SetPortInterceptor
     IPortInterceptor* portInterceptor = nullptr;
+    void SetPortInterceptor(IPortInterceptor* interceptor)
+    {
+        portInterceptor = interceptor;
+        UpdateInResultHooks();
+    }
 
     /// Test-only instruction-fetch trace hook (null in production - a single
     /// empty-function check per instruction when unset). Fired once per
@@ -559,6 +576,27 @@ public:
     /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
     /// Null unless a model decoder needs it: one pointer test per M1
     IMachineM1Hook* machineM1Hook = nullptr;
+
+    /// Machine latch clocked by I/O read cycles whose port matches its decode ((port & mask) == match), after
+    /// the CPU has taken the byte. Null unless a model decoder needs it (the 128K / +2 paging latch). The end of
+    /// an IN tests one flag for it and the port interceptor together (_inResultHooks)
+    IReadCycleLatch* readCycleLatch = nullptr;
+    uint16_t readCycleLatchMask = 0;
+    uint16_t readCycleLatchMatch = 0;
+    void SetReadCycleLatch(IReadCycleLatch* latch, uint16_t mask = 0, uint16_t match = 0)
+    {
+        readCycleLatch = latch;
+        readCycleLatchMask = mask;
+        readCycleLatchMatch = match;
+        UpdateInResultHooks();
+    }
+
+private:
+    /// Something observes the result of an IN (the port interceptor, a read-cycle latch)
+    bool _inResultHooks = false;
+    void UpdateInResultHooks() { _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr; }
+
+public:
 
 private:
     IInterruptSource* _interruptSource = nullptr;

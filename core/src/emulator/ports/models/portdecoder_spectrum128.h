@@ -4,6 +4,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
@@ -18,7 +19,7 @@
 // RAM bank 5 resides at $4000-$7FFF always
 // RAM bank 2 resides at $8000-$BFFF always
 // Any RAM bank may reside at $C000-$FFFF
-class PortDecoder_Spectrum128 : public PortDecoder
+class PortDecoder_Spectrum128 : public PortDecoder, public IReadCycleLatch
 {
     /// region <Fields>
 protected:
@@ -39,12 +40,22 @@ public:
 
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
+
+    /// The paging latch is clocked by read cycles too: the 128K's decode (a HAL10H8, BANK = IORQ & (RD | WR)
+    /// & !A15 & !A1, service manual and a PAL readout) does not tell them apart, so an IN from the #7FFD decode
+    /// writes the byte on the bus - the floating bus, #FF in the border - into the 74LS174, bits 0-5 only. The
+    /// lock bit stops it like a write (the diode clamps the latch clock). The +2A / +3 gate array decodes
+    /// writes only. Z80::readCycleLatch, docs/inprogress/2026-09-30-fusetest-core-defects/research.md claim 2
+    void OnReadCycle(uint16_t port, uint8_t value) override;
     /// endregion </Interface methods>
 
     /// region <Helper methods>
 public:
     bool IsPort_FE(uint16_t port);
 
+    /// The #7FFD decode: A15 = 0, A2 = 1, A1 = 0 (A2 keeps the SounDrive ports #F1 / #F9 out)
+    static constexpr uint16_t kPort7FFDMask = 0b1000'0000'0000'0110;
+    static constexpr uint16_t kPort7FFDMatch = 0b0000'0000'0000'0100;
     bool IsPort_7FFD(uint16_t port);
 
     bool IsPort_BFFD(uint16_t port);

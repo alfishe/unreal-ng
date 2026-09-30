@@ -184,7 +184,7 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
 
         // The ZX-Poly platform ports sit in front of the model's port decoder
         _interceptors[m] = std::make_unique<ZXPolyPortInterceptor>(*this, m);
-        context->pCore->GetZ80()->portInterceptor = _interceptors[m].get();
+        context->pCore->GetZ80()->SetPortInterceptor(_interceptors[m].get());
     }
 
     // Time travel of one member would split it from the others: ZX-Poly
@@ -258,7 +258,7 @@ void ZXPolyGroup::Destroy()
                 context->pTimeTravelManager->SetLiveInputInterceptor(nullptr);
             if (EmulatorContext* context = GetContext(m); context && context->pCore)
             {
-                context->pCore->GetZ80()->portInterceptor = nullptr;
+                context->pCore->GetZ80()->SetPortInterceptor(nullptr);
                 context->pCore->GetZ80()->busTraceHook = nullptr;
                 context->pCore->GetZ80()->m1TraceHook = nullptr;
             }
