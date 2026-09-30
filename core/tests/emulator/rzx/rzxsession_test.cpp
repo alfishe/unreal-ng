@@ -7,6 +7,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -17,6 +19,7 @@
 
 #include "_helpers/rzxtestbuilder.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
@@ -595,6 +598,92 @@ TEST_F(RzxSession_Test, RecordingWithoutSnapshotIsRefused)
 
 /// endregion </Locks and model>
 
+/// region <Seek>
+
+/// Forward: the state after seeking to frame 300 equals SkoolKit's after 300
+/// frames; back from 400: the keyframe at 250 plus 50 frames give the same.
+/// About 25 M T-states (a real recording is the point)
+TEST_F(RzxSession_Test, SeekForwardAndBackMatchesStraightPlay)
+{
+    Create("48K");
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("archive/ericfloaters.rzx")).Ok());
+    std::string error;
+    ASSERT_TRUE(_emulator->SeekRzx(300, &error)) << error;
+    EXPECT_EQ(Player().FramesDone(), 300u);
+    CompareWith(Fixture("oracle/ericfloaters-300.z80"), "48K");
+
+    ASSERT_TRUE(_emulator->SeekRzx(400, &error)) << error;
+    ASSERT_TRUE(_emulator->SeekRzx(300, &error)) << error;
+    EXPECT_EQ(Player().FramesDone(), 300u);
+    CompareWith(Fixture("oracle/ericfloaters-300.z80"), "48K");
+
+    const SessionStatus status = _emulator->GetRzxStatus();
+    EXPECT_EQ(status.player.keyframes, 2u) << "frame 0 and the boundary of frame 250";
+    EXPECT_EQ(status.player.desyncs, 0u);
+}
+
+/// After the end the playback can be sought back into and plays on
+TEST_F(RzxSession_Test, SeekBackAfterTheEndResumesThePlayback)
+{
+    Create("48K");
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("external/ericfloaters-ext.rzx")).Ok());
+    std::string error;
+    ASSERT_TRUE(_emulator->SeekRzx(300, &error)) << error;
+    EXPECT_FALSE(_emulator->IsRzxPlaying()) << "300 of 300 frames: finished";
+
+    ASSERT_TRUE(_emulator->SeekRzx(0, &error)) << error;
+    EXPECT_TRUE(_emulator->IsRzxPlaying());
+    EXPECT_EQ(Player().FramesDone(), 0u);
+    ASSERT_TRUE(_emulator->SeekRzx(300, &error)) << error;
+    CompareWith(Fixture("oracle/ericfloaters-300.z80"), "48K");
+}
+
+/// The player owns the keyframes: a stop frees them, a new recording starts
+/// with its own frame 0 only
+TEST_F(RzxSession_Test, KeyframesAreFreedOnStopAndReplacedByANewPlayback)
+{
+    Create("48K");
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("archive/garfield.rzx")).Ok());
+    ASSERT_TRUE(_emulator->SeekRzx(600));
+    EXPECT_EQ(_emulator->GetRzxStatus().player.keyframes, 3u);
+    EXPECT_GT(_emulator->GetRzxStatus().player.keyframeBytes, 0u);
+
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("archive/garfield.rzx")).Ok());
+    EXPECT_EQ(_emulator->GetRzxStatus().player.keyframes, 1u);
+
+    _emulator->StopRzx();
+    EXPECT_EQ(_emulator->GetRzxStatus().player.keyframes, 0u);
+    EXPECT_EQ(_emulator->GetRzxStatus().player.keyframeBytes, 0u);
+    std::string error;
+    EXPECT_FALSE(_emulator->SeekRzx(10, &error)) << "nothing to seek back from after a stop";
+}
+
+/// A long seek runs on another thread while the status stays readable (the
+/// GUI polls it during a seek: it must never wait for the seek to finish).
+/// 1000 frames of play (about 0.5 s): long enough to be seen under way
+TEST_F(RzxSession_Test, StatusStaysReadableDuringASeek)
+{
+    Create("48K");
+    ASSERT_TRUE(_emulator->PlayRzx(Fixture("archive/ericfloaters.rzx")).Ok());
+    std::atomic<bool> done{false};
+    std::thread seek([this, &done]() {
+        _emulator->SeekRzx(1000);
+        done = true;
+    });
+    // Frames advance under the running seek, read without blocking
+    const bool progressed = TestWait::For([this, &done]() {
+        const uint64_t frame = _emulator->GetRzxStatus().player.frame;
+        return done || (frame > 0 && frame < 1000);
+    });
+    const bool sawProgress = !done;
+    seek.join();
+    EXPECT_TRUE(progressed);
+    EXPECT_TRUE(sawProgress) << "the status read waited for the whole seek";
+    EXPECT_EQ(_emulator->GetRzxStatus().player.frame, 1000u);
+}
+
+/// endregion </Seek>
+
 /// region <Real recordings>
 
 struct ArchiveCase
@@ -730,6 +819,22 @@ TEST_F(RzxSession_Test, BitHlFlagsComeFromMemptrAfterAJump)
     PlayToFrame(1);
     EXPECT_EQ(_cpu->f, 0x74);
     CompareWith(Fixture("cases/memptr-bit-hl-1.z80"), "PLUS2");
+}
+
+/// Every place that opens snapshots opens a recording: LoadSnapshot plays it
+/// on this machine (no model switch) and the extension is listed
+TEST_F(RzxSession_Test, LoadSnapshotOfARecordingPlaysIt)
+{
+    Create("48K");
+    const std::vector<std::string> extensions = Emulator::SupportedSnapshotExtensions();
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "rzx"), extensions.end());
+
+    ASSERT_TRUE(_emulator->LoadSnapshot(Fixture("archive/garfield.rzx")));
+    EXPECT_TRUE(_emulator->IsRzxPlaying());
+    EXPECT_EQ(_context->coreState.snapshotFilePath.find("garfield.rzx") != std::string::npos, true)
+        << "the recording, not its temporary start snapshot, is the loaded file";
+
+    EXPECT_FALSE(_emulator->LoadSnapshot(Fixture("archive/greenberet.rzx"))) << "a 128K recording on a 48K";
 }
 
 /// One recording against one expected state (tools/verification/rzx):

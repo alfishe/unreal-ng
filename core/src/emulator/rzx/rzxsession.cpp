@@ -16,6 +16,9 @@
 #include "emulator/notifications.h"
 #include "loaders/rzx/rzxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
+#include "loaders/snapshot/szx/szxreader.h"
+#include "loaders/snapshot/szx/szxwriter.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 namespace rzx
 {
@@ -278,6 +281,7 @@ namespace rzx
             return result;
         }
         player->onEnded = [this](RzxPlayer& ended) { OnPlayerEnded(ended); };
+        player->captureState = [this](std::vector<uint8_t>& out) { return CaptureState(out); };
 
         // The first frame starts where the recording's T-state counter says,
         // counted from its INT (Fuse writes it; SkoolKit ignores it). The CPU
@@ -300,6 +304,9 @@ namespace rzx
             _options = options;
         }
         Install();
+
+        // Keyframe 0: the start, so a seek can always go back to the beginning
+        _player->MaybeKeyframe();
 
         PostEvent("started", _file->hasCreator ? "recorded with " + _file->creator.name : std::string());
         if (wasRunning)
@@ -358,13 +365,114 @@ namespace rzx
         {
             std::lock_guard<std::mutex> lock(_mutex);
             if (_player)
+            {
                 _player->Stop(reason);
+                _player->ClearKeyframes();  // no seeking after a stop: the memory goes
+            }
         }
         Uninstall();
         PostEvent("stopped", reason);
         if (wasRunning)
             _emulator.Resume(false);
         return true;
+    }
+
+    bool RzxSession::CaptureState(std::vector<uint8_t>& out)
+    {
+        szx::Stage stage;
+        std::string error;
+        if (!LoaderSZX::Capture(_context, stage, error))
+            return false;
+        out = SzxWriter::Write(stage);
+        return !out.empty();
+    }
+
+    bool RzxSession::RestoreState(const std::vector<uint8_t>& state, std::string& error)
+    {
+        szx::Stage stage;
+        if (!SzxReader::Parse(state.data(), state.size(), stage, error))
+            return false;
+        szx::Report report;
+        if (!LoaderSZX::Commit(_context, stage, report, error))
+            return false;
+        _emulator.RestartFrame();
+        return true;
+    }
+
+    bool RzxSession::Seek(uint64_t frame, std::string& error)
+    {
+        RzxPlayer* player = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            player = _player.get();
+        }
+        if (!player)
+        {
+            error = "no RZX recording played on this machine";
+            return false;
+        }
+        const uint64_t total = player->Status().totalFrames;
+        if (frame > total)
+            frame = total;
+
+        // A seek back replaces the machine like a snapshot load: refused while
+        // TTD records, a stopped TTD history is dropped
+        ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+        if (ttd && ttd->IsRecording())
+        {
+            error = "a TTD recording runs: stop it before seeking the RZX playback";
+            return false;
+        }
+
+        const bool wasRunning = _emulator.IsRunning() && !_emulator.IsPaused();
+        if (wasRunning)
+        {
+            _emulator.Pause(false);
+            _emulator.WaitForPauseConfirmation(1000);
+        }
+
+        bool ok = true;
+        const bool forward = player->IsPlaying() && frame >= player->FramesDone();
+        if (!forward)
+        {
+            // The latest keyframe that leaves frame `frame` to be played: one
+            // taken at a boundary holds the frame before it done but not ended
+            const Keyframe* keyframe = player->Keyframes().AtOrBefore(frame == 0 ? 0 : frame - 1);
+            if (!keyframe)
+            {
+                error = "no keyframe to seek back from (keyframes are off)";
+                ok = false;
+            }
+            else
+            {
+                if (ttd)
+                    ttd->InvalidateSession("rzx-seek");
+                const Keyframe copy = *keyframe;  // the store may thin while playing on
+                Uninstall();
+                ok = RestoreState(copy.state, error) && player->SeekCursor(copy.cursor);
+                if (ok)
+                    Install();
+                else if (error.empty())
+                    error = "the keyframe did not restore";
+            }
+        }
+
+        // Play on to the target (at full speed, on this thread, the machine paused)
+        if (ok && frame > player->FramesDone())
+        {
+            EmulatorContext* context = _context;
+            _emulator.RunUntilCondition(
+                [context, player, frame](const Z80State&) {
+                    return context->rzxPlayer == nullptr || player->FramesDone() >= frame;
+                },
+                0, false);
+        }
+
+        if (ok)
+            PostEvent("seek", "frame " + std::to_string(player->FramesDone()));
+        if (wasRunning)
+            _emulator.Resume(false);
+        return ok;
     }
 
     bool RzxSession::IsActive() const

@@ -2,7 +2,7 @@
 //
 // Tools orchestrate existing WebAPI endpoints over the loopback IApiCaller:
 //   1. emulator_manage    — lifecycle: create/list/start/stop/pause/resume/reset/destroy
-//   2. load_software      — auto-detect .sna/.z80/.szx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
+//   2. load_software      — auto-detect .sna/.z80/.szx/.rzx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
 //   3. control_execution  — stepping/running + breakpoint management
 //   4. inspect_state      — multi-aspect state inspection (registers/memory/disasm/...)
 //   5. type_input         — keyboard: type/tap/press/release/combo/macro
@@ -459,7 +459,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
     registry.Register(
         "load_software",
-        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), tapes (.tap .tzx .spc .sta .ltp .zxt), "
+        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
         "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
@@ -477,14 +477,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx";
+            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "rzx";
             const auto& tapeExtensions = TapeExtensions();
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
@@ -492,7 +492,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
@@ -523,6 +523,25 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                 if (autostart && isDisk)
                 {
                     headers["X-Autostart"] = "true";
+                }
+
+                // An RZX recording plays on the model it needs (the model
+                // switches when this machine is another one: a new target id)
+                if (ext == "rzx")
+                {
+                    if (isLocalFile)
+                    {
+                        ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                                       "Playing RZX " + filename + " (uploaded) from " + id, done);
+                    }
+                    else
+                    {
+                        Json::Value body;
+                        body["path"] = path;
+                        ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
+                                    done);
+                    }
+                    return;
                 }
 
                 if (isSnapshot)
@@ -2926,6 +2945,158 @@ void RegisterTimeTravel(ToolRegistry& registry)
 
 /// endregion </time_travel>
 
+/// region <rzx_playback>
+
+namespace
+{
+
+void RegisterRzxPlayback(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"].append("play");
+    schema["properties"]["action"]["enum"].append("stop");
+    schema["properties"]["action"]["enum"].append("status");
+    schema["properties"]["action"]["enum"].append("seek");
+    schema["properties"]["action"]["description"] =
+        "play a recording, stop playing, report the playback, or seek to a frame";
+    schema["properties"]["frame"]["type"] = "integer";
+    schema["properties"]["frame"]["description"] =
+        "seek: the frame boundary to move to (0 = start); back is fast (keyframes), forward plays on";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "play: the .rzx file (uploaded when it exists on the MCP host)";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["desync_mode"]["type"] = "string";
+    schema["properties"]["desync_mode"]["enum"].append("strict");
+    schema["properties"]["desync_mode"]["enum"].append("tolerant");
+    schema["properties"]["desync_mode"]["description"] =
+        "play: strict (default) stops at the first desync; tolerant counts desyncs and goes on";
+    schema["properties"]["ei_short_frame_blocks_int"]["type"] = "boolean";
+    schema["properties"]["ei_short_frame_blocks_int"]["description"] =
+        "play: a 1-2 fetch frame after EI means the interrupt was blocked (for files that need it)";
+    schema["properties"]["ld_air_parity_quirk"]["type"] = "boolean";
+    schema["properties"]["ld_air_parity_quirk"]["description"] = "play: NMOS LD A,I / LD A,R parity quirk on the frame interrupt";
+    schema["properties"]["ignore_later_snapshots"]["type"] = "boolean";
+    schema["properties"]["ignore_later_snapshots"]["description"] = "play: skip snapshot blocks after the first";
+    schema["properties"]["switch_model"]["type"] = "boolean";
+    schema["properties"]["switch_model"]["default"] = true;
+    schema["properties"]["switch_model"]["description"] =
+        "play: switch to the recording's model (a new emulator id, reported as emulator_id) when this one differs";
+    schema["required"].append("action");
+
+    registry.Register(
+        "rzx_playback",
+        "Play RZX input recordings (RZX Archive game completions and the like): the start snapshot loads, then every "
+        "IN and interrupt follows the recording to its end, and the machine runs live from there. Check progress and "
+        "desyncs with 'status'. A recording made on another model switches the model first: the answer's emulator_id "
+        "is the new target. load_software with an .rzx path does the same as 'play'.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            if (action == "stop")
+            {
+                ResolveAndForward(args, "POST", "/rzx/stop", nullptr, caller, "RZX playback stopped", done);
+                return;
+            }
+            if (action == "status")
+            {
+                TargetResolver::ResolveFromArgs(args, caller, [&caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    caller.Call("GET", Endpoint(idOrError, "/rzx/status"), nullptr,
+                                [done, idOrError](int status, Json::Value body) {
+                                    if (status < 200 || status >= 300)
+                                    {
+                                        done(ToolResult::Error("RZX status failed (HTTP " + std::to_string(status) +
+                                                               "): " + DescribeErrorBody(body)));
+                                        return;
+                                    }
+                                    const std::string summary = body["summary"].asString();
+                                    done(ToolResult::Ok("RZX on " + idOrError + ": " + summary, std::move(body)));
+                                });
+                });
+                return;
+            }
+            if (action == "seek")
+            {
+                if (!args.isMember("frame") || !args["frame"].isIntegral() || args["frame"].asInt64() < 0)
+                {
+                    done(ToolResult::Error("Action 'seek' requires 'frame' (a frame number, 0 = start)"));
+                    return;
+                }
+                Json::Value body;
+                body["frame"] = args["frame"];
+                ResolveAndForward(args, "POST", "/rzx/seek", &body, caller, "RZX playback moved", done);
+                return;
+            }
+            if (action != "play")
+            {
+                done(ToolResult::Error("Unknown action '" + action + "': expected play, stop, status or seek"));
+                return;
+            }
+
+            const std::string path = args["path"].asString();
+            if (path.empty())
+            {
+                done(ToolResult::Error("Action 'play' requires 'path'"));
+                return;
+            }
+            if (args.isMember("desync_mode") && args["desync_mode"].asString() != "strict" &&
+                args["desync_mode"].asString() != "tolerant")
+            {
+                done(ToolResult::Error("'desync_mode' must be 'strict' or 'tolerant'"));
+                return;
+            }
+
+            auto body = std::make_shared<Json::Value>(Json::objectValue);
+            for (const char* key : {"desync_mode", "ei_short_frame_blocks_int", "ld_air_parity_quirk",
+                                    "ignore_later_snapshots", "switch_model"})
+            {
+                if (args.isMember(key))
+                    (*body)[key] = args[key];
+            }
+
+            // A file on the MCP host is uploaded with the options as query parameters
+            auto content = std::make_shared<std::vector<uint8_t>>();
+            const bool isLocalFile = TryReadLocalFile(path, *content);
+            const std::string filename = ExtractFilename(path);
+            TargetResolver::ResolveFromArgs(args, caller, [&caller, done, body, content, isLocalFile, path,
+                                                           filename](bool ok, const std::string& idOrError) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(idOrError));
+                    return;
+                }
+                if (isLocalFile)
+                {
+                    std::string query;
+                    for (const std::string& key : body->getMemberNames())
+                    {
+                        const Json::Value& value = (*body)[key];
+                        query += (query.empty() ? "?" : "&") + key + "=" +
+                                 (value.isBool() ? (value.asBool() ? "true" : "false") : value.asString());
+                    }
+                    std::map<std::string, std::string> headers;
+                    headers["X-Filename"] = filename;
+                    ForwardCallRaw("POST", Endpoint(idOrError, "/rzx/play" + query), *content, headers, caller,
+                                   "Playing RZX " + filename + " (uploaded)", done);
+                    return;
+                }
+                (*body)["path"] = path;
+                ForwardCall("POST", Endpoint(idOrError, "/rzx/play"), body.get(), caller, "Playing RZX " + path, done);
+            });
+        });
+}
+
+} // namespace
+
+/// endregion </rzx_playback>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -2943,6 +3114,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // TD-1 — time_travel: the full TTD surface (session, navigation, reverse
     // search, .ttd files, TD-4 bookmarks, TD-7 coverage index)
     RegisterTimeTravel(*registry);
+
+    // rzx_playback: RZX input recordings (play / stop / status)
+    RegisterRzxPlayback(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

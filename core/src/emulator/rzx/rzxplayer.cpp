@@ -34,6 +34,7 @@ namespace rzx
         : _file(std::move(file)), _options(options), _frame(&kEndFrame)
     {
         _totalFrames = _file ? _file->TotalFrames() : 0;
+        _keyframes.Configure(options.keyframeInterval, options.keyframeBudget);
     }
 
     bool RzxPlayer::Start(std::string& error)
@@ -146,6 +147,49 @@ namespace rzx
         _stopReason = reason;
         _frame = &kEndFrame;
         Publish();
+    }
+
+    void RzxPlayer::MaybeKeyframe()
+    {
+        if (_state != PlayerState::Playing || !captureState || !_keyframes.Due(_framesDone))
+            return;
+        Keyframe keyframe;
+        keyframe.cursor = CurrentCursor();
+        if (captureState(keyframe.state))
+            _keyframes.Add(std::move(keyframe));
+        else
+            _keyframes.Configure(0, 0);  // the machine cannot be captured: no seeking back
+        Publish();
+    }
+
+    bool RzxPlayer::SeekCursor(const Cursor& cursor)
+    {
+        if (!_file || cursor.frame >= _totalFrames)
+            return false;
+
+        // Walk from the start: the frame's block and index, zero-fetch frames
+        // skipped as in play (a cursor is always on a frame with fetches)
+        _state = PlayerState::Playing;
+        _endNotified = false;
+        _stopReason.clear();
+        _orderIndex = 0;
+        _blockNumber = 0;
+        _block = nullptr;
+        _framesDone = 0;
+        if (!NextBlock() || !EnterFrame())
+            return false;
+        while (_framesDone < cursor.frame)
+        {
+            _frameIndex++;
+            _framesDone++;
+            if (!EnterFrame())
+                return false;
+        }
+        _fetches = cursor.fetches;
+        _inPos = cursor.inPos;
+        _keyframes.Rewound(_framesDone);
+        Publish();
+        return true;
     }
 
     void RzxPlayer::NotifyEnded()
@@ -273,6 +317,9 @@ namespace rzx
         status.stopReason = _stopReason;
         status.drift = _drift;
         status.maxDrift = _maxDrift;
+        status.keyframes = _keyframes.Count();
+        status.keyframeBytes = _keyframes.Bytes();
+        status.keyframeInterval = _keyframes.Interval();
 
         std::lock_guard<std::mutex> lock(_statusMutex);
         _published = std::move(status);

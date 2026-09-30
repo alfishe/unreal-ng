@@ -35,6 +35,7 @@ namespace rzx
         switchRequest.stranded = StrandedMedia::Keep;
         switchRequest.beforeRelease = request.beforeRelease;
         const std::string previousId = emulator->GetId();
+        const bool wasRunning = emulator->IsRunning();
         emulator.reset();
         out.emulator.reset();
 
@@ -47,9 +48,12 @@ namespace rzx
         }
 
         out.modelSwitched = true;
+        out.switchedToModel = switchRequest.model;
         out.previousEmulatorId = previousId;
         out.emulator = switched.emulator;
-        out.emulator->Start();
+        // The new machine runs if the old one did (Start() would run the loop on this thread)
+        if (wasRunning)
+            out.emulator->StartAsync();
         out.play = out.emulator->PlayRzx(request.path, request.options);
         return out;
     }
@@ -109,6 +113,8 @@ namespace rzx
                 (status.options.ignoreLaterSnapshots ? ", later snapshots ignored" : "") + "\n";
         text += "Interrupts:" + std::string(" ") + std::to_string(player.interrupts) + ", drift " +
                 std::to_string(player.drift) + " T (max " + std::to_string(player.maxDrift) + " T)\n";
+        text += "Keyframes: " + std::to_string(player.keyframes) + " (" + std::to_string(player.keyframeBytes / 1024) +
+                " KB, every " + std::to_string(player.keyframeInterval) + " frames)\n";
         if (player.desyncs > 0)
         {
             const Desync& d = player.firstDesync;

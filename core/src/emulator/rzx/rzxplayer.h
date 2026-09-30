@@ -25,6 +25,7 @@
 #include <mutex>
 #include <string>
 
+#include "emulator/rzx/rzxkeyframes.h"
 #include "loaders/rzx/rzxformat.h"
 
 namespace rzx
@@ -49,6 +50,10 @@ namespace rzx
         bool ldAirParityQuirk = false;
         /// SkoolKit flag 4: snapshot blocks after the first are skipped
         bool ignoreLaterSnapshots = false;
+        /// Keyframes for seeking back: one every this many frames (0: none)
+        /// within this many bytes (RzxKeyframeStore thins them to fit)
+        uint32_t keyframeInterval = RzxKeyframeStore::kDefaultInterval;
+        size_t keyframeBudget = RzxKeyframeStore::kDefaultBudget;
     };
 
     enum class PlayerState : uint8_t
@@ -93,6 +98,9 @@ namespace rzx
         /// interrupt position (positive: later); max: the largest magnitude seen
         int32_t drift = 0;
         int32_t maxDrift = 0;
+        uint64_t keyframes = 0;       ///< stored for seeking back
+        uint64_t keyframeBytes = 0;
+        uint32_t keyframeInterval = 0;
     };
 
     /// What the CPU does at a frame end
@@ -150,6 +158,29 @@ namespace rzx
 
         /// Stop from outside (the emulation thread, or with the machine paused)
         void Stop(const std::string& reason);
+
+        /// At a frame boundary (before EndFrame): take a keyframe when one is
+        /// due. The machine state comes from captureState (the session)
+        void MaybeKeyframe();
+        std::function<bool(std::vector<uint8_t>& state)> captureState;
+
+        /// Put the cursor where a keyframe was taken and play on from there
+        /// (the caller restored the machine); false past the recording
+        bool SeekCursor(const Cursor& cursor);
+        Cursor CurrentCursor() const
+        {
+            return {_framesDone, _fetches, _inPos};
+        }
+        const RzxKeyframeStore& Keyframes() const
+        {
+            return _keyframes;
+        }
+        /// Free the keyframes (stop, a new recording)
+        void ClearKeyframes()
+        {
+            _keyframes.Clear();
+            Publish();
+        }
 
         bool IsPlaying() const
         {
@@ -220,6 +251,8 @@ namespace rzx
         /// An always-due sentinel for the stopped state: FrameDue() stays
         /// a single compare with no null test
         static const Frame kEndFrame;
+
+        RzxKeyframeStore _keyframes;
 
         mutable std::mutex _statusMutex;
         PlayerStatus _published;

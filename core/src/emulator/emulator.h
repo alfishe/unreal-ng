@@ -112,8 +112,11 @@ protected:
     std::mutex _speedInterceptorMutex;
     std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
 
-    // RZX playback, created on first use; _rzxMutex serializes its commands
+    // RZX playback, created on first use. _rzxMutex serializes the commands
+    // (play, stop, seek: a seek may play for seconds); _rzxSessionMutex only
+    // guards the pointer, so a status read never waits for a command
     mutable std::mutex _rzxMutex;
+    mutable std::mutex _rzxSessionMutex;
     std::unique_ptr<rzx::RzxSession> _rzxSession;
     rzx::RzxSession& RzxSessionLocked();
 
@@ -298,6 +301,9 @@ public:
     rzx::PlayResult PlayRzx(std::shared_ptr<const rzx::File> file, const std::string& sourcePath,
                             const rzx::PlayerOptions& options = {});
     bool StopRzx();
+    /// Move the RZX playback to the boundary after `frame` frames (keyframes
+    /// make a seek back cost at most one keyframe interval of play)
+    bool SeekRzx(uint64_t frame, std::string* error = nullptr);
     bool IsRzxPlaying() const;
     rzx::SessionStatus GetRzxStatus() const;
     /// `ext` (no dot, any case) is an RZX recording

@@ -817,7 +817,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
 
                 bool ok = false;
                 std::string refusal;  // B9: a TTD recording refuses loads; report why
-                if (ext == "sna" || ext == "z80" || ext == "szx")
+                if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "rzx")
                 {
                     refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
                     ok = refusal.empty() && _emulator->LoadSnapshot(path);

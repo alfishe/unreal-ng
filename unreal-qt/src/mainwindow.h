@@ -163,6 +163,10 @@ private slots:
     /// Replace the running machine by `modelName` / `ramSize` (the media follow);
     /// no question asked. False when it did not happen (the user was told why)
     bool switchMachineModel(const std::string& modelName, uint32_t ramSize);
+    /// Play an RZX recording: another model is replaced by the recording's first
+    /// (as for an SZX); false when it did not start (the user was told why)
+    bool playRzxFile(const std::string& file);
+    void handleStopRzxRequested();
     void handleZXPolyConfigurationRequested(const QString& configurationName);
 
     // Toolbar (transport) handlers

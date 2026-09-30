@@ -54,6 +54,7 @@ TEST_F(RzxLauncher_Test, SwitchesTheModelForTheRecording)
     ASSERT_NE(result.emulator, nullptr);
     EXPECT_TRUE(result.modelSwitched);
     EXPECT_EQ(result.previousEmulatorId, _emulatorId);
+    EXPECT_EQ(result.switchedToModel, "128k");
     EXPECT_NE(result.emulator->GetId(), _emulatorId);
     EXPECT_EQ(result.emulator->GetContext()->config.mem_model, MM_SPECTRUM128);
     EXPECT_TRUE(result.emulator->IsRzxPlaying());

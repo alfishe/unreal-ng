@@ -484,6 +484,7 @@ void Emulator::ReleaseNoGuard()
     // loop no longer steps)
     {
         std::lock_guard<std::mutex> lock(_rzxMutex);
+        std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
         _rzxSession.reset();
     }
 
@@ -1444,6 +1445,21 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+
+    // An RZX recording opens like a snapshot: its start snapshot loads and the
+    // recording plays on this machine (a model switch is RzxLauncher's job)
+    if (ext == "rzx")
+    {
+        const rzx::PlayResult played = PlayRzx(absolutePath);
+        if (!played.Ok() && _context)
+        {
+            MLOGERROR("RZX playback failed: %s", played.message.c_str());
+            MessageCenter::DefaultMessageCenter().Post(
+                NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, false));
+        }
+        return played.Ok();
+    }
+
     if (ext != "z80" && ext != "sna" && ext != "szx")
     {
         MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna or .szx", ext.c_str());
@@ -1572,6 +1588,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
 
 rzx::RzxSession& Emulator::RzxSessionLocked()
 {
+    std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
     if (!_rzxSession)
         _rzxSession = std::make_unique<rzx::RzxSession>(*this);
     return *_rzxSession;
@@ -1614,6 +1631,16 @@ bool Emulator::StopRzx()
     return _rzxSession && _rzxSession->Stop();
 }
 
+bool Emulator::SeekRzx(uint64_t frame, std::string* error)
+{
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    std::string reason;
+    const bool ok = _rzxSession ? _rzxSession->Seek(frame, reason) : (reason = "no RZX recording played", false);
+    if (!ok && error)
+        *error = reason;
+    return ok;
+}
+
 bool Emulator::IsRzxPlaying() const
 {
     // The player pointer is the playback's own switch: set while the hooks are in
@@ -1622,7 +1649,8 @@ bool Emulator::IsRzxPlaying() const
 
 rzx::SessionStatus Emulator::GetRzxStatus() const
 {
-    std::lock_guard<std::mutex> lock(_rzxMutex);
+    // Not _rzxMutex: the status is read while a seek plays on (the GUI polls it)
+    std::lock_guard<std::mutex> lock(_rzxSessionMutex);
     return _rzxSession ? _rzxSession->Status() : rzx::SessionStatus{};
 }
 
@@ -2031,7 +2059,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
-    return {"sna", "z80", "szx"};
+    // rzx: an input recording, opened as its start snapshot plus the playback
+    return {"sna", "z80", "szx", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

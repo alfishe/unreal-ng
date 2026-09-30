@@ -10,7 +10,7 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna, .szx)";
+         ["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna, .szx; an .rzx recording plays on this machine, see rzx/play)";
     // Multipart upload option
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
          ["properties"]["file"]["type"] = "string";

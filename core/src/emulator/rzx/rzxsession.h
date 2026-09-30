@@ -87,6 +87,12 @@ namespace rzx
         /// Stop playing; the machine continues live. False when nothing plays
         bool Stop(const std::string& reason = "stopped");
 
+        /// Move the playback to the boundary after `frame` frames: forward by
+        /// playing on, back by restoring the nearest keyframe and playing on
+        /// from there. Works after the end or a desync too (the playback
+        /// resumes). False with `error` when there is nothing to seek in
+        bool Seek(uint64_t frame, std::string& error);
+
         bool IsActive() const;
         SessionStatus Status() const;
 
@@ -109,6 +115,9 @@ namespace rzx
     private:
         bool LoadStartSnapshot(const StartSnapshot& snapshot, const std::string& sourcePath, PlayResult& result);
         void Install();
+        /// The machine as an SZX image (a keyframe)
+        bool CaptureState(std::vector<uint8_t>& out);
+        bool RestoreState(const std::vector<uint8_t>& state, std::string& error);
         /// Remove the hooks and restore the machine; idempotent
         void Uninstall();
         /// Emulation thread: the player left Playing

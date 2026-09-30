@@ -764,6 +764,28 @@ status = emu.profilers_status_all()
 # }
 ```
 
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recording until its end, a desync (strict mode) or `rzx_stop()`; the machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+Module functions, by emulator id (default: the selected machine). A model switch replaces the machine, so these take an id rather than an `Emulator` object:
+
+| Function | Returns | Description |
+| :--- | :--- | :--- |
+| `unreal.rzx_play(path, emulator_id="", desync_mode="strict", ei_short_frame_blocks_int=False, ld_air_parity_quirk=False, ignore_later_snapshots=False, switch_model=True)` | dict `{ok, error, message, emulator_id, model_switched, model, previous_emulator_id, required_model, status}` | Play a recording; a recording made on another model switches to that model first (`emulator_id` is the new machine). `ValueError` on a bad `desync_mode`. |
+| `unreal.rzx_seek(frame, emulator_id="")` | bool | Move to the boundary after `frame` frames (back through keyframes, forward by playing on); `RuntimeError` with the reason when refused. |
+| `unreal.rzx_stop(emulator_id="")` | bool | Stop playing; `False` when nothing played. |
+| `unreal.rzx_status(emulator_id="")` | dict | `loaded`, `active`, `summary`, `path`, `creator`, `version`, `snapshot`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `keyframe_interval`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+
+`Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
+
+```python
+r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K
+emu = unreal.emu_get(r["emulator_id"])
+emu.run_frames(500)
+print(unreal.rzx_status(r["emulator_id"])["summary"])
+```
+
 ### Time-Travel Debugging
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).

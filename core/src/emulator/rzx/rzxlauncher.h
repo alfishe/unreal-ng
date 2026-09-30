@@ -38,6 +38,7 @@ namespace rzx
         std::shared_ptr<Emulator> emulator;  ///< the machine that plays (the new one after a switch)
         bool modelSwitched = false;
         std::string previousEmulatorId;      ///< set when the model was switched
+        std::string switchedToModel;         ///< set when the model was switched: its short name ("128k")
     };
 
     class RzxLauncher

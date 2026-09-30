@@ -3,6 +3,9 @@
 Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file, save states back out,
 and verify a snapshot actually took effect.
 
+An `.rzx` input recording loads the same way and then plays: see
+[play-rzx.md](play-rzx.md).
+
 Snapshots are the cheapest way to reach a known state — much faster than
 booting through TR-DOS or tape. Use them as the entry point for
 [TTD](../analysis/ttd-recording.md) capture and for regression testing.

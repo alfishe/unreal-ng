@@ -730,6 +730,9 @@ bool Z80::RzxFrameEnd(rzx::RzxPlayer& player)
             drift += frame;
     }
 
+    // A keyframe for seeking back, taken at the boundary before the frame ends
+    player.MaybeKeyframe();
+
     if (player.EndFrame(pc, iff1 != 0, boundary == Z80_BOUNDARY_INT_SHADOW, drift) != rzx::FrameEnd::Interrupt)
         return false;
 
