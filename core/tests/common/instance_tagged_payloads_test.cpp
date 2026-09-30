@@ -117,14 +117,25 @@ namespace
 {
 /// A tiny legacy observer that only knows about SimpleNumberPayload.
 /// Used to prove existing observers keep working unchanged.
+///
+/// The MessageCenter is process-wide: an emulator left by a neighbouring test
+/// in the same shard posts its own state changes on the same topic. The test
+/// counts only the events it posted itself (`testId`); the state is still read
+/// the legacy way, through SimpleNumberPayload::_payloadNumber
 struct LegacyStateObserver : public Observer
 {
+    UUID testId;
     std::atomic<uint32_t> lastState{0};
     std::atomic<int> hits{0};
+
+    explicit LegacyStateObserver(const UUID& id) : testId(id) {}
 
     // Observer base has no virtual method; signature must match ObserverCallbackMethod.
     void onEvent(int /*id*/, Message* message)
     {
+        auto* tagged = dynamic_cast<EmulatorStateChangePayload*>(message->obj);
+        if (!tagged || !(tagged->emulatorId == testId))
+            return;  // another test's emulator
         if (auto* p = dynamic_cast<SimpleNumberPayload*>(message->obj))
         {
             lastState.store(p->_payloadNumber);
@@ -134,14 +145,17 @@ struct LegacyStateObserver : public Observer
 };
 
 /// A new-style observer that uses the instance UUID for filtering.
+/// `filteredMisses` counts only the other instance this test posts for, not
+/// the emulators of neighbouring tests (see LegacyStateObserver)
 struct InstanceFilteringObserver : public Observer
 {
     UUID watchId;
+    UUID otherId;
     std::atomic<uint32_t> lastState{0};
     std::atomic<int> hits{0};
     std::atomic<int> filteredMisses{0};
 
-    explicit InstanceFilteringObserver(const UUID& id) : watchId(id) {}
+    InstanceFilteringObserver(const UUID& id, const UUID& other) : watchId(id), otherId(other) {}
 
     // Observer base has no virtual method; signature must match ObserverCallbackMethod.
     void onEvent(int /*id*/, Message* message)
@@ -153,7 +167,7 @@ struct InstanceFilteringObserver : public Observer
             lastState.store(p->_payloadNumber);
             hits.fetch_add(1);
         }
-        else
+        else if (p->emulatorId == otherId)
         {
             filteredMisses.fetch_add(1);
         }
@@ -164,14 +178,16 @@ struct InstanceFilteringObserver : public Observer
 TEST(InstanceTaggedPayloads_Test, LegacyObserverStillReceivesStateViaPayloadNumber)
 {
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
-    LegacyStateObserver obs;
+    const UUID id = UUID::Generate();
+    LegacyStateObserver obs(id);
     Observer* obsPtr = &obs;
 
     ObserverCallbackMethod cb =
         static_cast<ObserverCallbackMethod>(&LegacyStateObserver::onEvent);
     mc.AddObserver(NC_EMULATOR_STATE_CHANGE, obsPtr, cb);
 
-    UUID id = UUID::Generate();
+    // A neighbouring test's emulator on the same topic (the flake this test had)
+    mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(UUID::Generate(), StateStopped));
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(id, StateRun));
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(id, StatePaused));
 
@@ -194,12 +210,14 @@ TEST(InstanceTaggedPayloads_Test, InstanceFilteringObserverIgnoresOtherInstances
     const UUID other = UUID::Generate();
     ASSERT_FALSE(mine == other);
 
-    InstanceFilteringObserver obs(mine);
+    InstanceFilteringObserver obs(mine, other);
     Observer* obsPtr = &obs;
     ObserverCallbackMethod cb =
         static_cast<ObserverCallbackMethod>(&InstanceFilteringObserver::onEvent);
     mc.AddObserver(NC_EMULATOR_STATE_CHANGE, obsPtr, cb);
 
+    // A neighbouring test's emulator - neither ours nor the "other" one
+    mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(UUID::Generate(), StateStopped));
     // Event from a different instance — must be ignored.
     mc.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(other, StateRun));
     // Event from our instance — must be received.

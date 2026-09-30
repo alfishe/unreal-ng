@@ -1,9 +1,9 @@
 # TODO — Contended opcode fetches without a cost for machines that have no contention
 
-**Status (2026-09-29):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
-probe suite, the co-emulation harness (eight runners incl. SkoolKit) and the probe's Even M1 mode, all on
-master (see Done). **Where we stopped:** the six follow-ups in "Remaining": items 1, 2, 3 and 6 done,
-item 4 (not modeled yet) done on branch `not-modeled-waits`, item 5 (harness) next. PLAN.md row #61.
+**Status (2026-09-30):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
+probe suite, the co-emulation harness (eleven runners) and the probe's Even M1 mode, all on master (see Done).
+**Where we stopped:** all six follow-ups in "Remaining" are done; what stays open is listed in their own
+folders (machine waits, harness follow-ups: the three unreal-ng defects fusetest found). PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such tests: [test-writing-guide.md](test-writing-guide.md).
 
@@ -87,9 +87,11 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
    SC15.1 firmware, decoded from its fuse map) as host bus overlays installed only in turbo
    ([2026-09-29-machine-waits](../2026-09-29-machine-waits/TODO.md)). Still open there: the ZX-Evo's 48K /
    128K raster contention (the rasters are not modeled, PLAN #55), the Scorpion's 3.5 MHz while /INT is
-   active, SC15.3. TS-Conf cache misses belong to the TSConf machine (PLAN #41). Next: follow-up 5.
-5. **Harness follow-ups**: why MAME's `scorpio` crashed earlier (it now runs), further runners (Kozynax,
-   ZX-M8XXX, spec_chum), fusetest (needs pasmo), X-04.
+   active, SC15.3. TS-Conf cache misses belong to the TSConf machine (PLAN #41).
+5. ~~**Harness follow-ups**~~ - done 2026-09-30 on branch `coemu-followups`: MAME's `scorpio` restart explained
+   (Even M1 against the old engine), runners for Kozynax, ZX-M8XXX and spec_chum, fusetest built and run
+   (`FuseTest_Test`; three unreal-ng defects listed), X-04 (`CtProbeTimeOnly_Test`)
+   ([2026-09-29-coemu-followups](../2026-09-29-coemu-followups/TODO.md)).
 6. ~~**This TODO brought up to date**~~ - done 2026-09-29.
 
 Ideas backlog (performance of the contended machines): [baseline.md](baseline.md) §3.2.

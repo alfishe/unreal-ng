@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
@@ -892,3 +893,171 @@ GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CtProbeLoad_Test);
 
 
 
+
+/// X-04 (test-programs.md §3.4): contention changes time only. Every case's fragment runs from one state twice,
+/// with the `contention` feature on and off, from the case's first T-state; the registers, the RAM and the
+/// paging latches must come out equal, and only the clock may differ. What an unused port reads is the byte
+/// the video fetches at that moment (the floating bus), so it depends on time by definition: cases marked as
+/// such (flags 4 and 32) are left out, and a case whose IN no device answers is checked for its port reads
+/// only. The RET timed in ROM (flag 8) has no fragment. A boot per contended machine, then ~70 fragments of a few
+/// instructions each: ~0.1 s per machine
+class CtProbeTimeOnly_Test : public CtProbe_Test, public ::testing::WithParamInterface<Machine>
+{
+protected:
+    struct Outcome
+    {
+        uint16_t af, bc, de, hl, af2, bc2, de2, hl2, ix, iy, sp, pc, ir, memptr;
+        uint8_t rHi, iff1, iff2, im, p7FFD, p1FFD;
+        std::vector<uint8_t> ram;
+        uint32_t clocks;
+        std::vector<std::pair<uint16_t, bool>> portReads;  // (port, answered by a device) of every IN
+    };
+
+    static constexpr uint16_t kSentinel = 0xFFF0;  // the fragment's RET returns here: the run ends
+
+    Outcome RunFragment(const CaseRecord& r, uint16_t record, bool contention, const std::vector<uint8_t>& ram,
+                        const Z80Registers& regs, uint8_t p7FFD, uint8_t p1FFD, uint32_t startT)
+    {
+        Z80* z80 = _context->pCore->GetZ80();
+        Memory* memory = _context->pMemory;
+        PortDecoder* ports = _context->pPortDecoder;
+        const size_t ramBytes = ram.size();
+
+        // The same machine state for both runs
+        std::copy(ram.begin(), ram.end(), memory->RAMBase());
+        static_cast<Z80Registers&>(*z80) = regs;
+        ports->DecodePortOut(0x7FFD, p7FFD, 0);
+        if (_context->config.mem_model == MM_PLUS3)
+            ports->DecodePortOut(0x1FFD, p1FFD, 0);
+        _context->emulatorState.p7FFD = p7FFD;
+        _context->pCore->SetContentionSwitch(contention);
+
+        // The fragment as the probe places it: its page at #C000, the bytes and a RET at the target, a mirror
+        const uint16_t base7FFD = static_cast<uint16_t>(p7FFD & 0xD8);
+        if (r.page != 0xFF)
+            ports->DecodePortOut(0x7FFD, static_cast<uint8_t>(base7FFD | r.page), 0);
+        const uint16_t target = r.target == 0 ? _probe.Sym("FRAGBUF") : r.target;
+        const uint16_t src = PeekW(static_cast<uint16_t>(record + 6));
+        for (uint8_t i = 0; i < r.length; i++)
+            Poke(static_cast<uint16_t>(target + i), Peek(static_cast<uint16_t>(src + i)));
+        Poke(static_cast<uint16_t>(target + r.length), 0xC9);
+        const uint8_t mirror = Peek(static_cast<uint16_t>(record + 3));
+        if (mirror != 0xFF)
+        {
+            const uint8_t mapped = _context->emulatorState.p7FFD;
+            ports->DecodePortOut(0x7FFD, static_cast<uint8_t>(base7FFD | mirror), 0);
+            for (uint16_t i = 0; i <= r.length; i++)
+                Poke(static_cast<uint16_t>(_probe.Sym("FRAGBUF") + 0x4000 + i),
+                     Peek(static_cast<uint16_t>(_probe.Sym("FRAGBUF") + i)));
+            ports->DecodePortOut(0x7FFD, mapped, 0);
+        }
+
+        z80->ix = _probe.Sym("IXDATA");
+        z80->sp = 0xBDFE;
+        Poke(0xBDFE, kSentinel & 0xFF);
+        Poke(0xBDFF, kSentinel >> 8);
+        z80->pc = target;
+        z80->iff1 = z80->iff2 = 0;
+        z80->t = startT;
+        // Every IN, and whether a device answered it (the hook runs right after the decoder; an unanswered
+        // read gets the floating bus)
+        std::vector<std::pair<uint16_t, bool>> portReads;
+        z80->busTraceHook = [&](char kind, uint16_t port, uint8_t) {
+            if (kind == 'I')
+                portReads.emplace_back(port, ports->WasLastPortDecoded());
+        };
+        for (int steps = 0; z80->pc != kSentinel && steps < 10000; steps++)
+            z80->Z80Step();
+        z80->busTraceHook = nullptr;
+        EXPECT_EQ(z80->pc, kSentinel) << r.name << ": the fragment did not return";
+
+        Outcome o{ z80->af, z80->bc, z80->de, z80->hl, z80->alt.af, z80->alt.bc, z80->alt.de, z80->alt.hl,
+                   z80->ix, z80->iy, z80->sp, z80->pc, z80->ir_, z80->memptr, z80->r_hi, z80->iff1, z80->iff2,
+                   z80->im, _context->emulatorState.p7FFD, _context->emulatorState.p1FFD,
+                   std::vector<uint8_t>(memory->RAMBase(), memory->RAMBase() + ramBytes), z80->t - startT,
+                   portReads };
+        return o;
+    }
+};
+
+TEST_P(CtProbeTimeOnly_Test, ContentionChangesTimeOnly)
+{
+    const Machine& m = GetParam();
+    BootEditor(m.editor);
+    ASSERT_FALSE(HasFatalFailure());
+    _probe = BuildProbe();
+    ASSERT_FALSE(HasFailure());
+    for (size_t i = 0; i < _probe.bytes.size(); i++)
+        Poke(static_cast<uint16_t>(kOrg + i), _probe.bytes[i]);
+    OpenPaging();
+    // The mapping BASIC runs with, as the probe's detection stores it: the paging and layout fragments use it
+    Poke(_probe.Sym("DEF7FFD"), _context->emulatorState.p7FFD);
+    Poke(_probe.Sym("DEF1FFD"), _context->emulatorState.p1FFD);
+
+    const uint8_t caps = m.caps;
+    const size_t ramBytes = static_cast<size_t>(std::max<uint32_t>(_context->config.ramsize, 128)) * 1024;
+    const std::vector<uint8_t> ram(_context->pMemory->RAMBase(), _context->pMemory->RAMBase() + ramBytes);
+    const Z80Registers regs = *_context->pCore->GetZ80();
+    const uint8_t p7FFD = _context->emulatorState.p7FFD;
+    const uint8_t p1FFD = _context->emulatorState.p1FFD;
+    const uint32_t intT = _context->config.intstart + 1;
+
+    int compared = 0;
+    int slower = 0;
+    int floating = 0;
+    uint16_t record = _probe.Sym("CASES");
+    for (const CaseRecord& r : _probe.cases)
+    {
+        const uint16_t at = record;
+        record = static_cast<uint16_t>(record + kRecord);
+        if ((r.flags & (4 | 8 | 32)) != 0 || (r.flags & 3 & ~caps) != 0)
+            continue;
+        SCOPED_TRACE(r.name);
+        // The case's first timed T-state (INT-relative), in the frame
+        const uint32_t startT = intT + static_cast<uint32_t>(static_cast<int32_t>(m.onset) + r.offset);
+        const Outcome on = RunFragment(r, at, true, ram, regs, p7FFD, p1FFD, startT);
+        const Outcome off = RunFragment(r, at, false, ram, regs, p7FFD, p1FFD, startT);
+
+        EXPECT_TRUE(on.portReads == off.portReads) << "the same ports, answered by the same devices";
+        bool busRead = false;
+        for (const auto& read : on.portReads)
+            busRead = busRead || !read.second;
+        if (busRead)
+        {
+            floating++;
+            continue;
+        }
+
+        EXPECT_EQ(on.af, off.af);
+        EXPECT_EQ(on.bc, off.bc);
+        EXPECT_EQ(on.de, off.de);
+        EXPECT_EQ(on.hl, off.hl);
+        EXPECT_EQ(on.af2, off.af2);
+        EXPECT_EQ(on.bc2, off.bc2);
+        EXPECT_EQ(on.de2, off.de2);
+        EXPECT_EQ(on.hl2, off.hl2);
+        EXPECT_EQ(on.ix, off.ix);
+        EXPECT_EQ(on.iy, off.iy);
+        EXPECT_EQ(on.sp, off.sp);
+        EXPECT_EQ(on.ir, off.ir);
+        EXPECT_EQ(on.rHi, off.rHi);
+        EXPECT_EQ(on.memptr, off.memptr);
+        EXPECT_EQ(on.iff1, off.iff1);
+        EXPECT_EQ(on.iff2, off.iff2);
+        EXPECT_EQ(on.im, off.im);
+        EXPECT_EQ(on.p7FFD, off.p7FFD);
+        EXPECT_EQ(on.p1FFD, off.p1FFD);
+        EXPECT_TRUE(on.ram == off.ram) << "RAM differs";
+        EXPECT_GE(on.clocks, off.clocks) << "contention never makes code faster";
+        compared++;
+        slower += on.clocks > off.clocks ? 1 : 0;
+    }
+    std::printf("[ctprobe X-04 %s] %d fragments compared, %d slower with contention, %d read the floating bus\n",
+                m.editor, compared, slower, floating);
+    EXPECT_GT(compared, 30);
+    EXPECT_GT(slower, 10) << "the contention feature did not act: the comparison proves nothing";
+    _context->pCore->SetContentionSwitch(true);
+}
+
+INSTANTIATE_TEST_SUITE_P(Contended, CtProbeTimeOnly_Test,
+                         ::testing::Values(Machines()[0], Machines()[1], Machines()[2]), MachineName);

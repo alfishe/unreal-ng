@@ -159,6 +159,10 @@ merge; config fixes (`MoonSound=0`, explicit `GSType`).
 
 - `TTDRegionDesc` + region table in the session header; machine RAM becomes
   region 0; device regions register through the registry.
+- Device EEPROMs become regions too: the ZX-Evo AVR's 4 KiB EEPROM and the
+  Scorpion SMUC's 2 KiB LC16 EEPROM, the latter with its serial-link state in
+  the device blob (v1 captures neither; storing them whole in every v1
+  checkpoint would cost 4 / 2 KiB per frame for data written rarely).
 - **Per-piece chain cap** replaces global key frames for RAM.
 - `_prevPageCache` refreshed only for dirty pieces, rebuilt explicitly on
   seek/resume.

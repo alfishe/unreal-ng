@@ -6,6 +6,7 @@
 
 #include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -96,9 +97,10 @@ enum class NeoGSBench { Idle, Watch, Read };
 
 static void RunNeoGSFrame(benchmark::State& state, NeoGSBench scenario, bool debug)
 {
-    std::srand(0x4E47); // power-on RAM is rand()-filled: the same machine in every mode
+    // Zeroed power-on RAM: the same machine in every mode
     EmulatorManager* manager = EmulatorManager::GetInstance();
-    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-neogs-zxdma", "PENTAGON", LoggerLevel::LogNone);
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel(
+        "bench-neogs-zxdma", "PENTAGON", LoggerLevel::LogNone, nullptr, Config::RamPowerOnOverride(RamPowerOn::Zero));
     if (!emulator)
     {
         state.SkipWithError("emulator creation failed");

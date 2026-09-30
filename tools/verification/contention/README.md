@@ -1,11 +1,13 @@
 # Memory timing test programs, and what only real hardware can answer
 
-Two ZX Spectrum programs check how a machine shares its memory between the CPU and the picture:
+Two ZX Spectrum programs of this project check how a machine shares its memory between the CPU and the picture,
+and a third one, FUSE's own timing test, is built here from its source:
 
 | Program | Checks | Files |
 |:--|:--|:--|
 | [ctprobe](ctprobe/README.md) | contention (how long the CPU waits for the screen), the floating bus, the Scorpion's "Even M1" | `ctprobe/ctprobe.tap`, `ctprobe/ctprobe.trd` |
 | [snowtest](snowtest/README.md) | ULA snow (a picture corrupted by the CPU's memory refresh) | `snowtest/snowtest.tap`, `snowtest/snowtest.trd` |
+| [fusetest](fusetest/README.md) (Philip Kendall, GPL) | contention, contended `IN`, high-port contention, the floating bus, reads of the paging and AY ports | `fusetest/fusetest.tap` (48K, 128K, +3; its Pentagon detection is broken) |
 
 Both load like any program (`LOAD ""`, or `RUN` in TR-DOS), run at 3.5 MHz, and print their result on the screen.
 unreal-ng passes ctprobe on every machine it has, and snowtest on the 48K, 128K, +3 and Pentagon (its test

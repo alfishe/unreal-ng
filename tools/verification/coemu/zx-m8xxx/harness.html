@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  The page driver.py opens in headless Chrome. It loads ZX-M8XXX's own index.html in an iframe, drives it
+  through its documented automation surface (window.zxDebug, see the emulator's M8XXX.md), and posts
+  progress, log lines and the result back to driver.py. Everything is paced and bounded by emulated frames.
+
+  Query parameters (all set by driver.py):
+    machine   ZX-M8XXX machine id (48k, 128k, +2, +2a, +3, pentagon, scorpion)
+    media     URL of the program file (.tap or .trd)
+    type      tape | trd
+    done, start, end   addresses (decimal) of DONE, START and PROBEEND
+    max       MAX_FRAMES
+-->
+<meta charset="utf-8">
+<title>coemu zx-m8xxx harness</title>
+<iframe id="emu" src="/index.html" style="width:1024px;height:768px;border:0"></iframe>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const P = {
+	machine: q.get('machine'), media: q.get('media'), type: q.get('type'),
+	done: +q.get('done'), start: +q.get('start'), end: +q.get('end'), max: +q.get('max'),
+};
+const CHUNK = 250;          // frames per slice; the page yields between slices so posts go out
+const PROGRESS_EVERY = 1000;
+
+function post(route, body) {
+	return fetch('/__coemu/' + route, { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
+}
+function log(...a) { return post('log', { line: a.join(' ') }); }
+const idle = () => new Promise(r => setTimeout(r, 0));
+
+async function waitFor(get, what, tries = 600) {
+	for (let i = 0; i < tries; i++) {
+		const v = get();
+		if (v) return v;
+		await new Promise(r => setTimeout(r, 50));
+	}
+	throw new Error('timed out waiting for ' + what);
+}
+
+async function main() {
+	const frame = document.getElementById('emu');
+	await waitFor(() => frame.contentWindow && frame.contentWindow.document.readyState === 'complete', 'the page');
+	const win = frame.contentWindow;
+	// The emulator's own console output goes to the log too
+	for (const k of ['log', 'warn', 'error']) {
+		const orig = win.console[k].bind(win.console);
+		win.console[k] = (...a) => { orig(...a); post('log', { line: '[' + k + '] ' + a.map(String).join(' ') }); };
+	}
+	win.addEventListener('error', e => post('log', { line: '[page error] ' + e.message }));
+	const zx = await waitFor(() => win.zxDebug, 'window.zxDebug');
+	zx.require(['ready', 'start', 'loadUrl', 'autoLoad', 'runFrames', 'peek', 'peekBlock', 'captureRegisters']);
+	await log('ZX-M8XXX', zx.version, '- machine', P.machine);
+
+	// The page fetches all its ROMs at startup (the TR-DOS ROM among them) and then resets and starts the
+	// 48K by itself. ready() returns as soon as the machine's own ROM is in, so wait for that startup to end
+	// first: otherwise its reset lands in the middle of the run and the TR-DOS ROM is missing.
+	const spectrum = zx.spectrum;
+	await waitFor(() => spectrum.running, 'the emulator to start by itself');
+	spectrum.stop();
+	await zx.ready({ machine: P.machine });
+	await zx.start({ machine: P.machine });
+	if (spectrum.machineType !== P.machine) {
+		throw new Error(`asked for machine ${P.machine}, the emulator runs ${spectrum.machineType}`);
+	}
+	// The settings that bear on timing, as the stock (fresh profile) page has them, for the log
+	await log('started', spectrum.machineType, '- tape flash load', spectrum.getTapeFlashLoad(),
+		'- late timings', spectrum.lateTimings, '- frame', spectrum.getTstatesPerFrame(), 'T');
+
+	const media = await zx.loadUrl(P.media);
+	await log('loaded', media.name, media.bytes, 'bytes');
+
+	// The emulator's own auto-loader: types LOAD "" / picks the menu's loader, or boots TR-DOS with the disk
+	const boot = await zx.autoLoad({ type: P.type, maxFrames: Math.min(3000, P.max) });
+	await log('auto-load done after', boot.frames, 'frames, PC', boot.pc.toString(16));
+	spectrum.stop();
+
+	let frames = boot.frames;
+	let next = PROGRESS_EVERY;
+	while (zx.peek(P.done) !== 1 && frames < P.max) {
+		const n = Math.min(CHUNK, P.max - frames);
+		for (let i = 0; i < n && zx.peek(P.done) !== 1; i++) {
+			zx.runFrames(1);
+			frames++;
+		}
+		if (frames >= next) {
+			next += PROGRESS_EVERY;
+			await post('progress', { frames });
+		}
+		await idle();
+	}
+	const done = zx.peek(P.done) === 1;
+	const r = zx.captureRegisters();
+	await log(done ? 'DONE after' : 'DONE not set after', frames, 'frames; PC', r.pc.toString(16), 'SP', r.sp.toString(16));
+	await post('result', {
+		done, frames,
+		machineType: spectrum.machineType,
+		version: zx.version,
+		dump: Array.from(zx.peekBlock(P.start, P.end - P.start)),
+		screen: Array.from(zx.peekBlock(0x4000, 6912)),
+	});
+}
+
+main().catch(e => post('result', { error: String(e && e.stack || e) }));
+</script>

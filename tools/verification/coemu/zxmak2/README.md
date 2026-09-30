@@ -80,7 +80,7 @@ ZXMAK2's debug log.
 
 | Machine | Result |
 |:--|:--|
-| Scorpion, Scorpion ProfROM | error: the program crashes 8 frames after it starts, while measuring the frame. ZXMAK2's Scorpion (`UlaScorpionYellow.cs`, `busRDM1`) moves every opcode fetch from `#4000`-`#FFFF` to an even T-state. That makes the probe's 23-tick delay loop take 24, so the measured frame length is wrong, the next interrupt comes in the middle of a delay instead of at a `HALT`, and the return chain unwinds to `#0000`. Frame 69888, interrupt 32 ticks long. With that one line removed (an experiment on a copy, not the stock machine) both finish with every value as expected |
+| Scorpion, Scorpion ProfROM | ok since the probe's Even M1 mode (3952bdc8). Before it: error, the program crashed 8 frames after it started, while measuring the frame. ZXMAK2's Scorpion (`UlaScorpionYellow.cs`, `busRDM1`) moves every opcode fetch from `#4000`-`#FFFF` to an even T-state (Even M1). That made the probe's 23-tick delay loop take 24, so the measured frame length was wrong, the next interrupt came in the middle of a delay instead of at a `HALT`, and the return chain unwound to `#0000` (the same failure as MAME's `scorpio`, [../mame/README.md](../mame/README.md)). The probe now detects Even M1 and delays in 2-tick steps |
 | 48K | 490 values wrong in 33 checks, all of them the expected row moved by 1 tick: ZXMAK2's stock 48K ULA is the "late" one |
 | 128K | 560 values wrong in 40 checks, all 1 tick late, as the 48K |
 | +3 | 85 values wrong in 10 checks: the contended banks are 1, 3, 5, 7 (as on the 128K) instead of 4, 5, 6, 7 (M1-P1/P3/P4/P6), the all-RAM layouts are contended wrong (M1-L0..L3), and M1-03 and the floating bus (P-02) differ |

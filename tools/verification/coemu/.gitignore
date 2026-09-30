@@ -1,1 +1,3 @@
 out/
+# Kept reports (the root .gitignore ignores every reports/ folder)
+!reports/

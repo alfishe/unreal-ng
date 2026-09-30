@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include "scorpionfixture.h"
+#include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
@@ -363,7 +364,22 @@ TEST_F(ScorpionPorts_Test, KempstonStubsAnswerNeutralValues)
 TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
-    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    // Zeroed power-on RAM. The default noise in pages 5 and 7 comes from the
+    // global rand(), whose sequence position depends on how many rand() calls
+    // the preceding tests in the process happened to make - which is what made
+    // this test order-dependent (it passed alone and failed in the full suite,
+    // or the reverse, as unrelated tests were added or sped up).
+    //
+    // Zero rather than a fixed seed: garbage RAM is a real input to this boot,
+    // not a nuisance. Resuming the interrupted program from the Service Monitor
+    // can land the CPU in uninitialized RAM - with 2 of 12 sampled seeds the
+    // machine executed page 5 itself (PC 0x52FC) and cleared the screen. That
+    // is worth its own investigation (see the RAM-sensitivity note in
+    // profrom-service-monitor-menu-flashing.md), but it is not what this test
+    // asserts, and picking whichever seed happens to survive it would be
+    // cherry-picking.
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError, nullptr,
+                                                                          Config::RamPowerOnOverride(RamPowerOn::Zero));
     ASSERT_TRUE(emulator) << "PROFSCORP could not be created";
 
     EmulatorContext* context = emulator->GetContext();
@@ -374,24 +390,6 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     // which the monitor finishes drawing drifts run to run.
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
         decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-
-    // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and 7
-    // from the global rand(), whose sequence position depends on how many
-    // rand() calls the preceding tests in the process happened to make - which
-    // is what made this test order-dependent (it passed alone and failed in the
-    // full suite, or the reverse, as unrelated tests were added or sped up).
-    //
-    // Zero rather than a fixed seed: garbage RAM is a real input to this boot,
-    // not a nuisance. Resuming the interrupted program from the Service Monitor
-    // can land the CPU in uninitialized RAM - with 2 of 12 sampled seeds the
-    // machine executed page 5 itself (PC 0x52FC) and cleared the screen. That
-    // is worth its own investigation (see the RAM-sensitivity note in
-    // profrom-service-monitor-menu-flashing.md), but it is not what this test
-    // asserts, and picking whichever seed happens to survive it would be
-    // cherry-picking. Zero matches what Memory already gives every other page
-    // ("zero-init: deterministic power-on RAM").
-    memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
-    memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
 
     // Host-side turbo: no emulated-state effect, just skips per-frame audio work
     emulator->EnableTurboMode();
