@@ -11,6 +11,8 @@
 ///
 /// Uses the ROM font bitmap data to recognize characters displayed on screen.
 /// ZX Spectrum screen: 32 columns × 24 rows of 8×8 pixel characters.
+/// Text video modes (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL: 80x25) are read
+/// exactly from their character codes through the video mapper instead.
 ///
 class ScreenOCR
 {
@@ -32,6 +34,9 @@ public:
     /// @param col Character column (0-31)
     /// @return Matched character or '?' if no match
     static char ocrCell(Memory* memory, int row, int col);
+
+    /// The current mode's text layer as lines; false in bitmap modes
+    static bool textLayerScreen(Emulator* emulator, std::string& out);
 
 private:
     /// Get screen byte address for given character cell and pixel line

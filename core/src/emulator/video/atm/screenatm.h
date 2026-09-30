@@ -1,4 +1,5 @@
 #pragma once
+#include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/screen.h"
 #include "stdafx.h"
 
@@ -24,8 +25,8 @@ public:
     /// before the ZX paper (T=24) and ends 16T after it (ZX-Evo BaseConf
     /// video_sync_h.v HPIX_BEG_ATM=108 / HPIX_END_ATM=428 vs Pentagon 140/396,
     /// in 2-dot T units; Xpeccy vid_atm_org).
-    static constexpr uint32_t SCREEN_START_T = 8;
-    static constexpr uint32_t SCREEN_END_T = SCREEN_START_T + 160;
+    static constexpr uint32_t SCREEN_START_T = AtmGeometry::kScreenStartT;
+    static constexpr uint32_t SCREEN_END_T = AtmGeometry::kScreenEndT;
     /// endregion </Constants>
 
     /// region <Methods>

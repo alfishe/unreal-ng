@@ -1530,6 +1530,10 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 
     WD1793CUT fdc(_context);
 
+    // Verify reads the ID fields of track 0 (C = 0 must match the Track Register): a formatted disk is needed
+    DiskImage diskImage(MAX_CYLINDERS, 1);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
     /// region <Main test loop>
 
     std::cout << "------------------------------" << std::endl;
@@ -1599,11 +1603,10 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
 
         size_t estimatedExecutionTime = i * STEP_DURATION_MS;       // Number of positioning steps, 6ms each
-        estimatedExecutionTime += WD1793CUT::WD93_VERIFY_DELAY_MS;  // Add verification time after the positioning
+        estimatedExecutionTime += WD1793CUT::HEAD_SETTLE_MS_1MHZ;  // Add head settle (30 ms @ 1 MHz) after the positioning
 
-        size_t timeTolerance = 0.1 * estimatedExecutionTime;
-        if (timeTolerance == 0)
-            timeTolerance = 3 * STEP_DURATION_MS;
+        // Verify then waits for the next ID field of track 0: up to one TR-DOS sector spacing (~12.4 ms)
+        size_t timeTolerance = 0.1 * estimatedExecutionTime + 13;
         EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + timeTolerance)
             << "Abnormal execution time";
         /// endregion </Check results>
@@ -1620,6 +1623,8 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
     }
 
     /// endregion </Main test loop>
+
+    fdc._selectedDrive->ejectDisk();
 }
 
 // Regression test for a hang where cmdRestore() completing synchronously (already at track 0, no
@@ -4545,12 +4550,13 @@ TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
     delete diskImage;
 }
 
-/// Test that E-flag adds 15ms head settle delay before sector read
-/// Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is sampled after a 15 ms delay"
-TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
+/// Test that E-flag adds the head settle delay before sector read: 30 ms at the 1 MHz clock of every
+/// Spectrum interface. Datasheet p.6: "15 ms head settling time if the E flag is set [...] this time doubles
+/// to 30 ms for a 1 MHz clock"
+TEST_F(WD1793_Test, ReadSector_EFlag_Adds_30ms_Delay_At1MHz)
 {
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
-    static constexpr size_t const E_FLAG_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms
+    static constexpr size_t const E_FLAG_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 30;  // 30ms
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
@@ -4586,7 +4592,7 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
     size_t startTime = fdc._time;
     fdc.cmdReadSector(0x84);
 
-    // Find when first DRQ occurs (data transfer starts). After the 15 ms settle delay the head has moved past
+    // Find when first DRQ occurs (data transfer starts). After the 30 ms settle delay the head has moved past
     // sector 1, so the controller also waits for the sector to come round again (up to one revolution).
     size_t firstDRQTime = 0;
     for (size_t clk = startTime; clk < startTime + E_FLAG_DELAY_TSTATES * 2 + WD1793::DISK_ROTATION_PERIOD_TSTATES;
@@ -4602,9 +4608,10 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
         }
     }
 
-    // With E-flag, first DRQ should be delayed by at least 15ms
+    // With E-flag, first DRQ should be delayed by at least 30ms
+    ASSERT_NE(firstDRQTime, 0u) << "no DRQ within the test window";
     size_t delayTStates = firstDRQTime - startTime;
-    EXPECT_GE(delayTStates, E_FLAG_DELAY_TSTATES - 1000) << "E-flag should add ~15ms delay before sector read starts";
+    EXPECT_GE(delayTStates, E_FLAG_DELAY_TSTATES - 1000) << "E-flag should add ~30ms delay before sector read starts";
 
     // Cleanup
     fdc._selectedDrive->ejectDisk();

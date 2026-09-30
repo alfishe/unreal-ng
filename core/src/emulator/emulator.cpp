@@ -152,6 +152,11 @@ bool Emulator::Init()
                 MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
                          (int)_preferredModel);
             }
+
+            // The caller's per-instance adjustments get the last word before
+            // any device is created from the config
+            if (_configOverride)
+                _configOverride(_context->config);
         }
         else
         {

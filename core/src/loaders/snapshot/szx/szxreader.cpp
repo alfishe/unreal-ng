@@ -1,5 +1,6 @@
 #include "loaders/snapshot/szx/szxreader.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -50,6 +51,53 @@ bool SzxReader::Parse(const uint8_t* data, size_t size, Stage& stage, std::strin
             case kRamPage: ok = ParseRamPage(body, blockSize, stage, error); break;
             case kAy: ok = ParseAy(body, blockSize, stage, error); break;
             case kBeta128: ok = ParseBeta128(body, blockSize, stage, error); break;
+            case kBetaDisk: ok = ParseBetaDisk(body, blockSize, stage, error); break;
+            case kDskFile: ok = ParseDskFile(body, blockSize, stage, error); break;
+            case kTape: ok = ParseTape(body, blockSize, stage, error); break;
+            case kGs: ok = ParseGs(body, blockSize, stage, error); break;
+            case kGsRamPage: ok = ParseGsRamPage(body, blockSize, stage, error); break;
+            case kPlus3:
+                if (!(ok = !Short(blockSize, 2, "+3", error)))
+                    break;
+                stage.plus3 = Plus3{body[0], body[1]};
+                break;
+            case kKeyboard:
+            {
+                // 4 bytes in 1.0 (no joystick byte), 5 from 1.1
+                if (!(ok = !Short(blockSize, 4, "KEYB", error)))
+                    break;
+                Keyboard keyboard;
+                keyboard.flags = Get32(body);
+                keyboard.joystick = blockSize >= 5 ? body[4] : kKeyboardJoystickNone;
+                stage.keyboard = keyboard;
+                break;
+            }
+            case kJoystick:
+                if (!(ok = !Short(blockSize, 6, "JOY", error)))
+                    break;
+                stage.joysticks = std::array<uint8_t, 2>{body[4], body[5]};
+                break;
+            case kMouse:
+            {
+                if (!(ok = !Short(blockSize, 7, "AMXM", error)))
+                    break;
+                Mouse mouse;
+                mouse.type = body[0];
+                std::copy_n(body + 1, 3, mouse.ctrlA.begin());
+                std::copy_n(body + 4, 3, mouse.ctrlB.begin());
+                stage.mouse = mouse;
+                break;
+            }
+            case kCovox:
+                if (!(ok = !Short(blockSize, 1, "COVX", error)))
+                    break;
+                stage.covox = body[0];
+                break;
+            case kSpecDrum:
+                if (!(ok = !Short(blockSize, 1, "DRUM", error)))
+                    break;
+                stage.specDrum = static_cast<int8_t>(body[0]);
+                break;
             default: stage.otherBlocks.emplace_back(BlockName(id), blockSize); break;
         }
         if (!ok)
@@ -233,6 +281,173 @@ bool SzxReader::ParseBeta128(const uint8_t* body, uint32_t size, Stage& stage, s
     if ((beta.flags & kBetaCustomRom) && size > kBeta128Size)
         stage.warnings.push_back("B128 carries a custom TR-DOS ROM: the configured ROM stays");
     stage.beta = beta;
+    return true;
+}
+
+bool SzxReader::Short(uint32_t size, size_t minimum, const char* name, std::string& error)
+{
+    if (size >= minimum)
+        return false;
+    error = std::string(name) + " block too short";
+    return true;
+}
+
+namespace
+{
+    /// A null-terminated name of at most `size` bytes
+    std::string Name(const uint8_t* data, size_t size)
+    {
+        return std::string(reinterpret_cast<const char*>(data), strnlen(reinterpret_cast<const char*>(data), size));
+    }
+}  // namespace
+
+bool SzxReader::ParseBetaDisk(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, 7, "BDSK", error))
+        return false;
+    BetaDisk disk;
+    disk.flags = Get32(body);
+    disk.drive = body[4];
+    disk.cylinder = body[5];
+    disk.type = body[6];
+    const uint8_t* data = body + 7;
+    const size_t length = size - 7;
+    if (disk.flags & kDiskEmbedded)
+    {
+        // No uncompressed size in the block: bounded by the largest image
+        if (disk.flags & kDiskCompressed)
+        {
+            if (!InflateBounded(data, length, kMaxEmbeddedImage, disk.image))
+            {
+                error = "BDSK drive " + std::to_string(disk.drive) + ": the embedded image does not inflate";
+                return false;
+            }
+        }
+        else
+        {
+            disk.image.assign(data, data + length);
+        }
+    }
+    else
+    {
+        disk.fileName = Name(data, length);
+    }
+    stage.betaDisks.push_back(std::move(disk));
+    return true;
+}
+
+bool SzxReader::ParseDskFile(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, 7, "DSK", error))
+        return false;
+    DskFile file;
+    file.flags = Get16(body);
+    file.drive = body[2];
+    const uint32_t nameLength = Get32(body + 3);
+    file.fileName = Name(body + 7, std::min<size_t>(nameLength, size - 7));
+    stage.dskFiles.push_back(std::move(file));
+    return true;
+}
+
+bool SzxReader::ParseTape(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, 28, "TAPE", error))
+        return false;
+    Tape tape;
+    tape.block = Get16(body);
+    tape.flags = Get16(body + 2);
+    const uint32_t uncompressed = Get32(body + 4);
+    const uint32_t compressed = Get32(body + 8);
+    tape.extension = Name(body + 12, 16);
+    const uint8_t* data = body + 28;
+    const size_t length = std::min<size_t>(compressed, size - 28);
+    if (tape.flags & kTapeEmbedded)
+    {
+        if (tape.flags & kTapeCompressed)
+        {
+            if (uncompressed > kMaxEmbeddedImage || !Inflate(data, length, uncompressed, tape.image))
+            {
+                error = "TAPE: the embedded image does not inflate to its stated size";
+                return false;
+            }
+        }
+        else
+        {
+            tape.image.assign(data, data + length);
+        }
+    }
+    else
+    {
+        tape.fileName = Name(data, length);
+    }
+    stage.tape = std::move(tape);
+    return true;
+}
+
+bool SzxReader::ParseGs(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, kGsSize, "GS", error))
+        return false;
+    GeneralSound gs;
+    gs.model = body[0];
+    gs.upperPage = body[1];
+    std::copy_n(body + 2, 4, gs.volume.begin());
+    std::copy_n(body + 6, 4, gs.output.begin());
+    gs.flags = body[10];
+    Z80Regs& z = gs.cpu;
+    const uint8_t* r = body + 11;
+    z.af = Get16(r + 0);
+    z.bc = Get16(r + 2);
+    z.de = Get16(r + 4);
+    z.hl = Get16(r + 6);
+    z.af1 = Get16(r + 8);
+    z.bc1 = Get16(r + 10);
+    z.de1 = Get16(r + 12);
+    z.hl1 = Get16(r + 14);
+    z.ix = Get16(r + 16);
+    z.iy = Get16(r + 18);
+    z.sp = Get16(r + 20);
+    z.pc = Get16(r + 22);
+    z.i = body[35];
+    z.r = body[36];
+    z.iff1 = body[37] ? 1 : 0;
+    z.iff2 = body[38] ? 1 : 0;
+    z.im = static_cast<uint8_t>(body[39] & 0x03);
+    z.cyclesStart = Get32(body + 40);
+    z.holdIntReqCycles = body[44];
+    z.memptr = static_cast<uint16_t>(body[45] << 8);  // chBitReg: MEMPTR's high byte
+    z.flags = static_cast<uint8_t>(gs.flags & (kSuppressInts | kHalted));
+    if ((gs.flags & kGsCustomRom) && size > kGsSize)
+        stage.warnings.push_back("GS carries a custom ROM: the configured GS ROM stays");
+    stage.gs = gs;
+    return true;
+}
+
+bool SzxReader::ParseGsRamPage(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, 3, "GSRP", error))
+        return false;
+    const uint16_t flags = Get16(body);
+    const uint8_t page = body[2];
+    std::vector<uint8_t> bytes;
+    if (flags & kPageCompressed)
+    {
+        if (!Inflate(body + 3, size - 3, kGsPageSize, bytes))
+        {
+            error = "GSRP page " + std::to_string(page) + ": the compressed data is not exactly one 32 KB page";
+            return false;
+        }
+    }
+    else
+    {
+        if (size - 3 != kGsPageSize)
+        {
+            error = "GSRP page " + std::to_string(page) + ": not 32768 bytes";
+            return false;
+        }
+        bytes.assign(body + 3, body + 3 + kGsPageSize);
+    }
+    stage.gsPages[page] = std::move(bytes);
     return true;
 }
 

@@ -225,8 +225,6 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// MISC::ULA+ sub-section
 
-	// MISC::TSConf sub-section
-
     // ROM set. GetValue returns NULL when the [ROM] section or the key is
     // absent (a valid minimal config may carry neither) - a NULL const char*
     // assigned to std::string is UB, so map it to the empty name explicitly.
@@ -315,6 +313,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
 	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
 	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 0) ? true : false;  // Default: off (realistic WD1793 timing)
+	{
+		// Turbo VG (WD1793 clocked at 2 MHz while positioning): absent = the machine's own policy
+		const long turboVg = inimanager.GetLongValue(beta128, "TurboVG", -1);
+		config.fdcTurboVg = static_cast<int8_t>(turboVg < 0 ? -1 : (turboVg ? 1 : 0));
+	}
 	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
@@ -734,6 +737,11 @@ void Config::SetConfigLoadedHook(ConfigLoadedHook hook)
 	ConfigLoadedHookStorage() = std::move(hook);
 }
 
+Config::ConfigLoadedHook Config::GetConfigLoadedHook()
+{
+	return ConfigLoadedHookStorage();
+}
+
 bool Config::DetermineModel(const char* model, uint32_t ramsize)
 {
 	bool result = false;
@@ -748,22 +756,13 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 		return false;
 	}
 
-	// Search for model in lookup dictionary
-	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	// Search for model in lookup dictionary (short names and their aliases)
+	if (const TMemModel* found = FindModelByShortName(model))
 	{
-		// Null check before calling strlen to prevent crash
-		if (mem_model[i].ShortName != nullptr)
-		{
-			if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
-			{
-				config.mem_model = mem_model[i].Model;
-				maxMemory = mem_model[i].AvailRAMs;
-				fullModelName = mem_model[i].FullName;
-
-				result = true;
-				break;
-			}
-		}
+		config.mem_model = found->Model;
+		maxMemory = found->AvailRAMs;
+		fullModelName = found->FullName;
+		result = true;
 	}
 
 	// Check if config requested RAM size allowed for the selected model
@@ -818,6 +817,11 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 				return &mem_model[i];
 			}
 		}
+	}
+	for (const ModelAlias& alias : model_aliases)
+	{
+		if (StringHelper::CompareCaseInsensitive(shortName.c_str(), alias.Name, strlen(alias.Name)) == 0)
+			return FindModelByEnum(alias.Model);
 	}
 	return nullptr;
 }
@@ -1085,7 +1089,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         default:
-            // Leave existing values for TSConf etc.
+            // Leave existing values for the other models
             break;
     }
 
@@ -1146,6 +1150,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 1756;
                 config.intlen = 32;
+                break;
+            case MM_TSL:
+                // TS-Conf: 320 lines x 224 T (the Pentagon raster, hardware-spec §4). INT comes from the
+                // machine's interrupt source (VS_INT / HS_INT), so intstart / intlen are not used
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
                 break;
             default:
                 break;

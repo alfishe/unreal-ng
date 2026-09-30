@@ -147,6 +147,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"ports", &CLIProcessor::HandlePorts},                // Static port map + live routing flags
                         {"paging", &CLIProcessor::HandlePaging},              // Tagged paging latches + bank table (P1-2)
                         {"beam", &CLIProcessor::HandleBeam},                  // Raster beam position/zone
+                        {"video", &CLIProcessor::HandleVideo},                // Video debug translation (layout/pixel/address/text)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
@@ -658,6 +659,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  ports                   - Port map: which devices answer which I/O ports" << NEWLINE;
     oss << "  paging                 - Paging state: latches + bank table" << NEWLINE;
     oss << "  beam                   - Raster beam position and zone" << NEWLINE;
+    oss << "  video layout|pixel|address|text [args] - What makes a pixel, which pixels a byte feeds" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;

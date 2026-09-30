@@ -48,6 +48,13 @@ Performs the full workflow: creating the RAM disk, copying the project, building
 
 ---
 
+### TTD Benchmark Matrix
+
+#### `ttd-bench/ttd_bench_compare.py`
+Compares and summarizes TTD benchmark matrix runs (`TTDMatrix/*` in core-benchmarks) and exports the stored baselines, including the byte baseline for the core-tests CI gate. A byte difference fails the comparison; a timing change is reported as a percent. See [`ttd-bench/README.md`](ttd-bench/README.md).
+
+---
+
 ### Tape Fixture Vetting
 
 Tools live in per-format subfolders — `tape/tzx/` and `tape/tap/` (CSW joins when P3 lands).

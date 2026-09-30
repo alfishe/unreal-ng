@@ -96,6 +96,7 @@ protected:
     bool _hasPreferredModel = false;
     MEM_MODEL _preferredModel = MM_PENTAGON;
     uint32_t _preferredRamSize = 0;
+    std::function<void(CONFIG&)> _configOverride;
     std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
@@ -168,6 +169,16 @@ public:
         _preferredModel = model;
         _preferredRamSize = ramSize;
         _hasPreferredModel = true;
+    }
+
+    /// Adjust this instance's configuration after it is loaded and the
+    /// preferred model is applied, before any device is created from it.
+    /// Must be called before Init(). Per instance - unlike the process-wide
+    /// Config::SetConfigLoadedHook - so one caller cannot change another
+    /// instance's hardware (MachineStateTransfer fits the source's cards).
+    void SetConfigOverride(std::function<void(CONFIG&)> configOverride)
+    {
+        _configOverride = std::move(configOverride);
     }
 
     /// Set a custom config file path. Must be called before Init().

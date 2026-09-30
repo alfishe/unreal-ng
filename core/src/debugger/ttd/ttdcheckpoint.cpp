@@ -224,8 +224,7 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     //   nvram     — peripheral; handled via TTDSerializable when wired in
     //   video_memory_changed — debug-only flag
     //   nmi_in_progress — already in TTDCpuState
-    //   ts (TSPORTS_t)   — TS-Conf specific; not supported in v1
-    //   cram, sfile      — TS-Conf palette/sprite files; not in v1
+    //   TS-Conf state    — owned by its decoder (TsConfState), its own blob
     //
     // Caller is responsible for re-running the port decoder to rebuild
     // memory bank mappings from the restored port latches (TDD §8.1 step 2b).

@@ -147,6 +147,9 @@ fail on the old code and pass on the new.
 Exit: a v1 baseline JSON for the full matrix is stored; the comparison script
 prints it against itself with zero differences in byte counts.
 
+**Done 2026-09-29**, results and the V1b decision (not needed) in
+[v0b-benchmark-results.md](v0b-benchmark-results.md).
+
 ### Merge `profi` (S)
 
 Checklist in [branch-merge-strategy.md](branch-merge-strategy.md) §3.1. Clean
@@ -171,6 +174,8 @@ dirty-page count.
 
 ### V1b — checkpoints inside a frame (conditional, M)
 
+**Not needed** (V0b measured 2.5–3.5 ms p99 on the heaviest turbo configurations
+over 10-minute sessions; [v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
 Only if V0b shows seek p99 above 5 ms on a turbo or heavy configuration
 (requirements PR-5). Adds extra checkpoints at fixed T-state intervals inside
 long frames, so a seek replays at most one interval. Skipped otherwise.

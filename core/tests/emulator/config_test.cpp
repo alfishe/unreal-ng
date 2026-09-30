@@ -417,3 +417,47 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
 }
 
 /// endregion </[HDD] (IDE board)>
+
+/// TSConf model names (PLAN #41 INF-8, technical-design D3): the canonical
+/// short name stays TSL, TSCONF is accepted wherever a short name is
+TEST(ConfigModelLookup_Test, TsconfIsAnAliasOfTsl)
+{
+    for (const char* name : {"TSL", "tsl", "TSCONF", "TSConf", "tsconf"})
+    {
+        const TMemModel* model = Config::FindModelByShortName(name);
+        ASSERT_NE(model, nullptr) << name;
+        EXPECT_EQ(model->Model, MM_TSL) << name;
+        EXPECT_STREQ(model->ShortName, "TSL") << name << ": the table row, not a second model";
+    }
+    for (const char* name : {"TSCONFX", "TSCON", "TS", "TSLX"})
+        EXPECT_EQ(Config::FindModelByShortName(name), nullptr) << name;
+    EXPECT_EQ(Config::FindModelByShortName("PLUS2A")->Model, MM_PLUS2A) << "whole-name match, not a prefix";
+}
+
+TEST_F(Config_Test, TsconfConfigHimemSelectsTsl)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("tsconf_himem.ini");
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "[MISC]\nHIMEM=TSCONF\nRamSize=4096\n";
+    }
+    Config config(_context);
+    ASSERT_TRUE(config.LoadConfigFile(path));
+    EXPECT_EQ(_context->config.mem_model, MM_TSL);
+}
+
+/// TSConf frame geometry (PLAN #41 INF-9, technical-design §3.17): the
+/// Pentagon raster, 320 lines x 224 T; INT comes from the machine's interrupt
+/// source, so intstart / intlen are left alone
+TEST_F(Config_Test, TsconfCanonicalTiming)
+{
+    CONFIG config = _context->config;
+    config.mem_model = MM_TSL;
+    config.frame = 69888;  // another model's values must not leak in
+    config.t_line = 228;
+    Config(_context).ApplyModelTimingDefaults(config, true);
+    EXPECT_EQ(config.t_line, 224u);
+    EXPECT_EQ(config.frame, 71680u);
+    EXPECT_EQ(config.frame / config.t_line, 320u);
+    EXPECT_EQ(config.frame_duration_us, 20480u) << "48.83 frames per second";
+}

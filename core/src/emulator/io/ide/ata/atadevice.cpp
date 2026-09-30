@@ -121,7 +121,7 @@ uint8_t AtaDevice::ReadRegister(uint8_t reg)
 uint16_t AtaDevice::ReadData()
 {
     if (static_cast<AtaPhase>(_s.phase) != AtaPhase::DataIn || !(_s.status & Status::DRQ) ||
-        _s.bufferPos + 1 >= sizeof(_s.buffer))
+        static_cast<size_t>(_s.bufferPos) + 1 >= sizeof(_s.buffer))
         return 0xFFFF;
 
     const uint16_t word = static_cast<uint16_t>(_s.buffer[_s.bufferPos] | (_s.buffer[_s.bufferPos + 1] << 8));
@@ -140,7 +140,7 @@ void AtaDevice::WriteData(uint16_t word)
 {
     const AtaPhase phase = static_cast<AtaPhase>(_s.phase);
     if ((phase != AtaPhase::DataOut && phase != AtaPhase::PacketCommand) || !(_s.status & Status::DRQ) ||
-        _s.bufferPos + 1 >= sizeof(_s.buffer))
+        static_cast<size_t>(_s.bufferPos) + 1 >= sizeof(_s.buffer))
         return;
 
     _s.buffer[_s.bufferPos] = static_cast<uint8_t>(word & 0xFF);

@@ -55,11 +55,16 @@ Settings are the driver's stock ones. MAME's own `mame.ini` and plugins are not 
 whose ROMs are all there, passed as `-bios` (see ROMs). The command line is
 
 ```
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 mame <driver> -bios <bios> -rompath <roms> -cass <program>.tap | -flop1 <program>.trd
-     -video none -sound none -nothrottle -skip_gameinfo -noreadconfig -noplugins
+     -video none -sound none -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins
      -cfg_directory build/run/cfg -nvram_directory build/run/nvram
      -seconds_to_run <MAX_FRAMES / 50 + 30> -autoboot_script coemu.lua
 ```
+
+`-video none` alone still lets the SDL build open a window, and with `-noreadconfig` MAME's default is full
+screen. SDL's dummy drivers stop it opening any window or audio device; `-window` keeps it off the full screen
+should a build ignore them.
 
 The ATM Turbo 2+ boots with its BIOS menu set to "TURBO ON" (7 MHz). That is the stock setting, so the probe
 finds the CPU too fast, says so and stops; the result is `error`.

@@ -27,6 +27,15 @@
 | default access | `Session` with explicit Save (today's behavior, now named); `WriteThrough` = save after every written track; `ReadOnly` = the drive's write-protect tab |
 | registered by | the **active** controller: the WD1793 registers A-D except on +3; the uPD765 registers A-B on +3. Today the WD1793 is created and exposes four drives even on +3, so "drive present" checks pass wrongly (research §3); registration fixes what the surfaces see |
 
+**Density (DD / HD).** Floppy images carry no density field. The WD1793 derives it from each track's raw
+length: a track is HD (500 kbit/s) when it is at least 1.5x the DD nominal length for its encoding
+(MFM: 9 375 bytes or more, against 6 250; FM: 4 688 or more, against 3 125), otherwise DD (250 kbit/s). Example: a raw
+1.44 MB image (1 474 560 bytes = 80 x 2 x 18 x 512) must be built with 12 500-byte MFM tracks, a 720 KB
+image with 6 250-byte tracks. The controller reads only tracks whose rate equals its data-separator
+rate (250 kbit/s by default; the Sprinter's `#BD` latch switches it); any other track shows no sector
+IDs (Record Not Found). So the slot does not need a density property: the medium carries it, the machine
+sets the rate. See [WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md) §4.4.
+
 ## 3. Migration (M2)
 
 | Today | After |

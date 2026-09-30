@@ -71,6 +71,11 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   builds `ScreenTSConf : ScreenZX` for `MM_TSL`) - branch `tsconf-infra-2`
   (2026-09-29); technical-design §3.9
 
+- [x] Phase 0 remainder (2026-09-29, branch `tsconf-isolation`): INF-6/7 the
+  TSConf half-port removed from shared code + `tsconfisolation_test`; INF-8
+  `TSCONF` alias; INF-9 `MM_TSL` frame geometry; INF-10 `PeripheralId::TsConfPaging = 16`
+  (+ `ttd.ksy`, id-table test). **Phase 0 complete.**
+
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).

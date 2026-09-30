@@ -3827,52 +3827,28 @@ namespace PythonBindings
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")
 
-        .def("beam_position", [](Emulator& self) -> py::dict {
-            py::dict d;
-            EmulatorContext* context = self.GetContext();
-            if (!context || !context->pScreen)
-            {
-                d["error"] = "context not initialized";
-                return d;
-            }
-
-            const CONFIG& config = context->config;
-            Screen* screen = context->pScreen;
-            if (config.t_line == 0 || config.frame == 0)
-            {
-                d["error"] = "machine timing not initialized";
-                return d;
-            }
-
-            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-            const uint32_t tInFrame = tstate % config.frame;
-
-            const BeamPosition beam = screen->DescribeBeam(tInFrame);
-            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-            const uint32_t line = tInFrame / tstatesPerLine;
-
-            d["tstate"] = tstate;
-            d["tstate_in_frame"] = tInFrame;
-            d["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
-            d["line"] = line;
-            d["dot_in_line"] = tInFrame % tstatesPerLine;
-            d["beam_x"] = beam.beamX;
-            d["beam_y"] = line;
-            d["zone"] = std::string(beam.zone);
-            d["vertical_zone"] = std::string(beam.verticalZone);
-            d["horizontal_zone"] = std::string(beam.horizontalZone);
-            d["in_paper"] = beam.inPaper;
-            if (beam.inPaper)
-            {
-                py::dict paper;
-                paper["x"] = beam.paperX;
-                paper["x_end"] = beam.paperXEnd;
-                paper["y"] = beam.paperY;
-                d["paper"] = paper;
-            }
-            return d;
-        }, "Raster beam position and zone at the current t-state")
+        // Beam and video debug translation (PLAN #42): the same DeviceState reports every interface returns
+        .def("beam_position", [](Emulator& self) -> py::object {
+            return StateNodeToPy(DeviceState::VideoBeam(self.GetContext()));
+        }, "Raster beam position and zone at the current t-state, plus the layer pixel under it (layers)")
+        .def("video_layout", [](Emulator& self) -> py::object {
+            return StateNodeToPy(DeviceState::VideoLayout(self.GetContext()));
+        }, "Current video mode: layers, beam windows, framebuffer placement")
+        .def("video_pixel", [](Emulator& self, unsigned x, unsigned y, unsigned layer) -> py::object {
+            return StateNodeToPy(DeviceState::VideoPixel(self.GetContext(), layer, x, y));
+        }, "Memory, registers and palette cell behind a surface pixel", py::arg("x"), py::arg("y"), py::arg("layer") = 0)
+        .def("video_pixel_at", [](Emulator& self, unsigned t) -> py::object {
+            return StateNodeToPy(DeviceState::VideoPixelAtBeam(self.GetContext(), t));
+        }, "The same for the point under the beam at a frame T-state (layer pixel or border)", py::arg("t"))
+        .def("video_address", [](Emulator& self, unsigned page, unsigned offset) -> py::object {
+            return StateNodeToPy(DeviceState::VideoAddress(self.GetContext(), page, offset));
+        }, "Pixels a RAM byte (page, offset 0..0x3FFF) feeds", py::arg("page"), py::arg("offset"))
+        .def("video_address_z80", [](Emulator& self, unsigned address) -> py::object {
+            return StateNodeToPy(DeviceState::VideoAddressZ80(self.GetContext(), address));
+        }, "Pixels the byte at a Z80 address feeds (current paging)", py::arg("address"))
+        .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
+            return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
+        }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

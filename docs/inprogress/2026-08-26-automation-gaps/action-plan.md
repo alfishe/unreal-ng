@@ -84,7 +84,7 @@ See [gdb-protocol.md](../../emulator/design/control-interfaces/gdb-protocol.md) 
 | 1A.9.3 | `monitor instances` | DONE | 00c977fb | pid, symbolic id, model, state |
 | 1A.9.4 | `monitor bankinfo` | DONE | | Shows ROM/RAM pages for each bank |
 | 1A.9.5 | `monitor frame` | DONE | 00c977fb | T-state + PC display |
-| 1A.9.6 | `monitor load snap/tape/disk` | DONE | | Supports sna/z80/szx/tap/tzx/trd/scl/fdi |
+| 1A.9.6 | `monitor load snap/tape/disk` | DONE | | Supports sna/z80/szx/tap/tzx/trd/scl/fdi (szx loads since 2026-09-29, PLAN #64) |
 | 1A.9.7 | `monitor reset` | DONE | 00c977fb | Paused only, preserves model |
 
 ### G3: Reverse Execution (TTD Integration)

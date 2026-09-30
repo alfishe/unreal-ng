@@ -1247,7 +1247,6 @@ template <bool UseSource>
 bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end)
 {
     Z80& cpu = *this;
-    VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
 
     // A pending prefix is the middle of an instruction: neither INT nor NMI
@@ -1332,8 +1331,6 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             cpu.pc = 0x0067;
         }
 
-        video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
-
         return true;  // NMI accepted: skip Z80Step this iteration
     }
 
@@ -1341,7 +1338,6 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     if constexpr (UseSource)
     {
         cpu.int_pending = _interruptSource->IsIntAsserted(cpu.t);
-        video.memcyc_lcmd = 0;
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
             HandleINT(_interruptSource->AcknowledgeInterrupt(cpu.t));
@@ -1389,8 +1385,6 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             _localIntArmed = false;
     }
 
-    video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
-
     /// region <INT (Non-masked interrupt)>
 
     // If INT signal raised and IFF1 flag is set allowing interrupts handling (set by EI command)
@@ -1428,8 +1422,6 @@ bool Z80::IntClearedByAcknowledge() const
 void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
-    CONFIG& config = _context->config;
-    EmulatorState& state = _context->emulatorState;
 
     /// region <CPU is stopped on HALT (opcode 0x76) command>
 
@@ -1523,21 +1515,6 @@ void Z80::HandleINT(uint8_t vector)
     // this pulse window (ProcessInterrupts re-arms after it)
     if (IntClearedByAcknowledge())
         cpu.int_acked_in_pulse = 1;
-
-    /// region <TSConf>
-
-    // TODO: move to TSConf plugin
-    if (config.mem_model == MM_TSL)
-    {
-        if (state.ts.intctrl.frame_pend)
-            state.ts.intctrl.frame_pend = 0;
-        else if (state.ts.intctrl.line_pend)
-            state.ts.intctrl.line_pend = 0;
-        else if (state.ts.intctrl.dma_pend)
-            state.ts.intctrl.dma_pend = 0;
-    }
-
-    /// endregion </TSConf>
 }
 
 void Z80::OnCPUStep()

@@ -172,6 +172,35 @@ bool Inflate(const uint8_t* data, size_t size, size_t expected, std::vector<uint
     return ok;
 }
 
+bool InflateBounded(const uint8_t* data, size_t size, size_t limit, std::vector<uint8_t>& out)
+{
+    out.clear();
+    mz_stream stream{};
+    if (mz_inflateInit(&stream) != MZ_OK)
+        return false;
+    stream.next_in = data;
+    stream.avail_in = static_cast<unsigned int>(size);
+    uint8_t chunk[16384];
+    int status = MZ_OK;
+    while (status == MZ_OK)
+    {
+        stream.next_out = chunk;
+        stream.avail_out = sizeof(chunk);
+        status = mz_inflate(&stream, MZ_NO_FLUSH);
+        const size_t produced = sizeof(chunk) - stream.avail_out;
+        if (out.size() + produced > limit)
+        {
+            status = MZ_DATA_ERROR;
+            break;
+        }
+        out.insert(out.end(), chunk, chunk + produced);
+        if (status == MZ_BUF_ERROR && stream.avail_in == 0)
+            break;
+    }
+    mz_inflateEnd(&stream);
+    return status == MZ_STREAM_END;
+}
+
 std::vector<uint8_t> Deflate(const uint8_t* data, size_t size)
 {
     mz_ulong length = mz_compressBound(static_cast<mz_ulong>(size));

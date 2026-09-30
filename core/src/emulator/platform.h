@@ -3,7 +3,6 @@
 
 #include "sysdefs.h"
 #include "common/sound/filters/filtervoicing.h"
-#include "emulator/platforms/tsconf/tsconf.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -259,9 +258,6 @@ const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
 const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
 const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
-
-// TS-conf specific settings
-#define TS_CACHE_SIZE 512
 
 #define GS4MB //0.37.0
 #ifdef MOD_GSZ80
@@ -550,6 +546,7 @@ struct CONFIG
 	uint8_t trdos_interleave;
 	bool trdos_traps;			// Use TR-DOS traps
 	bool wd93_nodelay;			// Don't emulate WD1793 / VG93 controller delays
+	int8_t fdcTurboVg = -1;		// [Beta128] TurboVG=: -1 machine default, 0 fixed 1 MHz, 1 turbo VG (STEP -> 2 MHz, DRQ -> 1 MHz)
 	uint8_t trdos_wp[4];
 
 	uint8_t cache;
@@ -1074,11 +1071,7 @@ struct EmulatorState
 	bool evoNmiEntry : 1 = false;
 	bool nmiAtIntStartPending : 1 = false;
 	
-	TSPORTS_t ts;
-	
 	uint8_t pLSY256;
-	uint16_t cram[256];
-	uint16_t sfile[256];
 
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map

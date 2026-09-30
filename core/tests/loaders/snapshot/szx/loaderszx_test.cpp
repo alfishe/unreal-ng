@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
@@ -21,7 +22,16 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/corestate.h"
+#include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/upd765.h"
+#include "emulator/io/tape/tape.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/iturbosounddevice.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/snapshot/szx/szxreader.h"
@@ -301,4 +311,333 @@ TEST_P(LoaderSZX_Test, ExportForTheLibspectrumCheck)
     const std::string name = std::filesystem::path(param.file).stem().string();
     LoaderSZX writer(_context, (std::filesystem::path(folder) / (name + ".szx")).string());
     ASSERT_TRUE(writer.save()) << writer.GetError();
+}
+
+/// HALT: PC stays on the HALT while halted (here and in Fuse); a snapshot
+/// taken there round-trips, and the INT that ends it returns past the HALT.
+/// A file whose PC is already past the HALT is moved back onto it
+TEST(LoaderSZXHalt_Test, HaltedStateRoundTripsAndTheIntReturnsPastTheHalt)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("szx-halt", "48K", 48, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    Z80& cpu = *context->pCore->GetZ80();
+    Memory& memory = *context->pMemory;
+
+    // #8000: HALT, IM 1, interrupts on, 100 T-states after the INT (window over)
+    Stage stage = Parse(Fixture("libspectrum/synth-48.szx"));
+    stage.pages[2][0] = 0x76;
+    stage.pages[2][1] = 0x00;
+    stage.z80->pc = 0x8000;
+    stage.z80->sp = 0xBF00;
+    stage.z80->im = 1;
+    stage.z80->iff1 = stage.z80->iff2 = 1;
+    stage.z80->flags = 0;
+    stage.z80->cyclesStart = 100;
+    Report report;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Commit(context, stage, report, error)) << error;
+
+    // Execute the HALT: the snapshot now says HALTED with PC on the HALT
+    emulator->RunSingleCPUCycle();
+    ASSERT_EQ(cpu.halted, 1);
+    ASSERT_EQ(cpu.pc, 0x8000);
+    Stage saved;
+    ASSERT_TRUE(LoaderSZX::Capture(context, saved, error)) << error;
+    EXPECT_EQ(saved.z80->pc, 0x8000);
+    EXPECT_TRUE(saved.z80->flags & kHalted);
+
+    // Load it back and let the next INT end the HALT
+    report = Report{};
+    ASSERT_TRUE(LoaderSZX::Commit(context, saved, report, error)) << error;
+    EXPECT_EQ(cpu.halted, 1);
+    EXPECT_EQ(cpu.pc, 0x8000);
+    for (int step = 0; step < 40000 && cpu.pc != 0x0038; step++)
+        emulator->RunSingleCPUCycle();
+    ASSERT_EQ(cpu.pc, 0x0038) << "the INT was not taken";
+    EXPECT_EQ(cpu.halted, 0);
+    const uint16_t returnAddress =
+        static_cast<uint16_t>(memory.DirectReadFromZ80Memory(cpu.sp) | (memory.DirectReadFromZ80Memory(cpu.sp + 1) << 8));
+    EXPECT_EQ(returnAddress, 0x8001) << "the INT returns past the HALT";
+
+    // Another writer's convention: PC stored past the HALT
+    saved.z80->pc = 0x8001;
+    report = Report{};
+    ASSERT_TRUE(LoaderSZX::Commit(context, saved, report, error)) << error;
+    EXPECT_EQ(cpu.pc, 0x8000) << "moved back onto the HALT";
+    EXPECT_NE(report.ToText().find("moved back onto the HALT"), std::string::npos) << report.ToText();
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+namespace
+{
+    std::string TestFile(const std::string& relative)
+    {
+        return (TestPathHelper::FindProjectRoot() / "testdata" / relative).string();
+    }
+
+    MediaResult InsertFile(EmulatorContext* context, const std::string& slot, const std::string& path)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.immediate = true;
+        return context->pMediaManager->Insert(slot, source, options);
+    }
+
+    std::shared_ptr<Emulator> CreateWithSound(const char* id, const char* model, uint32_t ramKb)
+    {
+        SoundCardScope sound(TestSound::GeneralSound | TestSound::TurboSound);
+        return EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM(id, model, ramKb, LoggerLevel::LogError);
+    }
+}  // namespace
+
+/// Media and devices round-trip on a Pentagon: a linked TRD on drive A with
+/// its head cylinder, a linked tape at block 2, the classic GS card (CPU,
+/// page, volumes, DAC, RAM) and the Covox level come back on a fresh machine
+TEST(LoaderSZXDevices_Test, MediaAndDevicesRoundTripOnAPentagon)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto source = CreateWithSound("szx-dev-a", "PENTAGON", 128);
+    auto target = CreateWithSound("szx-dev-b", "PENTAGON", 128);
+    ASSERT_TRUE(source && target);
+    EmulatorContext* a = source->GetContext();
+    EmulatorContext* b = target->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(a->pSoundManager, GSTypeKind::Z80));
+    ASSERT_TRUE(FitGeneralSoundCard(b->pSoundManager, GSTypeKind::Z80));
+
+    const std::string trd = TestFile("loaders/trd/zx-format8.trd");
+    const std::string tap = TestFile("loaders/tap/aydetect.tap");
+    ASSERT_TRUE(InsertFile(a, "fdd.a", trd).Ok());
+    ASSERT_TRUE(InsertFile(a, "tape", tap).Ok());
+    ASSERT_TRUE(a->pTape->EnsureImageLoaded());
+    ASSERT_TRUE(a->pTape->SeekToBlock(2));
+    a->coreState.diskDrives[0]->setTrack(5);
+    ASSERT_TRUE(a->pSoundManager->hasCovox());
+    a->pSoundManager->getCovox()->portDeviceOutMethod(0x00FB, 0x9C);
+    source->RunNFrames(3, true);  // the GS card runs its firmware
+
+    Stage saved;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Capture(a, saved, error)) << error;
+    ASSERT_EQ(saved.betaDisks.size(), 1u);
+    EXPECT_EQ(saved.betaDisks[0].type, DiskTrd);
+    EXPECT_EQ(saved.betaDisks[0].cylinder, 5);
+    ASSERT_TRUE(saved.tape);
+    EXPECT_EQ(saved.tape->block, 2);
+    ASSERT_TRUE(saved.gs);
+    // GS128: four 32 KB pages; GS512: fifteen (the format's 0..14)
+    const size_t ramKb = a->pSoundManager->getGeneralSound()->getRamSizeKB();
+    EXPECT_EQ(saved.gs->model, ramKb >= 512 ? 1 : 0);
+    EXPECT_EQ(saved.gsPages.size(), ramKb >= 512 ? 15u : 4u);
+    ASSERT_TRUE(saved.covox);
+    EXPECT_EQ(*saved.covox, 0x9C);
+
+    // Through the bytes, then onto the other machine
+    const std::vector<uint8_t> bytes = SzxWriter::Write(saved);
+    Stage parsed;
+    ASSERT_TRUE(SzxReader::Parse(bytes.data(), bytes.size(), parsed, error)) << error;
+    Report report;
+    ASSERT_TRUE(LoaderSZX::Commit(b, parsed, report, error)) << error;
+
+    EXPECT_EQ(b->pMediaManager->Info("fdd.a")->source, trd);
+    EXPECT_EQ(b->pMediaManager->Info("fdd.a")->access, AccessMode::Session) << "linked media never write through";
+    EXPECT_EQ(b->coreState.diskDrives[0]->getTrack(), 5);
+    EXPECT_EQ(b->pMediaManager->Info("tape")->source, tap);
+    ASSERT_TRUE(b->pTape->GetPosition());
+    EXPECT_EQ(b->pTape->GetPosition()->blockIndex, 2u);
+    uint8_t latches[4] = {};
+    b->pSoundManager->getCovox()->getDacLatches(latches);
+    EXPECT_EQ(latches[3], 0x9C);
+
+    GeneralSoundCard& gsA = *a->pSoundManager->getGeneralSound();
+    GeneralSoundCard& gsB = *b->pSoundManager->getGeneralSound();
+    for (GSCpuRegister reg : {GSCpuRegister::AF, GSCpuRegister::BC, GSCpuRegister::HL, GSCpuRegister::SP, GSCpuRegister::PC,
+                              GSCpuRegister::IX, GSCpuRegister::I, GSCpuRegister::IM, GSCpuRegister::IFF1})
+        EXPECT_EQ(gsA.getCPUReg(reg), gsB.getCPUReg(reg)) << "GS register " << static_cast<int>(reg);
+    EXPECT_EQ(gsA.getMPAG(), gsB.getMPAG());
+    for (int channel = 0; channel < 4; channel++)
+    {
+        EXPECT_EQ(gsA.getChannelVolume(channel), gsB.getChannelVolume(channel));
+        EXPECT_EQ(gsA.getChannelSample(channel), gsB.getChannelSample(channel));
+    }
+    Stage again;
+    ASSERT_TRUE(LoaderSZX::Capture(b, again, error)) << error;
+    EXPECT_EQ(again.gsPages, saved.gsPages) << "GS RAM";
+    EXPECT_NE(report.ToText().find("BDSK A: applied"), std::string::npos) << report.ToText();
+
+    manager->RemoveEmulator(source->GetId());
+    manager->RemoveEmulator(target->GetId());
+}
+
+/// Embedded images: a BDSK disk and a TAPE image inside the file are staged in
+/// temporary files that go with their media; a relative link is found next
+/// to the snapshot
+TEST(LoaderSZXDevices_Test, EmbeddedImagesAndRelativeLinks)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("szx-embed", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+
+    auto read = [](const std::string& path) {
+        std::ifstream file(path, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    };
+    Stage stage = Parse(Fixture("libspectrum/synth-pentagon.szx"));
+    BetaDisk disk;
+    disk.drive = 1;
+    disk.type = DiskTrd;
+    disk.cylinder = 3;
+    disk.image = read(TestFile("loaders/trd/zx-format8.trd"));
+    stage.betaDisks.push_back(disk);
+    szx::Tape tape;
+    tape.extension = "tap";
+    tape.block = 1;
+    tape.image = read(TestFile("loaders/tap/aydetect.tap"));
+    stage.tape = tape;
+
+    // Through the bytes (compressed payloads), then committed
+    const std::vector<uint8_t> bytes = SzxWriter::Write(stage);
+    Stage parsed;
+    std::string error;
+    ASSERT_TRUE(SzxReader::Parse(bytes.data(), bytes.size(), parsed, error)) << error;
+    EXPECT_EQ(parsed.betaDisks.at(0).image, disk.image);
+    EXPECT_EQ(parsed.tape->image, tape.image);
+    Report report;
+    ASSERT_TRUE(LoaderSZX::Commit(context, parsed, report, error)) << error;
+
+    const std::optional<SlotInfo> drive = context->pMediaManager->Info("fdd.b");
+    ASSERT_TRUE(drive && drive->present) << report.ToText();
+    const std::string staged = drive->source;
+    EXPECT_TRUE(FileHelper::FileExists(staged));
+    EXPECT_EQ(context->coreState.diskDrives[1]->getTrack(), 3);
+    ASSERT_TRUE(context->pTape->GetPosition());
+    EXPECT_EQ(context->pTape->GetPosition()->blockIndex, 1u);
+    ASSERT_TRUE(context->pMediaManager->Eject("fdd.b").Ok());
+    EXPECT_FALSE(FileHelper::FileExists(staged)) << "the staged image goes with its medium";
+
+    // A relative link, found in the snapshot's folder
+    Stage linked = Parse(Fixture("libspectrum/synth-pentagon.szx"));
+    linked.folder = (TestPathHelper::FindProjectRoot() / "testdata" / "loaders" / "trd").string();
+    BetaDisk link;
+    link.fileName = "zx-format8.trd";
+    linked.betaDisks.push_back(link);
+    report = Report{};
+    ASSERT_TRUE(LoaderSZX::Commit(context, linked, report, error)) << error;
+    EXPECT_EQ(context->pMediaManager->Info("fdd.a")->source, TestFile("loaders/trd/zx-format8.trd"));
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// +3: the motor and a linked DSK on drive A come back
+TEST(LoaderSZXDevices_Test, Plus3DiskRoundTrip)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto source = manager->CreateEmulatorWithModelAndRAM("szx-p3-a", "PLUS3", 128, LoggerLevel::LogError);
+    auto target = manager->CreateEmulatorWithModelAndRAM("szx-p3-b", "PLUS3", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(source && target);
+    const std::string dsk = TestFile("loaders/dsk/plus3-blank.dsk");
+    ASSERT_TRUE(InsertFile(source->GetContext(), "fdd.a", dsk).Ok());
+    source->GetContext()->pUPD765->setMotor(true);
+    Stage saved;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Capture(source->GetContext(), saved, error)) << error;
+    ASSERT_TRUE(saved.plus3);
+    EXPECT_EQ(saved.plus3->motorOn, 1);
+    ASSERT_EQ(saved.dskFiles.size(), 1u);
+    EXPECT_TRUE(saved.betaDisks.empty()) << "the +3 has no Beta 128";
+
+    const std::vector<uint8_t> bytes = SzxWriter::Write(saved);
+    Stage parsed;
+    ASSERT_TRUE(SzxReader::Parse(bytes.data(), bytes.size(), parsed, error)) << error;
+    // SPCR #1FFD carries the motor bit too; the +3 block must agree with it
+    parsed.spec->port1FFDorEFF7 |= 0x08;
+    Report report;
+    ASSERT_TRUE(LoaderSZX::Commit(target->GetContext(), parsed, report, error)) << error;
+    EXPECT_TRUE(target->GetContext()->pUPD765->getMotor());
+    EXPECT_EQ(target->GetContext()->pMediaManager->Info("fdd.a")->source, dsk);
+    manager->RemoveEmulator(source->GetId());
+    manager->RemoveEmulator(target->GetId());
+}
+
+/// Blocks for hardware we do not emulate are read and reported, never applied
+TEST(LoaderSZXDevices_Test, UnemulatedHardwareIsReported)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("szx-report", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    LoaderSZX loader(emulator->GetContext(), Fixture("other/spectaculator-pentagon-crazylove.szx"));
+    ASSERT_TRUE(loader.load()) << loader.GetError();
+    const std::string text = loader.GetReport().ToText();
+    for (const char* line : {"IF1: ignored", "MFCE: ignored", "ZXPR: ignored", "JOY: ignored (joysticks are not emulated)"})
+        EXPECT_NE(text.find(line), std::string::npos) << line << "\n" << text;
+    EXPECT_NE(text.find("BDSK A: ignored (linked image not found"), std::string::npos) << text;
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// TurboSound FM replaces TurboSound: the AY block goes into the SSG half of
+/// YM2203 chip 1, fully applied (never an error), with the YM2203's own
+/// address latch on the selected register
+TEST(LoaderSZXSound_Test, TurboSoundFmTakesTheAyBlock)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator;
+    {
+        SoundCardScope sound(TestSound::TurboSound);
+        emulator = manager->CreateEmulatorWithModelAndRAM("szx-tsfm", "PENTAGON", 128, LoggerLevel::LogError);
+    }
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
+    ASSERT_TRUE(device && device->hasFm()) << "the shipped Pentagon config fits TurboSound FM";
+
+    LoaderSZX loader(context, Fixture("libspectrum/synth-pentagon.szx"));
+    ASSERT_TRUE(loader.load()) << loader.GetError();
+    EXPECT_NE(loader.GetReport().ToText().find("AY: applied (into the SSG half"), std::string::npos) << loader.GetReport().ToText();
+    SoundChip_AY8910* ssg = context->pSoundManager->getAYChip(0);
+    for (uint8_t reg = 0; reg < 16; reg++)
+        EXPECT_EQ(ssg->readRegister(reg), reg == 7 ? 0x38 : reg * 3 + 1) << "SSG register " << int(reg);
+    // The selected register (7) reaches the chip's own latch: a data write
+    // with no address write before it lands there
+    device->portDeviceOutMethod(0xBFFD, 0x3F);
+    EXPECT_EQ(ssg->readRegister(7), 0x3F);
+
+    Stage saved;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Capture(context, saved, error)) << error;
+    ASSERT_TRUE(saved.ay) << "a TSFM machine saves the AY block";
+    EXPECT_EQ(saved.ay->currentRegister, 7);
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// NeoGS replaces the General Sound: a GS block loads without an error (the
+/// card keeps its own firmware), and saving leaves the classic-card block out
+TEST(LoaderSZXSound_Test, NeoGsAcceptsTheGsBlock)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator;
+    {
+        SoundCardScope sound(TestSound::GeneralSound);
+        emulator = manager->CreateEmulatorWithModelAndRAM("szx-ngs", "PENTAGON", 128, LoggerLevel::LogError);
+    }
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+
+    Stage stage = Parse(Fixture("libspectrum/synth-pentagon.szx"));
+    stage.gs = GeneralSound{};
+    stage.gsPages[0] = std::vector<uint8_t>(kGsPageSize, 0x55);
+    Report report;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Commit(context, stage, report, error)) << error;
+    const std::string text = report.ToText();
+    EXPECT_NE(text.find("GS: approximated (NeoGS replaces the GS"), std::string::npos) << text;
+    EXPECT_EQ(text.find("GS: ignored"), std::string::npos) << text;
+
+    Stage saved;
+    ASSERT_TRUE(LoaderSZX::Capture(context, saved, error)) << error;
+    EXPECT_FALSE(saved.gs) << "the GS block describes the classic card";
+    EXPECT_FALSE(saved.warnings.empty());
+    manager->RemoveEmulator(emulator->GetId());
 }

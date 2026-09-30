@@ -379,9 +379,9 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 - Tests: `EvenM1_Test` in `core/tests/emulator/cpu/z80_test.cpp` (RAM fetch on an odd T waits, ROM never,
   RAM at `#0000` waits, turbo does not, other machines never); `ContentionNegative_Test.ClonesNeverWait`
   adds the alignment to its expected times.
-- The contention probe (`tools/verification/contention/ctprobe`) cannot time code on such a machine: its
-  engine needs delays of every length, and Even M1 rounds them to even T-states. It detects Even M1 before
-  the engine runs and reports "not measured".
+- The contention probe (`tools/verification/contention/ctprobe`) detects Even M1 before its engine runs and
+  then delays in 2 T-state steps (`DELAYE`), with two worked-out corrections to the Bobrowski / Rak engine
+  (its README, "Where the expected values come from"); a Scorpion with Even M1 is its class 5.
 - A natural home in the new design is the bus interface selector of [design.md](design.md) §6: a Scorpion
   interface whose fetch wrapper adds `tt & rate` when the slot holds RAM. Machines without it keep paying
   nothing (R1).

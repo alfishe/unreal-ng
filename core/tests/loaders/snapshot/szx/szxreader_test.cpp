@@ -185,7 +185,9 @@ TEST(SzxReader_Test, OtherWritersBlocksAreListed)
     for (const auto& [name, size] : stage.otherBlocks)
         names.push_back(name);
     EXPECT_TRUE(stage.beta) << "B128 is parsed";
-    for (const char* expected : {"BDSK", "IF1", "MFCE", "ZXPR", "KEYB", "JOY", "AMXM"})
+    EXPECT_FALSE(stage.betaDisks.empty()) << "BDSK is parsed";
+    EXPECT_TRUE(stage.keyboard && stage.joysticks && stage.mouse) << "KEYB, JOY, AMXM are parsed";
+    for (const char* expected : {"IF1", "MFCE", "ZXPR"})
         EXPECT_NE(std::find(names.begin(), names.end(), expected), names.end()) << expected;
 }
 

@@ -26,6 +26,7 @@
 
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
+#include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
 #include "emulator/io/ide/idecontroller.h"
 
 // Pull in the actual struct definitions for the capture call sites.
@@ -900,6 +901,7 @@ void TimeTravelManager::OnFrameBoundary()
         // Sealing under frame_counter shifted every coverage set one frame into
         // the future, which made reverse search look in the wrong frame and
         // report no match for a PC that had plainly executed.
+        const auto captureStart = std::chrono::steady_clock::now();
         const uint64_t endedFrame = _context->emulatorState.frame_counter;
         if (_enableCoverageIndex && endedFrame > 0)
             _coverageIndex.SealFrame(endedFrame - 1);
@@ -907,6 +909,8 @@ void TimeTravelManager::OnFrameBoundary()
         TTDCheckpoint cp;
         CaptureNow(cp);
         _timeline.push_back(std::move(cp));
+        _perf.lastCaptureNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
         return;
     }
 
@@ -1366,102 +1370,9 @@ uint64_t TimeTravelManager::ComputeRomSignature() const
 
 bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
-    // Idempotent: a restart must not stack duplicate serializers.
-    ReleaseModelPeripherals();
-
-    if (!_context)
-        return true;
-
-    // Core devices, present (or absent) independently of the model. They are
-    // owned by the emulator, not by us, so they are registered by raw pointer
-    // and simply dropped on release. A device that is absent on this model
-    // leaves no entry at all, which is the whole point of a registry: a
-    // checkpoint carries blobs only for what is actually connected.
-    if (_context->pSoundManager)
-    {
-        // TurboSound slot: register under the live device's own peripheral
-        // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
-        // device cannot load on the other (design §8.2). An empty slot
-        // (TurboSound = None) registers nothing, same as an absent Covox.
-        if (ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound())
-            _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
-        _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
-        // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
-        // the config did not fit one - the registry then simply carries no
-        // blob for it, same as Covox above. Registered under the live card's
-        // own peripheral id, same pattern as the TurboSound slot just above -
-        // LLE (GeneralSound) and LW (GeneralSoundLightweight) are different
-        // slots, so a session recorded on one personality cannot silently
-        // restore into the other.
-        if (GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound())
-            _peripherals.Register(gs->TTDPeripheralId(), gs);
-#ifdef UNREALNG_HAVE_OPL4
-        // MoonSound registers only when the config flag built it; a null
-        // pointer leaves no entry, so a session from a MoonSound machine
-        // loads on a MoonSound-less build as a visible missingBlob (R7).
-        _peripherals.Register(PeripheralId::MoonSound, _context->pSoundManager->getMoonSound());
-#endif
-    }
-    _peripherals.Register(PeripheralId::Tape, _context->pTape);
-    // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
-    _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
-    _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
-
-    // IDE board (any machine with [HDD] Scheme): controller state, not the media
-    if (_context->pIdeController && _context->pIdeController->Enabled())
-    {
-        auto ide = std::make_unique<TTDAtaChannel>(_context);
-        _peripherals.Register(PeripheralId::AtaChannel, ide.get());
-        _ownedPeripherals.push_back(std::move(ide));
-    }
-
-    // --- Model-specific state (TDD 6.4) ---
-    // The framework names no machine. The port decoder owns the model's
-    // latches, so it declares what extra state exists and supplies the
-    // serializers; we only check that the two agree.
-    PortDecoder* decoder = _context->pPortDecoder;
-    if (!decoder)
-        return true;
-
-    for (auto& serializer : decoder->CreateTTDSerializers())
-    {
-        if (!serializer)
-            continue;
-
-        _peripherals.Register(serializer->TTDPeripheralId(), serializer.get());
-        _ownedPeripherals.push_back(std::move(serializer));
-    }
-
-    // A declared id with no serializer behind it means this model's state
-    // would be dropped silently - a recording that looks correct and restores
-    // wrong. Refuse instead, naming what is missing.
-    for (PeripheralId id : decoder->GetTTDModelStateIds())
-    {
-        if (_peripherals.IsRegistered(id))
-            continue;
-
-        const std::string message =
-            "model (mem_model=" + std::to_string(static_cast<unsigned>(_context->config.mem_model)) +
-            ") declares TTD state id " + std::to_string(static_cast<unsigned>(id)) +
-            " but its port decoder supplied no serializer for it - recording would "
-            "silently drop that state. Implement CreateTTDSerializers() for this model.";
-
-        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", message.c_str());
-        if (err)
-            *err = message;
-
-        ReleaseModelPeripherals();
-        return false;
-    }
-
-    if (_peripherals.Count() > 0)
-    {
-        MLOGINFO("TimeTravelManager::RegisterModelPeripherals - %zu serializer(s) registered for mem_model=%u",
-                 _peripherals.Count(),
-                 static_cast<unsigned>(_context->config.mem_model));
-    }
-
-    return true;
+    // The device set is enumerated in one place (ttdmachineperipherals.cpp),
+    // shared with MachineStateTransfer. On failure the registry is left empty.
+    return RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err);
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
@@ -1487,6 +1398,12 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // Host-side fields (MemIf pointers, trace cursors, isDebugMode,
     // prev_pc/m1_pc/last_branch/nextpc) are preserved by RestoreCpuState —
     // they remain valid because we're not tearing down the emulator.
+    using PerfClock = std::chrono::steady_clock;
+    auto elapsedNs = [](PerfClock::time_point from, PerfClock::time_point to) {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count());
+    };
+    const PerfClock::time_point restoreStart = PerfClock::now();
+
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
@@ -1517,7 +1434,9 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // values and then never re-derive.
     // A device set that differs from the checkpoint's (FR-4) leaves devices
     // in the live machine's state; say so instead of restoring silently
+    const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
+    const PerfClock::time_point devicesEnd = PerfClock::now();
     if (!devices.Complete())
         MLOGWARNING("TimeTravelManager::RestoreCheckpoint — frame %llu: device set differs from the checkpoint "
                     "(%zu restored, %zu without state, %zu size mismatches, %zu unclaimed)",
@@ -1536,6 +1455,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // already matches is deferred (TDD §8.1 "often a handful of pages";
     // restore is rare, not a per-frame hot path).
     RestoreRamPages(cp.ramPages);
+    const PerfClock::time_point memoryEnd = PerfClock::now();
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
     // The screen renderer caches derived state (active screen bank from
@@ -1545,6 +1465,11 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // uses the same pattern for the same reason). Pixels are not touched:
     // what a position shows is decided by ComposeDisplay alone.
     ResyncScreenState();
+
+    _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, devicesStart);
+    _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
+    _perf.lastRestoreMemoryNs = elapsedNs(devicesEnd, memoryEnd);
+    _perf.lastRestoreScreenNs = elapsedNs(memoryEnd, PerfClock::now());
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
 }
@@ -1839,10 +1764,22 @@ bool TimeTravelManager::OwnsInput() const
     return _context->emulatorState.frame_counter <= _timeline.back().time.frame;
 }
 
+void TimeTravelManager::SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor)
+{
+    std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+    _liveInputInterceptor = std::move(interceptor);
+}
+
 bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
 {
     if (!_context || OwnsInput())
         return false;
+
+    {
+        std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+        if (_liveInputInterceptor && _liveInputInterceptor(ev))
+            return true;
+    }
 
     // The machine lives on the emulator loop's thread: while the loop runs,
     // only that thread mutates input state - queue for its next instruction
@@ -2028,8 +1965,6 @@ const char* TimeTravelManager::PortJournalUnsupportedReason() const
     // (ttd-port-read-journal.md §2)
     switch (_context->config.mem_model)
     {
-        case MM_TSL:
-            return "TSConf: its DMA moves data into RAM without IN (not isolated by the first version)";
         case MM_NEXT:
             return "ZX Next: its DMA moves data into RAM without IN (not isolated by the first version)";
         default:
@@ -2383,6 +2318,9 @@ void TimeTravelManager::PublishSeekedFrame()
 
 bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    _perf.lastReplayNs = 0;
+    _perf.lastPresentNs = 0;
+
     // ------------------------------------------------------------------
     // Default the out-result to a failure state. Every return path below
     // either leaves this default (false / OutOfRange) or overwrites it
@@ -2556,6 +2494,18 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
 
 void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame)
 {
+    const auto replayStart = std::chrono::steady_clock::now();
+    struct ReplayTimer
+    {
+        std::chrono::steady_clock::time_point start;
+        uint64_t& sink;
+        ~ReplayTimer()
+        {
+            sink = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        }
+    } replayTimer{replayStart, _perf.lastReplayNs};
+
     // Emulator must be available. The PageStore/Capture path doesn't need
     // it, but RunTStates does.
     if (!_context || !_context->pEmulator)
@@ -2716,8 +2666,11 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
 
 void TimeTravelManager::PresentPosition(bool frameTarget)
 {
+    const auto start = std::chrono::steady_clock::now();
     ComposeDisplay(frameTarget);
     PublishSeekedFrame();
+    _perf.lastPresentNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 bool TimeTravelManager::StepBackFrame()

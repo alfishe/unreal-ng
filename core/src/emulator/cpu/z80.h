@@ -708,14 +708,6 @@ public:
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
 
-    // TSConf specific
-    // TODO: Move to plugin
-protected:
-    uint8_t GetTSConfInterruptVector();
-    void ts_frame_int(bool vdos);
-    void ts_line_int(bool vdos);
-    void ts_dma_int(bool vdos);
-
     /// region <Debug methods>
 public:
     void DumpCurrentState();

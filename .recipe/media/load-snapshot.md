@@ -118,14 +118,47 @@ DIGEST_B=$(curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest)
 [ "$DIGEST_A" = "$DIGEST_B" ] && echo "deterministic" || echo "DIVERGED"
 ```
 
+## Move a running state to another instance (no file)
+
+Same state on another machine, e.g. to compare a demo on a 128K and a Pentagon
+side by side. The source keeps running; the report says per item what moved.
+
+```text
+emulator_manage {"action":"transfer_state","target":"<source-id>","to":"<target-id>","check":true}   # can it?
+emulator_manage {"action":"transfer_state","target":"<source-id>","to":"<target-id>"}                # do it
+emulator_manage {"action":"transfer_state","target":"<source-id>","model":"PENTAGON"}               # new instance
+```
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/transfer" \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"PENTAGON"}' | jq -r .summary
+# transfer: ok (cross-model)
+#   [copied] RAM: pages 0-7
+#   [copied] paging: 128K state replayed through the Pentagon port decoder
+#   [copied] TSFM: 2008 bytes of state
+#   [copied] NeoGS RAM and flash: 2048 KB RAM + 512 KB flash
+#   [note] media: disk and tape images are not moved
+```
+
+HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
+`reason` says why and nothing changed. Details:
+[automation.md → Machine State Transfer](../../docs/features/automation.md#machine-state-transfer).
+
 ## Interactions to know
 
 - **TTD invalidate**: loading a snapshot while a TTD session holds history
   makes the timeline invalid for further capture — start a fresh
   `POST /ttd/start` after a snapshot load (details in
   [ttd-recording.md](../analysis/ttd-recording.md)).
-- **Media state**: `.sna`/`.z80` (and `.szx` for now) do not carry disks/tapes — re-insert media
-  after loading if the program expects it.
+- **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
+  after loading if the program expects it. `.szx` does: saving links the
+  file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with
+  its current block; loading finds a linked image next to the snapshot first,
+  then at the stored path, and inserts it with Session access (the linked
+  file is never written). Images embedded in an `.szx` from another emulator
+  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot loaded into a 48K instance (or vice
   versa) either fails cleanly or drops extension state; create the right
   model first ([setup.md](../_common/setup.md) §3).

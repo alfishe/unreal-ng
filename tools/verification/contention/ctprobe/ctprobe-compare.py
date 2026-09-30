@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare a ctprobe memory dump with the expected values, check by check.
 
-After ctprobe has finished (DONE = 1), dump memory from 40000 (#9C40) up to PROBEEND (see ctprobe.sym) as a raw
+After ctprobe has finished (DONE = 1), dump memory from START (36000, #8CA0) up to PROBEEND (see ctprobe.sym) as a raw
 binary file, then:
 
     python3 ctprobe-compare.py dump.bin [ctprobe.sym]
@@ -14,7 +14,6 @@ import os
 import re
 import sys
 
-BASE = 0x9C40
 RECORD = 19
 
 
@@ -30,6 +29,8 @@ def main():
         if m:
             sym[m.group(1)] = int(m.group(2), 16)
 
+    BASE = sym['START']
+
     def peek(a):
         return dump[a - BASE]
 
@@ -37,7 +38,7 @@ def main():
         return peek(a) | peek(a + 1) << 8
 
     if len(dump) < sym['PROBEEND'] - BASE:
-        print(f'the dump is {len(dump)} bytes; it must cover #9C40..#{sym["PROBEEND"] - 1:04X}')
+        print(f'the dump is {len(dump)} bytes; it must cover #{BASE:04X}..#{sym["PROBEEND"] - 1:04X}')
         return 2
     if peek(sym['DONE']) != 1:
         print('DONE is not 1: the probe had not finished when the dump was taken')
@@ -45,11 +46,9 @@ def main():
     if 'TOOFAST' in sym and peek(sym['TOOFAST']):
         print('The CPU ran faster than 3.5 MHz, so nothing was measured: switch the machine to 3.5 MHz')
         return 2
-    if 'EVENM1' in sym and peek(sym['EVENM1']):
-        print('Opcode fetches wait for even T-states (the Scorpion\'s Even M1), nothing was measured')
-        return 3
 
-    names = ['ULA 48K', 'ULA 128K', 'gate array', 'no contention', 'no contention, attr bus']
+    names = ['ULA 48K', 'ULA 128K', 'gate array', 'no contention', 'no contention, attr bus',
+             'no contention, attr bus, Even M1', 'no contention, Even M1']
     cls = peek(sym['CLASS'])
     caps = peek(sym['CAPS'])
     onset = word(sym['ONSET'])
@@ -68,7 +67,7 @@ def main():
         results = word(at + 12)
         name = bytes(dump[at + 14 - BASE:at + 19 - BASE]).decode().strip()
         at += RECORD
-        if flags & 3 & ~caps or (flags & 32 and cls == 3):
+        if flags & 3 & ~caps or (flags & 32 and cls in (3, 6)):
             continue  # skipped as N/A on this machine
         got = list(dump[results - BASE:results - BASE + count])
         exp_at = sym['EXPECTED'] + cls * size + (results - sym['RESULTS']) - BASE

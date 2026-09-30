@@ -37,3 +37,11 @@ Commands are divided into four functional groups:
 *   **Type IV:** Immediate Control (Force Interrupt)
 
 *(Detailed breakdowns of each command type and their specific execution flows will follow in subsequent documents.)*
+
+## Controller Clock and Data Rate
+
+Step rates, head settle and the bit rate the chip writes follow its clock (1 MHz on standard Spectrum
+interfaces, 2 MHz with "turbo VG" or in HD mode); the bit rate it reads comes from the board's data
+separator. A disk recorded at a different rate shows no sector IDs at all. See
+[WD1793_Clock_And_Data_Rate.md](WD1793_Clock_And_Data_Rate.md) and the timer values in
+[WD1793_Timeouts.md](WD1793_Timeouts.md).

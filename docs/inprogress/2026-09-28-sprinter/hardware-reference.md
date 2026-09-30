@@ -26,7 +26,7 @@ including the port addresses, can change at run time (MAN §1.2-1.4).
 | Video RAM | 256 KB (512 KB option) | MAN §1.1, §4 |
 | Video modes | per 8×8 square: 320×256×256 colors, 640×256×16 colors, text 80×32, Spectrum screen; 4+4 palettes of 256 × 24-bit | MAN §4.5-4.8 |
 | Sound | AY-3-8910 clone in the PLD; beeper; 8-bit Covox; Covox-Blaster (buffered, up to 16-bit stereo); 16-bit stereo DAC TDA1543 | MAN §5; MAME `sprinter.cpp:2012-2020` |
-| Floppy | КР1818ВГ93 (WD1793 clone) as a Beta Disk interface; 3.5" 1.44 MB / 720 KB, 5.25" 720 KB | MAN §1.1, §10; MAME `sprinter.cpp:14-15`, `beta_m.cpp:26-39` |
+| Floppy | КР1818ВГ93 (WD1793 clone) as a Beta Disk interface; 3.5" 1.44 MB / 720 KB, 5.25" 720 KB. HD by clocking the chip at 2 MHz with a 500 kbit/s separator (§10) | MAN §1.1, §10; MAME `sprinter.cpp:14-15`, `beta_m.cpp:26-39` |
 | Hard disk | IDE, **two channels** × master/slave, ATAPI CD supported by the BIOS | BIOS-TT `EXTENDED/IDE/ATA_DRV.ASM:4` ("ADD SECONDARY CHANEL"); MAME `sprinter.cpp:1967-1969` |
 | Keyboard | PC AT keyboard; the PLD turns it into a ZX key matrix, and the CPU's serial port A receives the raw scan codes | MAN §9.4; PLD `KBD.TDF`; DSS-162 `keyinter.asm:859-860` |
 | Mouse | serial MS mouse on the CPU's serial port B, also presented as a Kempston mouse | MAN §9.1; INC `SP2000.inc:382-399`; MAME `sprinter.cpp:644-659` |
@@ -403,8 +403,8 @@ survives until changed; reset selects primary (MAME `:1582`).
 |---|---|---|
 | Controller | WD1793 as Beta Disk: `#1F`(→`#0F`)/`#3F`/`#5F`/`#7F`/`#FF`, only while DOS is active (maps 0-2) or always (map 3) | §4.4; MAN §10 |
 | DOS ROM switching | TR-DOS is entered by fetching from `#3D00-#3DFF` while the 48 BASIC vROM is in window 0; left by fetching from `#4000` up | MAME `sprinter.cpp:1383-1400`; ZXMAK2 `SprinterFdd.cs` (`BusReadMem3D00_M1`) |
-| Density | `OUT (#BD),A` with A = `#21` → 1.44 MB (500 kbit/s), A = `#01` → 720 KB (250 kbit/s); the high address byte, not the data, selects (codes `#17`/`#16`). MAME doubles the WD1793 clock for HD | MAN §10.1; INC `SP2000.inc:608-610`; BIOS-TT `FDD_DRIVER.asm:597-618`; MAME `beta_m.cpp:196-202` |
-| Density detection | the BIOS issues READ ADDRESS; on failure it flips the density and retries | BIOS-TT `FDD_DRIVER.asm:626-650` |
+| Density | `OUT (#BD),A` with A = `#21` → 1.44 MB (500 kbit/s), A = `#01` → 720 KB (250 kbit/s); the high address byte, not the data, selects (codes `#17`/`#16`). HD doubles both the WD1793 clock (1 → 2 MHz, the chip's 8" mode, so it also writes at 500 kbit/s) and the data separator (7 → 14 MHz source); in DD the PLD runs the chip at 2 MHz only while stepping (`TURBING`, STEP until the read/write strobe). MAME doubles the WD1793 clock for HD. unreal-ng: `Latched` clock policy + `WD1793::SetLatchedClock` ([WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md)) | MAN §10.1; INC `SP2000.inc:608-610`; BIOS-TT `FDD_DRIVER.asm:597-618`; PLD `SP2_MAX.TDF:272-306, 396-402`; MAME `beta_m.cpp:196-202` |
+| Density detection | the BIOS issues READ ADDRESS; on failure it flips the density and retries. It works because a separator at the wrong rate never finds an address mark: Record Not Found | BIOS-TT `FDD_DRIVER.asm:626-650` |
 | Formats | PC FAT12 720 KB (80×2×9×512) and 1.44 MB (80×2×18×512); TR-DOS TRD (80×2×16×256) with TR-DOS 5.04Em; 5.25" drives | MAN §1.1, §23; BIOS-TT `rom/SETUP/MAIN.asm:1206-1225` (drive tables); MAME `beta_m.cpp:26-39` |
 | DSS floppies | FAT12, BPB media `#F0`/`#F9`; the boot loader needs 3 reserved sectors after the boot sector, so `BOOT.EXE` removes one FAT copy and enlarges the reserved area | DSS `SYS.ASM:97-128`; DSS-162 floppy: 10 reserved sectors, 1 FAT |
 

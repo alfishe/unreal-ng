@@ -918,11 +918,6 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::PFFF7Window1: return state.pFFF7[1];
         case PagingLatch::PFFF7Window2: return state.pFFF7[2];
         case PagingLatch::PFFF7Window3: return state.pFFF7[3];
-        // Reserved atm-branch / TSConf members: fields exist but no decoder on
-        // master ever binds them yet, so there is nothing truthful to report
-        case PagingLatch::PBD:
-        case PagingLatch::PTS:
-        case PagingLatch::PMEM:
         case PagingLatch::None:
         default:
             return 0;
@@ -1013,9 +1008,6 @@ const char* PagingLatchToString(PagingLatch latch)
         case PagingLatch::PFFF7Window1: return "pFFF7_w1";
         case PagingLatch::PFFF7Window2: return "pFFF7_w2";
         case PagingLatch::PFFF7Window3: return "pFFF7_w3";
-        case PagingLatch::PBD:    return "pBD";
-        case PagingLatch::PTS:    return "pTS";
-        case PagingLatch::PMEM:   return "pMEM";
         case PagingLatch::None:
         default:
             return nullptr;

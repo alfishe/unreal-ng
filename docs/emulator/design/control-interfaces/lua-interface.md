@@ -971,7 +971,12 @@ emu.paging_state()                   -- tagged paging latches + bank table (P1-2
                                      -- ROM bank rows carry the §5.2 identification: name = recognized
                                      -- content (SHA-256 catalog), role = the model's layout slot; a
                                      -- role/name mismatch is the one-glance wrong-ROM signal.
-emu.beam_position()                  -- { frame, scanline, tstate, zone, ... }
+emu.beam_position()                  -- { frame, line, tstate, zone, ..., layers = {{id, x, x_end, y}} }
+emu.video_layout()                   -- layers (surface, beam window, dots_per_t), framebuffer placement, family
+emu.video_pixel(x, y [, layer])      -- sources (space, page, offset, bit_mask, role, z80), colour_index, rgb, rendered_rgb
+emu.video_pixel_at(t)                -- the same for the point under the beam at frame T (layer pixel or border)
+emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
+emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 
 -- Coverage analyzer

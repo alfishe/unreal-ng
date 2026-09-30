@@ -30,9 +30,17 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
-  migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, WD1793 rate check,
-  port-trace internal codes), TTD v2 (PLAN #40), video mappers (PLAN #42), media manager (PLAN #58),
+  migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
+  codes), TTD v2 (PLAN #40), video mappers (PLAN #42), media manager (PLAN #58),
   IDE core (PLAN #13a), ZX-Evo E2b keyboard event (PLAN #55), TSConf (PLAN #41).
+- WD1793 clock / data rate: **built** (2026-09-29, commits `64756638`, `f304dde1`; outcome in
+  [2026-09-29-fdc-clock-and-data-rate/DONE.md](../2026-09-29-fdc-clock-and-data-rate/DONE.md)). In S3a:
+  - wire the `#BD` latch (codes `#16`/`#17`) to `WD1793::SetLatchedClock` with the decoder returning
+    `FdcClockPolicy::Latched`; reset = DD ([tdd-storage.md](tdd-storage.md) §2.3, tests T-FDD-3..5);
+  - check that FDC timing stays in real time at 21 MHz (research open question 7);
+  - optional: DD-mode turbo VG ending at the PLD read/write strobe (`TURBING`, `SP2_MAX.TDF:272-306`);
+    not modeled, only seek time differs. Settle first which pins `WSTB`/`RSTB` are (research open
+    question 2).
 - S0 now: provisioning, disassembly of BIOS 3.04 pages 8 and 0 (`docs/disasm/rom/sprinter/`,
   `data/symbols/sprinter/`), loader trace for the exact bitstream write count, PLD check for the
   accelerator INT-suspend.

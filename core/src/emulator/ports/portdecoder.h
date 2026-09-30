@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -190,8 +191,9 @@ enum class PagingLatch : uint8_t
     P7FFD, P1FFD, PDFFD, PFDFD, P7EFD, PEFF7, PFF77,
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
-    PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PBD, PTS, PMEM                  // TSConf (reserved)
+    PFFF7Window2, PFFF7Window3      // (reserved until the decoders land)
+    // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
+    // its decoder reports them itself, they are not EmulatorState fields
 };
 
 /// region <Tag / latch serialization - single source for every automation surface>
@@ -643,6 +645,11 @@ public:
     /// hardware CPU clock ratio the model can select (EmulatorState::
     /// ttd_clock_units). 1 for models without a hardware turbo
     virtual uint8_t TtdClockUnits() const { return 1; }
+
+    /// How the board clocks its WD1793 (docs/WD1793/WD1793_Timeouts.md, "Controller clock and data rate").
+    /// Every standard Beta 128 style interface runs the chip at a fixed 1 MHz; boards with automatic
+    /// "turbo VG" hardware override this. The [Beta128] TurboVG= option can override it again (Core::Init)
+    virtual FdcClockPolicy DefaultFdcClockPolicy() const { return FdcClockPolicy::Fixed1MHz; }
 
     /// The machine's clock chip as the automation interfaces reach it
     /// (RtcAccess, DeviceState::Rtc). `chip` is null when the machine has no

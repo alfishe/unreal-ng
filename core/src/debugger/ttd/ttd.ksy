@@ -511,9 +511,16 @@ types:
           10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
-          16 reserved (TSConf), 17 AtaChannel (IDE board: channel, both units, adapter latches),
+          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC).
+          BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
+          (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
+          the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
+          the clock now (1 = 1 MHz, 2 = 2 MHz) and the data separator rate
+          (0 = 250 kbit/s, 1 = 500 kbit/s). Recordings made before 2026-09-29
+          carry the older 251-byte blob, which the reader reports as a size
+          mismatch and does not restore.
       - id: state
         type: peripheral_blob
 

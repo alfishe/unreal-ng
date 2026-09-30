@@ -531,7 +531,7 @@ TEST_F(TTD_Subsystem_Restore_Test, TapePosition_SeekRestoresPlaybackCursor)
 // ===========================================================================
 // 4. FDC (WD1793) REGISTER STATE
 //
-// The WD1793 + 4 FDDs serialize 251 bytes of state (143 controller + 4x27
+// The WD1793 + 4 FDDs serialize 254 bytes of state (146 controller + 4x27
 // per-drive). Per parent TDD section 4 row 4, all FDC internal state (state
 // machine phase, track/sector regs, DRQ/INTRQ timers) must be fully
 // serialized.

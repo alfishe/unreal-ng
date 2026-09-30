@@ -1827,7 +1827,6 @@ TEST_F(McpTools_Test, TargetResolver_ExplicitId_ValidatedAgainstInstance)
     EXPECT_EQ(id, "emu-1");
 }
 
-// ===========================================================================
 // rzx_playback
 // ===========================================================================
 
@@ -1898,4 +1897,115 @@ TEST_F(McpTools_Test, RzxPlayback_Seek_PostsFrame)
     noFrame["action"] = "seek";
     EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noFrame, *_caller).isError);
     EXPECT_TRUE(_caller->calls.empty());
+=======
+// PLAN #42: the video_layout and video_text aspects hit /video/layout and /video/text
+// and summarize the layer windows / the text rows
+TEST_F(McpTools_Test, InspectState_VideoAspects_FetchLayoutAndText)
+{
+    Json::Value layer;
+    layer["id"] = "atm16";
+    layer["surface"]["width"] = 320;
+    layer["surface"]["height"] = 200;
+    layer["window"]["first_line"] = 68;
+    layer["window"]["line_count"] = 200;
+    layer["window"]["first_t"] = 8;
+    layer["window"]["t_count"] = 160;
+    layer["window"]["dots_per_t"] = 2;
+    Json::Value layout;
+    layout["available"] = true;
+    layout["mapped"] = true;
+    layout["family"] = "atm";
+    layout["video_mode"] = "ATM16";
+    layout["layers"].append(layer);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/layout"] = {200, layout};
+
+    Json::Value line;
+    line["text"] = "HELLO....";
+    Json::Value text;
+    text["available"] = true;
+    text["layer"] = "atmtx";
+    text["columns"] = 80;
+    text["rows"] = 25;
+    text["lines"].append(line);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/text"] = {200, text};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("video_layout");
+    aspects.append("video_text");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/layout"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/text"));
+    EXPECT_EQ(result.structured["video_layout"]["family"].asString(), "atm");
+    EXPECT_NE(result.text.find("[video_layout] ATM16, family atm"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("atm16 320x200, lines 68+200, T 8+160 at 2 dots/T"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[video_text] atmtx 80x25"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("\n  HELLO"), std::string::npos) << result.text;
 }
+
+// transfer_state: the resolved target is the source; 'to' or 'model' picks the destination
+TEST_F(McpTools_Test, EmulatorManage_TransferState_PostsToOrModel)
+{
+    Json::Value report;
+    report["ok"] = true;
+    report["target_id"] = "emu-2";
+    report["summary"] = "clone: 12 copied";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {200, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    args["check"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["to"].asString(), "emu-2");
+    EXPECT_TRUE(call->body["check"].asBool());
+    EXPECT_FALSE(call->body.isMember("model"));
+    EXPECT_NE(result.text.find("12 copied"), std::string::npos) << result.text;
+
+    Json::Value create;
+    create["action"] = "transfer_state";
+    create["model"] = "PENTAGON";
+    create["ram_size"] = 512;
+    RunTool(*_registry, "emulator_manage", create, *_caller);
+    const auto* call2 = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call2, nullptr);
+    EXPECT_EQ(call2->body["model"].asString(), "PENTAGON");
+    EXPECT_EQ(call2->body["ram_size"].asUInt(), 512u);
+    EXPECT_FALSE(call2->body.isMember("to"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_TransferState_NeedsExactlyOneDestination)
+{
+    Json::Value args;
+    args["action"] = "transfer_state";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+
+    args["to"] = "emu-2";
+    args["model"] = "48K";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/transfer"));
+}
+
+// A refusal (422) surfaces the report's per-item reasons, not just the status
+TEST_F(McpTools_Test, EmulatorManage_TransferState_RefusalSurfacesReport)
+{
+    Json::Value report;
+    report["ok"] = false;
+    report["reason"] = "the target lacks RAM page 9";
+    report["summary"] = "refused: the target lacks RAM page 9";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {422, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("page 9"), std::string::npos) << result.text;
+
+// ====================================================================}

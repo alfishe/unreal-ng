@@ -102,8 +102,9 @@ for m in $MACHINES; do
 		cd "$BUILD/run" &&
 		COEMU_MACHINE=$m COEMU_MEDIA=$media COEMU_DONE=$DONE_ADDR COEMU_START=$START_ADDR COEMU_END=$END_ADDR \
 		COEMU_MAX_FRAMES=$MAX_FRAMES COEMU_BIN=$OUT/$m.bin COEMU_WORK=$BUILD/run/$m \
+		SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 		"$MAME" "$d" "${biosargs[@]}" -rompath "$ROMPATH" "${mediaargs[@]}" \
-			-video none -sound none -nothrottle -skip_gameinfo -noreadconfig -noplugins \
+			-video none -sound none -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins \
 			-cfg_directory "$BUILD/run/cfg" -nvram_directory "$BUILD/run/nvram" \
 			-seconds_to_run "$SECONDS_TO_RUN" -autoboot_script "$HERE/coemu.lua"
 	) > "$OUT/$m.log" 2>&1
