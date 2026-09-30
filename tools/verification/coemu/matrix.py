@@ -114,8 +114,14 @@ def main():
             sym[m.group(1)] = int(m.group(2), 16)
     notes = case_notes(os.path.join(probe, 'ctprobe.asm'))
     names = list(notes)
+    # Runners not in the list (results brought in by hand, e.g. the Unreal Speccy family from a Windows machine):
+    # every other folder with .result files, by its folder name
+    extra = sorted(d for d in os.listdir(outdir) if d not in EMUS and os.path.isdir(os.path.join(outdir, d)) and
+                   any(f.endswith('.result') for f in os.listdir(os.path.join(outdir, d))))
+    for d in extra:
+        ENAME.setdefault(d, d)
     data = {}
-    for emu in EMUS:
+    for emu in EMUS + extra:
         for m in MACHINES:
             res = os.path.join(outdir, emu, m + '.result')
             status, detail = 'missing', 'not run'
@@ -127,7 +133,7 @@ def main():
             if status in ('ok', 'wrong') and os.path.exists(binf):
                 a = analyse(open(binf, 'rb').read(), sym)
             data[emu, m] = (status, detail, a)
-    emus = [e for e in EMUS if any(data[e, m][0] != 'missing' for m in MACHINES)]
+    emus = [e for e in EMUS + extra if any(data[e, m][0] != 'missing' for m in MACHINES)]
     open(target, 'w').write(render(emus, names, notes, data))
     print(f'matrix: {target}')
     if args.md:

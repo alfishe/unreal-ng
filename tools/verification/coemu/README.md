@@ -58,6 +58,10 @@ Reports kept in the repository, with each difference explained: [reports/](repor
 
 Each folder has its own README with what it needs and how it loads the program.
 
+The Unreal Speccy family (classic 0.39.0, the nedopc line, Unreal NS) is Windows-only; a Windows machine (or an
+AI agent on one) runs it by hand with [windows-agent-unreal-speccy.md](windows-agent-unreal-speccy.md), which
+leaves its results in this harness's layout so `matrix.py` can merge them.
+
 ## Machines
 
 Every runner uses the same machine names:
