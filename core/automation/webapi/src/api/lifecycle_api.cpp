@@ -13,6 +13,9 @@
 #include <emulator/platform.h>
 #include <json/json.h>
 
+#include <functional>
+#include <optional>
+
 using namespace drogon;
 using namespace api::v1;
 
@@ -27,6 +30,37 @@ extern std::string stateToString(EmulatorStateEnum state);
 
 namespace
 {
+/// Optional "ram_power_on": "random" | "zero" of a create / start / model
+/// switch body. True when absent or valid (mode set only when present);
+/// false with a 400 already sent when the value is not one of the two
+bool ParseRamPowerOnField(const std::shared_ptr<Json::Value>& json, std::optional<RamPowerOn>& mode,
+                          const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!json || !json->isMember("ram_power_on"))
+        return true;
+    RamPowerOn parsed = RamPowerOn::Random;
+    const Json::Value& value = (*json)["ram_power_on"];
+    if (value.isString() && Config::ParseRamPowerOn(value.asString(), parsed))
+    {
+        mode = parsed;
+        return true;
+    }
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "ram_power_on must be \"random\" or \"zero\"";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+    return false;
+}
+
+/// The create-time override for a parsed ram_power_on (none when absent)
+std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>& mode)
+{
+    return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
+}
+
 // Machine identity block shared by lifecycle responses (P0-1: a triage
 // session must always see WHICH machine it is talking to). Computed by
 // EmulatorManager::GetMachineIdentity - the single source the CLI also uses -
@@ -45,6 +79,7 @@ void AddIdentityFields(Json::Value& target, Emulator& emulator)
         target["video_mode"] = Json::Value();
         target["speed_multiplier"] = Json::Value();
         target["config_folder"] = Json::Value();
+        target["ram_power_on"] = Json::Value();
         return;
     }
 
@@ -54,6 +89,7 @@ void AddIdentityFields(Json::Value& target, Emulator& emulator)
     target["video_mode"] = identity.HasVideoMode ? Json::Value(identity.VideoMode) : Json::Value();
     target["speed_multiplier"] = identity.SpeedMultiplier;
     target["config_folder"] = identity.ConfigFolder;
+    target["ram_power_on"] = identity.RamPowerOn;
 
     // ZX-Poly: the instance is a module of a four-CPU group
     if (identity.ZXPoly)
@@ -293,6 +329,7 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
 /// @brief   "symbolic_id": "my-emulator",
 /// @brief   "model": "48K" | "128K" | "PENTAGON" | etc,
 /// @brief   "ram_size": 128 (in KB, only valid for models that support it),
+/// @brief   "ram_power_on": "random" | "zero" (RAM contents at creation; default: the model's unreal.ini)
 /// @brief }
 /// @brief A non-empty "model" that cannot be created on this build fails with
 /// @brief 400 + reason - there is NO silent fallback to a default machine.
@@ -306,6 +343,9 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     std::string symbolicId = json ? (*json)["symbolic_id"].asString() : "";
     std::string modelName = json ? (*json)["model"].asString() : "";
     uint32_t ramSize = json && json->isMember("ram_size") ? (*json)["ram_size"].asUInt() : 0;
+    std::optional<RamPowerOn> ramPowerOn;
+    if (!ParseRamPowerOnField(json, ramPowerOn, callback))
+        return;
 
     try
     {
@@ -316,17 +356,19 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
         {
             // Create with specific model and RAM size - strict: no fallback
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
-                                                              LoggerLevel::LogWarning, &createError);
+                                                              LoggerLevel::LogWarning, &createError,
+                                                              RamPowerOnOverride(ramPowerOn));
         }
         else if (!modelName.empty())
         {
             // Create with specific model (default RAM) - strict: no fallback
-            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
+            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError,
+                                                        RamPowerOnOverride(ramPowerOn));
         }
         else
         {
             // Create with default configuration (48K)
-            emulator = manager->CreateEmulator(symbolicId);
+            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, RamPowerOnOverride(ramPowerOn));
         }
 
         if (!emulator)
@@ -483,7 +525,8 @@ void EmulatorAPI::removeEmulator(const HttpRequestPtr& req, std::function<void(c
 /// @brief {
 /// @brief   "symbolic_id": "my-emulator",
 /// @brief   "model": "48K" | "128K" | "PENTAGON" | etc,
-/// @brief   "ram_size": 128 (in KB, only valid for models that support it)
+/// @brief   "ram_size": 128 (in KB, only valid for models that support it),
+/// @brief   "ram_power_on": "random" | "zero" (RAM contents at creation; default: the model's unreal.ini)
 /// @brief }
 void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback) const
@@ -495,6 +538,9 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::string symbolicId = json ? (*json)["symbolic_id"].asString() : "";
     std::string modelName = json ? (*json)["model"].asString() : "";
     uint32_t ramSize = json && json->isMember("ram_size") ? (*json)["ram_size"].asUInt() : 0;
+    std::optional<RamPowerOn> ramPowerOn;
+    if (!ParseRamPowerOnField(json, ramPowerOn, callback))
+        return;
 
     // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
     const bool zxpoly = json && json->isMember("zxpoly") &&
@@ -517,20 +563,22 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         {
             // Four synchronized instances; the master is the machine returned
             emulator = manager->CreateZXPolyMachine(symbolicId, modelName.empty() ? "PENTAGON" : modelName,
-                                                    zxpolyFile, &createError);
+                                                    zxpolyFile, &createError, RamPowerOnOverride(ramPowerOn));
         }
         else if (!modelName.empty() && ramSize > 0)
         {
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
-                                                              LoggerLevel::LogWarning, &createError);
+                                                              LoggerLevel::LogWarning, &createError,
+                                                              RamPowerOnOverride(ramPowerOn));
         }
         else if (!modelName.empty())
         {
-            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
+            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError,
+                                                        RamPowerOnOverride(ramPowerOn));
         }
         else
         {
-            emulator = manager->CreateEmulator(symbolicId);
+            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, RamPowerOnOverride(ramPowerOn));
         }
 
         if (!emulator)
@@ -1008,6 +1056,10 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
     {
         ramSize = (*body)["ram_size"].asUInt();
     }
+    // Absent: the new machine keeps this machine's power-on RAM mode
+    std::optional<RamPowerOn> ramPowerOn;
+    if (!ParseRamPowerOnField(body, ramPowerOn, callback))
+        return;
 
     // Validate BEFORE touching the current instance: a failed model switch
     // must leave the caller's emulator untouched (the old flow removed the
@@ -1084,6 +1136,7 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         request.model = modelName;
         request.ramKb = ramSize;
         request.stranded = stranded;
+        request.ramPowerOn = ramPowerOn;
         const ModelSwitchResult switched = ModelSwitch::Run(request);
 
         auto mediaJson = [&switched]() {

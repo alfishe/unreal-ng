@@ -352,17 +352,27 @@ namespace PythonBindings
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
         // every surface uses): four synchronized instances of one model
-        m.def("zxpoly_start", [](const std::string& model, const std::string& file) -> std::string {
+        m.def("zxpoly_start", [](const std::string& model, const std::string& file,
+                                 const std::string& ramPowerOn) -> std::string {
             auto* mgr = EmulatorManager::GetInstance();
+            std::function<void(CONFIG&)> configOverride;
+            if (!ramPowerOn.empty())
+            {
+                RamPowerOn mode = RamPowerOn::Random;
+                if (!Config::ParseRamPowerOn(ramPowerOn, mode))
+                    throw std::invalid_argument("ram_power_on must be 'random' or 'zero'");
+                configOverride = Config::RamPowerOnOverride(mode);
+            }
             std::string error;
-            auto master = mgr->CreateZXPolyMachine("", model, file, &error);
+            auto master = mgr->CreateZXPolyMachine("", model, file, &error, configOverride);
             if (!master)
                 throw std::runtime_error("cannot start ZX-Poly: " + error);
             mgr->StartEmulatorAsync(master->GetId());
             mgr->SetSelectedEmulatorId(master->GetId());
             return master->GetId();
-        }, py::arg("model") = "PENTAGON", py::arg("file") = "",
-           "Start a ZX-Poly machine (file: .zxp, .prom or multiloader disk); returns the master's id");
+        }, py::arg("model") = "PENTAGON", py::arg("file") = "", py::arg("ram_power_on") = "",
+           "Start a ZX-Poly machine (file: .zxp, .prom or multiloader disk); returns the master's id. "
+           "ram_power_on: 'random' or 'zero' (RAM contents of all four modules; default: the model's unreal.ini)");
 
         m.def("zxpoly_status", [](const std::string& id) -> py::object {
             ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
@@ -515,6 +525,10 @@ namespace PythonBindings
                     default: return "unknown";
                 }
             }, "Get emulator state as string")
+            .def("ram_power_on", [](Emulator& self) -> std::string {
+                EmulatorContext* context = self.GetContext();
+                return context ? Config::RamPowerOnName(context->config.ramPowerOn) : "";
+            }, "RAM contents the machine was created with: 'random' or 'zero'")
             
             // Register access
             .def("get_pc", [](Emulator& self) -> uint16_t {

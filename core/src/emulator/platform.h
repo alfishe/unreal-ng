@@ -414,6 +414,18 @@ enum class TurboSoundKind : uint8_t
 	None
 };
 
+/// RAM contents when a machine is created ([MISC] RAMPowerOn).
+/// Random = noise in RAM pages 5 and 7 (the screen and the shadow screen),
+/// the way real DRAM powers up; every other page is zero. Zero = every RAM
+/// page of the configuration reads 0, so the machine does not depend on
+/// anything outside it (tests, benchmarks, reproducible automation runs).
+/// Read once when the machine is created.
+enum class RamPowerOn : uint8_t
+{
+	Random,
+	Zero
+};
+
 /// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
 /// Z80 = LLE coprocessor card (dedicated 12 MHz Z80 + 4xDAC),
 /// LW = lightweight in-tree mod player (HLE, no coprocessor - the BASS
@@ -566,6 +578,7 @@ struct CONFIG
 	MEM_MODEL mem_model;
 	uint32_t ramsize;
 	uint32_t romsize;
+	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	IDE_CONFIG ide[2];				// master, slave

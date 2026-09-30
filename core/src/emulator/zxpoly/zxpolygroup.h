@@ -9,12 +9,15 @@
 #include <bitset>
 #include <map>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+struct CONFIG;
 
 class Emulator;
 class EmulatorContext;
@@ -87,8 +90,10 @@ public:
 
     /// Creates the four instances of `model`: a configuration name or any
     /// creatable model name. Slave audio is muted; host key input is gated
-    /// on every member
-    bool Create(const std::string& model, std::string* error = nullptr);
+    /// on every member. configOverride edits each module's config before it
+    /// initializes (EmulatorManager::CreateEmulatorWithModel)
+    bool Create(const std::string& model, std::string* error = nullptr,
+                const std::function<void(CONFIG&)>& configOverride = {});
 
     /// Removes the instances from the emulator manager
     void Destroy();

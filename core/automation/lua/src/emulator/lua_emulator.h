@@ -311,6 +311,11 @@ public:
                     case StateResumed: return "resumed";
                     default: return "unknown";
                 }
+            },
+            // RAM contents the machine was created with: "random" | "zero"
+            "ram_power_on", [](Emulator& emu) -> std::string {
+                EmulatorContext* context = emu.GetContext();
+                return context ? Config::RamPowerOnName(context->config.ramPowerOn) : "";
             }
         );
 
@@ -327,13 +332,29 @@ public:
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
         // every surface uses): four synchronized instances of one model.
-        // zxpoly_start([model], [file]) -> master id, or nil + error
+        // zxpoly_start([model], [file], [ram_power_on]) -> master id, or nil + error.
+        // ram_power_on: "random" | "zero" (RAM contents of all four modules;
+        // default: the model's unreal.ini)
         lua.set_function("zxpoly_start", [](sol::optional<std::string> model, sol::optional<std::string> file,
+                                            sol::optional<std::string> ramPowerOn,
                                             sol::this_state state) -> sol::variadic_results {
             sol::variadic_results results;
             auto* mgr = EmulatorManager::GetInstance();
+            std::function<void(CONFIG&)> configOverride;
+            if (ramPowerOn)
+            {
+                RamPowerOn mode = RamPowerOn::Random;
+                if (!Config::ParseRamPowerOn(*ramPowerOn, mode))
+                {
+                    results.push_back(sol::make_object(state, sol::lua_nil));
+                    results.push_back(sol::make_object(state, "ram_power_on must be random or zero"));
+                    return results;
+                }
+                configOverride = Config::RamPowerOnOverride(mode);
+            }
             std::string error;
-            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error);
+            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error,
+                                                   configOverride);
             if (!master)
             {
                 results.push_back(sol::make_object(state, sol::lua_nil));

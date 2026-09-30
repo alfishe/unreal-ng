@@ -142,6 +142,15 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' / 'transfer_state' with 'model' (e.g. 128, 256, 512)";
+    schema["properties"]["ram_power_on"]["type"] = "string";
+    schema["properties"]["ram_power_on"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["ram_power_on"]["enum"].append("random");
+    schema["properties"]["ram_power_on"]["enum"].append("zero");
+    schema["properties"]["ram_power_on"]["description"] =
+        "'create' / 'switch_model': RAM contents of the new machine - 'zero' (every RAM page reads 0: reproducible "
+        "runs, the machine depends on nothing outside it) or 'random' (noise in the screen pages 5 and 7 like real "
+        "DRAM). Default for create: the model's unreal.ini ([MISC] RAMPowerOn, random when unset); for "
+        "switch_model: the current machine's mode. A ZX-Poly machine applies it to all four modules";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -245,6 +254,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 {
                     body["ram_size"] = args["ram_size"].asUInt();
                 }
+                if (args.isMember("ram_power_on") && args["ram_power_on"].isString())
+                    body["ram_power_on"] = args["ram_power_on"].asString();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
@@ -344,6 +355,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["ram_size"] = args["ram_size"].asUInt();
                     if (args.isMember("stranded") && args["stranded"].isString())
                         body["stranded"] = args["stranded"].asString();
+                    if (args.isMember("ram_power_on") && args["ram_power_on"].isString())
+                        body["ram_power_on"] = args["ram_power_on"].asString();
                     ForwardCall("POST", Endpoint(id, "/model"), &body, caller, "Switched " + id + " to " + body["model"].asString(),
                                 done);
                 }

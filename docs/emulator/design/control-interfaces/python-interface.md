@@ -76,6 +76,8 @@ The Python bindings do not expose model-selecting instance creation: `ue.Emulato
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```python
 id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
+id2 = zxpoly_start("ZXPOLY-48K", ram_power_on="zero")        # every RAM page of all four modules reads 0
+emu_get(id2).ram_power_on()                                  # "random" | "zero": RAM contents at creation
 status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
 status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
 status["parallel_slaves"], status["pipelined_slaves"]      # how the slaves are scheduled

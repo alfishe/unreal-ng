@@ -160,6 +160,7 @@ Available ZX Spectrum:
   ...
 ```
 - `create`/`start <model>` echo the RESOLVED model and RAM, not the requested string.
+- `create`/`start`/`zxpoly start` take `--ram-power-on random|zero`: `zero` creates the machine with every RAM page reading 0 (reproducible runs), `random` fills the screen pages with noise like real DRAM; omitted = `[MISC] RAMPowerOn` of the model's `unreal.ini`. `model <name>` keeps the current machine's mode unless the option names one.
 - A model this build cannot create fails with a `Reason:` line — no silent fallback to 48K.
 - `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
 - `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.

@@ -65,6 +65,7 @@ The Lua bindings operate on the existing emulator instance (`get_emulator()`); t
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```lua
 local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
+local id2 = zxpoly_start("ZXPOLY-48K", nil, "zero")  -- third argument: power-on RAM of all four modules, "random" | "zero"
 local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
 print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
 print(status.parallel_slaves, status.pipelined_slaves)   -- how the slaves are scheduled
@@ -385,6 +386,7 @@ id = emu:get_id()
 sym_id = emu:get_symbolic_id()
 emu:set_symbolic_id("name")
 state = emu:get_state()  -- "running", "paused", "stopped"
+ram = emu:ram_power_on()  -- RAM contents at creation: "random" | "zero" ([MISC] RAMPowerOn / ram_power_on)
 
 -- Subsystems
 cpu = emu:get_cpu()

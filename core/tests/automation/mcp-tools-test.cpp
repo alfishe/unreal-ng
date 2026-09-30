@@ -212,6 +212,32 @@ TEST_F(McpTools_Test, EmulatorManage_CreateZXPoly_PostsTheWebApiZXPolyRequest)
     EXPECT_EQ(call->body["zxpoly"]["file"].asString(), "/games/Alien8.zxp");
 }
 
+TEST_F(McpTools_Test, EmulatorManage_CreateAndSwitchModel_ForwardRamPowerOn)
+{
+    Json::Value response;
+    response["id"] = "emu-2";
+    _caller->routes["POST /api/v1/emulator/start"] = {201, response};
+    _caller->routes["POST /api/v1/emulator/emu-1/model"] = {200, response};
+
+    Json::Value create;
+    create["action"] = "create";
+    create["model"] = "PENTAGON";
+    create["ram_power_on"] = "zero";
+    ASSERT_FALSE(RunTool(*_registry, "emulator_manage", create, *_caller).isError);
+    const auto* created = _caller->Last("POST", "/api/v1/emulator/start");
+    ASSERT_NE(created, nullptr);
+    EXPECT_EQ(created->body["ram_power_on"].asString(), "zero");
+
+    Json::Value switchModel;
+    switchModel["action"] = "switch_model";
+    switchModel["model"] = "48K";
+    switchModel["ram_power_on"] = "random";
+    RunTool(*_registry, "emulator_manage", switchModel, *_caller);
+    const auto* switched = _caller->Last("POST", "/api/v1/emulator/emu-1/model");
+    ASSERT_NE(switched, nullptr);
+    EXPECT_EQ(switched->body["ram_power_on"].asString(), "random");
+}
+
 TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/zxpoly"] = {200, Json::Value(Json::objectValue)};

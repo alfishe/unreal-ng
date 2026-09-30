@@ -187,9 +187,17 @@ Content-Type: application/json
 {
   "symbolic_id": "test_instance",
   "model": "128k",
-  "ram_size": 128
+  "ram_size": 128,
+  "ram_power_on": "zero"
 }
 ```
+
+`ram_power_on` (optional) sets the RAM contents at creation:
+
+- `random`: noise in RAM pages 5 and 7 (the screen and the shadow screen), the way real DRAM powers up; every other page is zero;
+- `zero`: every RAM page of the configuration reads 0, so the machine depends on nothing outside it (tests, benchmarks, scripted analysis that must give the same result on every run).
+
+Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
 
 **Response 201**:
 ```json
@@ -202,11 +210,12 @@ Content-Type: application/json
   "ram_kb": 128,
   "video_mode": null,
   "speed_multiplier": 1,
-  "config_folder": "spectrum128"
+  "config_folder": "spectrum128",
+  "ram_power_on": "zero"
 }
 ```
 
-**Response 400** (model not creatable / unknown / bad RAM):
+**Response 400** (model not creatable / unknown / bad RAM / `ram_power_on` not `random` or `zero`):
 ```json
 {
   "error": "Bad Request",
@@ -296,7 +305,7 @@ state at every frame boundary is the same in every schedule. A 404 means no such
 not a ZX-Poly machine.
 
 ### 5b. Switch Model (validate-first)
-**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep"}`)  
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
 
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
