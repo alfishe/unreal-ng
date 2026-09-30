@@ -1,6 +1,6 @@
 # TODO — RZX replay integration (2026-09-29)
 
-**Status:** R0-R3 (playback) done 2026-09-29; R4 (recording) in progress separately; R5 (TTD interop) possibly later, low priority. PLAN row **#27** (T2).
+**Status:** R0-R3 (playback) done 2026-09-29; R4 (recording) free for implementation; R5 (TTD interop) possibly later, low priority. PLAN row **#27** (T2).
 
 ## Documents
 - [requirements.md](requirements.md) — why a loader is not enough (four run-time mechanisms), scope, functional (RZ-F1…F21), non-functional (RZ-N1 zero cost when off … RZ-N7), automation / UI, tests and acceptance.
@@ -19,7 +19,7 @@
 
 ## Next
 - [ ] Benchmark gate (RZ-N1 zero cost when off, RZ-N2 overhead while playing) - measured when the shared machine is quiet (result goes to design §18).
-- [ ] R4: recording (another agent).
+- [ ] R4: recording - free for implementation, nobody is on it (design §12, RZ-F16 … F18; rides the playback hooks: `IN`, fetch count from R, frame end; writer shares miniz with SZX).
 - [ ] R5: TTD interop (player state as a TTD blob, TTD while playing, import, export) - possibly later, low priority.
 - [ ] More real recordings for +3 and Scorpion (none found yet; RZX Archive reachable only through the Internet Archive, rate-limited).
 

@@ -1,7 +1,7 @@
 # RZX replay integration: design
 
 - **Date:** 2026-09-29
-- **Status:** R0-R3 (playback) implemented 2026-09-29; what differs from the plan below is in [As built](#18-as-built-r0-r2). R4 (recording) is being done separately; R5 (TTD interop) is a possible later, low-priority phase. Requirements: [requirements.md](requirements.md).
+- **Status:** R0-R3 (playback) implemented 2026-09-29; what differs from the plan below is in [As built](#18-as-built-r0-r2). R4 (recording) is free for implementation (nobody is on it); R5 (TTD interop) is a possible later, low-priority phase. Requirements: [requirements.md](requirements.md).
 - **Code base:** master at `15e711a6` (with the TTD port journals). Line
   numbers below were checked on that commit.
 - **Related:** [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md)
@@ -352,7 +352,7 @@ within noise. On: measured and documented; target ≤ 5% on `BM_Frame_PureCPU`.
 | R1 | `RzxPlayer` hooks (`IN`, step gate, interrupt mask), fetch counter, desync detection, locks; SNA / Z80 start snapshots via a temporary file; `Emulator::PlayRzx` / `StopRzx` / `RzxStatus`; benchmark gate | R0 |
 | R2 | surfaces (WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt), notifications, docs, recipe | R1 |
 | R3 | span-based snapshot loaders (SNA, Z80 from memory); SZX start snapshots; mid-stream snapshot blocks through the internal apply path - **done 2026-09-29** | #64 |
-| R4 | recording (phase 2) - in progress separately | R1, R3 |
+| R4 | recording (phase 2) - **free for implementation** (nobody is on it; design §12, requirements RZ-F16 … F18, the hooks it rides are in place: the `IN` hook, the R-delta fetch count, the frame end) | R1, R3 |
 | R5 | TTD interop (phase 3): player state as a TTD blob, TTD while playing, import, export - possibly later, low priority (RZX and TTD stay independent for now) | R1, TTD v2 as needed |
 
 ## 17. Decisions
