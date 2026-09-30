@@ -8,6 +8,12 @@ reference; each surface's own documentation links here.
 Design: [media-control-design.md](../inprogress/2026-09-28-storage-manager/media-control-design.md);
 layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-09-28-storage-manager/technical-design.md#11-layers-from-the-guests-port-to-the-medium).
 
+Trying to get a specific machine to actually **boot** something (which ROM it uses, what it can
+boot from, what filesystem/geometry a disk or SD card needs, which files must be present)? See
+[machine-boot-requirements.md](../hardware/machine-boot-requirements.md) — it covers every
+creatable model plus the planned Sprinter, and calls out the MBR-vs-no-MBR trap that is the most
+common way to get a disk image rejected.
+
 ## Words used here
 
 | Word | Meaning |
