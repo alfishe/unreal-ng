@@ -9,8 +9,11 @@
 /// main window - a window of its own, so it sits safely above the GPU screen
 /// (a QOpenGLWindow in a container) - that only lives while the main window is
 /// in front. It closes when the focus goes to another window or application,
-/// on a click outside it, on Esc and when the main window is minimized; it
-/// follows the main window's moves and resizes above the status bar label.
+/// on a click outside it, on Esc and when the main window is minimized. Where
+/// the OS can glue it to the main window (macOS child windows,
+/// platform/childwindow.h) it moves with the window by itself; elsewhere it
+/// follows the window's move events. It stays above the status bar label on
+/// resizes.
 /// visibilityChanged() lets the label show the open state (a toggle).
 ///
 /// A seek: the slider first stands at the target (a click on the groove jumps
@@ -50,6 +53,9 @@ signals:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    /// Detach from the main window before the window goes (a hidden child
+    /// window must not be brought back by its parent)
+    void setVisible(bool visible) override;
     void hideEvent(QHideEvent* event) override;
 
 private slots:
@@ -71,6 +77,7 @@ private:
 
     std::weak_ptr<Emulator> _emulator;
     QPointer<QWidget> _anchor;
+    bool _attached = false;  ///< glued to the main window by the OS (ChildWindow)
     QLabel* _title = nullptr;
     QLabel* _position = nullptr;
     QLabel* _state = nullptr;
