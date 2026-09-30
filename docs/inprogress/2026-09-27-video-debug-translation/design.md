@@ -1,8 +1,8 @@
 # Video debug translation: mode-aware beam, pixel and memory mapping
 
 Status: design, revision 2 (after independent review, see §14). Phase 0
-done 2026-09-27 (§10); **phases 1 and 2 done 2026-09-29** (see "Phase 1 as
-built" and "Phase 2 as built" below); phases 3-5 open. Scope: every machine and video mode unreal-ng emulates today,
+done 2026-09-27 (§10); **phases 1-3 done 2026-09-29** (see "Phase 1 as
+built", "Phase 2 as built" and "Phase 3 as built" below); phases 4-5 open. Scope: every machine and video mode unreal-ng emulates today,
 plus the ones on the roadmap (TSConf, ZX Next, Sprinter, ZX-Poly, Timex, GMX).
 
 ## 1. Problem
@@ -71,6 +71,34 @@ everywhere by construction.
   (`ScreenOCR::textLayerScreen`); font matching stays for bitmap modes.
 - Tests: `devicestatevideo_test.cpp` (field names and values per report),
   `mcp-tools-test.cpp` (the two aspects), `screenocr_test.cpp` (ATMTX text).
+
+### Phase 3 as built (2026-09-29)
+
+- **Write log of latches, not port writes** (`video/map/videowritelog.h`).
+  After a video port write, `Screen` notes the latches (`VideoLatches`: mode,
+  `#7FFD`, `#EFF7`, `#FF77`, `#DFFD`, `aFE`, `#FE`, border attribute / index,
+  ATM border bright, active screen) with the frame T - from the three places
+  every decoder already goes through (`InitRaster`, `SetActiveScreen`,
+  `SetBorderColor`). The state at T is the last entry at or before T, else
+  the frame start. No decode logic is repeated, which §4.6's "replay of the
+  log" would have needed.
+- **Cost:** an entry only when the latches differ from the last one; the
+  common case (beeper writes to `#FE` with the same border) is a 12-byte
+  compare and no T computation. 4096 entries per frame, then `partial`.
+- **Frames:** current and previous; at the frame start (`Screen::InitFrame`)
+  the finished frame is published under a mutex - one lock per frame
+  instead of §4.9's seqlock, simpler and cheap enough at 50 Hz.
+- **Answers:** `SourcesAtBeam(t)` uses the latches of that moment (labels
+  `state_at: t`, `state_frame`, `state_partial`). Paused machine: the
+  current frame once T has passed, else the previous frame. Running
+  machine: the published last completed frame (`snapshot: true`), and
+  `State()` also reads the published latches, so no query sees a
+  half-changed state. `rendered_rgb` is given only when the framebuffer's
+  geometry is that moment's mode (§4.6: a mid-frame switch is drawn in the
+  new geometry).
+- Tests: `core/tests/emulator/video/map/videowritelog_test.cpp`;
+  `videomapservice_test.cpp` - mid-frame `#FF77` switch (test 6), mid-frame
+  border colour, queries from another thread while running (test 7).
 
 ## 2. Goals
 

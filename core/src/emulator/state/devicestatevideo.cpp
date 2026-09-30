@@ -123,9 +123,20 @@ StateNode PixelNode(const VideoMapService& service, const PixelSources& p, uint3
     n["rgb"] = RgbText(p.finalRgb);
     if (p.renderedKnown)
         n["rendered_rgb"] = RgbText(p.renderedRgb);
-    // Design §4.6: addresses come from the latches now; values from memory now
-    n["state_at"] = "current";
+    // Design §4.6: addresses follow the latches at state_at (a frame T from the
+    // video write log, or "current"); colours come from memory and palettes now
+    if (p.stateAtT >= 0)
+    {
+        n["state_at"] = static_cast<int64_t>(p.stateAtT);
+        n["state_frame"] = static_cast<uint64_t>(p.stateFrame);
+        n["state_partial"] = p.statePartial;
+    }
+    else
+    {
+        n["state_at"] = "current";
+    }
     n["values_at"] = "current";
+    n["snapshot"] = p.fromSnapshot;
     return n;
 }
 } // namespace

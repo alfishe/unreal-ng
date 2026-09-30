@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "emulator/video/map/videomapper.h"
+#include "emulator/video/map/videowritelog.h"
 #include "emulator/video/videofamily.h"
 
 class EmulatorContext;
@@ -32,12 +33,17 @@ class VideoMapService
 public:
     explicit VideoMapService(EmulatorContext* context);
 
+    /// The state now, or the state a set of latches describes (a moment from the write log)
     VideoState State() const;
+    VideoState StateFrom(const VideoLatches& latches) const;
     VideoLayout Layout() const;
     BeamInfo BeamAt(uint32_t tInFrame) const;
     /// Sources of surface pixel (x, y) of a layer
     PixelSources SourcesAt(size_t layerIndex, uint32_t x, uint32_t y) const;
-    /// Sources of what the beam draws at a frame T: a layer pixel or the border
+    /// Sources of what the beam draws at a frame T: a layer pixel or the border,
+    /// with the video state of that moment (write log). Paused machine: the
+    /// current frame when T is already past, else the previous one. Running
+    /// machine: the last completed frame (published at the frame start)
     PixelSources SourcesAtBeam(uint32_t tInFrame) const;
     std::vector<SurfaceArea> PixelsFor(const SourceRef& ref) const;
     /// The byte at a Z80 address under current paging (ROM and unmapped: nothing)
@@ -51,6 +57,9 @@ public:
     static const IVideoMapper& MapperFor(VideoFamily family);
 
 private:
+    PixelSources SourcesAt(const VideoState& s, size_t layerIndex, uint32_t x, uint32_t y) const;
+    bool MachineRunning() const;
+
     EmulatorContext* _context = nullptr;
 };
 } // namespace videomap

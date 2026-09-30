@@ -133,6 +133,10 @@ void Screen::Reset()
 
 void Screen::InitFrame()
 {
+    // The video-state history of the frame that ends here is kept (and published) as the previous one
+    if (_state)
+        _videoWriteLog.BeginFrame(_state->frame_counter, CaptureVideoLatches());
+
     _vid.buf ^= 0x00000001;  // Swap current video buffer
     _vid.t_next = 0;
     _vid.vptr = 0;
@@ -620,6 +624,9 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
 #endif  // _DEBUG
+
+    // Mode and latches after the port write that asked for this (logged only when they changed)
+    NoteVideoWrite();
 }
 
 /// Set active ZX-Spectrum screen
@@ -652,6 +659,7 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
 
     _activeScreen = screen;
     _activeScreenMemoryOffset = activeScreenMemoryOffset;
+    NoteVideoWrite();
 }
 
 /// Set current border color
@@ -665,6 +673,38 @@ void Screen::SetBorderColor(uint8_t color)
 
     // Only bits [0:2] contain border color
     _borderColor = color & 0b0000'0111;
+    NoteVideoWrite();
+}
+
+videomap::VideoLatches Screen::CaptureVideoLatches() const
+{
+    videomap::VideoLatches l;
+    l.mode = static_cast<uint8_t>(_mode);
+    l.borderIndex = _borderColor;
+    l.activeScreen = _activeScreen;
+    if (_state)
+    {
+        l.p7FFD = _state->p7FFD;
+        l.pEFF7 = _state->pEFF7;
+        l.pFF77 = _state->pFF77;
+        l.pDFFD = _state->pDFFD;
+        l.aFE = _state->aFE;
+        l.pFE = _state->pFE;
+        l.borderAttr = _state->border_attr;
+        l.atmBorderBright = _state->atmBorderBright;
+    }
+    return l;
+}
+
+/// After a port handler changed video state: note the latches with the frame T (videowritelog.h)
+void Screen::NoteVideoWrite()
+{
+    if (!_context || !_state || !_context->pCore || !_context->pCore->GetZ80())
+        return;
+    // Beeper sound writes #FE thousands of times a frame with the same border: compare first, T only on a change
+    const videomap::VideoLatches latches = CaptureVideoLatches();
+    if (_videoWriteLog.Changes(latches))
+        _videoWriteLog.Record(GetCurrentTstate(), latches);
 }
 
 VideoModeEnum Screen::GetVideoMode()
