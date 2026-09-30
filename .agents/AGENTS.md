@@ -169,6 +169,14 @@ pkill -9 unreal-qt 2>/dev/null || true
 
 > Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. Creatable on `master`: `PENTAGON`, `48K`, `128k`, `PLUS2` (grey +2: 128K hardware, Amstrad ROM), `PLUS2A` (the +3 without its floppy controller), `PLUS3` (uPD765A floppy controller, see `docs/inprogress/2026-09-28-plus3-upd765/`), `ATM710`, `ATM3` (ZX-Evo; decoders landed with the ATM Turbo 2+/3 clone support, configs ship as `configs/atm710` + `configs/atm3`), `SCORPION`, `PROFSCORP`, `PROFI` (Profi 1024; IDE works: `[HDD] Scheme=PROFI`, slots `ide0.master` / `ide0.slave`, see `.recipe/machines/profi.md` and `docs/inprogress/2026-09-21-profi/`), `TSL` (TS-Conf, alias `TSCONF`: TS-BIOS from `rom/zxevo.rom`, TSU, DMA, SD slot `sd.zc`, `.spg` programs; see `.recipe/machines/tsconf.md` and `docs/inprogress/2026-09-27-tsconf/`). NOT creatable (no port-decoder factory case yet): `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` — a create request for them fails with HTTP 400 + reason, never a silent 48K fallback. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
 
+## macOS specifics (the development host)
+- **The shell is zsh: unquoted variables are not word-split.** `F="a.md b.md"; git diff -- $F` passes
+  ONE path, `a.md b.md`, and a check on a path that does not exist passes silently (this let a
+  master landing skip its "no foreign edits" check). Pass path lists as an array
+  (`F=(a.md b.md); git diff -- $F`) or from a file (`git diff -- $(cat files.txt)`).
+- **BSD tools:** `sed -i ''` (the empty backup suffix is required), `sysctl -n hw.ncpu` for the core
+  count, `sysctl -n vm.loadavg` for the load (`{ 1min 5min 15min }`).
+
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.
 - **Naming Conventions**: Do not use underscores in file names or C++ class/struct/method names. Use PascalCase for methods and camelCase for variables/fields. **Exception**: Test files use `*_test.cpp` suffix and test classes use `ClassName_Test` pattern.
