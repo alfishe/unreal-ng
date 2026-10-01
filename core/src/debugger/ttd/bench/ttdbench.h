@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file ttdbench.h
-/// @brief TTD benchmark harness (PLAN #40 V0b, TTD v2 requirements §5).
+/// @brief TTD benchmark harness (PLAN #40 Phase 0, Step 2, TTD v2 requirements §5).
 ///
 /// One harness for every TTD engine version, so v1, v2 and later versions run
 /// exactly the same emulation and their numbers compare:

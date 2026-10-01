@@ -409,14 +409,13 @@ Three designs feed PLAN #6, the only P0 left in the feature-parity matrix and th
 - **Tests:** about 40 files in `core/tests/debugger/ttd/`, including a state-completeness test and the `TTD_Corpus_Test`.
 
 **Planned.**
-- **PLAN #40, TTD v2** (`docs/inprogress/2026-09-25-ttd-v2-migration/`, V0 retired 2026-09-28):
-  - V1: device RAM as regions (GS RAM, MoonSound wave SRAM, NeoGS/TSConf/ZX-Poly), with a per-piece chain cap instead of whole-RAM key frames.
-  - V1b: checkpoints inside a frame (conditional).
-  - V2: a device table.
-  - V3: determinism inputs stored in the file.
-  - V4: a memory budget.
-  - V5: a chunked, checksummed, versioned container plus disk mode.
-  - V6: cleanup.
+- **PLAN #40, TTD v2** (`docs/inprogress/2026-09-25-ttd-v2-migration/`, Phase 0 (preparation) done 2026-09-29):
+  - Phase 1: device RAM as regions (GS RAM, MoonSound wave SRAM, NeoGS/TSConf/ZX-Poly), with a per-piece chain cap instead of whole-RAM key frames.
+  - Phase 2: a device table.
+  - Phase 3: determinism inputs stored in the file.
+  - Phase 4: a memory budget.
+  - Phase 5: a chunked, checksummed, versioned container plus disk mode.
+  - Phase 6: cleanup.
 - **PLAN #7:** `GET /ttd/timeline`. A 2026-09-28 note in the design says two of its data sources do not exist, so it needs revising first (`ttd-timeline-summary-design.md:9-16`).
 - **GS debugger:** card reverse-step (checkpoint, then replay to instruction N−1), a card write journal, and card breakpoints in reverse search (`gs-debugger/design.md` §8).
 - **Devtools:** edit-and-replay (rebuild, restore checkpoint N, inject the binary, replay the input journal, report the first divergence at a source line) (`unreal-ng-developer-toolchain-design.md` §13.1).
@@ -534,7 +533,7 @@ Beeper, tape, keyboard, mouse, paging and ports have their own routes (`emulator
   - Firmware profiles, `GSCommandInfo` tables chosen by ROM SHA-256 (§6.1).
   - Command log (§6.3).
   - TTD on the card (§8).
-  - Phases 1-6 (§10). Gated on PLAN #40-V1 and NeoGS phase 0.
+  - Phases 1-6 (§10). Gated on PLAN #40 Phase 1 and NeoGS phase 0.
 - **Debugger model** (`docs/inprogress/2026-09-28-debugger-model/`, draft).
   - "One protocol. One set of fields. One set of rules. Any number of looks."
   - Skins: pixel-faithful Unreal, modern Qt, terminal, browser, task skins. GDB and DeZog count as skins too.

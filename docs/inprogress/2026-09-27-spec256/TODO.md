@@ -25,7 +25,7 @@ Everything else: no model, config, loader, renderer, TTD or automation code.
    Phase 4 ([2026-09-27-zxpoly](../2026-09-27-zxpoly/) §4, PLAN #43).
    The analysis recommends: Phase R + E1 can proceed independently; E2
    should ride the ZX-Poly scheduler if that program is approved.
-2. **TTD v2 V1 first** (PLAN #40) if Phase I TTD capture is in scope —
+2. **TTD v2 Phase 1 first** (PLAN #40) if Phase I TTD capture is in scope —
    512 KB shadow RAM needs memory regions.
 3. Fixture licensing (zxpoly test ZIPs are GPL-repo assets) before any are
    committed under `testdata/`.

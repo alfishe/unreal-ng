@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare, summarize and export TTD benchmark matrix runs (PLAN #40 V0b).
+"""Compare, summarize and export TTD benchmark matrix runs (PLAN #40 Phase 0, Step 2).
 
 Input is the Google Benchmark JSON that core-benchmarks writes for the
 TTDMatrix/<engine>/<configuration>/<workload> benchmarks
@@ -214,7 +214,7 @@ def cmd_export_gate(args):
     if errors:
         sys.exit(f"error: failed cases in {args.run}: {sorted(errors)}")
     lines = [
-        "# TTD CI gate baseline (PLAN #40 V0b, requirements BR-7 / BR-8 / BR-9).",
+        "# TTD CI gate baseline (PLAN #40 Phase 0, Step 2, requirements BR-7 / BR-8 / BR-9).",
         "# Read by core/tests/debugger/ttd/bench/ttdbench_test.cpp.",
         f"# Exported by tools/verification/ttd-bench/ttd_bench_compare.py from a run of",
         f"# {describe(context, engine)}.",

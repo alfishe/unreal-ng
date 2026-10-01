@@ -1,8 +1,8 @@
-# V0b results: the TTD benchmark matrix with v1 as the first engine
+# Phase 0, Step 2 results: the TTD benchmark matrix with v1 as the first engine
 
-Date: 2026-09-29. Step V0b of the [migration trajectory](migration-trajectory.md), against [requirements §5](requirements.md) (BR-1 to BR-9).
+Date: 2026-09-29. Phase 0, Step 2 of the [migration trajectory](migration-trajectory.md), against [requirements §5](requirements.md) (BR-1 to BR-9).
 
-**Decision: V1b (checkpoints inside a frame) is not needed.** On every configuration, the heaviest turbo ones included, reaching any position takes at most 3.8 ms at p99 (3.5 ms over a 10-minute session). The PR-5 limit is 5 ms. What the user waits for beyond that is *drawing the picture* of the new position, which costs another 4–8 ms. Checkpoints inside a frame would not change that cost (§3).
+**Decision: Phase 0, Step 4 (checkpoints inside a frame) is not needed.** On every configuration, the heaviest turbo ones included, reaching any position takes at most 3.8 ms at p99 (3.5 ms over a 10-minute session). The PR-5 limit is 5 ms. What the user waits for beyond that is *drawing the picture* of the new position, which costs another 4–8 ms. Checkpoints inside a frame would not change that cost (§3).
 
 ## 1. Glossary
 
@@ -33,7 +33,7 @@ The engine is picked by name at run time (BR-1). Today the only engine is `v1`; 
 The matrix comes in three sets:
 
 - `ci`: 4 cases, about 10 s.
-- `turbo`: 5 cases, the configurations that decide V1b.
+- `turbo`: 5 cases, the configurations that decide Phase 0, Step 4.
 - `full`: 39 cases:
   - 13 base models;
   - 8 workloads on Pentagon;
@@ -47,7 +47,7 @@ Three things the harness had to fix to make the byte counts repeatable:
 
 Exit criterion: a byte comparison of two runs of the same matrix reports 0 differences, for the `ci` set and for the `full` set. The byte metrics were also identical between the high-load and the low-load reruns of the full set. Timings are compared as a change in percent, and only fail a comparison when asked to (`--fail-on-time`).
 
-## 3. The V1b question (PR-5)
+## 3. The Phase 0, Step 4 question (PR-5)
 
 PR-5 requires a seek to any position to complete in ≤ 5 ms at p99, measured over random positions of a 10-minute session. The table below comes from 10-minute sessions (30,000 frames) on the two heaviest turbo configurations, with 200 random positions, each measured three times with the fastest kept:
 
@@ -70,25 +70,25 @@ The shorter turbo runs (1,500 frames each) agree:
 
 Across the full matrix (39 cases, run at load average 7–19), state-reached p99 ranges from 0.7 ms (Pentagon without AY) to 3.8 ms (ZX-Evo with MoonSound). Replay p99 stays at 0.4–2.7 ms in every full run, including the runs on a loaded host. An earlier full run on a heavily loaded host (load average 25–50) showed up to 5.5 ms on the Pentagon game. That was host load: at load ~7 the same cases gave 1.2–2.4 ms, and their byte metrics matched exactly.
 
-Why V1b would not help:
+Why Phase 0, Step 4 would not help:
 
 - Replay, the only part that in-frame checkpoints would shorten, is 1.6–2.1 ms at p99 even at 2x turbo, which is already inside the limit.
 - The time above 5 ms is the *present* step. v1 draws the picture of the position by running the whole frame again (`ComposeDisplay` in `PresentPosition`). That costs one frame of emulation no matter where the checkpoint is.
 
 Rendering the full frame after every seek is intended: the picture always shows the complete frame of the position. It is not a task; this document reports the time to reach the machine state and the time with the picture separately.
 
-## 4. Other findings (for V1 and later)
+## 4. Other findings (for Phase 1 and later)
 
-These are v1's numbers. Each finding is an input for the step named in its row, not something V0b fixes.
+These are v1's numbers. Each finding is an input for the step named in its row, not something Phase 0, Step 2 fixes.
 
 | Finding | Numbers | Requirement / step |
 |---|---|---|
-| Capture cost follows installed RAM, not change | Capture with no memory written (BM-8): 7 µs on Pentagon without AY, 190 µs on ZX-Evo (4 MB), 300–420 µs with a General Sound card (its RAM is one whole blob). With 64 pieces of 4 KB written: 0.34–1.5 ms | PR-4, V1 |
-| Periodic capture spikes | ZX-Evo idle (10 min): p50 240 µs, p99 701 µs (2.9× the median, at the PR-3 limit of 3×); with GS512 + MoonSound: 518 / 1394 µs (2.7×). The cause is the key frame every 50 frames | PR-3, V1 |
-| Memory restore dominates the restore time on big machines | Memory (BM-6 p50): 60 µs on Pentagon idle, 260 µs on the Pentagon demo, 765–785 µs on ZX-Evo. Devices: 2–30 µs, 115–230 µs with a General Sound card. CPU/chipset: under 1 µs | V1 |
-| Session size | 10 min on ZX-Evo: 0.86 GB resident, 192 MB file (6.4 KB per frame); with GS512 + MoonSound: 0.92 GB / 198 MB | V4 (memory budget), V5 |
-| Loading a session | Save 4.6–5 s/GB, load 2.9–3.1 s/GB; first seek after loading a 10-minute file: 0.57–0.63 s | V5 |
-| Recording overhead | Extra frame time with the full journal and coverage on (BM-1, median frame): 7–14% on 128K-class machines, 20–30% on ZX-Evo, 42–45% with GS512. Capture alone is 3–26% of a recorded frame, the most with a General Sound card | PR-1, V1 |
+| Capture cost follows installed RAM, not change | Capture with no memory written (BM-8): 7 µs on Pentagon without AY, 190 µs on ZX-Evo (4 MB), 300–420 µs with a General Sound card (its RAM is one whole blob). With 64 pieces of 4 KB written: 0.34–1.5 ms | PR-4, Phase 1 |
+| Periodic capture spikes | ZX-Evo idle (10 min): p50 240 µs, p99 701 µs (2.9× the median, at the PR-3 limit of 3×); with GS512 + MoonSound: 518 / 1394 µs (2.7×). The cause is the key frame every 50 frames | PR-3, Phase 1 |
+| Memory restore dominates the restore time on big machines | Memory (BM-6 p50): 60 µs on Pentagon idle, 260 µs on the Pentagon demo, 765–785 µs on ZX-Evo. Devices: 2–30 µs, 115–230 µs with a General Sound card. CPU/chipset: under 1 µs | Phase 1 |
+| Session size | 10 min on ZX-Evo: 0.86 GB resident, 192 MB file (6.4 KB per frame); with GS512 + MoonSound: 0.92 GB / 198 MB | Phase 4 (memory budget), Phase 5 |
+| Loading a session | Save 4.6–5 s/GB, load 2.9–3.1 s/GB; first seek after loading a 10-minute file: 0.57–0.63 s | Phase 5 |
+| Recording overhead | Extra frame time with the full journal and coverage on (BM-1, median frame): 7–14% on 128K-class machines, 20–30% on ZX-Evo, 42–45% with GS512. Capture alone is 3–26% of a recorded frame, the most with a General Sound card | PR-1, Phase 1 |
 | The coverage index has a fixed cost | ~3 MB per session, so it dominates short recordings (53 KB per frame over 60 frames, 3.4 KB per frame over 1,500) | informational |
 
 Numbers are from a shared Mac Studio (Apple silicon), Release build, at load average 7–19 unless stated otherwise. That run was made before the harness zeroed power-on RAM, which changes a few bytes on cold-boot cases and no timings. The JSON files in `testdata/ttd/bench/` carry the commit and host of each run.
@@ -97,7 +97,7 @@ About the stored `v1-full.json`: its byte metrics are the reference, and they ma
 
 ## 5. Limits of this round
 
-- Only one engine exists, so the matrix measures v1 against itself. The v1-vs-v2 comparison (acceptance criterion 4) comes with V1.
+- Only one engine exists, so the matrix measures v1 against itself. The v1-vs-v2 comparison (acceptance criterion 4) comes with Phase 1.
 - The Scorpion firmware switches its Turbo+ flip-flop on by itself while it boots: the standard ROM's service page reads `#7FFD` at `#0419`, ProfROM applies its turbo setting at `#04CE` on the way to the user program (checked 2026-09-30; the emulator follows the firmware, see the Scorpion hardware reference §13). So plain `SCORPION` and `PROFSCORP` run at 7 MHz (`turbo_ratio` = 2). The matrix first had a `SCORPION-turbo` case that recorded the same machine; it is now `SCORPION-3.5MHz`, which switches the turbo off after the boot (`IN #1FFD`).
 - The `none` peripheral set appears as `noay` in case names. The name lists only the TurboSound slot; the other devices are off too.
 - Timings on a shared host vary by 10–30% between runs. The CI gate therefore checks bytes exactly and timing only as the share of capture in the frame (budget 50%; measured 3–14% on the `ci` cases, up to 26% on the full matrix with GS512).

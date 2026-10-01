@@ -56,7 +56,7 @@ struct TTDRegionDesc {
 - The owner marks pieces dirty on its own write path (GS: its Z80's memory
   write; MoonSound: the wave-SRAM data port). Machine RAM keeps the existing
   debug-write hook, with page indices widened so page 255 is no longer the
-  "not RAM" sentinel (done in V0, 2026-09-27: `ttd::PhysPage`).
+  "not RAM" sentinel (done in Phase 0, Step 1, 2026-09-27: `ttd::PhysPage`).
 - A region can have a *used size* smaller than its capacity (GS lightweight
   upload store: capacity = largest module allowed, used = uploaded bytes; the
   used size lives in the device blob). This replaces variable-size device
@@ -172,7 +172,7 @@ Also persisted (they exist in memory today but are lost on save):
 
 ### 6.1 Memory as linked blocks (direction, 2026-09-29)
 
-Direction from the user, recorded here for V4 / V5; the numbers and the spill
+Direction from the user, recorded here for Phase 4 / Phase 5; the numbers and the spill
 mechanism are still **open** ([migration-trajectory.md](migration-trajectory.md)
 §6, item 3):
 
@@ -274,7 +274,7 @@ the stored piece CRC instead of overwriting it).
 
 - One checkpoint per frame at the frame boundary; silent deterministic replay
   inside a frame. Checkpoints inside a frame are added only if the turbo
-  measurements require them (requirements PR-5, trajectory V1b).
+  measurements require them (requirements PR-5, trajectory Phase 0, Step 4).
 - Capture after every device has caught up to the frame boundary
   (requirements FR-19) — today by call order, in v2 as a tested rule.
 - The DeZog frame cache: it replays one frame through the normal restore path

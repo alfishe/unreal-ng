@@ -1,5 +1,5 @@
 /// @file ttdbench_test.cpp
-/// @brief The TTD CI gate (PLAN #40 V0b, TTD v2 requirements BR-7 / BR-8) and
+/// @brief The TTD CI gate (PLAN #40 Phase 0, Step 2, TTD v2 requirements BR-7 / BR-8) and
 /// checks of the benchmark harness itself (core/src/debugger/ttd/bench/).
 ///
 /// The gate runs the "ci" subset of the benchmark matrix through the same

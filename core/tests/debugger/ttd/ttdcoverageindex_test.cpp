@@ -328,7 +328,7 @@ TEST(TTD_CoverageIndex_Test, FilterCollisionsDoNotLoseKeys)
 }
 
 // ---------------------------------------------------------------------------
-// The "no RAM page" bucket (PLAN #40 V0)
+// The "no RAM page" bucket (PLAN #40 Phase 0, Step 1)
 // ---------------------------------------------------------------------------
 
 /// ROM/cache accesses share one bucket. It used to be page field 0xFF - the

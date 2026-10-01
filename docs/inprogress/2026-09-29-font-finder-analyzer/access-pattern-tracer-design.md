@@ -272,7 +272,7 @@ mechanisms:
 
 **Correction to tdd.md**: its §5 (implementation plan, P1.8) and §7 (risks)
 should drop the framing that Method D is a hard dependency on TTD v2's
-migration landing first. TTD v2 (PLAN #40 V1, per-region memory pages)
+migration landing first. TTD v2 (PLAN #40 Phase 1, per-region memory pages)
 remains relevant the same way it already is for Methods A/B on banked
 machines (F5's documented fallback), not as a new blocker specific to
 Method D.

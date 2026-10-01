@@ -1499,7 +1499,7 @@ earlier):
   are stored in changed 4 KB pieces.
 - **Until TTD v2 regions exist: no card memory in TTD v1 (decided
   2026-09-29).** Regions are planned but not implemented: the v2 migration
-  puts them (its step V1) after steps 0, V0 and V0b and the profi merge. TTD
+  puts them in its Phase 1, after Phase 0 (preparation, done). TTD
   v1 checkpoints store the changed pages of the machine's own memory and do
   not snapshot large device memories: a full copy in every checkpoint (one a
   frame) is the inefficiency v2 regions exist to remove. The NeoGS blob is
@@ -1700,7 +1700,7 @@ flowchart LR
     P3 --> P4["Phase 4<br/>switching, automation,<br/>debugger target,<br/>GS-slot guard"]
     P4 --> P5["Phase 5<br/>ZX-DMA host hook,<br/>fpgaD option"]
     P4 --> P6["Phase 6<br/>NeoGS TTD recording<br/>(v1 full blobs)"]
-    P6 --> TTD2["TTD v2 memory regions<br/>(separate project, step V1):<br/>RAM and flash as regions"]
+    P6 --> TTD2["TTD v2 memory regions<br/>(separate project, Phase 1):<br/>RAM and flash as regions"]
 ```
 
 | Phase | Work | Done when |

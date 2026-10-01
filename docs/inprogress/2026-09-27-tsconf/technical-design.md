@@ -541,7 +541,7 @@ store through `_bank_write[bank]`. TSConf needs:
    `CACHE_CONFIG[bank]`; invalidated by a CPU write that hits; not touched by
    DMA. Timing (miss waits at 14 MHz) phase 8.
 4. **RAM page 0xFF** (vdos maps exactly that page): ~~sentinel collision~~ —
-   **resolved on master in `3a6eabc6`** (PLAN #40 V0): the bank cache holds a
+   **resolved on master in `3a6eabc6`** (PLAN #40 Phase 0, Step 1): the bank cache holds a
    16-bit `ttd::PhysPage` with `kPhysPageNone = 0xFFFF` (`ttdphyspage.h`), so
    page 255 is dirty-tracked, journaled, probed and coverage-indexed like any
    page (`ttdpage255_test.cpp` on ATM3). `TsConfMemory` must keep the
@@ -815,7 +815,7 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 1. **`PeripheralId::TsConfPaging = 16`** (defined 2026-09-29, INF-10) (10 MoonSound, 11 GS-LW, 12 NeoGS
    reserved, 13 `Plus3Paging`, 14 `Upd765`, 15 `EvoSdCard` — `ttdserializable.h`;
    re-check the next free id when phase 1 starts); update `ttd.ksy` and
-   `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 V0 rule). The
+   `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 Phase 0, Step 1 rule). The
    SD side needs no new id: TSConf drives the same `ZControllerSpi` +
    `SdCardSpi` as ZX-Evo, so it registers the existing `EvoSdCard` (15)
    serializer (protocol state only; the card's sectors follow the media
@@ -843,7 +843,7 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 5. SD card: the card's protocol state follows the NeoGS TTD design for
    `SdCardSpi` (neogs-tdd §7.4); Session-mode written sectors are part of that
    state; vFAT is read-only, so no sector journal.
-6. **Dependencies**: PLAN #40 V1 (memory regions) per the PLAN #41 row. (The
+6. **Dependencies**: PLAN #40 Phase 1 (memory regions) per the PLAN #41 row. (The
    V0 items TSConf needed - the page-255 sentinel fix, `3a6eabc6`, and the
    unique `PeripheralId` table - are done.)
 7. **Divergence corpus**: one fixture with TSU + DMA + line INT activity (a
@@ -942,8 +942,8 @@ Tests are named after the file under test (`<sourcefile>_test.cpp`):
 4. **CRAM mid-line granularity** — per CPU instruction in v1 (≤ 23 T at 3.5 MHz
    ≈ 46 dots); exact per-dot timing would need a CRAM write log per line
    (phase 8 option).
-5. **PLAN dependencies** — #40 V1 (memory regions) before the full TTD phase;
-   #42 mapper before video debugging; neither blocks phases 0-2. (#40 V0's
+5. **PLAN dependencies** — #40 Phase 1 (memory regions) before the full TTD phase;
+   #42 mapper before video debugging; neither blocks phases 0-2. (#40 Phase 0, Step 1's
    page-255 fix is done, `3a6eabc6`.)
 6. **IDE** — resolved 2026-09-29: emulated in phase 6 (D2, §3.11). The CPU
    stall is off by default; a CPU IDE access during an IDE DMA is not modeled.

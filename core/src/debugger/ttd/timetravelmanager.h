@@ -119,7 +119,7 @@ enum class TTDRecordMode : uint8_t
 /// @brief Lightweight session summary returned by GetSessionInfo().
 /// Matches the shape automation clients (WebAPI/Lua/CLI) consume per TDD §10.4.
 /// Timings of the last capture and the last restore, in nanoseconds (the
-/// benchmark harness, PLAN #40 V0b, BM-2 / BM-6). Two clock reads per frame
+/// benchmark harness, PLAN #40 Phase 0, Step 2, BM-2 / BM-6). Two clock reads per frame
 /// while recording and a handful per restore - free next to a frame's work
 struct TTDPerfCounters
 {
