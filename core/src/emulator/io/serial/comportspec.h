@@ -13,7 +13,11 @@
 ///                                first, then the host resolver) at each connect
 ///   SERIAL:<device>[,<baud>]     a host serial device; <baud> until the ZX
 ///                                programs its own rate (115200 by default)
-///   ESPNET, AT                   ESP modules (step N3): refused until then
+///   ESPNET                       an emulated ESP module with NedoOS's ESPNET
+///                                firmware (binary socket protocol)
+///   AT                           an emulated ESP module with Espressif's AT firmware
+/// The ESP modules use the virtual network for their sockets; [NETWORK]
+/// EspChip= picks ESP32 (8 sockets) or ESP8266 (4)
 
 #include <cstdint>
 #include <string>
@@ -25,7 +29,9 @@ struct ComPortSpec
         None,
         Loopback,
         Tcp,
-        Serial
+        Serial,
+        Espnet,
+        At
     };
     Kind kind = Kind::None;
     std::string host;         ///< Tcp: the name or the address as written

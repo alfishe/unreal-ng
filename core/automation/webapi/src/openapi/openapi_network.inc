@@ -22,7 +22,7 @@
             "actions: frame, socket, proto, action, remote, status, bytes). com_port: fitted, flavor (evo = the "
             "ZX-Evo AVR's UART, zxwifi = a 16550 card), peer (loopback | tcp | serial), target, phase (idle | resolving | connecting | connected), error, modem_lines, connected, baud, "
             "frame_bits, divisor, the registers lcr / mcr / lsr / msr / ier / iir / scr, rts, cts, rx_fifo, tx_fifo, "
-            "peer_pending (bytes the peer holds for the ZX), bytes_in, bytes_out, overruns. card.kind is none when "
+            "peer_pending (bytes the peer holds for the ZX), bytes_in, bytes_out, overruns; an ESP module adds requests and recent_exchanges (request / reply: ESPNET frames by name, AT lines as text). card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
@@ -43,12 +43,15 @@
         paths[kConfig]["post"]["summary"] = "Change network settings";
         paths[kConfig]["post"]["tags"].append("Network");
         paths[kConfig]["post"]["description"] =
-            "Change the machine's [NETWORK] settings at runtime. Body: any of card (\"zxnetusb\" | \"none\"), "
+            "Change the machine's [NETWORK] settings at runtime. Body: any of card (ZX-Bus cards: \"none\" | "
+            "\"zxnetusb\" | \"zxwifi\" | \"zxnetusb,zxwifi\"), "
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
-            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | "
-            "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"), com_flavor (\"auto\" | \"evo\" | "
-            "\"zxwifi\"), com_modem_lines (true / false). Unset keys keep their value. Applied "
-            "at the next frame boundary (at once while paused): the card is fitted again, so every connection closes. "
+            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet\" | \"at\" | "
+            "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"; the machine's own serial port, the ZX-Evo "
+            "AVR's), zx_wifi (the same values: what the ZX-WiFi card's 16550 is wired to, default \"at\"), com_modem_lines (true / false), esp_chip (\"esp32\" | \"esp8266\"). Unset keys keep their value. Applied "
+            "at the next frame boundary (at once while paused): the devices are fitted again, so every connection closes. A "
+            "device the machine cannot take (a ZX-WiFi card on a ZX-Evo: #xxEF is the AVR's) is listed in the state's "
+            "not_fitted with the reason. "
             "The same keys as CLI `network set` and Lua / Python network_configure(). Refused (409) while a TTD "
             "recording runs.";
         paths[kConfig]["post"]["parameters"][0]["name"] = "id";

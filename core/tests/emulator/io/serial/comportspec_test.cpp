@@ -64,11 +64,14 @@ TEST(ComPortSpec_Test, SerialDeviceAndBaud)
     EXPECT_FALSE(ComPortSpec::Parse("serial:COM3,fast", s, error));
 }
 
-TEST(ComPortSpec_Test, EspModulesAreRefusedUntilStepN3)
+TEST(ComPortSpec_Test, EspModules)
 {
     ComPortSpec s;
     std::string error;
-    EXPECT_FALSE(ComPortSpec::Parse("ESPNET", s, error));
-    EXPECT_NE(error.find("N3"), std::string::npos);
+    ASSERT_TRUE(ComPortSpec::Parse("espnet", s, error));
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::Espnet);
+    EXPECT_EQ(s.ToString(), "ESPNET");
+    ASSERT_TRUE(ComPortSpec::Parse("AT", s, error));
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
     EXPECT_FALSE(ComPortSpec::Parse("modem", s, error));
 }

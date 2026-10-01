@@ -35,6 +35,11 @@ public:
     virtual bool HasByte() const = 0;
     virtual uint8_t TakeByte() = 0;
 
+    /// The peer starts a byte only while the ZX's RTS allows it (hardware flow
+    /// control on its side); false: it sends regardless (an ESP whose AT
+    /// UART_CUR switched flow control off)
+    virtual bool HonorsRts() const { return true; }
+
     /// Modem lines the peer drives: CTS lets the ZX send; DSR / DCD say the
     /// other end is there; RI rings
     virtual bool Cts() const { return true; }
@@ -52,6 +57,14 @@ public:
     /// The line format the ZX programmed (divisor, LCR): a host serial device
     /// follows it
     virtual void OnLineSettings(const SerialLine& line) { (void)line; }
+
+    /// The emulated clock (base T-states, as the UART's) and its rate: peers
+    /// with their own timing (an ESP module's turnaround, timeouts) use it
+    void SetClock(std::function<uint64_t()> now, uint32_t baseClockHz)
+    {
+        _clock = std::move(now);
+        _clockHz = baseClockHz ? baseClockHz : 3500000;
+    }
 
     /// Frame boundary on the machine thread: flush what the ZX sent, retry a
     /// lost connection
@@ -74,6 +87,16 @@ public:
     /// that starts sending while the program is busy fills the FIFO (and
     /// overruns it) in the background as on hardware
     std::function<void()> onReceive;
+
+protected:
+    uint64_t Now() const { return _clock ? _clock() : 0; }
+    uint64_t MicrosToT(uint64_t us) const { return us * _clockHz / 1000000u; }
+
+private:
+    std::function<uint64_t()> _clock;
+    uint32_t _clockHz = 3500000;
+
+public:
 
     /// True while the other end is reachable (TCP connected, device open)
     virtual bool Connected() const { return true; }

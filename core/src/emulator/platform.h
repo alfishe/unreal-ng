@@ -680,7 +680,7 @@ struct CONFIG
 	/// fields are always assigned during config parsing.
 	struct
 	{
-		/// Card on the ZX-Bus: 0 = none, 1 = ZXNETUSB (W5300)
+		/// Cards on the ZX-Bus (networkspec::kCard*): bit 0 ZXNETUSB (W5300), bit 1 ZX-WiFi
 		uint8_t card;
 		/// 1 = the virtual network reaches the host network; 0 = internal only
 		/// (DHCP, hosts table, gateway ping): hermetic tests, offline use
@@ -693,14 +693,18 @@ struct CONFIG
 		char forwards[256];
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
-		/// COM port peer (TDD §7.2): NONE | LOOPBACK | TCP:<a.b.c.d|localhost>:<port> |
-		/// SERIAL:<device>[,<baud>] (ComPortSpec::Parse). Empty = NONE
+		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
+		/// the AVR's 16550): NONE | LOOPBACK | TCP:<host>:<port> |
+		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
-		/// UART flavor: 0 = by machine (ZX-Evo: the AVR, others: ZX-WiFi), 1 = EVO, 2 = ZXWIFI
-		uint8_t comFlavor;
+		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
+		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
+		char zxWifi[256];
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
+		/// ESP module of ComPort=ESPNET / AT: 0 = ESP32 (8 sockets), 1 = ESP8266 (4 sockets)
+		uint8_t espChip;
 	} network;
 
 	struct
@@ -744,6 +748,9 @@ struct CONFIG
 		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
 		// (readback on #xxBE, breakpoint writes on #xxBD)
 		uint8_t evo_legacy_fpga;
+		// ZX-Evo AVR firmware ([EVO] Avr=): Uart16550::AvrFirmware - the COM
+		// port's emulation differs between NedoPC and TS-Labs releases
+		uint8_t evo_avr;
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];

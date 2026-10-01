@@ -440,8 +440,8 @@ goes and marked incomplete (logged at restore). The options considered:
 
 | Flavor | Behavior |
 |---|---|
-| **Evo AVR** (ZX-Evo BaseConf COM port) | 16-byte FIFOs, no interrupts (IIR always #01), MCR masked to `& #1F` (no auto flow control, no loopback), RTS driven by software, TX ignores CTS, OE sticky until an FCR RX reset, LSR bit 7 = RX half full, RBR of an empty FIFO = #00, 8N2 until the first LCR write, divisor 0 = 345600 baud; each access stalls the Z80 while the AVR serves it (52 T, ~15 us, estimated); a Z80 reset leaves it alone. Details and sources: [reference-evo-com-port.md](reference-evo-com-port.md) |
-| **ZX-WiFi** (real 16550 card on the ZX-Bus) | 16-byte FIFOs, auto RTS/CTS when MCR bit5 is set, 1.8432 MHz clock (divider 1 = 115200) |
+| **Evo AVR** (ZX-Evo COM port, on the mainboard: always there) | the AVR firmware chosen by `[EVO] Avr=` (default: the newest NedoPC, every release since 2010 available, [reference-evo-com-port.md](reference-evo-com-port.md) §9). Newest NedoPC: 16-byte FIFOs, no interrupts (IIR always #01), MCR masked to `& #1F` (no auto flow control, no loopback), RTS driven by software, TX ignores CTS, OE sticky until an FCR RX reset, LSR bit 7 = RX half full, RBR of an empty FIFO = #00, 8N2 until the first LCR write, divisor 0 = 345600 baud; each access holds the Z80 on /WAIT for the AVR's interrupt, main-loop phase and service (27-31 us minimum, 45-50 us when polled, §3 there); a Z80 reset leaves it alone |
+| **ZX-WiFi** (a ZX-Bus card: a real 16550 + an ESP; `Card=ZXWIFI`, its ESP by `ZxWifi=`; not on a ZX-Evo or TS-Conf, where #xxEF is taken) | 16-byte FIFOs, auto RTS/CTS when MCR bit5 is set, 1.8432 MHz clock (divider 1 = 115200) |
 
 Common: DLL/DLM, LCR, FCR, LSR (DR, THRE, TEMT, OE), MSR (CTS, DSR, DCD),
 scratch register. Bytes move at the programmed baud rate in emulated time
@@ -466,23 +466,19 @@ level, auto-CTS holds the transmitter.
 
 ### 7.2 Serial peers
 
-```cpp
-class ISerialPeer   // the other end of a UART, driven in emulated time
-{
-public:
-    virtual void OnHostToPeer(uint8_t byte, uint64_t tState) = 0;  // ZX transmitted a byte
-    virtual bool PeerToHostReady(uint64_t tState) = 0;             // peer has a byte for the ZX
-    virtual uint8_t PeerToHostTake() = 0;
-    virtual void OnModemLines(bool rts, bool dtr) = 0;             // ZX RTS/DTR changed
-    virtual bool Cts() const = 0;                                   // peer lets the ZX send
-    virtual ~ISerialPeer() = default;
-};
-```
+`ISerialPeer` (`core/src/emulator/io/serial/serialpeer.h`): the UART owns
+the timing and asks the peer only at character times - `Transmit(byte)` when
+the ZX's character left the line, `HasByte` / `TakeByte` when the receiver is
+free and RTS allows (`HonorsRts` false: regardless of RTS), `Cts` / `Dsr` /
+`Dcd` / `Ri` for MSR, `OnModemLines` / `OnLineSettings` for what the ZX
+programmed, `onReceive` when bytes arrive from outside (the UART moves its
+clock there), `SetClock` for peers with their own timing (the ESP modules'
+turnaround and timeouts).
 
 | Peer | Use |
 |---|---|
-| `EspnetModule` | NedoOS ESPNET firmware 1.27: frames `#A5` + header, commands SOCKET, SHUTDOWN, CONNECT, ACCEPT, BIND, LISTEN, READ, WRITE, GETDNS, DNSRESOLVE, INFO, WIFI_* (answered as "connected to a virtual AP"), UART (baud change), ECHO; 8 sockets as ESP32 (4 with an ESP8266 setting); sockets are VNet sockets |
-| `AtModule` | stock ESP AT: the commands NedoOS ESPCOM, Moon Rabbit and zx-net-tools use: `AT`, `ATE0`, `AT+RST` (then `ready` and `WIFI GOT IP`), `AT+GMR`, `AT+CWMODE`, `AT+CWJAP(_CUR/_DEF)`, `AT+CIPMUX`, `AT+CIPSTART`, `AT+CIPSEND`, `AT+CIPCLOSE`, `AT+CIPDINFO`, `AT+CIPSERVER`, `AT+CIPRECVMODE`, `AT+CIPMODE=1` (transparent), `AT+CIPSNTPCFG`, `AT+CIPSNTPTIME?`, `AT+UART_CUR`, `+IPD` delivery; both `_CUR/_DEF` and plain forms |
+| `EspnetModule` | NedoOS ESPNET firmware 1.27, byte for byte ([reference-esp-modules.md](reference-esp-modules.md) Part 1): frames `#A5` + header (CRC frames too), SOCKET, SHUTDOWN, CONNECT, ACCEPT, BIND, LISTEN, READ, WRITE, GETDNS, DNSRESOLVE, INFO, WIFI_SCAN / CONNECT / DISC / STATUS (the virtual access point `UnrealNG`), UART (baud change), ECHO; 8 sockets on ESP32, 4 on ESP8266 (`EspChip=`); sockets are VNet sockets |
+| `AtModule` | Espressif AT ([reference-esp-modules.md](reference-esp-modules.md) Part 2): ESP8266 as NonOS AT 1.7.4, ESP32 as AT 2.2; echo, RST / RESTORE, GMR, CWMODE / CWJAP / CWQAP / CWLAP / CWAUTOCONN, CIFSR / CIPSTA, CIPMUX 0 / 1, CIPDINFO, CIPSTART TCP / UDP (DNS on the module), CIPSEND (leading zeros, `> `), CIPCLOSE, CIPSTATUS, CIPSERVER, CIPRECVMODE / CIPRECVDATA / CIPRECVLEN, CIPMODE=1 + `+++`, CIPDOMAIN, PING, CIPSNTPCFG / CIPSNTPTIME (real NTP over the virtual network), UART_CUR / DEF (rate and flow control); `_CUR` / `_DEF` and plain forms; the order clients rely on |
 | `HostSerialPeer` | a real host serial port (a real ESP on USB, a modem) |
 | `TcpPeer` | bytes to / from a host TCP endpoint (telnet BBS, a test harness) |
 | `LoopbackPeer` | tests |
@@ -519,11 +515,11 @@ Machine INI:
 
 ```ini
 [NETWORK]
-Card=NONE                 ; NONE | ZXNETUSB
+Card=NONE                 ; ZX-Bus cards, a list: NONE | ZXNETUSB | ZXWIFI | ZXNETUSB,ZXWIFI
 HostAccess=1              ; 1 = reach the host network | 0 = internal services only
-ComPort=NONE              ; NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] (ESPNET | AT: step N3)
+ComPort=NONE              ; the machine's own serial port: NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET | AT
+ZxWifi=AT                 ; the ZX-WiFi card's 16550: AT | ESPNET (its ESP's firmware) or any ComPort= value
 ComModemLines=0           ; 1: a SERIAL: device gets RTS / DTR and reports CTS / DSR / RI / DCD
-ComFlavor=AUTO            ; AUTO (by machine) | EVO | ZXWIFI
 EspChip=ESP32             ; ESP32 (8 sockets) | ESP8266 (4)
 Subnet=10.0.2.0/24
 DnsMode=HOST              ; HOST | PASS
@@ -533,6 +529,14 @@ ConnectTimeoutMs=10000
 Allow=                    ; optional allow list
 ```
 
+- Settings are per slot, not per machine. The machine declares what it offers
+  (`PortDecoder::DescribeNetwork`: the ZX-Bus, its own serial port - ZX-Evo:
+  the AVR's, TS-Conf: ZiFi, others: none); `NetworkManager` fits from that and
+  never names a model. A device that clashes with the machine is not fitted and
+  `GET /state/network` lists it in `not_fitted` with the reason (a ZX-WiFi card
+  on a ZX-Evo: #xxEF is the AVR's). Machine-specific hardware lives in the
+  machine's own section: `[EVO] Avr=` (the AVR firmware). The step after this:
+  machine -> buses / extension slots -> devices, unlimited until ports clash.
 - The legacy keys already shipped in `data/configs/*/unreal.ini`
   (`[MISC] Modem=NONE`, `ZiFi=NONE`) are read too: `Modem=COMn` means
   `ComPort=SERIAL:COMn`. Nothing parses them today.
@@ -633,7 +637,7 @@ use the committed minimal card plus the few network programs they need
 | **N1a** | ZXNETUSB card + W5300 (TCP, UDP), status on every surface, PortDeviceId | NedoOS full card in the GUI: `wizcfg` lease, zxdb search, browser page, telnet; machine test green; replay sealed |
 | **N1b** | LISTEN / forwarding, IPRAW ping, memory-mapped mode, INT, blob (after the §6.3 decision), control on every surface | 3ws / scrnet reachable from the host browser; `ping`; TTD seek round trip |
 | **N2** | `Uart16550` (Evo, ZX-WiFi), `HostSerialPeer`, `TcpPeer`, `LoopbackPeer` | `cuart` talks to a TCP echo; a real ESP on USB works through `SERIAL:`. **Done** (§15): NedoOS `cuart` holds an AT dialog with a pretend ESP over TCP live; the SERIAL: path is checked on a pseudo-terminal; the real-ESP test is postponed until the hardware is at hand |
-| **N3** | `EspnetModule`, then `AtModule` | `sd_bootesp.$C` + zxdb works; Moon Rabbit `mrfue.com` and an ESPCOM app work |
+| **N3** | `EspnetModule`, then `AtModule` | `sd_bootesp.$C` + zxdb works; Moon Rabbit `mrfue.com` and an ESPCOM app work. **Done** (§15): zxdb over ESPNET (kernel driver) and over AT (`currentNetwork=1`) live; Moon Rabbit not run yet |
 | **N4** | ATM Turbo 2+ COM port | NedoOS ATM ESP kernel on ATM710 reaches the network |
 | **N5, N6** | ZiFi (with TS-Conf), AY-UART, ATM2IOESP | per demand |
 | **D** | debugging (§11) in the order listed | per item |
@@ -694,9 +698,9 @@ layout, noted for the next A/B on this path. Open: the debugging views
 | 16550 model, both flavors (ZX-Evo AVR, ZX-WiFi 16C550 with AFE) | `core/src/emulator/io/serial/uart16550.*` | `uart16550_test.cpp` (reset values, baud the AVR's way, character timing, RTS pulses, overrun rules, auto-RTS / auto-CTS, loopback, state round trip) |
 | Peers: loopback, TCP (address or name, resolved through the virtual network's DNS) and host serial device as virtual-network streams (bytes, DNS answers and modem lines journaled as NetEvents) | `serialpeer.*`; `VirtualNetwork::ConnectSerial` / `ConfigureSerial` / `SerialModemLines`, `NetProto::Serial`, `NetEventType::ModemLines`; `dns::BuildQuery` / `ParseAnswer` | `serialpeer_test.cpp` (hosts table, host resolver, unknown name, DNS timeout, retry, line format, modem lines both ways) |
 | Host serial device (termios / Win32 COMM) on its own bridge thread: line format incl. custom rates, RTS / DTR, CTS / DSR / RI / DCD polling | `common/serial/hostserialport.h`, `platform/posix/`, `platform/macos/` + `platform/linux/` (custom baud), `platform/windows/`; `HostNetBridge::SerialOpen` / `SerialConfigure` / `SerialModemLines` | `hostnetbridge_test.cpp` (missing device; pseudo-terminal exchange and line format on POSIX) |
-| The port on the bus (#xxEF, A10..A8), AVR wait, reset rule, fitting by `[NETWORK] ComPort=` / `ComFlavor=` | `comport.*`, `comportspec.*`, `networkmanager.*`, `config.cpp` | `comport_test.cpp` (decode, wait, Z80 code echo, reset, flavor, status, TTD), `comportspec_test.cpp` |
-| TTD: the COM port in the network adapters blob (version 2): UART registers, echo queue by value, peer bytes by journal reference; the virtual network is saved without a card too | `netstate.h`, `network/ttdzxnetusb.*` | `ttdzxnetusb_test.cpp` (`TTDComPort_Test`: replay without the host, seek restores the peer's bytes) |
-| Status and settings on every surface | `com_port` in `GET /state/network` and the MCP / CLI / Lua / Python views; keys `com_port`, `com_flavor` in `POST /network/config`, `network set`, `network_configure()` | through the tests above |
+| The port on the bus (#xxEF, A10..A8), AVR wait (ISR + loop phase + service), reset rule; fitting from the machine's capabilities (`PortDecoder::DescribeNetwork`), `[NETWORK] ComPort=` / `Card=ZXWIFI` / `ZxWifi=`; AVR firmware presets `[EVO] Avr=` | `comport.*`, `comportspec.*`, `networkspec.*`, `networkmanager.*`, `uart16550.*`, `portdecoder_atm3.cpp`, `config.cpp` | `comport_test.cpp` (always-there Evo UART, decode, wait, refit keeps registers, ZX-WiFi card and its clash, TS firmware on BaseConf, status, TTD), `uart16550_test.cpp` (every firmware preset, wait model), `comportspec_test.cpp` |
+| TTD: the serial port in its own blob (`PeripheralId::SerialPort` 22, a short UART-only blob without a peer): UART registers, echo queue by value, peer bytes by journal reference; the network adapters blob (version 3) keeps the card and the virtual network, saved without a card too | `netstate.h`, `network/ttdserialport.*`, `network/ttdzxnetusb.*` | `ttdzxnetusb_test.cpp` (`TTDComPort_Test`: replay without the host, seek restores the peer's bytes) |
+| Status and settings on every surface | `com_port` in `GET /state/network` and the MCP / CLI / Lua / Python views; keys `card`, `com_port`, `zx_wifi` in `POST /network/config`, `network set`, `network_configure()` | through the tests above |
 
 Checked live on the ZX-Evo:
 - `com_port=tcp:127.0.0.1:2323`, a Python echo server: Z80 code sent `HELLO`
@@ -716,3 +720,30 @@ wiring, auto-reset circuits, firmware and other emulators' ESP code:
 [reference-evo-com-port.md](reference-evo-com-port.md) §8. The port path of a
 machine without a COM port is unchanged (the low-byte observer table stays
 empty): no A/B needed for it.
+
+### N3: ESP modules (2026-10-01, branch `esp-modules`)
+
+| Part | Where | Tests |
+|---|---|---|
+| Socket stack of the module on the virtual network: TCP / UDP slots, servers with a client queue, DNS, ICMP echo, the firmware's own UDP query (SNTP); received bytes by journal reference | `core/src/emulator/io/serial/esp/espstack.*` | through the module tests |
+| Module base: UART side (4 KB receive buffer, turnaround, line format, flow control), Wi-Fi on the virtual access point with a DHCP lease, exchange log, TTD state | `espmodule.*`, `netstate::EspModuleState` | |
+| ESPNET firmware 1.27 | `espnetmodule.*` | `espnetmodule_test.cpp` (INFO, TCP client like the kernel, failed connect, busy ordering, UDP DNS like the kernel, DNSRESOLVE / GETDNS, server + queued clients like 3ws, errno cases, CRC, Wi-Fi, UART SET, state) |
+| AT firmware (NonOS 1.7 / ESP32 2.x personality) | `atmodule.*` | `atmodule_test.cpp` (banner, echo, NedoOS espReBoot, GMR, TCP session order, segments, failures + busy, CIPMUX + server, passive mode, CIPDINFO, transparent + `+++`, SNTP, UART_CUR, CWJAP, CIFSR / CIPSTATUS, PING, state) |
+| Fitting `ComPort=ESPNET / AT`, `EspChip=`, status (`com_port.recent_exchanges`, `requests`), TTD in the network adapters blob | `networkmanager.*`, `comport.*`, `devicestate.cpp`, `ttdzxnetusb.*` | `ttdzxnetusb_test.cpp` (`TTDEspModule_Test`: replay without the host), `comportspec_test.cpp` |
+
+Checked live on the ZX-Evo with the full NedoOS card (a copy with
+`sd_bootesp.$C` as the boot kernel):
+- ESPNET through the kernel driver: espcfg (INFO), zxdb search - DNS over UDP,
+  SOCKET, CONNECT, WRITE 113, four READs of 192, SHUTDOWN; results shown.
+- AT with `ini/network.ini currentNetwork=1`: zxdb's espReBoot (RST, ready,
+  WIFI GOT IP, ATE0, CIPCLOSE, CIPDINFO=0, CIPMUX=0, CIPSERVER=0,
+  CIPRECVMODE=0), CIPSTART to the name (DNS on the module), CIPSEND=115,
+  `+IPD,611`, CIPCLOSE; results shown.
+- next.zxart.ee did not answer HTTP that day and the host firewall held the
+  emulator's own connections, so the name was pinned (`Hosts=`) to a local
+  stand-in serving zxdb's record format.
+
+Open: Moon Rabbit / Karabas net-tools not run yet; the questions in
+[reference-esp-modules.md](reference-esp-modules.md) Part 4 (16-byte vs
+TS-Conf 511-byte AVR FIFO, overruns during an AT reboot).
+

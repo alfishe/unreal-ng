@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "network/ttdserialport.h"
 #include "network/ttdzxnetusb.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -80,12 +81,20 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         ownedSerializers.push_back(std::move(ide));
     }
 
-    // Network adapters (network TDD §6.3, §7): while a card or a COM port is fitted
-    if (context->pZxNetUsb || context->pComPort)
+    // Network adapters (network TDD §6.3, §7): while the virtual network
+    // exists; the serial port on #xxEF in its own blob (on a ZX-Evo always:
+    // the AVR's UART is on the mainboard), restored after the network
+    if (context->pZxNetUsb || context->pVirtualNetwork)
     {
         auto network = std::make_unique<TTDZxNetUsb>(context);
         registry.Register(PeripheralId::ZxNetUsb, network.get());
         ownedSerializers.push_back(std::move(network));
+    }
+    if (context->pComPort)
+    {
+        auto serial = std::make_unique<TTDSerialPort>(context);
+        registry.Register(PeripheralId::SerialPort, serial.get());
+        ownedSerializers.push_back(std::move(serial));
     }
 
     // --- Model-specific state (TDD 6.4) ---

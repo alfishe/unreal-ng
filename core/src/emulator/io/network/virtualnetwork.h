@@ -169,6 +169,9 @@ public:
     const std::deque<Activity>& RecentActivity() const { return _activity; }
 
     const VirtualNetworkConfig& Config() const { return _config; }
+
+    /// The address of a station with this MAC (a DHCP lease, made now if needed)
+    uint32_t LeaseFor(const DhcpServer::Mac& mac) { return _dhcp.Lease(mac); }
     const DhcpServer& Dhcp() const { return _dhcp; }
     IHostNet* Host() const { return _host.get(); }
 

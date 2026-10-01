@@ -35,8 +35,6 @@ void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
             complete = _context->pVirtualNetwork->SaveState(state.network, comGuest);
         }
     }
-    if (com)
-        complete = com->SaveState(state.com) && complete;
     if (!complete)
         state.incomplete = 1;
     std::memcpy(dst, &state, sizeof(state));
@@ -44,7 +42,7 @@ void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
 
 void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
 {
-    if (!_context || (!_context->pZxNetUsb && !_context->pComPort))
+    if (!_context || (!_context->pZxNetUsb && !_context->pVirtualNetwork))
         return;
     netstate::Adapters& state = *_scratch;
     std::memcpy(&state, src, sizeof(state));
@@ -74,8 +72,6 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
         complete = _context->pZxNetUsb->LoadState(state, bytes, comGuest);
     else if (_context->pVirtualNetwork && state.networkPresent)
         _context->pVirtualNetwork->LoadState(state.network, nullptr, comGuest);
-    if (com && state.com.present)
-        complete = com->LoadState(state.com, bytes) && complete;
 
     if ((!complete || state.incomplete) && _context->pModuleLogger)
     {
@@ -89,7 +85,7 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
 
 uint64_t TTDZxNetUsb::TTDHashState() const
 {
-    if (!_context || (!_context->pZxNetUsb && !_context->pComPort))
+    if (!_context || !_context->pZxNetUsb)
         return 0;
     // Socket states and buffer levels: enough to see a replay leave the recorded path
     uint64_t h = 1469598103934665603ull;
@@ -97,19 +93,6 @@ uint64_t TTDZxNetUsb::TTDHashState() const
         h ^= v;
         h *= 1099511628211ull;
     };
-    if (const ComPort* com = _context->pComPort)
-    {
-        const Uart16550::View u = com->Uart().GetView();
-        mix(u.lcr);
-        mix(u.mcr);
-        mix(u.lsr);
-        mix(u.rxCount);
-        mix(u.txCount);
-        mix(u.bytesIn);
-        mix(u.bytesOut);
-    }
-    if (!_context->pZxNetUsb)
-        return h;
     const ZxNetUsb& card = *_context->pZxNetUsb;
     mix(card.Control());
     mix(card.Mode());

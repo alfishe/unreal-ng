@@ -1733,11 +1733,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
                                             << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
                                     if (com["fitted"].asBool())
-                                        out << "\n[com] " << com["flavor"].asString() << " UART, " << com["peer"].asString()
+                                        out << "\n[com] " << com["flavor"].asString()
+                                            << (com.isMember("avr_firmware") ? " (" + com["avr_firmware"].asString() + ")" : std::string())
+                                            << " UART, " << com["peer"].asString()
                                             << (com.isMember("target") ? " " + com["target"].asString() : std::string())
                                             << (com["connected"].asBool() ? "" : " (not connected)") << ", " << com["baud"].asUInt() << " baud, rx "
                                             << com["rx_fifo"].asInt() << " / tx " << com["tx_fifo"].asInt() << " in FIFO, in " << com["bytes_in"].asUInt64()
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
+                                    for (const Json::Value& note : value["not_fitted"])
+                                        out << "\n[network] " << note.asString();
                                 }
                             }
                             else if (aspect == "rtc")

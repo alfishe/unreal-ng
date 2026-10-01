@@ -3,12 +3,14 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/io/serial/uart16550.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
@@ -762,6 +764,31 @@ public:
         (void)lowByte;
         return false;
     }
+
+    /// What this machine offers network and serial devices (network TDD §8):
+    /// the edge connector for ZX-Bus cards and its own serial port, if any.
+    /// The network manager and every interface build their choices from it,
+    /// shared code never names a model (a first step towards machine ->
+    /// buses / extension slots -> devices)
+    struct NetworkCapabilities
+    {
+        bool zxBus = true;   ///< ZX-Bus cards fit (ZXNETUSB, ZX-WiFi)
+
+        enum class SerialPort : uint8_t
+        {
+            None,     ///< no serial port of its own (a ZX-WiFi card adds one)
+            EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
+            ZiFi,     ///< TS-Conf: ZiFi + 16550 through the TS AVR (step N5, not emulated yet)
+        } serialPort = SerialPort::None;
+
+        /// The serial port's behavior (EvoAvr: by the configured AVR firmware)
+        Uart16550::Params uart;
+
+        /// Which register an #xxEF access reaches (ComPort::RegisterOf);
+        /// nullptr = A10..A8
+        std::function<int(uint16_t port)> serialRegister;
+    };
+    virtual NetworkCapabilities DescribeNetwork() { return NetworkCapabilities(); }
 
     /// Remove a low-byte full-decode observer. The device pointer must match
     /// the registration - a stale observer would keep firing into a dead object.

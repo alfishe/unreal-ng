@@ -1378,3 +1378,36 @@ void PortDecoder_ATM3::updateMemoryBanks()
 }
 
 /// endregion </Port handlers>
+
+PortDecoder::NetworkCapabilities PortDecoder_ATM3::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::EvoAvr;
+    const auto firmware = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    caps.uart = Uart16550::EvoAvrParams(firmware);
+
+    // The BaseConf FPGA hands the AVR A10..A8 (SPI register #42). The TS-Labs
+    // firmware from 2016-02 expects the TS-Conf FPGA's full high byte and
+    // reads the COM port wrongly here (reference-evo-com-port.md §9):
+    //  - 2016-02 .. 2021-04: index 0..7 from #42 lands in its ZiFi data area
+    //  - since 2021-04-28: the index is read from #41 = the Gluk clock address
+    //    (the last #DFF7 write): F8..FF reach the 16550, C0..CF the ZiFi
+    //    registers, D0..F7 nothing, 00..BF the ZiFi data area
+    if (firmware == Uart16550::AvrFirmware::Ts2016Feb)
+        caps.serialRegister = [](uint16_t) { return ComPortRegister::kDataRegion; };
+    else if (firmware == Uart16550::AvrFirmware::Ts2016Apr)
+    {
+        caps.serialRegister = [this](uint16_t) {
+            const uint8_t index = _evoAvr.GetAddress();
+            if (index >= 0xF8)
+                return static_cast<int>(index - 0xF8);
+            if (index >= 0xC0 && index <= 0xCF)
+                return ComPortRegister::kZiFiRegister;
+            if (index >= 0xD0)
+                return ComPortRegister::kNothing;
+            return ComPortRegister::kDataRegion;
+        };
+    }
+    return caps;
+}
+

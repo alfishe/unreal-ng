@@ -25,7 +25,16 @@ class ComPort final : public PortDevice
 public:
     static constexpr uint8_t kPortLowByte = 0xEF;
 
-    ComPort(EmulatorContext* context, const Uart16550::Params& params, std::unique_ptr<ISerialPeer> peer);
+    /// Which register an access reaches: 0..7, or one of the values below
+    /// (the AVR firmware and the FPGA decide; ZX-Evo + TS firmware differs)
+    static constexpr int kDataRegion = ComPortRegister::kDataRegion;
+    static constexpr int kZiFiRegister = ComPortRegister::kZiFiRegister;
+    static constexpr int kNothing = ComPortRegister::kNothing;
+    using RegisterOf = std::function<int(uint16_t port)>;
+
+    /// @param registerOf nullptr: A10..A8 (every NedoPC firmware, a real 16550)
+    ComPort(EmulatorContext* context, const Uart16550::Params& params, std::unique_ptr<ISerialPeer> peer,
+            RegisterOf registerOf = nullptr);
     ~ComPort();
 
     ComPort(const ComPort&) = delete;
@@ -68,10 +77,12 @@ public:
     bool LoadState(const netstate::Com& in, const ByteSource& bytes);
 
 private:
-    void AddAccessWait();
+    void AddAccessWait(uint8_t reg, bool read);
+    int Register(uint16_t port) const { return _registerOf ? _registerOf(port) : (port >> 8) & 0x07; }
 
     EmulatorContext* _context = nullptr;
     std::unique_ptr<ISerialPeer> _peer;
     Uart16550 _uart;
     PortDecoder* _decoder = nullptr;
+    RegisterOf _registerOf;
 };

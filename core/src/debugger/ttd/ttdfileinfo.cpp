@@ -122,6 +122,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::EvoPs2: return "evo-ps2";
         case PeripheralId::ZxNetUsb: return "zxnetusb";
         case PeripheralId::EvoTurboCache: return "evo-turbo-cache";
+        case PeripheralId::SerialPort: return "serial-port";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

@@ -89,7 +89,7 @@ TEST_F(Uart16550_Test, EvoResetValuesFromTheAvrFirmware)
 
 TEST_F(Uart16550_Test, ZxWifiResetValuesOfA16550)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     EXPECT_EQ(u.Read(kLsr, now), 0x60);
     EXPECT_EQ(u.Read(kFcr, now), 0x01);
     EXPECT_EQ(u.Read(kScr, now), 0x00);
@@ -116,7 +116,7 @@ TEST_F(Uart16550_Test, EvoBaudRatesAsTheAvrComputesThem)
 
 TEST_F(Uart16550_Test, TransmitTakesACharacterTimePerByte)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     InitLikeNedoOs(u);
     const uint64_t charT = u.CharacterT();
     EXPECT_EQ(charT, (10ull * 3500000 + 115199) / 115200) << "10 bits at 115200 in 3.5 MHz T-states";
@@ -175,7 +175,7 @@ TEST_F(Uart16550_Test, EvoOverrunIsStickyUntilAnFcrReset)
 
 TEST_F(Uart16550_Test, ZxWifiOverrunClearsOnLsrRead)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     u.Write(kFcr, 0x01, now);
     u.Write(kLcr, 0x03, now);
     u.Write(kMcr, 0x02, now);   // RTS, no AFE
@@ -190,7 +190,7 @@ TEST_F(Uart16550_Test, ZxWifiOverrunClearsOnLsrRead)
 
 TEST_F(Uart16550_Test, ZxWifiAutoRtsStopsThePeerAtTheTriggerLevel)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     InitLikeNedoOs(u);   // FCR #87: trigger 8; MCR #2F: AFE + RTS
     const uint64_t charT = u.CharacterT();
     for (int i = 0; i < 30; ++i)
@@ -207,7 +207,7 @@ TEST_F(Uart16550_Test, ZxWifiAutoRtsStopsThePeerAtTheTriggerLevel)
 
 TEST_F(Uart16550_Test, ZxWifiAutoCtsHoldsTheTransmitter)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     InitLikeNedoOs(u);
     const uint64_t charT = u.CharacterT();
     peer.cts = false;
@@ -246,7 +246,7 @@ TEST_F(Uart16550_Test, EvoMcrHasNoAfeAndNoLoopback)
 
 TEST_F(Uart16550_Test, ZxWifiLoopbackReturnsTheByteAndTheModemLines)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     u.Write(kFcr, 0x01, now);
     u.Write(kLcr, 0x03, now);
     u.Write(kMcr, 0x13, now);   // loop + RTS + DTR
@@ -268,7 +268,7 @@ TEST_F(Uart16550_Test, EvoIerIsStoredButRaisesNothing)
 
 TEST_F(Uart16550_Test, ZxWifiThreInterruptThroughOut2)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     u.Write(kMcr, 0x08, now);   // OUT2 gates the IRQ on PC-style cards
     u.Write(kIer, 0x02, now);
     EXPECT_EQ(u.Read(kFcr, now) & 0x0F, 0x02) << "THRE pending";
@@ -313,7 +313,7 @@ TEST_F(Uart16550_Test, StateRoundTripContinuesTheSameWay)
 
 TEST_F(Uart16550_Test, TheLineFormatReachesThePeer)
 {
-    Uart16550 u = Make(Uart16550::Flavor::ZxWifi);
+    Uart16550 u = Make(Uart16550::Flavor::Chip16550);
     ASSERT_FALSE(peer.lines.empty()) << "the reset line is announced";
     u.Write(kLcr, 0x80 | 0x1A, now);   // DLAB, 7 data bits, parity even (EPS | PEN)
     u.Write(kRbr, 12, now);            // divisor 12 = 9600
@@ -350,4 +350,199 @@ TEST_F(Uart16550_Test, AClockThatRestartsKeepsTheLineMoving)
     EXPECT_TRUE(peer.fromZx.empty());
     u.Advance(100 + charT / 2 + 1);
     EXPECT_EQ(peer.fromZx, (std::vector<uint8_t>{'A'})) << "the rest of the byte, not the whole uptime";
+}
+
+// ZX-Evo AVR firmware presets ([EVO] Avr=; reference-evo-com-port.md §9)
+
+namespace
+{
+Uart16550 MakeAvr(Uart16550::AvrFirmware firmware, ISerialPeer* peer)
+{
+    Uart16550 uart(Uart16550::EvoAvrParams(firmware), 3500000);
+    uart.SetPeer(peer);
+    return uart;
+}
+
+/// Let `chars` characters arrive one character time after another; returns the time after them
+uint64_t Receive(Uart16550& u, uint64_t from, int chars)
+{
+    const uint64_t charT = u.CharacterT();
+    for (int i = 0; i <= chars; ++i)
+        u.Advance(from + static_cast<uint64_t>(i) * charT);
+    return from + static_cast<uint64_t>(chars) * charT;
+}
+}  // namespace
+
+TEST_F(Uart16550_Test, AvrFirmwareNamesRoundTrip)
+{
+    for (int f = 0; f <= static_cast<int>(Uart16550::AvrFirmware::Ts2016Apr); ++f)
+    {
+        const auto firmware = static_cast<Uart16550::AvrFirmware>(f);
+        Uart16550::AvrFirmware parsed = Uart16550::kLatestAvr;
+        ASSERT_TRUE(Uart16550::ParseAvrFirmware(Uart16550::AvrFirmwareName(firmware), parsed));
+        EXPECT_EQ(parsed, firmware);
+    }
+    Uart16550::AvrFirmware parsed = Uart16550::AvrFirmware::Base2010;
+    EXPECT_TRUE(Uart16550::ParseAvrFirmware("baseconf", parsed));
+    EXPECT_EQ(parsed, Uart16550::AvrFirmware::Base2023) << "the default: the newest NedoPC firmware";
+    EXPECT_TRUE(Uart16550::ParseAvrFirmware("ts", parsed));
+    EXPECT_EQ(parsed, Uart16550::AvrFirmware::Ts2016Apr);
+    EXPECT_FALSE(Uart16550::ParseAvrFirmware("ts2099", parsed));
+}
+
+TEST_F(Uart16550_Test, The2010FirmwareIsARegisterFile)
+{
+    Uart16550 u = MakeAvr(Uart16550::AvrFirmware::Base2010, &peer);
+    peer.toZx = {0x41};
+    u.Write(kMcr, 0x02, now);
+    u.Write(kRbr, 'A', now);
+    u.Advance(now + 100000);
+    EXPECT_TRUE(peer.fromZx.empty()) << "no transfer behind the registers";
+    EXPECT_EQ(u.Read(kRbr, now + 100000), 0x00);
+    EXPECT_EQ(peer.toZx.size(), 1u);
+
+    u.Write(kLsr, 0x1E, now);
+    EXPECT_EQ(u.Read(kLsr, now), 0x1E) << "LSR is writable";
+    EXPECT_EQ(u.Read(kMsr, now), 0x00) << "MSR resets to 0";
+    u.Write(kIer, 0x05, now);
+    EXPECT_EQ(u.Read(kIer, now), 0x01) << "register 1 reads the IIR constant";
+    u.Write(kFcr, 0x87, now);
+    EXPECT_EQ(u.Read(kFcr, now), 0x87) << "register 2 reads the last FCR value";
+    EXPECT_EQ(u.Read(kScr, now), 0xFF);
+}
+
+TEST_F(Uart16550_Test, BeforeApril2011TheDivisorIsNotReset)
+{
+    Uart16550 early = MakeAvr(Uart16550::AvrFirmware::Base2011Apr, &peer);
+    EXPECT_EQ(early.Baud(), 345600u) << "DLL/DLM 0 after power-on: the divisor-0 rate";
+    Uart16550 later = MakeAvr(Uart16550::AvrFirmware::Base2011May, &peer);
+    EXPECT_EQ(later.Baud(), 115200u);
+}
+
+TEST_F(Uart16550_Test, DlmBit7IsTheAvrDivisorFromMay2011)
+{
+    for (const auto firmware : {Uart16550::AvrFirmware::Base2011Apr, Uart16550::AvrFirmware::Base2011May})
+    {
+        Uart16550 u = MakeAvr(firmware, &peer);
+        u.Write(kLcr, 0x83, now);
+        u.Write(kRbr, 0x05, now);
+        u.Write(kIer, 0x80, now);
+        u.Write(kLcr, 0x03, now);
+        if (firmware == Uart16550::AvrFirmware::Base2011May)
+            EXPECT_EQ(u.Baud(), 115200u) << "691200 / (5 + 1)";
+        else
+            EXPECT_NE(u.Baud(), 115200u) << "the divisor #8005 taken as 115200 / 32773";
+    }
+}
+
+TEST_F(Uart16550_Test, RtsWasInvertedBeforeSeptember2011)
+{
+    Uart16550 early = MakeAvr(Uart16550::AvrFirmware::Base2011May, &peer);
+    early.Write(kMcr, 0x02, now);
+    EXPECT_FALSE(peer.rts) << "MCR bit 1 set drove PD5 high: RTS inactive";
+    early.Write(kMcr, 0x00, now);
+    EXPECT_TRUE(peer.rts);
+
+    ScriptPeer other;
+    Uart16550 fixed = MakeAvr(Uart16550::AvrFirmware::Base2011Sep, &other);
+    fixed.Write(kMcr, 0x02, now);
+    EXPECT_TRUE(other.rts);
+}
+
+TEST_F(Uart16550_Test, OverrunIsClearedByFcrOnlyFrom2013)
+{
+    for (const auto firmware : {Uart16550::AvrFirmware::Base2011Sep, Uart16550::AvrFirmware::Base2013})
+    {
+        ScriptPeer p;
+        Uart16550 u = MakeAvr(firmware, &p);
+        u.Write(kLcr, 0x03, now);
+        u.Write(kMcr, 0x02, now);
+        p.toZx.assign(17, 0x55);
+        const uint64_t later = Receive(u, now, 17);
+        ASSERT_NE(u.Read(kLsr, later) & Uart16550::kLsrOe, 0) << "16 bytes fit, the 17th overruns";
+        u.Write(kFcr, 0x03, later);
+        const bool cleared = (u.Read(kLsr, later) & Uart16550::kLsrOe) == 0;
+        EXPECT_EQ(cleared, firmware == Uart16550::AvrFirmware::Base2013);
+    }
+}
+
+TEST_F(Uart16550_Test, HalfFullBitOnlyFrom2023)
+{
+    for (const auto firmware : {Uart16550::AvrFirmware::Base2013, Uart16550::AvrFirmware::Base2023})
+    {
+        ScriptPeer p;
+        Uart16550 u = MakeAvr(firmware, &p);
+        u.Write(kLcr, 0x03, now);
+        u.Write(kMcr, 0x02, now);
+        p.toZx.assign(8, 0x55);
+        const uint64_t later = Receive(u, now, 8);
+        const bool hf = (u.Read(kLsr, later) & Uart16550::kLsrHalfFull) != 0;
+        EXPECT_EQ(hf, firmware == Uart16550::AvrFirmware::Base2023);
+    }
+}
+
+TEST_F(Uart16550_Test, TsFifoDepthsByRelease)
+{
+    struct Row
+    {
+        Uart16550::AvrFirmware firmware;
+        int rx;
+    };
+    for (const Row row : {Row{Uart16550::AvrFirmware::Ts2013, 256}, Row{Uart16550::AvrFirmware::Ts2016Feb, 16},
+                          Row{Uart16550::AvrFirmware::Ts2016Apr, 511}})
+    {
+        ScriptPeer p;
+        Uart16550 u = MakeAvr(row.firmware, &p);
+        u.Write(kLcr, 0x03, now);
+        u.Write(kMcr, 0x02, now);
+        p.toZx.assign(static_cast<size_t>(row.rx + 1), 0x55);
+        const uint64_t later = Receive(u, now, row.rx + 1);
+        EXPECT_EQ(u.GetView().rxCount, row.rx);
+        EXPECT_NE(u.Read(kLsr, later) & Uart16550::kLsrOe, 0) << "one more byte than the ring holds";
+    }
+}
+
+TEST_F(Uart16550_Test, Ts2016AprThreMeansRoomAndTemtIsTheUsartTxc)
+{
+    Uart16550 u = MakeAvr(Uart16550::AvrFirmware::Ts2016Apr, &peer);
+    EXPECT_EQ(u.Read(kLsr, now), 0x20) << "TEMT = TXC: 0 after power-on";
+    u.Write(kLcr, 0x03, now);
+    u.Write(kRbr, 'A', now);
+    u.Write(kRbr, 'B', now);
+    EXPECT_EQ(u.Read(kLsr, now) & 0x20, 0x20) << "THRE: the TX ring has room";
+    u.Advance(now + 3 * u.CharacterT());
+    EXPECT_EQ(u.Read(kLsr, now + 3 * u.CharacterT()) & 0x60, 0x60) << "a byte went out: TXC set, and it stays";
+    EXPECT_EQ(peer.fromZx, (std::vector<uint8_t>{'A', 'B'}));
+
+    u.Write(kLcr, 0x83, now);
+    u.Write(kRbr, 0x00, now);
+    u.Write(kIer, 0x00, now);
+    u.Write(kLcr, 0x03, now);
+    EXPECT_EQ(u.Baud(), 230400u) << "TS 2016-04: divisor 0 = 230400";
+}
+
+TEST_F(Uart16550_Test, AvrWaitIsInterruptPlusLoopPhasePlusService)
+{
+    const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::kLatestAvr);
+    Uart16550 u = MakeAvr(Uart16550::kLatestAvr, &peer);
+    // Long after the last access: the loop is somewhere in its pass
+    const uint32_t minimum = static_cast<uint32_t>(p.isrCycles) + p.serviceRead;
+    const uint32_t wholePass = minimum + p.loopCycles;
+    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    EXPECT_GT(first, minimum);
+    EXPECT_LE(first, wholePass);
+    // Right behind the release: the loop starts its pass again, a whole pass to wait
+    const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
+    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    EXPECT_GE(polled, wholePass - 4);
+    EXPECT_LE(polled, wholePass);
+    // The services differ by access
+    Uart16550 v = MakeAvr(Uart16550::kLatestAvr, &peer);
+    const uint32_t write = v.AccessCycles(Uart16550::kScr, false, 2000000);
+    Uart16550 w = MakeAvr(Uart16550::kLatestAvr, &peer);
+    const uint32_t rbr = w.AccessCycles(Uart16550::kRbrThr, true, 2000000);
+    EXPECT_EQ(rbr - write, static_cast<uint32_t>(p.serviceRbr - p.serviceWrite)) << "same phase, different service";
+
+    Uart16550 chip = Make(Uart16550::Flavor::Chip16550);
+    EXPECT_EQ(chip.AccessCycles(Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
 }

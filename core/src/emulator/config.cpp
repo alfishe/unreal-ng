@@ -10,7 +10,9 @@
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/serial/uart16550.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -281,6 +283,13 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// EVO section (ZX-Evo BaseConf): FPGA variant the ROM image expects
 	config.atm.evo_legacy_fpga = ParseEvoFpgaVariant(inimanager.GetValue("EVO", "Fpga", nullptr)) ? 1 : 0;
+	{
+		const char* avr = inimanager.GetValue("EVO", "Avr", nullptr);
+		Uart16550::AvrFirmware firmware = Uart16550::kLatestAvr;
+		if (!Uart16550::ParseAvrFirmware(avr, firmware))
+			MLOGWARNING("Config: unknown [EVO] Avr=%s, BASECONF (the latest NedoPC firmware) used", avr);
+		config.atm.evo_avr = static_cast<uint8_t>(firmware);
+	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
@@ -765,9 +774,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// ZX-Bus; the runtime feature "network" can still unplug it.
 	char netValue[64] = {};
 	CopyStringValue(inimanager.GetValue(network, "Card", nullptr), netValue, sizeof netValue);
-	config.network.card = (StringHelper::CompareCaseInsensitive(netValue, "ZXNETUSB", strlen("ZXNETUSB")) == 0) ? 1 : 0;
-	if (netValue[0] != '\0' && config.network.card == 0 && StringHelper::CompareCaseInsensitive(netValue, "NONE", strlen("NONE")) != 0)
-		MLOGWARNING("Config: unknown [NETWORK] Card=%s, no card fitted", netValue);
+	{
+		std::string error;
+		if (!networkspec::ParseCards(netValue, config.network.card, error))
+		{
+			MLOGWARNING("Config: [NETWORK] Card=%s: %s - no card fitted", netValue, error.c_str());
+			config.network.card = 0;
+		}
+	}
 	config.network.hostAccess = (inimanager.GetLongValue(network, "HostAccess", 1) != 0) ? 1 : 0;
 	netValue[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "DnsMode", nullptr), netValue, sizeof netValue);
@@ -793,14 +807,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
 	netValue[0] = '\0';
-	CopyStringValue(inimanager.GetValue(network, "ComFlavor", nullptr), netValue, sizeof netValue);
-	config.network.comFlavor = 0;
-	if (StringHelper::CompareCaseInsensitive(netValue, "EVO", strlen("EVO")) == 0)
-		config.network.comFlavor = 1;
-	else if (StringHelper::CompareCaseInsensitive(netValue, "ZXWIFI", strlen("ZXWIFI")) == 0)
-		config.network.comFlavor = 2;
-	else if (netValue[0] != '\0' && StringHelper::CompareCaseInsensitive(netValue, "AUTO", strlen("AUTO")) != 0)
-		MLOGWARNING("Config: unknown [NETWORK] ComFlavor=%s, AUTO used (AUTO | EVO | ZXWIFI)", netValue);
+	CopyStringValue(inimanager.GetValue(network, "EspChip", nullptr), netValue, sizeof netValue);
+	config.network.espChip = (StringHelper::CompareCaseInsensitive(netValue, "ESP8266", strlen("ESP8266")) == 0) ? 1 : 0;
+	if (netValue[0] != '\0' && config.network.espChip == 0 && StringHelper::CompareCaseInsensitive(netValue, "ESP32", strlen("ESP32")) != 0)
+		MLOGWARNING("Config: unknown [NETWORK] EspChip=%s, ESP32 used (ESP32 | ESP8266)", netValue);
+	config.network.zxWifi[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ZxWifi", nullptr), config.network.zxWifi, sizeof config.network.zxWifi);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.zxWifi, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ZxWifi=%s: %s - the card's ESP runs AT", config.network.zxWifi, error.c_str());
+			config.network.zxWifi[0] = '\0';
+		}
+	}
+	if (inimanager.GetValue(network, "ComFlavor", nullptr))
+		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
+		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");
 
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))

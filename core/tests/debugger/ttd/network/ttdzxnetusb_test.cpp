@@ -15,14 +15,18 @@
 #include "_helpers/fakehostnet.h"
 #include "common/network/dnsmessage.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/network/ttdserialport.h"
 #include "debugger/ttd/network/ttdzxnetusb.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/network/networkspec.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/serial/comport.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/memory/memory.h"
 
@@ -48,6 +52,20 @@ std::vector<uint8_t> StateBlob(const ZxNetUsb& card)
     card.SaveState(*state);
     const auto* p = reinterpret_cast<const uint8_t*>(state.get());
     return std::vector<uint8_t>(p, p + sizeof(*state));
+}
+}  // namespace
+
+namespace
+{
+/// The network blob and the serial port blob, one after the other: a replay must reproduce both
+std::vector<uint8_t> BothBlobs(EmulatorContext* context)
+{
+    ttd::TTDZxNetUsb network(context);
+    ttd::TTDSerialPort serial(context);
+    std::vector<uint8_t> b(network.TTDStateSize() + serial.TTDStateSize());
+    network.TTDSaveState(b.data());
+    serial.TTDSaveState(b.data() + network.TTDStateSize());
+    return b;
 }
 }  // namespace
 
@@ -265,7 +283,9 @@ protected:
         features->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
 
-        std::strcpy(_context->config.network.comPort, "TCP:127.0.0.1:2323");
+        std::strcpy(_context->config.network.zxWifi, "TCP:127.0.0.1:2323");   // a ZX-WiFi card: Pentagon has no serial port
+
+        _context->config.network.card |= networkspec::kCardZxWifi;
         _context->config.network.hostAccess = 0;
         _context->pCore->ApplyNetworkConfiguration();
         ASSERT_NE(_context->pComPort, nullptr);
@@ -295,10 +315,7 @@ protected:
 
     std::vector<uint8_t> Blob()
     {
-        ttd::TTDZxNetUsb serializer(_context);
-        std::vector<uint8_t> blob(serializer.TTDStateSize());
-        serializer.TTDSaveState(blob.data());
-        return blob;
+        return BothBlobs(_context);
     }
 };
 
@@ -365,7 +382,8 @@ TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    std::strcpy(context->config.network.comPort, "TCP:bbs.example.org:23");
+    std::strcpy(context->config.network.zxWifi, "TCP:bbs.example.org:23");   // a ZX-WiFi card: Pentagon has no serial port
+    context->config.network.card |= networkspec::kCardZxWifi;
     context->config.network.hostAccess = 0;
     context->pCore->ApplyNetworkConfiguration();
     ASSERT_NE(context->pComPort, nullptr);
@@ -376,10 +394,7 @@ TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
     ASSERT_NE(peer, nullptr);
 
     auto blob = [&] {
-        ttd::TTDZxNetUsb serializer(context);
-        std::vector<uint8_t> b(serializer.TTDStateSize());
-        serializer.TTDSaveState(b.data());
-        return b;
+        return BothBlobs(context);
     };
 
     ASSERT_TRUE(ttd->StartRecording());
@@ -410,6 +425,74 @@ TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
     emulator->RunNFrames(static_cast<int>(end - before - 1));
     EXPECT_EQ(blob(), endBlob) << "the replay diverged";
     EXPECT_TRUE(peer->Connected());
+    EXPECT_EQ(host->commands.size(), hostCommands) << "a replay never talks to the host";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// An emulated ESP module (ESPNET) in the same blob: its socket buffers by
+/// journal reference, its protocol state by value; a replay from before the
+/// data rebuilds it without the host
+TEST(TTDEspModule_Test, ReplayWithoutTheHostRebuildsTheModule)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    std::strcpy(context->config.network.zxWifi, "ESPNET");   // a ZX-WiFi card: Pentagon has no serial port
+    context->config.network.card |= networkspec::kCardZxWifi;
+    context->config.network.hostAccess = 0;
+    context->pCore->ApplyNetworkConfiguration();
+    ASSERT_NE(context->pComPort, nullptr);
+    auto fake = std::make_unique<FakeHostNet>();
+    FakeHostNet* host = fake.get();
+    context->pVirtualNetwork->ReplaceHost(std::move(fake));
+
+    // The ZX side: FIFOs on, 115200 8N1, RTS off (the module's replies wait in it)
+    Z80* z80 = context->pCore->GetZ80();
+    z80->out(0xFAEF, 0x07);
+    z80->out(0xFBEF, 0x03);
+    auto frame = [&](const std::vector<uint8_t>& bytes) {
+        for (size_t i = 0; i < bytes.size(); ++i)
+        {
+            z80->out(0xF8EF, bytes[i]);
+            if (i % 12 == 11)
+                emulator->RunNFrames(1);   // the 16-byte TX FIFO drains at the line rate
+        }
+        emulator->RunNFrames(1);
+    };
+    frame({0xA5, 0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x02});   // SOCKET TCP
+    frame({0xA5, 0x03, 0x00, 0x00, 0x02, 0x0F, 0x00, 0x02, 0x00, 0x50, 93, 184, 216, 34, 0, 0, 0, 0, 0, 0, 0, 0});
+    ASSERT_NE(host->Last("connect"), nullptr);
+    const uint16_t socket = host->Last("connect")->socket;
+    host->Push(NetEventType::Connected, socket);
+    emulator->RunNFrames(2);
+
+    auto blob = [&] {
+        return BothBlobs(context);
+    };
+
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(1);
+    const uint64_t before = context->emulatorState.frame_counter;
+    host->Push(NetEventType::Data, socket, NetEventStatus::Ok, {}, std::vector<uint8_t>(500, 'q'));
+    emulator->RunNFrames(3);
+    const uint64_t end = context->emulatorState.frame_counter;
+    auto* esp = dynamic_cast<EspModule*>(context->pComPort->Peer());
+    ASSERT_NE(esp, nullptr);
+    EXPECT_EQ(esp->Stack().GetSlot(0).rx.size(), 500u) << "the bytes wait in the module until READ";
+    const std::vector<uint8_t> endBlob = blob();
+    ttd->StopRecording();
+
+    const size_t hostCommands = host->commands.size();
+    ASSERT_TRUE(ttd->SeekTo({before, 0}));
+    EXPECT_EQ(esp->Stack().GetSlot(0).rx.size(), 0u);
+    emulator->RunNFrames(static_cast<int>(end - before));
+    EXPECT_EQ(blob(), endBlob) << "the replay diverged";
+    EXPECT_EQ(esp->Stack().GetSlot(0).rx.size(), 500u);
     EXPECT_EQ(host->commands.size(), hostCommands) << "a replay never talks to the host";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

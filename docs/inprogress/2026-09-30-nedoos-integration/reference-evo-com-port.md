@@ -159,7 +159,8 @@ It is a plain read/write byte, reset value 0xFF (`:116,298-300,372-374`).
 - An RBR read with nothing available returns 0 (`:550,554-570`). OE is set by the RX ISR on overflow (`rs232_asm.S:39-42`).
 - There is no HF bit. 0 divisor = 230400 (`rs232.c:127-133`).
 - Adds the ZiFi API (#00..#BF data, #C0..#C9 regs, IMR/ISR interrupts through the "wait port interrupt" `MODE_TS_WTP_INT`, `rs232.c:614-664`). Documented in `github/zx-evo-docs/ZiFi/zifi.md:5-110`.
-- Caveat: `zx_wait_task_old` (Base/Egg FPGA) reads the address from SPI #41 (`TS-AVR@167199ba zx.c:796-835`), while BaseConf FPGA puts the COM address in #42 (`BC-FPGA/slave/slavespi.v:200-201`). [inferred] The COM port under TS-AVR + BaseConf FPGA is broken or mis-addressed. The official BaseConf pairing is `BC-AVR`.
+- With the BaseConf FPGA the TS-AVR misses the 16550 registers: verified, see §9.3. The official BaseConf pairing is `BC-AVR`.
+- Every release of both lines, with what changed in each: §9.
 
 ---
 
@@ -177,11 +178,49 @@ It is a plain read/write byte, reset value 0xFF (`:116,298-300,372-374`).
 - `zx_wait_task` (`BC-AVR/zx.c:578-622`): 2-byte SPI #42 (fetch A10..A8) -> `rs232_zx_read` if it is a read -> 2-byte SPI #40 (data out/in; **CS rising edge releases the Z80**) -> `rs232_zx_write` if it is a write. **The write is applied after the Z80 is already released.**
 - SPI clock: `SPCR=0x70` (enabled, master, LSB-first, fosc/4) with `SPI2X=1` -> 5.53 MHz (`BC-AVR/spi.c:7-11`), about 1.45 µs per byte.
 
-### Estimated stall length [inferred, no measured figure found in the sources]
+### How long the Z80 waits
 
-- The service path is about 5 SPI bytes plus C overhead, roughly **8-15 µs** once the AVR notices the request. Main-loop latency adds anywhere from about 0 to tens of µs (PS/2 and tape tasks; no bound is documented).
-- At 3.5 MHz that is roughly 30-60+ T-states per access, and 4x more at 14 MHz turbo.
-- Indirect real-world figure: MRF with `evo-uart.asm` reached **4.52 KB/s** at 115200 over the Evo COM port (`NOS/src/mrabbit-fusion/README.md:88-90`). That is about 220 µs per received byte, including the LSR poll, RBR read and RTS pulses.
+Nothing in the sources states the length (checked: the FPGA's `spi_fmt.txt` and `zwait.v`, the BaseConf manual
+§9.10, the firmware changelog, ZiFi docs, NedoOS `esp-com.c uartBench()`, five emulators). It follows from the
+AVR's clock and the firmware's cycle counts. The AVR is not compiled here: the cycle counts come from
+[`scorpevo/avr/current/default/core.lss`](https://github.com/alfishe/pentevo/blob/master/scorpevo/avr/current/default/core.lss),
+the compiled listing of a sibling build whose `zx_wait_task`, `zx_spi_send` and `spi.c` are character-identical
+to BaseConf, with the same flags
+([`Makefile:16`](https://github.com/alfishe/pentevo/blob/master/scorpevo/avr/current/default/Makefile)).
+
+| Input | Value | Source |
+|---|---|---|
+| AVR clock | 11.0592 MHz (1 cycle = 90.4 ns) | crystal Q2 "11.059Mhz" on the ATmega128's XTAL pins ([`kicad/rev_d/eva.kicad_pcb`](https://github.com/alfishe/pentevo/blob/master/kicad/rev_d/eva.kicad_pcb), also rev A-C P-CAD sheets); `-DF_CPU=11059200UL` ([`avr/baseconf/trunk/build/Makefile:24`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/build/Makefile)); BaseConf manual p.40 "F_CPU = 11059200 (для ZXEvo)" ([zx-evo-docs](https://github.com/tslabs/zx-evo-docs/blob/main/Baseconf/zxevo_base_configuration.pdf)) |
+| SPI | F_CPU / 2 = 5.53 MHz, 16 cycles a byte; 5 bytes per access (status, #42 + index, #40 + data) | `BC-AVR/spi.c:9-10`, `zx.c:54-69, 578-633`, FPGA [`slave/spi_fmt.txt`](https://github.com/alfishe/pentevo/blob/master/fpga/baseconf/trunk/slave/spi_fmt.txt) |
+| Release | the CS rising edge after the #40 transfer, +2-3 FPGA clocks (~0.1 us) | `BC-FPGA/slave/slavespi.v:199, 269` |
+| INT6 service (ISR) | ~37 cycles: only sets `FLAG_SPI_INT` | `BC-AVR/interrupts.c:324-329`; listing `<__vector_7>` |
+| Main loop pass (P) | ~260 cycles idle (23.5 us, ±25%): seven tasks, then the flag test | `BC-AVR/main.c:247-269`; per-task costs from the listing |
+| Service (S) | write ~258, LSR / register read ~278, RBR read ~308 cycles (±10%) | `zx_wait_task` + `zx_spi_send` in the listing; `rs232_zx_read` estimated |
+
+A wait costs `ISR + phase + S`: the phase is how far the main loop is from its next flag test. Right after a
+release a whole pass is left, so a polling loop waits nearly P every time; an isolated access lands anywhere in a
+pass.
+
+| Case | AVR cycles | us | T at 3.5 / 7 / 14 MHz |
+|---|---|---|---|
+| Minimum, write | ~295 | 26.7 | 93 / 187 / 374 |
+| Minimum, LSR read | ~315 | 28.5 | 100 / 200 / 399 |
+| Minimum, RBR read | ~345 | 31.2 | 109 / 218 / 437 |
+| Isolated LSR read (mean) | ~445 | 40.2 | 141 / 281 / 563 |
+| LSR polled in a loop (~25 T between accesses) | 495-555 | 45-50 | 157 / 339 / 703 |
+| Worst on a quiet AVR | ~600 | 54 | 190 / 380 / 760 |
+| Rare: a TIMER2 interrupt on top (~1-2% of accesses) | ~750 | ~68 | |
+| Rare: PS/2 LED / mouse command, I2C clock access in the loop | +1100..4400 | +100..450 | |
+
+In microseconds the wait hardly depends on the Z80's clock, so in T-states it scales with turbo. A write takes
+effect after the release (`zx.c:606-621`), so it lengthens the *next* access; a DLL / DLM write recomputes the
+baud rate (`rs232.c:142-169`, ~0.1 ms).
+
+Cross-check: Moon Rabbit Fusion 1.7.6 downloads at 4.52 KB/s over the Evo COM port at 115200
+([`src/mrabbit-fusion/README.md:90`](https://github.com/alfishe/NedoOS/blob/main/src/mrabbit-fusion/README.md)),
+221 us per byte. Its driver ([`drivers/uart-evo.asm:76-101`](https://github.com/alfishe/NedoOS/blob/main/src/mrabbit-fusion/drivers/uart-evo.asm))
+needs 2 accesses per byte when the FIFO has data and 4-5 with the RTS pulse: 4-5 x 45 us matches, and anything
+at or above 110 us per access would not.
 
 ### Fast path
 
@@ -291,13 +330,16 @@ MCR  #FCEF <- 0x2F   ; "Enable AFE" -> on Evo becomes 0x0F: RTS asserted
 
 ## 7. How the model follows it
 
-`core/src/emulator/io/serial/uart16550.{h,cpp}` (flavor `EvoAvr` for the
-ZX-Evo, `ZxWifi` elsewhere), `comport.{h,cpp}` (ports, wait, reset rule):
+`core/src/emulator/io/serial/uart16550.{h,cpp}` (flavor `EvoAvr` with the
+AVR firmware's parameters, `Chip16550` for a ZX-WiFi card), `comport.{h,cpp}`
+(ports, wait, reset rule). The ZX-Evo declares its serial port
+(`PortDecoder::DescribeNetwork`): it is there on every ZX-Evo, with
+`[NETWORK] ComPort=NONE` too, and `[EVO] Avr=` picks the firmware (§9):
 
 | Fact | Model |
 |---|---|
-| Low byte #EF, register = A10..A8 | `ComPort` claims low byte #EF on every model; `reg = (port >> 8) & 7` |
-| Every access waits for the AVR | `accessWaitT = 52` base T-states (~15 us, estimated: no measurement in the sources) |
+| Low byte #EF, register = A10..A8 | `ComPort` claims low byte #EF; `reg = (port >> 8) & 7` (TS firmwares on BaseConf: §9.3) |
+| Every access waits for the AVR | `Uart16550::AccessCycles`: ISR 37 + phase (P = 260 minus the AVR cycles since the previous release, mod P) + S (write 258, read 278, RBR 308) AVR cycles at 11.0592 MHz, turned into CPU clocks at the current speed (§3) |
 | IIR #01, IER without effect | `interrupts = false`: IIR constant, IER stored `& #0F` |
 | OE sticky until FCR RX reset, LSR bit 7 = RX half full | as the firmware |
 | THRE = TEMT = TX FIFO empty; RBR empty = #00 | as the firmware (ZX-WiFi: TEMT waits for the shifter, RBR keeps the last byte) |
@@ -309,9 +351,9 @@ ZX-Evo, `ZxWifi` elsewhere), `comport.{h,cpp}` (ports, wait, reset rule):
 
 Not modeled: PE / FE / BI (a virtual line has no line errors; a host serial
 device's errors are not passed through yet), the write taking effect after
-the wait ends (the Z80 cannot see the difference: it is held until then),
-the AVR main-loop jitter (not deterministic on hardware either; the model
-uses the fixed service time). The peer starts a byte only while RTS is asserted and
+the wait ends (the Z80 cannot see the difference: it is held until then;
+the next access is not lengthened by it), the rare outliers of §3 (PS/2,
+TIMER2, I2C: host-input driven, so not deterministic on hardware either). The peer starts a byte only while RTS is asserted and
 finishes it whatever RTS does afterwards, so the NedoOS type 0 RTS pulse
 (`MCR 2`, `MCR 0`) gets one byte per pulse.
 
@@ -351,4 +393,81 @@ other real-device bridges (Greaseweazle / KryoFlux: PLAN #12).
 | TSLabs Unreal | [Unreal/zifi32](https://github.com/tslabs/zx-evo-unreal/tree/main/Unreal/zifi32) ([esp32_emul.cpp](https://github.com/tslabs/zx-evo-unreal/blob/main/Unreal/zifi32/esp32_emul.cpp), [zifi32.cpp](https://github.com/tslabs/zx-evo-unreal/blob/main/Unreal/zifi32/zifi32.cpp)) | an ESP32 emulation behind ZiFi |
 | pico-spec | [ZiFiAT.cpp](https://github.com/drewpo28/pico-spec/blob/main/src/ZiFiAT.cpp), [ZiFiSock.cpp](https://github.com/drewpo28/pico-spec/blob/main/src/ZiFiSock.cpp) | an AT command emulation over sockets |
 | Unreal_NS | [SRC/modem.h](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/Unreal_NS/SRC/modem.h), [SRC/config.cpp](https://github.com/aaydev/zxevo.pentevo/blob/main/tools/unreal_fix/0.39.0/Unreal_NS/SRC/config.cpp) (`[MISC] Modem=COMn`) | host COM port passthrough only, no ESP emulation: the reason real ESPs on USB were used with it |
+
+---
+
+## 9. Every AVR firmware release (`[EVO] Avr=`)
+
+The ZX-Evo's COM port is whatever the AVR firmware makes of it, and two lines
+of firmware have changed it many times since 2010. The emulator offers every
+behavior that differs as a preset; the default is the newest NedoPC release.
+Research of 2026-10-01 over the full history of both lines.
+
+| Line | Repository | rs232.c history |
+|---|---|---|
+| NedoPC BaseConf | svn `svn://svn.nedopc.com/pentevo`, mirror [alfishe/pentevo](https://github.com/alfishe/pentevo) | `avr/current/rs232.c` until r896, then [`avr/baseconf/trunk/src/rs232.c`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/src/rs232.c) ([history](https://github.com/alfishe/pentevo/commits/master/avr/baseconf/trunk/src/rs232.c)) |
+| TS-Labs (TS-Conf + BaseConf + Egg FPGA bundle) | [tslabs/zx-evo](https://github.com/tslabs/zx-evo) | [`pentevo/avr/current/rs232.c`](https://github.com/tslabs/zx-evo/blob/master/pentevo/avr/current/rs232.c) ([history](https://github.com/tslabs/zx-evo/commits/master/pentevo/avr/current/rs232.c)) |
+
+Release dates come from the changelog in
+[`avr/baseconf/trunk/src/main.h:9-80`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/src/main.h);
+the svn revision that wrote the code can be older than the release that shipped it.
+
+### 9.1 The presets
+
+| `Avr=` | Releases | Code | What is new |
+|---|---|---|---|
+| `BASE2010` | 17.10.2010 .. 02.04.2011 (NedoPC), TS-Labs copies 2010-10 .. 2011-03 | r263 [6d1a79ce](https://github.com/alfishe/pentevo/blob/6d1a79ce/avr/current/rs232.c) | a register file only: no byte moves, LSR / MSR writable, register 1 reads the IIR #01, register 2 reads the last FCR, DLL / DLM 0 |
+| `BASE2011-04` | 26.04.2011 | r374 [657179cc](https://github.com/alfishe/pentevo/blob/657179cc/avr/current/rs232.c) | first working UART: 16-byte FIFOs, polled; DLL / DLM not reset (divisor 0 = 345600 at power-on); RTS: MCR bit 1 set drives the pin inactive |
+| `BASE2011-05` | 11.05.2011 | r377 [213d1a27](https://github.com/alfishe/pentevo/blob/213d1a27/avr/current/rs232.c), r391 [07fce045](https://github.com/alfishe/pentevo/blob/07fce045/avr/current/rs232.c) | DLL 1 / DLM 0 at reset; DLM bit 7 = the AVR's own divisor |
+| `BASE2011-09` | 29.09.2011 | r478 [2371039d](https://github.com/alfishe/pentevo/blob/2371039d/avr/current/rs232.c) | RTS the right way round |
+| `BASE2013` | 08.11.2013 | r565 [bebc848c](https://github.com/alfishe/pentevo/blob/bebc848c/avr/current/rs232.c) | an FCR RX reset clears OE (before: only an AVR restart did) |
+| `BASE2023` = `BASECONF` (default) | 2023-10-08 .. now | r1097 [cf3ad6d0](https://github.com/alfishe/pentevo/blob/cf3ad6d0/avr/baseconf/trunk/src/rs232.c) | LSR bit 7 = 8 or more bytes in the RX FIFO |
+| `TS2013` | TS-Labs 2013-05-05 .. 2016-02-26 | [ae210f50](https://github.com/tslabs/zx-evo/blob/ae210f50/pentevo/avr/current/rs232.c) | the 2013 logic with 256-byte FIFOs |
+| `TS2016-02` | TS-Labs 2016-02-27 .. 2016-04-11 | [d84c13a7](https://github.com/tslabs/zx-evo/blob/d84c13a7/pentevo/avr/current/rs232.c) | the register index is the whole high byte (#F8..#FF) and ZiFi v1 appears: needs the TS-Conf FPGA (§9.3) |
+| `TS2016-04` = `TS` | TS-Labs 2016-04-12 .. now | [3a85dc69](https://github.com/tslabs/zx-evo/blob/3a85dc69/pentevo/avr/current/rs232.c), wait protocol [21924ab1](https://github.com/tslabs/zx-evo/blob/21924ab1/pentevo/avr/current/zx.c) | interrupt-driven 511 / 255-byte rings, THRE = room in the TX ring, TEMT = the USART's TXC (0 after power-on until the first byte went out, then 1 for good), divisor 0 = 230400 |
+
+### 9.2 What every release shares
+
+16550 register subset at #F8EF..#FFEF; no interrupts (IIR #01; the TS ZiFi
+interrupt is a separate mechanism); RBR reads #00 when empty; the USART starts
+8N2 at 115200 until LCR is written; SCR #FF at power-on; MSR: CTS live with
+DCTS, DSR and DCD 1; MCR `& #1F`, only RTS reaches a pin; no loopback or
+automatic flow control; OE is never cleared by reading LSR; a Z80 reset does
+not reset the UART (only the AVR's own restart does); every access holds the
+Z80 on /WAIT (§3).
+
+### 9.3 A TS-Labs firmware with the BaseConf FPGA
+
+The TS bundle's BaseConf image latches only `a[10:8]` and hands it to the AVR
+in SPI register #42; the Gluk clock's address (the last #DFF7 write) is in #41
+([`fpga/base/slave/slavespi.v`](https://github.com/tslabs/zx-evo/blob/master/pentevo/fpga/base/slave/slavespi.v),
+[`fpga/base/z80/zports.v`](https://github.com/tslabs/zx-evo/blob/master/pentevo/fpga/base/z80/zports.v)).
+From 2016-02-27 the TS firmware expects a whole high byte:
+
+- 2016-02-27 .. 2021-04-27 (`TS2016-02`, and `TS2016-04` builds of that
+  time): it reads #42, gets 0..7, which in its index map is the ZiFi data
+  area: reads #FF, writes are dropped.
+- From 2021-04-28 (`TS2016-04`): `zx_wait_task_old` takes the index from #41
+  (`SPI_WAIT_ADDR`, [`zx.c`](https://github.com/tslabs/zx-evo/blob/master/pentevo/avr/current/zx.c),
+  [`zx.h:59-62`](https://github.com/tslabs/zx-evo/blob/master/pentevo/avr/current/zx.h)),
+  the clock's address: #00..#BF the ZiFi data area (#FF), #C0..#CF the ZiFi
+  registers (#FF with the API off), #D0..#F7 nothing (#00), #F8..#FF a 16550
+  register whatever A10..A8 say.
+
+The model does the same: the `TS2016-02` preset maps every access to the data
+area, `TS2016-04` takes the index from the clock's address latch
+(`PortDecoder_ATM3::DescribeNetwork`). The ZiFi API itself (SETAPI, the
+enhanced RS-232 data area, its interrupts) belongs to the TS-Conf serial
+port, step N5: with the BaseConf FPGA a program reaching #C7 could switch it
+on, which the model does not follow (ZiFi registers stay #FF).
+
+### 9.4 Telling them apart from the ZX side
+
+- The version string: write 0 to Gluk cell #F0, read cells #F0..#FF: "ZXEvo 4M"
+  (NedoPC) or "ZXEvoTS&BASE" (TS-Labs), then the build date
+  ([`rtc.c:382-392, 516-526`](https://github.com/alfishe/pentevo/blob/master/avr/baseconf/trunk/src/rtc.c)).
+- LSR right after the AVR's power-on: #60 (NedoPC), #20 (TS 2016-04: TEMT = TXC).
+- The FIFO depth: OE after 16 (NedoPC, TS 2016-02), 256 (TS 2013) or 511
+  (TS 2016-04) bytes; LSR bit 7 after 8 bytes only on NedoPC 2023.
+- Divisor 0: 345600 baud, or 230400 on TS 2016-04.
 

@@ -186,6 +186,9 @@ public:
     EvoAvr& GetEvoAvr() { return _evoAvr; }
     RtcBinding GetRtcBinding() override;
 
+    /// The AVR firmware's 16550 on #xxEF ([EVO] Avr=) and the ZX-Bus
+    NetworkCapabilities DescribeNetwork() override;
+
     /// Install the 14 MHz wait-state overlay while the clock select says 14 MHz, remove it otherwise
     /// (updateTurboMode; a TTD restore, whose chipset copy sets the clock without the decoder)
     void SyncTurboWaits();

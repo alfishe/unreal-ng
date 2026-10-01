@@ -1943,12 +1943,26 @@ StateNode Network(EmulatorContext* context)
     if (!manager)
         return Unavailable("no network support in this machine");
     const NetworkManager::Status st = manager->GetStatus();
-    if (!st.fitted && !st.com.fitted)
-        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE and ComPort=NONE, or the network feature is off)");
+    if (!st.fitted && !st.com.fitted && st.notes.empty())
+        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE, and the machine has no serial port of its own "
+                           "or the network feature is off)");
 
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["frame"] = st.frame;
+
+    // What the machine offers, what is plugged, what could not be fitted and why
+    StateNode& machine = ret["machine"];
+    machine["zx_bus"] = st.zxBus;
+    machine["serial_port"] = st.serialPort;
+    ret["cards"] = st.cards;
+    if (!st.notes.empty())
+    {
+        StateNode& notes = ret["not_fitted"];
+        notes = StateNode::Array();
+        for (const std::string& n : st.notes)
+            notes.push(StateNode(n));
+    }
 
     // The COM port (TDD §7): the UART as the Z80 sees it and the peer
     StateNode& com = ret["com_port"];
@@ -1957,7 +1971,9 @@ StateNode Network(EmulatorContext* context)
     {
         const Uart16550::View& u = st.com.uart;
         com["flavor"] = st.com.flavor;
-        com["peer"] = st.com.peer;
+        if (!st.com.firmware.empty())
+            com["avr_firmware"] = st.com.firmware;
+        com["peer"] = st.com.peer.empty() ? std::string("none") : st.com.peer;
         if (!st.com.target.empty())
             com["target"] = st.com.target;
         com["connected"] = st.com.connected;
@@ -1966,6 +1982,19 @@ StateNode Network(EmulatorContext* context)
         if (!st.com.error.empty())
             com["error"] = st.com.error;
         com["modem_lines"] = st.com.modemLines;
+        if (!st.com.exchanges.empty() || st.com.requests)
+        {
+            com["requests"] = st.com.requests;
+            StateNode& log = com["recent_exchanges"];
+            log = StateNode::Array();
+            for (const auto& [request, reply] : st.com.exchanges)
+            {
+                StateNode e = StateNode::Object();
+                e["request"] = request;
+                e["reply"] = reply;
+                log.push(std::move(e));
+            }
+        }
         com["baud"] = st.com.baud;
         com["frame_bits"] = st.com.frameBits;
         com["divisor"] = int(u.divisor);
@@ -1988,55 +2017,39 @@ StateNode Network(EmulatorContext* context)
 
     StateNode& card = ret["card"];
     card["kind"] = st.fitted ? st.card : std::string("none");
-    if (!st.fitted)
+    if (st.fitted)
     {
-        ret["virtual_network"] = StateNode::Object();
-        StateNode& vnet = ret["virtual_network"];
-        vnet["host_access"] = st.hostAccess;
-        StateNode& vsockets = vnet["sockets"];
-        vsockets = StateNode::Array();
-        for (const VirtualNetwork::SocketInfo& i : st.sockets)
+        card["port_83AB"] = StringHelper::Format("#%02X", st.control);
+        card["port_82AB"] = StringHelper::Format("#%02X", st.mode);
+        card["port_81AB"] = StringHelper::Format("#%02X", st.addressHigh);
+        card["w5300_running"] = st.chipRunning;
+        card["w5300_int"] = st.chipInt;
+        card["int_to_z80"] = st.intToZ80;
+        card["w5300_in_io_space"] = (st.mode & 0x10) != 0 && (st.mode & 0x04) == 0;
+        card["mac"] = StringHelper::Format("%02X:%02X:%02X:%02X:%02X:%02X", st.common[8], st.common[9], st.common[10],
+                                            st.common[11], st.common[12], st.common[13]);
+        card["ip"] = Ip4(st.common, 0x18);
+        card["gateway"] = Ip4(st.common, 0x10);
+        card["mask"] = Ip4(st.common, 0x14);
+        StateNode& chipSockets = card["sockets"];
+        chipSockets = StateNode::Array();
+        for (size_t n = 0; n < st.chipSockets.size(); ++n)
         {
+            const W5300::SocketView& v = st.chipSockets[n];
             StateNode s = StateNode::Object();
-            s["id"] = int(i.id);
-            s["proto"] = NetProtoName(i.proto);
-            s["connected"] = i.connected;
-            s["bytes_in"] = i.bytesIn;
-            s["bytes_out"] = i.bytesOut;
-            vsockets.push(std::move(s));
+            s["n"] = int(n);
+            s["mode"] = v.mode == 1 ? "TCP" : v.mode == 2 ? "UDP" : v.mode == 3 ? "IPRAW" : v.mode == 0 ? "CLOSED" : "OTHER";
+            s["state"] = W5300StateName(v.state);
+            s["ssr"] = StringHelper::Format("#%02X", v.state);
+            s["ir"] = StringHelper::Format("#%02X", v.ir);
+            s["source_port"] = int(v.sourcePort);
+            s["destination"] = Endpoint(v.destination);
+            s["tx_free"] = v.txFree;
+            s["rx_received"] = v.rxReceived;
+            s["tcp_backlog"] = uint64_t(v.tcpBacklog);
+            s["network_socket"] = int(v.networkSocket);
+            chipSockets.push(std::move(s));
         }
-        return ret;
-    }
-    card["port_83AB"] = StringHelper::Format("#%02X", st.control);
-    card["port_82AB"] = StringHelper::Format("#%02X", st.mode);
-    card["port_81AB"] = StringHelper::Format("#%02X", st.addressHigh);
-    card["w5300_running"] = st.chipRunning;
-    card["w5300_int"] = st.chipInt;
-    card["int_to_z80"] = st.intToZ80;
-    card["w5300_in_io_space"] = (st.mode & 0x10) != 0 && (st.mode & 0x04) == 0;
-    card["mac"] = StringHelper::Format("%02X:%02X:%02X:%02X:%02X:%02X", st.common[8], st.common[9], st.common[10],
-                                        st.common[11], st.common[12], st.common[13]);
-    card["ip"] = Ip4(st.common, 0x18);
-    card["gateway"] = Ip4(st.common, 0x10);
-    card["mask"] = Ip4(st.common, 0x14);
-    StateNode& chipSockets = card["sockets"];
-    chipSockets = StateNode::Array();
-    for (size_t n = 0; n < st.chipSockets.size(); ++n)
-    {
-        const W5300::SocketView& v = st.chipSockets[n];
-        StateNode s = StateNode::Object();
-        s["n"] = int(n);
-        s["mode"] = v.mode == 1 ? "TCP" : v.mode == 2 ? "UDP" : v.mode == 3 ? "IPRAW" : v.mode == 0 ? "CLOSED" : "OTHER";
-        s["state"] = W5300StateName(v.state);
-        s["ssr"] = StringHelper::Format("#%02X", v.state);
-        s["ir"] = StringHelper::Format("#%02X", v.ir);
-        s["source_port"] = int(v.sourcePort);
-        s["destination"] = Endpoint(v.destination);
-        s["tx_free"] = v.txFree;
-        s["rx_received"] = v.rxReceived;
-        s["tcp_backlog"] = uint64_t(v.tcpBacklog);
-        s["network_socket"] = int(v.networkSocket);
-        chipSockets.push(std::move(s));
     }
 
     StateNode& net = ret["virtual_network"];

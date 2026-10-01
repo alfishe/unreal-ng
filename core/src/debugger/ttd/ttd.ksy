@@ -539,7 +539,9 @@ types:
           registers and socket states, unsent bytes, and journal references
           for the received bytes; the virtual network's guest-side tables -
           netstate.h),
-          21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes).
+          21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
+          22 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
+          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
