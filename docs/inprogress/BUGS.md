@@ -41,10 +41,10 @@ Verification: `MediaManager_Test.Fat32OnlySlotBuildsFoldersAsFat32AndChecksImage
 
 ---
 
-## 🟣 [Fix Proposed] #4: TSConf Wild Commander - Parsed Modules Play No Sound
+## 🟢 [Fixed] #4: TSConf Wild Commander - Parsed Modules Play No Sound
 * **Date Opened:** 2026-09-30
-* **Date Fixed:** *Pending*
-* **Commit ID:** *None*
+* **Date Fixed:** 2026-09-30
+* **Commit ID:** `d391d73f`
 
 ### Description
 TS-Conf, Wild Commander (`wc-improved-v1.11i.img`) with a host folder of modules mounted. Opening any non-archived module (.asc / .pt2 and others) shows the player screen with **correctly parsed tags**, but **no music plays**. Suspect: the music ports (AY / TSFM / GS / MoonSound) are not wired in the TS-Conf port decoder.
@@ -62,15 +62,15 @@ Turbo mode was on - by design it mutes all audio and skips the host-audio path e
 ### Requirements / Acceptance Criteria
 - [x] Triage on the live instance: audio hardware config, port trace for AY port activity (#BFFD/#FFFD) while the player runs. (activity confirmed)
 - [x] Root cause: player never writes the ports, or the decoder swallows/misroutes them, or the chip is not fitted. (none of these: turbo mute)
-- [ ] A module played from Wild Commander produces audio (AY path at minimum). (works with turbo off; the fix is the shortcut/UX below)
-- [ ] Proposal: rebind Turbo Mode off bare Tab (a guest-app key) - e.g. `Ctrl+Tab` / `F11` - and/or surface the turbo state on the player screen (status bar already shows it). Decision: developer.
+- [x] A module played from Wild Commander produces audio (AY path at minimum). (works with turbo off; the trap is gone with the rebind below)
+- [x] Proposal: rebind Turbo Mode off bare Tab (a guest-app key) - e.g. `Ctrl+Tab` / `F11` - and/or surface the turbo state on the player screen (status bar already shows it). Decision: developer. (rebound to Ctrl+Tab in `d391d73f`)
 
 ---
 
-## 🟣 [Fix Proposed] #5: "28 MHz", Changing Frequency, 2x-Fast Time, Flicker on TSConf
+## 🟢 [Fixed] #5: "28 MHz", Changing Frequency, 2x-Fast Time, Flicker on TSConf
 * **Date Opened:** 2026-09-30
-* **Date Fixed:** *Pending*
-* **Commit ID:** *None*
+* **Date Fixed:** 2026-09-30
+* **Commit ID:** `d391d73f`
 
 ### Description
 The machine appears to jump to a turbo frequency of ~28 MHz, the number keeps changing, emulated time flows about 2x faster than real time, and the picture flickers. TS-Conf is expected to support at most 14 MHz.
@@ -85,7 +85,7 @@ The machine appears to jump to a turbo frequency of ~28 MHz, the number keeps ch
 ### Requirements / Acceptance Criteria
 - [x] Verify what the 4th SYS_CONFIG combo does. (clamped to 14 - matches the BIOS; the tslabs spec's 28 MHz combo is never issued by shipped firmware)
 - [x] Verify frame/INT timing under hw turbo. (frame budget scales with the ratio; INT stays video-locked)
-- [ ] Proposal: same as #4 - the turbo shortcut + turbo state visibility. The frequency display could also show the composition (e.g. "14 MHz x2") instead of a bare product.
+- [x] Proposal: same as #4 - the turbo shortcut + turbo state visibility. The frequency display could also show the composition (e.g. "14 MHz x2") instead of a bare product. (turbo rebound to Ctrl+Tab; the label shows the half-second range, e.g. "3.5-14 MHz", at 2 Hz - `d391d73f`)
 
 ---
 
