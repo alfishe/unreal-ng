@@ -386,7 +386,9 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsTheHDImageOnlyAt500Kbps)
 
 /// A FAT12 boot sector (the DSS 1.62 boot floppy layout: OEM "DSS 1.60", 10 reserved sectors, one FAT, 2 880
 /// sectors, 18 per track, 2 heads) reads back through the controller at HD with its BPB intact. The machine
-/// that boots it (Sprinter) is not emulated yet; this is the part the floppy path owns
+/// that boots it (Sprinter) is not emulated yet; this is the part the floppy path owns.
+/// Kept next to the real-image tests below (region <Real DSS boot floppy>) because it needs no fixture file and
+/// so still runs where testdata/machines/sprinter/ is absent
 TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsAFat12BootSector)
 {
     std::vector<uint8_t> dump(LoaderRawPcFloppy::IMAGE_SIZE_HD, 0xF6);
@@ -427,3 +429,152 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsAFat12BootSector)
 }
 
 /// endregion </Controller>
+
+/// region <Real DSS boot floppy>
+
+/// The real Sprinter DSS 1.62.92 boot floppy (testdata/machines/sprinter/README.md), read the way the Sprinter
+/// reads it: through the WD1793 with the Latched clock policy at 2 MHz / 500 kbit/s (port #BD, HD). Every byte
+/// checked here comes out of the controller, not out of the file
+class LoaderRawPcFloppyDss_Test : public LoaderRawPcFloppy_Test
+{
+protected:
+    static constexpr uint8_t kSectorsPerTrack = 18;
+    static constexpr uint8_t kHeads = 2;
+
+    std::unique_ptr<DiskImage> _image;
+
+    void TearDown() override
+    {
+        _image.reset();
+        LoaderRawPcFloppy_Test::TearDown();
+    }
+
+    /// Load the real image through the file path. False (and the caller skips) when the fixture is absent
+    bool LoadDssFloppy()
+    {
+        const std::string path = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+        if (!FileHelper::FileExists(path))
+            return false;
+        LoaderRawPcFloppy loader(_context, path);
+        EXPECT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings().front());
+        _image.reset(loader.getImage());
+        return _image != nullptr;
+    }
+
+    /// One sector by its PC logical block address: LBA -> (cylinder, side, sector) for 18 sectors per track and
+    /// two heads, then READ SECTOR at HD. Returns the 512 data bytes (empty on Record Not Found)
+    std::vector<uint8_t> ReadLba(uint32_t lba, uint8_t* status = nullptr)
+    {
+        const uint8_t cylinder = static_cast<uint8_t>(lba / (kSectorsPerTrack * kHeads));
+        const uint8_t side = static_cast<uint8_t>((lba / kSectorsPerTrack) % kHeads);
+        const uint8_t number = static_cast<uint8_t>(lba % kSectorsPerTrack + 1);
+
+        WD1793CUT fdc(_context);
+        Prepare(fdc, _image.get(), cylinder, side);
+        SetHighDensity(fdc);
+        std::vector<uint8_t> read = ReadOneSector(fdc, number, status);
+        fdc.getDrive()->ejectDisk();
+        return read;
+    }
+
+    static uint16_t Word(const std::vector<uint8_t>& bytes, size_t offset)
+    {
+        return static_cast<uint16_t>(bytes[offset] | (bytes[offset + 1] << 8));
+    }
+};
+
+/// The boot sector's BIOS Parameter Block as the DSS 1.62.92 floppy ships it, and the DSS loader that the
+/// Sprinter ROM starts from LBA 1 (it begins with the text "Starting...")
+TEST_F(LoaderRawPcFloppyDss_Test, Wd1793ReadsTheRealBootSectorAndLoaderAt500Kbps)
+{
+    if (!LoadDssFloppy())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing (see testdata/machines/sprinter/README.md)";
+    EXPECT_EQ(_image->getCylinders(), 80);
+    EXPECT_EQ(_image->getSides(), 2);
+
+    uint8_t status = 0;
+    const std::vector<uint8_t> boot = ReadLba(0, &status);
+    ASSERT_EQ(boot.size(), kSector);
+    EXPECT_FALSE(status & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR | WD1793::WDS_LOSTDATA));
+
+    EXPECT_EQ(std::string(boot.begin() + 3, boot.begin() + 11), "DSS 1.60") << "OEM name";
+    EXPECT_EQ(Word(boot, 11), 512) << "bytes per sector";
+    EXPECT_EQ(boot[13], 1) << "sectors per cluster";
+    EXPECT_EQ(Word(boot, 14), 10) << "reserved sectors: the boot sector and the 9-sector DSS loader";
+    EXPECT_EQ(boot[16], 1) << "number of FATs";
+    EXPECT_EQ(Word(boot, 17), 224) << "root directory entries";
+    EXPECT_EQ(Word(boot, 19), 2880) << "total sectors";
+    EXPECT_EQ(boot[21], 0xF0) << "media descriptor (1.44 MB)";
+    EXPECT_EQ(Word(boot, 22), 9) << "sectors per FAT";
+    EXPECT_EQ(Word(boot, 24), kSectorsPerTrack) << "sectors per track";
+    EXPECT_EQ(Word(boot, 26), kHeads) << "heads";
+    EXPECT_EQ(std::string(boot.begin() + 54, boot.begin() + 62), "FAT12   ") << "file system type";
+    EXPECT_EQ(boot[510], 0x55);
+    EXPECT_EQ(boot[511], 0xAA);
+
+    const std::vector<uint8_t> loader = ReadLba(1, &status);
+    ASSERT_EQ(loader.size(), kSector);
+    EXPECT_FALSE(status & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR | WD1793::WDS_LOSTDATA));
+    EXPECT_EQ(std::string(loader.begin(), loader.begin() + 11), "Starting...");
+}
+
+/// The root directory, located from the BPB read off the disk (reserved + FATs x sectors per FAT = LBA 19, i.e.
+/// cylinder 0, side 1, sector 2), holds the DSS kernel SYSTEM.DOS and the shell SYSTEM.EXE
+TEST_F(LoaderRawPcFloppyDss_Test, Wd1793ReadsTheRealRootDirectoryAt500Kbps)
+{
+    if (!LoadDssFloppy())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing (see testdata/machines/sprinter/README.md)";
+
+    const std::vector<uint8_t> boot = ReadLba(0);
+    ASSERT_EQ(boot.size(), kSector);
+    const uint32_t rootLba = Word(boot, 14) + boot[16] * Word(boot, 22);
+    const uint32_t rootSectors = (Word(boot, 17) * 32u + kSector - 1) / kSector;
+    EXPECT_EQ(rootLba, 19u);
+    EXPECT_EQ(rootSectors, 14u);
+
+    uint32_t dosSize = 0;
+    uint32_t exeSize = 0;
+    bool end = false;
+    for (uint32_t lba = rootLba; lba < rootLba + rootSectors && !end && !(dosSize && exeSize); lba++)
+    {
+        uint8_t status = 0;
+        const std::vector<uint8_t> dir = ReadLba(lba, &status);
+        ASSERT_EQ(dir.size(), kSector) << "root directory LBA " << lba;
+        ASSERT_FALSE(status & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR | WD1793::WDS_LOSTDATA)) << "LBA " << lba;
+        for (size_t entry = 0; entry < kSector; entry += 32)
+        {
+            if (dir[entry] == 0x00)  // end of the directory
+            {
+                end = true;
+                break;
+            }
+            const std::string name(dir.begin() + entry, dir.begin() + entry + 11);
+            const uint32_t size = Word(dir, entry + 28) | (static_cast<uint32_t>(Word(dir, entry + 30)) << 16);
+            if (name == "SYSTEM  DOS")
+                dosSize = size;
+            else if (name == "SYSTEM  EXE")
+                exeSize = size;
+        }
+    }
+    EXPECT_EQ(dosSize, 16035u) << "SYSTEM.DOS (the DSS 1.62 kernel) in the root directory";
+    EXPECT_EQ(exeSize, 7424u) << "SYSTEM.EXE (the DSS 1.62 shell) in the root directory";
+}
+
+/// The same disk at the default DD rate (1 MHz / 250 kbit/s): the controller sees no address mark on the HD
+/// track, Record Not Found - the cue the Sprinter BIOS density probe switches #BD to HD on
+TEST_F(LoaderRawPcFloppyDss_Test, Wd1793FindsNoRecordOnTheRealImageAt250Kbps)
+{
+    if (!LoadDssFloppy())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing (see testdata/machines/sprinter/README.md)";
+
+    WD1793CUT fdc(_context);
+    Prepare(fdc, _image.get(), 0, 0);
+    ASSERT_EQ(fdc.GetDataRate(), FdcDataRate::Rate250Kbps);
+    uint8_t status = 0;
+    const std::vector<uint8_t> read = ReadOneSector(fdc, 1, &status);
+    EXPECT_TRUE(read.empty());
+    EXPECT_TRUE(status & WD1793::WDS_NOTFOUND) << "an HD track at the DD rate shows no address mark";
+    fdc.getDrive()->ejectDisk();
+}
+
+/// endregion </Real DSS boot floppy>
