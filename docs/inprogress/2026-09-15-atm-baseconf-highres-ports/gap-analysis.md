@@ -86,7 +86,7 @@
 | **P-2** | FDC answers outside shadow; no Kempston joystick | VG93 `#1F/#3F/#5F/#7F/#FF` only in shadow; outside shadow `#1F` is an 8-bit Kempston joystick (hw ref §A.2) | FDC always; `#1F` never reaches a joystick (audit §1.1) | U, N, X+, M gate the FDC | M | S |
 | **P-3** | Kempston mouse not decoded | `#FADF` buttons + 4-bit wheel, `#FBDF` X, `#FFDF` Y, always (hw ref §A.2) | ATM decoders never call the mouse; `Mouse=KEMPSTON` in the ini creates an unreachable device | all (Z has no wheel) | H for NedoOS/WC | S |
 | **P-4** | Covox `#FB` dead | `#xxFB` 8-bit DAC on the beeper output, always (hw ref §A.12) | device created from `CovoxFB=1`/`SD=1` but ATM decoders never dispatch self-decoding devices | U, N, X+ | M | S |
-| **P-5** | `#xBF7` write protect missing | `#3BF7…#FBF7` D0 = read-only bit per window, also blocks flash writes (hw ref §A.4) | not decoded | N, X+ | L | S |
+| **P-5** ✅ 2026-10-01 ([tdd-e8-wrprot-font-pal444-dosstall.md](tdd-e8-wrprot-font-pal444-dosstall.md)) | `#xBF7` write protect missing | `#3BF7…#FBF7` D0 = read-only bit per window, also blocks flash writes (hw ref §A.4) | not decoded | N, X+ | L | S |
 | **P-6** | `#EFF7` bits and write rule | bit 3 = RAM page 0 at `#0000` (beats the pager); bit 2 = 0 means Pentagon-1024 mode where `#7FFD` bits 7-5 extend the page; `#EFF7` is **not writable in shadow**; bit 7 opens the Gluk ports (hw ref §A.4) | bit 3 ignored, `#7FFD` 7-5 ignored (the header claims them), written in shadow, Gluk not gated (audit §1.1, §2) | N, X+ (M maps ROM 0 for bit 3: bug) | M | S |
 | **P-7** | Reset clock | CPU leaves reset at **7 MHz** (`#EFF7`.4 = 0, `#xx77`.3 = 0) (hw ref §A.11) | `hw_turbo_ratio = 1` (3.5 MHz) until the first port write | M right; U 3.5 | L | S |
 | **P-8** | NMI → RAM page `#FF` is dead code | window 0 = RAM `#FF` while in NMI (hw ref §A.7) | reads `EmulatorState::nmi_in_progress`, which nothing sets at runtime (audit §1.1) | U, N, X+ | (see C-3) | — |
@@ -104,10 +104,11 @@
 | **C-3** | NMI | sources: `#BF`.3 1→0 edge, Magic key (PrintScreen), breakpoint. `#BF`/key NMIs wait for the next INT start; the FPGA feeds `NOP` for the `#0066` fetch and then maps RAM `#FF` into window 0 (hw ref §A.7) | generic Z80 NMI only; no page switch, no INT alignment, no `NOP` feed | U, N, X+ | H (ERS Magic service, STS debugger, tape emulation) | M |
 | **C-4** | Breakpoint | `#10BD/#11BD` address, `#BF`.4 enable → immediate NMI on M1 at that address; stays armed (hw ref §A.7) | none (`pBD` only cleared) | N, X+ (M stores, never checks) | M (ERS tape emulation, debuggers) | S |
 | **C-5** | Flash ROM writes | `#BF`.1 + a window not write-protected → memory writes reach the 29F040 flash, programmed with JEDEC command sequences; ERS "Fast update ROM", "Update custom ROM" (hw ref §A.4, §C 1.4) | ROM read-only | **none** | M | M |
-| **C-6** | Font RAM | `#BF`.2: every memory write also writes font RAM at `A & 2047`; `#0EBD` reads the displayed font byte (hw ref §A.6) | fixed built-in font (PLAN #53 item 2) | none load fonts (U fixed) | L-M (ERS "Reload font") | S |
-| **C-7** | 4:4:4 palette | `#BF`.5: `#FF` palette write takes the low bits of each channel from A15..A8 (TD only) (hw ref §A.6) | 2-bit-per-channel only | N, X+, M | M (NedoOS sets `#BF`=32) | S |
+| **C-6** ✅ 2026-10-01 ([E8 TDD](tdd-e8-wrprot-font-pal444-dosstall.md)) | Font RAM | `#BF`.2: every memory write also writes font RAM at `A & 2047`; `#0EBD` reads the displayed font byte (hw ref §A.6) | fixed built-in font (PLAN #53 item 2) | none load fonts (U fixed) | L-M (ERS "Reload font") | S |
+| **C-7** ✅ 2026-10-01 ([E8 TDD](tdd-e8-wrprot-font-pal444-dosstall.md)) | 4:4:4 palette | `#BF`.5: `#FF` palette write takes the low bits of each channel from A15..A8 (TD only) (hw ref §A.6) | 2-bit-per-channel only | N, X+, M | M (NedoOS sets `#BF`=32) | S |
 | **C-8** | ULA+ | `#BF3B` register select, `#FF3B` data (hw ref §A.2) | none | N, X+ | L | S |
 | **C-9** | FPGA variant switch | BC and TD differ in C-1, C-2, ST-5 and `#2F/#4F/#6F/#8F` (BC RAM-disk latches) | — | U is BC-only, X+ is TD-only | M | S |
+| **C-10** ✅ 2026-10-01 ([E8 TDD](tdd-e8-wrprot-font-pal444-dosstall.md)) | Clock stall on a DOS-entry fetch | `atm_pager.v` `zclk_stall`: an M1 fetch from `#3Dxx` of a window whose map-1 register is ROM with `dos7ffd` holds the Z80 clock 4 fclk (28 MHz), in or out of DOS (found by the xpeccy-plus comparison, 2026-10-01) | none | X+ (`evoMRd`, whole clocks) | L (timing of every TR-DOS entry) | S |
 
 ### 3.3 AVR: clock, NVRAM, keyboard, versions (A)
 

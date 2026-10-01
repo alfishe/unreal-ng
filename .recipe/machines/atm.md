@@ -55,6 +55,9 @@ inspect_state {"aspects":["registers","video","fdc"]}
   - **shadow** = TR-DOS active or `#BF` bit 0. The FDC (`#1F/#3F/#5F/#7F/#FF`),
     `#xx77` and the pager (`#xFF7`, `#x7F7`) answer only in shadow; outside it
     `#1F` is the Kempston joystick and `#xx77` the Z-Controller chip select.
+    The joystick reads the `Joystick` device (idle `0x00`, active high: D0 right, D1 left, D2 down, D3 up, D4 fire);
+    the host keypad drives it by default (`kp8` up, `kp2` down, `kp4` left, `kp6` right, `kp0` fire; `[INPUT]
+    JoystickKeys=` overrides, empty disables, `Joystick=NONE` unfits it) and the same keys still reach the PS/2 log.
   - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
     only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
     `#EFF7` itself is ignored in shadow and cannot be read.
@@ -65,6 +68,18 @@ inspect_state {"aspects":["registers","video","fdc"]}
   - **ROM**: the shipped image is the official `rom/zxevo-fe.rom`; its EVO
     Reset Service idles in the main menu at PC `#6117` about 60 frames after
     reset.
+  - **`#BF` bits** (shadow ports): bit 2 = every memory write also writes the
+    text-mode **font RAM** (`A & #7FF`, address `code * 8 + row`; read the byte
+    under the beam on `#0EBD`; the font survives a reset); bit 5 = **4:4:4
+    palette** (a `#FF` write takes the low bit of each channel from A15..A8,
+    `#0DBD` then reads the low bit pair instead of the high one).
+  - **`#xBF7`** (shadow, window = A15:A14, D0): per-window **write protect**
+    for the map `#7FFD` bit 4 selects; read back on `#12BD` (bit i = window i
+    of map 0, bit 4+i = of map 1). Window 0 under RAM 0, the NMI page or the
+    virtual TR-DOS page is never protected.
+  - **TR-DOS entry stall**: with `contention` on, an opcode fetch from `#3Dxx`
+    of a window that holds the DOS ROM in map 1 takes half a 3.5 MHz T longer
+    (the chipset holds the clock 4 x 28 MHz so the ROM chip can answer).
 - **Video:** multiple hardware video modes beyond 128K standard — read the
   live one via `inspect_state {"aspects":["video"]}` or
   `GET /state/screen/mode`; turbo shows up as `speed_multiplier` in the

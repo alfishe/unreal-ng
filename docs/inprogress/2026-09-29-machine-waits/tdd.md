@@ -43,8 +43,8 @@ From [research-zxevo.md](research-zxevo.md) section A (clocks are 14 MHz T-state
 
 - Installed by the `ATM3` port decoder (`updateTurboMode` -> `SyncTurboWaits`) while the clock select says
   14 MHz (`hw_turbo_ratio` 4), removed otherwise; it starts with an empty cache. The waits apply while the CPU
-  runs at 14 MHz (`hw_turbo_ratio_applied` 4: unreal-ng applies the ATM3's clock select at the next frame, the
-  hardware at the next fetch's refresh, research C.1) and the `contention` feature is on. The cache words are
+  runs at 14 MHz (`hw_turbo_ratio_applied` 4: the ATM3's clock select is taken over at the next M1 refresh, as the hardware does, research C.1; until
+  2026-10-01 it was the next frame) and the `contention` feature is on. The cache words are
   kept up to date either way, so switching the feature mid-run needs nothing more. The decoder invalidates the
   cache and adds the external port's 3 T on its own I/O path (before the IDE board's ports, which are I/O
   cycles too).
