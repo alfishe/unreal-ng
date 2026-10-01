@@ -269,10 +269,14 @@ prints or compares tables (`--rom`, `--page`, `--records`). Results:
   and 572 bytes; map 2 additionally maps `#80A5-#E0A5` (DOS on) to `#18-#1B`. `dcp-table.py --map 1`
   prints them.
 
-**Needs a runtime capture.** This is the table the BIOS *writes* at start-up. Function `#F4`
-(`DCP_CONFIG`) and SETUP (`ApplyScreenPosition` patches offset `#0400` with `#CB` and restores it)
-change entries at run time, so the reference for the tests (R-1) stays a page `#40` dump taken after
-POST from MAME or, from S1 on, the emulator (deferred, see [TODO.md](TODO.md)).
+**Runtime capture (MAME 0.289, 2026-10-01).** The page `#40` dump taken from MAME's `sprinter` driver
+with BIOS 3.04 after POST (the boot screen with no media, 10.4 s after power-on), `page40.bin` in
+[testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md), is **byte for byte the statically unpacked table**
+(CRC `b7f09600`, `dcp-table.py --rom ROM --compare-page page40.bin`: 0 bytes differ). The table is the
+same at the first port read that opens the decoder (0.677 s) and at the boot screen: nothing changes it
+on that path. Function `#F4` (`DCP_CONFIG`) and SETUP (`ApplyScreenPosition` patches offset `#0400`
+with `#CB` and restores it) still change entries at run time, but only when a program or the user calls
+them, so the tests (R-1) can use either the dump or `dcp-table.py --rom`.
 
 **Fixed ports.** The Z84C15 decodes its own ports before the PLD sees them: `#10-#13` (CTC),
 `#18-#1B` (SIO A data, A control, B data, B control), `#1C-#1F` (PIO), `#EE/#EF` (system control:
@@ -320,6 +324,11 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
   "blank + interrupt" (`Mode0` = `%1111 11x1`). The BIOS moves INT to the Pentagon, Scorpion or
   Spectrum position by rewriting those bytes (MAN §4.6; BIOS-TT `doc/changes.txt`, FN_SINC `#F2`;
   MAME `sprinter.cpp:1278-1313`). Pulse length: 32 clocks of 3.5 MHz (MAME `:1736`).
+- **Measured on MAME** (BIOS 3.04, `FN_SYNC` called at the boot screen, `int.csv` in
+  [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md)): one INT per
+  320-line frame, at the same horizontal position (pixel 768 of 896, T 192 of the line) and on MAME
+  screen line 271 (Scorpion, also the cold-start default of 3.04), 287 (Pentagon, 16 lines later) or
+  295 (Spectrum, 8 lines after Pentagon); MAME's paper is lines 16-271.
 - HOLD register (`#CB`) shifts the picture by up to 7 squares horizontally (2-pixel steps) and 7 lines
   vertically (MAME `sprinter.cpp:850-852`).
 
@@ -474,7 +483,8 @@ turbo (`#1B`), TR-DOS drive mapping (`#1E`) (INC `SP2000.inc:1013-1160`).
 power-on / RESET button
   │ PLD empty; CPU runs the loader in ROM (page #1C / 12) with only ROM and fast RAM visible
   │ loader: "ACEX_30K_LOADING" at fast RAM #FEF0? → bitstream from fast RAM, else from ROM
-  │ streams 59 215 bytes to the PLD, 8 writes per byte (one bit each) = 473 720 writes (S0, static)
+  │ streams 59 215 bytes to the PLD, 8 writes per byte (one bit each) = 473 720 writes (S0, static;
+  │ confirmed at run time on MAME: no other writes before the last bitstream byte)
   ▼ PLD configured → the small EPM7064 CPLD resets the CPU
 BIOS (ROM, system mode)
   │ POST, DCP_INIT fills page #40, IN A,(SLOT3) opens the port decoder

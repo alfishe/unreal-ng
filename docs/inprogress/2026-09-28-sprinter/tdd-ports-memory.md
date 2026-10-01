@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): end of load (Q4), start mode (Q2) and configuration modules (Q6) decided, §6. S0 (2026-10-01): the end of load is 473 720 writes, statically from BIOS 3.04 (§6), runtime confirmation pending |
+| **Status** | Review round 1 done (2026-09-28): end of load (Q4), start mode (Q2) and configuration modules (Q6) decided, §6. S0 (2026-10-01): the end of load is 473 720 writes, statically from BIOS 3.04 and confirmed by a runtime count on MAME (§6); when CONF_DONE rises and the reset delay remain open (no PLD model in MAME) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §2-§5, §11, §14 |
 | **Index** | [technical-design.md](technical-design.md) |
 
@@ -240,9 +240,14 @@ stateDiagram-v2
   (BIOS-TT `0271ac3` `src/altera/max/SP2_MAX.TDF`).
 
   So the emulator ends the load at write 473 720 and does **not** wait for the loop to stop (it never
-  does). Everything after the count is ignored until the reset. **To confirm by a runtime trace once
-  MAME or S1 exists:** that CONF_DONE rises at write 473 720 (whether the device also counts the
-  leading `#FF` bytes as configuration data), how many extra clocks the ACEX takes before it starts
+  does). Everything after the count is ignored until the reset. **Runtime check on MAME (2026-10-01,
+  `loader.txt` in [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md)):** with MAME's 4 096-write shortcut held off,
+  the BIOS 3.04 loader makes 0 writes before the stream and exactly **473 720** writes while HL is in
+  `#0100-#E84E`, all to `#FE00-#FEFF`; the D0 of the writes rebuild the ROM bytes (checked to `#3FFF`,
+  the part MAME maps). The last bitstream write is at 1.912 s at 3.5 MHz (113 T per byte), not
+  ~0.1 s. **Still open** (MAME has no PLD model; needs the PLD sources or real hardware): that
+  CONF_DONE rises at write 473 720 (whether the device also counts the leading `#FF` bytes as
+  configuration data), how many extra clocks the ACEX takes before it starts
   (FLEX/ACEX need about 10 DCLKs after CONF_DONE: 2 more bytes would be 16 writes), and how the CPU
   reset follows. The reload path (fast RAM holds `"ACEX_30K_LOADING"` at `#FEF0`: the stream comes
   from RAM `#1000`) uses the same loop and the same count.
@@ -258,7 +263,8 @@ stateDiagram-v2
   flag `ACEX_30K_LOADING` into fast RAM, then resetting; the loader reads it from there (MAN §1.4;
   BIOS-TT `loader.asm` `.LOOP_S1`). Nothing special is needed: fast RAM survives the reset.
 - **Start mode (review round 1, Q2).** The **full start** (the ROM loader streams the bitstream,
-  ~0.1 s of emulated time) is the user default. `[SPRINTER] FastStart=1` is the **test default**: it
+  about 1.9 s of emulated time at 3.5 MHz, 0.32 s at 21 MHz; MAME runs the loader at 3.5 MHz) is the
+  user default. `[SPRINTER] FastStart=1` is the **test default**: it
   sets `Configured` with the Standard module at power-on and starts the CPU at the address the
   loader would reach after the reset (the BIOS entry, ROM page 0, `#0000`), with the fast-RAM state
   the loader would leave. An equivalence test keeps the two paths identical (test plan §2.3,
