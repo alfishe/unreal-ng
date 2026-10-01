@@ -126,12 +126,12 @@ A check has up to 20 measurements, one per tick, so one wrong check can add up t
 
 ### What `got` and `exp` are
 
-For all checks but `P-02`, `got` and `exp` are durations in clock ticks (T-states), counted from the fragment's
+For all checks but `P-02` and `P-02B`, `got` and `exp` are durations in clock ticks (T-states), counted from the fragment's
 first instruction to its end, **including** any wait of the `RET` that follows it. The program subtracts the
 `RET`'s own 10 ticks, but not its wait.
 
-For `P-02`, `got` and `exp` are the byte read from port `#FF` (the "floating bus"), not a duration. 255 means
-"nothing on the bus".
+For `P-02` and `P-02B`, `got` and `exp` are the byte read from an unused port (the "floating bus"), not a
+duration. 255 means "nothing on the bus".
 
 `T` is the tick, counted from the start of the screen interrupt, at which the fragment started. Ticks are
 counted the way FUSE and most emulators count them: the 48K's first contended tick is 14335.
@@ -181,6 +181,7 @@ counted the way FUSE and most emulators count them: the 48K's first contended ti
 | P-04D | `OTIR` over 3 ports | The repeat and its 5 extra ticks |
 | P-05A..D | `IN A,(C)` from ports `#C0FE` and `#C0FF`, with page 0 and then page 1 at `#C000` | 128K / +2: a port whose high byte points at an odd page at `#C000` waits like a contended one. **Not yet confirmed on real hardware**: this rule is what FUSE and the other emulators do; no photographed test covers it |
 | P-02 | `IN A,(#FF)` at 20 ticks around the start of the picture | The byte the screen hardware is reading at that tick (the "floating bus"). The program first writes a known pattern into the first screen cells. Skipped on the plain clones (Pentagon, ATM, Profi): there an unused port's answer depends on the machine |
+| P-02B | `IN A,(C)` from `#40FF` at 20 ticks around the start of the picture | The same, for a port whose high byte points into slow memory: on the 48K / 128K the screen hardware holds the CPU after it has started the port read too, and the CPU takes the byte at the end of the stretched read, up to 12 ticks later. An emulator that looks the byte up when the read starts gets `#FF` where a pattern byte is due (FUSE's fusetest checks the same thing) |
 | X-02 | A `RET` inside the ROM | Code in ROM never waits |
 
 The 48K and the clones skip the page and layout checks. The 128K skips the layout checks.
@@ -233,6 +234,7 @@ test they appear on screen only as that first one; see the next section for gett
    | Only `P-04*` BAD | Block I/O: the order of the port and memory cycles, or when `B` goes down in `OUTI` / `OTIR` |
    | Only `P-05*` BAD | Whether a port's high byte counts as contended when it points at the page at `#C000` (128K / +2); also check the note on P-05 above |
    | Only `P-02` BAD | The floating bus: wrong byte, or right byte one tick off |
+   | Only `P-02B` BAD | The floating bus is read when the port read starts, not at its end (after the screen hardware's waits) |
    | `Machine: no contention` on a 48K / 128K / +3 | Contention is switched off or not emulated; every contended check will fail |
 
 4. **Get every value, not just the first wrong one.** When the program has finished, the measurements are in
@@ -256,7 +258,11 @@ test they appear on screen only as that first one; see the next section for gett
 ## Results so far
 
 Run by the [co-emulation harness](../../coemu/README.md), with each emulator's stock settings, 2026-09-29 (Kozynax,
-ZX-M8XXX and spec_chum 2026-09-30; each runner's README explains its differences):
+ZX-M8XXX and spec_chum 2026-09-30; each runner's README explains its differences). P-02B (2026-10-01, the floating
+bus of a port whose high byte points into slow memory): FUSE, MAME (48K) and xpeccy-plus pass it; ZXMAK2 and Kozynax
+read the same bytes one tick late, as everything else on their 48K / 128K; ZEsarUX and SkoolKit read `#FF`
+throughout; Xpeccy and ZX-M8XXX read other bytes. The full matrix:
+[reports/2026-10-01](../../coemu/reports/2026-10-01-ctprobe-matrix.html):
 
 | Emulator | 48K | 128K | +2 | +2A / +3 | Pentagon | Scorpion |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -264,8 +270,8 @@ ZX-M8XXX and spec_chum 2026-09-30; each runner's README explains its differences
 | xpeccy-plus 7a96d8da | all as expected | P-05 only: a port whose high byte points at an odd page at `#C000` does not wait | as the 128K | the gate array's waits come 2 ticks late; the extra tick at the end of each line is missing | all as expected | P-02 only, 2 ticks late: its `scrp.wait` adds the Even M1 tick at the end of an odd-length instruction, before it looks at the interrupt (see below) |
 | FUSE 1.6.0 | all as expected | all as expected | all as expected | the extra tick at the end of each line is missing (1 value) | all as expected | - |
 | MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | all as expected (Even M1, no attr bus) |
-| ZEsarUX 13.0 | floating bus (P-02) only | floating bus (P-02) only | floating bus (P-02) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
-| SkoolKit 10.1 | floating bus (P-02) only: unused ports always read `#FF` | floating bus (P-02) only | - | - | - | - |
+| ZEsarUX 13.0 | floating bus (P-02, P-02B) only | floating bus (P-02, P-02B) only | floating bus (P-02, P-02B) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
+| SkoolKit 10.1 | floating bus (P-02, P-02B) only: unused ports always read `#FF` | floating bus (P-02, P-02B) only | - | - | - | - |
 | ZXMAK2 | everything 1 tick late | everything 1 tick late | - | +3: the +3 layouts and the floating bus (10 checks) | all as expected | all as expected (Even M1, no attr bus) |
 | Xpeccy (upstream) | many values differ (33 checks) | many values differ (40 checks) | as the 128K | many values differ (33 checks) | all as expected | all as expected (Even M1 off by default, no attr bus) |
 | Kozynax | everything 1 tick late (its stock ULA is the "late" one), byte-identical to ZXMAK2 | as the 48K | - | +3: the 128K's pages wait, the +3 layouts, the extra tick at the end of each line, the floating bus (10 checks) | all as expected | all as expected (Even M1, no attr bus) |
