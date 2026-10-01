@@ -1742,6 +1742,11 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
+                                    const Json::Value& set = value["settings"];
+                                    if (set.isObject())
+                                        out << "\n[network] settings: card " << set["card"].asString() << ", com_port " << set["com_port"].asString()
+                                            << ", zx_wifi " << set["zx_wifi"].asString() << ", esp_chip " << set["esp_chip"].asString()
+                                            << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string());
                                 }
                             }
                             else if (aspect == "rtc")

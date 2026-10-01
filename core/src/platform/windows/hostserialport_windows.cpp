@@ -202,3 +202,18 @@ int HostSerialPort::ModemStatus()
     if (status & MS_RLSD_ON) msr |= 0x80;
     return msr;
 }
+
+std::vector<std::string> HostSerialPort::ListDevices()
+{
+    // QueryDosDevice answers for every COM name the system has (USB adapters
+    // included), with no extra library
+    std::vector<std::string> out;
+    std::vector<wchar_t> target(4096);
+    for (int n = 1; n <= 256; ++n)
+    {
+        const std::wstring name = L"COM" + std::to_wstring(n);
+        if (::QueryDosDeviceW(name.c_str(), target.data(), static_cast<DWORD>(target.size())) != 0)
+            out.push_back("COM" + std::to_string(n));
+    }
+    return out;
+}

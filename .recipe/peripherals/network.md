@@ -76,7 +76,7 @@ takes the same values for the card's side:
 The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
 (default `BASECONF`, the newest NedoPC; every NedoPC and TS-Labs release
 since 2010 is a preset: no interrupts, RTS by software, every access holds
-the Z80 ~30-50 us). The ZX-WiFi card is a real 16550 (auto flow control with
+the Z80 ~30-50 us); at runtime `avr_firmware=ts2013` etc. The ZX-WiFi card is a real 16550 (auto flow control with
 MCR bit 5). A ZX-WiFi card on a ZX-Evo or TS-Conf is not fitted (#xxEF is
 taken): `not_fitted` in `inspect_state network` says so. The
 bytes that arrive are TTD input like the card's. Details:
@@ -90,7 +90,9 @@ bytes that arrive are TTD input like the card's. Details:
 CLI `network set com_port=loopback` (or `network set card=zxwifi zx_wifi=espnet` on a Pentagon), Lua `network_configure{com_port="serial:COM3"}`,
 Python `emu.network_configure(com_port="tcp:127.0.0.1:2323")`. The state is
 `com_port` in `inspect_state network` (registers, FIFO levels, peer, link
-`phase` and `error`, bytes). A machine reset keeps the link.
+`phase` and `error`, bytes). A machine reset keeps the link. `settings` there
+shows every setting in force and `host_serial_devices` what `serial:` can
+open. In the Qt UI: Tools > Network.
 
 NedoOS: `cuart` (`bin/cuart.com`) is a terminal for the port; `ini/espcom.ini`
 `comType = 0` on the ZX-Evo (RTS pulses), `2` for a ZX-WiFi. The first key
