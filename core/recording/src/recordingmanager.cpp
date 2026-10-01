@@ -8,6 +8,7 @@
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/videofamily.h"
 #include "encoders/gif_encoder.h"
 #include "encoders/ffmpeg_pipe_encoder.h"
 #include "platform_encoder.h"
@@ -399,6 +400,13 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
                 _videoWidth = vp.GetDisplayWidth(fb.width);
                 _videoHeight = vp.GetDisplayHeight(fb.height);
             }
+
+            // What the user sees is the framebuffer scaled to the true pixel
+            // aspect: a recording is square-pixel, so the TS-Conf fat pixels
+            // (stored at half height) double their lines - the same vertical
+            // stretch the display applies (BUGS.md #6)
+            if (StoresHalfHeightLines(fb.videoMode))
+                _videoHeight = static_cast<uint16_t>(_videoHeight * 2);
         }
         else
         {
@@ -506,6 +514,10 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
             FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
             _videoWidth = fb.width;
             _videoHeight = fb.height;
+            // The square-pixel recording of a TS-Conf session doubles the
+            // half-height stored lines, as the display does (BUGS.md #6)
+            if (StoresHalfHeightLines(fb.videoMode))
+                _videoHeight = static_cast<uint16_t>(_videoHeight * 2);
         }
         else
         {
@@ -797,6 +809,7 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     // Crop framebuffer when requested (MainScreen or Viewport modes)
     const FramebufferDescriptor* toEncode = &framebuffer;
     FramebufferDescriptor cropped;
+    FramebufferDescriptor stretched;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
     {
         const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[framebuffer.videoMode];
@@ -851,6 +864,29 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
             cropped.memoryBufferSize = _cropBuffer.size();
             toEncode = &cropped;
         }
+    }
+
+    // The recording must show what the user sees. TS-Conf stores its fat
+    // pixels at half height, and the display stretches the framebuffer
+    // vertically to the true pixel aspect; a file is square-pixel, so each
+    // stored line doubles here - the same stretch, the same pixels (BUGS.md #6)
+    if (toEncode->memoryBuffer && StoresHalfHeightLines(toEncode->videoMode))
+    {
+        const size_t rowBytes = static_cast<size_t>(toEncode->width) * 4;
+        _aspectBuffer.resize(rowBytes * toEncode->height * 2);
+        const uint8_t* src = toEncode->memoryBuffer;
+        for (uint32_t y = 0; y < toEncode->height; y++)
+        {
+            uint8_t* row = _aspectBuffer.data() + 2 * static_cast<size_t>(y) * rowBytes;
+            memcpy(row, src, rowBytes);
+            memcpy(row + rowBytes, src, rowBytes);
+            src += rowBytes;
+        }
+        stretched = *toEncode;
+        stretched.height = static_cast<uint16_t>(toEncode->height * 2);
+        stretched.memoryBuffer = _aspectBuffer.data();
+        stretched.memoryBufferSize = _aspectBuffer.size();
+        toEncode = &stretched;
     }
 
     // Encode video frame

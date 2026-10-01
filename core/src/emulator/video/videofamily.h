@@ -45,3 +45,13 @@ constexpr VideoFamily FamilyOf(VideoModeEnum mode)
             return VideoFamily::Zx;
     }
 }
+
+/// TS-Conf stores its fat pixels at half height: the 360x288 raster dots are
+/// kept at 2 px per dot wide (TXT pixels are 14 MHz) but one stored line per
+/// dot row, so the display scales the framebuffer 2x vertically to the true
+/// pixel aspect. Anything producing square-pixel output of what the user sees
+/// (a recording file) doubles each stored line - the same correction
+inline bool StoresHalfHeightLines(VideoModeEnum mode)
+{
+    return FamilyOf(mode) == VideoFamily::TsConf;
+}

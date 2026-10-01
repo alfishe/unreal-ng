@@ -89,6 +89,46 @@ The machine appears to jump to a turbo frequency of ~28 MHz, the number keeps ch
 
 ---
 
+## 🟣 [Fix Proposed] #6: Native macOS MP4 Recording - Frame 2x Too Wide on TSConf
+* **Date Opened:** 2026-09-30
+* **Date Fixed:** *Pending*
+* **Commit ID:** *None*
+
+### Description
+TS-Conf with the module player running, video recording started - native (macOS VideoToolbox), MP4, fullscreen. The video records fine **with sound**, but the file is **1440x576** where the natural frame is **720x288**: the horizontal resolution is doubled and the picture is stretched 2x horizontally. Recorded sample: `/Users/dev/Movies/unreal_20260930_205229.mp4` (emulator left paused for triage, file no longer present).
+
+### Root cause
+TS-Conf stores its fat pixels at **half height** internally: the 360x288-dot raster is kept at 720 (2 px/dot wide) x 288 (1 stored line per dot row). `RecordingManager` had no awareness of this and passed the raw `fb.width x fb.height` (720x288) straight through as the recording's target resolution - already wrong aspect before any user-chosen scale.
+
+Separately, the GUI's recording dialog and "Quick Record" presets default to `SetScaleFactor(2)` (a "2x nearest-neighbor upscale, keeps ZX pixels crisp" convenience, `unreal-qt/src/debugger/widgets/videorecordingwidget.cpp:388-394`, `unreal-qt/src/mainwindow.cpp:3374`), which every encoder backend applies **uniformly to both axes** (`VideoToolboxEncoder::Start`, `core/recording/src/platform/macos/videotoolbox_encoder.mm:56-61`; the ffmpeg `scale=iw*N:ih*N` filter, `core/recording/src/encoders/ffmpeg_pipe_encoder.cpp:767-772`).
+
+With no TS-Conf correction, `720x288` uniformly doubled by the GUI's default `scaleFactor=2` gives exactly the reported `1440x576`: the width got its (otherwise legitimate) 2x upscale, the height needed a 2x *aspect* correction first and never got one, so it reads as "width doubled, height not" even though the real defect is a missing height fix, not an added width one. A direct/test call to `RecordingManager::StartRecording` never touches `SetScaleFactor` (class default `1`), so that path was never visibly wrong - it just produced an uncorrected `720x288` with no upscale to make the mismatch visible.
+
+### Fix
+`core/src/emulator/video/videofamily.h`: `StoresHalfHeightLines(VideoModeEnum)` - true for the four TS-Conf modes (`M_TS16/M_TS256/M_TSTX/M_TSZX`), false elsewhere.
+
+`core/recording/src/recordingmanager.cpp`: both `StartRecording` and `StartRecordingEx` double `_videoHeight` when `StoresHalfHeightLines(fb.videoMode)` before it ever reaches an encoder config, and `CaptureFrame` duplicates every captured row (720x288 -> 720x576) before handing the frame to `EncodeVideoFrame`. This is encoder-agnostic: it runs once, upstream of all three backends.
+
+Checked that no backend double-applies or skips the fix:
+- VideoToolbox (native) and the ffmpeg software path both read the already-corrected `config.videoWidth/videoHeight` as their un-scaled source size and apply the user's `scaleFactor` uniformly on top - a 2x "crisp pixels" recording of a TS-Conf session now comes out `1440x1152` (uniform 2x of the correct `720x576`), not `1440x576`.
+- The GIF encoder ignores `scaleFactor` entirely (by design - chroma subsampling doesn't apply to GIF) and uses `config.videoWidth/videoHeight` directly, so it inherits the corrected `720x576` with no extra step.
+
+### Verification
+- New test `core/tests/emulator/recording/tsconf_aspect_test.cpp`: `StoresHalfHeightLines` classification (TS-Conf-only) and the row-doubling algorithm (byte-exact content, width untouched) - red before the fix, green after.
+- Full rebuild (`ninja core-tests`, zero warnings) + `test-parallel`, twice, both green (no regression; a first pass accidentally broke `ScorpionTurbo_Test.TurboStrobePostsCpuFreqChanged` via an unrelated notification-throttle change bundled in the same working tree - reverted, see commit notes).
+- Full default build (`ninja`, no target) also green, zero non-third-party warnings.
+- **Found and fixed a second bug while verifying live**: `RecordingManager::CaptureFrame`'s first draft declared the stretched `FramebufferDescriptor` *inside* the `if (StoresHalfHeightLines(...))` block and kept using the `toEncode` pointer to it after that block closed - a dangling pointer to a destroyed stack local, read by `EncodeVideoFrame` right after. This is what produced "mostly red garbage, worse than before the fix" when actually recording Wild Commander in the running app (not caught by the geometry-only unit test or `test-parallel`, since neither exercises a real `RecordingManager` + encoder round trip). Fixed by hoisting `FramebufferDescriptor stretched;` to function scope next to the existing `cropped` local, same lifetime pattern already used for the crop paths.
+- Re-verified live via WebAPI/MCP against the freshly built `unreal-qt` (TSL model, TR-DOS/TSTX boot screen - any TS-Conf framebuffer exercises the same path as Wild Commander): native H.264 recording at `scaleFactor=1` -> clean `720x576` frame (ffprobe + a decoded PNG, no corruption); at `scaleFactor=2` over 60 captured frames -> clean `1440x1152`, image content crisp and correctly proportioned, no garbage, no crash.
+- Could not re-probe the *original* user sample - that file no longer exists on disk; the geometry fix is verified by the math above, the new unit test, and this fresh live recording.
+
+### Requirements / Acceptance Criteria
+- [x] Triage: probe the file (dimensions, SAR/DAR, pixel format) and read the VideoToolbox recorder's frame-size/scaling path.
+- [x] Root cause: which stage doubles the width (capture with devicePixelRatio, a scale-to-even/16 step, or a SAR/PAR mix-up).
+- [x] A native MP4 recording of a TS-Conf session has the right geometry (720-wide content stays 720 wide, or scales uniformly with the correct pixel aspect).
+- [x] The same check for the other recording paths (GIF, software MP4) - they must not share the bug.
+
+---
+
 ## 🔴 [Open] #3: Host Folder Insert Freezes the UI Thread
 * **Date Opened:** 2026-09-30
 * **Date Fixed:** *Pending*

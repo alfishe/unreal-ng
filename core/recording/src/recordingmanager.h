@@ -352,6 +352,7 @@ protected:
     VideoCaptureRegion _captureRegion = VideoCaptureRegion::FullFrame;
     uint32_t _scaleFactor = 1;
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
+    std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
 
     // Viewport crop offsets (captured at recording start for Viewport mode)
     uint16_t _viewportCropLeft = 0;
