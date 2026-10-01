@@ -26,6 +26,17 @@ that the emulator works out of the box, on the following basis:
   from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
   like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
   `tools/neogs/pack_flash.py` checks the image against them.
+* **Peters Plus Sprinter Sp2000 BIOS** (`sprinter/sp2k-3.04.rom`): BIOS 3.04 build 253 of 17.06.2003, the last
+  Peters Plus build, 262 144 bytes, CRC32 `1729cb5c` (the value MAME's `sprinter` ROM set uses), SHA-256
+  `e166d1557f699cedb65481e784e7f0f17c7b0cdbb6851bf2ed0c4dbf5448de95`. Copied unchanged from
+  `fw/bios/sp2k-3.04.253.bin` of the Sprinter board repository (https://zxgit.org/Sprinter/2000). Peters Plus Ltd
+  firmware, distributed freely in the Sprinter community (the BIOS 2.17 sources were released in 2009 and are
+  believed public domain). ROM pages: 0 = disk drivers and the packed SETUP, 8 = the BIOS proper, `#C`-`#F` = the
+  PLD loader and bitstream, the rest empty; annotated listings in `docs/disasm/rom/sprinter/`. A known variant
+  (ZXMAK2 `SP_304.BIN`, CRC32 `a3970620`) differs in 5 bytes: the page 0 checksum and the page 8 board-id byte.
+  The community BIOS 3.06 (`sp2k-3.06.rom`, CRC32 `187f4382` in MAME) is not included: no copy was found in the
+  public repositories (Tolik-Trek `Sprinter-BIOS` publishes sources only, no releases); take it from the MAME
+  `sprinter` ROM set or build it from https://zxgit.org/Tolik-Trek/Sprinter-BIOS.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

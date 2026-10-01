@@ -644,6 +644,46 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_PerScanlineFontLines)
     }
 }
 
+/// FNT-5, FNT-6: the text renderer reads the font RAM (code * 8 + row), not the built-in table, and leaves the
+/// glyph byte it fetched for #0EBD
+TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_ReadsTheFontRam)
+{
+    _context->config.mem_model = MM_ATM710;
+    SetATMTiming();
+    SetFF77Mode(FF77_TX);
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_ATMTX);
+
+    auto& fb = _screen->GetFramebufferDescriptor();
+    auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
+
+    uint8_t* ap = _memory->RAMPageAddress(1);
+    uint8_t* vp = _memory->RAMPageAddress(5);
+    memset(ap + 0x2000 + 0x1C0, 0x47, 25 * 64);
+    memset(ap + 1 + 0x1C0, 0x47, 25 * 64);
+    vp[0x1C0] = 0x41;  // 'A' at row 0, column 0
+
+    // A loaded glyph: a different pattern on every font row of code 0x41
+    EmulatorState& state = _context->emulatorState;
+    for (unsigned row = 0; row < 8; row++)
+        state.atmFontRam[0x41 * 8 + row] = static_cast<uint8_t>(0x80 >> row);  // a diagonal
+    state.atmFontByte = 0xFF;
+
+    const uint32_t ink = InkColor(0x47);
+    const uint32_t paper = PaperColor(0x47);
+    for (uint32_t s = 0; s < 8; ++s)
+    {
+        SCOPED_TRACE(testing::Message() << "scanline " << s);
+        _screen->Draw(BeamT(s, 0));
+        _screen->Draw(BeamT(s, 1));
+        const uint32_t row = 44 + s;
+        for (uint32_t k = 0; k < 8; ++k)
+            EXPECT_EQ(At(row, k), k == s ? ink : paper) << "px " << k;
+        EXPECT_EQ(state.atmFontByte, static_cast<uint8_t>(0x80 >> s)) << "#0EBD shows the byte last fetched";
+    }
+}
+
 TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_AttrQuirkByteAlignment)
 {
     _context->config.mem_model = MM_ATM710;

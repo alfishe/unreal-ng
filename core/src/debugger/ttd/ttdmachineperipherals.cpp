@@ -7,6 +7,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/platform.h"
@@ -71,6 +72,10 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     registry.Register(PeripheralId::Tape, context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
     registry.Register(PeripheralId::KempstonMouse, context->pMouse);
+    // Kempston joystick: the state byte, only on machines whose decoder answers #1F (a machine without the arm
+    // cannot observe it, and its checkpoints stay as they were)
+    if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())
+        registry.Register(PeripheralId::KempstonJoystick, context->pJoystick);
     registry.Register(PeripheralId::BetaDisk, context->pBetaDisk);
 
     // IDE board (any machine with [HDD] Scheme): controller state, not the media

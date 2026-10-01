@@ -44,7 +44,9 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     blob.evoNmiEntry = state.evoNmiEntry ? 1 : 0;
     blob.nmiAtIntPending = state.nmiAtIntStartPending ? 1 : 0;
     blob.evoTrdemu = state.evoTrdemu;
-    blob.evoVgDrive = state.evoVgDrive;
+    blob.evoVgSys = state.evoVgSys;
+    blob.evoWrProt = state.evoWrProt;
+    blob.evoTurboPending = state.evoTurboPending;
 
     return blob;
 }
@@ -92,7 +94,12 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     state.evoNmiEntry = blob.evoNmiEntry != 0;
     state.nmiAtIntStartPending = blob.nmiAtIntPending != 0;
     state.evoTrdemu = blob.evoTrdemu;
-    state.evoVgDrive = blob.evoVgDrive;
+    state.evoVgSys = blob.evoVgSys;
+    state.evoWrProt = blob.evoWrProt;
+    state.evoTurboPending = blob.evoTurboPending;
+    // #BF bit 2 decides whether the font RAM loader sits on the bus
+    if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
+        atm3->SyncFontOverlay();
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there rather than

@@ -57,7 +57,9 @@ const FrameGolden kFrameGolden[] = {
     {"PROFSCORP", nullptr, 352, 288, 0xA41CF760F5AF9B37ull, 0x9F7E8F7927DE22B7ull},
     {"PROFI", nullptr, 352, 288, 0xA41CF760F5AF9B37ull, 0x9F7E8F7927DE22B7ull},
     {"ATM710", nullptr, 640, 288, 0x2FC6C35968C6F354ull, 0x2FC6C35968C6F354ull},
-    {"ATM3", nullptr, 352, 288, 0xE274C408E6A1D406ull, 0xE274C408E6A1D406ull},
+    // ATM3 re-recorded 2026-10-01 (E8b): 150 real frames of the BIOS now (RunNFrames counts emulated time across
+    // the 14 MHz switch), the clock select taken over at the next M1 refresh
+    {"ATM3", nullptr, 352, 288, 0x65DE3531E7BF4A70ull, 0x65DE3531E7BF4A70ull},
 };
 
 constexpr unsigned kFrames = 150;

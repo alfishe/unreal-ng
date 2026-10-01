@@ -40,6 +40,7 @@ constexpr const char* const kFastDisk = "fastdisk";
 constexpr const char* const kTurboMode = "turbomode";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
+constexpr const char* const kKempstonJoystick = "kempstonjoystick";
 constexpr const char* const kGSLightweight = "gs_lightweight";
 constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
@@ -65,6 +66,7 @@ constexpr const char* const kFastDiskAlias = "fdisk";
 constexpr const char* const kTurboModeAlias = "turbo";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
+constexpr const char* const kKempstonJoystickAlias = "kjoy";
 constexpr const char* const kGSLightweightAlias = "gslw";
 constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
@@ -109,6 +111,9 @@ constexpr const char* const kHudDesc =
 
 constexpr const char* const kKempstonMouseDesc =
     "Kempston Mouse on the bus (when fitted by the machine config [INPUT] Mouse=KEMPSTON). Off: the mouse ports are not decoded.";
+
+constexpr const char* const kKempstonJoystickDesc =
+    "Kempston joystick on the bus (when fitted by the machine config [INPUT] Joystick=KEMPSTON). Off: #1F reads 0x00 and the host keys are not bound.";
 
 constexpr const char* const kNetworkDesc =
     "Network adapters on the bus (when fitted by the machine config [NETWORK] Card=, e.g. ZXNETUSB). Off: the card is "

@@ -13,6 +13,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
@@ -485,6 +486,12 @@ void MainLoop::CompleteFrame()
     if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
     {
         _context->pDebugManager->GetMouseManager()->OnFrame();
+    }
+
+    // Release timed joystick taps (automation) at frame boundaries
+    if (_context->pDebugManager && _context->pDebugManager->GetJoystickManager())
+    {
+        _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
 
     // Network adapters: a pending refit, the virtual network's own answers,

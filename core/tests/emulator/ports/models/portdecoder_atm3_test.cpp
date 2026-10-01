@@ -15,7 +15,11 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "emulator/memory/atm/evoavr.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulator.h"
 
@@ -426,7 +430,7 @@ TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters_LegacyFpga)
     state.aFF77 = 0x0000;  // manager open at reset
     state.border_attr = 0x04;
     state.atmBorderBright = 1;  // cell = 4 | (1 << 3) = 12
-    state.atmPaletteRegs[12] = 0xA5;
+    _portDecoder->DecodePortOut(0x00FF, 0xA5, 0x0000);  // the palette cell 12 takes the color; #0D reads it back
     state.pEFF7 = 0x5A;
 
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBE, 0x0000), 0x5A) << "#BE.0B = pEFF7";
@@ -709,6 +713,66 @@ TEST_F(PortDecoder_ATM3_Test, Fdc_OnlyInShadow_JoystickOutside)
     EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
     _portDecoder->DecodePortOut(0x001F, 0xD0, 0x0000);
     EXPECT_EQ(fdc.lastPort, 0) << "the WD1793 must not see #1F outside shadow";
+}
+
+/// JOY-3: outside shadow #1F answers the joystick device; inside shadow it is the VG93 status again
+TEST_F(PortDecoder_ATM3_Test, JOY3_JoystickStateOutsideShadowFdcInside)
+{
+    Joystick joystick(_context);
+    _context->pJoystick = &joystick;
+    GsPortMockDevice fdc;
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x001F, &fdc, static_cast<PortTagSet>(PortTag::StorageFdc)));
+    EmulatorState& state = _context->emulatorState;
+
+    EXPECT_TRUE(_portDecoder->HasKempstonJoystick());
+
+    SetShadow(state, false);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), 0x00) << "idle";
+    joystick.SetState(Joystick::kUp | Joystick::kFire);
+    fdc.lastPort = 0;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), 0x18);
+    EXPECT_EQ(fdc.lastPort, 0) << "the WD1793 must not see #1F outside shadow";
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+
+    SetShadow(state, true);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), static_cast<uint8_t>(0x1F ^ 0xFF)) << "VG93 in shadow";
+    EXPECT_EQ(fdc.lastPort, 0x001F);
+
+    _context->pJoystick = nullptr;
+}
+
+/// JOY-4: the decode is the full low byte #1F with any high byte (zports.v: loa == KJOY); the mouse
+/// addresses (#xxDF) and the neighbors of #1F are not the joystick
+TEST_F(PortDecoder_ATM3_Test, JOY4_JoystickDecodesTheExactLowByteOnly)
+{
+    Joystick joystick(_context);
+    _context->pJoystick = &joystick;
+    SetShadow(_context->emulatorState, false);
+    joystick.SetState(0x5A);
+
+    for (const uint16_t port : {0x001F, 0xFB1F, 0xFF1F, 0x7F1F, 0x1F1F, 0xFE1F})
+        EXPECT_EQ(_portDecoder->DecodePortIn(port, 0x0000), 0x5A) << std::hex << port;
+
+    for (const uint16_t port : {0xFBDF, 0xFFDF, 0xFADF, 0x000F, 0x009F, 0x001E, 0x003F, 0x00DF})
+        EXPECT_NE(_portDecoder->DecodePortIn(port, 0x0000), 0x5A) << std::hex << port << " is not the joystick";
+
+    _context->pJoystick = nullptr;
+}
+
+/// JOY-6 (ATM3): not fitted or absent - the decoder answers 0x00, as before the device existed
+TEST_F(PortDecoder_ATM3_Test, JOY6_JoystickNotFittedReadsZero)
+{
+    SetShadow(_context->emulatorState, false);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), 0x00) << "no device object";
+
+    Joystick joystick(_context);
+    _context->pJoystick = &joystick;
+    joystick.SetState(0x1F);
+    joystick.SetPresent(false);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), 0x00) << "device not fitted";
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded()) << "the arm still answers";
+
+    _context->pJoystick = nullptr;
 }
 
 /// #EFF7 is written only outside shadow, on any #F7 port with A8=1 and A12=0;
@@ -1160,6 +1224,52 @@ TEST_F(PortDecoder_ATM3_Machine_Test, KempstonMouse_Decoded)
 
     mouse->SetPresent(false);
     EXPECT_EQ(_decoder->DecodePortIn(0xFBDF, 0x0000), 0xFF) << "no mouse: the AVR answers #FF";
+}
+
+/// JOY-8: a host key bound to a joystick button still reaches the AVR's PS/2 log (NedoOS reads the keypad
+/// there) - one key event, two consumers
+TEST_F(PortDecoder_ATM3_Machine_Test, JOY8_BoundKeyStillReachesThePs2Sink)
+{
+    Joystick* joystick = _context->pJoystick;
+    ASSERT_NE(joystick, nullptr);
+    DebugKeyboardManager* keys = _context->pDebugManager->GetKeyboardManager();
+    ASSERT_NE(keys, nullptr);
+    EvoAvr& avr = _decoder->GetEvoAvr();
+    _context->emulatorState.flags &= ~CF_TRDOS;
+
+    keys->PressKey("kp_8");  // bound to "up": Set 2 code #75, one byte on make
+    EXPECT_EQ(joystick->State(), Joystick::kUp);
+    EXPECT_EQ(avr.GetPs2LogCount(), 1u) << "and the PS/2 log still got the key";
+
+    keys->ReleaseKey("kp_8");  // break: F0 75
+    EXPECT_EQ(joystick->State(), 0x00);
+    EXPECT_EQ(avr.GetPs2LogCount(), 3u);
+
+    // An unbound keypad key is the PS/2 log only
+    keys->PressKey("kp_5");
+    EXPECT_EQ(joystick->State(), 0x00);
+    EXPECT_EQ(avr.GetPs2LogCount(), 4u);
+    keys->ReleaseKey("kp_5");
+
+    // With the host keys switched off the log is the same, the joystick stays idle
+    joystick->SetBindings("");
+    const size_t before = avr.GetPs2LogCount();
+    keys->PressKey("kp_8");
+    EXPECT_EQ(joystick->State(), 0x00);
+    EXPECT_EQ(avr.GetPs2LogCount(), before + 1u);
+}
+
+/// Releasing every key (automation "release all") lets go of the key-driven buttons too
+TEST_F(PortDecoder_ATM3_Machine_Test, JOY8_ReleaseAllKeysReleasesKeyDrivenButtons)
+{
+    DebugKeyboardManager* keys = _context->pDebugManager->GetKeyboardManager();
+    ASSERT_NE(keys, nullptr);
+    keys->PressKey("kp_4");
+    keys->PressKey("kp_0");
+    ASSERT_EQ(_context->pJoystick->State(), Joystick::kLeft | Joystick::kFire);
+
+    keys->ReleaseAllKeys();
+    EXPECT_EQ(_context->pJoystick->State(), 0x00);
 }
 
 /// endregion </BaseConf full-stack tests (ZX-Evo plan phase E0)>
@@ -1818,3 +1928,411 @@ TEST(PortDecoder_ATM3_Trace_Test, EventsCarryTheDecodeArmAsInternalCode)
 }
 
 /// endregion </Port trace attribution>
+
+/// region <E8: #xBF7 write protect, 4:4:4 palette (tdd-e8-wrprot-font-pal444-dosstall.md)>
+
+namespace
+{
+/// The TR-DOS boot map (ROM 0 / RAM 5 / RAM 2 / RAM 0) with the shadow ports open
+void OpenShadow(PortDecoder_ATM3* decoder, EmulatorState& state)
+{
+    decoder->reset();
+    decoder->ApplyBootROMDefaults(RM_DOS);
+    state.pBF = 0x01;
+}
+
+constexpr uint16_t kBF7Window2 = 0x89F7;  // A15:A14 = window 2, A11:A10 = 10 (#xBF7), A8 = 1 (shadow)
+}  // namespace
+
+/// WP-1: the byte is in the #12BD order and only the active map's bit moves
+TEST_F(PortDecoder_ATM3_Test, WriteProtect_BitsFollowWindowAndMap)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    auto rd = [this](uint8_t index) { return _portDecoder->DecodePortIn(static_cast<uint16_t>((index << 8) | 0xBD), 0x0000); };
+
+    EXPECT_EQ(rd(0x12), 0x00);
+
+    state.p7FFD = 0x00;  // map 0
+    _portDecoder->DecodePortOut(0x09F7, 0x01, 0x0000);   // window 0
+    _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
+    EXPECT_EQ(rd(0x12), 0x05) << "map 0: bits 0 and 2";
+
+    state.p7FFD = 0x10;  // map 1
+    _portDecoder->DecodePortOut(0xC9F7, 0x01, 0x0000);   // window 3
+    EXPECT_EQ(rd(0x12), 0x85) << "map 1: bit 7 (4 + window 3); map 0 untouched";
+
+    _portDecoder->DecodePortOut(0xC9F7, 0xFE, 0x0000);   // only D0 counts
+    EXPECT_EQ(rd(0x12), 0x05);
+
+    state.p7FFD = 0x00;
+    _portDecoder->DecodePortOut(kBF7Window2, 0x00, 0x0000);
+    EXPECT_EQ(rd(0x12), 0x01);
+}
+
+/// WP-2: a protected RAM window reads as before and drops writes; the page query still answers the real page
+TEST_F(PortDecoder_ATM3_Test, WriteProtect_RamWindowDropsWrites)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    state.p7FFD = 0x00;
+    _memory->DirectWriteToZ80Memory(0x8000, 0x11);
+
+    _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
+    _memory->MemoryWriteFast(0x8000, 0x22);
+    EXPECT_EQ(_memory->MemoryReadFast(0x8000, false), 0x11) << "the write was dropped";
+    EXPECT_EQ(_memory->GetRAMPageForBank2(), 2) << "still RAM page 2";
+    _memory->MemoryWriteFast(0x4000, 0x33);
+    EXPECT_EQ(_memory->MemoryReadFast(0x4000, false), 0x33) << "other windows keep writing";
+
+    _memory->DirectWriteToZ80Memory(0x8000, 0x44);
+    EXPECT_EQ(_memory->MemoryReadFast(0x8000, false), 0x44) << "a debugger poke is not the CPU's write";
+
+    _portDecoder->DecodePortOut(kBF7Window2, 0x00, 0x0000);
+    _memory->MemoryWriteFast(0x8000, 0x55);
+    EXPECT_EQ(_memory->MemoryReadFast(0x8000, false), 0x55) << "unprotected again";
+}
+
+/// WP-3: window 0 under RAM 0 (#EFF7 bit 3) or the NMI page ignores the protect bit
+TEST_F(PortDecoder_ATM3_Test, WriteProtect_Window0RamOverridesAreWritable)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    state.p7FFD = 0x00;
+    _portDecoder->DecodePortOut(0x09F7, 0x01, 0x0000);  // window 0 protected, but it is ROM: nothing to see
+
+    state.pEFF7 |= PortDecoder_ATM3::ATM_EFF7_ROCACHE;
+    _memory->UpdateZ80Banks();
+    ASSERT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM);
+    _memory->MemoryWriteFast(0x0010, 0x66);
+    EXPECT_EQ(_memory->MemoryReadFast(0x0010, false), 0x66) << "RAM 0 over the ROM window";
+
+    state.pEFF7 &= static_cast<uint8_t>(~PortDecoder_ATM3::ATM_EFF7_ROCACHE);
+    state.evoInNmi = true;
+    _memory->UpdateZ80Banks();
+    _memory->MemoryWriteFast(0x0011, 0x77);
+    EXPECT_EQ(_memory->MemoryReadFast(0x0011, false), 0x77) << "the NMI page";
+}
+
+/// WP-6, WP-7: no effect outside the shadow ports; reset clears the bits
+TEST_F(PortDecoder_ATM3_Test, WriteProtect_ShadowOnlyAndResetClears)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    state.pBF = 0x00;
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN;  // no shadow
+    _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
+    EXPECT_EQ(state.evoWrProt, 0x00);
+
+    OpenShadow(_portDecoder, state);
+    _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
+    ASSERT_NE(state.evoWrProt, 0x00);
+    _portDecoder->reset();
+    EXPECT_EQ(state.evoWrProt, 0x00);
+}
+
+namespace
+{
+/// The palette cell the #FF write lands in, from the RTL (zports.v:916-917, video_palframe.v), computed from the
+/// bits independently of the decoder: red {d1, d6, A9, A14}, green {d4, d7, A12, A15}, blue {d0, d5, A8, A13},
+/// all inverted; without pal444 the low pair is the data pair again
+uint32_t ExpectedPaletteColor(uint8_t data, uint8_t portHigh, bool pal444)
+{
+    const unsigned d = static_cast<uint8_t>(~data);
+    const unsigned a = static_cast<uint8_t>(~portHigh);
+    auto channel = [&](unsigned dh, unsigned dl, unsigned ah, unsigned al) {
+        const unsigned h = (d >> dh) & 1, l = (d >> dl) & 1;
+        const unsigned lowH = pal444 ? (a >> ah) & 1 : h, lowL = pal444 ? (a >> al) & 1 : l;
+        return ((h << 3) | (l << 2) | (lowH << 1) | lowL) * 0x11u;
+    };
+    const unsigned blue = channel(0, 5, 0, 5);
+    const unsigned red = channel(1, 6, 1, 6);
+    const unsigned green = channel(4, 7, 4, 7);
+    return 0xFF000000u | (blue << 16) | (green << 8) | red;
+}
+
+/// #0DBD as the RTL builds it (BD_COLORRD) from the displayed color's channel nibbles
+uint8_t ExpectedColorReadback(uint32_t abgr, bool pal444)
+{
+    auto pair = [&](unsigned shift) {
+        const unsigned nibble = (abgr >> shift) >> 4;
+        return pal444 ? (nibble & 3u) : (nibble >> 2);
+    };
+    const unsigned r = pair(0), g = pair(8), b = pair(16);
+    return static_cast<uint8_t>((!(g & 1) << 7) | (!(r & 1) << 6) | (!(b & 1) << 5) | (!(g >> 1) << 4) | 0x0C |
+                                (!(r >> 1) << 1) | (!(b >> 1)));
+}
+}  // namespace
+
+/// PAL-1: with #BF bit 5 the low bit of each channel comes from A15..A8; the formula over several data / address bytes
+TEST_F(PortDecoder_ATM3_Test, Palette444_LowBitsFromAddressHighByte)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    state.aFF77 = 0;  // pen2 clear: the palette gate is open
+    state.flags = 0;
+    state.border_attr = 0x00;
+    state.atmBorderBright = 0;
+    state.pBF |= 0x20;
+
+    const uint8_t datas[] = {0x00, 0xFF, 0x5A, 0xA5, 0x33, 0xC4, 0x01, 0x80};
+    const uint8_t highs[] = {0x00, 0xFF, 0x13, 0xEC, 0xA5, 0x5A};
+    for (uint8_t data : datas)
+        for (uint8_t high : highs)
+        {
+            _portDecoder->DecodePortOut(static_cast<uint16_t>((high << 8) | 0xFF), data, 0x0000);
+            EXPECT_EQ(state.atmPalette[0], ExpectedPaletteColor(data, high, true))
+                << "data=" << int(data) << " A15..A8=" << int(high);
+            EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBD, 0x0000), ExpectedColorReadback(state.atmPalette[0], true))
+                << "readback data=" << int(data) << " A15..A8=" << int(high);
+        }
+}
+
+/// PAL-2, PAL-3: without pal444 every byte gives the old 2-bits-per-channel color and the old #0DBD byte
+TEST_F(PortDecoder_ATM3_Test, Palette444_OffKeepsTheDdScheme)
+{
+    EmulatorState& state = _context->emulatorState;
+    OpenShadow(_portDecoder, state);
+    state.aFF77 = 0;  // pen2 clear: the palette gate is open
+    state.flags = 0;
+    state.border_attr = 0x00;
+    state.atmBorderBright = 0;
+
+    for (unsigned data = 0; data < 256; data++)
+    {
+        _portDecoder->DecodePortOut(0xA5FF, static_cast<uint8_t>(data), 0x0000);  // the high byte must not count
+        EXPECT_EQ(state.atmPalette[0], ExpectedPaletteColor(static_cast<uint8_t>(data), 0x00, false)) << data;
+        EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBD, 0x0000), static_cast<uint8_t>((data & 0xF3) | 0x0C)) << data;
+    }
+}
+
+/// endregion </E8: #xBF7 write protect, 4:4:4 palette>
+
+/// region <E8: the DOS-entry clock stall (C-10)>
+
+class PortDecoder_ATM3_Stall_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Core* _core = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+    PortDecoder_ATM3* _decoder = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _core = _context->pCore;
+        _z80 = _core->GetZ80();
+        _memory = _context->pMemory;
+        _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+
+        // Map 1 (#7FFD.4 = 1): window 0 = ROM with the dos7ffd bit, windows 1-3 = RAM
+        _decoder->ApplyBootROMDefaults(RM_DOS);
+        EmulatorState& state = _context->emulatorState;
+        state.pBF = 0x01;
+        state.pFFF7[4] = 0x0100;
+        state.pFFF7[5] = 0x0200 | 5;
+        state.pFFF7[6] = 0x0200 | 2;
+        state.pFFF7[7] = 0x0200 | 0;
+        state.p7FFD = 0x10;
+        state.flags = CF_TRDOS;  // the DOS ROM is in already: its #3Dxx content is what the NOPs below replace
+        _memory->UpdateZ80Banks();
+        _z80->iff1 = 0;
+
+        for (uint16_t addr : {0x3C00, 0x3D00, 0x3DFF, 0x3E00, 0x7D00, 0x7E00})
+            _z80->DirectWrite(addr, 0x00);  // NOP
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    /// Counter ticks (256 per 3.5 MHz T) the NOP at `pc` takes
+    uint32_t NopTicks(uint16_t pc)
+    {
+        _z80->pc = pc;
+        _z80->tt = 40000u << 8;
+        const uint32_t before = _z80->tt;
+        _z80->Z80Step();
+        return _z80->tt - before;
+    }
+};
+
+/// STALL-1, STALL-4: a fetch from #3Dxx holds the clock 4 fclk (128 ticks); its neighbours do not
+TEST_F(PortDecoder_ATM3_Stall_Test, FetchFrom3DxxAddsFourFclk)
+{
+    EXPECT_TRUE(_core->IsContentionSwitchOn());
+    const uint32_t plain = NopTicks(0x3C00);
+    EXPECT_EQ(NopTicks(0x3E00), plain) << "#3Exx is not the DOS entry page";
+    EXPECT_EQ(NopTicks(0x3D00), plain + 128) << "half a 3.5 MHz T";
+    EXPECT_EQ(NopTicks(0x3DFF), plain + 128) << "the whole page";
+}
+
+/// STALL-6: the entering fetch holds the clock too (the session is switched on by that very fetch)
+TEST_F(PortDecoder_ATM3_Stall_Test, TheEnteringFetchStalls)
+{
+    EmulatorState& state = _context->emulatorState;
+    const uint32_t plain = NopTicks(0x3C00);
+
+    // Leave DOS: the 48K ROM is in window 0 again and the entry is armed (CF_SETDOSROM)
+    state.flags = 0;
+    _memory->UpdateZ80Banks();
+    ASSERT_TRUE(state.flags & CF_SETDOSROM);
+    // The NOP the DOS ROM shows at #3D00 once the fetch switches it in
+    state.flags = CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    _z80->DirectWrite(0x3D00, 0x00);
+    state.flags = 0;
+    _memory->UpdateZ80Banks();
+
+    EXPECT_EQ(NopTicks(0x3D00), plain + 128);
+    EXPECT_TRUE(state.flags & CF_TRDOS) << "the fetch entered TR-DOS";
+}
+
+/// STALL-2: the same 128 ticks at every clock rate (the stall is in 28 MHz clocks, not in Z80 clocks)
+TEST_F(PortDecoder_ATM3_Stall_Test, TheStallIsTheSameAtEveryClockRate)
+{
+    for (const uint8_t clock : {0x03, 0x0B})  // #xx77: 7 MHz (bit 3 clear), 14 MHz (bit 3 set)
+    {
+        _decoder->DecodePortOut(0x0177, clock, 0x0000);
+        _z80->ApplyHardwareTurboNow();
+        const uint32_t plain = NopTicks(0x3C00);
+        EXPECT_EQ(NopTicks(0x3D00), plain + 128) << "clock select " << int(clock);
+    }
+}
+
+/// STALL-3: only a window whose map-1 register is ROM with dos7ffd, in map 1, with the contention feature on
+TEST_F(PortDecoder_ATM3_Stall_Test, OnlyTheDosRomWindowOfMapOneStalls)
+{
+    EmulatorState& state = _context->emulatorState;
+    const uint32_t plain = NopTicks(0x3C00);
+
+    // A window holding RAM: no stall (window 1 = RAM 5). Executing from RAM ends the DOS session
+    EXPECT_EQ(NopTicks(0x7D00), plain) << "window 1 is RAM";
+
+    // The same window as ROM with dos7ffd: stall at its #3D offset too
+    state.pFFF7[5] = 0x0100;
+    state.flags = CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    _z80->DirectWrite(0x7D00, 0x00);
+    EXPECT_EQ(NopTicks(0x7D00), plain + 128);
+
+    // ROM from the register (no dos7ffd bit): the chip is not switched, nothing to wait for
+    state.pFFF7[5] = 0x0300 | 0x01;
+    state.flags = CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    _z80->DirectWrite(0x7D00, 0x00);
+    EXPECT_EQ(NopTicks(0x7D00), plain);
+
+    // Map 0: the DOS ROM of map 1 is not selected
+    state.p7FFD = 0x00;
+    state.flags = CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    _z80->DirectWrite(0x3D00, 0x00);
+    EXPECT_EQ(NopTicks(0x3D00), plain);
+
+    // Contention feature off: no machine waits
+    state.p7FFD = 0x10;
+    state.flags = CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    _core->SetContentionSwitch(false);
+    EXPECT_EQ(NopTicks(0x3D00), plain);
+    _core->SetContentionSwitch(true);
+    EXPECT_EQ(NopTicks(0x3D00), plain + 128);
+}
+
+/// endregion </E8: the DOS-entry clock stall>
+
+/// region <E8b: #FE / #FF reads and the clock-select timing (tdd-e8b-board-fidelity.md)>
+
+class PortDecoder_ATM3_Emu_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+    PortDecoder_ATM3* _decoder = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+        _memory = _context->pMemory;
+        _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+        _decoder->ApplyBootROMDefaults(RM_DOS);
+        _context->emulatorState.pBF = 0x01;  // the shadow ports (FDC, #xx77) answer
+        _z80->iff1 = 0;
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+};
+
+/// FE-1: zports.v `{1'b1, tape_read, 1'b0, keys_in}`: bit 7 reads 1 and bit 5 reads 0, on #FE and on #F6
+TEST_F(PortDecoder_ATM3_Emu_Test, KeyboardPortBit5ReadsZeroBit7ReadsOne)
+{
+    for (const uint16_t port : {0x00FE, 0xFEFE, 0x00F6, 0x7FFE})
+    {
+        const uint8_t value = _decoder->DecodePortIn(port, 0x0000);
+        EXPECT_EQ(value & 0x20, 0x00) << "port " << std::hex << port;
+        EXPECT_EQ(value & 0x80, 0x80) << "port " << std::hex << port;
+    }
+}
+
+/// FF-1: #FF reads {intrq, drq, 1, D4..D0 of the last write} on the current tree, all six bits on the legacy one
+TEST_F(PortDecoder_ATM3_Emu_Test, SystemPortReadsBackTheLastWrite)
+{
+    _context->emulatorState.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2;  // palette writes off: #FF is the Beta128 port only
+    for (const uint8_t written : {0x00, 0x1F, 0x35, 0x0A, 0x20})
+    {
+        _decoder->DecodePortOut(0x00FF, written, 0x0000);
+        const uint8_t value = _decoder->DecodePortIn(0x00FF, 0x0000);
+        EXPECT_EQ(value & 0x3F, 0x20 | (written & 0x1F)) << "written " << int(written);
+    }
+
+    _context->config.atm.evo_legacy_fpga = 1;
+    for (const uint8_t written : {0x00, 0x20, 0x35})
+    {
+        _decoder->DecodePortOut(0x00FF, written, 0x0000);
+        EXPECT_EQ(_decoder->DecodePortIn(0x00FF, 0x0000) & 0x3F, written & 0x3F) << "legacy, written " << int(written);
+    }
+}
+
+/// CLK-1: the clock select is taken over at the next M1 refresh, not at the OUT and not at the frame start
+TEST_F(PortDecoder_ATM3_Emu_Test, ClockSelectTakesEffectAtTheNextM1)
+{
+    EmulatorState& state = _context->emulatorState;
+    _decoder->DecodePortOut(0x0177, 0x03, 0x0000);  // 7 MHz first
+    _z80->Z80Step();
+    ASSERT_EQ(state.hw_turbo_ratio_applied, 2);
+
+    for (const uint16_t addr : {0x8000, 0x8001})
+        _z80->DirectWrite(addr, 0x00);  // NOP, NOP
+    _decoder->DecodePortOut(0x0177, 0x0B, 0x0000);  // bit 3: 14 MHz
+    EXPECT_EQ(state.hw_turbo_ratio, 4) << "selected";
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 2) << "not yet running at it";
+    EXPECT_EQ(state.evoTurboPending, 1);
+    EXPECT_NE(_z80->machineM1Hook, nullptr) << "the hook is attached while the switch is pending";
+
+    _z80->pc = 0x8000;
+    _z80->Z80Step();  // the next M1
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 4);
+    EXPECT_EQ(state.evoTurboPending, 0);
+    EXPECT_EQ(_z80->machineM1Hook, nullptr) << "and released again";
+}
+
+/// endregion </E8b: #FE / #FF reads and the clock-select timing>

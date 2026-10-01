@@ -143,7 +143,8 @@ types:
           9 GSResetCard, 10 GSReset, 11 PcKey - a physical PC key for the PS/2
           controller, key = PcKey, 12 NetEvent - a host network answer for a
           virtual-network socket, 13 NetLinkReset - every host connection
-          gone; their network fields live in the bit-10 section), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          gone; their network fields live in the bit-10 section, 14 Joystick - a
+          Kempston joystick state write, u1 buttonMask = the state byte), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -540,7 +541,10 @@ types:
           for the received bytes; the virtual network's guest-side tables -
           netstate.h),
           21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
-          22 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
+          22 EvoFontRam (ZX-Evo text-mode font RAM, 2 KB, and the glyph byte #0EBD reads: 2050 bytes),
+          23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
+          machines whose decoder answers #1F - ATM3, Scorpion, TS-Conf),
+          24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
           netstate::SerialPort; without a peer only the header and the UART registers and FIFOs).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are

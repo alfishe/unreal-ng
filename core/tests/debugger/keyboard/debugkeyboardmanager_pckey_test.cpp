@@ -38,10 +38,14 @@ TEST(DebugKeyboardManagerPcKey_Test, ComboOfTwoPcOnlyNamesReachesThePs2Controlle
     // Both names resolve to ZXKEY_NONE - before the fix, PressCombo/ReleaseCombo
     // pushed ZXKEY_NONE into the ZX key list and ApplyKey silently no-op'd it,
     // so the AVR's PS/2 log never grew at all
-    keys->PressCombo({"rshift", "f12"});
+    // The combo overloads (vector<ZXKeysEnum> / vector<std::string>) can't take
+    // a braced list of names directly: gcc calls it ambiguous (clang picks the
+    // string overload), so the vector is spelled out to pin the overload
+    const std::vector<std::string> tsconfSetup = {"rshift", "f12"};
+    keys->PressCombo(tsconfSetup);
     EXPECT_EQ(avr.GetPs2LogCount(), 2u) << "RightShift (0x59) + F12 (0x07) make codes, 1 byte each";
 
-    keys->ReleaseCombo({"rshift", "f12"});
+    keys->ReleaseCombo(tsconfSetup);
     EXPECT_EQ(avr.GetPs2LogCount(), 6u) << "+ 2 break codes (F0 + code), 2 bytes each, cumulative";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
@@ -59,7 +63,8 @@ TEST(DebugKeyboardManagerPcKey_Test, TapComboOfTwoPcOnlyNamesPressesAndReleases)
     DebugKeyboardManager* keys = emulator->GetDebugManager()->GetKeyboardManager();
     ASSERT_NE(keys, nullptr);
 
-    keys->TapCombo({"rshift", "f12"}, 2);
+    const std::vector<std::string> tsconfSetup = {"rshift", "f12"};
+    keys->TapCombo(tsconfSetup, 2);
     emulator->RunNFrames(5);  // comfortably past the tap's 2-frame hold: queued release fires
     EXPECT_EQ(avr.GetPs2LogCount(), 6u) << "2 make + 2 break bytes (RightShift) + 2 break... "
                                            "same totals as the immediate Press/ReleaseCombo test";

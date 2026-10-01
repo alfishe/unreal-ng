@@ -10,6 +10,7 @@
 #include "common/collectionhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "emulator/video/ulacontention.h"
 
@@ -300,13 +301,13 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     }
     else if (IsPort_KempstonJoystick(port))
     {
-        // Kempston Joystick stub until joystick peripheral is integrated:
-        // Active-high: D0=Right, D1=Left, D2=Down, D3=Up, D4=Fire.
-        // On physical hardware without a joystick attached, pulldown resistors return 0x00.
+        // Kempston Joystick: Joystick::Read(), active-high: D0=Right, D1=Left, D2=Down, D3=Up, D4=Fire.
+        // On physical hardware without a joystick attached, pulldown resistors return 0x00; with no
+        // device or an unfitted one the read stays 0x00.
         // In the Service Monitor, sub_0260h reads port #FF1F (LD BC,#FF1F; IN C,(C)).
-        // Returning 0x00 ensures Fire is released (D4=0), eliminating phantom autorepeat
+        // Idle 0x00 keeps Fire released (D4=0), eliminating phantom autorepeat
         // clicks (0x80) that cause the active menu item highlight to continuously blink/redraw.
-        result = 0x00;
+        result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
         _lastPortDecoded = true;
         disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;

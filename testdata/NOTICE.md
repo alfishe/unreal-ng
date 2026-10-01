@@ -23,6 +23,7 @@ Fixtures with a known license:
 | RZX expected states (`testdata/loaders/rzx/oracle/`, `cases/*.z80`): written by SkoolKit `rzxplay.py` from the recordings named in that folder's `README.md`; the cut recordings in `external/` and `cases/` are made from those recordings | unreal-ng (tools), the recordings' authors (contents) | as their sources |
 | SZX reference files (`testdata/loaders/szx/libspectrum/`): written by libspectrum from known values or from the snapshots named in that folder's `README.md` | unreal-ng (values), the snapshot authors (contents) | as their sources |
 | RZX recordings with SZX start snapshots (`testdata/loaders/rzx/szx/`): the `archive/` recordings re-written by libspectrum | the recordings' authors | as `testdata/loaders/rzx/archive/` |
+| Estex DSS for the Sprinter (`testdata/machines/sprinter/`, see its `README.md`): the DSS 1.60R release files in `dss160r/`, the DSS 1.62.92 boot floppy `dss_1_62_92.img` | 1.60R: Peters Plus Ltd; 1.62: the Sprinter community (app.sprinter.ru) | 1.60R: believed public domain (per the gitlab.com/sprinter-computer/dos README); 1.62 floppy: none stated (test material only) |
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,
 Satisfaction, Insult, Echology, Across the Edge, 7th Reality, the TR-DOS / FDI / UDI disk images, the TurboSound FM

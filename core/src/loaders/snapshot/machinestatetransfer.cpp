@@ -300,6 +300,7 @@ namespace
             case PeripheralId::NeoGS:
             case PeripheralId::MoonSound:
             case PeripheralId::KempstonMouse:
+            case PeripheralId::KempstonJoystick:
                 return true;
             default:
                 return false;

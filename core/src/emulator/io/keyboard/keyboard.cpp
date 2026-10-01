@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "stdafx.h"
 
@@ -429,8 +430,8 @@ void Keyboard::SubmitHostKey(ZXKeysEnum key, bool pressed)
 }
 void Keyboard::SubmitHostPcKey(PcKey key, bool pressed)
 {
-    // Machines without a PS/2 controller pay nothing: no journal entry, no call
-    if (!_ps2Sink)
+    // Machines without a PS/2 controller and a joystick binding for the key pay nothing: no journal entry, no call
+    if (!WantsPcKey(key))
         return;
 
     if (_context && _context->pTimeTravelManager)
@@ -446,16 +447,34 @@ void Keyboard::SubmitHostPcKey(PcKey key, bool pressed)
     ApplyPcKey(key, pressed);
 }
 
+bool Keyboard::WantsPcKey(PcKey key) const
+{
+    if (key == PcKey::None)
+        return false;
+    if (_ps2Sink)
+        return true;
+    return _context && _context->pJoystick && _context->pJoystick->WantsKey(key);
+}
+
 void Keyboard::ApplyPcKey(PcKey key, bool pressed)
 {
-    if (_ps2Sink && key != PcKey::None)
+    if (key == PcKey::None)
+        return;
+
+    // The same event feeds both consumers: a bound key still reaches the PS/2 controller (NedoOS reads
+    // the keypad there) and drives the joystick button
+    if (_ps2Sink)
         _ps2Sink->OnPcKey(key, pressed);
+    if (_context && _context->pJoystick)
+        _context->pJoystick->OnPcKey(key, pressed);
 }
 
 void Keyboard::ReleaseAllPcKeys()
 {
     if (_ps2Sink)
         _ps2Sink->ReleaseAllPcKeys();
+    if (_context && _context->pJoystick)
+        _context->pJoystick->ReleaseBoundKeys();
 }
 
 void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)

@@ -1094,6 +1094,18 @@ void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
         SetROMPageFlags();
 }
 
+/// Keep the read mapping of a RAM bank and send its writes to the trash page (ZX-Evo `#xBF7`)
+/// \param bank Z80 memory bank (window) 0-3
+void Memory::SetBankWriteProtected(uint8_t bank)
+{
+    if (bank > 3)
+        return;
+
+    _bank_write[bank] = _memory + TRASH_MEMORY_OFFSET;
+    // The writes no longer reach the page: left stale, time travel would journal them as writes to it
+    _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
+}
+
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page Page number (in 16KiB pages)
@@ -1217,25 +1229,33 @@ uint16_t Memory::GetROMPage()
     return GetROMPageFromAddress(_bank_read[0]);
 }
 
+/// The RAM page a RAM bank maps. The cache holds kPhysPageNone for a write-protected bank (its writes are not
+/// the page's), so the page comes from the read pointer then
+uint16_t Memory::MappedRAMPage(uint8_t bank)
+{
+    const ttd::PhysPage cached = _bank_ram_page_cache[bank];
+    return cached != ttd::kPhysPageNone ? cached : GetRAMPageFromAddress(_bank_read[bank]);
+}
+
 uint16_t Memory::GetRAMPageForBank0()
 {
     // Use cache if bank mode is RAM (cache is kPhysPageNone for ROM)
-    return _bank_mode[0] == BANK_RAM ? _bank_ram_page_cache[0] : MEMORY_UNMAPPABLE;
+    return _bank_mode[0] == BANK_RAM ? MappedRAMPage(0) : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank1()
 {
-    return _bank_mode[1] == BANK_RAM ? _bank_ram_page_cache[1] : MEMORY_UNMAPPABLE;
+    return _bank_mode[1] == BANK_RAM ? MappedRAMPage(1) : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank2()
 {
-    return _bank_mode[2] == BANK_RAM ? _bank_ram_page_cache[2] : MEMORY_UNMAPPABLE;
+    return _bank_mode[2] == BANK_RAM ? MappedRAMPage(2) : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank3()
 {
-    return _bank_mode[3] == BANK_RAM ? _bank_ram_page_cache[3] : MEMORY_UNMAPPABLE;
+    return _bank_mode[3] == BANK_RAM ? MappedRAMPage(3) : MEMORY_UNMAPPABLE;
 }
 
 ///
@@ -1264,7 +1284,7 @@ uint16_t Memory::GetRAMPageForBank(uint8_t bank)
     // Use cache (kPhysPageNone = not RAM); return MEMORY_UNMAPPABLE if bank is ROM
     if (_bank_mode[bank] == BANK_RAM)
     {
-        return _bank_ram_page_cache[bank];
+        return MappedRAMPage(bank);
     }
     return MEMORY_UNMAPPABLE;
 }
@@ -1782,10 +1802,11 @@ void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
     address = address & 0b0011'1111'1111'1111;
     uint8_t* baseAddress = nullptr;
 
-    if (_bank_mode[bank] == BANK_ROM)
+    if (_bank_mode[bank] == BANK_ROM || _bank_write[bank] == _memory + TRASH_MEMORY_OFFSET)
     {
         baseAddress = _bank_read[bank];  // Usually ROM is blocked from write so _bank_write[<bank>] pointer is set to
-                                         // fake region. Use read address
+                                         // fake region. Use read address (a write-protected RAM bank is the same:
+                                         // a tool's poke is not the CPU's write the protect is about)
     }
     else
     {

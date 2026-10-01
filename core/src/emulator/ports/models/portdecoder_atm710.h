@@ -113,6 +113,10 @@ public:
     // DOSEN || SYSEN line, ATM3 the manager/shaden line
     virtual bool IsPaletteWriteEnabled();
 
+    /// Where the low bit of each palette channel comes from: false = the data byte (the DD scheme, 2 bits per
+    /// channel), true = the port's high address byte (ZX-Evo `#BF` bit 5, 4 bits per channel)
+    virtual bool PaletteLowBitsFromAddress() const { return false; }
+
     uint16_t decodePort(uint16_t port);
     /// endregion </Port detection>
 

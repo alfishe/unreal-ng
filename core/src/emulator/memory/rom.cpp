@@ -52,6 +52,15 @@ ROM::ROM(EmulatorContext* context)
     _signatures.insert({ "e21d37271d087eab5ef8f88d8f3a58c8c19da1fa857b9790eaa974b231db9e13", "TR-DOS v5.04T ROM" });                                // 16Kb
     _signatures.insert({ "1ef928538972ed8f0425c4469f3f471267393f7635b813f000de0fec4ea39fa3", "TR-DOS v5.04TM ROM" });                               // 16Kb
     _signatures.insert({ "075c87ddb55a2fb633373e2d7c834f03e5d44b9b70889499ece732f377f5d224", "TR-DOS v5.13f ROM" });                                // 16Kb
+
+    // Peters Plus Sprinter Sp2000 BIOS 3.04 (data/rom/sprinter/sp2k-3.04.rom, CRC32 1729cb5c); ROM pages
+    // 1-7 and 9-11 are empty. The ZXMAK2 copy (CRC32 a3970620) differs only in the page 0 checksum and
+    // the page 8 board-id byte. See docs/disasm/rom/sprinter/README.md
+    _signatures.insert({ "2dfc60fee11069e86b96457c133d17acfe626c07b5dd303ffe87711bf488ef07", "Sprinter BIOS 3.04 page 0 (disk drivers, SETUP)" });     // 16Kb
+    _signatures.insert({ "f6b3a9e55be7f2698605f6cbcd9458f0c4da1769c17c5945cbf759759ae8d01d", "Sprinter BIOS 3.04 page 0 (ZXMAK2 variant)" });          // 16Kb
+    _signatures.insert({ "d079c4d77ba25753a185134e5d265df3fd649377925564575206b0dc720781df", "Sprinter BIOS 3.04 page 8 (BIOS proper, EXP)" });       // 16Kb
+    _signatures.insert({ "829b2439ae2245abdfa2ccf8acdd10b834e5592918fab34416f7fe0f91498caa", "Sprinter BIOS 3.04 page 8 (ZXMAK2 variant)" });          // 16Kb
+    _signatures.insert({ "bad3cfd31990ad8d55cda29d6b2ff0a32185832ec5042043fcf15d83127796c4", "Sprinter BIOS 3.04 page 12 (PLD loader, bitstream)" });  // 16Kb
 	//_signatures.insert({ "", "" });
 }
 

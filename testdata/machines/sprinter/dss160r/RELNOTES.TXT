@@ -1,0 +1,83 @@
+Estex DSS 1.6 Release - Release Notes
+
+                 Overview of New Features in DSS 1.6
+
+ The release notes for Estex DSS 1.6-RELEASE contain a summary of the changes made to the Estex DSS base system since 1.55-RELEASE.
+
+ What's New
+ ============
+
+ Now we release a new system feature as System Environment. It's the ability to use environment variables in batch files. These variables can be referenced by surrounding the variable with percent symbols (%).
+Also it allow to improve program launching. By special %PATH% variable which contain list of directories for search executable files.
+
+ Command Processor (SYSTEM.EXE) Enhancements
+ =============================================
+
+* Added new built-in command PATH. To specify, display the current search path.
+
+* Added new built-in command SET. To displays, sets, or removes system environment variables.
+
+* Added environment variable substitution %VAR%.
+
+* Added command line parameters substitution %1...%9 and %0.
+
+* Fixed bug in batch-parser. Sometimes, it could merge two lines in a batch-file.
+
+ User's Commands Enhancements
+ ============================
+
+* Added new external command ATTRIB. Show/Change file(s) or directory attributes.
+
+* Added new external command BOOT. Puts bootstrap record to the disk.
+
+* Added new external command CDX. CDROM extension.
+
+* Added new external command COPY. Copy a file.
+
+* Added new external command FVIEW. View a text file.
+
+* Added new external command IF. Exitcode condition.
+
+* Added new external command INPUT. Input environment variable.
+
+* Added new external command KEYBOARD. Keyboard control.
+
+* Added new external command MENU. User menu.
+
+* Added new external command RAMDRIVE. Create 720K RAM-drive.
+
+ System Kernel Enhancements
+ ============================
+
+* Added new DSS function DSS_ENVIRON (46h) with three subfunctions for System Environment.
+
+* Added new DSS function DSS_APPINFO (47h) with three subfunctions for getting application related information.
+
+* Improved DSS functions DSS_CREATE (0Ah), DSS_CREAT_N (0Bh). Now it masked incorrect attribute values.
+
+* Improved DSS function DSS_ATTRIB (16h). Now it allow to change attributes for directory.
+
+* Improved DSS function DSS_EXEC (40h) subfunction 0. Now it use PATH variable.
+
+* Improved DSS functions DSS_WINCOPY (59h), DSS_WINREST (5Ah).
+
+* Improved DSS function DSS_ECHOKEY (32h). Added visualization of blinked cursor.
+
+* Fixed bug in DSS function DSS_ATTRIB (16h). With system attribute.
+
+* Fixed bug in DSS function DSS_CHDIR (1Dh). Bug with "CD ." in root directory.
+
+* Fixed bug in DSS function DSS_EXEC (40h). Incorrect PID with execute failure.
+
+* Fixed bug in DSS function DSS_SCROLL (55h). Bug when A=0.
+
+* Fixed bug with filename parsing.
+
+* Fixed bug in DSS function DSS_PUT_D_T (18h). It's not updated date and time if file hasn't changes between OPEN and CLOSE calls.
+
+* And also some other internal changes and improvements.
+
+--------------------------------------------------------------------
+ For more information, suggestions or comments, please contact sprinter@petersplus.ru
+
+(c) 2003 PETERS PLUS LTD

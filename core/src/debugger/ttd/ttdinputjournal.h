@@ -96,11 +96,14 @@ enum class TTDInputKind : uint8_t
     // the machine's virtual network sees it. The bytes (received data) live in
     // the journal's payload store, referenced by payloadOffset / payloadLength
     NetEvent,           ///< host network event for one virtual-network socket (netIndex -> TTDNetInput + payload)
-    NetLinkReset        ///< every host connection of the virtual network is gone (seek / resume from the past)
+    NetLinkReset,       ///< every host connection of the virtual network is gone (seek / resume from the past)
+
+    Joystick            ///< Kempston joystick state write (buttonMask = the whole state byte, active high);
+                        ///< automation input. A host key bound to a button travels as PcKey instead
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NetLinkReset;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::Joystick;
 
 struct TTDInputEvent
 {
@@ -110,7 +113,7 @@ struct TTDInputEvent
     bool         pressed = false;  ///< Key / PcKey: true = press, false = release
     int16_t      dx = 0;      ///< MouseMove: delta X; MouseCounters: X value
     int16_t      dy = 0;      ///< MouseMove: delta Y; MouseCounters: Y value
-    uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask
+    uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask; Joystick: the state byte, active high
     int8_t       wheelSteps = 0;     ///< MouseWheel: notches
     uint8_t      value = 0;          ///< GSCommand / GSData: the byte written
 

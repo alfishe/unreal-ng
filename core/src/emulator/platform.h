@@ -717,6 +717,13 @@ struct CONFIG
 		char mousescale;
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
 		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
+		/// Kempston joystick: [INPUT] Joystick=KEMPSTON|NONE (1 = fitted) and JoystickKeys= (button:key list).
+		/// joystickConfigured / joystickKeysConfigured are false without an ini: the device stays fitted and
+		/// the default keypad bindings apply; an empty JoystickKeys= is configured and disables the keys
+		uint8_t joystick;
+		bool joystickConfigured;
+		bool joystickKeysConfigured;
+		char joystickKeys[160];
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -1169,6 +1176,13 @@ struct EmulatorState
 		}
 		atmBorderBright = 0;
 	}
+	// Text-mode font RAM (ATM Turbo 2+ renders from it too, nothing writes it there). Address = code * 8 + row,
+	// the FPGA's read address {char, row}; the built-in font (stored row * 256 + code) is copied in by
+	// InitAtmFont. ZX-Evo #BF bit 2 mirrors every memory write into it (EvoFontOverlay). atmFontByte is the
+	// glyph byte the text renderer fetched last, what #0EBD reads back (#FF until a text frame is drawn)
+	uint8_t atmFontRam[2048];
+	uint8_t atmFontByte;
+	void InitAtmFont();
 	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
@@ -1188,9 +1202,13 @@ struct EmulatorState
 	uint8_t pBE, pBF;
 	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
 	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
-	// bit 1 = swap due before the next opcode fetch; evoVgDrive = drive from the last OUT (#FF)
+	// bit 1 = swap due before the next opcode fetch; evoVgSys = D5..D0 of the last OUT (#FF) (the VG93 system latch: drive D1..D0, reset, HLT, side)
 	uint8_t evoTrdemu;
-	uint8_t evoVgDrive;
+	uint8_t evoVgSys;
+	// ZX-Evo #xBF7 write protect: bit i = window i of map 0, bit 4 + i = window i of map 1 (the #12BD order)
+	uint8_t evoWrProt;
+	// ZX-Evo clock select written, taken over by the CPU clock at the next M1 refresh (zclock.v int_turbo)
+	uint8_t evoTurboPending;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

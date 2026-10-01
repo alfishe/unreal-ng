@@ -17,12 +17,15 @@ namespace videomap
 class MemView
 {
 public:
-    explicit MemView(Memory* memory) : _memory(memory) {}
+    /// @param atmFontRam the text font RAM (EmulatorState::atmFontRam, code * 8 + row); its table offsets are the
+    /// font's own layout, row * 256 + code
+    explicit MemView(Memory* memory, const uint8_t* atmFontRam = nullptr) : _memory(memory), _atmFontRam(atmFontRam) {}
     /// Byte of a memory source (Ram, InternalTable); 0 for spaces without storage here
     uint8_t Read(const SourceRef& ref) const;
 
 private:
     Memory* _memory = nullptr;
+    const uint8_t* _atmFontRam = nullptr;
 };
 
 class IVideoMapper
