@@ -530,15 +530,23 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
         return !tag.empty() && std::find(info.tags.begin(), info.tags.end(), tag) != info.tags.end();
     };
 
-    // The first empty slot of that kind (a preferred one first); else the
-    // default one: the slot tagged "primary", else the first of the kind
+    // The first empty slot of that kind (a preferred one first, and among
+    // those the one tagged "primary": an SD image on a ZX-Evo with NeoGS goes
+    // to the Z-Controller card, not to the add-on); else the default one: the
+    // slot tagged "primary", else the first of the kind
+    const SlotInfo* preferred = nullptr;
     for (const SlotInfo& info : slots)
     {
         if (info.descriptor.kind == kind && !info.present && !info.pending && tagged(info, preferTag))
         {
-            slotId = info.descriptor.id;
-            return MediaResult::Success();
+            if (!preferred || (tagged(info, "primary") && !tagged(*preferred, "primary")))
+                preferred = &info;
         }
+    }
+    if (preferred)
+    {
+        slotId = preferred->descriptor.id;
+        return MediaResult::Success();
     }
     const SlotInfo* fallback = nullptr;
     for (const SlotInfo& info : slots)

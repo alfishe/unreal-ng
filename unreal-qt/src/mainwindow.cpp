@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "emulator/media/mediacontrol.h"
 #include "emulator/media/modelswitch.h"
 
 #include <QWindow>
@@ -2123,8 +2124,16 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
     SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
     std::string file = filePath.toStdString();
 
-    // Auto-start emulator if not running (except for symbol files which don't need it)
+    // Auto-start emulator if not running (except for symbol files which don't need it). A CD, hard disk
+    // or card image does not say which machine it is for: it never starts one
     bool freshlyStarted = false;
+    if (!_emulator && category == FileStorage)
+    {
+        QMessageBox::information(this, tr("Insert Medium"),
+                                 tr("Start a machine with a slot for %1 first: the image does not say which machine it is for.")
+                                     .arg(QFileInfo(filePath).fileName()));
+        return;
+    }
     if (!_emulator && category != FileSymbol && category != FileUnknown)
     {
         freshlyStarted = true;
@@ -2243,6 +2252,19 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             else
             {
                 qWarning() << "Cannot load disk - emulator not running:" << filePath;
+            }
+            break;
+        case FileStorage:
+            if (_emulator)
+            {
+                // The media manager picks the slot of the image's kind (a CD-ROM drive for an ISO, an IDE
+                // unit for a hard disk, an SD slot for a card) and refuses when the machine has none
+                MediaRequest request{"insert", "auto", file, {{"async", "true"}}};
+                const MediaReply reply = MediaControl(_emulator->GetContext()).Execute(request);
+                if (!reply.result.Ok())
+                    QMessageBox::warning(this, tr("Insert Medium"), QString::fromStdString(reply.result.message));
+                else
+                    qInfo() << "Inserted into" << QString::fromStdString(reply.slot) << ":" << filePath;
             }
             break;
         case FileSymbol:
