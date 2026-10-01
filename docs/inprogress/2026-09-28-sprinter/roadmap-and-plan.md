@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done except the MAME captures (2026-10-01, branch `sprinter-s0`); S1-S7 not started. PLAN row **#59** (T4); its shared prerequisites are row **#60** |
+| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done except the MAME captures (2026-10-01, branch `sprinter-s0`); **S1 done** (2026-10-01, branch `sprinter-s1`); S2-S7 not started. The owner started the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"). PLAN row **#59** (T4); its shared prerequisites are row **#60** |
 | **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, its tests passing; nothing is committed without an explicit request |
 | **Inputs** | [goals-and-requirements.md](goals-and-requirements.md) (ACC-*), [technical-design.md](technical-design.md), [test-plan.md](test-plan.md) |
 
@@ -39,7 +39,7 @@ earlier.
 | Phase | Content | Acceptance / tests | Size | Blocked by |
 |---|---|---|---|---|
 | **S0** | Provisioning: BIOS 3.04 (+3.06) in `data/rom/sprinter/` + README entry (3.04 source: HW-2000 `fw/bios/sp2k-3.04.253.bin`, [materials.md](materials.md) §5); **disassembly of ROM pages 8 and 0 of 3.04**, cross-checked against BIOS-TT `0271ac3`, into `docs/disasm/rom/sprinter/`, symbols into `data/symbols/sprinter/`; the loader traced once to capture the exact bitstream write count (Q4); the PLD (AHDL) sources checked for the accelerator INT-suspend (Q3); DSS 1.62 floppy and DSS 1.60R files in `testdata/machines/sprinter/` + `testdata/NOTICE.md`; add BIOS-TT, Shared_Includes, DSS and the PLD sources to the local emulator corpus; reference captures from MAME (page `#40` after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port accesses of BIOS 3.04 with codes); a small script that decodes a port-table page into the table of HW §4.4 | reference files checked in; decoded table equals HW §4.4; disassembly and symbol files in place. **Status 2026-10-01: done except the MAME captures** (branch `sprinter-s0`): BIOS 3.04 in `data/rom/sprinter/` (3.06 not found publicly, recorded in `data/rom/README-ROMS.md`); listings of pages 8, 0, SETUP and the loader in [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md), symbols in `data/symbols/sprinter/`; port-table decoder `tools/sprinter/dcp-table.py`, 3.04 table checked (HW §4.4: three differences to the BIOS-TT table); Q4 = 473 720 writes (static, tdd-ports-memory §6); Q3 = the PLD has the INT-suspend (tdd-accel-sound-input §1.3); DSS fixtures in `testdata/machines/sprinter/` + real-floppy WD1793 tests. **Deferred, needs MAME** (not installed; owner: do not install): page `#40` after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port accesses with codes, a runtime trace of the loader (confirms the 473 720 count and the end of configuration) | S-M | — (can start now) |
-| **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened") | L | S0; PLAN #60; TSConf (#41) landed |
+| **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened"). **Status 2026-10-01: done** (branch `sprinter-s1`, see [§6](#6-s1-outcome-2026-10-01)) | L | S0; PLAN #60 |
 | **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save) | L | S1 |
 | **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density: the `#BD` latch (codes `#16`/`#17`) wired to the WD1793 `Latched` clock policy via `WD1793::SetLatchedClock` (built 2026-09-29, commits `64756638`, `f304dde1`), `LoaderRawPcFloppy` from PLAN #60(f); TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD) | M | S1 |
 | **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image) | S-M | S1; IDE R1-1 (PLAN #13a) |
@@ -119,3 +119,65 @@ Shared-infrastructure decisions from the same round:
 | CMOS | `Ds12887` becomes the shared MC146818 core, extracted from the ATM3 `CMOS`; ATM3, Profi, SMUC and the ZX-Evo AVR clock migrate onto it in a separate task before the Sprinter | [tdd-storage.md](tdd-storage.md) §4 |
 | Other hooks | accepted as designed: write intercept, interrupt source + `OnReti()`, cache pages 2 → 4, per-model `Screen`, WD1793 rate check (built 2026-09-29 as the `Latched` clock policy), raw PC floppy loader, `BootProfile` in `HostFolderFat`, port trace with internal code | [technical-design.md](technical-design.md) §2 |
 | Sequencing | the Sprinter is the last machine program; PLAN row #59 (T4, trigger TSConf #41 landed); shared pieces in row #60 before TSConf | §4 |
+
+## 6. S1 outcome (2026-10-01)
+
+Branch `sprinter-s1`. `SPRINTER` is creatable (model table, `data/configs/sprinter/unreal.ini`,
+`[ROM] SPRINTER=rom/sprinter/sp2k-3.04.rom` loaded as 16 pages, 4 MB RAM, fast RAM = the 4 cache
+pages). BIOS 3.04 cold start, both with the fast start and with the full start through the ROM's
+PLD loader, reaches its boot prompt:
+
+```text
+Model name: Sprinter                    Sprinter BIOS: ver 3.04.253
+Memory    : 4096K                       All Rights Reserved
+CMOS      : Found, 19:44:19             Press <ALT> for Alt. System Disk
+WARNING! CMOS CHECKSUM ERROR, INSTALL DEFAULT VALUES!
+ Detecting IDE Primary Master   ... None
+ Detecting IDE Primary Slave    ... None
+Start from Hard disk...fail
+Alternative Start from Diskette...fail
+PRESS <ENTER> TO REBOOT, <ESC> TO CANCEL . . .
+```
+
+(read back from the video RAM mode table: a text square's Mode1 byte is the character code;
+`SprinterBoot_Test.Bios304_ReachesTheBootMenu`, ~0.3 s with the turbo mode).
+
+| Item | Where | Tests |
+|---|---|---|
+| `PortDecoder_Sprinter`: page `#40` lookup, code dispatch through the configuration module, cells `#C0-#FF` with the CNF clean rules, start-up gate, the "nailed" `#3C/#7C`, `#5C`, `#FB/#7B` decodes, the TR-DOS signal by M1 fetch (`#3Dxx` / `≥ #4000`), port waits | `core/src/emulator/ports/models/portdecoder_sprinter.*` | `portdecoder_sprinter_test.cpp` (T-DCP-1..8, T-MEM-1/2, T-RTC-1..3) |
+| `SprinterPldConfiguration` registry, `SprinterPldStandard`, bitstream sink (473 720 writes, MAME head hash + FNV-1a full hash, 300-frame watchdog), fast start, reload `#2E` | `core/src/emulator/ports/models/sprinter/` | `sprinterpldconfig_test.cpp` (T-CFG-1..6 incl. the full-start / fast-start equivalence on the real ROM), `sprinterpldconfiguration_test.cpp` (T-PLDM-1, 2, 4, 5 with a stub module) |
+| `SprinterMemory`: MAME's bank formula, graphics pages, the Spectrum screen shadow, reset page `#A0`, ISA view, fast RAM, the loader layout (ROM `#C-#F`, fast RAM above the Z84C15 CS0 boundary) | `core/src/emulator/memory/sprinter/` | `sprintermemory_test.cpp` (T-MEM-3..9; window 0 over all 256 combinations against a transcription of MAME's formula) |
+| `SprinterWaits` (MAME's phase rule, memory 3 / port 4) on `MemoryWaitOverlay`, installed only at 21 MHz | `memory/sprinter/sprinterwaits.h` | `sprinterwaits_test.cpp` (T-MEM-10) |
+| `SprinterVideoRam` (256 KB, the INT-byte notification) and `SprinterIntSource` (MAME's `update_int`, 32 T pulse) | `core/src/emulator/video/sprinter/` | `sprintervideoram_test.cpp`, `sprinterintsource_test.cpp` |
+| Z84C15 package: SIO (async, RR0/RR1/RR2, 3-byte FIFO), CTC (timer readback), PIO register file, system registers + chip selects, WDT registers | `core/src/emulator/io/z84c15/` | `z84sio_test.cpp`, `z84ctc_test.cpp`, `z84pio_test.cpp` (T-Z84) |
+| `Ds12887` at codes `#1C/#1D/#1E`, 128 cells, century `#32`, `[SPRINTER] CmosFile` | decoder | T-RTC-1..3 |
+| Isolation | `sprinterisolation_test.cpp` | the TSConf precedent |
+
+Findings and deviations from the design (applied in the documents named):
+
+- **"DCP opened" is the IN at page 8 `#0CD8`**, the last instruction of `DcpInit`, not `#0258`
+  (exp README step 3 said "then `IN A,(#E2)`"; both are right, the first IN is DcpInit's own).
+- **Page `#40` at the boot prompt equals the static 3.04 table** (CRC `b7f09600`) byte for byte:
+  the run-time edits seen on the way (FnF8 `SET_PORTS` maps port `#0000` to cell `#EE` through
+  indexes `#000/#200`, SETUP's `ApplyScreenPosition` puts code `#CB` at `#0400`) are undone before
+  the prompt.
+- **The TR-DOS signal is S1 work, not S3a**: the BIOS reaches its functions through `#3D13`
+  (`ToBios3D13`), and FnF8 relies on the "DOS on" half of the table there. Without the M1 rule the
+  BIOS restarts itself in an endless POST loop. The decoder is the machine's M1 hook.
+- **IDE without a drive**: until the IDE adapter (S3b) the IDE codes read `#FF` (BSY set), as an
+  empty bus does on the shared IDE core; SETUP then waits ~31 s per unit ("Detecting IDE ...
+  [Press F4 to skip]"). The boot test presses F4 through the SIO (scan code `#0C`), which also
+  proves the keyboard path SETUP polls. Whether the board pulls DD7 low is open (MAME capture).
+- **TTD**: `PeripheralId::SprinterPld = 25` is declared without a serializer, so TTD refuses to
+  record the Sprinter until S7 instead of recording a state it cannot restore; the CMOS uses the
+  shared id 18. The ids of tdd-integration §2.1 are therefore 25 (PLD) and up.
+- **INT acknowledge**: one INT per pulse (the acknowledge ends it); MAME keeps the line for the
+  full 32 T. Unverified (PLD source to check); matters only for handlers shorter than 32 T.
+- **Z84C15 system registers survive the PLD's CPU reset** (MAME sets them at device start only);
+  they matter only while the PLD loads (the chip selects).
+- **Frame length**: codes `#2C/#2D` are stored and feed the INT list; the frame itself stays
+  71 680 T until the renderer (S2).
+- **Not in S1** (as planned): renderer, WD1793 density latch, `#1F` operand rewrite, IDE, keyboard
+  scan-code encoder and keyboard INT, accelerator, Covox-Blaster, CTC/SIO interrupts.
+- `[SPRINTER] CmosFile` ships commented out (as `[PROFI] NvramFile`), so a fresh machine shows
+  "CMOS CHECKSUM ERROR, INSTALL DEFAULT VALUES" like a real board with a flat battery.

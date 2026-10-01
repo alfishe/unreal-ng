@@ -21,6 +21,14 @@
 
 ## 2. PLD state
 
+> **Built in S1 (2026-10-01):** `core/src/emulator/ports/models/sprinter/sprinterpldstate.h`. Two
+> differences to the sketch below: the flags are separate bytes (`romOff`, `ramSys`, `sysPg`,
+> `arom16`, `turbo`, `turboHard`, `cacheOn`, `dos`, padding-free, 112 bytes), and the cleaned
+> `#1FFD` / `#7FFD` values are kept as `sc` / `pn` next to the raw cells `#C0` / `#C1`, as MAME does
+> (a cell reads back the raw value). The `/DOS` signal by M1 fetch (§3.1 index bit 10) is S1 work:
+> BIOS 3.04 calls its functions through `#3D13` and needs the "DOS on" half of the table there
+> ([roadmap-and-plan.md](roadmap-and-plan.md) §6).
+
 ```cpp
 struct SprinterPldState            // POD, static_assert on size (TTD blob)
 {

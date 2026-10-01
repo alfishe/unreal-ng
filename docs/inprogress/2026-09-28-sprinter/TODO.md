@@ -1,10 +1,9 @@
 # TODO — Peters Plus Sprinter Sp2000 machine support
 
 **Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done except the
-MAME captures** (2026-10-01, branch `sprinter-s0`); S1-S7 not started.
-PLAN.md row **#59** (T4, trigger: TSConf #41 landed); the shared pieces this design introduced
-are PLAN row **#60** (shared infrastructure, before TSConf). The Sprinter is the last machine
-program; only S0 can start earlier.
+MAME captures** (2026-10-01, branch `sprinter-s0`); **S1 done** (2026-10-01, branch
+`sprinter-s1`); S2-S7 not started. PLAN.md row **#59**: the owner started the program on
+2026-10-01 (TSConf exists); the shared pieces this design introduced are PLAN row **#60** (done).
 
 ## Goal
 
@@ -43,6 +42,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     500 kbit/s
   - [x] Sprinter sources added to the local corpus ([materials.md](materials.md))
 
+- [x] S1 (2026-10-01, branch `sprinter-s1`; outcome and deviations in
+  [roadmap-and-plan.md](roadmap-and-plan.md) §6): creatable `SPRINTER`; `PortDecoder_Sprinter`,
+  `SprinterMemory`, the configuration modules (Standard + a test stub), the bitstream sink and
+  fast start, `SprinterVideoRam` + `SprinterIntSource`, the Z84C15 package, the CMOS, the turbo
+  waits, the TR-DOS M1 signal; BIOS 3.04 reaches its boot prompt with the fast and the full start
+  (ACC-1a); page `#40` at the prompt equals the static 3.04 table
+
 ## Remaining
 
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
@@ -66,7 +72,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
   off before the PLD check).
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
-- Unverified items to settle first (S0/S1): palette byte order, watchdog use by the BIOS,
-  keyboard commands from the BIOS, Z84C15 interrupt use.
+- Unverified items: palette byte order (S2). Settled in S1: BIOS 3.04 never programs the Z84C15
+  watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no
+  Z84C15 interrupts, the keys are polled in the frame INT). Still open: whether the board pulls IDE
+  DD7 low with no drive (S1 reads `#FF`, SETUP waits ~31 s per unit unless F4); whether the PLD
+  ends the INT at the acknowledge (S1) or after 32 T (MAME); the runtime CONF_DONE timing (S1's
+  full start resets after write 473 720 and boots, consistent with the static count).
+- S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
+  then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
   against MAME.
