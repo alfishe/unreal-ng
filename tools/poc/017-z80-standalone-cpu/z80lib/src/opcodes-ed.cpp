@@ -1,0 +1,1402 @@
+// opcodes-ed.cpp - ED prefix opcodes, ported from core op_ed.cpp.
+
+#include "z80cpu-internal.h"
+#include "z80cpu-opcodes.h"
+
+/// region <Information>
+
+// There are ED prefixed undocumented commands (synonyms to existing documented ones)
+// See: http://www.z80.info/zip/z80-documented.pdf
+// See: http://www.z80.info/z80undoc3.txt
+//    1.4) ED Prefix [1]
+//
+//    There are a number of undocumented EDxx instructions, of which most are
+//            duplicates of documented instructions. Any instruction not listed has
+//    no effect (just like 2 NOP instructions).
+//
+//    The complete list except for the block instructions: (* = undocumented)
+//
+//    ED40   IN B,(C)                 ED60   IN H,(C)
+//    ED41   OUT (C),B                ED61   OUT (C),H
+//    ED42   SBC HL,BC                ED62   SBC HL,HL
+//    ED43   LD (nn),BC               ED63   LD (nn),HL
+//    ED44   NEG                      ED64 * NEG
+//    ED45   RETN                     ED65 * RETN
+//    ED46   IM 0                     ED66 * IM 0
+//    ED47   LD I,A                   ED67   RRD
+//    ED48   IN C,(C)                 ED68   IN L,(C)
+//    ED49   OUT (C),C                ED69   OUT (C),L
+//    ED4A   ADC HL,BC                ED6A   ADC HL,HL
+//    ED4B   LD BC,(nn)               ED6B   LD HL,(nn)
+//    ED4C * NEG                      ED6C * NEG
+//    ED4D   RETI                     ED6D * RETN
+//    ED4E * IM 0                     ED6E * IM 0
+//    ED4F   LD R,A                   ED6F   RLD
+//
+//    ED50   IN D,(C)                 ED70 * IN (C) / IN F,(C)
+//    ED51   OUT (C),D                ED71 * OUT (C),0
+//    ED52   SBC HL,DE                ED72   SBC HL,SP
+//    ED53   LD (nn),DE               ED73   LD (nn),SP
+//    ED54 * NEG                      ED74 * NEG
+//    ED55 * RETN                     ED75 * RETN
+//    ED56   IM 1                     ED76 * IM 1
+//    ED57   LD A,I                   ED77 * NOP
+//    ED58   IN E,(C)                 ED78   IN A,(C)
+//    ED59   OUT (C),E                ED79   OUT (C),A
+//    ED5A   ADC HL,DE                ED7A   ADC HL,SP
+//    ED5B   LD DE,(nn)               ED7B   LD SP,(nn)
+//    ED5C * NEG                      ED7C * NEG
+//    ED5D * RETN                     ED7D * RETN
+//    ED5E   IM 2                     ED7E * IM 2
+//    ED5F   LD A,R                   ED7F * NOP
+//
+//    The ED70 instruction reads from I/O port C, but does not store the result.
+//    It just affects the flags like the other IN x,(C) instruction. ED71 simply
+//    outs the value 0 to I/O port C.
+//
+//    The ED63 is a duplicate of the 22 instruction (LD (nn),HL) just like the
+//    ED6B is a duplicate of the 2A instruction. Of course the timings are
+//    different. These instructions are listed in the official documentation.
+//
+//    According to Gerton Lunter (gerton@math.rug.nl):
+//    The instructions ED 4E and ED 6E are IM 0 equivalents: when FF was put
+//    on the bus (physically) at interrupt time, the Spectrum continued to
+//    execute normally, whereas when an EF (RST #28) was put on the bus it
+//    crashed, just as it does in that case when the Z80 is in the official
+//    interrupt mode 0.  In IM 1 the Z80 just executes a RST #38 (opcode FF)
+//    no matter what is on the bus.
+//
+//    [5] All the RETI/RETN instructions are the same, all like the RETN
+//    instruction. So they all, including RETI, copy IFF2 to IFF1. More information
+//    on RETI and RETN and IM x is in the part about Interrupts and I register (3).
+
+/// endregion </Information>
+
+// ED opcodes
+
+Z80OPCODE ope_40(Z80CPU *cpu) { // in b,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->b = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->b] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_41(Z80CPU *cpu) { // out (c),b
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->b);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_42(Z80CPU *cpu) { // sbc hl,bc
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl;
+    int32_t bc = cpu->bc;
+
+    int32_t halfHL = hl & 0x0FFF;  // Lower 12 bits for half-carry
+    int32_t halfBC = bc & 0x0FFF;
+
+    uint8_t flags = NF;
+    flags |= ((halfHL - halfBC - (cpu->af & CF)) >> 8) & 0x10; // HF
+
+    uint32_t result = hl - bc - (cpu->af & CF);
+    if (result & 0x10000)
+        flags |= CF;
+    if (!(result & 0xFFFF))
+        flags |= ZF;
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ bc) & 0x8000) && ((hl ^ result) & 0x8000))
+        flags |= PV;
+
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_43(Z80CPU *cpu) { // ld (nnnn),bc
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->wd(addr, cpu->c);
+    cpu->wd(addr + 1, cpu->b);
+
+    cpu->pc = pc;
+}
+
+Z80OPCODE ope_44(Z80CPU *cpu) { // neg
+   cpu->f = sbc_f[cpu->a];
+   cpu->a = -cpu->a;
+}
+
+Z80OPCODE ope_45(Z80CPU *cpu) { // retn
+   cpu->iff1 = cpu->iff2;
+
+   uint16_t sp = cpu->sp;
+
+   uint16_t addr = cpu->rd(sp++);
+   addr += 0x100 * cpu->rd(sp++);
+
+   cpu->last_branch = cpu->pc - 2;
+   cpu->pc = addr;
+   cpu->memptr = addr;
+
+   cpu->sp = sp;
+
+   // TODO: Is callback still needed?
+   cpu->retn();
+}
+
+Z80OPCODE ope_46(Z80CPU *cpu) { // im 0
+   cpu->im = 0;
+}
+
+Z80OPCODE ope_47(Z80CPU *cpu) { // ld i,a
+   cpu->i = cpu->a;
+
+   cputact(1);
+}
+
+Z80OPCODE ope_48(Z80CPU *cpu) { // in c,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->c = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->c] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_49(Z80CPU *cpu) { // out (c),c
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->c);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_4A(Z80CPU *cpu) { // adc hl,bc
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t bc = cpu->bc & 0xFFFF;
+
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfBC = bc & 0x0FFF;
+
+    // Calculate half-carry flag (HF)
+    uint8_t flags = ((halfHL + halfBC + (cpu->f & CF)) >> 8) & 0x10; // HF
+    uint32_t result = hl + bc + (cpu->f & CF);
+
+    if (result & 0x10000)
+        flags |= CF;
+    if (!(result & 0xFFFF))
+        flags |= ZF;
+
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ bc) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
+        flags |= PV;
+
+    // Store result back to registers
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3|F5|SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_4B(Z80CPU *cpu) { // ld bc,(nnnn)
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->c = cpu->rd(addr);
+    cpu->b = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
+}
+
+#define ope_4C ope_44   // neg
+
+Z80OPCODE ope_4D(Z80CPU *cpu) { // reti
+    cpu->iff1 = cpu->iff2;
+
+    uint16_t sp = cpu->sp;
+
+    uint16_t addr = cpu->rd(sp++);
+    addr += 0x100 * cpu->rd(sp++);
+
+    cpu->last_branch = cpu->pc - 2;
+    cpu->pc = addr;
+    cpu->memptr = addr;
+
+    cpu->sp = sp;
+}
+
+#define ope_4E ope_46  // im0 undocumented
+
+Z80OPCODE ope_4F(Z80CPU *cpu) { // ld r,a
+   cpu->r_low = cpu->a;
+   cpu->r_hi = cpu->a & 0x80;
+
+   cputact(1);
+}
+
+Z80OPCODE ope_50(Z80CPU *cpu) { // in d,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->d = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->d] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_51(Z80CPU *cpu) { // out (c),d
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->d);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_52(Z80CPU *cpu) { // sbc hl,de
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t de = cpu->de & 0xFFFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfDE = de & 0x0FFF;
+    int32_t carryAF = cpu->af & CF;
+
+    // Calculate half-carry flag
+    uint8_t flags = NF;
+    flags |= ((halfHL - halfDE - carryAF) >> 8) & 0x10; // HF
+
+    uint32_t result = hl - de - carryAF;
+    if (result & 0x10000)
+        flags |= CF;
+
+    if (!(result & 0xFFFF))
+        flags |= ZF;
+
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ de) & 0x8000) && ((hl ^ result) & 0x8000))
+        flags |= PV;
+
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_53(Z80CPU *cpu) { // ld (nnnn),de
+    uint16_t pc = cpu->pc;
+
+    // Read 2 bytes of address from memory
+    uint16_t adr = cpu->rd(pc++, true);
+    adr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = adr + 1;
+
+    // Write 2 bytes from DE to memory using fetched address
+    cpu->wd(adr, cpu->e);
+    cpu->wd(adr + 1, cpu->d);
+
+    cpu->pc = pc;
+}
+
+#define ope_54 ope_44 // neg
+#define ope_55 ope_45 // retn
+
+Z80OPCODE ope_56(Z80CPU *cpu) { // im 1
+    cpu->im = 1;
+}
+
+Z80OPCODE ope_57(Z80CPU *cpu) { // ld a,i
+   cpu->a = cpu->i;
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
+   cputact(1);
+}
+
+Z80OPCODE ope_58(Z80CPU *cpu) { // in e,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->e = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->e] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_59(Z80CPU *cpu) { // out (c),e
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->e);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_5A(Z80CPU *cpu) { // adc hl,de
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t de = cpu->de & 0xFFFF;
+
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfDE = de & 0x0FFF;
+
+    uint8_t flags = ((halfHL + halfDE + (cpu->af & CF)) >> 8) & 0x10; /* HF */
+    uint32_t result = hl + de + (cpu->af & CF);
+
+    if (result & 0x10000)
+       flags |= CF;
+    if (!(result & 0xFFFF))
+       flags |= ZF;
+
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ de) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
+       flags |= PV;
+
+    // Store result back to registers
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3|F5|SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_5B(Z80CPU *cpu) { // ld de,(nnnn)
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->e = cpu->rd(addr);
+    cpu->d = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
+}
+
+#define ope_5C ope_44   // neg
+#define ope_5D ope_4D   // reti
+
+Z80OPCODE ope_5E(Z80CPU *cpu) { // im 2
+   cpu->im = 2;
+}
+
+Z80OPCODE ope_5F(Z80CPU *cpu) { // ld a,r
+   cpu->a = (cpu->r_low & 0x7F) | cpu->r_hi;
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
+   cputact(1);
+}
+
+Z80OPCODE ope_60(Z80CPU *cpu) { // in h,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->h = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->h] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_61(Z80CPU *cpu) { // out (c),h
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->h);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_62(Z80CPU *cpu) { // sbc hl,hl
+   cpu->memptr = cpu->hl + 1;
+
+   uint8_t flags = NF;
+    flags |= (cpu->f & CF) << 4; // HF - copy from CF
+
+   uint32_t result = 0 - (cpu->af & CF);
+   if (result & 0x10000)
+       flags |= CF;
+   if (!(result & 0xFFFF))
+       flags |= ZF;
+
+   // never set PV
+   cpu->hl = result & 0xFFFF;
+   cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+   cputact(7);
+}
+
+#define ope_63 op_22 // ld (nnnn),hl
+#define ope_64 ope_44 // neg
+#define ope_65 ope_45 // retn
+#define ope_66 ope_46 // im 0
+
+Z80OPCODE ope_67(Z80CPU *cpu) { // rrd
+  uint8_t value = cpu->rd(cpu->hl);
+
+  cpu->memptr = cpu->hl + 1;
+
+  cputact(4);
+
+  cpu->wd(cpu->hl, (cpu->a << 4) | (value >> 4));
+
+  cpu->a = (cpu->a & 0xF0) | (value & 0x0F);
+  cpu->f = log_f[cpu->a] | (cpu->f & CF);
+}
+
+Z80OPCODE ope_68(Z80CPU *cpu) { // in l,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->l = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->l] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_69(Z80CPU *cpu) { // out (c),l
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->l);
+
+   cputact(3);
+}
+Z80OPCODE ope_6A(Z80CPU *cpu) { // adc hl,hl
+   cpu->memptr = cpu->hl + 1;
+
+   uint8_t flags = ((cpu->h << 1) & 0x10); // HF
+   unsigned result = (cpu->hl & 0xFFFF) * 2 + (cpu->af & CF);
+
+   if (result & 0x10000)
+       flags |= CF;
+   if (!(result & 0xFFFF))
+       flags |= ZF;
+
+   // P/V = overflow: signed result outside 16-bit signed range
+   int32_t signedResult = 2 * (int16_t)(cpu->hl & 0xFFFF) + (cpu->af & CF);
+   if (signedResult < -0x8000 || signedResult >= 0x8000)
+       flags |= PV;
+
+   cpu->hl = result & 0xFFFF;
+   cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+   cputact(7);
+}
+
+#define ope_6B op_2A // ld hl,(nnnn)
+#define ope_6C ope_44   // neg
+#define ope_6D ope_4D   // reti
+#define ope_6E ope_46   // im 0 (undocumented "IM 0/1" acts as IM 0; z80.info / FUSE)
+
+Z80OPCODE ope_6F(Z80CPU *cpu) { // rld
+  uint8_t value = cpu->rd(cpu->hl);
+
+  cpu->memptr = cpu->hl + 1;
+
+  cputact(4);
+
+  cpu->wd(cpu->hl, (cpu->a & 0x0F) | (value << 4));
+
+  cpu->a = (cpu->a & 0xF0) | (value >> 4);
+  cpu->f = log_f[cpu->a] | (cpu->f & CF);
+}
+
+Z80OPCODE ope_70(Z80CPU *cpu) { // in (c) - Undocumented. Reads from the port and affects flags, but does not store the value to a register
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->f = log_f[cpu->in(cpu->bc)] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_71(Z80CPU *cpu) { // out (c),0 - Undocumented. Writes zero to the port
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->outc0);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_72(Z80CPU *cpu) { // sbc hl,sp
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t sp = cpu->sp & 0xFFFF;
+
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfSP = sp & 0x0FFF;
+
+    uint8_t flags = NF;
+    flags |= ((halfHL - halfSP - (cpu->af & CF)) >> 8) & 0x10; // HF
+
+    uint32_t result = hl - sp - (cpu->af & CF);
+
+    if (result & 0x10000)
+        flags |= CF;
+    if (!(result & 0xFFFF))
+        flags |= ZF;
+
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ sp) & 0x8000) && ((hl ^ result) & 0x8000))
+        flags |= PV;
+
+    // Store result back to regusters
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_73(Z80CPU *cpu) { // ld (nnnn),sp
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->wd(addr, cpu->spl);
+    cpu->wd(addr + 1, cpu->sph);
+
+    cpu->pc = pc;
+}
+
+#define ope_74 ope_44 // neg
+#define ope_75 ope_45 // retn
+
+Z80OPCODE ope_76(Z80CPU *cpu) { // im 1
+   cpu->im = 1;
+}
+
+#define ope_77 op_00  // nop
+
+Z80OPCODE ope_78(Z80CPU *cpu) { // in a,(c)
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->a = cpu->in(cpu->bc);
+   cpu->f = log_f[cpu->a] | (cpu->f & CF);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_79(Z80CPU *cpu) { // out (c),a
+   cpu->memptr = cpu->bc + 1;
+
+   cputact(1);
+   cpu->out(cpu->bc, cpu->a);
+
+   cputact(3);
+}
+
+Z80OPCODE ope_7A(Z80CPU *cpu) { // adc hl,sp
+    cpu->memptr = cpu->hl + 1;
+
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t sp = cpu->sp & 0xFFFF;
+
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfSP = sp & 0x0FFF;
+
+    uint8_t flags = ((halfHL + halfSP + (cpu->af & CF)) >> 8) & 0x10; // HF
+
+    uint32_t result = hl + sp + (cpu->af & CF);
+
+    if (result & 0x10000)
+       flags |= CF;
+    if (!(uint16_t)result)
+       flags |= ZF;
+
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ sp) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
+       flags |= PV;
+
+    // Store result back to registers
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
+    cputact(7);
+}
+
+Z80OPCODE ope_7B(Z80CPU *cpu) { // ld sp,(nnnn)
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->spl = cpu->rd(addr);
+    cpu->sph = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
+}
+
+#define ope_7C ope_44   // neg
+#define ope_7D ope_4D   // reti
+#define ope_7E ope_5E   // im 2
+#define ope_7F op_00    // nop
+
+Z80OPCODE ope_A0(Z80CPU *cpu) { // ldi
+    uint8_t value = cpu->rd(cpu->hl++);
+
+    cpu->wd(cpu->de++, value);
+
+    value += cpu->a;
+    value = (value & F3) + ((value << 4) & F5);
+
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+
+    if (--cpu->bc)
+        cpu->f |= PV;
+
+    cputact(2);
+}
+
+Z80OPCODE ope_A1(Z80CPU *cpu) { // cpi
+   uint8_t cf = cpu->f & CF;
+
+   uint8_t value = cpu->rd(cpu->hl++);
+
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
+
+   if (--cpu->bc)
+	   cpu->f |= PV;
+
+   cpu->memptr++;
+
+   cputact(5);
+}
+
+Z80OPCODE ope_A2(Z80CPU *cpu) { // ini
+    // Based on Xpeccy emulator implementation
+    // Cycle order (Xpeccy "5 4in 3wr" / ZXMAK2): M1 stall T, IO read, memory write.
+    // 1T stall + 1T to reach IORQ at T2 of the IO cycle (see op_D3), then the
+    // remaining 3T of the IO cycle before the 3T memory write.
+    cpu->memptr = cpu->bc + 1;
+
+    cputact(2);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
+    cpu->wd(hl++, value);
+
+    // Decrement B
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    // T = M + ((C + 1) & 0xFF) for INI
+    uint16_t t = value + ((cpu->c + 1) & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_A3(Z80CPU *cpu) { // outi
+    // Based on Xpeccy emulator implementation
+    // Cycle order (Xpeccy "5 3rd 4wr" / ZXMAK2): M1 stall T, memory read, IO write.
+    // IORQ asserts at T2 of the IO cycle (see op_D3).
+    cputact(1);
+
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl);  // M = memory value
+
+    // Decrement B first
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    cpu->memptr = cpu->bc + 1;
+
+    cputact(1);
+    cpu->out(cpu->bc, value);
+    cputact(3);
+    hl++;
+
+    // T = M + L (output value of L)
+    uint16_t t = value + (hl & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_A8(Z80CPU *cpu) { // ldd
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
+
+    uint8_t value = cpu->rd(hl--);
+
+    cpu->wd(de--, value);
+
+    value += cpu->a;
+    value = (value & F3) + ((value << 4) & F5);
+
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+
+    if (--cpu->bc)
+        cpu->f |= PV;
+
+    cpu->hl = hl;
+    cpu->de = de;
+
+    cputact(2);
+}
+
+Z80OPCODE ope_A9(Z80CPU *cpu) { // cpd
+    uint8_t cf = cpu->f & CF;
+
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl--);
+
+    cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
+
+    if (--cpu->bc)
+        cpu->f |= PV;
+
+    cpu->hl = hl;
+
+    cpu->memptr--;
+
+    cputact(5);
+}
+
+Z80OPCODE ope_AA(Z80CPU *cpu) { // ind
+    // Based on Xpeccy emulator implementation
+    // Cycle order and IO phase: see ope_A2 (ini)
+    cpu->memptr = cpu->bc - 1;
+
+    cputact(2);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
+    cpu->wd(hl--, value);
+
+    // Decrement B
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    // T = M + ((C - 1) & 0xFF) for IND
+    uint16_t t = value + ((cpu->c - 1) & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_AB(Z80CPU *cpu) { // outd
+    // Based on Xpeccy emulator implementation
+    // Cycle order and IO phase: see ope_A3 (outi)
+    cputact(1);
+
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl);  // M = memory value
+
+    // Decrement B first
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    cpu->memptr = cpu->bc - 1;
+
+    cputact(1);
+    cpu->out(cpu->bc, value);
+    cputact(3);
+    hl--;
+
+    // T = M + L (output value of L)
+    uint16_t t = value + (hl & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_B0(Z80CPU *cpu) { // ldir
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
+
+	uint8_t value = cpu->rd(hl++);
+
+	cpu->wd(de++, value);
+
+    value += cpu->a;
+    value = (value & F3) + ((value << 4) & F5);
+
+	cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+
+	if (--cpu->bc)
+	{
+		cpu->f |= PV;
+		cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+		// Interrupted block instruction: YF=PC.13, XF=PC.11
+		cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+		cputact(7);
+
+		cpu->memptr = cpu->pc + 1;
+	}
+	else
+	{
+		cputact(2);
+	}
+
+	cpu->hl = hl;
+	cpu->de = de;
+}
+
+Z80OPCODE ope_B1(Z80CPU *cpu) { // cpir
+   cpu->memptr++;
+
+   uint8_t cf = cpu->f & CF;
+
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl++);
+
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
+
+   // Set PV flag and XF/YF from PC BEFORE any cputact calls
+   // so interrupts occurring during cycles see correct flags
+   if (--cpu->bc)
+   {
+      cpu->f |= PV;
+
+      if (!(cpu->f & ZF))
+      {
+          cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+          // Interrupted block instruction: YF=PC.13, XF=PC.11
+          cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+          cpu->memptr = cpu->pc + 1;
+
+          cputact(10); // 5 + 5 cycles for repeat
+      }
+      else
+      {
+          cputact(5);
+      }
+   }
+   else
+   {
+      cputact(5);
+   }
+
+   cpu->hl = hl;
+}
+
+Z80OPCODE ope_B2(Z80CPU *cpu) { // inir
+    // Based on David Banks' research
+    // For INIR: T = M + ((C + 1) & 0xFF)
+    cpu->memptr = cpu->bc + 1;
+
+    // Cycle order and IO phase: see ope_A2 (ini)
+    cputact(2);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
+    cpu->wd(hl++, value);
+
+    // Decrement B
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
+
+    // T = M + ((C + 1) & 0xFF) for INIR
+    uint16_t t = value + ((cpu->c + 1) & 0xFF);
+
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
+
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
+
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
+
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(5);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+    }
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_B3(Z80CPU *cpu) { // otir
+    // Based on David Banks' research:
+    // https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags
+    cputact(1);
+
+    // Decrement B first (before output)
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
+
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl++);  // M = memory value
+    uint8_t l_out = hl & 0xFF;      // Lo = output value of L
+
+    cputact(1);
+    cpu->out(cpu->bc, value);
+    cputact(3);
+
+    // T = M + Lo (for OTIR/OTDR)
+    uint16_t t = value + l_out;
+
+    // Calculate flags according to David Banks
+    // NF = M.7
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    // CF = T > 255
+    uint8_t cf = (t > 255) ? CF : 0;
+
+    if (b_out)  // B != 0, instruction will repeat
+    {
+        // ZF = 0, SF = Bo.7
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+
+        // Calculate HF and PF based on CF and M.7
+        uint8_t hf = 0;
+        uint8_t pf;
+
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                // Balu = Bo - 1
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else  // M.7 = 0
+            {
+                // Balu = Bo + 1
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            // Balu = Bo (no adjustment when CF=0)
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
+
+        // Calculate parity of pf
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;  // Even parity = PV set
+
+        cpu->f = sf | pf | hf | nf | cf;
+
+        // Set PC back to instruction for repeat
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+        // Interrupted block instruction: YF=PC.13, XF=PC.11
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(5);
+    }
+    else  // B == 0, single iteration flags
+    {
+        // SF = 0, ZF = 1, HF = CF
+        uint8_t hf = cf ? HF : 0;
+
+        // PF = ((T & 7) ^ Bo).parity (Bo is 0 here)
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+    }
+
+    cpu->hl = hl;
+    cpu->memptr = cpu->bc + 1;
+}
+
+Z80OPCODE ope_B8(Z80CPU *cpu) { // lddr
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
+
+    uint8_t value = cpu->rd(hl--);
+
+    cpu->wd(de--, value);
+
+    value += cpu->a; value = (value & F3) + ((value << 4) & F5);
+
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+
+    if (--cpu->bc)
+    {
+       cpu->f |= PV;
+       cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+       // Interrupted block instruction: YF=PC.13, XF=PC.11
+       cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+       // Repeating block op: MEMPTR = PC+1 (FUSE-verified, same as LDIR)
+       cpu->memptr = cpu->pc + 1;
+
+       cputact(7);
+    }
+    else
+    {
+       cputact(2);
+    }
+
+    cpu->hl = hl;
+    cpu->de = de;
+}
+
+Z80OPCODE ope_B9(Z80CPU *cpu) { // cpdr
+   cpu->memptr--;
+
+   uint8_t cf = cpu->f & CF;
+
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl--);
+
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
+
+   // Set PV flag and XF/YF from PC BEFORE any cputact calls
+   // so interrupts occurring during cycles see correct flags
+   if (--cpu->bc)
+   {
+      cpu->f |= PV;
+
+      if (!(cpu->f & ZF))
+      {
+          cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+          // Interrupted block instruction: YF=PC.13, XF=PC.11
+          cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+          cpu->memptr = cpu->pc + 1;
+
+          cputact(10); // 5 + 5 cycles for repeat
+      }
+      else
+      {
+          cputact(5);
+      }
+   }
+   else
+   {
+      cputact(5);
+   }
+
+   cpu->hl = hl;
+}
+
+Z80OPCODE ope_BA(Z80CPU *cpu) { // indr
+    // Based on David Banks' research
+    // For INDR: T = M + ((C - 1) & 0xFF)
+    cpu->memptr = cpu->bc - 1;
+
+    // Cycle order and IO phase: see ope_A2 (ini)
+    cputact(2);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value (IORQ at T2)
+    cputact(3);
+    cpu->wd(hl--, value);
+
+    // Decrement B
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
+
+    // T = M + ((C - 1) & 0xFF) for INDR
+    uint16_t t = value + ((cpu->c - 1) & 0xFF);
+
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
+
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
+
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
+
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(5);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+
+    }
+
+    cpu->hl = hl;
+}
+
+Z80OPCODE ope_BB(Z80CPU *cpu) { // otdr
+    // Based on David Banks' research
+    cputact(1);
+
+    // Decrement B first (before output)
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
+
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl--);  // M = memory value
+    uint8_t l_out = hl & 0xFF;      // Lo = output value of L
+
+    cputact(1);
+    cpu->out(cpu->bc, value);
+    cputact(3);
+
+    // T = M + Lo (for OTIR/OTDR)
+    uint16_t t = value + l_out;
+
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
+
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
+
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
+
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(5);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+    }
+
+    cpu->hl = hl;
+    cpu->memptr = cpu->bc - 1;
+}
+
+
+STEPFUNC const ext_opcode[0x100] =
+{
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+
+   ope_40, ope_41, ope_42, ope_43, ope_44, ope_45, ope_46, ope_47,
+   ope_48, ope_49, ope_4A, ope_4B, ope_4C, ope_4D, ope_4E, ope_4F,
+   ope_50, ope_51, ope_52, ope_53, ope_54, ope_55, ope_56, ope_57,
+   ope_58, ope_59, ope_5A, ope_5B, ope_5C, ope_5D, ope_5E, ope_5F,
+   ope_60, ope_61, ope_62, ope_63, ope_64, ope_65, ope_66, ope_67,
+   ope_68, ope_69, ope_6A, ope_6B, ope_6C, ope_6D, ope_6E, ope_6F,
+   ope_70, ope_71, ope_72, ope_73, ope_74, ope_75, ope_76, ope_77,
+   ope_78, ope_79, ope_7A, ope_7B, ope_7C, ope_7D, ope_7E, ope_7F,
+
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   ope_A0, ope_A1, ope_A2, ope_A3, op_00, op_00, op_00, op_00,
+   ope_A8, ope_A9, ope_AA, ope_AB, op_00, op_00, op_00, op_00,
+   ope_B0, ope_B1, ope_B2, ope_B3, op_00, op_00, op_00, op_00,
+   ope_B8, ope_B9, ope_BA, ope_BB, op_00, op_00, op_00, op_00,
+
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+   op_00, op_00, op_00, op_00, op_00, op_00, op_00, op_00,
+};
+
+
+/// ED-prefix handler. Executes one more M1 Core cycle to fetch extended opcode
+/// \param cpu
+Z80OPCODE op_ED(Z80CPU *cpu)
+{
+    // Record used prefix
+    cpu->prefix = 0xED;
+
+	uint8_t opcode = cpu->m1_cycle();
+	(ext_opcode[opcode])(cpu);
+
+	// Finalize opcode
+	cpu->opcode = opcode;
+}
+
