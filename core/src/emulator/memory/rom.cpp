@@ -132,6 +132,9 @@ std::string ROM::GetROMFilename()
         case MM_PHOENIX:
             result = config.phoenix_rom_path;
             break;
+        case MM_SPRINTER:
+            result = config.sprinter_rom_path;
+            break;
         case MM_GMX:
             assert("Not implemented");
             break;
@@ -276,6 +279,16 @@ bool ROM::LoadROM()
 			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.phoenix_rom_path;
 			break;
+	    case MM_SPRINTER:
+			// Sprinter Sp2000: the whole 256 KB flash, 16 pages (BIOS page 8, drivers + SETUP page 0,
+			// the PLD loader and bitstream pages 12-15). No Spectrum ROM roles: Spectrum mode runs
+			// its ROMs from RAM pages ("vROM"), which the decoder maps itself
+			memory.base_sos_rom = nullptr;
+			memory.base_dos_rom = nullptr;
+			memory.base_128_rom = nullptr;
+			memory.base_sys_rom = nullptr;
+			romname = config.sprinter_rom_path;
+			break;
 	    case MM_GMX:
             assert("Not implemented");
             break;
@@ -383,6 +396,14 @@ bool ROM::LoadROM()
 					std::memset(memory.ROMBase() + loadedBanks * PAGE_SIZE, 0xFF, (32 - loadedBanks) * PAGE_SIZE);
 				}
 			}
+            else if (config.mem_model == MM_SPRINTER)
+            {
+                if (loadedBanks != 16)
+                {
+                    MLOGERROR("Incorrect ROM size for Sprinter. Should be 256 KB. Found %d", loadedBanks * PAGE_SIZE);
+                    result = false;
+                }
+            }
             else if (config.mem_model == MM_SPECTRUM48)
             {
                 if (loadedBanks != 1)

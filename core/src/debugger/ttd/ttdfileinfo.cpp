@@ -125,6 +125,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::EvoFontRam: return "evo-font-ram";
         case PeripheralId::KempstonJoystick: return "kempston-joystick";
         case PeripheralId::SerialPort: return "serial-port";
+        case PeripheralId::SprinterPld: return "sprinter-pld";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

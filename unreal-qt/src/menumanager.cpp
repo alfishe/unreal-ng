@@ -660,7 +660,8 @@ void MenuManager::createMachineMenu()
         MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
                           // quadrant switching + #7EFD window; same design doc)
         MM_PROFI,         // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
-        MM_TSL            // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
     };
 
     for (const auto& model : models)
