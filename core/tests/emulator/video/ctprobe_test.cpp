@@ -251,6 +251,24 @@ public:
     /// attribute of the cell being fetched (programmer's manual, port #FF): the cell advances every 4 T from
     /// 4 T before the paper (INT + 14336, Xpeccy / ZXMAK2); the T grid is this project's model, not a hardware
     /// measurement. #FF elsewhere
+    /// An IN from a port whose high byte is in contended memory, its I/O cycle starting at `t1`: the Ferranti ULA
+    /// holds T1, T2, TW and T3 (C:1 four times), and the CPU takes the data at the end of T3. Returns the T1 of an
+    /// unstretched cycle with the same T3, the point FloatingBus is calibrated to
+    /// (docs/inprogress/2026-09-30-fusetest-core-defects/research.md claim 1)
+    uint32_t LateIoSampleT1(uint32_t t1) const
+    {
+        if (_rule != Rule::Ula48 && _rule != Rule::Ula128)
+            return t1;
+        uint32_t t = t1;
+        for (int k = 0; k < 4; k++)
+        {
+            t += Delay(t);
+            if (k < 3)
+                t += 1;
+        }
+        return t - 3;  // t: the start of T3
+    }
+
     uint8_t FloatingBus(uint32_t s) const
     {
         if (_rule == Rule::Scorpion || _rule == Rule::ScorpionEvenM1)
@@ -522,7 +540,7 @@ std::vector<Cycle> Fragment(uint8_t id, uint16_t pc, const SymbolFn& sym)
             c.insert(c.end(), { M1(pc + 3), M1(pc + 4), Io(id < 72 ? 0xC0FE : 0xC0FF) });
             break;
 
-        default:  // 10-17: the RET alone; 55: a value case; 60: RET in ROM
+        default:  // 10-17: the RET alone; 55, 56: value cases; 60: RET in ROM
             break;
     }
     return c;
@@ -579,8 +597,11 @@ std::vector<uint8_t> Expected(Rule rule, const CaseRecord& r, const SymbolFn& sy
     for (uint8_t i = 0; i < r.count; i++)
     {
         const uint32_t t = first + i;
-        if (r.flags & 4)  // XOR A, then IN A,(#FF): its I/O cycle 11 T in (with Even M1 from the aligned start)
-            values.push_back(oracle.FloatingBus((rule == Rule::ScorpionEvenM1 ? EvenM1Align(t) : t) + 11));
+        const uint32_t start = rule == Rule::ScorpionEvenM1 ? EvenM1Align(t) : t;  // Even M1 aligns the first fetch
+        if ((r.flags & 4) && r.id == 56)  // P-02B: LD BC,#40FF / IN A,(C): the I/O cycle 18 T in
+            values.push_back(oracle.FloatingBus(oracle.LateIoSampleT1(start + 18)));
+        else if (r.flags & 4)  // XOR A, then IN A,(#FF): its I/O cycle 11 T in
+            values.push_back(oracle.FloatingBus(start + 11));
         else
             values.push_back(static_cast<uint8_t>(
                 oracle.Duration(cycles, romRet ? 0x0000 : static_cast<uint16_t>(target + r.length), t)));

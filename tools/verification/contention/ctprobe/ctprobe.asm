@@ -1335,6 +1335,13 @@ CASES:
         db 20
         dw R55
         db "P-02 "
+        db 56, 52, #FF, #FF     ; the byte IN A,(C) reads from #40FF: the high byte in contended memory, so the
+        dw 0, FrFloatHi         ; ULA holds the cycle after IORQ too and the CPU takes the data at the end of T3
+        db FrFloatHiEnd-FrFloatHi
+        dw -24
+        db 20
+        dw R56
+        db "P-02B"
         db 60, 8, #FF, #FF      ; RET in ROM
         dw 0, FrNop
         db 0
@@ -1506,6 +1513,11 @@ FrFloat:
         in a,(#FF)
         ld (CTVALUE),a
 FrFloatEnd:
+FrFloatHi:                      ; P-02B: the I/O cycle 18 T in (LD BC,nn 10, ED 78 two fetches 8)
+        ld bc,#40FF
+        in a,(c)
+        ld (CTVALUE),a
+FrFloatHiEnd:
 
 ; P-03 fragments (records above; oracle ids 61-65)
 FrOut00FE:
@@ -1610,6 +1622,7 @@ R52:       ds 16
 R53:       ds 16
 R54:       ds 16
 R55:       ds 20
+R56:       ds 20                ; P-02B
 R61:       ds 16                ; P-03
 R62:       ds 16
 R63:       ds 16
