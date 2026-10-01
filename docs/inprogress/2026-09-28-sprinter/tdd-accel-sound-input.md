@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): INT-suspend as a config option (Q3, §1.3); accelerator chosen by the configuration module (§1). S0 (2026-10-01): the PLD has the INT-suspend, default on proposed (§1.3) |
+| **Status** | Review round 1 done (2026-09-28): INT-suspend as a config option (Q3, §1.3); accelerator chosen by the configuration module (§1). S0 (2026-10-01): the PLD has the INT-suspend, **default on** (owner decision 2026-10-01, §1.3) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §7, §8, §13, §4.4 (fixed ports) |
 | **Index** | [technical-design.md](technical-design.md) |
 
@@ -56,11 +56,11 @@ inside the access and adds the time as extra T-states to the current instruction
 time, deterministic, no mid-block interrupt.
 
 **Accelerator off during INT, back on at RETI** (MAN §6 p. 21; review round 1, Q3; S0 finding
-2026-10-01). Implemented in S5 as a **config option**; **S0 proposes default on**, because the
-standard PLD configuration has the feature (owner to confirm; round 1 had chosen off before the
-check):
+2026-10-01). Implemented in S5 as a **config option, default on** (owner decision 2026-10-01): the standard PLD
+configuration has the feature, so on is the hardware behavior; off gives MAME's behavior for
+side-by-side comparisons (round 1 had chosen off before the PLD was checked):
 
-- on (proposed default, the hardware): accepting an INT **blocks** the accelerator; the first opcode
+- on (default, the hardware): accepting an INT **blocks** the accelerator; the first opcode
   fetch after a `RETI` (`ED 4D`) unblocks it (through the interrupt source's `OnReti()`, §5.1). While
   blocked, no new accelerator operation starts; the **mode register is not saved or cleared**, and
   an `LD r,r` in the handler still changes it. `RETN` does not unblock; an NMI does not block (it has

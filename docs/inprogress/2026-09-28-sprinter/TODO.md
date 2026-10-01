@@ -36,7 +36,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - [x] port-table decoder `tools/sprinter/dcp-table.py`; the 3.04 table checked statically
     ([hardware-reference.md](hardware-reference.md) §4.4: three differences to the BIOS-TT table)
   - [x] Q4: 473 720 writes, statically ([tdd-ports-memory.md](tdd-ports-memory.md) §6)
-  - [x] Q3: the PLD has the INT-suspend; default on proposed
+  - [x] Q3: the PLD has the INT-suspend; default on (owner decision 2026-10-01)
     ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §1.3)
   - [x] DSS 1.62 boot floppy and DSS 1.60R files in `testdata/machines/sprinter/` +
     `testdata/NOTICE.md`; `LoaderRawPcFloppyDss_Test` reads the real floppy through the WD1793 at
