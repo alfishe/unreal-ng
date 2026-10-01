@@ -6,10 +6,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
 #include "_helpers/fakehostnet.h"
+#include "common/serial/hostserialport.h"
 #include "debugger/ttd/network/ttdserialport.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -363,4 +365,45 @@ TEST_F(ComPort_Test, AMachineResetKeepsTheTcpLink)
     ASSERT_NE(host->Last("send"), nullptr);
     EXPECT_EQ(host->Last("send")->socket, socket);
     EXPECT_EQ(host->Last("send")->data, (std::vector<uint8_t>{'A'}));
+}
+
+TEST_F(ComPort_Test, TheAvrFirmwareChangesAtRuntime)
+{
+    Create("ATM3", 4096);
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->out(0xFFEF, 0x5C);
+    ASSERT_TRUE(Apply({{"avr_firmware", "ts2013"}}));
+    ASSERT_NE(_context->pComPort, nullptr);
+    EXPECT_EQ(_context->pComPort->Uart().GetParams().avr, Uart16550::AvrFirmware::Ts2013);
+    EXPECT_EQ(z80->in(0xFFEF), 0xFF) << "a new firmware restarts the AVR: SCR back to #FF";
+    EXPECT_EQ(_context->pCore->GetNetworkManager()->GetStatus().settings.avrFirmware, "TS2013");
+
+    NetworkManager::Change change;
+    std::string error;
+    EXPECT_FALSE(NetworkManager::ParseChange({{"avr_firmware", "ts2099"}}, change, error));
+    EXPECT_NE(error.find("avr_firmware"), std::string::npos);
+}
+
+TEST_F(ComPort_Test, StatusCarriesTheSettingsInForce)
+{
+    Create("PENTAGON", 128);
+    ASSERT_TRUE(Apply({{"card", "zxnetusb,zxwifi"}, {"zx_wifi", "espnet"}, {"esp_chip", "esp8266"}}));
+    const NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.settings.card, "ZXNETUSB,ZXWIFI");
+    EXPECT_EQ(st.settings.zxWifi, "ESPNET");
+    EXPECT_EQ(st.settings.espChip, "ESP8266");
+    EXPECT_EQ(st.settings.comPort, "NONE");
+    EXPECT_FALSE(st.settings.hostAccess) << "the fixture turns host access off";
+
+    const std::string text = DeviceState::ToText(DeviceState::Network(_context));
+    EXPECT_NE(text.find("settings"), std::string::npos);
+    EXPECT_NE(text.find("host_serial_devices"), std::string::npos);
+}
+
+TEST_F(ComPort_Test, HostSerialDevicesAreSortedDeviceNames)
+{
+    const std::vector<std::string> devices = HostSerialPort::ListDevices();
+    EXPECT_TRUE(std::is_sorted(devices.begin(), devices.end()) || devices.empty());
+    for (const std::string& d : devices)
+        EXPECT_FALSE(d.empty());
 }

@@ -249,6 +249,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
+    // Network window (network TDD §8): hidden by default, Tools → Network (Ctrl+5)
+    networkWindow = new NetworkWindow();
+    networkWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -289,6 +294,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
+    connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
+    connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -537,6 +544,13 @@ MainWindow::~MainWindow()
         delete mediaPanelWindow;
     }
 
+    if (networkWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(networkWindow);
+        networkWindow->hide();
+        delete networkWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -723,6 +737,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         mediaPanelWindow->hide();
         delete mediaPanelWindow;
         mediaPanelWindow = nullptr;
+    }
+    if (networkWindow)
+    {
+        _dockingManager->removeDockableWindow(networkWindow);
+        networkWindow->hide();
+        delete networkWindow;
+        networkWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -2894,6 +2915,12 @@ void MainWindow::handleMediaPanelToggled(bool visible)
 {
     if (mediaPanelWindow)
         mediaPanelWindow->setVisible(visible);
+}
+
+void MainWindow::handleNetworkWindowToggled(bool visible)
+{
+    if (networkWindow)
+        networkWindow->setVisible(visible);
 }
 
 void MainWindow::handleTapeManagerToggled(bool visible)

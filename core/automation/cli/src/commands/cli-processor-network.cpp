@@ -51,7 +51,8 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
         session.SendResponse("Usage: network [state] | network set card=none|zxnetusb|zxwifi|zxnetusb,zxwifi host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet|at (the machine's serial port) "
-                             "zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" +
+                             "zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266 "
+                             "avr_firmware=baseconf|base2010|base2011-04|base2011-05|base2011-09|base2013|base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" +
                              std::string(NEWLINE));
         return;
     }

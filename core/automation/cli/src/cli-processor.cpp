@@ -629,6 +629,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (ZX-Evo AVR UART)" << NEWLINE;
     oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
+    oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
