@@ -83,26 +83,6 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     cpuFont.setStyleHint(QFont::Monospace);
     _cpuFreq->setFont(cpuFont);
     _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
-    _freqTimer.setInterval(500);
-    connect(&_freqTimer, &QTimer::timeout, this, [this]() {
-        if (_freqMaxHz == 0)
-            return;
-        const uint32_t shown = std::max(_freqMinHz, _freqMaxHz);
-        std::string freqStr = StringHelper::FormatFrequencyMHz(_freqMinHz);
-        if (_freqMinHz != _freqMaxHz)
-            freqStr += "-" + StringHelper::FormatFrequencyMHz(_freqMaxHz);
-        _cpuFreq->setText(QString::fromStdString(freqStr));
-
-        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
-        if (shown >= 14'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
-        else if (shown >= 7'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
-        else
-            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
-        _freqMinHz = _freqMaxHz = 0;
-    });
-    _freqTimer.start();
 
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
@@ -210,14 +190,39 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
     if (!payload || payload->_emulatorId.toString() != emulator->GetId())
         return;
 
-    // No immediate label write: a guest that flips its clock every frame
-    // (TS-Conf software toggles SYS_CONFIG around SD I/O) would flicker the
-    // text at 50 Hz. The value joins the window; the timer paints it at most
-    // twice a second, as a range when the clock is genuinely switching
+    // Z80::NotifyCPUFrequencyChanged already decided whether this is a plain
+    // reading or a sustained oscillation (a guest flipping its clock faster
+    // than ~1/sec, e.g. TS-Conf's Wild Commander AY player toggling
+    // SYS_CONFIG every frame) - render exactly what it says, once, here.
+    // This is the single writer for _cpuFreq's text/color: refresh() no
+    // longer polls the instantaneous value, so the two can't race and
+    // flicker between a short reading and a stale range anymore.
+    const bool oscillating = payload->_oscillating;
     const uint32_t freqHz = payload->_frequencyHz;
-    QMetaObject::invokeMethod(this, [this, freqHz]() {
-        _freqMinHz = _freqMinHz ? std::min(_freqMinHz, freqHz) : freqHz;
-        _freqMaxHz = std::max(_freqMaxHz, freqHz);
+    const uint32_t loHz = payload->_oscLowHz;
+    const uint32_t hiHz = payload->_oscHighHz;
+    QMetaObject::invokeMethod(this, [this, oscillating, freqHz, loHz, hiHz]() {
+        std::string freqStr;
+        uint32_t shown;
+        if (oscillating)
+        {
+            freqStr = StringHelper::FormatFrequencyMHz(loHz) + "↔" + StringHelper::FormatFrequencyMHz(hiHz);
+            shown = hiHz;
+        }
+        else
+        {
+            freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+            shown = freqHz;
+        }
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (shown >= 14'000'000)
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
+        else if (shown >= 7'000'000)
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
+        else
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
     }, Qt::QueuedConnection);
 }
 
@@ -382,21 +387,12 @@ void StatusBarManager::refresh()
     updateIde(context);
     _sound->setActive(soundOn);
 
-    // CPU frequency display from actual EmulatorState value with color coding
+    // The text/color are owned by handleCPUFreqChanged (one writer, driven by
+    // NC_CPU_FREQ_CHANGED) so a 200ms poll here can't race it and flicker
+    // between a plain reading and a stale oscillation range. This tick only
+    // keeps the tooltip (and the "no emulator" placeholder) current.
     if (context)
     {
-        const uint32_t freqHz = context->emulatorState.current_z80_frequency;
-        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
-        _cpuFreq->setText(QString::fromStdString(freqStr));
-
-        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
-        if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");  // Dark red
-        else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");  // Orange
-        else
-            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");  // Default color
-
         updateCpuFreqToolTip(context);
     }
     else

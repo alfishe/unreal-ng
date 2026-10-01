@@ -232,20 +232,45 @@ public:
     }
 };
 
-/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency
+/// NC_CPU_FREQ_CHANGED payload: emulator instance and new CPU frequency.
+///
+/// _frequencyHz / _freqMultiplier always report the real, current, applied
+/// value - every consumer that just wants "what speed is it running at right
+/// now" (automation, tests, the WebAPI) reads exactly those two fields and
+/// gets it immediately on every logical change, same as before this payload
+/// grew the oscillation fields below.
+///
+/// _oscillating / _oscLowHz / _oscHighHz are a display hint, nothing more:
+/// some guest software (TS-Conf's Wild Commander AY player is the one this
+/// was built for) flips SYS_CONFIG's clock bits every single frame as a
+/// software turbo trick, so "the current value" changes 50x/sec and is
+/// meaningless to show as a single number. Z80 classifies this at the
+/// source (see Z80::NotifyCPUFrequencyChanged) and sets _oscillating with
+/// the two bouncing values in _oscLowHz/_oscHighHz once flips start arriving
+/// faster than about 1/sec; it clears back to false after ~3s of a settled
+/// value. A UI that cares (StatusBarManager) renders "lo<->hi" while
+/// _oscillating is set and the plain _frequencyHz otherwise. A consumer that
+/// ignores these three fields entirely still sees fully correct behavior.
 class CPUFreqPayload : public MessagePayload
 {
 public:
     unreal::UUID _emulatorId;
     uint32_t _frequencyHz;     // Actual frequency in Hz (e.g., 3500000, 7000000, 14000000)
     uint8_t _freqMultiplier;   // Multiplier relative to base (1, 2, 4, etc.)
+    bool _oscillating = false;  // Display hint: the clock is flipping faster than ~1/sec
+    uint32_t _oscLowHz = 0;     // Valid only when _oscillating: the lower of the two bouncing values
+    uint32_t _oscHighHz = 0;    // Valid only when _oscillating: the higher of the two bouncing values
 
 public:
-    CPUFreqPayload(const std::string& emulatorId, uint32_t frequencyHz, uint8_t freqMultiplier)
+    CPUFreqPayload(const std::string& emulatorId, uint32_t frequencyHz, uint8_t freqMultiplier,
+                   bool oscillating = false, uint32_t oscLowHz = 0, uint32_t oscHighHz = 0)
         : MessagePayload()
         , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
         , _frequencyHz(frequencyHz)
         , _freqMultiplier(freqMultiplier)
+        , _oscillating(oscillating)
+        , _oscLowHz(oscLowHz)
+        , _oscHighHz(oscHighHz)
     {
     }
 

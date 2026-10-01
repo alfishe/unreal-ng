@@ -98,13 +98,12 @@ private:
     StatusIndicator* _hdd = nullptr;
     uint64_t _ideTransfers = 0;  ///< sectors moved at the last tick (the IDE LED blinks on a change)
     StatusIndicator* _sound = nullptr;
+    /// Rendered straight from each NC_CPU_FREQ_CHANGED post - no local polling
+    /// or accumulation. Z80::NotifyCPUFrequencyChanged already classifies a
+    /// guest that flips its clock every frame (TS-Conf: Wild Commander's AY
+    /// player toggles SYS_CONFIG around SD I/O) and sends CPUFreqPayload::_oscillating
+    /// plus the lo/hi band, so the label just shows whichever the payload says.
     QLabel* _cpuFreq = nullptr;
-    /// The guest can switch its clock every frame (TS-Conf: Wild Commander
-    /// toggles SYS_CONFIG around SD I/O); the label shows the range seen in
-    /// the window, refreshed by a timer instead of per notification
-    uint32_t _freqMinHz = 0;
-    uint32_t _freqMaxHz = 0;
-    QTimer _freqTimer;
     QLabel* _fps = nullptr;
     QLabel* _rzx = nullptr;               ///< RZX playback progress, shown while a recording was played
     QLabel* _ttd = nullptr;               ///< TTD history replay progress, shown while positioned in the past

@@ -539,6 +539,12 @@ void Z80::ApplyQueuedFrequencyMultiplier()
     // -> host 1x at ratio 2): the audio descale must follow the ratio in effect
     state.hw_turbo_ratio_applied = ratio;
 
+    // Checked every frame regardless of whether this frame itself changed
+    // anything: a guest that was oscillating and then settled needs a nudge
+    // even on a frame where nothing happens, or the UI would be stuck
+    // showing a stale "lo<->hi" range forever once the flips stop
+    SettleCpuFreqOscillationIfQuiet();
+
     if (desiredMultiplier != state.current_z80_frequency_multiplier)
     {
         uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
@@ -549,21 +555,89 @@ void Z80::ApplyQueuedFrequencyMultiplier()
         // Speed multipliers are handled by adjusting frame duration and timings
         cpu.rate = 256;
 
-        MLOGINFO("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_ratio=%u)", oldMultiplier,
+        // Debug level: a guest can flip its clock several times a frame (TS-Conf
+        // software toggles SYS_CONFIG around SD I/O), and an info line per flip
+        // floods the log window during playback
+        MLOGDEBUG("Z80::ApplyQueuedFrequencyMultiplier - Applied speed multiplier: %dx -> %dx (%.2f MHz, rate=%d, hw_turbo_ratio=%u)", oldMultiplier,
                  state.current_z80_frequency_multiplier, state.current_z80_frequency / 1'000'000.0, cpu.rate, ratio);
 
         NotifyCPUFrequencyChanged();
     }
 }
 
+/// Post NC_CPU_FREQ_CHANGED, classifying the flip for display at the source
+/// instead of leaving it to whichever consumer happens to be watching.
+///
+/// Background: TS-Conf's Wild Commander flips SYS_CONFIG's clock bits [1:0]
+/// from the same PC once every single frame while its AY module player runs
+/// (verified live via porttrace: 0x6BD5 writes 0x00/0x02 alternately, one
+/// frame apart - a software "turbo during the heavy part of the frame, back
+/// to normal for the rest" trick; NeoGS playback never does this, since the
+/// hardware card needs no CPU-side mixing help). Reporting the bare current
+/// value on every one of those flips is correct but useless to a human: two
+/// independent GUI timers used to read it at their own cadence (one
+/// instantaneous, one accumulating) and stomp on each other's text, which is
+/// what actually produced the "random long text that appears and vanishes"
+/// symptom - not a port-decode bug.
+///
+/// The fix lives here, once, instead of in every consumer: classify a flip as
+/// "oscillating" the moment two flips land within 1s of each other, track the
+/// band of values it bounces between, and only drop back to reporting a
+/// single value after the clock has sat still for 3s (SettleCpuFreqOscillationIfQuiet,
+/// called every frame so a guest going quiet is noticed even without a new
+/// flip to trigger it). _frequencyHz/_freqMultiplier in the payload are
+/// unaffected by any of this - they are always the true current value, so
+/// ScorpionTurbo_Test.TurboStrobePostsCpuFreqChanged and any other consumer
+/// that only reads those two fields keeps working unchanged. _oscillating
+/// plus the _oscLowHz/_oscHighHz band are purely additive display hints.
 void Z80::NotifyCPUFrequencyChanged()
+{
+    const uint32_t freqHz = _context->emulatorState.current_z80_frequency;
+    const auto now = std::chrono::steady_clock::now();
+
+    constexpr auto kOscillationGap = std::chrono::seconds(1);
+    const bool hadPriorChange = _freqLastChangeTime.time_since_epoch().count() != 0;
+    const bool rapidFlip = hadPriorChange && (now - _freqLastChangeTime) <= kOscillationGap;
+
+    if (rapidFlip)
+    {
+        const uint32_t lo = _freqOscillating ? _freqOscLowHz : _freqPrevNotifiedHz;
+        const uint32_t hi = _freqOscillating ? _freqOscHighHz : _freqPrevNotifiedHz;
+        _freqOscLowHz = std::min({lo, hi, freqHz});
+        _freqOscHighHz = std::max({lo, hi, freqHz});
+        _freqOscillating = true;
+    }
+    // else: an isolated change, or a slow beat inside an already-open band -
+    // SettleCpuFreqOscillationIfQuiet is the only thing that closes the band
+
+    _freqLastChangeTime = now;
+    _freqPrevNotifiedHz = freqHz;
+
+    PostCpuFreqNotification();
+}
+
+void Z80::SettleCpuFreqOscillationIfQuiet()
+{
+    if (!_freqOscillating)
+        return;
+
+    constexpr auto kSettleAfter = std::chrono::seconds(3);
+    if (std::chrono::steady_clock::now() - _freqLastChangeTime < kSettleAfter)
+        return;
+
+    _freqOscillating = false;
+    PostCpuFreqNotification();
+}
+
+void Z80::PostCpuFreqNotification()
 {
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
     messageCenter.Post(NC_CPU_FREQ_CHANGED,
                        new CPUFreqPayload(emulatorId,
                                           _context->emulatorState.current_z80_frequency,
-                                          _context->emulatorState.current_z80_frequency_multiplier));
+                                          _context->emulatorState.current_z80_frequency_multiplier,
+                                          _freqOscillating, _freqOscLowHz, _freqOscHighHz));
 }
 
 void Z80::RecomputeFrameTiming()
@@ -808,9 +882,6 @@ void Z80::ApplyHardwareTurboNow()
 
     // The running Z80FrameCycle loop reads these every iteration
     RecomputeFrameTiming();
-
-    MLOGINFO("Z80::ApplyHardwareTurboNow - hardware turbo applied mid-frame: %dx -> %dx (%.2f MHz) at t=%u",
-             oldMultiplier, desiredMultiplier, state.current_z80_frequency / 1'000'000.0, cpu.t);
 
     // Mid-frame hardware strobes must notify too: they never pass through a
     // frame boundary, so ApplyQueuedFrequencyMultiplier will see

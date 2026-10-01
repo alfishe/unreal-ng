@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <functional>
 
 #include "emulator/cpu/cpulogic.h"
@@ -697,6 +698,24 @@ public:
     /// ProfROM monitor flips the clock mid-frame via IN (#7FFD/#1FFD), which
     /// never passes through a frame boundary)
     void NotifyCPUFrequencyChanged();
+
+    /// Opportunistic check, called every frame from ApplyQueuedFrequencyMultiplier:
+    /// closes an open oscillation band after ~3s of no further flip, so a UI
+    /// drops back to a plain reading without waiting for an actual new change
+    void SettleCpuFreqOscillationIfQuiet();
+
+    void PostCpuFreqNotification();
+
+    // CPU-frequency oscillation classification (display hint only - see the
+    // CPUFreqPayload comment in notifications.h). Guest software like
+    // TS-Conf's Wild Commander AY player can flip SYS_CONFIG's clock bits
+    // every single frame; _frequencyHz/_freqMultiplier in the payload always
+    // stay the real current value regardless of this state
+    std::chrono::steady_clock::time_point _freqLastChangeTime{};
+    uint32_t _freqPrevNotifiedHz = 0;
+    uint32_t _freqOscLowHz = 0;
+    uint32_t _freqOscHighHz = 0;
+    bool _freqOscillating = false;
 
     uint32_t _frameLimit = 0;   // config.frame * multiplier
     unsigned _intStart = 0;     // config.intstart * multiplier
