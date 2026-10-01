@@ -19,10 +19,16 @@
     // POST /api/v1/emulator/{id}/keyboard/combo
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/combo", "post");
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["summary"] = "Tap a key combo";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["description"] =
+        "Each name in 'keys' may be a ZX matrix key or a physical PC key with no ZX "
+        "equivalent at all (e.g. 'f12', 'rshift'), mixed freely - needed for host-level "
+        "combos such as TS-Conf's BIOS Setup entry, Right Shift + F12 ({\"keys\": [\"rshift\", \"f12\"]}).";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["keys"]["type"] = "array";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["keys"]["items"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["frames"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["responses"]["200"]["description"] = "Combo tapped";
 
     // POST /api/v1/emulator/{id}/keyboard/type

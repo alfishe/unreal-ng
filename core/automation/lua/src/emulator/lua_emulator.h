@@ -26,6 +26,7 @@
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include <debugger/debugmanager.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -1059,6 +1060,71 @@ public:
             effectiveEmulator()->RunUntilCondition([&predicate](const Z80State& state) -> bool {
                 return predicate(state.pc, state.af, state.bc, state.de, state.hl).get<bool>();
             }, maxTStates.value_or(0));
+        });
+
+        // Keyboard operations. Same `key` name space as WebAPI/CLI/Python
+        // (DebugKeyboardManager::ResolveKeyName for ZX matrix keys, falling
+        // back to pckey::FromName for a PC-only key with no ZX equivalent at
+        // all - e.g. "f12", "rshift"; combos accept a mix of both, needed for
+        // TS-Conf's BIOS Setup entry, Right Shift + F12)
+        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
+            return true;
+        });
+
+        lua.set_function("key_press", [this](const std::string& keyName) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+            return true;
+        });
+
+        lua.set_function("key_release", [this](const std::string& keyName) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+            return true;
+        });
+
+        lua.set_function("key_combo", [this](const std::vector<std::string>& keyNames, sol::optional<uint16_t> holdFrames) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TapCombo(keyNames, holdFrames.value_or(2));
+            return true;
+        });
+
+        lua.set_function("key_macro", [this](const std::string& macroName) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            return ctx->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence(macroName);
+        });
+
+        lua.set_function("key_type", [this](const std::string& text, sol::optional<uint16_t> delayFrames) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2));
+            return true;
+        });
+
+        lua.set_function("key_release_all", [this]() {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (ctx && ctx->pDebugManager->GetKeyboardManager())
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseAllKeys();
         });
 
         // Tape operations

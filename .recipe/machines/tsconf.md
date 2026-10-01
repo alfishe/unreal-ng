@@ -83,6 +83,50 @@ ENTER: SD Z-contr -> IDE Nemo M) before the reset; WC's panels open the drive
 named in `WC/wc.ini` (`DRV=1` for the IDE master). Setup options, boot devices
 and IDE details: `docs/inprogress/2026-09-27-tsconf/boot-and-storage-notes.md`.
 
+### Entering TS-BIOS Setup directly: Right Shift + F12
+
+A running machine can be sent straight into Setup (no reboot needed) the same
+way a real ZX-Evo keyboard does it: **Right Shift + F12**. Neither half is a
+ZX Spectrum matrix key - F12 does not exist on a ZX keyboard at all, and the
+matrix has only one "Symbol Shift" (it cannot tell left from right) - so this
+combo only works through the physical-PC-key path (`PcKey`,
+[pckey.h](../../core/src/emulator/io/keyboard/pckey.h)), not the ZX key names
+used for everything else. Every automation surface accepts a combo mixing ZX
+and PC-only names freely:
+
+```bash
+# MCP (preferred)
+type_input {"action":"combo","keys":["rshift","f12"],"frames":2}
+
+# WebAPI
+curl -s -X POST "$BASE/emulator/$EMU/keyboard/combo" -H 'Content-Type: application/json' \
+     -d '{"keys":["rshift","f12"],"frames":2}'
+
+# CLI
+key combo rshift f12
+
+# Lua
+key_combo({"rshift", "f12"}, 2)
+
+# Python
+emulator.key_combo(["rshift", "f12"], 2)
+```
+
+`pckey::FromName` is case-insensitive and also accepts a `"pc."` prefix
+(`"pc.f12"`, `"pc.rshift"`) if a name ever collides with a ZX key name
+elsewhere. `GET /api/v1/emulator/{id}/keyboard/keys` lists every known name,
+ZX and PC-only alike.
+
+**AY module playback flips the CPU clock every frame.** WC's built-in AY
+player writes `SYS_CONFIG[1:0]` from the same PC once per frame (verified via
+`porttrace`: alternating `0x00`/`0x02` at a fixed address, one frame apart) -
+a software "turbo during the heavy part of the frame, normal speed for the
+rest" trick, not a bug. NeoGS playback never does this (the hardware card
+needs no CPU-side mixing help), so the CPU-frequency indicator only flickers
+with AY/TurboSound tracks. `Z80::NotifyCPUFrequencyChanged` classifies this at
+the source (see its comment in `core/src/emulator/cpu/z80.cpp`) so a UI shows
+a stable "lo<->hi" band instead of chasing every flip.
+
 ### What works / what doesn't
 
 | Area | State |

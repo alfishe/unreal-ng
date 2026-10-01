@@ -280,13 +280,30 @@ void DebugKeyboardManager::PressCombo(const std::vector<ZXKeysEnum>& keys)
 
 void DebugKeyboardManager::PressCombo(const std::vector<std::string>& keyNames)
 {
+    // Split by name: a name that is not a ZX key (e.g. "f12", "rshift" - no ZX
+    // Spectrum matrix equivalent at all) falls back to a pure PC key, exactly
+    // like the single-key PressKey(string) overload already does. Without
+    // this split, a PC-only name resolved to ZXKEY_NONE and ApplyKey silently
+    // dropped it - a combo like {"rshift", "f12"} (TS-Conf's BIOS Setup entry)
+    // pressed nothing at all.
     std::vector<ZXKeysEnum> keys;
+    std::vector<PcKey> pcKeys;
     keys.reserve(keyNames.size());
     for (const auto& name : keyNames)
     {
-        keys.push_back(ResolveKeyName(name));
+        const ZXKeysEnum key = ResolveKeyName(name);
+        if (key != ZXKEY_NONE)
+        {
+            keys.push_back(key);
+            continue;
+        }
+        const PcKey pcKey = pckey::FromName(name);
+        if (pcKey != PcKey::None)
+            pcKeys.push_back(pcKey);
     }
     PressCombo(keys);
+    for (PcKey pcKey : pcKeys)
+        ApplyPcKey(pcKey, /*pressed=*/true);
 }
 
 void DebugKeyboardManager::ReleaseCombo(const std::vector<ZXKeysEnum>& keys)
@@ -303,12 +320,25 @@ void DebugKeyboardManager::ReleaseCombo(const std::vector<ZXKeysEnum>& keys)
 
 void DebugKeyboardManager::ReleaseCombo(const std::vector<std::string>& keyNames)
 {
+    // Same ZX/PC split as PressCombo(vector<string>); PC keys release first,
+    // in reverse name order, mirroring "modifier last" for the ZX half below
     std::vector<ZXKeysEnum> keys;
+    std::vector<PcKey> pcKeys;
     keys.reserve(keyNames.size());
     for (const auto& name : keyNames)
     {
-        keys.push_back(ResolveKeyName(name));
+        const ZXKeysEnum key = ResolveKeyName(name);
+        if (key != ZXKEY_NONE)
+        {
+            keys.push_back(key);
+            continue;
+        }
+        const PcKey pcKey = pckey::FromName(name);
+        if (pcKey != PcKey::None)
+            pcKeys.push_back(pcKey);
     }
+    for (auto it = pcKeys.rbegin(); it != pcKeys.rend(); ++it)
+        ApplyPcKey(*it, /*pressed=*/false);
     ReleaseCombo(keys);
 }
 
@@ -326,13 +356,38 @@ void DebugKeyboardManager::TapCombo(const std::vector<ZXKeysEnum>& keys, uint16_
 
 void DebugKeyboardManager::TapCombo(const std::vector<std::string>& keyNames, uint16_t holdFrames)
 {
+    // Same ZX/PC split as PressCombo(vector<string>). A combo made entirely of
+    // PC-only names (e.g. {"rshift", "f12"} - TS-Conf's BIOS Setup entry) still
+    // queues a single COMBO_TAP event with an empty ZX key list and a
+    // populated pcKeys list; ExecuteEvent/OnFrame already presses, holds and
+    // releases pcKeys exactly like the ZX half (see pressPcKeys() and the
+    // reverse-order release in OnFrame)
     std::vector<ZXKeysEnum> keys;
+    std::vector<PcKey> pcKeys;
     keys.reserve(keyNames.size());
     for (const auto& name : keyNames)
     {
-        keys.push_back(ResolveKeyName(name));
+        const ZXKeysEnum key = ResolveKeyName(name);
+        if (key != ZXKEY_NONE)
+        {
+            keys.push_back(key);
+            continue;
+        }
+        const PcKey pcKey = pckey::FromName(name);
+        if (pcKey != PcKey::None)
+            pcKeys.push_back(pcKey);
     }
-    TapCombo(keys, holdFrames);
+
+    if (keys.empty() && pcKeys.empty())
+        return;
+
+    KeyboardSequence seq;
+    seq.name = "tap_combo";
+    KeyboardSequenceEvent event(KeyboardSequenceEvent::Action::COMBO_TAP, keys, holdFrames);
+    event.pcKeys = std::move(pcKeys);
+    seq.events.push_back(std::move(event));
+
+    QueueSequence(seq);
 }
 
 /// endregion </Modifier + Key Combo Operations>
@@ -689,6 +744,18 @@ std::vector<std::string> DebugKeyboardManager::GetAllKeyNames()
     {
         names.push_back(pair.first);
     }
+
+    // PC-only names (no ZX matrix equivalent at all, e.g. "f12", "rshift",
+    // "home") are already fully accepted by PressKey/TapKey/PressCombo/etc.
+    // (pckey::FromName fallback) but were missing from this discovery list.
+    // A name that collides with a ZX name keeps ZX priority in ResolveKeyName,
+    // so it is not duplicated here - only genuinely PC-only names are added
+    for (const std::string& pcName : pckey::AllNames())
+    {
+        if (_keyNameMap.find(pcName) == _keyNameMap.end())
+            names.push_back(pcName);
+    }
+
     std::sort(names.begin(), names.end());
     return names;
 }

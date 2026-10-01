@@ -262,6 +262,18 @@ PcKey FromName(const std::string& name)
     return PcKey::None;
 }
 
+std::vector<std::string> AllNames()
+{
+    std::vector<std::string> names;
+    names.reserve(sizeof(kKeys) / sizeof(kKeys[0]));
+    for (const KeyInfo& info : kKeys)
+    {
+        if (info.key != PcKey::None)
+            names.emplace_back(info.name);
+    }
+    return names;
+}
+
 std::vector<uint8_t> Ps2Set2Bytes(PcKey key, bool pressed)
 {
     if (key == PcKey::PrintScreen)

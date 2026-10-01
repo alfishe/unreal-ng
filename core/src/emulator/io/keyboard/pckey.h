@@ -80,6 +80,11 @@ namespace pckey
     /// PcKey::None when unknown
     PcKey FromName(const std::string& name);
 
+    /// Every automation name in table order (skips the empty None entry) -
+    /// for listing endpoints (WebAPI GET /keyboard/keys) so PC-only keys like
+    /// "f12" or "rshift" are discoverable, not just already-accepted
+    std::vector<std::string> AllNames();
+
     /// PS/2 scan code set 2 bytes of a key press (make) or release (break):
     /// A -> 1C / F0 1C; Up -> E0 75 / E0 F0 75; Print Screen -> E0 12 E0 7C /
     /// E0 F0 7C E0 F0 12; Pause -> E1 14 77 E1 F0 14 F0 77 on press, nothing on
