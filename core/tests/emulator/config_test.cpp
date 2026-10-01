@@ -512,3 +512,29 @@ TEST_F(Config_Test, TsconfCanonicalTiming)
     EXPECT_EQ(config.frame / config.t_line, 320u);
     EXPECT_EQ(config.frame_duration_us, 20480u) << "48.83 frames per second";
 }
+
+/// [MISC] ScorpionTurboLogic: SC15.1 by default; SC15.3 has no Even M1, whatever [ULA] EvenM1 says
+/// (docs/inprogress/2026-09-29-machine-waits/research-scorpion-turbo.md section 4.2)
+TEST_F(Config_Test, ScorpionTurboLogicDecidesEvenM1)
+{
+    auto load = [this](const std::string& misc) {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath("scorpion_logic_config_test.ini");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file << "[MISC]\nHIMEM=SCORPION\nRAMSize=256\n" << misc << "[ULA]\nEvenM1=1\n";
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load(""));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC151);
+    EXPECT_EQ(_context->config.even_M1, 1);
+
+    ASSERT_TRUE(load("ScorpionTurboLogic=SC15.3\n"));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC153);
+    EXPECT_EQ(_context->config.even_M1, 0) << "SC15.3 has no Even M1";
+
+    ASSERT_TRUE(load("ScorpionTurboLogic=SC15.2\n"));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC151) << "unknown: the default";
+}

@@ -1711,6 +1711,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& slots = value["slots"];
                                     for (Json::ArrayIndex i = 0; i < slots.size(); ++i)
                                         out << " " << (slots[i]["contended"].asBool() ? "C" : "-");
+                                    if (value["even_m1"].asBool())
+                                        out << ", Even M1";
+                                    if (value.isMember("scorpion_turbo_logic"))
+                                        out << ", Turbo+ logic " << value["scorpion_turbo_logic"].asString();
                                     if (value["statistics"].isObject())
                                     {
                                         const Json::Value& last = value["statistics"]["last_frame"];

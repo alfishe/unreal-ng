@@ -141,3 +141,71 @@ TEST_F(ScorpionTurboOverlay_Test, NoWaitsAtNormalSpeedOrWithTheFeatureOff)
     _core->SetContentionSwitch(true);
     EXPECT_EQ(Run(0x8000, kPicture, 3), (std::vector<uint32_t>{8, 8, 8}));
 }
+
+/// The closed-form waits (one division per access) equal the edge-by-edge rule at every clock of a turbo frame
+TEST_F(ScorpionTurboOverlay_Test, ClosedFormWaitsMatchTheEdgeByEdgeRule)
+{
+    Turbo(true);
+    ScorpionTurboOverlay overlay(_core, _z80, _context->pMemory, &_context->emulatorState,
+                                 _context->config.intstart + 1 + 14336);
+    const uint32_t frameClocks = 2 * _context->config.frame;
+    for (uint32_t t = 0; t < frameClocks; t++)
+    {
+        ASSERT_EQ(overlay.DataWait(t), overlay.DataWaitByEdges(t)) << "clock " << t;
+        ASSERT_EQ(overlay.OpcodeFetchWait(t), overlay.OpcodeFetchWaitByEdges(t)) << "clock " << t;
+    }
+}
+
+/// The SC15.3 firmware (research-scorpion-turbo.md 4.2, 4.3): an opcode fetch waits only for the memory slot, like
+/// a data access, and an I/O cycle takes one T more. From the picture's phase 0 a NOP stream settles to 4 T (its
+/// fetches start on the count before the CPU's slot); in the border 5, then 4; OUT (#FE),A in the border 13
+TEST_F(ScorpionTurboOverlay_Test, Sc153FetchesWaitForTheSlotOnly)
+{
+    _context->config.scorpionTurboLogic = ScorpionTurboLogic::SC153;
+    Turbo(true);
+    Poke(0x8000, {0x00, 0x00, 0x00, 0x00});
+    EXPECT_EQ(Run(0x8000, kPicture, 4), (std::vector<uint32_t>{7, 4, 4, 4}));
+    EXPECT_EQ(Run(0x8000, kBorder, 4), (std::vector<uint32_t>{5, 4, 4, 4}));
+
+    Poke(0x9000, {0xD3, 0xFE});
+    EXPECT_EQ(Run(0x9000, kBorder, 1), (std::vector<uint32_t>{5 + 3 + 5})) << "the I/O cycle 4 + 1";
+}
+
+/// While /INT is active the Turbo+ logic runs the CPU at 3.5 MHz (research-scorpion-turbo.md 2.3): the clock drops at
+/// the first instruction boundary inside the pulse and comes back after it; nothing with the contention feature off
+TEST_F(ScorpionTurboOverlay_Test, TurboDropsToNormalSpeedWhileIntIsActive)
+{
+    Turbo(true);
+    std::vector<uint8_t> nops(512, 0x00);
+    for (size_t i = 0; i < nops.size(); i++)
+        _z80->DirectWrite(static_cast<uint16_t>(0x8000 + i), 0x00);
+    EmulatorState& state = _context->emulatorState;
+    const uint32_t intStart = _context->config.intstart;
+    const uint32_t intEnd = intStart + _context->config.intlen;
+
+    _z80->pc = 0x8000;
+    _z80->iff1 = _z80->iff2 = 0;
+    _z80->t = 2 * intStart - 16;  // turbo clock, just before the pulse
+    int steps = 0;
+    while (state.hw_turbo_ratio_applied == 2 && steps++ < 50)
+        _z80->StepInstruction(true);  // the frame loop step: it runs the machine step hooks
+    ASSERT_EQ(state.hw_turbo_ratio_applied, 1) << "3.5 MHz inside /INT";
+    EXPECT_GE(_z80->t, intStart) << "the clock now counts 3.5 MHz ticks, inside the pulse";
+    EXPECT_LT(_z80->t, intEnd);
+
+    steps = 0;
+    while (state.hw_turbo_ratio_applied == 1 && steps++ < 50)
+        _z80->StepInstruction(true);  // the frame loop step: it runs the machine step hooks
+    ASSERT_EQ(state.hw_turbo_ratio_applied, 2) << "7 MHz again after /INT";
+    EXPECT_GE(_z80->t, 2 * intEnd);
+    EXPECT_EQ(state.scorpion_turbo, 1) << "the latch is untouched";
+
+    // With the contention feature off the turbo clock stays
+    _core->SetContentionSwitch(false);
+    _z80->pc = 0x8000;
+    _z80->t = 2 * intStart - 16;
+    for (int i = 0; i < 30; i++)
+        _z80->StepInstruction(true);  // the frame loop step: it runs the machine step hooks
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 2);
+    _core->SetContentionSwitch(true);
+}
