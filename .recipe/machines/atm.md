@@ -58,6 +58,8 @@ inspect_state {"aspects":["registers","video","fdc"]}
     The joystick reads the `Joystick` device (idle `0x00`, active high: D0 right, D1 left, D2 down, D3 up, D4 fire);
     the host keypad drives it by default (`kp8` up, `kp2` down, `kp4` left, `kp6` right, `kp0` fire; `[INPUT]
     JoystickKeys=` overrides, empty disables, `Joystick=NONE` unfits it) and the same keys still reach the PS/2 log.
+    To press buttons from automation (MCP `joystick_input`, WebAPI `/joystick/*`, CLI, Lua, Python) see
+    [input/joystick.md](../input/joystick.md). The ROM service menu is outside shadow about 60 frames after reset.
   - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
     only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
     `#EFF7` itself is ignored in shadow and cannot be read.

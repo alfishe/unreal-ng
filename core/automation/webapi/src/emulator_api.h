@@ -436,6 +436,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::mouseButtonList, "/api/v1/emulator/{id}/mouse/buttons", drogon::Get);
     // endregion Mouse Injection
 
+    // region Joystick Injection (implementation: api/joystick_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::joystickPress, "/api/v1/emulator/{id}/joystick/press", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::joystickRelease, "/api/v1/emulator/{id}/joystick/release", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::joystickSet, "/api/v1/emulator/{id}/joystick/set", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::joystickTap, "/api/v1/emulator/{id}/joystick/tap", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::joystickStatus, "/api/v1/emulator/{id}/joystick", drogon::Get);
+    // endregion Joystick Injection
+
     // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
     // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
     ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
@@ -1336,6 +1344,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void mouseButtonList(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Mouse Injection Methods
+
+    // region Joystick Injection Methods (implementation: api/joystick_api.cpp)
+    void joystickPress(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void joystickRelease(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void joystickSet(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void joystickTap(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void joystickStatus(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // endregion Joystick Injection Methods
 
     // region TTD Methods (implementation: api/ttd_api.cpp)
     // Per parent TDD §10.4. Full surface available after Phase 2 completion.

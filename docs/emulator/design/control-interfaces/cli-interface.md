@@ -327,6 +327,32 @@ model-specific decoder gating` behind the Scorpion DOS trigger / Shadow Monitor,
 - The CLI does not run frames for you. After a `click`, use `run_frames` (or resume) so the
   program sees the press and the release.
 
+### Joystick Input Commands
+
+The `joystick` verb drives the Kempston joystick of the selected emulator (source:
+`core/automation/cli/src/commands/cli-processor-joystick.cpp`, the command logic and output
+formatting in `cli-joystick-format.h`). Full semantics, units and limits:
+[command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+
+| CLI Command | Alias | Description |
+| :--- | :--- | :--- |
+| `joystick press <buttons>` / `joystick release <buttons>` | | `up`, `down`, `left`, `right`, `fire`, `b5`..`b7`; several as `up+fire`, `up,fire` or `up fire` |
+| `joystick set <state\|buttons\|none>` | | Exactly these buttons: a byte (`0x18`, `24`), a list, or `none` |
+| `joystick tap <buttons> [frames]` | | Hold for `frames` (default 2), then release on its own |
+| `joystick clear` | `joystick release_all` | Release everything, cancel a pending tap |
+| `joystick status` | `joystick info` | Multi-line state block |
+| `joystick list` | | Button names and bits |
+| `joystick help` | | Subcommand help |
+
+```
+> joystick press up+fire
+Joystick pressed: up,fire -> state=0x18 buttons=up,fire (IN #1F=0x18)
+> joystick set 300
+Error: state=300 out of range 0..255
+> joystick tap fire 3
+Joystick tap: fire for 3 frames -> state=0x18 buttons=up,fire (IN #1F=0x18)
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

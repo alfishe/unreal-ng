@@ -36,6 +36,7 @@
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
+#include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
@@ -337,6 +338,108 @@ namespace PythonBindings
     }
 
     /// endregion </Kempston Mouse helpers>
+
+    /// region <Kempston joystick helpers (joystick TDD §5)>
+
+    inline DebugJoystickManager& JoystickManagerOrThrow(Emulator& self)
+    {
+        auto* ctx = self.GetContext();
+        DebugJoystickManager* mgr = (ctx && ctx->pDebugManager) ? ctx->pDebugManager->GetJoystickManager() : nullptr;
+        if (!mgr)
+            throw std::runtime_error("joystick manager not available");
+        return *mgr;
+    }
+
+    /// State dict: same keys as the WebAPI state object
+    inline py::dict JoystickStateDict(const JoystickStateSnapshot& state, const std::string& warning = "")
+    {
+        py::dict buttons;
+        for (const std::string& name : DebugJoystickManager::GetAllButtonNames())
+            buttons[py::str(name)] = false;
+        py::list pressed;
+        for (const std::string& name : state.buttons)
+        {
+            buttons[py::str(name)] = true;
+            pressed.append(name);
+        }
+
+        py::dict d;
+        d["available"] = state.available;
+        d["present"] = state.present;
+        d["wired"] = state.wired;
+        d["state"] = static_cast<int>(state.state);
+        d["port_value"] = static_cast<int>(state.portValue);
+        d["buttons"] = buttons;
+        d["pressed"] = pressed;
+        d["button_names"] = DebugJoystickManager::GetAllButtonNames();
+        d["keys"] = state.keys;
+        if (state.pendingTapMask != 0)
+        {
+            py::dict pending;
+            pending["mask"] = static_cast<int>(state.pendingTapMask);
+            pending["frames_left"] = static_cast<int>(state.pendingTapFramesLeft);
+            d["pending_tap"] = pending;
+        }
+        else
+        {
+            d["pending_tap"] = py::none();
+        }
+        if (!warning.empty())
+            d["warning"] = warning;
+        return d;
+    }
+
+    /// Raise for a failed result (ValueError / RuntimeError), else return the state dict
+    inline py::dict JoystickResultOrThrow(DebugJoystickManager& mgr, const JoystickInjectResult& result)
+    {
+        switch (result.status)
+        {
+            case JoystickInjectStatus::Ok:
+                return JoystickStateDict(mgr.GetState(), result.warning);
+            case JoystickInjectStatus::InvalidArgument:
+                throw py::value_error(result.message);
+            case JoystickInjectStatus::NoDevice:
+            case JoystickInjectStatus::ReplayActive:
+            default:
+                throw std::runtime_error(result.message.empty() ? "joystick manager not available" : result.message);
+        }
+    }
+
+    /// Button list: a string ("up+fire", "up,fire") or a list / tuple of names -> one list string
+    inline std::string JoystickNamesOrThrow(const py::object& buttons)
+    {
+        if (py::isinstance<py::str>(buttons))
+            return buttons.cast<std::string>();
+        if (py::isinstance<py::list>(buttons) || py::isinstance<py::tuple>(buttons))
+        {
+            std::string names;
+            for (const py::handle& item : buttons)
+            {
+                if (!py::isinstance<py::str>(item))
+                    throw py::value_error("buttons must be a string or a list of button names");
+                names += (names.empty() ? "" : ",") + item.cast<std::string>();
+            }
+            return names;
+        }
+        throw py::value_error("buttons must be a string or a list of button names");
+    }
+
+    /// Python int -> long long; beyond 64 bits saturates so the manager reports it out of range
+    inline long long JoystickIntOrThrow(const py::object& value, const char* name)
+    {
+        if (!py::isinstance<py::int_>(value))
+            throw py::value_error(std::string(name) + " must be an integer");
+        try
+        {
+            return value.cast<long long>();
+        }
+        catch (const py::cast_error&)
+        {
+            return value.cast<py::int_>() > py::int_(0) ? std::numeric_limits<long long>::max()
+                                                        : std::numeric_limits<long long>::min();
+        }
+    }
+    /// endregion </Kempston joystick helpers>
 
     /// @brief Register all emulator bindings with the Python module
     /// @param m The pybind11 module to register bindings with
@@ -2748,6 +2851,56 @@ namespace PythonBindings
             .def("mouse_button_names", [](Emulator&) -> std::vector<std::string> {
                 return DebugMouseManager::GetAllButtonNames();
             }, "List mouse button names")
+
+            // -----------------------------------------------------------------
+            // Kempston joystick injection (joystick TDD §5). Same contract as the mouse:
+            // errors raise (ValueError for bad arguments, RuntimeError for TTD replay /
+            // missing device), success returns the state dict (same keys as GET /joystick).
+            // -----------------------------------------------------------------
+            .def("joystick_press", [](Emulator& self, const py::object& buttons) -> py::dict {
+                const std::string names = JoystickNamesOrThrow(buttons);
+                DebugJoystickManager& mgr = JoystickManagerOrThrow(self);
+                return JoystickResultOrThrow(mgr, mgr.Press(names));
+            }, "Press and hold joystick buttons (up|down|left|right|fire|b5..b7; 'up+fire' or a list)", py::arg("buttons"))
+            .def("joystick_release", [](Emulator& self, const py::object& buttons) -> py::dict {
+                const std::string names = JoystickNamesOrThrow(buttons);
+                DebugJoystickManager& mgr = JoystickManagerOrThrow(self);
+                return JoystickResultOrThrow(mgr, mgr.Release(names));
+            }, "Release joystick buttons", py::arg("buttons"))
+            .def("joystick_set", [](Emulator& self, const py::object& state) -> py::dict {
+                DebugJoystickManager& mgr = JoystickManagerOrThrow(self);
+                if (py::isinstance<py::int_>(state))
+                    return JoystickResultOrThrow(mgr, mgr.SetStateChecked(JoystickIntOrThrow(state, "state")));
+                const std::string names = JoystickNamesOrThrow(state);
+                if (names.empty())
+                    return JoystickResultOrThrow(mgr, mgr.ReleaseAll());
+                const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
+                if (mask == 0)  // the manager words the unknown-name error
+                    return JoystickResultOrThrow(mgr, mgr.Press(names));
+                return JoystickResultOrThrow(mgr, mgr.SetStateChecked(mask));
+            }, "Set exactly the held joystick buttons: a byte 0..255 or a list / string of names ([] = none)",
+               py::arg("state"))
+            .def("joystick_tap", [](Emulator& self, const py::object& buttons, const py::object& frames) -> py::dict {
+                const std::string names = JoystickNamesOrThrow(buttons);
+                const long long count = frames.is_none() ? static_cast<long long>(DebugJoystickManager::DEFAULT_TAP_FRAMES)
+                                                         : JoystickIntOrThrow(frames, "frames");
+                DebugJoystickManager& mgr = JoystickManagerOrThrow(self);
+                return JoystickResultOrThrow(mgr, mgr.TapChecked(names, count));
+            }, "Press joystick buttons, hold for frames (default 2), release", py::arg("buttons"),
+               py::arg("frames") = py::none())
+            .def("joystick_state", [](Emulator& self) -> py::dict {
+                DebugJoystickManager& mgr = JoystickManagerOrThrow(self);
+                const JoystickStateSnapshot state = mgr.GetState();
+                if (!state.available)
+                    throw std::runtime_error("Joystick device not available");
+                return JoystickStateDict(state);
+            }, "Get the joystick byte, held buttons, the IN #1F value, wiring, host keys and a pending tap")
+            .def("joystick_tap_pending", [](Emulator& self) -> bool {
+                return JoystickManagerOrThrow(self).IsTapPending();
+            }, "True while a timed joystick tap is still holding its buttons")
+            .def("joystick_button_names", [](Emulator&) -> std::vector<std::string> {
+                return DebugJoystickManager::GetAllButtonNames();
+            }, "List joystick button names")
 
             // -----------------------------------------------------------------
             // TTD (Time-Travel Debug) bindings — Phase 2 surface

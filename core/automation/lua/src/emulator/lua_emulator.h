@@ -28,6 +28,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
+#include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -279,6 +280,96 @@ protected:
         return std::nullopt;
     }
     /// endregion </Kempston Mouse helpers>
+
+    /// region <Kempston joystick helpers (joystick TDD §5)>
+protected:
+    DebugJoystickManager* joystickManager() const
+    {
+        Emulator* emu = effectiveEmulator();
+        EmulatorContext* ctx = emu ? emu->GetContext() : nullptr;
+        return (ctx && ctx->pDebugManager) ? ctx->pDebugManager->GetJoystickManager() : nullptr;
+    }
+
+    /// State table: same keys as the WebAPI state object
+    static sol::table joystickStateTable(sol::this_state s, const JoystickStateSnapshot& state,
+                                         const std::string& warning = "")
+    {
+        sol::state_view lua(s);
+        sol::table buttons = lua.create_table();
+        for (const std::string& name : DebugJoystickManager::GetAllButtonNames())
+            buttons[name] = false;
+        sol::table pressed = lua.create_table();
+        int index = 1;
+        for (const std::string& name : state.buttons)
+        {
+            buttons[name] = true;
+            pressed[index++] = name;
+        }
+        sol::table names = lua.create_table();
+        index = 1;
+        for (const std::string& name : DebugJoystickManager::GetAllButtonNames())
+            names[index++] = name;
+
+        sol::table t = lua.create_table();
+        t["available"] = state.available;
+        t["present"] = state.present;
+        t["wired"] = state.wired;
+        t["state"] = static_cast<int>(state.state);
+        t["port_value"] = static_cast<int>(state.portValue);
+        t["buttons"] = buttons;
+        t["pressed"] = pressed;
+        t["button_names"] = names;
+        t["keys"] = state.keys;
+        if (state.pendingTapMask != 0)
+        {
+            sol::table pending = lua.create_table();
+            pending["mask"] = static_cast<int>(state.pendingTapMask);
+            pending["frames_left"] = static_cast<int>(state.pendingTapFramesLeft);
+            t["pending_tap"] = pending;
+        }
+        if (!warning.empty())
+            t["warning"] = warning;
+        return t;
+    }
+
+    static sol::variadic_results joystickResult(sol::this_state s, DebugJoystickManager& mgr,
+                                                const JoystickInjectResult& result)
+    {
+        if (!result.ok())
+            return mouseError(s, result.message);
+        sol::variadic_results results;
+        results.push_back(sol::make_object(s, joystickStateTable(s, mgr.GetState(), result.warning)));
+        return results;
+    }
+
+    /// Button list: a string ("up+fire", "up,fire") or a table of names -> one list string
+    static bool joystickNamesArg(const sol::object& obj, std::string& names, std::string& error)
+    {
+        names.clear();
+        if (obj.get_type() == sol::type::string)
+        {
+            names = obj.as<std::string>();
+            return true;
+        }
+        if (obj.get_type() == sol::type::table)
+        {
+            sol::table table = obj.as<sol::table>();
+            for (size_t i = 1; i <= table.size(); i++)
+            {
+                sol::object item = table[i];
+                if (item.get_type() != sol::type::string)
+                {
+                    error = "buttons must be a string or a table of button names";
+                    return false;
+                }
+                names += (names.empty() ? "" : ",") + item.as<std::string>();
+            }
+            return true;
+        }
+        error = "buttons must be a string or a table of button names";
+        return false;
+    }
+    /// endregion </Kempston joystick helpers>
 
     /// region <Constructors / destructors>
 public:
@@ -1581,6 +1672,90 @@ public:
 
         lua.set_function("mouse_button_names", []() -> sol::as_table_t<std::vector<std::string>> {
             return sol::as_table(DebugMouseManager::GetAllButtonNames());
+        });
+
+        // Joystick injection (Kempston joystick, joystick TDD §5). Same contract as the mouse functions:
+        // success returns the state table (same keys as GET /joystick), failure returns nil, "message".
+        lua.set_function("joystick_press", [this](sol::this_state s, sol::object buttonsArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->Press(names));
+        });
+
+        lua.set_function("joystick_release", [this](sol::this_state s, sol::object buttonsArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->Release(names));
+        });
+
+        // joystick_set(0xE5) sets the raw byte; joystick_set({"up", "fire"}) / joystick_set("up+fire") the held set; {} releases all
+        lua.set_function("joystick_set", [this](sol::this_state s, sol::object stateArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string error;
+            if (stateArg.get_type() == sol::type::number)
+            {
+                long long state = 0;
+                if (!mouseIntArg(stateArg, "state", LLONG_MIN, LLONG_MAX, state, error))
+                    return mouseError(s, error);
+                return joystickResult(s, *mgr, mgr->SetStateChecked(state));
+            }
+            std::string names;
+            if (!joystickNamesArg(stateArg, names, error))
+                return mouseError(s, "state must be an integer, a string or a table of button names");
+            if (names.empty())
+                return joystickResult(s, *mgr, mgr->ReleaseAll());
+            const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
+            if (mask == 0)  // the manager words the unknown-name error
+                return joystickResult(s, *mgr, mgr->Press(names));
+            return joystickResult(s, *mgr, mgr->SetStateChecked(mask));
+        });
+
+        lua.set_function("joystick_tap", [this](sol::this_state s, sol::object buttonsArg, sol::object framesArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            long long frames = DebugJoystickManager::DEFAULT_TAP_FRAMES;
+            if (framesArg.valid() && framesArg.get_type() != sol::type::lua_nil &&
+                !mouseIntArg(framesArg, "frames", LLONG_MIN, LLONG_MAX, frames, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->TapChecked(names, frames));
+        });
+
+        lua.set_function("joystick_state", [this](sol::this_state s) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            const JoystickStateSnapshot state = mgr->GetState();
+            if (!state.available)
+                return mouseError(s, "Joystick device not available");
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, joystickStateTable(s, state)));
+            return results;
+        });
+
+        lua.set_function("joystick_tap_pending", [this]() -> bool {
+            DebugJoystickManager* mgr = joystickManager();
+            return mgr && mgr->IsTapPending();
+        });
+
+        lua.set_function("joystick_button_names", []() -> sol::as_table_t<std::vector<std::string>> {
+            return sol::as_table(DebugJoystickManager::GetAllButtonNames());
         });
 
         // Snapshot operations

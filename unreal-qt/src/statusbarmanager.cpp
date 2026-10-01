@@ -1,5 +1,7 @@
 #include "statusbarmanager.h"
 #include "emulator/rzx/rzxlauncher.h"
+#include "debugger/debugmanager.h"
+#include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "widgets/rzxpopover.h"
 
@@ -67,6 +69,9 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _disk = new StatusIndicator(QStringLiteral("disk"), tr("Disk"), _statusBar);
     _hdd = new StatusIndicator(QStringLiteral("hdd"), tr("HDD"), _statusBar);
     _sound = new StatusIndicator(QStringLiteral("sound"), tr("Sound"), _statusBar);
+    _joystick = new StatusIndicator(QStringLiteral("joystick"), tr("Joystick"), _statusBar);
+    _joystick->setBlinking(false);  // a held-buttons state LED, like sound
+    _joystick->hide();
 
     _sound->setBlinking(false);
     _sound->setCursor(Qt::PointingHandCursor);
@@ -115,6 +120,7 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _statusBar->addPermanentWidget(_tape);
     _statusBar->addPermanentWidget(_hdd);
     _statusBar->addPermanentWidget(_disk);
+    _statusBar->addPermanentWidget(_joystick);
     _statusBar->addPermanentWidget(_sound);
     _statusBar->addPermanentWidget(separator);
     _statusBar->addPermanentWidget(_cpuFreq);
@@ -385,6 +391,7 @@ void StatusBarManager::refresh()
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
     updateIde(context);
+    updateJoystick(context);
     _sound->setActive(soundOn);
 
     // The text/color are owned by handleCPUFreqChanged (one writer, driven by
@@ -576,6 +583,31 @@ void StatusBarManager::restoreVisibility()
         _statusBar->raise();
         _statusBar->update();
     }
+}
+
+void StatusBarManager::updateJoystick(EmulatorContext* context)
+{
+    // Lit while a button is held (host keypad keys, CLI / WebAPI / MCP / Lua / Python input); shown only when
+    // the machine decodes a Kempston joystick and one is fitted. Host keys arrive through the core mapping, so
+    // there is no Qt key handling here: this only reads the device state
+    DebugJoystickManager* manager =
+        (context && context->pDebugManager) ? context->pDebugManager->GetJoystickManager() : nullptr;
+    const JoystickStateSnapshot state = manager ? manager->GetState() : JoystickStateSnapshot();
+    const bool visible = state.available && state.present && state.wired;
+    if (_joystick->isVisible() != visible)
+        _joystick->setVisible(visible);
+    if (!visible)
+    {
+        _joystick->setActive(false);
+        return;
+    }
+
+    QStringList held;
+    for (const std::string& name : state.buttons)
+        held << QString::fromStdString(name);
+    _joystick->setActive(!held.isEmpty());
+    _joystick->setLiveToolTip(held.isEmpty() ? tr("Kempston joystick (IN #1F): nothing held")
+                                             : tr("Kempston joystick (IN #1F): %1").arg(held.join(QLatin1String(", "))));
 }
 
 void StatusBarManager::updateIde(EmulatorContext* context)

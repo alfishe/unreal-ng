@@ -287,6 +287,44 @@ local ok, err = mouse_wheel(12)
 print(ok, err)                     -- nil   steps=12 out of range -7..7
 ```
 
+### Joystick Input
+
+> **Status**: ✅ Implemented (2026-10). Source: `core/automation/lua/src/emulator/lua_emulator.h`
+> (`joystick_*` functions; helpers `joystickStateTable`, `joystickResult`, `joystickNamesArg`).
+
+Global functions that drive the emulated Kempston joystick, mirroring the CLI `joystick` commands.
+Semantics, units and limits: [command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+They act on the bound emulator, or on the selected one, like the mouse functions. (The design note
+spells them `emu:joystickPress`; the Lua API is global snake-case functions, so they are named like `mouse_*`.)
+
+```lua
+joystick_press(buttons)            --> state | nil, err    ("up+fire", "up,fire" or {"up","fire"})
+joystick_release(buttons)          --> state | nil, err
+joystick_set(state)                --> state | nil, err    (a byte 0..255, a name string, or a table; {} = none)
+joystick_tap(buttons [, frames=2]) --> state | nil, err    (hold 1..65535 frames)
+joystick_state()                   --> state | nil, err
+joystick_tap_pending()             --> true while a tap is still holding its buttons
+joystick_button_names()            --> {"up","down","left","right","fire","b5","b6","b7"}
+```
+
+`state` has the same key names as the WebAPI state object: `available`, `present`, `wired`,
+`state` (the byte), `port_value` (what `IN #1F` returns), `buttons = {up=..., ...}`, `pressed`
+(array of names), `button_names`, `keys`, `pending_tap` (`{mask, frames_left}`, or **absent**),
+plus `warning` when the guest cannot see the buttons.
+
+Errors do not raise: the function returns `nil, "message"` with the shared wording
+(`state=300 out of range 0..255`, `unknown joystick button 'jump' (...)`, `TTD replay in progress ...`).
+
+```lua
+run_frames(1)
+local st = assert(joystick_press("up+fire"))
+print(st.state, st.port_value)        -- 24   24
+assert(joystick_tap("left", 3))
+run_frames(4)
+print(joystick_state().buttons.left)  -- false
+print(joystick_set(300))              -- nil   state=300 out of range 0..255
+```
+
 ### Feature Management
 
 `feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:

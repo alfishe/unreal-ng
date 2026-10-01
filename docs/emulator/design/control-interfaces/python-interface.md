@@ -430,6 +430,39 @@ except ValueError as e:
 
 While TTD records, these calls are written to the TTD input journal, so a replay reproduces them.
 
+### Joystick Input
+
+`Emulator` methods that drive the emulated Kempston joystick, mirroring the CLI `joystick` commands
+and the WebAPI `/joystick/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
+Semantics, units and limits: [command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+
+```python
+emu.joystick_press(buttons)             # "up+fire", "up,fire" or ["up", "fire"]
+emu.joystick_release(buttons)
+emu.joystick_set(state)                 # a byte 0..255, a name string or a list; [] = none
+emu.joystick_tap(buttons, frames=2)     # hold 1..65535 frames, then release on its own
+emu.joystick_state()                    # state dict (below)
+emu.joystick_tap_pending()              # True while a tap is still holding its buttons
+emu.joystick_button_names()             # ["up", "down", "left", "right", "fire", "b5", "b6", "b7"]
+```
+
+Every changing method returns the resulting **state dict**, with the keys of the WebAPI state object:
+`available`, `present`, `wired`, `state` (the byte), `port_value` (what `IN #1F` returns),
+`buttons` (a bool per name), `pressed`, `button_names`, `keys`, `pending_tap` (`None` or
+`{'mask', 'frames_left'}`), plus `warning` when the guest cannot see the buttons.
+
+**Errors raise**: `ValueError` for a bad name, type or range (`state=300 out of range 0..255`),
+`RuntimeError` for a TTD replay in progress or a missing device; the messages are the shared ones.
+
+```python
+emu = unreal.emu_get_selected()
+emu.pause()
+st = emu.joystick_press("up+fire")      # st['state'] == 0x18, st['port_value'] == 0x18
+emu.joystick_tap("left", frames=3)
+emu.run_frames(4)
+assert emu.joystick_state()["buttons"]["left"] is False
+```
+
 ### Feature Management
 
 `feature_list()` enumerates every registered runtime feature dynamically (the same list the CLI `feature` table and the WebAPI `/features` endpoint return), keyed by feature id:

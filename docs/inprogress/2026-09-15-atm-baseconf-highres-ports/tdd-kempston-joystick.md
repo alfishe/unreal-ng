@@ -120,7 +120,7 @@ Host gamepad (SDL / Qt gamepad), the Sega-pad keyboard maps of the AVR, the 12-b
 
 ## 10. What landed
 
-Core part landed 2026-10-01 (uncommitted at the time of writing). The automation surfaces (§5) are a separate task.
+Core part and automation surfaces landed 2026-10-01 (uncommitted at the time of writing).
 
 **Done**
 
@@ -148,6 +148,48 @@ Core part landed 2026-10-01 (uncommitted at the time of writing). The automation
 
 **Not done**
 
-- Every automation surface of §5 and JOY-13: CLI, WebAPI + OpenAPI, MCP `joystick_input`, Lua, Python, Qt status indicator, `.recipe/input/joystick.md`.
 - A ZX-Poly group does not route the joystick (no ZX-Poly base model has the arm).
 - No Pentagon / Profi arms (PLAN #13a), as §9.
+
+### Automation surfaces (§5, JOY-13) - landed 2026-10-01
+
+Every surface is a thin shell over `DebugJoystickManager`; the same state change and the same messages come out of each. Two entry points were added to the manager for the surfaces that parse their own number types: `SetStateChecked(long long)` (`state=300 out of range 0..255`) and `TapChecked(name, long long)` (`frames=0 out of range 1..65535`, no wrap of negatives or values beyond 32 bits). Result messages and warnings (not fitted, machine does not decode the port) and the errors (no device, replay refused, unknown name) are the manager's, verbatim, on every surface.
+
+| Surface | Files | Verbs |
+|---|---|---|
+| CLI | `core/automation/cli/src/commands/cli-processor-joystick.cpp`, `cli-joystick-format.h` (parsing, command execution and formatting, header-only so tests run the exact text), `cli-processor.{h,cpp}` (route + help), `CMakeLists.txt` | `joystick press\|release\|set\|tap\|clear\|status\|list\|help` |
+| WebAPI + OpenAPI | `core/automation/webapi/src/api/joystick_api.cpp` (Drogon shell), `src/common/joystickjson.h` (parsing, status codes, JSON, unit-tested), `emulator_api.h`, `openapi/openapi_joystick.inc`, `openapi_joystick_schemas.inc`, `openapi_spec.cpp` (tag + includes), `OPENAPI_MAINTENANCE.md` | `GET /emulator/{id}/joystick`, `POST .../joystick/press\|release\|set\|tap` |
+| MCP | `core/automation/mcp/src/mcp-tools.cpp` (`RegisterJoystickInput`), `mcp-dispatcher.cpp` (instructions), `README.md`, `docs/features/mcp/README.md` | `joystick_input` actions `press`, `release`, `set`, `tap`, `status` (the tool count is 16) |
+| Lua | `core/automation/lua/src/emulator/lua_emulator.h` | `joystick_press`, `joystick_release`, `joystick_set`, `joystick_tap`, `joystick_state`, plus `joystick_tap_pending`, `joystick_button_names` |
+| Python | `core/automation/python/src/emulator/python_emulator.h` | `emu.joystick_press`, `joystick_release`, `joystick_set`, `joystick_tap`, `joystick_state`, `joystick_tap_pending`, `joystick_button_names` |
+| Qt | `unreal-qt/src/statusbarmanager.{h,cpp}`, `unreal-qt/resources/icons/joystick.svg`, `icons.qrc` | a status-bar LED lit while a button is held, tooltip lists the held buttons; hidden unless the joystick is fitted and the machine decodes it; reads the state only (no Qt key handling, host keys arrive through the core mapping) |
+| Docs | `.recipe/input/joystick.md` (+ `.recipe/README.md` index, `.recipe/_common/transports.md`, `.recipe/machines/atm.md`), `docs/emulator/design/control-interfaces/{command,cli,webapi,lua,python}-interface.md`, `docs/features/automation.md` | |
+
+Request shapes (WebAPI, MCP): `buttons` is a string (`"up+fire"`, `"up,fire"`) or an array of names (`button` is accepted as an alias); `set` takes `state` (integer 0..255) or `buttons` (`[]` = release all); `tap` takes `frames` (default 2). The POST reply echoes the input (`buttons`, `frames`, `requested_state`) and carries the resulting `state` object; `GET` returns the same object plus `emulator_id` and a `warning`.
+
+Tests (all pass; `core-tests`, full `test-parallel` 20 shards, 5686 tests, no failures):
+
+| Test file | Tests | Covers |
+|---|---|---|
+| `core/tests/debugger/joystick/debugjoystickmanager_test.cpp` | +2 (20 in file) | `SetStateChecked`, `TapChecked` ranges |
+| `core/tests/automation/cli-joystick-format-test.cpp` | 15 | JOY-13 CLI: every verb, errors, replay, not fitted, no device, help |
+| `core/tests/automation/webapi/common/joystickjson_test.cpp` | 11 | JOY-13 WebAPI: every route's body, 400 / 409 / 500 / 404, warning, status JSON; OpenAPI document (routes, `$ref`s, schema fields equal the real JSON, limits equal the manager's) |
+| `core/tests/automation/mcp-joystick-tools-test.cpp` | 5 | JOY-13 MCP: the tool through a caller that answers with the WebAPI logic over a real ATM3: routes, bodies, state change, shared errors, missing arguments |
+| `core/tests/automation/mcp-dispatcher-test.cpp` | 1 changed | tool list is 16 and has `joystick_input` |
+| `tools/verification/webapi/src/test_api_joystick.py` | 27 (live) | the routes on a running emulator, including a guest loop reading `IN #1F` |
+
+Live check (headless `unreal-qt`, ATM3): CLI over the CLI socket, WebAPI, MCP `tools/call`, Lua through `/api/v1/lua/exec` and the pytest above all pressed or set buttons and the machine's own `IN #1F` loop stored `0x18` for up + fire and `0x04` for down (outside shadow; during the first frames after reset the ROM is in shadow mode and `IN #1F` is the floppy controller, which the test accounts for by running 120 frames first). `verify_openapi_coverage.py --strict` lists all five joystick routes as covered (it also reports four older routes missing from OpenAPI and two stale ones: not touched here).
+
+**Deviations from §5**
+
+- Lua names: the Lua API is global snake-case functions (`mouse_press`, `key_tap`, ...), not `emu:` methods, so the verbs are `joystick_press` etc. instead of `emu:joystickPress`; Python uses the same snake-case names as methods of `emu`.
+- WebAPI echo key: `set` echoes the integer as `requested_state`, because `state` is the resulting-state object.
+- MCP `joystick_input` accepts `state` for `set` in addition to `buttons`; no `release_all` action (`set` with `[]`).
+- A `joystick list` CLI verb and `joystick_button_names` exist; the WebAPI has no separate list route (`button_names` is in the state object).
+
+**Open items**
+
+- **Paused machines queue input.** While the emulator loop lives (also when paused) `SubmitLiveInput` hands the change to the machine's thread, which applies it at its next executed instruction; a reply printed on a paused machine shows the state before the change (documented in the recipe and the interface docs). The Kempston mouse behaves the same: `tools/verification/webapi/src/test_api_mouse.py::TestMouseInput::test_move_reflected_in_status` fails identically against the live emulator (X stays 31) - an existing mismatch between that test and the core, not caused by the joystick.
+- The Qt LED could only be built and run headless (`QT_QPA_PLATFORM=offscreen`, status-bar refresh ran without trouble); it was not seen on a screen.
+- The Python bindings are not built in `cmake-build-agent-release` (`ENABLE_PYTHON_AUTOMATION=OFF`): the new methods were checked with `-fsyntax-only` against pybind11 and Python 3.12 (no new warnings), not executed.
+- Host-key presses (keypad) were not exercised live; they are covered by the core tests (JOY-7, JOY-8, JOY-11).
