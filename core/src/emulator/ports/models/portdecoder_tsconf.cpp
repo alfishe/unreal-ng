@@ -1107,7 +1107,11 @@ PortDecoder_TSConf::SdSlot::SdSlot(PortDecoder_TSConf& owner) : _owner(owner)
     _descriptor.swapDelayMs = 500;
     _descriptor.acceptsFolder = true;
     _descriptor.defaultAccess = AccessMode::Session;
-    _descriptor.defaultFs = FatType::Fat16;
+    // TS-BIOS ("Boot Device: SD Z-contr") and Wild Commander read FAT32
+    // straight from sector 0 (blockadvisory.h) - folder volumes are FAT32 and
+    // a FAT16 image is refused (BUGS.md #1)
+    _descriptor.defaultFs = FatType::Fat32;
+    _descriptor.fsCompatibility = {FatType::Fat32};
     _descriptor.hasCardDetect = true;          // AVR register C bit 3
     _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
     _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};

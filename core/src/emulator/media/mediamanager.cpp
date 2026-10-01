@@ -22,6 +22,26 @@
 #include "loaders/tape/writer_tap.h"
 #include "loaders/tape/writer_tzx.h"
 
+namespace
+{
+    const char* FatTypeName(FatType fs)
+    {
+        return fs == FatType::Fat32 ? "fat32" : "fat16";
+    }
+
+    std::string FatTypeNames(const std::vector<FatType>& list)
+    {
+        std::string names;
+        for (FatType fs : list)
+        {
+            if (!names.empty())
+                names += " or ";
+            names += FatTypeName(fs);
+        }
+        return names.empty() ? "no folder volume" : names;
+    }
+}  // namespace
+
 MediaManager::MediaManager(EmulatorContext* context) : _context(context) {}
 
 MediaManager::~MediaManager()
@@ -172,13 +192,46 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     if (!options.access && folder && request.access == AccessMode::WriteThrough)
         request.access = AccessMode::Session;
     request.fs = options.fs.value_or(descriptor.defaultFs);
+    request.allowedFs = descriptor.fsCompatibility;
     request.codePage = options.codePage;
     request.freeBytes = options.freeBytes;
+
+    // The slot's FAT compatibility matrix (BUGS.md #1): a folder volume is
+    // built in a flavour the controller reads. The default is clamped into
+    // the matrix; an explicit request for a flavour it cannot read is a
+    // caller error, not silently reinterpreted
+    if (!descriptor.fsCompatibility.empty())
+    {
+        const bool allowed = std::find(descriptor.fsCompatibility.begin(), descriptor.fsCompatibility.end(),
+                                       request.fs) != descriptor.fsCompatibility.end();
+        if (!allowed && options.fs)
+            return MediaResult::Fail(MediaError::BadRequest, "slot '" + slotId + "' reads " +
+                                                                  FatTypeNames(descriptor.fsCompatibility) +
+                                                                  " volumes, not " + FatTypeName(request.fs));
+        if (!allowed)
+            request.fs = descriptor.fsCompatibility.front();
+    }
 
     std::unique_ptr<Medium> medium;
     MediaResult opened = MediaFormatRegistry::Open(request, medium);
     if (!opened.Ok())
         return opened;
+
+    // The same matrix for an inserted image: a FAT volume of a flavour the
+    // controller cannot read is refused. A folder cannot land here wrong - it
+    // was built into an allowed flavour above; a non-FAT image is none of the
+    // matrix's business (a blank disk the guest formats itself is legitimate)
+    if (!descriptor.fsCompatibility.empty() && !folder && medium->Kind() == MediaKind::Block && medium->Block())
+    {
+        if (const std::optional<FatType> fs = ProbeFatType(*medium->Block());
+            fs && std::find(descriptor.fsCompatibility.begin(), descriptor.fsCompatibility.end(), *fs)
+                     == descriptor.fsCompatibility.end())
+        {
+            return MediaResult::Fail(MediaError::BadRequest,
+                                     "slot '" + slotId + "' reads " + FatTypeNames(descriptor.fsCompatibility) +
+                                         " volumes: '" + source.path + "' is a " + FatTypeName(*fs) + " volume");
+        }
+    }
 
     // Advisory only: does sector 0 look like the layout this slot's boot path
     // actually reads (MBR-partitioned vs. raw FAT)? Never refuses the insert

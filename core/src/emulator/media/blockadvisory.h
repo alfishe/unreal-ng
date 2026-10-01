@@ -18,8 +18,11 @@
 /// image on the same slot drives real, varied `READ SECTORS` traffic
 /// (testdata/machines/baseconf/hdd-images/README.md).
 
+#include <optional>
 #include <string>
 #include <vector>
+
+#include "emulator/media/mediatypes.h"
 
 class IBlockDevice;
 
@@ -27,3 +30,10 @@ class IBlockDevice;
 /// expect. Never throws, never fails the insert - `block`'s read position is
 /// unaffected on return (this only reads sector 0)
 std::string DescribeBlockLayoutMismatch(IBlockDevice& block, const std::vector<std::string>& tags);
+
+/// The FAT flavour of a block medium: the BPB of sector 0 when it is a FAT
+/// volume, or of the first FAT partition when sector 0 holds an MBR. nullopt
+/// when this is no FAT volume this build knows (or unreadable) - deciding
+/// what to do with the answer is the caller's business (BUGS.md #1: a slot
+/// whose controller reads FAT32 only refuses a FAT16 image)
+std::optional<FatType> ProbeFatType(IBlockDevice& block);

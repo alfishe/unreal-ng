@@ -69,6 +69,22 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
 
     std::vector<std::string> buildReport;
     auto volume = HostFolderFat::Build(snapshot, options, &error, &buildReport);
+    if (!volume && options.fs == FatType::Fat16)
+    {
+        // BUGS.md #2: a folder over the FAT16 ceiling (2 GiB) does not fail
+        // the insert when the slot's controller also reads FAT32 - the volume
+        // is built as FAT32 instead, whatever chose FAT16
+        const bool fat32Allowed = request.allowedFs.empty()
+            || std::find(request.allowedFs.begin(), request.allowedFs.end(), FatType::Fat32) != request.allowedFs.end();
+        if (fat32Allowed)
+        {
+            options.fs = FatType::Fat32;
+            error.clear();
+            volume = HostFolderFat::Build(snapshot, options, &error, &buildReport);
+            if (volume)
+                result.report.push_back("the folder is over the FAT16 ceiling: the volume is built as FAT32");
+        }
+    }
     if (!volume)
         return MediaResult::Fail(MediaError::DoesNotFit, error);
     for (const std::string& line : buildReport)
@@ -77,9 +93,9 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
     MediaSource resolved = source;
     resolved.type = MediaSourceType::Folder;
     medium = MediaFormatRegistry::WrapBlock(resolved, request.access,
-                                            request.fs == FatType::Fat32 ? "folder-fat32" : "folder-fat16", std::move(volume));
+                                            options.fs == FatType::Fat32 ? "folder-fat32" : "folder-fat16", std::move(volume));
     medium->Report() = result.report;
-    medium->SetOptions({request.fs, request.codePage, request.freeBytes});
+    medium->SetOptions({options.fs, request.codePage, request.freeBytes});
     return result;
 }
 

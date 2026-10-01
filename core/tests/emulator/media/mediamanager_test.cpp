@@ -42,6 +42,7 @@ namespace
         }
 
         const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        SlotDescriptor& MutableDescriptor() { return _descriptor; }
         void Attach(Medium& medium) override
         {
             attached = &medium;
@@ -78,6 +79,64 @@ namespace
         const std::vector<char> sector(512, 0x42);
         for (size_t i = 0; i < sectors; i++)
             out.write(sector.data(), static_cast<std::streamsize>(sector.size()));
+        return path;
+    }
+
+    /// A minimal FAT image: a VBR (raw, or behind an MBR when `mbr`) with a
+    /// BPB of the requested flavour - enough for ProbeFatType, nothing more
+    std::string MakeFatImageFile(const char* name, FatType fs, bool mbr)
+    {
+        std::vector<uint8_t> vbr(512, 0);
+        vbr[0] = 0xEB;
+        vbr[1] = 0x3C;
+        vbr[2] = 0x90;
+        std::memcpy(&vbr[3], "MSDOS5.0", 8);
+        const uint16_t bytesPerSector = 512;
+        std::memcpy(&vbr[11], &bytesPerSector, 2);
+        vbr[13] = fs == FatType::Fat32 ? 8 : 1;  // sectors per cluster
+        const uint16_t reserved = 1;
+        std::memcpy(&vbr[14], &reserved, 2);
+        vbr[16] = 2;  // FAT copies
+        const uint16_t rootEntries = fs == FatType::Fat32 ? 0 : 512;
+        std::memcpy(&vbr[17], &rootEntries, 2);
+        const uint16_t total16 = fs == FatType::Fat32 ? 0 : 16384;  // 16 KiB of 1-sector clusters: over FAT12's 4085
+        std::memcpy(&vbr[19], &total16, 2);
+        vbr[21] = 0xF8;
+        const uint16_t fatSectors16 = fs == FatType::Fat32 ? 0 : 2;
+        std::memcpy(&vbr[22], &fatSectors16, 2);
+        if (fs == FatType::Fat32)
+        {
+            const uint32_t total32 = 8u * 70000;  // 70 000 clusters of 8 sectors: over FAT32's 65 525 floor
+            std::memcpy(&vbr[32], &total32, 4);
+            const uint32_t fatSectors32 = 8;
+            std::memcpy(&vbr[36], &fatSectors32, 4);
+            std::memcpy(&vbr[0x52], "FAT32   ", 8);
+        }
+        else
+        {
+            std::memcpy(&vbr[0x36], "FAT16   ", 8);
+        }
+        vbr[510] = 0x55;
+        vbr[511] = 0xAA;
+
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (mbr)
+        {
+            std::vector<uint8_t> table(512, 0);
+            uint8_t* entry = &table[446];
+            entry[4] = fs == FatType::Fat32 ? 0x0B : 0x06;
+            const uint32_t start = 1;
+            std::memcpy(entry + 8, &start, 4);
+            const uint32_t count = 64;
+            std::memcpy(entry + 12, &count, 4);
+            table[510] = 0x55;
+            table[511] = 0xAA;
+            out.write(reinterpret_cast<const char*>(table.data()), static_cast<std::streamsize>(table.size()));
+        }
+        out.write(reinterpret_cast<const char*>(vbr.data()), static_cast<std::streamsize>(vbr.size()));
+        const std::vector<char> pad(63 * 512, 0);
+        out.write(pad.data(), static_cast<std::streamsize>(pad.size()));
         return path;
     }
 
@@ -349,6 +408,84 @@ TEST(MediaManager_Test, KindAndFolderChecks)
     writeThrough.access = AccessMode::WriteThrough;
     EXPECT_EQ(manager.Insert("sd.test", folder, writeThrough).error, MediaError::KindMismatch)
         << "a folder is never written";
+    manager.UnregisterSlot("sd.test");
+}
+
+/// BUGS.md #1: a slot whose controller reads one FAT flavour only - folder
+/// volumes are built in it (the default clamps into the matrix), an explicit
+/// request for another flavour is a caller error, and an inserted image of
+/// another flavour is refused by the sector-0 probe
+TEST(MediaManager_Test, Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages)
+{
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    slot.MutableDescriptor().fsCompatibility = {FatType::Fat32};
+    manager.RegisterSlot(slot);
+
+    ScratchFolder files("matrix-fat32");
+    files.File("boot.$C", "boot");
+    MediaSource source;
+    const auto u8 = files.Path().u8string();
+    source.path = std::string(u8.begin(), u8.end());
+
+    // The default Fat16 clamps into the matrix: the folder becomes FAT32
+    ASSERT_TRUE(manager.Insert("sd.test", source).Ok());
+    EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat32");
+
+    InsertOptions fat16;
+    fat16.fs = FatType::Fat16;
+    const MediaResult refused = manager.Insert("sd.test", source, fat16);
+    EXPECT_EQ(refused.error, MediaError::BadRequest);
+    EXPECT_NE(refused.message.find("fat32"), std::string::npos) << refused.message;
+
+    MediaSource fat16Image;
+    fat16Image.path = MakeFatImageFile("matrix-fat16.img", FatType::Fat16, false);
+    const MediaResult refusedImage = manager.Insert("sd.test", fat16Image);
+    EXPECT_EQ(refusedImage.error, MediaError::BadRequest);
+    EXPECT_NE(refusedImage.message.find("fat16 volume"), std::string::npos) << refusedImage.message;
+
+    MediaSource fat32Image;
+    fat32Image.path = MakeFatImageFile("matrix-fat32-mbr.img", FatType::Fat32, true);
+    ASSERT_TRUE(manager.Insert("sd.test", fat32Image).Ok()) << "FAT32 behind an MBR passes the probe";
+
+    // A non-FAT image is none of the matrix's business: the guest may format it
+    MediaSource raw;
+    raw.path = MakeImageFile("matrix-raw.img", 4);
+    ASSERT_TRUE(manager.Insert("sd.test", raw).Ok());
+    manager.UnregisterSlot("sd.test");
+}
+
+/// BUGS.md #2: a folder over the FAT16 ceiling becomes FAT32 when the slot
+/// can read it; a single-flavour slot keeps the honest error
+TEST(MediaManager_Test, OversizedFolderSwitchesToFAT32WhenAllowed)
+{
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    manager.RegisterSlot(slot);  // no matrix: both flavours
+
+    ScratchFolder files("matrix-oversize");
+    files.File("big.trd", std::string(1000, 'x'));
+    MediaSource source;
+    const auto u8 = files.Path().u8string();
+    source.path = std::string(u8.begin(), u8.end());
+    InsertOptions huge;
+    huge.freeBytes = 3ull * 1024 * 1024 * 1024;  // over FAT16's 2 GiB ceiling
+
+    const MediaResult inserted = manager.Insert("sd.test", source, huge);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat32");
+    bool noted = false;
+    for (const std::string& line : inserted.report)
+        noted = noted || line.find("FAT32") != std::string::npos;
+    EXPECT_TRUE(noted) << "the switch is reported";
+
+    FakeBlockSlot fat16Only("sd.f16");
+    fat16Only.MutableDescriptor().fsCompatibility = {FatType::Fat16};
+    manager.RegisterSlot(fat16Only);
+    const MediaResult refused = manager.Insert("sd.f16", source, huge);
+    EXPECT_EQ(refused.error, MediaError::DoesNotFit);
+    EXPECT_NE(refused.message.find("does not fit a FAT16"), std::string::npos) << refused.message;
+    manager.UnregisterSlot("sd.f16");
     manager.UnregisterSlot("sd.test");
 }
 

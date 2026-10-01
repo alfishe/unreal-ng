@@ -27,6 +27,11 @@ struct OpenRequest
     MediaKind kind = MediaKind::Block;
     AccessMode access = AccessMode::Session;
     FatType fs = FatType::Fat16;
+    /// The FAT flavours the slot's controller reads (SlotDescriptor::
+    /// fsCompatibility). Empty: no constraint. A folder that does not fit a
+    /// FAT16 volume switches to FAT32 when FAT32 is among them or the list is
+    /// empty (BUGS.md #2)
+    std::vector<FatType> allowedFs;
     std::optional<CodePage> codePage;  ///< folder volumes: explicit > the folder's manifest > CP866
     std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
 };

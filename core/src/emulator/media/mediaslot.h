@@ -29,6 +29,11 @@ struct SlotDescriptor
     bool acceptsFolder = false;          ///< a host folder can be inserted
     AccessMode defaultAccess = AccessMode::Session;
     FatType defaultFs = FatType::Fat16;  ///< folder volumes, unless the request says otherwise
+    /// The FAT flavours the slot's controller actually reads, folder volumes
+    /// and inserted images alike (BUGS.md #1). Empty: no constraint. A folder
+    /// is built in one of these (the default when it is among them); an image
+    /// of another flavour is refused on insert
+    std::vector<FatType> fsCompatibility;
     bool hasCardDetect = false;          ///< the slot reports "present" to its peripheral
     bool hasWriteProtectSwitch = false;  ///< the slot reports its switch to its peripheral
 

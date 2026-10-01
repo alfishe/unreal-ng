@@ -8,11 +8,13 @@
 
 #include "_helpers/zcsdtesthelper.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/scratchfolder.h"
 #include "debugger/ttd/ide/ttdatachannel.h"
 #include "emulator/emulator.h"
 #include "emulator/io/ide/ata/atadisk.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/spi/spidevice.h"
+#include "emulator/media/mediamanager.h"
 
 using zcsdtest::PatternDisk;
 using zcsdtest::SdCommand;
@@ -306,5 +308,35 @@ TEST(TsConfIde_Test, IDE5_TtdMidWriteContinuesExactly)
     EXPECT_EQ(blob.TTDHashState(), hash);
     EXPECT_EQ(finish(), first) << "the restored transfer writes the same sector";
     EXPECT_EQ(in(0x00F0) & 0x88, 0x00) << "not busy, no data request: the command completed";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// BUGS.md #1: the Z-controller reads FAT32 only - a folder inserted into
+/// sd.zc becomes a FAT32 volume, and an explicit fat16 request is refused
+TEST(TsConfMedia_Test, SdSlotIsFat32Only)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context->pMediaManager, nullptr);
+
+    ScratchFolder files("tsconf-sd-fat32");
+    files.File("boot.$C", "boot");
+    MediaSource source;
+    const auto u8 = files.Path().u8string();
+    source.path = std::string(u8.begin(), u8.end());
+
+    const MediaResult inserted = context->pMediaManager->Insert("sd.zc", source);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    const auto info = context->pMediaManager->Info("sd.zc");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->format, "folder-fat32") << "TS-BIOS and Wild Commander read FAT32";
+
+    InsertOptions fat16;
+    fat16.fs = FatType::Fat16;
+    const MediaResult refused = context->pMediaManager->Insert("sd.zc", source, fat16);
+    EXPECT_EQ(refused.error, MediaError::BadRequest);
+    EXPECT_NE(refused.message.find("fat32"), std::string::npos) << refused.message;
+
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
