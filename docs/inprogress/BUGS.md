@@ -40,3 +40,21 @@ The Media manager is blindly creating FAT16 images for mounted host folders base
 Verification: `MediaManager_Test.Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages`, `MediaManager_Test.OversizedFolderSwitchesToFAT32WhenAllowed`, `TsConfMedia_Test.SdSlotIsFat32Only`.
 
 ---
+
+## 🔴 [Open] #3: Host Folder Insert Freezes the UI Thread
+* **Date Opened:** 2026-09-30
+* **Date Fixed:** *Pending*
+* **Commit ID:** *None*
+
+### Description
+Inserting a host folder into an HDD / SD slot runs the folder scan and the volume build **on the Qt UI thread**. `MediaPanelWindow::run` (unreal-qt/src/media/mediapanelwindow.cpp:251) executes `MediaControl::Execute` synchronously, and `MediaManager::Insert` does its file I/O and `FolderSnapshot::Scan` "on the caller's thread" by design (core/src/emulator/media/mediamanager.cpp:149). A large folder (or a slow / network disk behind it) freezes the whole UI for the duration of the scan - no repaints, no input, no cancel.
+
+### Requirements / Acceptance Criteria
+- [ ] The folder scan and volume build for a GUI insert (Media Panel "Insert Folder..." and drag'n'drop) run on a **worker thread**: the Qt main thread stays responsive (event loop keeps running, window repaints, the user can keep working).
+- [ ] The UI is **notified on completion**: success -> the slot shows the medium; failure -> a readable error, surfaced like every other insert error.
+- [ ] **Mid-scan source loss** (the host disk unmounted, the folder deleted, permission gone): the insert fails cleanly with a clear error - no crash, no half-inserted slot state, no leaked background work, later inserts into the same slot work.
+- [ ] **Stall watchdog**: when the scan makes no progress for 60 s (configurable), it is aborted with an error to the UI instead of hanging forever ("everything froze and there is no progress at all").
+- [ ] The synchronous `Insert` semantics of the automation surfaces (WebAPI / MCP, their own HTTP threads) are preserved - the async path is the GUI's, or `Insert` grows an async entry point (decide in the design).
+- [ ] Design note added to `docs/inprogress/2026-09-29-media-drop-targets/design.md` and `docs/inprogress/PLAN.md` (registry rule 3).
+
+---
