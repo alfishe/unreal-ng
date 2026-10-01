@@ -605,13 +605,15 @@ TEST_F(DeviceInt_Test, TakenOutsideTheFrameWindowWithTheFFVector)
     _memory->DirectWriteToZ80Memory(0xBEFF, 0x34);  // I*256 + #FF: handler #C234
     _memory->DirectWriteToZ80Memory(0xBF00, 0xC2);
 
-    const uint32_t far = _intEnd + 30000;
-    EXPECT_FALSE(offerAt(far)) << "no line, no frame INT";
+    // `far` is a reserved word for the Windows targets (mingw) - do not name a
+    // variable that way
+    const uint32_t farT = _intEnd + 30000;
+    EXPECT_FALSE(offerAt(farT)) << "no line, no frame INT";
 
     _z80->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, true);
-    ASSERT_TRUE(offerAt(far));
+    ASSERT_TRUE(offerAt(farT));
     EXPECT_EQ(_z80->pc, 0xC234u) << "the bus reads #FF";
-    EXPECT_EQ(_z80->t, far + 19u);
+    EXPECT_EQ(_z80->t, farT + 19u);
 }
 
 TEST_F(DeviceInt_Test, ReleasedLineLeavesNoLatch)

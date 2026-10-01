@@ -400,10 +400,11 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
    re-creation does not. Which one reflects a stock green board? A real-hardware measurement settles it:
    run a `LD A,n` loop from RAM and from ROM and time a frame. The `ctprobe` suite ([test-programs.md](test-programs.md)
    §3.7) can grow a case for it.
-2. **Even M1 in turbo.** Does the turbo slot scheme still align M1, or do the ordinary slot waits replace it?
-   The equations suggest the latter; no measurement found.
-3. **Turbo wait pattern during the paper**, exactly: needs a simulation of the SC15.1 equations or a hardware
-   trace. Relevant only if 7 MHz Scorpion timing is ever required.
+2. ~~**Even M1 in turbo.**~~ Answered 2026-09-29 by the SC15.1 equations, simulated
+   ([research-scorpion-turbo.md](../2026-09-29-machine-waits/research-scorpion-turbo.md) section 4): the turbo
+   slot waits replace it; an opcode fetch waits one T more than a data access. Not measured on hardware.
+3. ~~**Turbo wait pattern during the paper**~~ Answered the same way: one CPU slot every 4 T in the paper, every
+   2 T in the border; unreal-ng models it since 2026-09-29 (`ScorpionTurboOverlay`).
 4. **Leningrad-1:** contention like the 48K (ru.wikipedia) or Even M1 (ZXMAK2)? Needs its schematic.
 5. **Timex SCLD:** the onset and whether I/O is contended. zxsp's values are marked unverified.
 6. **Quorum, ATM Turbo 1, Pentagon 1024SL turbo:** no primary description of the memory slots was found.

@@ -31,6 +31,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 
     # Disable specific warnings if needed
     add_compile_options(-Wno-error=deprecated-declarations)  # Example for disabling specific warnings
+
+    # gcc 14+ misfires -Wfree-nonheap-object and -Wstringop-overflow on plain
+    # std::vector growth (libstdc++ _M_realloc_append internals; the PR108247
+    # false-positive family). Seen on the mingw cross build (foldertapebuilder.cpp,
+    # portdecoder.cpp); clang, MSVC and CI's gcc 15 compile the same code clean
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+        add_compile_options(-Wno-free-nonheap-object -Wno-stringop-overflow)
+    endif ()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Clang-specific flags
     add_compile_options(-Wall -Wextra -Werror)
