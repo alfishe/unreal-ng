@@ -621,8 +621,11 @@ void MenuManager::createRunMenu()
 
     // Turbo Mode (max speed)
     _turboModeAction = _speedMenu->addAction(tr("Turbo Mode (Max Speed)"));
-    _turboModeAction->setShortcut(QKeySequence(Qt::Key_Tab));
-    _turboModeAction->setStatusTip(tr("Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
+    // Not bare Tab: it is the file managers' panel-switch key (Wild Commander,
+    // NedoOS), so a guest session silently turned turbo - and its audio mute -
+    // on within seconds. Tab belongs to the guest
+    _turboModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab));
+    _turboModeAction->setStatusTip(tr("Ctrl+Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }

@@ -83,6 +83,26 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     cpuFont.setStyleHint(QFont::Monospace);
     _cpuFreq->setFont(cpuFont);
     _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+    _freqTimer.setInterval(500);
+    connect(&_freqTimer, &QTimer::timeout, this, [this]() {
+        if (_freqMaxHz == 0)
+            return;
+        const uint32_t shown = std::max(_freqMinHz, _freqMaxHz);
+        std::string freqStr = StringHelper::FormatFrequencyMHz(_freqMinHz);
+        if (_freqMinHz != _freqMaxHz)
+            freqStr += "-" + StringHelper::FormatFrequencyMHz(_freqMaxHz);
+        _cpuFreq->setText(QString::fromStdString(freqStr));
+
+        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+        if (shown >= 14'000'000)
+            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
+        else if (shown >= 7'000'000)
+            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
+        else
+            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+        _freqMinHz = _freqMaxHz = 0;
+    });
+    _freqTimer.start();
 
     _fps = new QLabel(QStringLiteral("-- FPS"), _statusBar);
     _fps->setToolTip(tr("Emulated frames per second"));
@@ -190,18 +210,14 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
     if (!payload || payload->_emulatorId.toString() != emulator->GetId())
         return;
 
+    // No immediate label write: a guest that flips its clock every frame
+    // (TS-Conf software toggles SYS_CONFIG around SD I/O) would flicker the
+    // text at 50 Hz. The value joins the window; the timer paints it at most
+    // twice a second, as a range when the clock is genuinely switching
     const uint32_t freqHz = payload->_frequencyHz;
     QMetaObject::invokeMethod(this, [this, freqHz]() {
-        const std::string freqStr = StringHelper::FormatFrequencyMHz(freqHz);
-        _cpuFreq->setText(QString::fromStdString(freqStr));
-
-        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
-        if (freqHz >= 14'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
-        else if (freqHz >= 7'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
-        else
-            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+        _freqMinHz = _freqMinHz ? std::min(_freqMinHz, freqHz) : freqHz;
+        _freqMaxHz = std::max(_freqMaxHz, freqHz);
     }, Qt::QueuedConnection);
 }
 
