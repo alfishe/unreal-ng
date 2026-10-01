@@ -3,7 +3,7 @@
 **Status (2026-09-30):** phases 1a-1d, 2 and 3 on master; the Scorpion's Even M1 in the core, the ctprobe
 probe suite, the co-emulation harness (eleven runners) and the probe's Even M1 mode, all on master (see Done).
 **Where we stopped:** all six follow-ups in "Remaining" are done; what stays open is listed in their own
-folders (machine waits, harness follow-ups: the three unreal-ng defects fusetest found). PLAN.md row #61.
+folders, gathered in the [contention backlog](../2026-10-01-contention-backlog/backlog.md). PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such tests: [test-writing-guide.md](test-writing-guide.md).
 
@@ -77,7 +77,7 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
 1. ~~**Probe engine for Even M1 machines**~~ - done (`3952bdc8`, see Done).
 2. ~~**Snow**~~ - done 2026-09-29 on branch `ula-snow`: snow and double in the core, anchored on Snow Hold's
    photos from three real 48K machines; the visual test program snowtest; the floating-bus check dropped as not
-   observable ([2026-09-29-ula-snow](../2026-09-29-ula-snow/TODO.md)). Next: follow-up 3.
+   observable ([2026-09-29-ula-snow](../2026-09-29-ula-snow/TODO.md)).
 3. ~~**Real-hardware kit**~~ - done 2026-09-29: [tools/verification/contention/README.md](../../../tools/verification/contention/README.md)
    lists what only hardware settles (P-05 on the 128K, Even M1 per Scorpion board, the Even M1 start offset,
    snow on the 128K / +2 and on the +2A / +3 / clones), what to run with ctprobe and snowtest, what to send
@@ -90,7 +90,7 @@ How the work went: [walkthrough.md](walkthrough.md). For AI agents writing such 
    active, SC15.3. TS-Conf cache misses belong to the TSConf machine (PLAN #41).
 5. ~~**Harness follow-ups**~~ - done 2026-09-30 on branch `coemu-followups`: MAME's `scorpio` restart explained
    (Even M1 against the old engine), runners for Kozynax, ZX-M8XXX and spec_chum, fusetest built and run
-   (`FuseTest_Test`; three unreal-ng defects listed), X-04 (`CtProbeTimeOnly_Test`)
+   (`FuseTest_Test`; the three unreal-ng defects it found are fixed: [2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/TODO.md)), X-04 (`CtProbeTimeOnly_Test`)
    ([2026-09-29-coemu-followups](../2026-09-29-coemu-followups/TODO.md)).
 6. ~~**This TODO brought up to date**~~ - done 2026-09-29.
 

@@ -67,7 +67,7 @@ bool DebugKeyboardManager::IsInputOwnedByJournal() const
 /// directly and were missing from the journal.
 bool DebugKeyboardManager::ApplyPcKey(PcKey key, bool pressed)
 {
-    if (key == PcKey::None || !_keyboard || !_keyboard->HasPs2Sink())
+    if (key == PcKey::None || !_keyboard || !_keyboard->WantsPcKey(key))
         return false;
 
     if (_context && _context->pTimeTravelManager)

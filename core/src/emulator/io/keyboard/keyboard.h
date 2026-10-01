@@ -355,10 +355,16 @@ public:
     IPs2KeySink* GetPs2Sink() const { return _ps2Sink; }
     bool HasPs2Sink() const { return _ps2Sink != nullptr; }
 
+    /// Something on this machine consumes the physical key: the PS/2 controller (every key), or the
+    /// Kempston joystick when the key is bound to a button and the machine decodes the joystick port.
+    /// A key nobody wants is neither journaled nor applied
+    bool WantsPcKey(PcKey key) const;
+
     /// Apply one physical key event (the TTD input apply point, live and
-    /// replay); no-op without a sink
+    /// replay): to the PS/2 controller and to the joystick binding, whichever the machine has
     void ApplyPcKey(PcKey key, bool pressed);
-    /// Release every physical key the controller holds (automation "release all")
+    /// Release every physical key the controller holds and every joystick button bound to a key
+    /// (automation "release all")
     void ReleaseAllPcKeys();
     /// endregion </PS/2 (physical keys)>
 
@@ -398,7 +404,7 @@ public:
 protected:
     bool IsHostInputSuppressed() const;               // TTD journal owns input
     void SubmitHostKey(ZXKeysEnum key, bool pressed);   // via the TTD live-input gateway
-    void SubmitHostPcKey(PcKey key, bool pressed);      // same gateway; only with a PS/2 sink
+    void SubmitHostPcKey(PcKey key, bool pressed);      // same gateway; only a key the machine wants (WantsPcKey)
     /// endregion </Handle MessageCenter keyboard events>
 
     /// region <Debug>

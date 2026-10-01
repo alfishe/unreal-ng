@@ -227,6 +227,8 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     {
         if (cpu.pch == 0x3D)  // Execution enters $3D00-$3DFF => activate TR-DOS ROM
         {
+            if (_context->pPortDecoder)
+                _context->pPortDecoder->OnDosRomFetch(cpu.pc);
             state.flags |= CF_TRDOS;
 
             // Apply ROM page changes
@@ -250,6 +252,8 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         // ZX-Evo looks at the programmed window type, so its NMI page (RAM over
         // a ROM window) keeps the DOS signal on
         uint8_t bank = (cpu.pc >> 14) & 3;
+        if ((cpu.pch & 0x3F) == 0x3D)  // #3Dxx of any window: the FPGA's DOS entry strobe looks at A13:A8 only
+            _context->pPortDecoder->OnDosRomFetch(cpu.pc);
         if (_context->pPortDecoder->IsDosLeavingBank(bank))
         {
             state.flags &= ~CF_TRDOS;

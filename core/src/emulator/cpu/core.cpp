@@ -172,6 +172,22 @@ bool Core::Init()
 
     /// endregion </Mouse>
 
+    /// region <Joystick>
+
+    if (result)
+    {
+        result = false;
+
+        _joystick = new Joystick(_context);
+        if (_joystick)
+        {
+            _context->pJoystick = _joystick;
+            result = true;
+        }
+    }
+
+    /// endregion </Joystick>
+
     /// region <Tape>
 
     if (result)
@@ -575,6 +591,13 @@ void Core::Release()
         _mouse = nullptr;
     }
 
+    _context->pJoystick = nullptr;
+    if (_joystick != nullptr)
+    {
+        delete _joystick;
+        _joystick = nullptr;
+    }
+
     if (_rom != nullptr)
     {
         delete _rom;
@@ -795,6 +818,8 @@ void Core::Reset(ROMModeEnum mode)
     if (_mouse)
         _mouse->ApplyConfiguration();  // Kempston Mouse fitting (Mouse=, Wheel=); counters are power-on
                                        // only - RESET does not reach the interface (MiSTer mouse.v: cold_reset)
+    if (_joystick)
+        _joystick->ApplyConfiguration();  // Kempston joystick fitting and keys; held buttons mirror the physical stick
     _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state

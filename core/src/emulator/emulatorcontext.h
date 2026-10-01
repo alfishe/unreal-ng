@@ -17,6 +17,7 @@ using unreal::UUID;
 
 class Core;
 class Emulator;
+class Joystick;
 class Keyboard;
 class Mouse;
 class VirtualNetwork;
@@ -108,6 +109,9 @@ public:
 
 	// Mouse controller instance
 	Mouse* pMouse = nullptr;
+
+	// Kempston joystick instance
+	Joystick* pJoystick = nullptr;
 
 	// Virtual network of this machine (network adapters TDD §5): present only
 	// while a network adapter is fitted

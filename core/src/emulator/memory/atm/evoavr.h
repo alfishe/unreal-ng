@@ -1,4 +1,9 @@
 #pragma once
+
+// Hardware source: the ZX-Evo FPGA / AVR / ERS sources of https://github.com/alfishe/pentevo at commit c24723db
+// (project home https://github.com/tslabs/zx-evo, folder pentevo), taken from the public repository, not a local edit;
+// the timing rules were run in Verilator. Pinned revisions, links and what was simulated versus read:
+// docs/inprogress/2026-09-15-atm-baseconf-highres-ports/sources-and-provenance.md
 #include "stdafx.h"
 
 #include <array>

@@ -1,0 +1,3 @@
+SetupName: start 0x8000 end 0x8005 type bytedata
+SetupCopyright: start 0x8007 end 0x8020 type bytedata
+Data8153: start 0x8153 end 0x815F type bytedata

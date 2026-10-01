@@ -623,11 +623,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
     oss << NEWLINE;
-    oss << "Network adapters (ZXNETUSB / W5300, [NETWORK] Card=):" << NEWLINE;
-    oss << "  network | net | state network - Card, W5300 sockets, virtual network (DHCP, sockets, activity)" << NEWLINE;
-    oss << "  network set key=value ..     - card=zxnetusb|none host_access=on|off dns_mode=host|pass" << NEWLINE;
+    oss << "Network adapters ([NETWORK] Card= ZX-Bus cards, ComPort= the machine's serial port):" << NEWLINE;
+    oss << "  network | net | state network - Cards, serial port, W5300 sockets, virtual network, devices not fitted" << NEWLINE;
+    oss << "  network set key=value ..     - card=none|zxnetusb|zxwifi|zxnetusb,zxwifi host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
-    oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud] com_flavor=auto|evo|zxwifi com_modem_lines=on|off" << NEWLINE;
+    oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (ZX-Evo AVR UART)" << NEWLINE;
+    oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;

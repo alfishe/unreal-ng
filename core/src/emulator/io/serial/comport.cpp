@@ -5,16 +5,23 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/serial/esp/espmodule.h"
 
-ComPort::ComPort(EmulatorContext* context, const Uart16550::Params& params, std::unique_ptr<ISerialPeer> peer)
+ComPort::ComPort(EmulatorContext* context, const Uart16550::Params& params, std::unique_ptr<ISerialPeer> peer,
+                 RegisterOf registerOf)
     : _context(context),
       _peer(std::move(peer)),
-      _uart(params, context ? context->emulatorState.base_z80_frequency : 3500000)
+      _uart(params, context ? context->emulatorState.base_z80_frequency : 3500000),
+      _registerOf(std::move(registerOf))
 {
     _uart.SetPeer(_peer.get());
     _uart.Reset();
     if (_peer)
+    {
         _peer->onReceive = [this]() { _uart.Advance(Now()); };
+        _peer->SetClock([this]() { return Now(); },
+                        context ? context->emulatorState.base_z80_frequency : 3500000);
+    }
 }
 
 ComPort::~ComPort()
@@ -53,11 +60,19 @@ uint64_t ComPort::Now() const
     return _context->emulatorState.t_states + _context->pCore->GetZ80()->t / multiplier;
 }
 
-void ComPort::AddAccessWait()
+void ComPort::AddAccessWait(uint8_t reg, bool read)
 {
-    const uint32_t wait = _uart.GetParams().accessWaitT;
-    if (wait && _context && _context->pCore && _context->pCore->GetZ80())
-        _context->pCore->GetZ80()->AddWaitStates(wait);
+    if (!_context || !_context->pCore || !_context->pCore->GetZ80())
+        return;
+    const uint32_t cycles = _uart.AccessCycles(reg, read, Now());
+    if (!cycles)
+        return;
+    // The AVR's time in the CPU's clocks at its current speed (turbo waits longer in T-states)
+    const uint64_t cpuHz = _context->emulatorState.current_z80_frequency ? _context->emulatorState.current_z80_frequency
+                                                                          : _context->emulatorState.base_z80_frequency;
+    const uint32_t avrHz = _uart.GetParams().avrClockHz;
+    const uint32_t clocks = static_cast<uint32_t>((static_cast<uint64_t>(cycles) * cpuHz + avrHz - 1) / avrHz);
+    _context->pCore->GetZ80()->AddWaitStates(clocks);
 }
 
 void ComPort::Reset()
@@ -73,6 +88,8 @@ void ComPort::Reset()
 
 INetGuest* ComPort::NetGuest() const
 {
+    if (auto* esp = dynamic_cast<EspModule*>(_peer.get()))
+        return &esp->Stack();
     return dynamic_cast<StreamPeer*>(_peer.get());
 }
 
@@ -91,6 +108,11 @@ bool ComPort::SaveState(netstate::Com& out) const
             out.loopback[i] = q[i];
         out.loopbackLength = static_cast<uint32_t>(n);
         complete = n == q.size();
+    }
+    else if (const auto* esp = dynamic_cast<const EspModule*>(_peer.get()))
+    {
+        out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : 5;
+        complete = esp->SaveState(out.esp) && complete;
     }
     else if (const auto* stream = dynamic_cast<const StreamPeer*>(_peer.get()))
     {
@@ -133,6 +155,11 @@ bool ComPort::LoadState(const netstate::Com& in, const ByteSource& bytes)
                                         ? in.loopbackLength
                                         : static_cast<uint32_t>(netstate::kMaxComBytes));
     }
+    else if (auto* esp = dynamic_cast<EspModule*>(_peer.get()))
+    {
+        if (in.esp.present)
+            complete = esp->LoadState(in.esp, bytes) && complete;
+    }
     else if (auto* stream = dynamic_cast<StreamPeer*>(_peer.get()))
     {
         std::deque<StreamPeer::RxByte> rx;
@@ -166,12 +193,20 @@ void ComPort::OnFrame()
 
 uint8_t ComPort::portDeviceInMethod(uint16_t port)
 {
-    AddAccessWait();
-    return _uart.Read(static_cast<uint8_t>((port >> 8) & 0x07), Now());
+    const int reg = Register(port);
+    AddAccessWait(static_cast<uint8_t>(reg < 0 ? 5 : reg), true);   // every #xxEF access waits for the AVR
+    if (reg == kDataRegion || reg == kZiFiRegister)
+        return 0xFF;
+    if (reg == kNothing)
+        return 0x00;
+    return _uart.Read(static_cast<uint8_t>(reg), Now());
 }
 
 void ComPort::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    AddAccessWait();
-    _uart.Write(static_cast<uint8_t>((port >> 8) & 0x07), value, Now());
+    const int reg = Register(port);
+    AddAccessWait(static_cast<uint8_t>(reg < 0 ? 5 : reg), false);
+    if (reg < 0)
+        return;
+    _uart.Write(static_cast<uint8_t>(reg), value, Now());
 }

@@ -12,6 +12,7 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
@@ -410,8 +411,8 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             result = FdcAccess(static_cast<uint8_t>(port), /*isWrite*/ false, 0);
             break;
         case PortArm::Joystick:
-            // Kempston joystick outside DOS; no joystick model is attached (as ATM3)
-            result = 0x00;
+            // Kempston joystick outside DOS (as ATM3). No device or not fitted: 0x00
+            result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
             break;
         case PortArm::Gluk:
             result = DecodeF7In(port);

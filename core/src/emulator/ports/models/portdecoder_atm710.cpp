@@ -686,8 +686,11 @@ void PortDecoder_ATM710::Port_ATM_Palette_Out(uint16_t port, uint8_t value)
 
     const uint8_t v = static_cast<uint8_t>(value ^ 0xFF);  // inverse colors
 
-    // Data-bus substitution: port high byte <- inverted data value
-    const uint16_t dacPort = (port & 0x00FF) | (static_cast<uint16_t>(v) << 8);
+    // The DAC's second bit of each channel: the inverted data value substituted for the port high byte (2 bits
+    // per channel), or the real, inverted high byte when the board has the 4:4:4 palette on (ZX-Evo #BF bit 5)
+    const uint16_t dacPort = PaletteLowBitsFromAddress()
+                                 ? static_cast<uint16_t>((port & 0x00FF) | (~port & 0xFF00))
+                                 : static_cast<uint16_t>((port & 0x00FF) | (static_cast<uint16_t>(v) << 8));
 
     // 4-bit DAC components, bit-for-bit as in atm2OutFF
     const uint8_t blue = static_cast<uint8_t>(((v & 0x01) << 3) | ((v & 0x20) >> 3) |

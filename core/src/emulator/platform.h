@@ -680,7 +680,7 @@ struct CONFIG
 	/// fields are always assigned during config parsing.
 	struct
 	{
-		/// Card on the ZX-Bus: 0 = none, 1 = ZXNETUSB (W5300)
+		/// Cards on the ZX-Bus (networkspec::kCard*): bit 0 ZXNETUSB (W5300), bit 1 ZX-WiFi
 		uint8_t card;
 		/// 1 = the virtual network reaches the host network; 0 = internal only
 		/// (DHCP, hosts table, gateway ping): hermetic tests, offline use
@@ -693,14 +693,18 @@ struct CONFIG
 		char forwards[256];
 		/// TCP connect timeout on the host, ms
 		unsigned connectTimeoutMs;
-		/// COM port peer (TDD §7.2): NONE | LOOPBACK | TCP:<a.b.c.d|localhost>:<port> |
-		/// SERIAL:<device>[,<baud>] (ComPortSpec::Parse). Empty = NONE
+		/// What the machine's own serial port is connected to (TDD §7.2; ZX-Evo:
+		/// the AVR's 16550): NONE | LOOPBACK | TCP:<host>:<port> |
+		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
-		/// UART flavor: 0 = by machine (ZX-Evo: the AVR, others: ZX-WiFi), 1 = EVO, 2 = ZXWIFI
-		uint8_t comFlavor;
+		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
+		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
+		char zxWifi[256];
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
+		/// ESP module of ComPort=ESPNET / AT: 0 = ESP32 (8 sockets), 1 = ESP8266 (4 sockets)
+		uint8_t espChip;
 	} network;
 
 	struct
@@ -713,6 +717,13 @@ struct CONFIG
 		char mousescale;
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
 		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
+		/// Kempston joystick: [INPUT] Joystick=KEMPSTON|NONE (1 = fitted) and JoystickKeys= (button:key list).
+		/// joystickConfigured / joystickKeysConfigured are false without an ini: the device stays fitted and
+		/// the default keypad bindings apply; an empty JoystickKeys= is configured and disables the keys
+		uint8_t joystick;
+		bool joystickConfigured;
+		bool joystickKeysConfigured;
+		char joystickKeys[160];
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -744,6 +755,9 @@ struct CONFIG
 		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
 		// (readback on #xxBE, breakpoint writes on #xxBD)
 		uint8_t evo_legacy_fpga;
+		// ZX-Evo AVR firmware ([EVO] Avr=): Uart16550::AvrFirmware - the COM
+		// port's emulation differs between NedoPC and TS-Labs releases
+		uint8_t evo_avr;
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
@@ -1162,6 +1176,13 @@ struct EmulatorState
 		}
 		atmBorderBright = 0;
 	}
+	// Text-mode font RAM (ATM Turbo 2+ renders from it too, nothing writes it there). Address = code * 8 + row,
+	// the FPGA's read address {char, row}; the built-in font (stored row * 256 + code) is copied in by
+	// InitAtmFont. ZX-Evo #BF bit 2 mirrors every memory write into it (EvoFontOverlay). atmFontByte is the
+	// glyph byte the text renderer fetched last, what #0EBD reads back (#FF until a text frame is drawn)
+	uint8_t atmFontRam[2048];
+	uint8_t atmFontByte;
+	void InitAtmFont();
 	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
@@ -1181,9 +1202,13 @@ struct EmulatorState
 	uint8_t pBE, pBF;
 	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
 	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
-	// bit 1 = swap due before the next opcode fetch; evoVgDrive = drive from the last OUT (#FF)
+	// bit 1 = swap due before the next opcode fetch; evoVgSys = D5..D0 of the last OUT (#FF) (the VG93 system latch: drive D1..D0, reset, HLT, side)
 	uint8_t evoTrdemu;
-	uint8_t evoVgDrive;
+	uint8_t evoVgSys;
+	// ZX-Evo #xBF7 write protect: bit i = window i of map 0, bit 4 + i = window i of map 1 (the #12BD order)
+	uint8_t evoWrProt;
+	// ZX-Evo clock select written, taken over by the CPU clock at the next M1 refresh (zclock.v int_turbo)
+	uint8_t evoTurboPending;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

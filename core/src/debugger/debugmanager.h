@@ -34,6 +34,9 @@ protected:
     // Kempston Mouse injection funnel (automation, host input, TTD journal)
     class DebugMouseManager* _mouseManager = nullptr;
 
+    // Kempston joystick injection funnel (automation, TTD journal)
+    class DebugJoystickManager* _joystickManager = nullptr;
+
     // ROM editor control points for verified command input (input-verification.md)
     // Registered with (and owned by) the AnalyzerManager
     class EditorMonitor* _editorMonitor = nullptr;
@@ -57,6 +60,7 @@ public:
     AnalyzerManager* GetAnalyzerManager();
     DebugKeyboardManager* GetKeyboardManager();
     DebugMouseManager* GetMouseManager();
+    DebugJoystickManager* GetJoystickManager();
     EditorMonitor* GetEditorMonitor() { return _editorMonitor; }
     CommandTyper* GetCommandTyper() { return _commandTyper.get(); }
 

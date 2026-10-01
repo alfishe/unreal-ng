@@ -1,5 +1,8 @@
 # ZX-Evo BaseConf (ATM3) CPU wait states - RTL-derived specification
 
+Provenance: the RTL is the public `alfishe/pentevo` repository at commit `c24723db` (home: `tslabs/zx-evo`, folder `pentevo`), not a
+local edit; links and the simulated-versus-read split: [sources-and-provenance.md](../2026-09-15-atm-baseconf-highres-ports/sources-and-provenance.md).
+
 Scope: the released BaseConf RTL, `pentevo/fpga/base_trdemu/trunk` (identical, apart from CRLF, in
 `zxevo.pentevo/fpga/base_trdemu/trunk`; the older `zxevo.pentevo/fpga/baseconf/trunk` differs only in `zmem.v`,
 which has one fetch buffer instead of two, commit b5b58673 "add extra fetch buffer ... one for opcode and one for

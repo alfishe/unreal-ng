@@ -12,7 +12,10 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
+#include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/serial/esp/atmodule.h"
+#include "emulator/io/serial/esp/espnetmodule.h"
 #include "emulator/ports/portdecoder.h"
 
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
@@ -24,37 +27,71 @@ NetworkManager::~NetworkManager()
     Unplug();
 }
 
-bool NetworkManager::Wanted() const
+NetworkManager::Plan NetworkManager::MakePlan() const
 {
-    return CardWanted() || ComWanted();
+    Plan plan;
+    if (!_context)
+        return plan;
+    const auto& net = _context->config.network;
+    const bool networkOn = !_context->pFeatureManager || _context->pFeatureManager->isEnabled(Features::kNetwork);
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    using SerialPort = PortDecoder::NetworkCapabilities::SerialPort;
+
+    auto peerOf = [](const char* text, const char* fallback) {
+        ComPortSpec spec;
+        std::string error;
+        if (!text || !*text || !ComPortSpec::Parse(text, spec, error))
+            ComPortSpec::Parse(fallback, spec, error);
+        return spec.kind == ComPortSpec::Kind::None ? std::string() : spec.ToString();
+    };
+    const std::string comPeer = peerOf(net.comPort, "NONE");
+
+    // The machine's own serial port: mainboard hardware, there with the network off
+    if (caps.serialPort == SerialPort::EvoAvr)
+    {
+        plan.serial = Plan::Serial::EvoAvr;
+        if (networkOn)
+            plan.peer = comPeer;
+    }
+    else if (caps.serialPort == SerialPort::ZiFi && !comPeer.empty())
+        plan.notes.push_back("ComPort: the machine's serial port (ZiFi) is not emulated yet");
+    else if (caps.serialPort == SerialPort::None && !comPeer.empty())
+        plan.notes.push_back("ComPort: the machine has no serial port of its own - a ZX-WiFi card adds one (Card=ZXWIFI)");
+
+    if (!networkOn)
+        return plan;
+    const uint8_t cards = net.card;
+    if (cards && !caps.zxBus)
+    {
+        plan.notes.push_back("Card: the machine has no ZX-Bus");
+        return plan;
+    }
+    plan.zxNetUsb = (cards & networkspec::kCardZxNetUsb) != 0;
+    if (cards & networkspec::kCardZxWifi)
+    {
+        // The card's 16550 sits on #F8EF..#FFEF: a clash with the machine's own #xxEF device disables the card
+        if (plan.serial != Plan::Serial::None || caps.serialPort != SerialPort::None ||
+            (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
+            plan.notes.push_back(caps.serialPort == SerialPort::EvoAvr
+                                     ? "ZXWIFI: not fitted - ports #F8EF..#FFEF are the ZX-Evo AVR's COM port"
+                                     : "ZXWIFI: not fitted - the machine owns ports #xxEF");
+        else
+        {
+            plan.serial = Plan::Serial::ZxWifi;
+            plan.peer = peerOf(net.zxWifi, "AT");
+        }
+    }
+    return plan;
 }
 
-bool NetworkManager::CardWanted() const
+void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
 {
-    if (!_context || _context->config.network.card == 0)
-        return false;
-    return !_context->pFeatureManager || _context->pFeatureManager->isEnabled(Features::kNetwork);
-}
-
-bool NetworkManager::ComWanted() const
-{
-    if (!_context || _context->config.network.comPort[0] == '\0')
-        return false;
-    if (_context->pFeatureManager && !_context->pFeatureManager->isEnabled(Features::kNetwork))
-        return false;
-    // A machine whose own device owns #xxEF (TS-Conf: ZiFi, step N5) gets none
-    if (_context->pPortDecoder && _context->pPortDecoder->ReservesLowByte(ComPort::kPortLowByte))
-        return false;
     ComPortSpec spec;
     std::string error;
-    return ComPortSpec::Parse(_context->config.network.comPort, spec, error) && spec.kind != ComPortSpec::Kind::None;
-}
-
-void NetworkManager::FitCom()
-{
-    ComPortSpec spec;
-    std::string error;
-    ComPortSpec::Parse(_context->config.network.comPort, spec, error);
+    ComPortSpec::Parse(plan.peer.empty() ? "NONE" : plan.peer, spec, error);
+    const EspModule::Chip chip =
+        _context->config.network.espChip == 1 ? EspModule::Chip::Esp8266 : EspModule::Chip::Esp32;
     std::unique_ptr<ISerialPeer> peer;
     switch (spec.kind)
     {
@@ -65,16 +102,29 @@ void NetworkManager::FitCom()
         case ComPortSpec::Kind::Serial:
             peer = std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
             break;
+        case ComPortSpec::Kind::At:
+            peer = std::make_unique<AtModule>(_network.get(), chip);
+            break;
+        case ComPortSpec::Kind::Espnet:
+            peer = std::make_unique<EspnetModule>(_network.get(), chip);
+            break;
         default:
-            return;
+            break;   // nothing on the line: the registers still answer
     }
-    const uint8_t flavorSetting = _context->config.network.comFlavor;
-    const bool evo = flavorSetting == 1 || (flavorSetting == 0 && _context->config.mem_model == MM_ATM3);
-    const Uart16550::Params params =
-        Uart16550::DefaultParams(evo ? Uart16550::Flavor::EvoAvr : Uart16550::Flavor::ZxWifi);
-    _com = std::make_unique<ComPort>(_context, params, std::move(peer));
-    if (_context->pPortDecoder)
-        _com->AttachToPorts(_context->pPortDecoder);
+    PortDecoder* decoder = _context->pPortDecoder;
+    Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
+    ComPort::RegisterOf registerOf;
+    if (plan.serial == Plan::Serial::EvoAvr && decoder)
+    {
+        PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
+        params = caps.uart;
+        registerOf = std::move(caps.serialRegister);
+    }
+    _com = std::make_unique<ComPort>(_context, params, std::move(peer), std::move(registerOf));
+    if (keep)
+        _com->Uart().LoadState(*keep);   // the same chip, a new cable: its registers stay
+    if (decoder)
+        _com->AttachToPorts(decoder);
     _context->pComPort = _com.get();
 }
 
@@ -111,7 +161,7 @@ void NetworkManager::Refit()
             dst[n] = '\0';
         };
         if (change->card)
-            net.card = *change->card ? 1 : 0;
+            net.card = *change->card;
         if (change->hostAccess)
             net.hostAccess = *change->hostAccess ? 1 : 0;
         if (change->dnsPass)
@@ -124,45 +174,56 @@ void NetworkManager::Refit()
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
             copy(net.comPort, sizeof(net.comPort), *change->comPort);
-        if (change->comFlavor)
-            net.comFlavor = *change->comFlavor;
+        if (change->zxWifi)
+            copy(net.zxWifi, sizeof(net.zxWifi), *change->zxWifi);
         if (change->comModemLines)
             net.comModemLines = *change->comModemLines ? 1 : 0;
+        if (change->espChip)
+            net.espChip = *change->espChip;
         _forceRefit = true;
     }
-    if (_forceRefit)
+    Plan plan = MakePlan();
+    const bool same = plan == _plan && !_forceRefit && (_network || _com || (!plan.zxNetUsb && plan.serial == Plan::Serial::None));
+    _forceRefit = false;
+    if (same)
     {
-        _forceRefit = false;
-        Unplug();
-    }
-
-    const bool wanted = Wanted();
-    if (!wanted)
-    {
-        Unplug();
+        _plan.notes = plan.notes;
+        UpdateStatus();
         return;
     }
-    if (_network)
-        return;   // already fitted (a change of the set unplugs first)
 
-    std::unique_ptr<IHostNet> host;
-    if (_context->config.network.hostAccess)
+    // The machine's own serial port keeps its registers across a refit (the
+    // cable changes, not the chip)
+    std::optional<Uart16550::State> keep;
+    if (_com && plan.serial == Plan::Serial::EvoAvr && _plan.serial == Plan::Serial::EvoAvr)
     {
-        HostNetBridge::Options options;
-        options.connectTimeoutMs = _context->config.network.connectTimeoutMs;
-        host = std::make_unique<HostNetBridge>(options);
+        keep.emplace();
+        _com->Uart().SaveState(*keep);
     }
-    _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
-    _context->pVirtualNetwork = _network.get();
-    if (CardWanted())
+    Unplug();
+    _plan = plan;
+
+    if (plan.zxNetUsb || !plan.peer.empty())
+    {
+        std::unique_ptr<IHostNet> host;
+        if (_context->config.network.hostAccess)
+        {
+            HostNetBridge::Options options;
+            options.connectTimeoutMs = _context->config.network.connectTimeoutMs;
+            host = std::make_unique<HostNetBridge>(options);
+        }
+        _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
+        _context->pVirtualNetwork = _network.get();
+    }
+    if (plan.zxNetUsb)
     {
         _card = std::make_unique<ZxNetUsb>(_network.get(), _context->pCore);
         if (_context->pPortDecoder)
             _card->AttachToPorts(_context->pPortDecoder);
         _context->pZxNetUsb = _card.get();
     }
-    if (ComWanted())
-        FitCom();
+    if (plan.serial != Plan::Serial::None)
+        FitCom(plan, keep ? &*keep : nullptr);
     UpdateStatus();
 }
 
@@ -178,7 +239,7 @@ void NetworkManager::Unplug()
     _com.reset();
     _card.reset();
     _network.reset();
-    UpdateStatus();
+    _plan = Plan();
 }
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
@@ -217,6 +278,20 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             return false;
         }
     }
+    if (change.zxWifi)
+    {
+        ComPortSpec spec;
+        if (!ComPortSpec::Parse(*change.zxWifi, spec, error))
+        {
+            error = "zx_wifi: " + error;
+            return false;
+        }
+        if (change.zxWifi->size() >= sizeof(_context->config.network.zxWifi))
+        {
+            error = "zx_wifi: too long";
+            return false;
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(_changeMutex);
         _pendingChange = change;
@@ -248,16 +323,51 @@ void NetworkManager::OnFrame()
             _com->OnFrame();
         UpdateStatus();
     }
+    else if (_com && _context && _context->emulatorState.frame_counter % 25 == 0)
+    {
+        // A serial port with nothing on its line (a ZX-Evo's AVR UART): no
+        // peer to pump, the status copy twice a second is enough
+        UpdateStatus();
+    }
 }
 
 void NetworkManager::UpdateStatus()
 {
     Status st;
     st.fitted = _card != nullptr;
+    st.notes = _plan.notes;
+    {
+        uint8_t cards = _card ? networkspec::kCardZxNetUsb : 0;
+        if (_com && _plan.serial == Plan::Serial::ZxWifi)
+            cards |= networkspec::kCardZxWifi;
+        st.cards = networkspec::CardsToString(cards);
+    }
+    if (_context && _context->pPortDecoder)
+    {
+        const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+        using SerialPort = PortDecoder::NetworkCapabilities::SerialPort;
+        st.zxBus = caps.zxBus;
+        st.serialPort = caps.serialPort == SerialPort::EvoAvr ? "evo-avr"
+                        : caps.serialPort == SerialPort::ZiFi ? "zifi"
+                                                              : "none";
+    }
+    else
+        st.serialPort = "none";
+    // The virtual network serves the card and the COM port alike
+    if (_network)
+    {
+        st.hostAccess = _network->Host() != nullptr;
+        st.sockets = _network->Sockets();
+        st.listeners = _network->Listeners();
+        for (const auto& [mac, addr] : _network->Dhcp().Leases())
+            st.leases.emplace_back(mac, addr);
+        st.counters = _network->GetCounters();
+        st.activity.assign(_network->RecentActivity().begin(), _network->RecentActivity().end());
+        st.config = _network->Config();
+    }
     if (_card && _network)
     {
         st.card = "ZXNETUSB";
-        st.hostAccess = _network->Host() != nullptr;
         st.control = _card->Control();
         st.mode = _card->Mode();
         st.addressHigh = _card->AddressHigh();
@@ -267,26 +377,28 @@ void NetworkManager::UpdateStatus()
         st.common = _card->Chip().CommonRegisters();
         for (int n = 0; n < W5300::kSockets; ++n)
             st.chipSockets.push_back(_card->Chip().GetSocket(n));
-        st.sockets = _network->Sockets();
-        st.listeners = _network->Listeners();
-        for (const auto& [mac, addr] : _network->Dhcp().Leases())
-            st.leases.emplace_back(mac, addr);
-        st.counters = _network->GetCounters();
-        st.activity.assign(_network->RecentActivity().begin(), _network->RecentActivity().end());
-        st.config = _network->Config();
     }
     if (_com)
     {
         auto& c = st.com;
         const Uart16550& uart = _com->Uart();
         c.fitted = true;
-        c.flavor = uart.GetParams().flavor == Uart16550::Flavor::EvoAvr ? "evo" : "zxwifi";
+        const bool evo = uart.GetParams().flavor == Uart16550::Flavor::EvoAvr;
+        c.flavor = evo ? "evo" : "zxwifi";
+        if (evo)
+            c.firmware = Uart16550::AvrFirmwareName(uart.GetParams().avr);
         if (const ISerialPeer* peer = _com->Peer())
         {
             c.peer = peer->Kind();
             c.target = peer->Target();
             c.connected = peer->Connected();
             c.pending = peer->Pending();
+            if (const auto* esp = dynamic_cast<const EspModule*>(peer))
+            {
+                c.requests = esp->RequestsServed();
+                for (const EspModule::Exchange& e : esp->RecentExchanges())
+                    c.exchanges.emplace_back(e.request, e.reply);
+            }
             if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
             {
                 static const char* const kPhases[] = {"idle", "resolving", "connecting", "connected"};
@@ -298,14 +410,7 @@ void NetworkManager::UpdateStatus()
         c.uart = uart.GetView();
         c.baud = uart.Baud();
         c.frameBits = uart.FrameBits();
-        if (!_card && _network)
-        {
-            st.hostAccess = _network->Host() != nullptr;
-            st.sockets = _network->Sockets();
-            st.counters = _network->GetCounters();
-            st.activity.assign(_network->RecentActivity().begin(), _network->RecentActivity().end());
-            st.config = _network->Config();
-        }
+
     }
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
@@ -389,18 +494,16 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
     for (const auto& [rawKey, value] : settings)
     {
         const std::string key = lower(rawKey);
-        if (key == "card")
+        if (key == "card" || key == "cards")
         {
-            const std::string v = lower(value);
-            if (v == "zxnetusb")
-                out.card = true;
-            else if (v == "none")
-                out.card = false;
-            else
+            uint8_t mask = 0;
+            std::string why;
+            if (!networkspec::ParseCards(value, mask, why))
             {
-                error = "card: zxnetusb | none";
+                error = "card: " + why;
                 return false;
             }
+            out.card = mask;
         }
         else if (key == "host_access" || key == "hostaccess" || key == "host")
         {
@@ -439,25 +542,34 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
             }
             out.comPort = spec.ToString();
         }
+        else if (key == "esp_chip" || key == "espchip")
+        {
+            const std::string v = lower(value);
+            if (v == "esp32")
+                out.espChip = 0;
+            else if (v == "esp8266")
+                out.espChip = 1;
+            else
+            {
+                error = "esp_chip: esp32 | esp8266";
+                return false;
+            }
+        }
         else if (key == "com_modem_lines" || key == "commodemlines")
         {
             if (!flag(value, "com_modem_lines", out.comModemLines))
                 return false;
         }
-        else if (key == "com_flavor" || key == "comflavor")
+        else if (key == "zx_wifi" || key == "zxwifi")
         {
-            const std::string v = lower(value);
-            if (v == "auto")
-                out.comFlavor = 0;
-            else if (v == "evo")
-                out.comFlavor = 1;
-            else if (v == "zxwifi")
-                out.comFlavor = 2;
-            else
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
             {
-                error = "com_flavor: auto | evo | zxwifi";
+                error = "zx_wifi: " + why;
                 return false;
             }
+            out.zxWifi = spec.ToString();
         }
         else if (key == "connect_timeout_ms" || key == "timeout")
         {
@@ -472,7 +584,9 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         }
         else
         {
-            error = "unknown setting '" + rawKey + "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms)";
+            error = "unknown setting '" + rawKey +
+                    "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
+                    "com_modem_lines, esp_chip)";
             return false;
         }
     }

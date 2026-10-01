@@ -65,6 +65,9 @@ enum class PeripheralId : uint8_t
     EvoPs2 = 19,          // ZX-Evo AVR PS/2 keyboard: scan code log, parser flags, modifiers, held keys (ATM3)
     ZxNetUsb = 20,        // ZXNETUSB card + W5300 + the virtual network's guest-side tables; received bytes by journal reference (network TDD §6.3)
     EvoTurboCache = 21,   // ZX-Evo BaseConf at 14 MHz: the DRAM's code and data cache words (EvoTurboOverlay)
+    EvoFontRam = 22,      // ZX-Evo BaseConf text-mode font RAM (2 KB, #BF bit 2 loads it) and the glyph byte #0EBD reads
+    KempstonJoystick = 23, // Kempston joystick state byte (core device; carried by machines whose decoder answers #1F)
+    SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
     // Future: SAA1099, GS512, etc.
     Count
 };

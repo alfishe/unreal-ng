@@ -23,11 +23,16 @@ virtual TR-DOS trap that the current Evo Reset Service needs.
 | [e4-virtual-trdos.md](e4-virtual-trdos.md) | Phase E4 done (2026-09-28): the virtual TR-DOS trap; the ERS RAM disk works on the real ROM |
 | [e2a-evo-avr.md](e2a-evo-avr.md) | Phase E2a done (2026-09-28): `EvoAvr` — version window, registers A-D, EEPROM, NVRAM file. PS/2 keyboard (E2b) deferred, design in the TDD §6.1 |
 | [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) | Decoder fixes, `#xxBD/#BE/#BF`, NMI, breakpoint, flash, font RAM, `EvoAvr` (clock, NVRAM, PS/2, versions) |
+| [sources-and-provenance.md](sources-and-provenance.md) | **Where the reference sources come from**: upstream repositories, pinned commits, direct links, what was run in Verilator versus read |
+| [tdd-e8-wrprot-font-pal444-dosstall.md](tdd-e8-wrprot-font-pal444-dosstall.md) | **2026-10-01**: `#xBF7` write protect, font RAM, 4:4:4 palette, DOS-entry clock stall; checks the xpeccy-plus comparison claims against the RTL; raster selection (A-7) analysed |
+| [tdd-a7-raster-selection.md](tdd-a7-raster-selection.md) | **2026-10-01**: gap A-7, AVR raster selection (Pentagon / 60 Hz / 48K / 128K): RTL numbers per raster, runtime change at a frame boundary, contention, TTD, tests, phases R0-R7 (design only) |
+| [tdd-kempston-joystick.md](tdd-kempston-joystick.md) | **2026-10-01**: the Kempston joystick (`#1F` on ATM3 / TS-Conf, `#FF1F` on Scorpion): one reusable device (`io/joystick/joystick.{h,cpp}`), `DebugJoystickManager` (`debugger/joystick/`), host keypad keys bound in the core, TTD blob 23 and input kind `Joystick`; core landed, automation surfaces pending (§10) |
 | [tdd-virtual-trdos.md](tdd-virtual-trdos.md) | The trdemu trap behind the ERS RAM disk and TRD mounting |
 | [tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) | Z-Controller SD, NemoIDE, ATAPI CD on the shared components; cross-machine sync decisions S1-S5 |
 | [baseconf-hardware-reference.md](baseconf-hardware-reference.md) | Evidence: FPGA ports, AVR Gluk/extension protocol, ROM layout, ERS internals, NedoOS usage |
 | [emulator-feature-matrix.md](emulator-feature-matrix.md) | Evidence: zx-evo-unreal, Unreal 0.39 family, Xpeccy/xpeccy-plus, ZXMAK2/kozynax, MAME |
 | [unreal-ng-atm3-audit.md](unreal-ng-atm3-audit.md) | Evidence: what unreal-ng does today, file:line |
+| [atm710-atm2-spec-compliance.md](atm710-atm2-spec-compliance.md) | 2026-10-01: ATM710 reviewed against the vendor book `atm2_arch.pdf` (Turbo 2+ v7.10). Core matches; gaps S7-1..S7-4 with proposed fixes (Covox `#FB` dispatch, ZX-mode palette/16-color border, `IN #FF` attribute port, `#EFF7` vs window decode) |
 
 ## 2026-09-15: hi-res video modes and port differences
 

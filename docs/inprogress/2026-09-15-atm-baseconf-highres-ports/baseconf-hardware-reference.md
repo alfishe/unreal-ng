@@ -2,6 +2,8 @@
 
 > **Role in this folder:** hardware evidence for the 2026-09-27 BaseConf gap analysis ([gap-analysis.md](gap-analysis.md)). Research notes, read-only survey of the FPGA (current `base_trdemu` and legacy `baseconf` trees), AVR firmware, ROM/ERS sources and NedoOS. `emulators/github/` is the reference-source directory next to the project.
 
+Sources, upstream URLs and pinned commits: [sources-and-provenance.md](sources-and-provenance.md).
+
 Research date: 2026-09-27. Read-only survey of:
 
 - `P` = `emulators/github/pentevo` (NedoPC SVN mirror, HEAD c24723db 2026-06-19)

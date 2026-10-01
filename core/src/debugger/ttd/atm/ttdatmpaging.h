@@ -56,12 +56,13 @@ struct AtmPagingState
     uint8_t  evoNmiEntry;       ///< ZX-Evo: the next accepted NMI is the board's own
     uint8_t  nmiAtIntPending;   ///< board NMI waiting for the frame INT
     uint8_t  evoTrdemu;         ///< ZX-Evo virtual TR-DOS: bit 0 page #FE in, bit 1 swap pending
-    uint8_t  evoVgDrive;        ///< ZX-Evo drive number from the last OUT (#FF)
-    uint8_t  reserved[2];       ///< explicit tail padding, always 0
+    uint8_t  evoVgSys;        ///< ZX-Evo D5..D0 of the last OUT (#FF): VG93 system latch, drive in D1..D0
+    uint8_t  evoWrProt;         ///< ZX-Evo `#xBF7` write protect, bit i = window i of map 0, bit 4 + i = of map 1
+    uint8_t  evoTurboPending;   ///< ZX-Evo clock select waiting for the next M1 refresh
 };
 
 static_assert(sizeof(AtmPagingState) == 136, "AtmPagingState layout changed");
-static_assert(offsetof(AtmPagingState, reserved) + 2 == sizeof(AtmPagingState),
+static_assert(offsetof(AtmPagingState, evoTurboPending) + 1 == sizeof(AtmPagingState),
               "AtmPagingState has implicit trailing padding");
 
 /// @brief TTDSerializable implementation for ATM paging state.

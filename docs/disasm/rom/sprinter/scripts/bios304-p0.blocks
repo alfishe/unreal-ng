@@ -1,0 +1,16 @@
+Data0002: start 0x0002 end 0x0010 type bytedata
+Fill0011: start 0x0011 end 0x0038 type bytedata
+Fill0061: start 0x0061 end 0x0066 type bytedata
+Fill0085: start 0x0085 end 0x0100 type bytedata
+Data0CDC: start 0x0CDC end 0x0CDF type bytedata
+Data0CE9: start 0x0CE9 end 0x0CEE type bytedata
+Data0D02: start 0x0D02 end 0x0D0C type bytedata
+Data0E60: start 0x0E60 end 0x0E6D type bytedata
+Data0E8C: start 0x0E8C end 0x0EBC type bytedata
+Fill0EBC: start 0x0EBC end 0x1000 type bytedata
+SetupStub: start 0x1000 end 0x115F type bytedata
+SetupPacked: start 0x115F end 0x320A type bytedata
+Fill320A: start 0x320A end 0x3FD0 type bytedata
+Fill3FD7: start 0x3FD7 end 0x3FD8 type bytedata
+Fill3FDB: start 0x3FDB end 0x3FE0 type bytedata
+Fill3FE7: start 0x3FE7 end 0x3FE8 type bytedata

@@ -1,6 +1,5 @@
 #include "screenatm.h"
 
-#include "atmfont.h"
 #include "emulator/memory/memory.h"
 
 /// region <Constructors / Destructors>
@@ -150,8 +149,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         //          odd char column n at +0x11C0 + 64*r + (n>>1)
         //   attrs: complement parity - even n at +0x31C0 + 64*r + ((n+1)>>1),
         //          odd n at +0x21C0 + 64*r + ((n+1)>>1)
-        // Font and bit order are the same as TX: built-in SGEN table,
-        // row-major [(scanline % 8)*256 + code], MSB-first (bit 7 = leftmost).
+        // Font and bit order are the same as TX: the font RAM (power-on content = the built-in SGEN table),
+        // [code * 8 + scanline % 8], MSB-first (bit 7 = leftmost).
         const uint32_t n = t / 2;      // char column 0..79
         const uint32_t half = t % 2;   // 0: font bits 7..4, 1: bits 3..0
         uint8_t* page = _memory->RAMPageAddress(TextLinearPage(videoPage));
@@ -161,7 +160,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         const uint32_t attrAddr = (evenCol ? kTlAttrEven : kTlAttrOdd) + rowBase + ((n + 1) >> 1);
         const uint8_t code = page[codeAddr];
         const uint8_t attr = page[attrAddr];
-        const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
+        const uint8_t glyph = state.atmFontRam[code * 8 + (screenY % 8)];
+        state.atmFontByte = glyph;  // what #0EBD reads back
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
         const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
         const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
@@ -181,8 +181,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     // glyph line.
     // Char codes: p0 = vp+0, p1 = vp+0x2000; attrs: a1 = ap+0x2000 (pairs with
     // p0 chars) and a0 = ap+1 (pairs with p1 chars - the +1 offset is a
-    // hardware quirk kept from the reference dxr_atm6.cpp). Font: built-in 2KB
-    // table (atmfont.h), row-major [row * 256 + code], MSB-first bits (bit 7
+    // hardware quirk kept from the reference dxr_atm6.cpp). Font: the 2KB font
+    // RAM (atmfont.h is its power-on content), [code * 8 + row], MSB-first bits (bit 7
     // = leftmost pixel - reference dxr_atm6_8/16 and ZXMAK2 AtmTxtRenderer;
     // the unrealspeccy 32bpp paths are LSB-first outliers).
     {
@@ -192,7 +192,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         const bool fromP0 = (n % 2 == 0);
         const uint8_t code = fromP0 ? vp[byteIdx] : vp[kPlaneHigh + byteIdx];
         const uint8_t attr = fromP0 ? ap[kPlaneHigh + byteIdx] : ap[1 + byteIdx];
-        const uint8_t glyph = ATM_FONT[(screenY % 8) * 256 + code];
+        const uint8_t glyph = state.atmFontRam[code * 8 + (screenY % 8)];
+        state.atmFontByte = glyph;  // what #0EBD reads back
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
         const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
         const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];

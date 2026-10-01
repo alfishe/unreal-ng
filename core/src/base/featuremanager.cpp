@@ -1,5 +1,6 @@
 #include "featuremanager.h"
 
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include <algorithm>
 #include <cassert>
@@ -551,6 +552,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kKempstonJoystick,
+                     Features::kKempstonJoystickAlias,
+                     Features::kKempstonJoystickDesc,
+                     true,  // ON by default - whether a joystick is fitted is decided by the machine config
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kNetwork,
                      Features::kNetworkAlias,
                      Features::kNetworkDesc,
@@ -696,6 +705,12 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     if (_context && _context->pMouse)
     {
         _context->pMouse->ApplyConfiguration();
+    }
+
+    // Kempston joystick fitting follows the kempstonjoystick feature
+    if (_context && _context->pJoystick)
+    {
+        _context->pJoystick->ApplyConfiguration();
     }
 
     // Network adapters follow the network feature

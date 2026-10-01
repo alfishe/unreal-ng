@@ -32,6 +32,10 @@ public:
     /// reply payload, or empty when there is nothing to answer.
     std::vector<uint8_t> Handle(const uint8_t* request, size_t length);
 
+    /// The lease of `mac`, made now if it has none (a station that joins the
+    /// network without a DHCP exchange of its own: an emulated ESP module)
+    uint32_t Lease(const Mac& mac) { return LeaseFor(mac); }
+
     /// Current leases (MAC -> address)
     const std::map<Mac, uint32_t>& Leases() const { return _leases; }
 

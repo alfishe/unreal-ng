@@ -14,6 +14,7 @@
 /// Plain structs, filled after a memset (padding bytes are always zero, so
 /// equal states give equal blobs).
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -116,6 +117,69 @@ struct VirtualNetwork
     uint64_t counters[6];   ///< dhcpReplies, dnsLocalAnswers, dnsHostQueries, echoReplies, hostEvents, linkResets
 };
 
+// --- Emulated ESP module (step N3): its socket stack -----------------------
+
+constexpr int kEspSlots = 8;          ///< ESPNET: 8 sockets on ESP32 (4 on ESP8266); AT: 5 links + its server
+constexpr int kEspRuns = 64;          ///< runs of unread TCP bytes per slot
+constexpr int kEspDatagrams = 16;     ///< unread UDP datagrams per slot
+constexpr int kEspPending = 8;        ///< clients queued on a server slot
+constexpr int kEspPendingRuns = 16;   ///< runs of bytes a queued client already sent
+constexpr int kEspClose = 16;         ///< sockets to close at the next frame boundary
+
+struct EspDatagram
+{
+    uint32_t fromAddr;
+    uint16_t fromPort, reserved;
+    Reference data;         ///< one datagram is one journal record
+};
+
+struct EspPending
+{
+    uint16_t vnetId, peerPort;
+    uint32_t peerAddr;
+    uint8_t finSeen, reserved;
+    uint16_t rxRuns;
+    Reference rx[kEspPendingRuns];
+};
+
+struct EspSlot
+{
+    uint8_t state, connecting, finSeen, datagramCount, pendingCount, reserved[3];
+    uint16_t vnetId, localPort, remotePort, waitingId;
+    uint32_t remoteAddr;
+    uint16_t rxRuns, reserved2;
+    Reference rx[kEspRuns];
+    EspDatagram datagrams[kEspDatagrams];
+    EspPending pending[kEspPending];
+};
+
+struct EspStackState
+{
+    uint8_t slotCount, resolving, closeCount, rearmMask;
+    uint16_t dnsSocket, dnsId, dnsSeq, pingSocket, querySocket, reserved;
+    char resolveName[68];
+    uint16_t closeLater[kEspClose];
+    EspSlot slots[kEspSlots];
+};
+
+constexpr int kEspRxBytes = 6144;     ///< bytes from the ZX not parsed yet (the 4 KB ring + a frame in progress)
+constexpr int kEspOutBytes = 8192;    ///< reply bytes waiting for the ZX
+constexpr int kEspFirmware = 256;     ///< the firmware's own state (EspnetModule / AtModule)
+
+/// An emulated ESP module (EspModule)
+struct EspModuleState
+{
+    uint8_t present, chip, wifi, lineMismatch;
+    uint8_t mac[6], flowControl, reserved;
+    char ssid[36];
+    uint32_t ip, baud, pendingBaud, rxLength, outLength, reserved2;
+    uint64_t wifiAt, pendingBaudAt, outReadyAt, requests;
+    uint8_t rx[kEspRxBytes];
+    uint8_t out[kEspOutBytes];
+    uint8_t firmware[kEspFirmware];
+    EspStackState stack;
+};
+
 /// A COM port stream peer's link (StreamPeer): phase, sockets, DNS lookup,
 /// the device's modem lines, the line format last asked of the device
 struct StreamLink
@@ -134,7 +198,7 @@ struct StreamLink
 struct Com
 {
     uint8_t present;        ///< a COM port was fitted at capture
-    uint8_t peerKind;       ///< 1 loopback, 2 tcp, 3 serial
+    uint8_t peerKind;       ///< 1 loopback, 2 tcp, 3 serial, 4 ESPNET module, 5 AT module
     uint8_t reserved[2];
     StreamLink link;        ///< stream peers
     Uart16550::State uart;
@@ -144,6 +208,7 @@ struct Com
     Reference runs[kMaxComRuns];      ///< stream peer: bytes waiting for the ZX, by journal reference
     uint32_t unsentLength;
     uint8_t unsent[kMaxComBytes];     ///< stream peer: bytes the ZX sent, not yet flushed
+    EspModuleState esp;               ///< peerKind 4 (ESPNET) / 5 (AT)
 };
 
 struct Adapters
@@ -157,10 +222,23 @@ struct Adapters
     uint8_t common[256];
     W5300Socket sockets[kSockets];
     VirtualNetwork network;
-    Com com;
 };
 
-constexpr uint32_t kVersion = 2;   ///< 2: the COM port
+constexpr uint32_t kVersion = 3;   ///< 2: the COM port; 3: the COM port in its own blob (SerialPort)
+
+/// The machine's serial port on #xxEF (PeripheralId::SerialPort). Without a
+/// peer (ZX-Evo, ComPort=NONE: the AVR's UART on its own) only the header and
+/// the UART are written: the blob is that short
+struct SerialPort
+{
+    uint32_t version;       ///< kSerialPortVersion
+    uint8_t incomplete;     ///< some peer state did not fit the limits above
+    uint8_t reserved[3];
+    Com com;                ///< com.uart always; the peer part only in the full size
+};
+constexpr uint32_t kSerialPortVersion = 1;
+constexpr size_t kSerialPortShortSize = offsetof(SerialPort, com) + offsetof(Com, uart) + sizeof(Uart16550::State);
+static_assert(std::is_trivial_v<SerialPort>, "the serial port blob is cleared and copied as bytes");
 
 static_assert(std::is_trivial_v<Adapters>, "the network state blob is cleared and copied as bytes");
 

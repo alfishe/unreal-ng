@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): end of load (Q4), start mode (Q2) and configuration modules (Q6) decided, §6 |
+| **Status** | Review round 1 done (2026-09-28): end of load (Q4), start mode (Q2) and configuration modules (Q6) decided, §6. S0 (2026-10-01): the end of load is 473 720 writes, statically from BIOS 3.04 (§6), runtime confirmation pending |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §2-§5, §11, §14 |
 | **Index** | [technical-design.md](technical-design.md) |
 
@@ -217,14 +217,40 @@ stateDiagram-v2
 ```
 
 - **Sink.** While loading, every CPU memory write is a bitstream write: nothing reaches RAM.
-- **End of load (review round 1, Q4).** v1 counts the **real bitstream**: 59 215 bytes (the size
-  of every BIOS-PP `ALTERA/SP2K_*.BIN`), and the loader shifts each byte out one bit per write
-  (BIOS-TT `loader.asm`, `DUP 7 … RRCA`), so about 59 215 × 8 = 473 720 writes. The exact number,
-  including any preamble or trailing writes, is captured in S0 by tracing the loader and becomes a
-  named constant. A **watchdog** (a frame budget well above the normal load time) ends a load that
-  never reaches the count: the machine takes the Standard module and logs a warning, so a broken
-  or unexpected ROM cannot hang the machine silently. v1 no longer uses MAME's "4 096 writes" as
-  the end of the load (MAME stops there, `sprinter.cpp:1156-1162`, in the middle of the stream).
+- **End of load (review round 1, Q4).** v1 counts the **real bitstream**:
+
+  ```cpp
+  // 59 215 bitstream bytes x 8 single-bit writes; S0 static analysis of BIOS 3.04
+  constexpr uint32_t kPldConfigurationWrites = 473720;
+  ```
+
+  Derivation (S0, statically from the BIOS 3.04 loader, ROM page `#C` `#0000-#009B`, listing
+  [docs/disasm/rom/sprinter/loader/](../../disasm/rom/sprinter/loader/README.md)):
+
+  | Part | Writes | Why |
+  |---|---|---|
+  | preamble | 0 | the set-up before the loop is only `OUT` (Z84C15 registers, SIO, PIO) and `LD`; no `CALL`, no `PUSH`, so no stack writes |
+  | stream | 59 215 × 8 = **473 720** | the loop at `#0088` writes each byte 8 times with `LD (DE),A`, `RRCA` between the writes (bit 0 first); the bytes are ROM `#0100-#E84E`, identical to BIOS-PP `ALTERA/SP2K_304.BIN` (59 215 bytes) |
+  | postamble | none counted | the loop has no exit: it keeps streaming the `#FF` filler after `#E84E` until the configured PLD resets the CPU |
+
+  Worked example: the first bitstream byte `#FF` gives writes 1-8 with D0 = 1; byte `#A5`
+  (`1010 0101`) gives D0 = 1, 0, 1, 0, 0, 1, 0, 1. Write 473 720 carries bit 7 of the byte at
+  `#E84E`. The writes go to `#FE00-#FEFF` (only E is incremented; `#FD00-#FDFF` when fast RAM `#FEE0`
+  holds "IM"). In the CPLD each write in the configuration state is one DCLK with D0
+  (BIOS-TT `0271ac3` `src/altera/max/SP2_MAX.TDF`).
+
+  So the emulator ends the load at write 473 720 and does **not** wait for the loop to stop (it never
+  does). Everything after the count is ignored until the reset. **To confirm by a runtime trace once
+  MAME or S1 exists:** that CONF_DONE rises at write 473 720 (whether the device also counts the
+  leading `#FF` bytes as configuration data), how many extra clocks the ACEX takes before it starts
+  (FLEX/ACEX need about 10 DCLKs after CONF_DONE: 2 more bytes would be 16 writes), and how the CPU
+  reset follows. The reload path (fast RAM holds `"ACEX_30K_LOADING"` at `#FEF0`: the stream comes
+  from RAM `#1000`) uses the same loop and the same count.
+
+  A **watchdog** (a frame budget well above the normal load time) ends a load that never reaches the
+  count: the machine takes the Standard module and logs a warning, so a broken or unexpected ROM
+  cannot hang the machine silently. v1 no longer uses MAME's "4 096 writes" as the end of the load
+  (MAME stops there, `sprinter.cpp:1156-1162`, in the middle of the stream).
 - **Identify.** Two hashes are kept while the stream runs: one over the **first 4 096 writes**
   (the same bytes MAME hashes, so MAME's constants can be reused) and one over the **full stream**
   (exact identification of a firmware). After the end, the registry looks up the module (§6.1).

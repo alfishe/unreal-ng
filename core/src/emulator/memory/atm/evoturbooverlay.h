@@ -1,5 +1,10 @@
 #pragma once
 
+// Hardware source: the ZX-Evo FPGA / AVR / ERS sources of https://github.com/alfishe/pentevo at commit c24723db
+// (project home https://github.com/tslabs/zx-evo, folder pentevo), taken from the public repository, not a local edit;
+// the timing rules were run in Verilator. Pinned revisions, links and what was simulated versus read:
+// docs/inprogress/2026-09-15-atm-baseconf-highres-ports/sources-and-provenance.md
+
 /// @file evoturbooverlay.h
 /// @brief ZX-Evo BaseConf wait states at 14 MHz: the DRAM's two one-word caches
 /// (docs/inprogress/2026-09-29-machine-waits/tdd.md section 3, research-zxevo.md section A).
@@ -21,7 +26,7 @@
 ///
 /// Installed by the ATM3 port decoder while the clock select says 14 MHz (PortDecoder_ATM3::SyncTurboWaits). It
 /// keeps the cache words up to date always and adds waits only while the CPU runs at 14 MHz
-/// (`hw_turbo_ratio_applied`: unreal-ng applies the ATM3's clock select at the next frame) and the `contention`
+/// (`hw_turbo_ratio_applied`: the ATM3's clock select is taken over at the next M1 refresh, like the RTL's `int_turbo`) and the `contention`
 /// feature is on.
 
 #include <cstdint>

@@ -4,34 +4,219 @@
 
 #include "emulator/io/serial/serialpeer.h"
 
-// ZX-Evo BaseConf facts (AVR firmware rs232.c, FPGA zports.v / zwait.v; the
-// research notes are in the network TDD §7.1):
+// ZX-Evo AVR firmware facts (rs232.c of every NedoPC and TS-Labs release;
+// research notes: reference-evo-com-port.md §2, §3, §9):
 //  - IIR always #01, IER stored but without effect: no interrupts
-//  - OE clears only by an FCR RX reset; LSR bit 7 = RX FIFO half full (8+)
-//  - THRE and TEMT both mean "TX FIFO empty"; RBR reads #00 when empty
+//  - OE: set when the receive FIFO is full, cleared by an FCR RX reset (from
+//    2013; before only by the AVR restarting), never by reading LSR
+//  - THRE and TEMT both mean "TX FIFO empty" (TS 2016-04: THRE = not full,
+//    TEMT = the USART's TXC); RBR reads #00 when empty; NedoPC 2023: LSR
+//    bit 7 = 8 or more bytes waiting
 //  - MSR: CTS live (+ DCTS), DSR and DCD always 1, RI 0
-//  - MCR & #1F, only RTS drives a pin: no loopback, no auto flow control,
-//    TX ignores CTS
-//  - baud 115200 / divisor; divisor 0 = 345600; DLM bit 7 = the AVR's own
-//    divisor: 691200 / (((DLM & #7F) << 8 | DLL) + 1)
+//  - MCR & #1F, only RTS drives a pin (inverted before 2011-09): no loopback,
+//    no auto flow control, TX ignores CTS
+//  - baud 115200 / divisor; divisor 0 = 345600 (TS 2016-04: 230400); DLM
+//    bit 7 = the AVR's own divisor: 691200 / (((DLM & #7F) << 8 | DLL) + 1)
 //  - the USART starts 8N2 whatever LCR says, until the first LCR write
-//  - a Z80 reset does not reset it (only the AVR's own hard reset)
-//  - every access holds the Z80 on /WAIT while the AVR serves it
+//  - a Z80 reset does not reset it (only the AVR's own restart)
+//  - every access holds the Z80 on /WAIT while the AVR serves it (AccessCycles)
 
 Uart16550::Params Uart16550::DefaultParams(Flavor flavor)
 {
+    if (flavor == Flavor::EvoAvr)
+        return EvoAvrParams(kLatestAvr);
     Params p;
     p.flavor = flavor;
-    if (flavor == Flavor::EvoAvr)
+    return p;
+}
+
+Uart16550::Params Uart16550::EvoAvrParams(AvrFirmware firmware)
+{
+    Params p;
+    p.flavor = Flavor::EvoAvr;
+    p.avr = firmware;
+    p.uartClockHz = 1843200;   // 115200 / divisor
+    p.mcrMask = 0x1F;          // no AFE
+    p.interrupts = false;
+    switch (firmware)
     {
-        p.uartClockHz = 1843200;   // 115200 / divisor
-        p.mcrMask = 0x1F;          // no AFE
-        p.interrupts = false;
-        // ~15 us of AVR service per access (5 SPI bytes at 5.53 MHz plus the
-        // main loop; estimated, no measurement in the sources): 52 T at 3.5 MHz
-        p.accessWaitT = 52;
+        case AvrFirmware::Base2010:
+            p.dataPath = false;
+            p.divisorResets = false;
+            p.rawUbrr = false;
+            p.oeClearedByFcr = false;
+            break;
+        case AvrFirmware::Base2011Apr:
+            p.divisorResets = false;
+            p.rawUbrr = false;
+            p.oeClearedByFcr = false;
+            p.rtsInverted = true;
+            break;
+        case AvrFirmware::Base2011May:
+            p.oeClearedByFcr = false;
+            p.rtsInverted = true;
+            break;
+        case AvrFirmware::Base2011Sep:
+            p.oeClearedByFcr = false;
+            break;
+        case AvrFirmware::Base2013:
+            break;
+        case AvrFirmware::Base2023:
+            p.halfFullBit = true;
+            break;
+        case AvrFirmware::Ts2013:
+            p.rxDepth = 256;
+            p.txDepth = 256;
+            break;
+        case AvrFirmware::Ts2016Feb:
+            break;
+        case AvrFirmware::Ts2016Apr:
+            p.rxDepth = 511;
+            p.txDepth = 255;
+            p.threNotFull = true;
+            p.temtIsTxc = true;
+            p.divisor0Baud = 230400;
+            break;
     }
     return p;
+}
+
+namespace
+{
+struct AvrName
+{
+    Uart16550::AvrFirmware firmware;
+    const char* name;
+};
+constexpr AvrName kAvrNames[] = {
+    {Uart16550::AvrFirmware::Base2010, "BASE2010"},       {Uart16550::AvrFirmware::Base2011Apr, "BASE2011-04"},
+    {Uart16550::AvrFirmware::Base2011May, "BASE2011-05"}, {Uart16550::AvrFirmware::Base2011Sep, "BASE2011-09"},
+    {Uart16550::AvrFirmware::Base2013, "BASE2013"},       {Uart16550::AvrFirmware::Base2023, "BASE2023"},
+    {Uart16550::AvrFirmware::Ts2013, "TS2013"},           {Uart16550::AvrFirmware::Ts2016Feb, "TS2016-02"},
+    {Uart16550::AvrFirmware::Ts2016Apr, "TS2016-04"},
+};
+
+bool SameText(const char* a, const char* b)
+{
+    for (; *a && *b; ++a, ++b)
+    {
+        char x = *a, y = *b;
+        if (x >= 'a' && x <= 'z') x = static_cast<char>(x - 32);
+        if (y >= 'a' && y <= 'z') y = static_cast<char>(y - 32);
+        if (x != y)
+            return false;
+    }
+    return *a == 0 && *b == 0;
+}
+}  // namespace
+
+bool Uart16550::ParseAvrFirmware(const char* text, AvrFirmware& out)
+{
+    if (!text || !*text || SameText(text, "BASECONF") || SameText(text, "LATEST"))
+    {
+        out = kLatestAvr;
+        return true;
+    }
+    if (SameText(text, "TS"))
+    {
+        out = AvrFirmware::Ts2016Apr;
+        return true;
+    }
+    for (const AvrName& n : kAvrNames)
+    {
+        if (SameText(text, n.name))
+        {
+            out = n.firmware;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* Uart16550::AvrFirmwareName(AvrFirmware firmware)
+{
+    for (const AvrName& n : kAvrNames)
+    {
+        if (n.firmware == firmware)
+            return n.name;
+    }
+    return "?";
+}
+
+uint16_t Uart16550::RxDepth() const
+{
+    if (Evo())
+        return _params.rxDepth;
+    return (_fcr & 0x01) ? kFifoSize : 1;
+}
+
+uint16_t Uart16550::TxDepth() const
+{
+    if (Evo())
+        return _params.txDepth;
+    return (_fcr & 0x01) ? kFifoSize : 1;
+}
+
+uint32_t Uart16550::AccessCycles(uint8_t reg, bool read, uint64_t now)
+{
+    if (!Evo() || !_params.avrClockHz)
+        return 0;
+    // The AVR's clock, absolute, from the base-clock T-states
+    const uint64_t avrNow = now * _params.avrClockHz / _baseClockHz;
+    const uint64_t elapsed = avrNow > _avrRelease ? avrNow - _avrRelease : 0;
+    const uint32_t loop = _params.loopCycles ? _params.loopCycles : 1;
+    // The main loop looks at the flag once per pass, and a pass starts when
+    // the previous access is released: right behind it a whole pass is left,
+    // long after it anywhere in one. The interrupt steals its cycles from the
+    // loop on top (reference-evo-com-port.md §3)
+    const uint32_t phase = loop - static_cast<uint32_t>(elapsed % loop);
+    const bool dlab = (_lcr & 0x80) != 0;
+    const uint32_t service = !read ? _params.serviceWrite
+                                   : ((reg & 7) == kRbrThr && !dlab ? _params.serviceRbr : _params.serviceRead);
+    const uint32_t total = _params.isrCycles + phase + service;
+    _avrRelease = avrNow + total;
+    return total;
+}
+
+uint8_t Uart16550::ReadStub(uint8_t reg) const
+{
+    // The 2010 register file: values as written, no transfer behind them
+    const bool dlab = (_lcr & 0x80) != 0;
+    switch (reg & 7)
+    {
+        case kRbrThr: return dlab ? _dll : 0x00;
+        case kIer: return dlab ? _dlm : 0x01;   // reads the IIR constant
+        case kIirFcr: return _stubIir;          // the last FCR value
+        case kLcr: return _lcr;
+        case kMcr: return _mcr;
+        case kLsr: return _lsr;
+        case kMsr: return _msr;
+        default: return _scr;
+    }
+}
+
+void Uart16550::WriteStub(uint8_t reg, uint8_t value)
+{
+    const bool dlab = (_lcr & 0x80) != 0;
+    switch (reg & 7)
+    {
+        case kRbrThr:
+            if (dlab)
+                _dll = value;
+            break;
+        case kIer:
+            if (dlab)
+                _dlm = value;
+            else
+                _ier = static_cast<uint8_t>(value & 0x0F);
+            break;
+        case kIirFcr: _stubIir = value; break;
+        case kLcr: _lcr = value; break;
+        case kMcr: _mcr = static_cast<uint8_t>(value & 0x1F); break;
+        case kLsr: _lsr = value; break;   // writable in the stub
+        case kMsr: _msr = value; break;
+        default: _scr = value; break;
+    }
 }
 
 Uart16550::Uart16550(const Params& params, uint32_t baseClockHz)
@@ -50,11 +235,13 @@ void Uart16550::Reset()
 {
     _ier = 0;
     _fcr = Evo() ? 0x01 : 0x00;
+    _txc = false;
+    _stubIir = 0x00;
     _lcr = 0;
     _mcr = 0;
     _lsr = kLsrThre | kLsrTemt;
     _scr = Evo() ? 0xFF : 0x00;
-    _dll = 1;
+    _dll = (Evo() && !_params.divisorResets) ? 0 : 1;
     _dlm = 0;
     _rxCount = _rxHead = _txCount = _txHead = 0;
     _txShift = _rxShift = 0;
@@ -64,6 +251,8 @@ void Uart16550::Reset()
     _txDoneAt = _rxArriveAt = 0;
     _msrLines = 0;
     _msr = 0;
+    if (Evo() && !_params.dataPath)
+        return;   // the 2010 register file: MSR reads what was written (0)
     UpdateModemStatus();
     _msr &= 0xF0;   // no deltas after reset
     if (_peer)
@@ -116,9 +305,9 @@ uint32_t Uart16550::Baud() const
     if (Evo())
     {
         if (divisor == 0)
-            return 345600;                                  // the firmware's "256000" computes to this
+            return _params.divisor0Baud;                    // the firmware's "256000" computes to 345600
         uint32_t ubrr = 0;
-        if (_dlm & 0x80)
+        if ((_dlm & 0x80) && _params.rawUbrr)
             ubrr = ((static_cast<uint32_t>(_dlm) & 0x7F) << 8) | _dll;   // the AVR's own divisor
         else
         {
@@ -149,7 +338,9 @@ uint64_t Uart16550::CharacterT() const
 
 bool Uart16550::RtsAsserted() const
 {
-    if (!(_mcr & kMcrRts))
+    // Before 2011-09 the AVR drove the RTS pin the other way round
+    const bool bit = (_mcr & kMcrRts) != 0;
+    if (Evo() && _params.rtsInverted ? bit : !bit)
         return false;
     // Auto-RTS (16C550 AFE with RTS): the chip drops RTS at the trigger level
     if (!Evo() && (_mcr & kMcrAfe) && (_fcr & 0x01) && _rxCount >= RxTriggerLevel())
@@ -174,15 +365,14 @@ uint8_t Uart16550::RxTriggerLevel() const
 
 void Uart16550::PushRx(uint8_t byte)
 {
-    const uint8_t depth = (Evo() || (_fcr & 0x01)) ? kFifoSize : 1;
-    if (_rxCount >= depth)
+    if (_rxCount >= RxDepth())
     {
         // Overrun: the byte on the line is lost, the FIFO keeps its contents
         _lsr |= kLsrOe;
         ++_overruns;
         return;
     }
-    _rx[(_rxHead + _rxCount) % kFifoSize] = byte;
+    _rx[(_rxHead + _rxCount) % kMaxRx] = byte;
     ++_rxCount;
     ++_bytesIn;
 }
@@ -192,10 +382,10 @@ uint8_t Uart16550::PopRx()
     if (_rxCount == 0)
     {
         // Evo: the AVR answers #00; a 16550's RBR still holds the last byte
-        return Evo() ? 0x00 : _rx[(_rxHead + kFifoSize - 1) % kFifoSize];
+        return Evo() ? 0x00 : _rx[(_rxHead + kMaxRx - 1) % kMaxRx];
     }
     const uint8_t b = _rx[_rxHead];
-    _rxHead = static_cast<uint8_t>((_rxHead + 1) % kFifoSize);
+    _rxHead = static_cast<uint16_t>((_rxHead + 1) % kMaxRx);
     --_rxCount;
     return b;
 }
@@ -243,6 +433,8 @@ void Uart16550::Advance(uint64_t now)
     if (now < _lastNow)
         Rebase(now);      // the machine's clock restarted (a reset, a snapshot load)
     _lastNow = now;
+    if (Evo() && !_params.dataPath)
+        return;   // the 2010 register file moves no bytes
     const uint64_t charT = CharacterT();
     const bool loop = !Evo() && (_mcr & kMcrLoop) != 0;
 
@@ -256,6 +448,7 @@ void Uart16550::Advance(uint64_t now)
             if (_txDoneAt > now)
                 break;
             _txBusy = false;
+            _txc = true;
             ++_bytesOut;
             if (loop)
                 PushRx(_txShift);
@@ -266,7 +459,7 @@ void Uart16550::Advance(uint64_t now)
         if (_txCount == 0 || !CtsForTx())
             break;
         _txShift = _tx[_txHead];
-        _txHead = static_cast<uint8_t>((_txHead + 1) % kFifoSize);
+        _txHead = static_cast<uint16_t>((_txHead + 1) % kMaxTx);
         --_txCount;
         _txBusy = true;
         _txDoneAt = startAt + charT;
@@ -300,7 +493,7 @@ void Uart16550::Advance(uint64_t now)
                 PushRx(_rxShift);
                 rxStart = _rxArriveAt;
             }
-            if (!_peer->HasByte() || !RtsAsserted())
+            if (!_peer->HasByte() || (_peer->HonorsRts() && !RtsAsserted()))
                 break;
             _rxShift = _peer->TakeByte();
             _rxInFlight = true;
@@ -308,6 +501,25 @@ void Uart16550::Advance(uint64_t now)
         }
     }
     UpdateModemStatus();
+}
+
+uint8_t Uart16550::LsrValue() const
+{
+    uint8_t value = static_cast<uint8_t>(_lsr & ~(kLsrDr | kLsrHalfFull));
+    if (_rxCount > 0)
+        value |= kLsrDr;
+    if (Evo() && _params.halfFullBit && _rxCount >= 8)
+        value |= kLsrHalfFull;   // NedoPC 2023: 8 or more bytes waiting
+    if (Evo() && _params.threNotFull)
+    {
+        // TS 2016-04: THRE = room in the TX ring; TEMT = the USART's TXC
+        value = static_cast<uint8_t>(value & ~(kLsrThre | kLsrTemt));
+        if (_txCount < _params.txDepth)
+            value |= kLsrThre;
+        if (_txc)
+            value |= kLsrTemt;
+    }
+    return value;
 }
 
 uint8_t Uart16550::Iir() const
@@ -335,6 +547,8 @@ bool Uart16550::InterruptActive() const
 
 uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
 {
+    if (Evo() && !_params.dataPath)
+        return ReadStub(reg);
     Advance(now);
     const bool dlab = (_lcr & 0x80) != 0;
     uint8_t value = 0xFF;
@@ -358,11 +572,7 @@ uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
         case kMcr:
             return _mcr;
         case kLsr:
-            value = static_cast<uint8_t>(_lsr & ~(kLsrDr | 0x80));
-            if (_rxCount > 0)
-                value |= kLsrDr;
-            if (Evo() && _rxCount >= 8)
-                value |= 0x80;   // Evo: RX FIFO half full
+            value = LsrValue();
             if (!Evo())
                 _lsr &= static_cast<uint8_t>(~kLsrOe);   // 16550: OE clears on read (Evo: only by an FCR RX reset)
             return value;
@@ -377,6 +587,8 @@ uint8_t Uart16550::Read(uint8_t reg, uint64_t now)
 
 void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
 {
+    if (Evo() && !_params.dataPath)
+        return WriteStub(reg, value);
     Advance(now);
     const bool dlab = (_lcr & 0x80) != 0;
     switch (reg & 0x07)
@@ -389,10 +601,9 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
                 break;
             }
             {
-                const uint8_t depth = (Evo() || (_fcr & 0x01)) ? kFifoSize : 1;
-                if (_txCount < depth)
+                if (_txCount < TxDepth())
                 {
-                    _tx[(_txHead + _txCount) % kFifoSize] = value;
+                    _tx[(_txHead + _txCount) % kMaxTx] = value;
                     ++_txCount;
                 }
                 // A full FIFO drops the byte silently
@@ -424,7 +635,8 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
                     if (value & 0x02)
                     {
                         _rxCount = _rxHead = 0;
-                        _lsr &= static_cast<uint8_t>(~kLsrOe);
+                        if (_params.oeClearedByFcr)
+                            _lsr &= static_cast<uint8_t>(~kLsrOe);
                     }
                     if (value & 0x04)
                     {
@@ -457,7 +669,7 @@ void Uart16550::Write(uint8_t reg, uint8_t value, uint64_t now)
         case kMcr:
             _mcr = static_cast<uint8_t>(value & _params.mcrMask);
             if (_peer && (Evo() || !(_mcr & kMcrLoop)))
-                _peer->OnModemLines((_mcr & kMcrRts) != 0, (_mcr & kMcrDtr) != 0);
+                _peer->OnModemLines(RtsAsserted(), (_mcr & kMcrDtr) != 0);
             break;
         case kLsr:
         case kMsr:
@@ -477,8 +689,7 @@ Uart16550::View Uart16550::GetView() const
     v.fcr = _fcr;
     v.lcr = _lcr;
     v.mcr = _mcr;
-    v.lsr = static_cast<uint8_t>((_lsr & ~(kLsrDr | 0x80)) | (_rxCount ? kLsrDr : 0) |
-                                 ((Evo() && _rxCount >= 8) ? 0x80 : 0));
+    v.lsr = (Evo() && !_params.dataPath) ? _lsr : LsrValue();
     v.msr = _msr;
     v.scr = _scr;
     v.divisor = static_cast<uint16_t>((_dlm << 8) | _dll);
@@ -514,8 +725,11 @@ void Uart16550::SaveState(State& out) const
     out.msrLines = _msrLines;
     out.thrInt = _thrInterrupt ? 1 : 0;
     out.lcrWritten = _lcrWritten ? 1 : 0;
-    std::memcpy(out.rx, _rx.data(), kFifoSize);
-    std::memcpy(out.tx, _tx.data(), kFifoSize);
+    out.txc = _txc ? 1 : 0;
+    out.stubIir = _stubIir;
+    out.avrRelease = _avrRelease;
+    std::memcpy(out.rx, _rx.data(), kMaxRx);
+    std::memcpy(out.tx, _tx.data(), kMaxTx);
     out.txDoneAt = _txDoneAt;
     out.rxArriveAt = _rxArriveAt;
     out.lastNow = _lastNow;
@@ -535,10 +749,13 @@ void Uart16550::LoadState(const State& in)
     _scr = in.scr;
     _dll = in.dll;
     _dlm = in.dlm;
-    _rxCount = static_cast<uint8_t>(in.rxCount > kFifoSize ? kFifoSize : in.rxCount);
-    _rxHead = static_cast<uint8_t>(in.rxHead % kFifoSize);
-    _txCount = static_cast<uint8_t>(in.txCount > kFifoSize ? kFifoSize : in.txCount);
-    _txHead = static_cast<uint8_t>(in.txHead % kFifoSize);
+    _rxCount = static_cast<uint16_t>(in.rxCount > kMaxRx ? kMaxRx : in.rxCount);
+    _rxHead = static_cast<uint16_t>(in.rxHead % kMaxRx);
+    _txCount = static_cast<uint16_t>(in.txCount > kMaxTx ? kMaxTx : in.txCount);
+    _txHead = static_cast<uint16_t>(in.txHead % kMaxTx);
+    _txc = in.txc != 0;
+    _stubIir = in.stubIir;
+    _avrRelease = in.avrRelease;
     _txShift = in.txShift;
     _txBusy = in.txBusy != 0;
     _rxShift = in.rxShift;
@@ -546,8 +763,8 @@ void Uart16550::LoadState(const State& in)
     _msrLines = in.msrLines;
     _thrInterrupt = in.thrInt != 0;
     _lcrWritten = in.lcrWritten != 0;
-    std::memcpy(_rx.data(), in.rx, kFifoSize);
-    std::memcpy(_tx.data(), in.tx, kFifoSize);
+    std::memcpy(_rx.data(), in.rx, kMaxRx);
+    std::memcpy(_tx.data(), in.tx, kMaxTx);
     _txDoneAt = in.txDoneAt;
     _rxArriveAt = in.rxArriveAt;
     _lastNow = in.lastNow;

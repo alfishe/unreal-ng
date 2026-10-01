@@ -240,6 +240,40 @@ BIOS 3.04 is the reference for the tests.
 Map 3 (CNF = `#1C`) additionally opens the floppy ports without the DOS signal ("for access to
 the WD1793 without DOS_ON", INC `SP2000.inc:239`, `:1315`).
 
+#### Checked against BIOS 3.04 (S0, 2026-10-01)
+
+**Verified statically against 3.04.** BIOS 3.04 does not build the table from records: it unpacks
+a packed copy from ROM page 8 `#1400` (writer `DcpInit` at page 8 `#0CA1`, see
+[docs/disasm/rom/sprinter/exp/README.md](../../disasm/rom/sprinter/exp/README.md)), then makes map 3
+four copies of map 0's first KB (the "DOS on, PN5 = 0" quarter). The tool
+[`tools/sprinter/dcp-table.py`](../../../tools/sprinter/dcp-table.py) unpacks it the same way and
+prints or compares tables (`--rom`, `--page`, `--records`). Results:
+
+- The 3.04 table equals **byte for byte** `src/bios/old_files/DCP_PAGE.bin` of BIOS-TT `0271ac3`
+  (2023). It differs from the beta `doc/DCP_PAGE.bin` in 64 bytes and from the `DCP.ASM` records the
+  table above was decoded from in 88 bytes:
+
+  | Map | Pattern A15..A0 | When | 3.04 | `DCP.ASM` (beta) |
+  |---|---|---|---|---|
+  | 0, 3 | `xxxx xxxx 111x x100` (`#E4`, `#EC`, `#F4`, `#FC`) | write | **`#C7`** (SCALE / accelerator addressing) | none (the record is commented out) |
+  | 0 | `xxxx xxxx 000x x111` (`#07`, `#0F`, `#17`, `#1F`) | write, DOS off | **`#88`** (Covox) | none (the "#1F and CBL" collision fix) |
+  | 0, 3 | `001x xxxx 010x x110` (`#204E`) | read | none | `#C3` (ALL_MODE read-back, beta f546c4e) |
+
+  So with 3.04 a Spectrum program writing port `#1F` outside TR-DOS (the PLD rewrites `#1F` to `#0F`,
+  §4.4 fixed ports) feeds the Covox, `OUT (#FC),A` reaches the `#C7` register, and ALL_MODE cannot be
+  read back.
+- Codes present in both 3.04 and the records but missing from the table above: `#2F` (write,
+  `011x xxxx 101x x100`, e.g. `#60BC`) and `#32` (read/write, DOS off, `xxxx xxxx 101x xx11`, e.g.
+  `#A3`, `#AB`, `#BB`: ISA_Control in INC). Map 0 holds 48 codes in all.
+- Maps 1 and 2 (CNF `#0C` Scorpion, `#14` Pentagon) hold 31 and 34 codes and differ from map 0 in 556
+  and 572 bytes; map 2 additionally maps `#80A5-#E0A5` (DOS on) to `#18-#1B`. `dcp-table.py --map 1`
+  prints them.
+
+**Needs a runtime capture.** This is the table the BIOS *writes* at start-up. Function `#F4`
+(`DCP_CONFIG`) and SETUP (`ApplyScreenPosition` patches offset `#0400` with `#CB` and restores it)
+change entries at run time, so the reference for the tests (R-1) stays a page `#40` dump taken after
+POST from MAME or, from S1 on, the emulator (deferred, see [TODO.md](TODO.md)).
+
 **Fixed ports.** The Z84C15 decodes its own ports before the PLD sees them: `#10-#13` (CTC),
 `#18-#1B` (SIO A data, A control, B data, B control), `#1C-#1F` (PIO), `#EE/#EF` (system control:
 wait states, chip selects), `#F0/#F1` (watchdog), `#F4` (interrupt priority) (MAN §13.2;
@@ -440,7 +474,7 @@ turbo (`#1B`), TR-DOS drive mapping (`#1E`) (INC `SP2000.inc:1013-1160`).
 power-on / RESET button
   │ PLD empty; CPU runs the loader in ROM (page #1C / 12) with only ROM and fast RAM visible
   │ loader: "ACEX_30K_LOADING" at fast RAM #FEF0? → bitstream from fast RAM, else from ROM
-  │ streams ~59 KB to the PLD, 8 writes per byte (one bit each)
+  │ streams 59 215 bytes to the PLD, 8 writes per byte (one bit each) = 473 720 writes (S0, static)
   ▼ PLD configured → the small EPM7064 CPLD resets the CPU
 BIOS (ROM, system mode)
   │ POST, DCP_INIT fills page #40, IN A,(SLOT3) opens the port decoder
@@ -453,6 +487,15 @@ DSS loader (DOSBOOT4): loads LBA 2-3 to #8200; LBA 0: MBR (HDD) or BPB (FDD);
   partition boot sector; FAT12/16 root: SYSTEM.DOS (`DOSBOOT4.ASM:650`) → a BIOS-allocated page in window 0;
   DSS init (RST #10 fn 0); set boot drive; CHDIR X:\; EXEC "\SYSTEM.EXE /P"
 ```
+
+BIOS 3.04 (S0, statically from the disassembly, [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md)):
+the loader is ROM page `#C` `#0000-#009B` and runs with ROM pages `#C-#F` at `#0000-#FFFF`; the
+BIOS cold start is ROM page 8 `#0100`; the boot (SETUP, unpacked from ROM page 0) reads the boot
+device from CMOS `#10` (low nibble: 0 floppy A, 1 floppy B, 2 IDE master, 3 IDE slave, 4 RAM disk;
+high nibble: the alternative), resets a floppy first (function `#51`, which runs the density
+probe), then reads LBA 1 with function `#55` to `#7E00`, checks the 12 bytes `Starting...`+`#00`,
+copies the sector to `#8000` and jumps to `#800C`, A = device code. 3.04 has no CD boot (an ATAPI
+driver exists, SETUP refuses a CD as boot device).
 
 Sources: MAN §1.4, §14; BIOS-TT `bios/loader/loader.asm`, `rom/SETUP/MAIN.asm:770-830` (menu keys),
 `:1019-1191` (boot), `bios/mem_map.txt` (ROM pages); DSS `utils/BOOT/DOSBOOT4.ASM:36-220`; MAME

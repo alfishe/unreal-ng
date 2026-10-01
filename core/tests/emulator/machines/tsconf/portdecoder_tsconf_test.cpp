@@ -4,6 +4,7 @@
 
 #include "tsconffixture.h"
 
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/memory/atm/evoavr.h"
 
 class PortDecoder_TSConf_Test : public TsConfFixture
@@ -283,6 +284,34 @@ TEST_F(PortDecoder_TSConf_Test, BetaPortsGatedByDosOrVgOpen)
     EXPECT_EQ(_decoder->ClassifyPort(0x12FF), PortDecoder_TSConf::PortArm::Fdc);
     EXPECT_NE(_context->emulatorState.flags & CF_DOSPORTS, 0);
     EXPECT_EQ(_decoder->ClassifyPort(0x009F), PortDecoder_TSConf::PortArm::ZxBus) << "there is no #9F";
+}
+
+/// JOY-5 (TS-Conf): #1F outside DOS answers the joystick device; with DOS open it is the VG93 again
+TEST_F(PortDecoder_TSConf_Test, JOY5_JoystickAtPort1F)
+{
+    ASSERT_NE(_context->pJoystick, nullptr);
+    EXPECT_TRUE(_decoder->HasKempstonJoystick());
+
+    EXPECT_EQ(In(0x001F), 0x00) << "idle";
+    _context->pJoystick->SetState(Joystick::kDown | Joystick::kFire);
+    EXPECT_EQ(In(0x001F), 0x14);
+
+    Reg(TsConfReg::FddVirt, 0x80);
+    EXPECT_EQ(_decoder->ClassifyPort(0x001F), PortDecoder_TSConf::PortArm::Fdc);
+    EXPECT_NE(In(0x001F), 0x14) << "the VG93 answers, not the joystick";
+}
+
+/// JOY-6 (TS-Conf): not fitted or absent - 0x00 as before
+TEST_F(PortDecoder_TSConf_Test, JOY6_JoystickNotFittedReadsZero)
+{
+    _context->pJoystick->SetState(0x1F);
+    _context->pJoystick->SetPresent(false);
+    EXPECT_EQ(In(0x001F), 0x00);
+
+    Joystick* device = _context->pJoystick;
+    _context->pJoystick = nullptr;
+    EXPECT_EQ(In(0x001F), 0x00) << "no device object";
+    _context->pJoystick = device;
 }
 
 /// Gluk CMOS (hs §9): reachable after #EFF7 bit 7, never from the TR-DOS ROM

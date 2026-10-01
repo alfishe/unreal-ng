@@ -54,6 +54,9 @@ public:
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
+    /// #FF1F answers Joystick::Read()
+    bool HasKempstonJoystick() const override { return true; }
+
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
 

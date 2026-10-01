@@ -127,7 +127,9 @@ Configuration modules — `sprinterpldconfiguration_test.cpp` (T-PLDM):
 
 Fill, copy, vertical fill/copy with PORT_Y, AND/OR/XOR, length 0 = 256, prefixed `LD r,r` ignored,
 `HALT` ignored, ALL_MODE bit 0 = 0 disables, the time charge (`length × 6 / 42 MHz`), writes into
-page `#FD` feed the CBL.
+page `#FD` feed the CBL. INT-suspend option on (the PLD behavior, tdd-accel-sound-input §1.3): after an INT
+acknowledge a store is plain, the mode register is unchanged, the first opcode after `RETI` re-enables,
+`RETN` does not, an NMI does not block; option off: the handler's store is accelerated (MAME).
 
 ### 2.9 Sound — `covoxblaster_test.cpp` (T-CBL)
 
@@ -164,7 +166,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 
 | Data | Location | Rule |
 |---|---|---|
-| BIOS ROMs | `data/rom/sprinter/sp2k-3.04.rom`, `sp2k-3.06.rom` | CRC checked against MAME's table at load (warn on mismatch) |
+| BIOS ROMs | `data/rom/sprinter/sp2k-3.04.rom` (provisioned in S0), `sp2k-3.06.rom` (not public yet: the 3.06 instances skip until it is added, see `data/rom/README-ROMS.md`) | CRC checked against MAME's table at load (warn on mismatch) |
 | DSS 1.62 floppy | `testdata/machines/sprinter/dss_1_62_92.img` | third-party, listed in `testdata/NOTICE.md` with its source URL |
 | DSS 1.60R files | `testdata/machines/sprinter/dss160r/` (`SYSTEM.DOS`, `SYSTEM.EXE`, `CMD/BOOT.EXE`…) | "believed public domain" (DSS repo README); NOTICE entry |
 | Built HDD image | generated **by the test** into the scratch folder from the DSS files (MBR + loader + FAT16), never committed | `TestPathHelper::GetUniqueTestScratchPath()` |

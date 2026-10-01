@@ -95,10 +95,15 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Loopback;
         return true;
     }
-    if (upper == "ESPNET" || upper == "AT")
+    if (upper == "ESPNET")
     {
-        error = "ESP modules come with network step N3; not available yet";
-        return false;
+        out.kind = Kind::Espnet;
+        return true;
+    }
+    if (upper == "AT")
+    {
+        out.kind = Kind::At;
+        return true;
     }
     if (upper.rfind("TCP:", 0) == 0)
     {
@@ -150,7 +155,7 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Serial;
         return true;
     }
-    error = "unknown value (NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>])";
+    error = "unknown value (NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET | AT)";
     return false;
 }
 
@@ -162,6 +167,8 @@ std::string ComPortSpec::ToString() const
         case Kind::Tcp:
             return "TCP:" + host + ":" + std::to_string(port);
         case Kind::Serial: return "SERIAL:" + device + "," + std::to_string(baud);
+        case Kind::Espnet: return "ESPNET";
+        case Kind::At: return "AT";
         default: return "NONE";
     }
 }

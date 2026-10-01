@@ -2,6 +2,7 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/atm/ttdevofontram.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/atm/ttdevoturbocache.h"
@@ -11,6 +12,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
@@ -66,6 +68,9 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
     if (_turboWaitsInstalled && _context->pCore)
         _context->pCore->RemoveBusOverlay(_turboOverlay.get());
 
+    if (_fontOverlayInstalled && _context->pCore)
+        _context->pCore->RemoveBusOverlay(_fontOverlay.get());
+
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
     if (_nvramLoaded && nvramPath[0] != '\0' && !_evoAvr.SaveNvram(nvramPath))
@@ -87,6 +92,8 @@ void PortDecoder_ATM3::reset()
     _state->pBDh = 0x00;
     _state->pBE = 0x00;
     _state->pBF = 0x00;
+    _state->evoWrProt = 0x00;  // atm_pager.v: wrdisables reset to 0
+    SyncFontOverlay();         // pBF.2 is clear now; the font RAM itself keeps its content (altdpram, not reset)
     _state->evoFddMask = 0x00;  // fdd_mask resets to "all drives real" (zports.v:521-525)
 
     // znmi.v: reset clears pending_nmi, in_nmi, in_nmi_2 (pBE doubles as the
@@ -95,7 +102,9 @@ void PortDecoder_ATM3::reset()
     _state->evoNmiEntry = false;
     _state->nmiAtIntStartPending = false;
     _state->evoTrdemu = 0;     // zdos.v: in_trdemu resets to 0
-    _state->evoVgDrive = 0;
+    _state->evoVgSys = 0;  // vg_res_n resets to 0, the rest reads as 0
+    // The reset's 7 MHz select (ATM710::reset ran updateTurboMode) is taken over at the next M1 like any other
+    _state->evoTurboPending = (_state->hw_turbo_ratio != _state->hw_turbo_ratio_applied) ? 1 : 0;
     RefreshM1Hook();
 
     // The battery-backed NVRAM and EEPROM come from [EVO] NvramFile once, at
@@ -328,7 +337,8 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
     switch (arm)
     {
         case PortArm::KeyboardBorder:
-            result = Default_Port_FE_In(port, pc);
+            // zports.v: {1'b1, tape_read, 1'b0, keys_in} - bit 5 reads 0 here, 1 on a plain ULA
+            result = static_cast<uint8_t>(Default_Port_FE_In(port, pc) & ~0x20);
             break;
         case PortArm::Ay:
             // #FFFD reads the selected AY register; #BFFD is write-only
@@ -351,15 +361,21 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             const uint8_t fdcPort = static_cast<uint8_t>(port & 0x00FF);
             // A drive emulated in software leaves the chip deselected: nothing drives the bus
             result = TrdemuFdcAccess(fdcPort, /*isWrite*/ false, 0) ? 0xFF : PeripheralPortIn(fdcPort);
+            // #FF reads {intrq, drq, 1, last write D4..D0} on the current tree (zports.v VGSYS, vg93.v:177);
+            // the legacy tree reads back all six written bits (vgFF). The chip's own register does not hold them
+            // while the write was a reset
+            if (fdcPort == 0xFF)
+                result = static_cast<uint8_t>((result & 0xC0) |
+                                              (IsLegacyFpga() ? (_state->evoVgSys & 0x3F) : (0x20 | (_state->evoVgSys & 0x1F))));
             break;
         }
         case PortArm::LegacyFddLatch:
             result = _state->wd_shadow[((port & 0x00FF) >> 5) - 1];
             break;
         case PortArm::Joystick:
-            // Kempston joystick outside shadow; no joystick model is attached, so
-            // nothing is pressed (same stub as PortDecoder_Scorpion256)
-            result = 0x00;
+            // Kempston joystick outside shadow (zports.v: kj_in, the AVR's SPI register). No device
+            // or not fitted: nothing is pressed, 0x00
+            result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
             break;
         case PortArm::Mouse:
         {
@@ -654,6 +670,11 @@ void PortDecoder_ATM3::updateTurboMode()
 
     _state->hw_turbo_ratio = turboRatio;
 
+    // zclock.v: the clock select is taken over on the falling edge of /RFSH, the refresh of the next M1, not at
+    // the OUT. The M1 hook (attached only while this is pending) applies it
+    _state->evoTurboPending = (turboRatio != _state->hw_turbo_ratio_applied) ? 1 : 0;
+    RefreshM1Hook();
+
     MLOGDEBUG("ATM3 updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X pEFF7=0x%02X)",
               turboRatio, _state->pFF77, _state->pEFF7);
 
@@ -686,6 +707,31 @@ void PortDecoder_ATM3::SyncTurboWaits()
     {
         core->RemoveBusOverlay(_turboOverlay.get());
         _turboWaitsInstalled = false;
+    }
+}
+
+void PortDecoder_ATM3::SyncFontOverlay()
+{
+    Core* core = _context->pCore;
+    if (!core || !core->GetZ80() || !_memory)
+        return;
+
+    const bool wanted = (_state->pBF & 0x04) != 0;
+    if (wanted == _fontOverlayInstalled)
+        return;
+
+    if (wanted)
+    {
+        if (!_fontOverlay)
+            _fontOverlay = std::make_unique<EvoFontOverlay>(_state->atmFontRam);
+        _fontOverlayInstalled = core->AddBusOverlay(_fontOverlay.get());
+        if (!_fontOverlayInstalled)
+            MLOGWARNING("PortDecoder_ATM3: no room for the font RAM loader overlay; font writes are lost");
+    }
+    else
+    {
+        core->RemoveBusOverlay(_fontOverlay.get());
+        _fontOverlayInstalled = false;
     }
 }
 
@@ -780,6 +826,44 @@ void PortDecoder_ATM3::Port_37F7_Out(uint16_t port, uint8_t value, [[maybe_unuse
     MLOGDEBUG("Port_37F7_Out: idx=%d value=0x%02X fullValue=0x%04X", idx, value, fullValue);
 }
 
+void PortDecoder_ATM3::Port_BF7_Out(uint16_t port, uint8_t value)
+{
+    // atm_pager.v:186 `wrdisables[pent1m_ROM] <= zd[0]`: the window is A15:A14, the map the current #7FFD.4
+    const unsigned regSet = (_state->p7FFD & 0x10) ? 4 : 0;
+    const uint8_t bit = static_cast<uint8_t>(1u << (regSet + (port >> 14)));
+    _state->evoWrProt = static_cast<uint8_t>((value & 1) ? (_state->evoWrProt | bit) : (_state->evoWrProt & ~bit));
+
+    if (_memory)
+        _memory->UpdateZ80Banks();
+
+    MLOGDEBUG("Port_BF7_Out: port=0x%04X value=0x%02X protect=0x%02X", port, value, _state->evoWrProt);
+}
+
+bool PortDecoder_ATM3::IsWindowWriteProtected(uint8_t bank) const
+{
+    // Pager off: every window is the ROM, nothing to protect (atm_pager.v:121)
+    if (!(_state->aFF77 & ATM_AFF77_PEN))
+        return false;
+
+    // Window 0 under the NMI page, the virtual TR-DOS page or RAM 0 answers to trdemu_wr_disable, which the
+    // trap order already covers (atm_pager.v:126)
+    if (bank == 0 && (_state->evoInNmi || (_state->evoTrdemu & kTrdemuIn) || (_state->pEFF7 & ATM_EFF7_ROCACHE)))
+        return false;
+
+    const unsigned regSet = (_state->p7FFD & 0x10) ? 4 : 0;
+    return (_state->evoWrProt >> (regSet + (bank & 3))) & 1;
+}
+
+void PortDecoder_ATM3::OnDosRomFetch(uint16_t pc)
+{
+    // atm_pager.v zclk_stall: 4 fclk of the 28 MHz clock (half a 3.5 MHz T = 128 counter ticks) on every fetch from
+    // #3Dxx of a window that holds the DOS ROM in map 1 (map 1 current, the register ROM with the dos7ffd bit), so
+    // the ROM chip can answer. Like every machine wait it follows the `contention` feature
+    if ((_state->p7FFD & 0x10) && (_state->pFFF7[4 + (pc >> 14)] & 0x300) == 0x100 && _context->pCore &&
+        _context->pCore->IsContentionSwitchOn())
+        _context->pCore->GetZ80()->AddWaitTicks(kDosEntryStallTicks);
+}
+
 void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     // Bit 3: a 1->0 edge requests a board NMI, released at the next frame INT
@@ -788,6 +872,9 @@ void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value
     _state->pBF = value;
     if (nmiEdge)
         RequestBoardNmi();
+
+    // Bit 2 lets every memory write also write the font RAM (zports.v fnt_wr)
+    SyncFontOverlay();
 
     // Bit 4 enables the M1 breakpoint (zbreak.v)
     RefreshM1Hook();
@@ -872,12 +959,20 @@ uint8_t PortDecoder_ATM3::ReadEvoRegister(uint8_t index)
                                         ((_state->aFF77 & ATM_AFF77_PEN) ? 0x20 : 0x00) |
                                         ((_state->flags & CF_TRDOS) ? 0x10 : 0x00) |
                                         (_state->pFF77 & 0x0F));
-        case 0x0D:  // palette entry of the border cell in the #FF write format,
-                    // bits 3:2 read back as 1 (xpeccy evoInCfg; RTL round trip
-                    // `{g,r,b,G,1,1,R,B}` of the displayed color)
+        case 0x0D:  // the displayed color of the border cell, `{g,r,b,G,1,1,R,B}` (RTL palcolor / BD_COLORRD): the
+                    // high bit pair of each channel, or the low pair while the 4:4:4 palette is on
         {
             const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
-            return static_cast<uint8_t>((_state->atmPaletteRegs[cell] & 0xF3) | 0x0C);
+            const uint32_t abgr = _state->atmPalette[cell];
+            const unsigned shift = PaletteLowBitsFromAddress() ? 4 : 6;  // the nibble's low pair, or the byte's top pair
+            const unsigned red = (abgr >> shift) & 0x03;
+            const unsigned green = (abgr >> (8 + shift)) & 0x03;
+            const unsigned blue = (abgr >> (16 + shift)) & 0x03;
+            // The stored color is the positive one; the port shows it inverted, as it was written
+            const unsigned low = (~((green & 1) << 2 | (red & 1) << 1 | (blue & 1))) & 0x07;   // g, r, b
+            const unsigned high = (~((green >> 1) << 2 | (red >> 1) << 1 | (blue >> 1))) & 0x07;  // G, R, B
+            return static_cast<uint8_t>(((low & 0x04) << 5) | ((low & 0x02) << 5) | ((low & 0x01) << 5) |
+                                        ((high & 0x04) << 2) | 0x0C | (high & 0x02) | (high & 0x01));
         }
         case 0x0F:  // border color incl. the bright half (0..15)
             return static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
@@ -885,11 +980,12 @@ uint8_t PortDecoder_ATM3::ReadEvoRegister(uint8_t index)
             return _state->pBDl;
         case 0x11:
             return _state->pBDh;
-        case 0x12:  // #xBF7 write-protect bits: per-window write protect is not emulated yet (plan E8)
-            return 0x00;
+        case 0x12:  // #xBF7 write-protect bits, the order of 08
+            return _state->evoWrProt;
         case 0x13:  // virtual-drive mask, current tree only
             return IsLegacyFpga() ? 0xFF : static_cast<uint8_t>(_state->evoFddMask & 0x0F);
-        case 0x0E:  // font byte under the beam: font RAM is not emulated yet (plan E8)
+        case 0x0E:  // the glyph byte the text renderer fetched last (RTL fontrom_readback)
+            return _state->atmFontByte;
         default:
             return 0xFF;
     }
@@ -977,8 +1073,10 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
             Port_FFF7_Out(port, value, windowIndex, pc);
         else if (IsPort_37F7(port))
             Port_37F7_Out(port, value, pc);
+        else if ((port & 0x0C00) == 0x0800)
+            Port_BF7_Out(port, value);
         else
-            MLOGDEBUG("PortDecoder_ATM3: #%04X write-protect / unused pager function ignored", port);
+            MLOGDEBUG("PortDecoder_ATM3: #%04X unused pager function ignored", port);
         return;
     }
 
@@ -1061,6 +1159,14 @@ bool PortDecoder_ATM3::IsDosLeavingBank(uint8_t bank) const
 
 void PortDecoder_ATM3::OnMachineM1(uint16_t address)
 {
+    // The refresh of this M1: a clock select written before it takes effect now (zclock.v int_turbo)
+    if (_state->evoTurboPending)
+    {
+        _state->evoTurboPending = 0;
+        if (_context->pCore && _context->pCore->GetZ80())
+            _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    }
+
     // NMI exit countdown (znmi.v clr_count / pending_clr)
     if (_state->pBE > 0 && --_state->pBE == 0)
     {
@@ -1086,7 +1192,8 @@ void PortDecoder_ATM3::RefreshM1Hook()
     if (!_context->pCore || !_context->pCore->GetZ80())
         return;
 
-    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10) || (_state->evoTrdemu & kTrdemuPending);
+    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10) || (_state->evoTrdemu & kTrdemuPending) ||
+                        _state->evoTurboPending;
     Z80* z80 = _context->pCore->GetZ80();
     if (needed)
         z80->machineM1Hook = this;
@@ -1111,15 +1218,17 @@ void PortDecoder_ATM3::BeforeMachineM1([[maybe_unused]] uint16_t address)
 
 bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value)
 {
+    // vg93.v:177 / zports.v vgFF: every OUT (#FF) in shadow is latched, drive mask or not; #FF reads it back
+    const bool systemWrite = isWrite && fdcPort == 0xFF;
+    if (systemWrite)
+        _state->evoVgSys = static_cast<uint8_t>(value & 0x3F);
+
     if (IsLegacyFpga())
         return false;  // the legacy tree has no drive mask
 
     // The drive number the FPGA compares: for OUT (#FF) the value being written
     // (vg_rdwr_fclk is registered after the write), otherwise the latched one
-    const bool systemWrite = isWrite && fdcPort == 0xFF;
-    const uint8_t drive = systemWrite ? static_cast<uint8_t>(value & 0x03) : _state->evoVgDrive;
-    if (systemWrite)
-        _state->evoVgDrive = drive;
+    const uint8_t drive = static_cast<uint8_t>(_state->evoVgSys & 0x03);
 
     const bool masked = (_state->evoFddMask >> drive) & 0x01;
     if (!masked)
@@ -1273,6 +1382,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     ids.push_back(ttd::PeripheralId::Ds12887);
     ids.push_back(ttd::PeripheralId::EvoPs2);
     ids.push_back(ttd::PeripheralId::EvoTurboCache);
+    ids.push_back(ttd::PeripheralId::EvoFontRam);
     return ids;
 }
 
@@ -1286,6 +1396,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(const_cast<EvoAvr&>(_evoAvr)));
     serializers.push_back(std::make_unique<ttd::TTDEvoTurboCache>(const_cast<PortDecoder_ATM3&>(*this)));
+    serializers.push_back(std::make_unique<ttd::TTDEvoFontRam>(_context));
     return serializers;
 }
 
@@ -1372,9 +1483,48 @@ void PortDecoder_ATM3::updateMemoryBanks()
     else if (_state->pEFF7 & ATM_EFF7_ROCACHE)
         _memory->SetRAMPageToBank0(0);
 
+    // #xBF7: a protected RAM window keeps reading and drops its writes. ROM windows drop them already
+    if (_state->evoWrProt)
+        for (uint8_t bank = 0; bank < 4; bank++)
+            if (!_memory->IsWindowRom(bank) && IsWindowWriteProtected(bank))
+                _memory->SetBankWriteProtected(bank);
+
     // Every state restore (TTD seek, snapshot) re-runs the decode: re-attach
     // the M1 hook the restored NMI / breakpoint state needs
     RefreshM1Hook();
 }
 
 /// endregion </Port handlers>
+
+PortDecoder::NetworkCapabilities PortDecoder_ATM3::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::EvoAvr;
+    const auto firmware = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    caps.uart = Uart16550::EvoAvrParams(firmware);
+
+    // The BaseConf FPGA hands the AVR A10..A8 (SPI register #42). The TS-Labs
+    // firmware from 2016-02 expects the TS-Conf FPGA's full high byte and
+    // reads the COM port wrongly here (reference-evo-com-port.md §9):
+    //  - 2016-02 .. 2021-04: index 0..7 from #42 lands in its ZiFi data area
+    //  - since 2021-04-28: the index is read from #41 = the Gluk clock address
+    //    (the last #DFF7 write): F8..FF reach the 16550, C0..CF the ZiFi
+    //    registers, D0..F7 nothing, 00..BF the ZiFi data area
+    if (firmware == Uart16550::AvrFirmware::Ts2016Feb)
+        caps.serialRegister = [](uint16_t) { return ComPortRegister::kDataRegion; };
+    else if (firmware == Uart16550::AvrFirmware::Ts2016Apr)
+    {
+        caps.serialRegister = [this](uint16_t) {
+            const uint8_t index = _evoAvr.GetAddress();
+            if (index >= 0xF8)
+                return static_cast<int>(index - 0xF8);
+            if (index >= 0xC0 && index <= 0xCF)
+                return ComPortRegister::kZiFiRegister;
+            if (index >= 0xD0)
+                return ComPortRegister::kNothing;
+            return ComPortRegister::kDataRegion;
+        };
+    }
+    return caps;
+}
+
