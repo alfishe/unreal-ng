@@ -157,7 +157,7 @@ class Emulator:
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
-        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet'|'at' (the machine's own serial port, the ZX-Evo AVR's), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'. Applied at the next frame
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet'|'at' (the machine's own serial port, the ZX-Evo AVR's), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
     def rtc_state(self) -> dict:
@@ -430,6 +430,39 @@ except ValueError as e:
 ```
 
 While TTD records, these calls are written to the TTD input journal, so a replay reproduces them.
+
+### Joystick Input
+
+`Emulator` methods that drive the emulated Kempston joystick, mirroring the CLI `joystick` commands
+and the WebAPI `/joystick/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
+Semantics, units and limits: [command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+
+```python
+emu.joystick_press(buttons)             # "up+fire", "up,fire" or ["up", "fire"]
+emu.joystick_release(buttons)
+emu.joystick_set(state)                 # a byte 0..255, a name string or a list; [] = none
+emu.joystick_tap(buttons, frames=2)     # hold 1..65535 frames, then release on its own
+emu.joystick_state()                    # state dict (below)
+emu.joystick_tap_pending()              # True while a tap is still holding its buttons
+emu.joystick_button_names()             # ["up", "down", "left", "right", "fire", "b5", "b6", "b7"]
+```
+
+Every changing method returns the resulting **state dict**, with the keys of the WebAPI state object:
+`available`, `present`, `wired`, `state` (the byte), `port_value` (what `IN #1F` returns),
+`buttons` (a bool per name), `pressed`, `button_names`, `keys`, `pending_tap` (`None` or
+`{'mask', 'frames_left'}`), plus `warning` when the guest cannot see the buttons.
+
+**Errors raise**: `ValueError` for a bad name, type or range (`state=300 out of range 0..255`),
+`RuntimeError` for a TTD replay in progress or a missing device; the messages are the shared ones.
+
+```python
+emu = unreal.emu_get_selected()
+emu.pause()
+st = emu.joystick_press("up+fire")      # st['state'] == 0x18, st['port_value'] == 0x18
+emu.joystick_tap("left", frames=3)
+emu.run_frames(4)
+assert emu.joystick_state()["buttons"]["left"] is False
+```
 
 ### Feature Management
 

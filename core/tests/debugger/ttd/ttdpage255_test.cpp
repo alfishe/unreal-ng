@@ -1,5 +1,5 @@
 /// @file ttdpage255_test.cpp
-/// @brief RAM page 255 is an ordinary page to time travel (PLAN #40 V0).
+/// @brief RAM page 255 is an ordinary page to time travel (PLAN #40 Phase 0, Step 1).
 ///
 /// Memory's per-bank page cache used to be a uint8_t with 0xFF meaning "this
 /// bank holds ROM". On a 4 MB machine (ATM3 today, TSConf later) 0xFF is also

@@ -1,5 +1,5 @@
 /// @file ttd_matrix_benchmark.cpp
-/// @brief The TTD benchmark matrix (PLAN #40 V0b, TTD v2 requirements §5):
+/// @brief The TTD benchmark matrix (PLAN #40 Phase 0, Step 2, TTD v2 requirements §5):
 /// every engine x configuration x workload, one benchmark each, the metrics
 /// BM-1..BM-8 as counters. Harness: core/src/debugger/ttd/bench/ttdbench.h.
 ///

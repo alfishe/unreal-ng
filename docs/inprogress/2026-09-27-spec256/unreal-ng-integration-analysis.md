@@ -102,7 +102,7 @@ gates ZX-Poly Phase 4.
   and `RAMPageAddress`-based consumers (screen digest, memory viewer) must
   not silently scan it. Memory writes land in the shadow via the engine hook
   (D2), not via banking.
-- TTD: register the shadow RAM as a **TTD v2 memory region** (PLAN #40-V1)
+- TTD: register the shadow RAM as a **TTD v2 memory region** (PLAN #40 Phase 1)
   rather than a monolithic serializer blob — 512 KB per checkpoint is
   unaffordable; region deltas are the design's whole point. See §4.
 
@@ -163,11 +163,11 @@ Follow the **Pentagon P16 precedent** (retired PLAN #21: decoder + mode enum
   options, engine version — `static_assert(sizeof(...))`-style POD like
   `TTDAtmPaging` (`core/src/debugger/ttd/ttdatmpaging.h:36-72`).
 - The **512 KB shadow RAM must not** ride in the serializer blob; it belongs
-  in TTD v2 memory regions (#40-V1). Interim (pre-V1) fallback: hash-only
+  in TTD v2 memory regions (#40 Phase 1). Interim (before Phase 1) fallback: hash-only
   participation + capture at coarse intervals, accepting seek rebuild cost.
 - Register-alignment profiles are per-container constants (from `.cfg` /
   app-base DB) — deterministic inputs, recorded once at session start
-  (feeds #40-V3 "determinism inputs in the file"), not per-checkpoint.
+  (feeds #40 Phase 3 "determinism inputs in the file"), not per-checkpoint.
 - E2 only: 8 shadow register files. Under lockstep they are a deterministic
   function of (main CPU trace + initial shadow RAM + profile) — capture
   hashes for divergence detection, not full files; full recompute happens
@@ -244,7 +244,7 @@ flowchart LR
 | **R** (≈1–2 wk) | `MM_SPEC256` + config + decoder factory case; ZIP/loose loader + plane codec; `M_SPEC256` view + `ScreenSpec256` helper; default palette + `.pal` override; screenshots/GIF; `/state/screen/mode` case; codec tests vs zxpoly fixtures | title screens of Jetpac/Renegade/TreeWeeks render pixel-exact vs zxpoly captures; classic-ULA toggle lossless |
 | **E1** (≈1–2 wk) | shadow-register file for the source operand of stores; write-mirror hook in the memory-write path (pattern: memory-tracking/RWX overlay hooks); coverage report (which catalog games need RMW) | an LD-blit game (e.g. Chuckie Egg class) animates correctly for minutes; no shadow leak into ZX memory |
 | **E2** (defer; ≈2–3 wk, ≈ zxpoly Phase-4 estimate) | 8 satellite cores via the multi-CPU scheduler (Track B if ZX-Poly lands, else Track A local); `zxpAlignRegs` + leveled logicals + XOR-buffering; port the `spec256appbase.txt` profile DB as fixture data; 128K variant | the 3 local fixture games + 5 public titles through zxpoly-accuracy A/B; divergence corpus green |
-| **I** (opportunistic) | TTD region for shadow RAM (#40-V1 consumer); GFX plane viewer/painter in Qt debugger + WebAPI `gfx` reads; `.bnn` backgrounds + probe palettes; `.ezx` import; MCP `unreal://machine/spec256` resource | TTD seek leaves colour state exact; one game recoloured end-to-end via automation |
+| **I** (opportunistic) | TTD region for shadow RAM (#40 Phase 1 consumer); GFX plane viewer/painter in Qt debugger + WebAPI `gfx` reads; `.bnn` backgrounds + probe palettes; `.ezx` import; MCP `unreal://machine/spec256` resource | TTD seek leaves colour state exact; one game recoloured end-to-end via automation |
 
 Phase R+E1 is a **self-contained, low-risk deliverable** that makes the
 majority of the catalog viewable and mostly playable; E2 is explicitly
@@ -268,7 +268,7 @@ gated (same discipline as ZX-Poly Phase 4).
 6. **TTD**: `PeripheralId` + `TTDSpec256State` serializer + decoder
    declaration (`portdecoder.h:581-609`; registry wiring
    `timetravelmanager.cpp:1063-1140`); contract-test model list; shadow RAM
-   region once #40-V1 lands.
+   region once #40 Phase 1 lands.
 7. **Viewers/automation**: screen-viewer mode branch; `/state/screen/mode`
    case; MCP model string + forwarding; OpenAPI/doc updates
    (`docs/emulator/design/control-interfaces/command-interface.md` memory-layout
@@ -284,7 +284,7 @@ gated (same discipline as ZX-Poly Phase 4).
 |:--|:--|:--|
 | Bit/triplet order contradictions (pixel MSB-first vs LSB-first claims; RGB vs BGR) | High (silent wrong colours) | fixture-verify on day one; codec isolated behind one function |
 | Per-game profiles are load-bearing (no profile → wrong sync) | High | ship the profile DB as data; per-container `.cfg` overrides; log profile application |
-| TTD without shadow-region support = 512 KB blobs or colour desync | High | gate Phase I on #40-V1; hash-only interim |
+| TTD without shadow-region support = 512 KB blobs or colour desync | High | gate Phase I on #40 Phase 1; hash-only interim |
 | GPL contamination (zxpoly code/palette/fixtures) | Medium | clean-room from docs + GZX/EmuZWin-source palette; regenerate fixtures or verify licensing |
 | Scope creep into a second multi-core engine before ZX-Poly decides | Medium | E2 deferred until Track A/B decision; Phase R has no engine at all |
 | Performance of E2 + TTD concurrently | Medium | benchmark in spike; turbo; region deltas |

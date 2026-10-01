@@ -182,7 +182,7 @@ future. With branches that reason is gone, and so is truncation:
 
 ### 4.3 Fork point: a frame boundary
 
-TTD keeps one checkpoint per frame, at the frame boundary (v2 §9; V1b not
+TTD keeps one checkpoint per frame, at the frame boundary (v2 §9; Phase 0, Step 4 not
 needed). A divergence in the middle of frame N therefore forks at the boundary
 **before** it (the end of frame N−1, the checkpoint that starts frame N):
 
@@ -203,7 +203,7 @@ in-frame replay.
   (recording appends to that branch).
 - **Play backward** (R-5): repeated frame seeks at the requested speed
   (`−1×`, `−2×`, `−4×`); audio muted or reversed per frame, video shown per
-  frame. Needs no new engine: V0b measured seek p99 ≤ 3.5 ms, well inside a
+  frame. Needs no new engine: Phase 0, Step 2 measured seek p99 ≤ 3.5 ms, well inside a
   20 ms frame.
 - **Rename, pin, delete.** Deleting a branch deletes its descendants (asked
   first) and releases their pieces. The trunk can be deleted only by
@@ -217,7 +217,7 @@ in-frame replay.
 
 Today every snapshot, tape or disk load, ROM reload and media change calls
 `InvalidateSession` and the history is gone. With branches and external events
-(TTD v2 V3: external-event markers are persisted) they become **events on the
+(TTD v2 Phase 3: external-event markers are persisted) they become **events on the
 timeline**:
 
 - the load happens at a frame boundary (the emulator is paused; the load ends
@@ -236,7 +236,7 @@ to the old one, so the lane continues visually on the other model.
 
 ### 4.6 Memory budget
 
-**Owned by TTD v2** (V4 / V5): the limit, the spill trigger and the spill
+**Owned by TTD v2** (Phases 4 / 5): the limit, the spill trigger and the spill
 mechanism are decided there, not here. The direction below is the user's
 (2026-09-29) and is recorded there too
 ([target-architecture.md §6.1](../2026-09-25-ttd-v2-migration/target-architecture.md#61-memory-as-linked-blocks-direction-2026-09-29)).
@@ -316,7 +316,7 @@ flowchart LR
 6. **Run** the range on every fork, **headless and in lockstep by frame
    index** (frame K of every fork runs before frame K+1 of any), fed with:
    - the parent lineage's **input events** from the fork point, by frame number
-     (TTD v2 V3 input journal; in memory today, in the file after O-1);
+     (TTD v2 Phase 3 input journal; in memory today, in the file after O-1);
    - the parent's **external events** that are commands (tape play/stop, disk
      insert of the same copy, reset), at the same frame numbers.
    Frames differ in length between models, so frame index is the common clock;
@@ -346,7 +346,7 @@ single "continue on another model now":
 | Timing honesty | **full**: no target runs a partial frame with the source's timing | a mid-frame start runs the rest of that frame on the target's contention and INT window from a state the source's timing produced; 128K → +2A share the geometry but not the contention, so the first frame mixes two machines — misleading exactly where a timing what-if looks | full from the handler on | full |
 | Distance from the chosen moment | up to one frame earlier (≤ 20 ms); at 50 frames per second the user rarely sees the difference | none on matching targets | up to one frame later; **never**, if the program runs with interrupts off (loaders, border effects in DI) | whatever the mark says |
 | Works on every program | yes | yes | **no** (DI code) | only where a mark exists |
-| Fits TTD v2 | the checkpoint grid itself; no V1b | needs replay inside the frame (already how seeks work) | needs a search forward | a bookmark is a position (FR-6) |
+| Fits TTD v2 | the checkpoint grid itself; no Phase 0, Step 4 | needs replay inside the frame (already how seeks work) | needs a search forward | a bookmark is a position (FR-6) |
 
 **Decided 2026-09-29 (user): A for forks, for now** — to be revisited once forks
 run and the grid shows how much the frame-boundary start matters. **A for forks** (the grid, batch mode, OR-30 … OR-36): the only
@@ -460,20 +460,20 @@ History panel, extended from today's `TtdWidget` with R-1 … R-5:
 |---|---|---|
 | One checkpoint per frame at the boundary (§9) | fork points at frame boundaries (§4.3) | yes, unchanged |
 | Page store, 4 KB pieces, reference counts (§3) | branches share pieces by reference | yes, as designed |
-| Per-piece chain cap (V1) | a branch's pieces continue the parent's chains; the cap is per piece | yes |
-| Copy-on-write reference blocks (V1) | a branch's first checkpoint shares the parent's blocks | yes, that is what COW is for |
-| Device blobs shared when unchanged (V2) | a branch starts by sharing the fork checkpoint's blobs | yes |
+| Per-piece chain cap (Phase 1) | a branch's pieces continue the parent's chains; the cap is per piece | yes |
+| Copy-on-write reference blocks (Phase 1) | a branch's first checkpoint shares the parent's blocks | yes, that is what COW is for |
+| Device blobs shared when unchanged (Phase 2) | a branch starts by sharing the fork checkpoint's blobs | yes |
 | Restore report / degraded (FR-7) | media not branch-aware before M7 (§4.7); fork = transfer report | yes, used as designed |
-| Configuration fingerprint (V3, FR-14) | one per session; forks are new sessions (P-2) | yes; nothing replays across configurations |
-| Input journal and external events persisted (V3, O-1) | per branch; forks read the parent's | yes; O-1 becomes a prerequisite of forks from saved sessions |
+| Configuration fingerprint (Phase 3, FR-14) | one per session; forks are new sessions (P-2) | yes; nothing replays across configurations |
+| Input journal and external events persisted (Phase 3, O-1) | per branch; forks read the parent's | yes; O-1 becomes a prerequisite of forks from saved sessions |
 | Replay isolation (FR-20, FR-21) | switching branches is a seek = replay; forks run live on their own copies (P-4) | yes |
-| Memory budget (V4, FR-15) | branch-aware eviction (§4.6) | memory counted in linked blocks (64 MB, up to the limit), spill or release by whole blocks; v2 ring behavior kept for the trunk |
-| Container v2 (V5): chunks with stream ids, readers skip unknown streams | branch table and non-trunk branch data as **new skippable streams**; the parent link as a skippable header stream | yes: a reader without branch support reads the trunk only |
+| Memory budget (Phase 4, FR-15) | branch-aware eviction (§4.6) | memory counted in linked blocks (64 MB, up to the limit), spill or release by whole blocks; v2 ring behavior kept for the trunk |
+| Container v2 (Phase 5): chunks with stream ids, readers skip unknown streams | branch table and non-trunk branch data as **new skippable streams**; the parent link as a skippable header stream | yes: a reader without branch support reads the trunk only |
 | `ResumeRecordingFrom` (FR-8, QR-8, FR-24) | same routes; starts a branch instead of truncating; nothing recorded is lost | yes: every route kept, the only change is that history is no longer deleted |
 
-Nothing in V1–V4 changes (TTD v2 requirements FR-22 … FR-24 record what must
-stay possible). V5 reserves the stream ids below; branches can ship
-**in memory** before V5 (a save before V5 writes the active lineage as a linear
+Nothing in Phases 1–4 changes (TTD v2 requirements FR-22 … FR-24 record what must
+stay possible). Phase 5 reserves the stream ids below; branches can ship
+**in memory** before Phase 5 (a save before Phase 5 writes the active lineage as a linear
 session and says so).
 
 Proposed stream ids (from the reserved 9+ range, allocated in the one id table):
@@ -537,11 +537,11 @@ MUST unless marked. Traced to OR-30 … OR-37 where they already exist.
 |---|---|---|---|
 | **W0** | Machine state transfer; WebAPI + MCP; floppies and tape; invariant tests over every model | — | **done** (`6f5759f3`, `570ca3ce`, `7ddbef11`) |
 | W0b | Transfer on CLI, Lua, Python, Qt (parity) | W0 | S |
-| **W1** | In-memory branches: timeline tree, divergence rule, switch / rename / delete / pin / promote, `resume` starts a branch, history lanes, distance-to-end, reverse playback; save writes the active lineage | TTD V1 (the timeline code is rewritten there anyway) | M |
-| W2 | History across loads (§4.5) | TTD V3 external events | S-M |
+| **W1** | In-memory branches: timeline tree, divergence rule, switch / rename / delete / pin / promote, `resume` starts a branch, history lanes, distance-to-end, reverse playback; save writes the active lineage | TTD Phase 1 (the timeline code is rewritten there anyway) | M |
+| W2 | History across loads (§4.5) | TTD Phase 3 external events | S-M |
 | **W3** | Forks: `RestoreInto`, fork runner (headless, lockstep by frame), input and command events from the parent, parent link, per-target report; `switch_model` with state | W1, O-1 (saved sessions) | M |
 | W4 | Capture, grid, scores, verdict; batch mode | W3, workbench time / Beam Lab panels | L |
-| W5 | Branches and family in the v2 container (streams 10-13) | TTD V5 | S |
+| W5 | Branches and family in the v2 container (streams 10-13) | TTD Phase 5 | S |
 | W6 | Media per branch exact | storage manager M7 | S (on top of M7) |
 
 W1 and W3 are the user-visible core; W0b can go any time.

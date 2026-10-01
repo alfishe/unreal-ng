@@ -62,6 +62,7 @@ public:
         std::optional<std::string> zxWifi;     ///< ZxWifi= value (ComPortSpec): the ZX-WiFi card's ESP
         std::optional<bool> comModemLines;     ///< a serial device's RTS / DTR / CTS / DSR / RI / DCD
         std::optional<uint8_t> espChip;        ///< 0 ESP32, 1 ESP8266
+        std::optional<uint8_t> avrFirmware;    ///< ZX-Evo: Uart16550::AvrFirmware ([EVO] Avr=)
     };
     bool RequestChange(const Change& change, std::string& error);
 
@@ -70,7 +71,9 @@ public:
     /// pass), hosts, forwards, connect_timeout_ms, com_port and zx_wifi
     /// (ComPortSpec: none | loopback | tcp:<host>:<port> |
     /// serial:<device>[,<baud>] | espnet | at), com_modem_lines (on | off),
-    /// esp_chip (esp32 | esp8266). Unknown keys and bad values are errors
+    /// esp_chip (esp32 | esp8266), avr_firmware (ZX-Evo, [EVO] Avr= names:
+    /// baseconf | base2010 .. base2023 | ts | ts2013 | ts2016-02 | ts2016-04).
+    /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
 
@@ -94,6 +97,22 @@ public:
         bool zxBus = true;                ///< the machine takes ZX-Bus cards
         std::string serialPort;           ///< the machine's own: none | evo-avr | zifi
         std::vector<std::string> notes;   ///< configured devices not fitted, and why
+
+        /// The settings in force (the machine config), in ParseChange's terms
+        struct Settings
+        {
+            std::string card;             ///< NONE | ZXNETUSB | ZXWIFI | ZXNETUSB,ZXWIFI
+            std::string comPort;          ///< ComPortSpec text, NONE when empty
+            std::string zxWifi;           ///< ComPortSpec text, AT when empty
+            std::string espChip;          ///< ESP32 | ESP8266
+            std::string avrFirmware;      ///< [EVO] Avr= name
+            std::string dnsMode;          ///< HOST | PASS
+            std::string hosts;
+            std::string forwards;
+            bool comModemLines = false;
+            bool hostAccess = true;
+            unsigned connectTimeoutMs = 10000;
+        } settings;
         bool hostAccess = false;
         uint8_t control = 0, mode = 0, addressHigh = 0;   ///< card ports #83AB / #82AB / #81AB
         bool chipRunning = false;
@@ -137,11 +156,12 @@ private:
     {
         bool zxNetUsb = false;
         enum class Serial : uint8_t { None, EvoAvr, ZxWifi } serial = Serial::None;
+        uint8_t avr = 0;                  ///< EvoAvr: the AVR firmware
         std::string peer;                 ///< ComPortSpec of the serial port's peer
         std::vector<std::string> notes;
         bool operator==(const Plan& o) const
         {
-            return zxNetUsb == o.zxNetUsb && serial == o.serial && peer == o.peer;
+            return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer;
         }
     };
     Plan MakePlan() const;

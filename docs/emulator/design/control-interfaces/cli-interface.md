@@ -104,7 +104,7 @@ state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
 state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
 state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
 network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity) (alias: net)
-network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|zxnetusb,zxwifi host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (the machine's own serial port: the ZX-Evo AVR's) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266; devices the machine cannot take are listed under not_fitted in `network`
+network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|zxnetusb,zxwifi host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (the machine's own serial port: the ZX-Evo AVR's) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo); devices the machine cannot take are listed under not_fitted in `network`
 rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
 rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
@@ -326,6 +326,32 @@ model-specific decoder gating` behind the Scorpion DOS trigger / Shadow Monitor,
   while TTD replays. While TTD records they are journalled, `mouse set` included.
 - The CLI does not run frames for you. After a `click`, use `run_frames` (or resume) so the
   program sees the press and the release.
+
+### Joystick Input Commands
+
+The `joystick` verb drives the Kempston joystick of the selected emulator (source:
+`core/automation/cli/src/commands/cli-processor-joystick.cpp`, the command logic and output
+formatting in `cli-joystick-format.h`). Full semantics, units and limits:
+[command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+
+| CLI Command | Alias | Description |
+| :--- | :--- | :--- |
+| `joystick press <buttons>` / `joystick release <buttons>` | | `up`, `down`, `left`, `right`, `fire`, `b5`..`b7`; several as `up+fire`, `up,fire` or `up fire` |
+| `joystick set <state\|buttons\|none>` | | Exactly these buttons: a byte (`0x18`, `24`), a list, or `none` |
+| `joystick tap <buttons> [frames]` | | Hold for `frames` (default 2), then release on its own |
+| `joystick clear` | `joystick release_all` | Release everything, cancel a pending tap |
+| `joystick status` | `joystick info` | Multi-line state block |
+| `joystick list` | | Button names and bits |
+| `joystick help` | | Subcommand help |
+
+```
+> joystick press up+fire
+Joystick pressed: up,fire -> state=0x18 buttons=up,fire (IN #1F=0x18)
+> joystick set 300
+Error: state=300 out of range 0..255
+> joystick tap fire 3
+Joystick tap: fire for 3 frames -> state=0x18 buttons=up,fire (IN #1F=0x18)
+```
 
 ### Analysis, Capture & Assembly Commands
 

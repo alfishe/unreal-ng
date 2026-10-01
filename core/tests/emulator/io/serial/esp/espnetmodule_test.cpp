@@ -434,8 +434,8 @@ TEST_F(EspnetModule_Test, StateRoundTripContinuesTheSameWay)
     copy->SetClock([this]() { return _now; }, 3500000);
     copy->OnLineSettings(SerialLine());
     netstate::EspModuleState& st = *state;
-    st.stack.slots[s].rxRuns = 1;
-    st.stack.slots[s].rx[0] = {1, 0, 3};
+    st.stack.slotStates[s].rxRuns = 1;
+    st.stack.slotStates[s].rx[0] = {1, 0, 3};
     ASSERT_TRUE(copy->LoadState(st, [&](uint32_t, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
         out.assign(journal.begin() + offset, journal.begin() + offset + length);
         return true;

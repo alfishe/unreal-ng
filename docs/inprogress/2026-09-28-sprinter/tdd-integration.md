@@ -65,7 +65,7 @@ when they are appended (15 -> 19 and so on); the order stays:
 | Id | Name | Blob contents |
 |---|---|---|
 | 15 | `SprinterPld` | `SprinterPldState` (cells, CNF, ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, flags, config state, sink count and hashes), the active configuration module's **name** and its opaque **state blob** ([tdd-ports-memory.md](tdd-ports-memory.md) §6.1), `SprinterAccelState`, IDE channel latch + data latch |
-| 16 | `SprinterVideo` | video RAM (256 KB) as a TTD memory region (PLAN #40 V1 "device RAM in the page store"); until V1 lands, a whole-array blob with a CRC short-cut |
+| 16 | `SprinterVideo` | video RAM (256 KB) as a TTD memory region (PLAN #40 Phase 1 "device RAM in the page store"); until Phase 1 lands, a whole-array blob with a CRC short-cut |
 | 17 | `Z84C15` | SIO (both channels, FIFOs, registers), CTC, PIO, system registers |
 | 18 | `SprinterCbl` | Covox-Blaster ring, indices, control, tick phase |
 | ~~19~~ | `Ds12887` | shared id 18, already built (PLAN #60(c)): cells + address latch + time base |
@@ -96,7 +96,7 @@ recording; replay uses it (NFR-3).
 - Spectrum formats (`.sna`, `.z80`, `.szx`) cannot hold the machine: loading one on a Sprinter
   is refused with "not supported on SPRINTER"; saving likewise.
 - A native snapshot = the TTD key frame (all serializers above + RAM + fast RAM + VRAM) written as a
-  file. It rides on whatever PLAN #40 V5 (the chunked TTD container) or the `uns-snapshots` branch
+  file. It rides on whatever PLAN #40 Phase 5 (the chunked TTD container) or the `uns-snapshots` branch
   (PLAN #52 audit) produces; no Sprinter-only format.
 
 ## 3. Automation

@@ -26,6 +26,16 @@ PatternCategoryMap FileManager::_extensions =
     { "img", SupportedFileCategoriesEnum::FileDisk },
     { "ima", SupportedFileCategoriesEnum::FileDisk },
 
+    // Only a CD, a hard disk or a memory card has these (.img is shared with floppies and stays one)
+    { "iso", SupportedFileCategoriesEnum::FileStorage },
+    { "hdf", SupportedFileCategoriesEnum::FileStorage },
+    { "hdi", SupportedFileCategoriesEnum::FileStorage },
+    { "vhd", SupportedFileCategoriesEnum::FileStorage },
+    { "hdd", SupportedFileCategoriesEnum::FileStorage },
+    { "hd", SupportedFileCategoriesEnum::FileStorage },
+    { "mmc", SupportedFileCategoriesEnum::FileStorage },
+    { "sd", SupportedFileCategoriesEnum::FileStorage },
+
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },
     { "zip", SupportedFileCategoriesEnum::FileArchive },

@@ -38,6 +38,7 @@ set(SOURCES
     src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-keyboard.cpp
     src/commands/cli-processor-mouse.cpp
+    src/commands/cli-processor-joystick.cpp
     src/commands/cli-processor-analysis.cpp
 )
 

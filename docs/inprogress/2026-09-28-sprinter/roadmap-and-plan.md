@@ -28,7 +28,7 @@ flowchart LR
     S4 --> S7["S7 TTD, automation, GUI"]
     S5 --> S7
     S6 --> S7
-    V1["TTD V1 regions<br/>(PLAN #40)"] -.-> S7
+    V1["TTD Phase 1 regions<br/>(PLAN #40)"] -.-> S7
 ```
 
 Dashed arrows are work owned by other PLAN rows. The Sprinter is the **last** machine program
@@ -46,7 +46,7 @@ earlier.
 | **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, **default on** because the PLD has it (Q3, decided 2026-10-01) | T-ACC-*; part of **ACC-9** | M | S2 |
 | **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub | T-CBL-*; **ACC-9** | S-M | S2 |
-| **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD V1 (PLAN #40) |
+| **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD Phase 1 (PLAN #40) |
 
 Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work).
 

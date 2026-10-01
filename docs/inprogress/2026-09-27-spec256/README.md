@@ -53,7 +53,7 @@ port-decoder + VRAM-banking job. The hard parts are:
   ZX module + 8 satellite GFX cores, i.e. exactly the multi-CPU scheduler
   ZX-Poly Phases 1–2 would build (PLAN row #43).
 - **TTD v2 migration (PLAN #40)** — the 512 KB GFX RAM is a textbook "device
-  RAM region" for V1; doing #40-V1 first is the same sequencing rule the plan
+  RAM region" for its Phase 1; doing #40 Phase 1 first is the same sequencing rule the plan
   already states for TSConf/ZX-Poly.
 - **Video debug translation (PLAN #42)** — Spec256's pixel→memory mapping
   (each pixel maps to *two* addresses: a bitmap byte and 8 plane bytes) should

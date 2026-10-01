@@ -345,7 +345,7 @@ TEST(TTDAccessProbe_Test, AccessTypeFromString_DefaultFallback)
 }
 
 // ===========================================================================
-// Page filter: RAM page 255 is a page, not "no page" (PLAN #40 V0)
+// Page filter: RAM page 255 is a page, not "no page" (PLAN #40 Phase 0, Step 1)
 // ===========================================================================
 
 TEST(TTDAccessProbe_Test, Matches_PageFilter_Page255IsNotNoPage)

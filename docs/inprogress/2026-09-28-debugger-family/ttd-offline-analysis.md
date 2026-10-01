@@ -63,12 +63,12 @@ Checked in code on 2026-09-29 (`core/src/debugger/ttd/`,
 | Item | State |
 |---|---|
 | Recording, seek, reverse step / continue, find-last, coverage, bookmarks | **works** (live session) |
-| V0 "make v1 honest" | **done** 2026-09-28 (TTD v2 TODO) |
+| Phase 0, Step 1 "make v1 honest" | **done** 2026-09-28 (TTD v2 TODO) |
 | Saved in the `.ttd` file | checkpoints (CPU and chipset state, references to 4 KB memory pieces stored Full / XOR-against-previous / Zero, CRC per piece), device state blobs from the registry, the write journal (with a "complete" flag when no records were evicted), the coverage index, bookmarks; times counted at the model's top CPU clock |
 | **Not saved in the file** | **input events** (keyboard, mouse, GS stimuli) and **external events** (tape and disk barriers, debugger edits): they exist only in the live session. A loaded file can show checkpoints, but replay between them with input does not reproduce the recorded run. |
 | Host time read by the machine | **solved for recording sessions** by `04383910` (2026-09-29): one shared `Ds12887` RTC for ATM3 / ZX-Evo, Profi and Scorpion SMUC; while TTD records, its time is emulated (host time at recording start plus emulated time since), and its state is a TTD device blob. Outside recording it still follows host time |
 | Media | TTD v1 is media-agnostic: it records port-level behavior, not media identity |
-| Device RAM | GS card RAM is copied whole into every checkpoint blob; MoonSound wave SRAM is not captured (Tier A only); memory regions are TTD v2 V1 |
+| Device RAM | GS card RAM is copied whole into every checkpoint blob; MoonSound wave SRAM is not captured (Tier A only); memory regions are TTD v2 Phase 1 |
 | Write journal | a 64 MB ring; records can be evicted in long sessions |
 
 ## 3. What it enables
@@ -99,7 +99,7 @@ Each requirement is tagged **MUST** (the principle fails without it) or
 | OR-2 | Every external event (tape and disk barriers, media insert / eject, debugger edits, settings changes that affect emulation) is saved with its exact time | MUST |
 | OR-3 | No host time reaches the emulated machine: RTC / CMOS chips run on an emulated clock seeded at session start, the seed saved in the file | MUST |
 | OR-4 | Media identity and positions are recorded (which image in which slot, its content hash, tape position, head position), and media writes are journaled, so a replay sees the same media | MUST |
-| OR-5 | Every checkpoint holds the full machine state: all devices (device table, V2) and all memory regions including device RAM (V1) | MUST |
+| OR-5 | Every checkpoint holds the full machine state: all devices (device table, Phase 2) and all memory regions including device RAM (Phase 1) | MUST |
 | OR-6 | Model, ROMs (by hash), configuration and the emulator version are recorded in the file | MUST |
 | OR-7 | Frame digests (a hash of the machine state or a cheap proxy) are stored per frame or per checkpoint interval, so a replay can prove it matches | MUST |
 | OR-8 | Speculative contexts (run-ahead, look-ahead) never write into the recording | MUST |
@@ -123,7 +123,7 @@ Each requirement is tagged **MUST** (the principle fails without it) or
 
 | ID | Requirement | Level |
 |---|---|---|
-| OR-19 | The file format is versioned and chunked (V5); readers accept older minor versions | MUST |
+| OR-19 | The file format is versioned and chunked (Phase 5); readers accept older minor versions | MUST |
 | OR-20 | Integrity: per-piece CRCs today; a file-level checksum; optionally a hash chain over frames for tamper evidence (TA-21) | SHOULD |
 | OR-21 | Trimmed exports re-compute the start state and re-pack deltas, then verify by replay (TE-3, TE-7) | MUST for the editor |
 
@@ -136,7 +136,7 @@ Each requirement is tagged **MUST** (the principle fails without it) or
 | **Non-recordable sources**: live hardware bridges (Greaseweazle and similar, PLAN #12), network devices, audio line-in as a tape source, host folders not versioned by the media manager | such sessions cannot replay exactly | record their data as external events where possible (the bytes that reached the machine); otherwise mark the recording "not replayable past frame N" |
 | **Host time** (RTC / CMOS) | met while recording since `04383910`; a file-level check of the time anchor is still open | keep every future clock device on the same emulated-time switch |
 | **Write-journal eviction** in long sessions | reverse queries fall back to replay | acceptable: replay regenerates everything; the "complete" flag already tells which case applies |
-| **Storage size** of long sessions with device RAM | large files | memory regions and per-piece chain caps (V1), memory budget and disk mode (V4, V5), trimming (TE) |
+| **Storage size** of long sessions with device RAM | large files | memory regions and per-piece chain caps (Phase 1), memory budget and disk mode (Phases 4, 5), trimming (TE) |
 | **Reads and register flow are not recorded** | TA-5, TA-6, TA-8 need replay with observers | by design: that is the principle |
 | **Content ownership**: recordings contain the software that ran | sending recordings to a remote service may not be acceptable | local-first; remote analysis opt-in; digests and results can be shared without the recording |
 | **Plug-in analyzers** may be buggy or slow | a bad analyzer must not corrupt results or the recording | analyzers run in the replay instance only, read-only (OR-12), with time limits |
@@ -452,13 +452,13 @@ first user-visible wins · **P3** depth.
 
 | ID | Item | Priority | Depends on | Status (2026-09-29) | Tracked in |
 |---|---|---|---|---|---|
-| O-1 | Save input events and external events in the file (OR-1, OR-2) | **P0** | — | **not done** (verified in `SerializeSession`) | #40 V3 |
+| O-1 | Save input events and external events in the file (OR-1, OR-2) | **P0** | — | **not done** (verified in `SerializeSession`) | #40 Phase 3 |
 | O-2 | Emulated RTC / CMOS clock with the seed in the file (OR-3) | **P0** | MC146818 unification | **done** for recording sessions (`04383910`, PLAN #60(c)); left: confirm the time anchor survives save / load of a `.ttd` file, and cover future RTC chips (Sprinter) the same way | PLAN #60 |
-| O-3 | Full state in every checkpoint: device table and memory regions incl. device RAM (OR-5) | **P0** | — | V1, V2 open | #40 V1, V2 |
-| O-4 | Per-frame or per-interval digests; replay divergence check (OR-7, OR-11) | **P0** | O-1 | partial (CRC compare of pieces) | #40 V3 |
-| O-5 | Model, ROM hashes, configuration and emulator version in the file (OR-6) | **P0** | — | partial | #40 V5 |
+| O-3 | Full state in every checkpoint: device table and memory regions incl. device RAM (OR-5) | **P0** | — | Phases 1, 2 open | #40 Phases 1, 2 |
+| O-4 | Per-frame or per-interval digests; replay divergence check (OR-7, OR-11) | **P0** | O-1 | partial (CRC compare of pieces) | #40 Phase 3 |
+| O-5 | Model, ROM hashes, configuration and emulator version in the file (OR-6) | **P0** | — | partial | #40 Phase 5 |
 | O-6 | Media identity, positions and journaled media writes (OR-4) | **P1** | media manager M7 | designed | #58, #40 media item |
-| O-7 | Versioned chunked container and integrity decision (OR-19, OR-20) | **P1** | O-1 … O-5 | open (integrity decision due before V4) | #40 V5 |
+| O-7 | Versioned chunked container and integrity decision (OR-19, OR-20) | **P1** | O-1 … O-5 | open (integrity decision due before Phase 4) | #40 Phase 5 |
 | O-8 | Recording library, C++ + Python, read-only (OR-13) | **P1** | O-7 (can start on v1 for reading) | none | new row |
 | O-9 | Headless replay from a checkpoint segment (OR-10) | **P1** | O-1, O-3, O-4 | partial (live seek re-executes from checkpoints) | new row |
 | O-10 | Analyzer host with observer hooks (OR-12) | **P1** | O-9 | none | new row |
@@ -480,7 +480,7 @@ first user-visible wins · **P3** depth.
 | O-26 | Highlight and integrity detectors; instant-replay source for scenes | **P3** | O-24, workbench scenes | none | new row |
 | O-27 | Signed builds and segments, hash chains, referee verification (OR-28) | **P3** | O-7, TA-21 | none | new row |
 | O-28 | Multi-session streams with alignment points; race replays; playtest aggregation (OR-29) | **P3** | O-23 | none | new row |
-| O-29 | `IN`-value journal and per-frame fetch counts in TTD recordings (§6b.4) | **P1** | O-1 | none | #40 V3 |
+| O-29 | `IN`-value journal and per-frame fetch counts in TTD recordings (§6b.4) | **P1** | O-1 | none | #40 Phase 3 |
 | O-30 | RZX player mode in the core (snapshot + recorded `IN` values + fetch-count interrupts), with divergence report; RZX → TTD import (§6b.3) | **P2** | O-29 (shares the taps) | none | #27 |
 | O-31 | TTD → RZX export via replay, with verification (§6b.2); SZX writer for fuller start states | **P2** | O-9, O-10, O-30 | none (Z80 / SNA writers exist) | #27 |
 | O-33 | Model-neutral state transplant at a frame boundary, with per-target report (OR-30, §6c.2) | **P2** | O-3, SZX #64 state model | **done** in memory: `MachineStateTransfer` (`6f5759f3`, `570ca3ce`, `7ddbef11`; floppies and tape copied, SD / HDD / CD not moved) | #76 W0 |
@@ -494,7 +494,7 @@ first user-visible wins · **P3** depth.
 (O-24) the base for esports and streaming.
 
 **Order of work.** O-1 first (O-2 is done; small, and every recording made
-before O-1 is not fully replayable), then O-3 … O-5 with TTD v2 V1-V3, then the
+before O-1 is not fully replayable), then O-3 … O-5 with TTD v2 Phases 1–3, then the
 library and the replay worker (O-8, O-9), then the analyzer host and the first
 analyzers (O-10, O-14) — the first visible payoff.
 
@@ -504,7 +504,7 @@ To be applied only after approval.
 
 | Change | Content |
 |---|---|
-| **Re-prioritize #40** | TTD v2 V1, V2, V3 and V5 become the foundation of offline analysis, not only "better time travel"; V3's first slice (O-1: inputs and external events in the file) is pulled forward as a small T1 item |
+| **Re-prioritize #40** | TTD v2 Phases 1, 2, 3 and 5 become the foundation of offline analysis, not only "better time travel"; Phase 3's first slice (O-1: inputs and external events in the file) is pulled forward as a small T1 item |
 | ~~New row: RTC unification with an emulated clock~~ | done as PLAN #60(c), `04383910` (2026-09-29) |
 | **New row: TTD offline analysis program** | this document: O-8 … O-21 |
 | **New row: TTD live segment streaming** | this document §6a: O-22 … O-28 (black box, findings queue, instant replay, integrity) |

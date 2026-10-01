@@ -50,11 +50,12 @@ namespace
     class LooseSlot : public IMediaSlot
     {
     public:
-        explicit LooseSlot(std::string id)
+        explicit LooseSlot(std::string id, std::vector<std::string> tags = {})
         {
             _descriptor.id = std::move(id);
             _descriptor.kind = MediaKind::Block;
             _descriptor.label = "add-on card";
+            _descriptor.tags = std::move(tags);
         }
         const SlotDescriptor& Descriptor() const override { return _descriptor; }
         void Attach(Medium& medium) override { attached = &medium; }
@@ -199,6 +200,53 @@ TEST_F(MediaControl_Test, AutoPicksTheSlotFromTheContent)
     reply = Run(Request("insert", "auto", Utf8(folder.Path()), {{"kind", "floppy"}}));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
     EXPECT_EQ(reply.slot, "fdd.c");
+}
+
+/// insert auto with two SD slots: the card goes to the one tagged "primary"
+/// (the Z-Controller), not to an add-on's slot listed before it
+TEST_F(MediaControl_Test, AutoPutsACardIntoThePrimarySdSlot)
+{
+    Create("ATM3");
+    MediaManager& manager = *_context->pMediaManager;
+    LooseSlot addon("sd.addon", {"sd", "addon"});  // sorts before sd.zc, as sd.ngs does
+    manager.RegisterSlot(addon);
+
+    ScratchFolder folder("control-auto-primary");
+    folder.File("card.img", std::string(64 * 512, '\0'));
+    MediaReply reply = Run(Request("insert", "auto", Utf8(folder.Path() / "card.img")));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.slot, "sd.zc");
+
+    folder.File("card2.img", std::string(64 * 512, '\0'));
+    reply = Run(Request("insert", "auto", Utf8(folder.Path() / "card2.img")));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.slot, "sd.addon") << "the primary slot is taken: the next empty one";
+    manager.UnregisterSlot("sd.addon");
+}
+
+/// An ISO goes to a CD-ROM drive, never to a floppy drive; a machine without
+/// one refuses it
+TEST_F(MediaControl_Test, AnIsoGoesOnlyToACdRomDrive)
+{
+    ScratchFolder folder("control-auto-iso");
+    std::string iso(0x8000 + 2048, '\0');  // the system area, then the primary volume descriptor
+    iso.replace(0x8001, 5, "CD001");
+    const std::string path = Utf8(folder.File("disc.iso", iso));
+
+    Create("PENTAGON");  // floppy drives, no CD-ROM drive
+    MediaReply reply = Run(Request("insert", "auto", path));
+    EXPECT_EQ(reply.result.error, MediaError::KindMismatch) << reply.slot;
+    reply = Run(Request("insert", "fdd.a", path));
+    EXPECT_FALSE(reply.result.Ok()) << "a floppy drive does not take an ISO";
+    EXPECT_FALSE(_context->pMediaManager->Info("fdd.a")->present);
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
+
+    Create("ATM3");  // ZX-Evo: the CD-ROM drive is the IDE slave
+    reply = Run(Request("insert", "auto", path));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.slot, "ide0.slave");
+    EXPECT_FALSE(_context->pMediaManager->Info("fdd.a")->present);
 }
 
 /// A dirty medium leaves only with a disposition (§3.6), given with the request.

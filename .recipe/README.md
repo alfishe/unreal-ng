@@ -57,6 +57,7 @@ matches; it names the recipe(s) for that action.
 | Loading a disk/tape/snapshot | the matching [media/](media/) file for that format | the other media files |
 | Making loaded software actually run (autostart/`RUN`/tape play) | the matching [run/](run/) file for the load path you used | machines/peripherals, unless the model itself matters |
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
+| Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
@@ -97,6 +98,12 @@ call.
 | [run/autostart-disk.md](run/autostart-disk.md) | One-call disk boot (`autostart: true`), the boot decision table, what to assert |
 | [run/manual-trdos-run.md](run/manual-trdos-run.md) | Manual path: insert without autostart, read the catalog, enter TR-DOS, `RUN "NAME.B"` for a chosen file |
 | [run/tape-fastload.md](run/tape-fastload.md) | Tape loading: `LOAD ""` + play, block seeking, fast-load, detecting load completion |
+
+### `input/` — driving the machine's input devices
+
+| Recipe | What it covers |
+|:--|:--|
+| [input/joystick.md](input/joystick.md) | Kempston joystick: press / release / set / tap / status on MCP, WebAPI, CLI, Lua and Python; which models decode `IN #1F`; the paused-machine queueing; reading the byte from a guest loop |
 
 ### `analysis/` — instrumenting the machine
 

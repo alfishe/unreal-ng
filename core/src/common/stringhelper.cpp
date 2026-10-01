@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
 
 #include "stdafx.h"
 
@@ -351,6 +354,28 @@ std::string StringHelper::ToLower(const string& str)
     */
 
     return result;
+}
+
+bool StringHelper::TryParseUInt64(const std::string& text, uint64_t& value, int base)
+{
+    if (text.empty())
+        return false;
+
+    // Signs and leading whitespace must not reach strtoull: it accepts "-1"
+    // and returns the wrapped-around value instead of failing
+    unsigned char first = static_cast<unsigned char>(text[0]);
+    if (first == '-' || first == '+' || std::isspace(first))
+        return false;
+
+    errno = 0;
+    char* end = nullptr;
+    unsigned long long parsed = std::strtoull(text.c_str(), &end, base);
+
+    if (errno == ERANGE || end == nullptr || *end != '\0')
+        return false;
+
+    value = static_cast<uint64_t>(parsed);
+    return true;
 }
 
 std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)

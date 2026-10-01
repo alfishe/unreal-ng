@@ -1,4 +1,4 @@
-# TTD CI gate baseline (PLAN #40 V0b, requirements BR-7 / BR-8 / BR-9).
+# TTD CI gate baseline (PLAN #40 Phase 0, Step 2, requirements BR-7 / BR-8 / BR-9).
 # Read by core/tests/debugger/ttd/bench/ttdbench_test.cpp.
 # Exported by tools/verification/ttd-bench/ttd_bench_compare.py from a run of
 # engine v1, set ci, zxevo-ps2@23d339c3, Release, MacStudio.localdomain.

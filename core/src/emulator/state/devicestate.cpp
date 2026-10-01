@@ -17,6 +17,7 @@
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/rtc/rtcaccess.h"
 #include "common/stringhelper.h"
+#include "common/serial/hostserialport.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -1948,13 +1949,32 @@ StateNode Network(EmulatorContext* context)
     if (!manager)
         return Unavailable("no network support in this machine");
     const NetworkManager::Status st = manager->GetStatus();
-    if (!st.fitted && !st.com.fitted && st.notes.empty())
-        return Unavailable("no network adapter fitted ([NETWORK] Card=NONE, and the machine has no serial port of its own "
-                           "or the network feature is off)");
 
+    // Always available: the settings and what the machine offers are worth
+    // seeing with nothing fitted (the Qt Network window builds on this)
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["frame"] = st.frame;
+
+    // The settings in force, as network_configure / POST /network/config take them
+    StateNode& set = ret["settings"];
+    set["card"] = st.settings.card;
+    set["com_port"] = st.settings.comPort;
+    set["zx_wifi"] = st.settings.zxWifi;
+    set["esp_chip"] = st.settings.espChip;
+    set["com_modem_lines"] = st.settings.comModemLines;
+    set["avr_firmware"] = st.settings.avrFirmware;
+    set["host_access"] = st.settings.hostAccess;
+    set["dns_mode"] = st.settings.dnsMode;
+    set["hosts"] = st.settings.hosts;
+    set["forwards"] = st.settings.forwards;
+    set["connect_timeout_ms"] = st.settings.connectTimeoutMs;
+
+    // Devices a SERIAL: peer can open (read now: a USB adapter comes and goes)
+    StateNode& devices = ret["host_serial_devices"];
+    devices = StateNode::Array();
+    for (const std::string& device : HostSerialPort::ListDevices())
+        devices.push(StateNode(device));
 
     // What the machine offers, what is plugged, what could not be fitted and why
     StateNode& machine = ret["machine"];

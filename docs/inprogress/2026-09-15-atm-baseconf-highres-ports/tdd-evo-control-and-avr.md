@@ -340,7 +340,7 @@ ATM3=rom/zxevo-fe.rom       ; D2
 `AtmPagingState` grows (new blob version, size `static_assert`): `#BD` registers (breakpoint, mask,
 write-protect bits), `#BF` bits, NMI state (`nmiPending/Entry/inNmi/exitCount`), trdemu state
 (virtual TR-DOS design §3), palette and palette regs, border-bright, font RAM (2 KB; TTD v2 region
-once PLAN #40-V1 lands, a blob field until then), flash command state (the flash contents are the ROM
+once PLAN #40 Phase 1 lands, a blob field until then), flash command state (the flash contents are the ROM
 buffer: a TTD v2 region; until V1 the first flash write invalidates the recording, same rule as
 floppy writes). `EvoAvr` gets its own `PeripheralId` (next free id, appended) with clock, NVRAM,
 EEPROM, extension type, PS/2 buffer. `ttdmodelstatecontract_test` lists both for ATM3.

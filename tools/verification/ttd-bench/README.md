@@ -1,6 +1,6 @@
 # TTD benchmark matrix
 
-This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 V0b, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
+This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 Phase 0, Step 2, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
 
 The same emulation runs under every TTD engine (today only `v1`, the current `TimeTravelManager`), so the numbers compare engine against engine and commit against commit.
 

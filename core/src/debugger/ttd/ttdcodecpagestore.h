@@ -176,7 +176,7 @@ public:
     inline uint32_t GetFreeSlotCount() const { return static_cast<uint32_t>(_freeList.size()); }
 
     /// Total bytes currently held in slot payloads + headers. Reported by the
-    /// session status; no memory budget is enforced yet (TTD v2 step V4).
+    /// session status; no memory budget is enforced yet (TTD v2 Phase 4).
     size_t GetUsedBytes() const;
 
     /// Bytes allocated for slot capacity (capacity × sizeof(Slot) rounded).

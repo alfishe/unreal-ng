@@ -65,7 +65,7 @@ jobs:
         #   * TTD_Divergence_Corpus_Test — capture/restore round-trip on
         #     Dizzy Y (idle) and AccuracyCoinZX (self-modifying code).
         #   * TTDBench_Test — the "ci" subset of the TTD benchmark matrix
-        #     (PLAN #40 V0b): bytes per stream vs testdata/ttd/bench/
+        #     (PLAN #40 Phase 0, Step 2): bytes per stream vs testdata/ttd/bench/
         #     v1-ci-gate.txt, capture share of frame time, seek and save/load.
         run: |
           cd unreal-qt

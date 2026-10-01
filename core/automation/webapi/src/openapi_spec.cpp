@@ -100,6 +100,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagMouse["name"] = "Mouse Injection";
     tagMouse["description"] = "Kempston mouse input simulation";
     tags.append(tagMouse);
+    Json::Value tagJoystick;
+    tagJoystick["name"] = "Joystick Injection";
+    tagJoystick["description"] = "Kempston joystick input simulation";
+    tags.append(tagJoystick);
     Json::Value tagMemState;
     tagMemState["name"] = "Memory State";
     tagMemState["description"] = "Memory inspection (RAM/ROM)";
@@ -166,6 +170,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_basic.inc"
 #include "openapi/openapi_keyboard.inc"
 #include "openapi/openapi_mouse.inc"
+#include "openapi/openapi_joystick.inc"
 #include "openapi/openapi_settings.inc"
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
@@ -195,6 +200,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
 #include "openapi/openapi_schemas.inc"
 #include "openapi/openapi_media_schemas.inc"
+#include "openapi/openapi_joystick_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
 

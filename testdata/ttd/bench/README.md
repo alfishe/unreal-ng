@@ -1,6 +1,6 @@
 # TTD benchmark baselines
 
-These are the stored results of the TTD benchmark matrix (PLAN #40 V0b, requirement BR-9). How to run, compare and regenerate them: [`tools/verification/ttd-bench/`](../../../tools/verification/ttd-bench/README.md).
+These are the stored results of the TTD benchmark matrix (PLAN #40 Phase 0, Step 2, requirement BR-9). How to run, compare and regenerate them: [`tools/verification/ttd-bench/`](../../../tools/verification/ttd-bench/README.md).
 
 | File | What | Read by |
 |---|---|---|

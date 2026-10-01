@@ -27,7 +27,7 @@ Commits `64756638` (model) and `f304dde1` (TTD fixture corpus and CI gate re-rec
 - Tests: `core/tests/emulator/io/fdc/wd1793_clock_test.cpp` (clock, settle, policies, mismatch,
   HD byte period, write Lost Data, verify, machine wiring), `wd1793_test.cpp`,
   `ttdwd1793serializer_test.cpp`.
-- TTD fixtures and the V0b CI gate: `testdata/ttd/*.ttd`, `testdata/ttd/bench/v1-ci-gate.txt`.
+- TTD fixtures and the TTD benchmark CI gate: `testdata/ttd/*.ttd`, `testdata/ttd/bench/v1-ci-gate.txt`.
 
 ## Permanent documentation
 

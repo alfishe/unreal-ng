@@ -24,7 +24,7 @@ sits on the `atm` branch per the plan header.
 4. **Phase 5: documentation (P2)** — label measured-vs-target numbers.
 
 ## Pointers
-- Cumulative plan: [`../PLAN.md`](../PLAN.md) — Phase 1 is folded into item #40-V0
-  (already done); Phases 2–5 ride #40 V1 (memory regions) and V2 (device table),
+- Cumulative plan: [`../PLAN.md`](../PLAN.md) — Phase 1 is folded into item #40 Phase 0, Step 1
+  (already done); Phases 2–5 ride #40 Phase 1 (memory regions) and Phase 2 (device table),
   not a separate row. ATM branch already merged (`59e37f38`/`4ab0ce18`, retired
   row #10); related T1 item #1 (TTD docs truth pass).

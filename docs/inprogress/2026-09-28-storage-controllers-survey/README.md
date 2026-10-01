@@ -93,7 +93,7 @@ Why this order:
 | Media manager | slots, formats, folders, verbs on every surface, add-on slots that come and go (G3) | all | master |
 | Host folders | `HostFolderFat` (FAT16 default, FAT32 with ≥ 65 526 clusters) | SD and IDE slots | master; a superfloppy layout (no MBR) is **new (S)** for DivMMC-style cards |
 | Persistent blobs | EEPROM / flash contents with session / persist access (G11) | DivIDE / DivMMC EEPROM, Next flash | **new (S)** |
-| TTD | protocol state in POD blobs, guest writes as replay barriers (`NoteWrite`); board RAM (32 KB-1 MB) as TTD v2 memory regions | all | rule on master; regions wait for PLAN #40-V1 |
+| TTD | protocol state in POD blobs, guest writes as replay barriers (`NoteWrite`); board RAM (32 KB-1 MB) as TTD v2 memory regions | all | rule on master; regions wait for PLAN #40 Phase 1 |
 | esxDOS | real firmware + real card only; **no** host-side emulation of the esxDOS API (CSpect / ZEsarUX style) | DivIDE, DivMMC, Next | policy |
 
 **Worked example: what "reusable" means for DivMMC on a 48K.**
@@ -126,7 +126,7 @@ Why this order:
    `(low & #E3) = #A3`, so `#E3`, `#E7` and `#EB` stay free for the DivIDE / DivMMC paging
    ([divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) §2.1).
 6. ~~**`ide-atapi` is uncommitted**: every IDE row depends on it landing.~~ - landed: on master since 2026-09-29 (`f5fc5f05`).
-7. **Board RAM under TTD before #40-V1** means whole-RAM blobs per snapshot (the NeoGS precedent);
+7. **Board RAM under TTD before #40 Phase 1** means whole-RAM blobs per snapshot (the NeoGS precedent);
    acceptable for 32-128 KB, costly for 512 KB-1 MB boards.
 
 ## 6. Files

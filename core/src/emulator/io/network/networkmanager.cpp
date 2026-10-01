@@ -51,6 +51,7 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     if (caps.serialPort == SerialPort::EvoAvr)
     {
         plan.serial = Plan::Serial::EvoAvr;
+        plan.avr = _context->config.atm.evo_avr;
         if (networkOn)
             plan.peer = comPeer;
     }
@@ -180,6 +181,8 @@ void NetworkManager::Refit()
             net.comModemLines = *change->comModemLines ? 1 : 0;
         if (change->espChip)
             net.espChip = *change->espChip;
+        if (change->avrFirmware)
+            _context->config.atm.evo_avr = *change->avrFirmware;
         _forceRefit = true;
     }
     Plan plan = MakePlan();
@@ -195,7 +198,8 @@ void NetworkManager::Refit()
     // The machine's own serial port keeps its registers across a refit (the
     // cable changes, not the chip)
     std::optional<Uart16550::State> keep;
-    if (_com && plan.serial == Plan::Serial::EvoAvr && _plan.serial == Plan::Serial::EvoAvr)
+    // (a new AVR firmware restarts the AVR: its UART starts afresh)
+    if (_com && plan.serial == Plan::Serial::EvoAvr && _plan.serial == Plan::Serial::EvoAvr && plan.avr == _plan.avr)
     {
         keep.emplace();
         _com->Uart().SaveState(*keep);
@@ -336,6 +340,22 @@ void NetworkManager::UpdateStatus()
     Status st;
     st.fitted = _card != nullptr;
     st.notes = _plan.notes;
+    if (_context)
+    {
+        const auto& net = _context->config.network;
+        auto& s = st.settings;
+        s.card = networkspec::CardsToString(net.card);
+        s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string("NONE");
+        s.zxWifi = net.zxWifi[0] ? std::string(net.zxWifi) : std::string("AT");
+        s.espChip = net.espChip == 1 ? "ESP8266" : "ESP32";
+        s.avrFirmware = Uart16550::AvrFirmwareName(static_cast<Uart16550::AvrFirmware>(_context->config.atm.evo_avr));
+        s.dnsMode = net.dnsPass ? "PASS" : "HOST";
+        s.hosts = net.hosts;
+        s.forwards = net.forwards;
+        s.comModemLines = net.comModemLines != 0;
+        s.hostAccess = net.hostAccess != 0;
+        s.connectTimeoutMs = net.connectTimeoutMs;
+    }
     {
         uint8_t cards = _card ? networkspec::kCardZxNetUsb : 0;
         if (_com && _plan.serial == Plan::Serial::ZxWifi)
@@ -560,6 +580,17 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
             if (!flag(value, "com_modem_lines", out.comModemLines))
                 return false;
         }
+        else if (key == "avr_firmware" || key == "avr")
+        {
+            Uart16550::AvrFirmware firmware = Uart16550::kLatestAvr;
+            if (!Uart16550::ParseAvrFirmware(value.c_str(), firmware) || value.empty())
+            {
+                error = "avr_firmware: baseconf | base2010 | base2011-04 | base2011-05 | base2011-09 | base2013 | "
+                        "base2023 | ts | ts2013 | ts2016-02 | ts2016-04";
+                return false;
+            }
+            out.avrFirmware = static_cast<uint8_t>(firmware);
+        }
         else if (key == "zx_wifi" || key == "zxwifi")
         {
             ComPortSpec spec;
@@ -586,7 +617,7 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         {
             error = "unknown setting '" + rawKey +
                     "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
-                    "com_modem_lines, esp_chip)";
+                    "com_modem_lines, esp_chip, avr_firmware)";
             return false;
         }
     }
