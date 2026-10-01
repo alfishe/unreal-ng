@@ -3,12 +3,16 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Survey done; review round 1 (2026-09-28) applied: the 3.04 ROM source found (§5); provisioning (ROM, disk images) not started |
+| **Status** | Survey done; review round 1 (2026-09-28) applied: the 3.04 ROM source found (§5); S0 provisioning done 2026-10-01 (ROM 3.04, DSS fixtures; 3.06 not found publicly) |
 | **Used by** | every other file in this folder; hardware facts cite these sources by the short names below |
 
 The local emulator corpus lives next to this repository at `emulators/github/…`. Repositories
 that are not in the corpus yet were cloned into a scratch folder for this design and are cited
 with their upstream URL plus a path and line inside the repository at the revision given below.
+Since S0 (2026-10-01) all Sprinter sources are in the corpus: `emulators/zxgit/Sprinter-BIOS`
+(BIOS-TT), `emulators/zxgit/Shared_Includes` (INC), `emulators/zxgit/2000` (HW-2000),
+`emulators/gitlab/sprinter-computer-bios` (BIOS-PP), `…-dos` (DSS), `…-hard` (PLD),
+`emulators/github/Sprinter200x` (PLD, MAN), `emulators/gitlab/sprintem` (SPRINTEM).
 
 ## 1. Primary sources (authoritative)
 
@@ -42,10 +46,10 @@ zx-evo-unreal, Zero, ZXSpeculator, zxsp, Spectral) mentions Sprinter (`grep -ril
 
 | Item | Where | Status | Use |
 |---|---|---|---|
-| **DSS 1.62.92 boot floppy** `dss_1_62_92.img` (1 474 560 bytes, FAT12, OEM `DSS 1.60`, 10 reserved sectors, **1 FAT**, loader at LBA 1 starting with `Starting...`) | [app.sprinter.ru/os/estex-dss162](https://app.sprinter.ru/os/estex-dss162) → `dss_1_62_92.zip` (858.88 KB); patch 1.62.93 | downloaded and inspected 2026-09-28 (root holds `SYSTEM.DOS`, `SYSTEM.EXE`, `SYSTEM.BAT`, `INSTALL.BAT`, folders `BIN DEMOS DOCS FM FN GAMES PICS ZX KEYBOARD`, `ESTEX.ZIP`) | **the first DSS acceptance test** (boot from `fdd.a` at 1.44 MB); source of files for the HDD and folder tests |
-| DSS 1.60R release files | [sprinter-computer/dos `release/`](https://gitlab.com/sprinter-computer/dos/-/tree/master/release) | public; "we believe … PUBLIC DOMAIN" (repo README) | `SYSTEM.DOS` 16 364 B, `SYSTEM.EXE` 6 969 B, `CMD/BOOT.EXE` 2 453 B whose last 1 536 bytes are the boot loader (`Starting...` at offset `#395`) |
+| **DSS 1.62.92 boot floppy** `dss_1_62_92.img` (1 474 560 bytes, FAT12, OEM `DSS 1.60`, 10 reserved sectors, **1 FAT**, loader at LBA 1 starting with `Starting...`) | [app.sprinter.ru/os/estex-dss162](https://app.sprinter.ru/os/estex-dss162) → `dss_1_62_92.zip` (858.88 KB); patch 1.62.93 | downloaded and inspected 2026-09-28 (root holds `SYSTEM.DOS`, `SYSTEM.EXE`, `SYSTEM.BAT`, `INSTALL.BAT`, folders `BIN DEMOS DOCS FM FN GAMES PICS ZX KEYBOARD`, `ESTEX.ZIP`); **provisioned 2026-10-01** as `testdata/machines/sprinter/dss_1_62_92.img` (CRC32 `8D61BE4E`), read by `LoaderRawPcFloppyDss_Test` | **the first DSS acceptance test** (boot from `fdd.a` at 1.44 MB); source of files for the HDD and folder tests |
+| DSS 1.60R release files | [sprinter-computer/dos `release/`](https://gitlab.com/sprinter-computer/dos/-/tree/master/release) | public; "we believe … PUBLIC DOMAIN" (repo README); **provisioned 2026-10-01** in `testdata/machines/sprinter/dss160r/` (`SYSTEM.DOS`, `SYSTEM.EXE`, `SYSTEMX.BAT`, `CMD/BOOT.EXE`, `RELNOTES.TXT`; the release has no `SYSTEM.BAT`) | `SYSTEM.DOS` 16 364 B, `SYSTEM.EXE` 6 969 B, `CMD/BOOT.EXE` 2 453 B whose last 1 536 bytes are the boot loader (`Starting...` at offset `#395`) |
 | DSS 1.61 beta, 1.60 | [app.sprinter.ru/os](https://app.sprinter.ru/os) | listed, not downloaded | version sweep later |
-| BIOS ROM 256 KB | MAME ROM set `sprinter` (`sp2k-2.13.rom` … `sp2k-3.06.rom`, CRCs at `sprinter.cpp:2030-2049`); the exact 3.04 image (CRC `1729cb5c`) as `fw/bios/sp2k-3.04.253.bin` in [zxgit.org/Sprinter/2000](https://zxgit.org/Sprinter/2000); "Sprinter Firmware 3.04.253" on [app.sprinter.ru/os/sprinter-firmware](https://app.sprinter.ru/os/sprinter-firmware) | source found, **not provisioned** | S0 provisioning (§5) |
+| BIOS ROM 256 KB | MAME ROM set `sprinter` (`sp2k-2.13.rom` … `sp2k-3.06.rom`, CRCs at `sprinter.cpp:2030-2049`); the exact 3.04 image (CRC `1729cb5c`) as `fw/bios/sp2k-3.04.253.bin` in [zxgit.org/Sprinter/2000](https://zxgit.org/Sprinter/2000); "Sprinter Firmware 3.04.253" on [app.sprinter.ru/os/sprinter-firmware](https://app.sprinter.ru/os/sprinter-firmware) | 3.04 **provisioned 2026-10-01** as `data/rom/sprinter/sp2k-3.04.rom`; 3.06 not found in a public repository (Tolik-Trek publishes sources only, no releases; take it from the MAME set) | S0 provisioning (§5) |
 | Sample Sprinter programs | SPRINTEM `disk/*.EXE` (GPL repo; individual program licenses not stated) | available | "a native program runs" acceptance (small, no disk needed beyond a folder) |
 | Sprinter software archive | [app.sprinter.ru](https://app.sprinter.ru/) (games, demos, utilities) | not surveyed item by item | demo/game acceptance picks (S2, S5) |
 | HDD image with DSS installed | none found | **missing** | built by the test itself (§4) |
@@ -105,6 +109,13 @@ zx-evo-unreal, Zero, ZXSpeculator, zxsp, Spectral) mentions Sprinter (`grep -ril
   symbol files in `data/` subfolders).
 - Placement follows the repo's ROM rules: `data/rom/sprinter/sp2k-3.04.rom` plus an entry in
   `data/rom/README-ROMS.md`; licensing: treated like the other third-party ROMs in `data/rom`.
+- **Done in S0 (2026-10-01).** `data/rom/sprinter/sp2k-3.04.rom` + README-ROMS entry + the ROM
+  signature catalog (`rom.cpp`: SHA-256 of pages 0, 8, 12 and of the ZXMAK2 variant's pages 0, 8);
+  the listings in [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md) and the symbol
+  files in `data/symbols/sprinter/`. Facts found on the way: page 0 also holds SETUP packed with
+  Hrust 1.x (13 893 bytes at `#8000`), an ATAPI CD-ROM driver (no CD boot), disk subsystem 2.53;
+  the packed port table in page 8 equals BIOS-TT `0271ac3` `old_files/DCP_PAGE.bin`. `sp2k-3.06.rom`
+  (CRC `187f4382`) was not found publicly; it stays to be added from the MAME set.
 
 ## 6. Licensing notes
 

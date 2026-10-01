@@ -1,6 +1,7 @@
 # TODO — Peters Plus Sprinter Sp2000 machine support
 
-**Status marker:** design drafted and **review round 1 done** (2026-09-28). Nothing implemented.
+**Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done except the
+MAME captures** (2026-10-01, branch `sprinter-s0`); S1-S7 not started.
 PLAN.md row **#59** (T4, trigger: TSConf #41 landed); the shared pieces this design introduced
 are PLAN row **#60** (shared infrastructure, before TSConf). The Sprinter is the last machine
 program; only S0 can start earlier.
@@ -25,6 +26,22 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - [x] Review round 1 (2026-09-28): decisions D1-D11 (high-level design §7), Q1-Q6 and the shared
   infrastructure decisions ([roadmap-and-plan.md](roadmap-and-plan.md) §5); modular PLD
   configurations (`SprinterPldConfiguration`)
+- [x] S0 (2026-10-01, branch `sprinter-s0`; [roadmap-and-plan.md](roadmap-and-plan.md) §1):
+  - [x] BIOS 3.04 in `data/rom/sprinter/sp2k-3.04.rom` + `data/rom/README-ROMS.md` + ROM signature
+    catalog (`rom.cpp`); 3.06 **not found publicly** (recorded; add from the MAME set later)
+  - [x] disassembly of ROM pages 8 and 0, SETUP (unpacked from page 0) and the PLD loader in
+    [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md), names carried from BIOS-TT
+    `0271ac3` and BIOS-PP `1273243`; symbol files in `data/symbols/sprinter/` (load with
+    `LabelManager`)
+  - [x] port-table decoder `tools/sprinter/dcp-table.py`; the 3.04 table checked statically
+    ([hardware-reference.md](hardware-reference.md) §4.4: three differences to the BIOS-TT table)
+  - [x] Q4: 473 720 writes, statically ([tdd-ports-memory.md](tdd-ports-memory.md) §6)
+  - [x] Q3: the PLD has the INT-suspend; default on proposed
+    ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §1.3)
+  - [x] DSS 1.62 boot floppy and DSS 1.60R files in `testdata/machines/sprinter/` +
+    `testdata/NOTICE.md`; `LoaderRawPcFloppyDss_Test` reads the real floppy through the WD1793 at
+    500 kbit/s
+  - [x] Sprinter sources added to the local corpus ([materials.md](materials.md))
 
 ## Remaining
 
@@ -41,9 +58,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - optional: DD-mode turbo VG ending at the PLD read/write strobe (`TURBING`, `SP2_MAX.TDF:272-306`);
     not modeled, only seek time differs. Settle first which pins `WSTB`/`RSTB` are (research open
     question 2).
-- S0 now: provisioning, disassembly of BIOS 3.04 pages 8 and 0 (`docs/disasm/rom/sprinter/`,
-  `data/symbols/sprinter/`), loader trace for the exact bitstream write count, PLD check for the
-  accelerator INT-suspend.
+- S0 remainder, **deferred: needs MAME** (not installed; owner: do not install it): page `#40`
+  after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port
+  accesses of BIOS 3.04 with codes, a runtime trace of the loader (confirms the 473 720 writes, the
+  extra clocks before the PLD starts and the CPU reset). From S1 on the emulator itself can take
+  the page `#40` and loader captures.
+- Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
+  off before the PLD check).
+- BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
 - Unverified items to settle first (S0/S1): palette byte order, watchdog use by the BIOS,
   keyboard commands from the BIOS, Z84C15 interrupt use.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams

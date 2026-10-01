@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): INT-suspend as a config option (Q3, §1.3); accelerator chosen by the configuration module (§1) |
+| **Status** | Review round 1 done (2026-09-28): INT-suspend as a config option (Q3, §1.3); accelerator chosen by the configuration module (§1). S0 (2026-10-01): the PLD has the INT-suspend, default on proposed (§1.3) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §7, §8, §13, §4.4 (fixed ports) |
 | **Index** | [technical-design.md](technical-design.md) |
 
@@ -55,19 +55,38 @@ MAME runs the block from a timer with WAIT asserted (`:956-1052`); the emulator 
 inside the access and adds the time as extra T-states to the current instruction. Same total
 time, deterministic, no mid-block interrupt.
 
-**Accelerator off during INT, back on at RETI** (MAN §6 p. 21; review round 1, Q3). Implemented in
-S5 as a **config option, default off**:
+**Accelerator off during INT, back on at RETI** (MAN §6 p. 21; review round 1, Q3; S0 finding
+2026-10-01). Implemented in S5 as a **config option**; **S0 proposes default on**, because the
+standard PLD configuration has the feature (owner to confirm; round 1 had chosen off before the
+check):
 
-- off (default): MAME's behavior; the accelerator mode stays armed while an interrupt handler runs;
-- on: accepting an INT saves and disarms the accelerator mode, and the next `RETI` restores it
-  (through the interrupt source's `OnReti()`, §5.1). Example: a program armed "fill" (`LD C,C`, `#49`), an
-  INT arrives, the handler copies a byte with `LD (HL),A`; with the option on that store is a plain
-  store, not a fill, and the fill mode is back after `RETI`.
+- on (proposed default, the hardware): accepting an INT **blocks** the accelerator; the first opcode
+  fetch after a `RETI` (`ED 4D`) unblocks it (through the interrupt source's `OnReti()`, §5.1). While
+  blocked, no new accelerator operation starts; the **mode register is not saved or cleared**, and
+  an `LD r,r` in the handler still changes it. `RETN` does not unblock; an NMI does not block (it has
+  no acknowledge cycle). Example: a program armed "fill" (`LD C,C`, `#49`), an INT arrives, the
+  handler copies a byte with `LD (HL),A`; that store is a plain store, not a fill, and after `RETI`
+  the next store fills again;
+- off: MAME's behavior; the accelerator stays active while an interrupt handler runs.
 
-S0 checks the PLD (AHDL) sources, `ACCELER.TDF` and the top level, for whether the standard
-configuration has this behavior, so the documented default matches the hardware; the finding is
-recorded here and in the roadmap decision table (§5 there), and the default is revisited with the
-owner if the PLD has it.
+**What the PLD does** (BIOS-TT `0271ac3` `src/altera/acex/k30/ACCELER.TDF`):
+
+| Lines | Logic | In plain words |
+|---|---|---|
+| `:146-154` | `ED_CMD`, `RETI` latched on each opcode fetch (M1); `RETI` = the byte after `ED` is `4D` | the PLD decodes `RETI` itself |
+| `:158-160` | `RETN` (`ED 45`) decoded but unused | `RETN` does not unblock |
+| `:164-166` | `ACC_BLK.clk = /M1; ACC_BLK.d = DFF((/IO & ACC_BLK) or (!ACC_BLK & RETI), CLK_Z80); ACC_BLK.prn = /RESET & ACC_MODE3` | an M1 cycle with `/IORQ` low (only the INT acknowledge does that) clears `ACC_BLK` (blocked); a latched `RETI` sets it again at the next M1; reset presets it to "enabled" |
+| `:237` | `START_ACC` gated by `!ACC_BLK` | only the start of new operations is blocked |
+| `:190`, `:261-270` | the count load and the mode register are not gated | the mode survives the handler |
+
+`/IO` is the raw Z80 `/IORQ` pin (`SP2_ACEX.TDF:33`, `:941`). The same `ACCELER.TDF` is in every
+surviving version (Sprinter200x `1039391` `Altera_1K30/Last` and `Sp2000`, gitlab
+sprinter-computer/hard incl. branch `quartus2`, Sprinter-BIOS history); the older `SPRINT08.TDF`
+(`quartus2:Other/UNUSED`) already has it; the fitter report `Sprinter200x/Altera_1K30/Sp2000/acceler.rpt`
+shows `ACC_BLK` synthesized. MAME (`sprinter.cpp:1017`, `accel_go_case`) and ZXMAK2 have no INT or RETI
+handling. The manual says the same: "В момент прихода прерывания он отключается и включается обратно
+по команде RETI" ("when an interrupt arrives it is switched off, and switched back on by RETI").
+ALL_MODE bit 0 is a separate, manual switch.
 
 ## 2. Sound
 
