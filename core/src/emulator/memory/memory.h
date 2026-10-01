@@ -385,6 +385,14 @@ public:
 
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetROMPageToBank(uint8_t bank, uint16_t page);  // Map any of the 4 Z80 banks to a ROM page (bank writes -> trash)
+    /// A RAM bank that reads normally and drops its writes (ZX-Evo `#xBF7` write protect): the write pointer goes to
+    /// the trash page like a ROM bank's. Call after the bank's page is mapped
+    void SetBankWriteProtected(uint8_t bank);
+
+private:
+    uint16_t MappedRAMPage(uint8_t bank);
+
+public:
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank1(uint16_t page);
     void SetRAMPageToBank2(uint16_t page);

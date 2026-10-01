@@ -18,6 +18,7 @@
 
 class EmulatorContext;
 class GeneralSoundCard;
+class Joystick;
 class Keyboard;
 class Mouse;
 class VirtualNetwork;
@@ -30,6 +31,7 @@ struct TTDInputDevices
 {
     Keyboard* keyboard = nullptr;
     Mouse* mouse = nullptr;
+    Joystick* joystick = nullptr;
     GeneralSoundCard* generalSound = nullptr;
     VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)
 };

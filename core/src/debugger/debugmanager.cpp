@@ -9,6 +9,7 @@
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
+#include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 
@@ -28,6 +29,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
     _mouseManager = new DebugMouseManager(_context);
+    _joystickManager = new DebugJoystickManager(_context);
     _commandTyper = std::make_unique<CommandTyper>(_context);
     
     // Initialize AnalyzerManager after all components are created
@@ -68,6 +70,12 @@ DebugManager::~DebugManager()
     {
         delete _mouseManager;
         _mouseManager = nullptr;
+    }
+
+    if (_joystickManager)
+    {
+        delete _joystickManager;
+        _joystickManager = nullptr;
     }
     
     if (_labels)
@@ -128,6 +136,11 @@ DebugKeyboardManager* DebugManager::GetKeyboardManager()
 DebugMouseManager* DebugManager::GetMouseManager()
 {
     return _mouseManager;
+}
+
+DebugJoystickManager* DebugManager::GetJoystickManager()
+{
+    return _joystickManager;
 }
 
 /// endregion </Properties>

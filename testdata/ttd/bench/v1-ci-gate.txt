@@ -6,6 +6,9 @@
 # Columns: <configuration>/<workload> <metric> <value> <tolerance percent>
 # Tolerance 0 = exact; heap metrics follow the allocator's growth policy.
 # ATM3/idle exact rows updated 2026-09-30 (not-modeled-waits): the EvoTurboCache blob and the 14 MHz waits.
+# ATM3/idle blob and file rows updated 2026-10-01 (E8): the EvoFontRam blob (2050 bytes per capture).
+# ATM3/idle rows nudged 2026-10-01 (E8b): the clock select now switches at the next M1 refresh, so the idle run differs slightly.
+# ATM3/idle blob and file rows updated 2026-10-01 (Kempston joystick): the KempstonJoystick blob (id 23, 14 bytes per capture, 854 over 61); nothing else moved.
 48K/idle bm3_checkpoint_core_bpf 170.800000 0
 48K/idle bm3_coverage_bpf 52976.933333 25
 48K/idle bm3_device_blobs_bpf 460.016667 0
@@ -22,16 +25,16 @@
 48K/idle frames 60.000000 0
 ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
 ATM3/idle bm3_coverage_bpf 55482.616667 25
-ATM3/idle bm3_device_blobs_bpf 1177.733333 0
+ATM3/idle bm3_device_blobs_bpf 2227.266667 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
 ATM3/idle bm3_page_refs_bpf 4164.266667 0
-ATM3/idle bm3_ram_payload_bpf 897.150000 0
+ATM3/idle bm3_ram_payload_bpf 898.883333 0
 ATM3/idle bm3_total_bpf 67277.933333 25
 ATM3/idle bm3_write_journal_bpf 5401.000000 0
 ATM3/idle bm4_resident_bpf 94929.266667 25
 ATM3/idle bm4_resident_bytes 5695756.000000 25
-ATM3/idle bm7_file_bpf 7365.416667 0
-ATM3/idle bm7_file_bytes 441925.000000 0
+ATM3/idle bm7_file_bpf 8429.100000 0
+ATM3/idle bm7_file_bytes 505746.000000 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm3_checkpoint_core_bpf 170.800000 0

@@ -2434,7 +2434,9 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
     Z80& z80 = *_core->GetZ80();
 
-    // Run exactly N frames worth of t-states
+    // Run exactly N frames worth of t-states. Both counters are in T-states of the frame length now in force;
+    // a hardware clock switch (a turbo machine's) changes that length, mid-frame too, and the two are rescaled
+    // with it so "N frames" stays N frames of emulated time
     unsigned targetTStates = z80._frameLimit * frames;
     unsigned elapsed = 0;
 
@@ -2448,8 +2450,24 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
 
-        // Track elapsed t-states (a completed frame rebased t by its limit)
-        elapsed += frameCompleted ? (z80.t + limitBefore - prevT) : (z80.t - prevT);
+        const unsigned limitAfter = z80._frameLimit;
+        if (limitAfter == limitBefore)
+        {
+            // Track elapsed t-states (a completed frame rebased t by its limit)
+            elapsed += frameCompleted ? (z80.t + limitBefore - prevT) : (z80.t - prevT);
+        }
+        else if (limitBefore != 0 && limitAfter != 0)
+        {
+            // The frame length changed during the step and t was rescaled with it: only the position inside the
+            // frame, as a fraction of it, means the same before and after
+            const double fractionBefore = static_cast<double>(prevT) / limitBefore;
+            const double fractionAfter = static_cast<double>(z80.t) / limitAfter;
+            const double deltaFrames = (frameCompleted ? 1.0 : 0.0) + fractionAfter - fractionBefore;
+            const double scale = static_cast<double>(limitAfter) / limitBefore;
+            const double elapsedAfter = elapsed * scale + deltaFrames * limitAfter;
+            elapsed = elapsedAfter > 0 ? static_cast<unsigned>(elapsedAfter) : 0;
+            targetTStates = static_cast<unsigned>(targetTStates * scale);
+        }
 
         // Notify after each frame so debugger/visualizers can update
         if (frameCompleted)

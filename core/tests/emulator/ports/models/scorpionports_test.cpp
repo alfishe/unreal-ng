@@ -5,6 +5,7 @@
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 
@@ -498,3 +499,42 @@ TEST_F(ScorpionPorts_Test, KempstonJoystick_DoesNotStealPort1FFromBeta128InTrdos
 }
 
 /// endregion <Kempston Joystick & Mouse stubs>
+
+/// JOY-5 (Scorpion): #FF1F answers the joystick device; idle is 0x00 (the Service Monitor polls it)
+TEST_F(ScorpionPorts_Test, JOY5_JoystickAtFF1F)
+{
+    ASSERT_NE(_context->pJoystick, nullptr);
+    EXPECT_TRUE(_context->pPortDecoder->HasKempstonJoystick());
+    _context->emulatorState.flags &= ~CF_TRDOS;
+
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00) << "Service Monitor idle: fire released";
+    _context->pJoystick->SetState(Joystick::kLeft | Joystick::kFire);
+    EXPECT_EQ(ReadPort(0xFF1F), 0x12);
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded());
+
+    EXPECT_NE(ReadPort(0x7F1F), 0x12) << "only the exact #FF1F is the joystick on this board";
+}
+
+/// TR-DOS selected: #FF1F is the FDC again, whatever the stick says
+TEST_F(ScorpionPorts_Test, JOY5_TrDosSelectedHandsFF1FToTheFdc)
+{
+    _context->pJoystick->SetState(0x5A);
+    _context->emulatorState.flags |= CF_TRDOS;
+    EXPECT_NE(ReadPort(0xFF1F), 0x5A);
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    EXPECT_EQ(ReadPort(0xFF1F), 0x5A);
+}
+
+/// JOY-6 (Scorpion): not fitted or absent - 0x00 as before
+TEST_F(ScorpionPorts_Test, JOY6_JoystickNotFittedReadsZero)
+{
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    _context->pJoystick->SetState(0x1F);
+    _context->pJoystick->SetPresent(false);
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00);
+
+    Joystick* device = _context->pJoystick;
+    _context->pJoystick = nullptr;
+    EXPECT_EQ(ReadPort(0xFF1F), 0x00) << "no device object";
+    _context->pJoystick = device;
+}

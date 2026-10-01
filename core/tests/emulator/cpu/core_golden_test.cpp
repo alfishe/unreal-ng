@@ -62,7 +62,13 @@ const Golden kGolden[] = {
     {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE360A9F00E0771B9ull, 10483200ull},
     // ATM3 re-recorded 2026-09-30 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
     // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)
-    {"ATM3", nullptr, 0x6824EF056B8D72E9ull, 0xBAFAE3005C816E0Dull, 9434880ull},
+    // ATM3 re-recorded 2026-10-01 (E8): the BIOS enters TR-DOS through #3Dxx, where the FPGA holds the clock
+    // 4 fclk (tdd-e8-wrprot-font-pal444-dosstall.md C-10). Checked by switching the stall off: the old row returns
+    // ATM3 re-recorded 2026-10-01 again (E8b): the clock select is taken over at the next M1 refresh (zclock.v
+    // int_turbo), not at the next frame; #FE bit 5 reads 0, #FF bit 5 reads 1; and Emulator::RunNFrames now counts
+    // frames of emulated time across a mid-run clock switch. The T-states are 150 frames of 69888 now, like the 48K
+    // row; the earlier ATM3 rows counted fewer because the 14 MHz switch shortened the run
+    {"ATM3", nullptr, 0x7BD7C7B6B4074DEAull, 0x3213A1A920D2B129ull, 10483200ull},
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 

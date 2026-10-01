@@ -1,4 +1,9 @@
 #pragma once
+
+// Hardware source: the ZX-Evo FPGA / AVR / ERS sources of https://github.com/alfishe/pentevo at commit c24723db
+// (project home https://github.com/tslabs/zx-evo, folder pentevo), taken from the public repository, not a local edit;
+// the timing rules were run in Verilator. Pinned revisions, links and what was simulated versus read:
+// docs/inprogress/2026-09-15-atm-baseconf-highres-ports/sources-and-provenance.md
 #include "stdafx.h"
 
 #include <memory>
@@ -9,6 +14,7 @@
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/atm/evofontoverlay.h"
 #include "emulator/memory/atm/evoturbooverlay.h"
 
 #include "portdecoder_atm710.h"
@@ -80,6 +86,9 @@ public:
     static constexpr uint8_t kTrdemuIn = 0x01;       ///< RAM page #FE is in window 0
     static constexpr uint8_t kTrdemuPending = 0x02;  ///< swap in before the next opcode fetch
 
+    /// The clock stall of a DOS-entry fetch: 4 fclk of 28 MHz = half a 3.5 MHz T (256 counter ticks per T)
+    static constexpr uint32_t kDosEntryStallTicks = 128;
+
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
 
@@ -112,7 +121,12 @@ public:
     void OnMachineM1(uint16_t address) override;
     /// Before an opcode fetch: a pending virtual-TR-DOS swap takes effect
     void BeforeMachineM1(uint16_t address) override;
+    /// A fetch from #3Dxx while the DOS ROM can come in or is in: the FPGA holds the clock (zclk_stall)
+    void OnDosRomFetch(uint16_t pc) override;
     /// endregion </Board NMI>
+
+    /// #1F outside shadow answers Joystick::Read()
+    bool HasKempstonJoystick() const override { return true; }
 
     /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
     /// The card is the media manager's slot "sd.zc" (storage-manager
@@ -166,6 +180,10 @@ protected:
     // the host bus while the CPU runs at 14 MHz (SyncTurboWaits)
     std::unique_ptr<EvoTurboOverlay> _turboOverlay;
     bool _turboWaitsInstalled = false;
+
+    // The font RAM loader (`#BF` bit 2): installed on the host bus only while the bit is set (SyncFontOverlay)
+    std::unique_ptr<EvoFontOverlay> _fontOverlay;
+    bool _fontOverlayInstalled = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -190,6 +208,10 @@ public:
     /// (updateTurboMode; a TTD restore, whose chipset copy sets the clock without the decoder)
     void SyncTurboWaits();
     bool AreTurboWaitsInstalled() const { return _turboWaitsInstalled; }
+
+    /// Install the font RAM loader while `#BF` bit 2 is set, remove it otherwise (a `#BF` write, reset, a TTD restore)
+    void SyncFontOverlay();
+    bool IsFontOverlayInstalled() const { return _fontOverlayInstalled; }
     /// The DRAM cache words (TTDEvoTurboCache): empty while the overlay is not installed
     EvoTurboOverlay::CacheState GetTurboCacheState() const;
     void SetTurboCacheState(const EvoTurboOverlay::CacheState& state);
@@ -225,6 +247,9 @@ public:
     // Palette gated by the manager/shaden line (the ATM3 dos-line analog)
     bool IsPaletteWriteEnabled() override;
 
+    /// `#BF` bit 5 (pal444): 4 bits per channel, the low ones from A15..A8
+    bool PaletteLowBitsFromAddress() const override { return (_state->pBF & 0x20) != 0 && !IsLegacyFpga(); }
+
     // Gluk clock ports: #DFF7 / #BFF7 outside shadow (needs #EFF7 bit 7),
     // #DEF7 / #BEF7 in shadow (always on); decoded on A8/A13/A14 (zports.v)
     bool IsGlukEnabled();
@@ -240,6 +265,10 @@ protected:
     void NoteTurboIo(uint16_t port);
     void Port_FF77_Out_ATM3(uint16_t port, uint8_t value, uint16_t pc);
     void Port_37F7_Out(uint16_t port, uint8_t value, uint16_t pc);
+    /// `#xBF7` (shadow): bit 0 = the window is read-only in the map `#7FFD`.4 selects now
+    void Port_BF7_Out(uint16_t port, uint8_t value);
+    /// A window of the current map the `#xBF7` write protect applies to (atm_pager.v `wrdisable`)
+    bool IsWindowWriteProtected(uint8_t bank) const;
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BE_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BD_Out(uint16_t port, uint8_t value);

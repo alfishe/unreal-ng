@@ -7,6 +7,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -21,6 +22,7 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
         return devices;
     devices.keyboard = context->pKeyboard;
     devices.mouse = context->pMouse;
+    devices.joystick = context->pJoystick;
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
     return devices;
@@ -31,6 +33,7 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
 {
     Keyboard* keyboard = devices.keyboard;
     Mouse* mouse = devices.mouse;
+    Joystick* joystick = devices.joystick;
     GeneralSoundCard* generalSound = devices.generalSound;
 
     switch (ev.kind)
@@ -58,7 +61,7 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             break;
 
         case TTDInputKind::PcKey:
-            if (!keyboard || !keyboard->HasPs2Sink())
+            if (!keyboard || !keyboard->WantsPcKey(static_cast<PcKey>(ev.key)))
                 return false;
             keyboard->ApplyPcKey(static_cast<PcKey>(ev.key), ev.pressed);
             break;
@@ -85,6 +88,12 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             if (!mouse)
                 return false;
             mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
+            break;
+
+        case TTDInputKind::Joystick:
+            if (!joystick)
+                return false;
+            joystick->SetState(ev.buttonMask);
             break;
 
         case TTDInputKind::GSCommand:

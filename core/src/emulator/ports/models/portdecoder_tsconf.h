@@ -88,6 +88,9 @@ public:
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }
 
+    /// #1F outside DOS answers Joystick::Read()
+    bool HasKempstonJoystick() const override { return true; }
+
     /// #xxEF belongs to ZiFi (network TDD step N5): no COM port there
     bool ReservesLowByte(uint8_t lowByte) const override { return lowByte == 0xEF; }
 

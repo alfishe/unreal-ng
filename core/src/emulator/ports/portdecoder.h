@@ -509,7 +509,15 @@ public:
     /// Whether executing from Z80 bank `bank` closes a TR-DOS session
     /// (CF_LEAVEDOSRAM). Default: the bank currently maps RAM
     virtual bool IsDosLeavingBank(uint8_t bank) const;
+    /// An opcode fetch from #3Dxx while a TR-DOS session is being entered (CF_SETDOSROM) or is on (the DOS ROM
+    /// answers): a board whose chipset holds the clock there adds the wait (ZX-Evo). Called from the instruction
+    /// start only in those states, so a machine that ignores it pays one call per #3Dxx fetch
+    virtual void OnDosRomFetch([[maybe_unused]] uint16_t pc) {}
     /// endregion </Board NMI hooks>
+
+    /// The model decodes a Kempston joystick (#1F; Scorpion #FF1F) and answers Joystick::Read(). Machines
+    /// without the arm stay false: the host joystick keys are not bound there, the TTD blob is not carried
+    virtual bool HasKempstonJoystick() const { return false; }
 
     virtual bool IsFEPort(uint16_t port);
 

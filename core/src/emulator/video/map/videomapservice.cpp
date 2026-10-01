@@ -4,7 +4,6 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/video/alco/alcovideomapper.h"
-#include "emulator/video/atm/atmfont.h"
 #include "emulator/video/atm/atmvideomapper.h"
 #include "emulator/video/profi/profivideomapper.h"
 #include "emulator/video/screen.h"
@@ -25,7 +24,7 @@ uint8_t MemView::Read(const SourceRef& ref) const
             return page ? page[ref.offset] : 0;
         }
         case Space::InternalTable:
-            return ref.offset < sizeof(ATM_FONT) ? ATM_FONT[ref.offset] : 0;
+            return _atmFontRam && ref.offset < 2048 ? _atmFontRam[(ref.offset & 0xFF) * 8 + (ref.offset >> 8)] : 0;
         default:
             return 0;
     }
@@ -178,7 +177,7 @@ PixelSources VideoMapService::SourcesAt(const VideoState& s, size_t layerIndex, 
 {
     PixelSources result;
     const IVideoMapper& mapper = MapperFor(FamilyOf(s.mode));
-    const MemView memory(_context ? _context->pMemory : nullptr);
+    const MemView memory(_context ? _context->pMemory : nullptr, _context ? _context->emulatorState.atmFontRam : nullptr);
     if (!mapper.SourcesAt(s, memory, layerIndex, x, y, result.contribution))
         return result;
 
@@ -312,7 +311,7 @@ bool VideoMapService::Text(size_t layerIndex, uint16_t& columns, uint16_t& rows,
     const VideoLayout layout = mapper.Layout(s);
     if (layerIndex >= layout.layers.size() || layout.layers[layerIndex].surface.textColumns == 0)
         return false;
-    const MemView memory(_context->pMemory);
+    const MemView memory(_context->pMemory, _context->emulatorState.atmFontRam);
     columns = layout.layers[layerIndex].surface.textColumns;
     rows = layout.layers[layerIndex].surface.textRows;
     cells.assign(static_cast<size_t>(columns) * rows, TextCell{});

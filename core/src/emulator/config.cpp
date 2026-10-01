@@ -390,6 +390,26 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.input.mousescale = static_cast<char>(scale);
 	}
 
+	// INPUT section - Kempston joystick (joystick TDD J4, J6):
+	//   Joystick=KEMPSTON|NONE (default KEMPSTON)
+	//   JoystickKeys=up:kp8,down:kp2,left:kp4,right:kp6,fire:kp0 (absent: these defaults; empty: no host keys)
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "Joystick", nullptr), line, sizeof line);
+		config.input.joystickConfigured = line[0] != '\0';
+		config.input.joystick = 1;
+		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
+			config.input.joystick = 0;
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) != 0)
+			MLOGWARNING("Config: unsupported [INPUT] Joystick='%s', using KEMPSTON", line);
+
+		const char* keys = inimanager.GetValue(input, "JoystickKeys", nullptr);
+		config.input.joystickKeysConfigured = keys != nullptr;
+		config.input.joystickKeys[0] = '\0';
+		if (keys)
+			CopyStringValue(keys, config.input.joystickKeys, sizeof config.input.joystickKeys);
+	}
+
 	// HDD section: the machine's IDE board and how its units are set up. The
 	// images (Image0/1, HD0RO/1RO) are media: MediaConfig reads them
 	{

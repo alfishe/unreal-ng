@@ -81,7 +81,9 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.evoNmiEntry = 1;
     src.nmiAtIntPending = 1;
     src.evoTrdemu = 0x01;
-    src.evoVgDrive = 0x02;
+    src.evoVgSys = 0x02;
+    src.evoWrProt = 0x6A;
+    src.evoTurboPending = 1;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -163,7 +165,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
     state.evoNmiEntry = true;
     state.nmiAtIntStartPending = true;
     state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
-    state.evoVgDrive = 3;
+    state.evoVgSys = 3;
+    state.evoWrProt = 0x96;
+    state.evoTurboPending = 1;
     atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
     ttd::TTDAtmPaging serializer(context);
@@ -181,7 +185,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
     state.evoNmiEntry = false;
     state.nmiAtIntStartPending = false;
     state.evoTrdemu = 0;
-    state.evoVgDrive = 0;
+    state.evoVgSys = 0;
+    state.evoWrProt = 0;
+    state.evoTurboPending = 0;
     atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
     serializer.TTDLoadState(blob);
@@ -197,7 +203,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
     EXPECT_TRUE(state.evoNmiEntry);
     EXPECT_TRUE(state.nmiAtIntStartPending);
     EXPECT_EQ(state.evoTrdemu, PortDecoder_ATM3::kTrdemuIn) << "virtual TR-DOS page state";
-    EXPECT_EQ(state.evoVgDrive, 3);
+    EXPECT_EQ(state.evoVgSys, 3);
+    EXPECT_EQ(state.evoWrProt, 0x96) << "#xBF7 write protect";
+    EXPECT_EQ(state.evoTurboPending, 1) << "a clock select waiting for the next M1";
     EXPECT_EQ(atm3->GetEvoAvr().GetExtensionType(), EvoAvr::kExtBootloaderVersion) << "AVR extension type";
     EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
     EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());
@@ -254,6 +262,10 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     state.evoFddMask ^= 0x04;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoFddMask not hashed";
     state.evoFddMask ^= 0x04;
+
+    state.evoWrProt ^= 0x04;
+    EXPECT_NE(serializer.TTDHashState(), base) << "evoWrProt not hashed";
+    state.evoWrProt ^= 0x04;
 
     state.evoInNmi = !state.evoInNmi;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoInNmi not hashed";
