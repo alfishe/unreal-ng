@@ -136,7 +136,10 @@ Default run: the 48K contended NOP (`ContendedNop48KMatchesTheHardware`, ~1 s: R
 end-to-end check of M1 contention against a hardware reference. Opt-in: the 14-case matrix; a case listed as
 differing must still differ, so the phase that fixes it fails the test and moves it to the matching list.
 
-Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128K suite (`.szx`).
+fusetest: built from source with pasmo 0.5.5 and run by `FuseTest_Test` on the 48K, 128K, +3 and Pentagon since
+2026-09-30 ([tools/verification/contention/fusetest](../../../tools/verification/contention/fusetest/README.md)); it
+found three core defects, fixed ([2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/TODO.md)).
+Not done: the Butler 128K suite (`.szx`) - [contention backlog](../2026-10-01-contention-backlog/backlog.md) C5.
 
 ## 3. The probe suite (`ctprobe`)
 
@@ -372,9 +375,12 @@ fails when the committed files drift from the source.
 - P-03 (`#0FFD` on the gate array): between fetches it reads the last contended byte, which the probe
   cannot pin.
 
-**Open:**
-- X-04 (register results equal with contention on and off).
-- The cross-emulator runs of 3.6.
+**Done since:**
+- X-04 (register results equal with contention on and off): `CtProbeTimeOnly_Test`, 2026-09-30.
+- The cross-emulator runs of 3.6: the co-emulation harness, eleven emulators, with a check-by-check matrix
+  ([tools/verification/coemu](../../../tools/verification/coemu/README.md), reports/).
+
+What is still open: the [contention backlog](../2026-10-01-contention-backlog/backlog.md).
 
 ## 4. How the pieces fit
 
