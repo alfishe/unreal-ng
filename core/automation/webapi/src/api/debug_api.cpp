@@ -22,6 +22,7 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <base/featuremanager.h>
 #include <common/dumphelper.h>
+#include <common/stringhelper.h>
 #include <json/json.h>
 
 using namespace drogon;
@@ -1662,18 +1663,59 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
-    unsigned page = std::stoul(pageStr);
-    unsigned offset = std::stoul(offsetStr);
-    
+    // Strict index validation: a plain std::stoul() here accepted "-1"
+    // (wrapping to a huge value), so pagePtr[offset] read memory outside
+    // the page - leaking host process bytes
+    uint64_t page = 0;
+    uint64_t offset = 0;
+    if (!StringHelper::TryParseUInt64(pageStr, page))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid page number '" + pageStr + "' (expected unsigned decimal)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (!StringHelper::TryParseUInt64(offsetStr, offset) || offset >= PAGE_SIZE)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid offset '" + offsetStr + "' (expected 0-" + std::to_string(PAGE_SIZE - 1) + ")";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     // Get length from query param
     unsigned len = 128;
     auto lenParam = req->getParameter("len");
-    if (!lenParam.empty()) len = std::stoul(lenParam);
-    if (len > 16384) len = 16384;
-    if (len < 1) len = 1;
-    
-    // Clamp to page boundary
-    if (offset + len > 16384) len = 16384 - offset;
+    if (!lenParam.empty())
+    {
+        uint64_t lenValue = 0;
+        if (!StringHelper::TryParseUInt64(lenParam, lenValue) || lenValue < 1)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid length '" + lenParam + "' (expected unsigned decimal >= 1)";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        len = lenValue > PAGE_SIZE ? PAGE_SIZE : static_cast<unsigned>(lenValue);
+    }
+
+    // Clamp to page boundary (offset <= PAGE_SIZE - 1 here, no underflow)
+    if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
     
     // Get page pointer
     uint8_t* pagePtr = nullptr;
@@ -1693,7 +1735,7 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
                 callback(resp);
                 return;
             }
-            pagePtr = mem->RAMPageAddress(page);
+            pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
             typeName = "ram";
             break;
         case 1:  // ROM
@@ -1708,7 +1750,7 @@ void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(co
                 callback(resp);
                 return;
             }
-            pagePtr = mem->ROMPageHostAddress(page);
+            pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
             typeName = "rom";
             break;
         case 2:  // Cache
@@ -1828,9 +1870,35 @@ void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(co
         return;
     }
     
-    unsigned page = std::stoul(pageStr);
-    unsigned offset = std::stoul(offsetStr);
-    
+    // Strict index validation (see getMemoryPage): std::stoul() wrapped
+    // "-1" into a huge value, and the checks below then misbehaved
+    uint64_t page = 0;
+    uint64_t offset = 0;
+    if (!StringHelper::TryParseUInt64(pageStr, page))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid page number '" + pageStr + "' (expected unsigned decimal)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (!StringHelper::TryParseUInt64(offsetStr, offset) || offset >= PAGE_SIZE)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid offset '" + offsetStr + "' (expected 0-" + std::to_string(PAGE_SIZE - 1) + ")";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     auto json = req->getJsonObject();
     if (!json)
     {
@@ -1901,22 +1969,62 @@ void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(co
     switch (pageType)
     {
         case 0:
-            if (page >= MAX_RAM_PAGES) { /* error */ return; }
-            pagePtr = mem->RAMPageAddress(page);
+            if (page >= MAX_RAM_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid RAM page (expected 0-" + std::to_string(MAX_RAM_PAGES - 1) + ")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
             typeName = "ram";
             break;
         case 1:
-            if (page >= MAX_ROM_PAGES) { /* error */ return; }
-            pagePtr = mem->ROMPageHostAddress(page);
+            if (page >= MAX_ROM_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid ROM page (expected 0-" + std::to_string(MAX_ROM_PAGES - 1) + ")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
             typeName = "rom";
             break;
         case 2:
-            if (page >= MAX_CACHE_PAGES) { /* error */ return; }
+            if (page >= MAX_CACHE_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid cache page (expected 0-" + std::to_string(MAX_CACHE_PAGES - 1) + ")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
             pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             typeName = "cache";
             break;
         case 3:
-            if (page >= MAX_MISC_PAGES) { /* error */ return; }
+            if (page >= MAX_MISC_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid misc page (expected 0-" + std::to_string(MAX_MISC_PAGES - 1) + ")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
             pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             typeName = "misc";
             break;
@@ -2458,30 +2566,50 @@ void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(co
     uint8_t page = 0;
     uint16_t offset = 0;
     size_t count = 10;
-    
-    try {
-        page = static_cast<uint8_t>(std::stoul(pageParam));
-        if (!offsetParam.empty()) {
-            if (offsetParam.find("0x") == 0 || offsetParam.find("0X") == 0)
-                offset = static_cast<uint16_t>(std::stoul(offsetParam, nullptr, 16));
-            else
-                offset = static_cast<uint16_t>(std::stoul(offsetParam));
-        }
-    } catch (...) {
+
+    // Strict parse: std::stoul silently truncated page "300" to 44 and "-1"
+    // to 255, and count was parsed outside the try block at all
+    uint64_t pageValue = 0;
+    uint64_t offsetValue = 0;
+    const uint64_t maxDisasmPage = isROM ? MAX_ROM_PAGES - 1 : MAX_RAM_PAGES - 1;
+    bool indexOk = StringHelper::TryParseUInt64(pageParam, pageValue) && pageValue <= maxDisasmPage;
+    if (indexOk && !offsetParam.empty())
+    {
+        if (offsetParam.find("0x") == 0 || offsetParam.find("0X") == 0)
+            indexOk = StringHelper::TryParseUInt64(offsetParam, offsetValue, 16);
+        else
+            indexOk = StringHelper::TryParseUInt64(offsetParam, offsetValue);
+        indexOk = indexOk && offsetValue < PAGE_SIZE;
+    }
+    if (!indexOk)
+    {
         Json::Value error;
         error["error"] = "Invalid page or offset parameter";
+        error["message"] = "Page must be 0-" + std::to_string(maxDisasmPage) + ", offset 0-" +
+                           std::to_string(PAGE_SIZE - 1) + " (decimal or 0x-prefixed hex)";
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
-    if (offset >= PAGE_SIZE) offset = PAGE_SIZE - 1;
-    
+    page = static_cast<uint8_t>(pageValue);
+    offset = static_cast<uint16_t>(offsetValue);
+
     if (!countParam.empty()) {
-        count = std::stoul(countParam);
-        if (count > 100) count = 100;
+        uint64_t countValue = 0;
+        if (!StringHelper::TryParseUInt64(countParam, countValue))
+        {
+            Json::Value error;
+            error["error"] = "Invalid count parameter";
+            error["message"] = "Count must be an unsigned decimal number";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        count = countValue > 100 ? 100 : static_cast<size_t>(countValue);
         if (count < 1) count = 1;
     }
     

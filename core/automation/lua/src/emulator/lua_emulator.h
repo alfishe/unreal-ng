@@ -65,8 +65,32 @@
 #include <chrono>
 #include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+
+/// Shared page-index validation for the page_* bindings: an invalid index
+/// must raise a Lua error instead of silently returning zeros or touching
+/// memory outside the page (a negative cache/misc page reads before the
+/// buffer)
+inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
+{
+    int maxPage;
+    if (type == "ram") maxPage = MAX_RAM_PAGES - 1;
+    else if (type == "rom") maxPage = MAX_ROM_PAGES - 1;
+    else if (type == "cache") maxPage = MAX_CACHE_PAGES - 1;
+    else if (type == "misc") maxPage = MAX_MISC_PAGES - 1;
+    else
+        throw std::invalid_argument(std::string(api) + ": unknown page type '" + type + "' (use ram, rom, cache, misc)");
+
+    if (page < 0 || page > maxPage)
+        throw std::invalid_argument(std::string(api) + ": page " + std::to_string(page) +
+                                    " out of range for '" + type + "' (0-" + std::to_string(maxPage) + ")");
+    if (offset < 0 || offset >= PAGE_SIZE)
+        throw std::invalid_argument(std::string(api) + ": offset " + std::to_string(offset) +
+                                    " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
+}
+
 
 /// StateNode -> Lua table (objects keep their keys, arrays become 1-based
 /// sequences). The one converter Lua needs for every DeviceState report.
@@ -740,16 +764,16 @@ public:
             if (!effectiveEmulator()) return 0;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return 0;
+            ValidatePageIndex("page_read", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return 0;
             return pagePtr[offset];
         });
 
@@ -757,22 +781,21 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
+            ValidatePageIndex("page_write", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
-                    pagePtr[offset] = value;
-                    if (type == "ram")
-                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
-                });
-            }
+            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+                pagePtr[offset] = value;
+                if (type == "ram")
+                    mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+            });
         });
 
         lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len) -> sol::table {
@@ -781,19 +804,19 @@ public:
             if (!effectiveEmulator()) return data;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return data;
+            ValidatePageIndex("page_read_block", type, page, offset);
+            if (len < 0)
+                throw std::invalid_argument("page_read_block: len must be >= 0");
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr) return data;
-            if (offset < 0) offset = 0;
-            if (offset >= PAGE_SIZE) return data;
-            if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+            if (len > PAGE_SIZE - offset) len = PAGE_SIZE - offset;
             for (int i = 0; i < len; i++) {
                 data[i + 1] = pagePtr[offset + i];
             }
@@ -804,16 +827,16 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
+            ValidatePageIndex("page_write_block", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return;
             int maxLen = PAGE_SIZE - offset;
             effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
                 int idx = 0;
@@ -2248,7 +2271,10 @@ public:
             LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
             
             bool isROM = (type == "rom");
-            uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
+            if (!isROM && type != "ram")
+                throw std::invalid_argument("disasm_page: unknown page type '" + type + "' (use ram, rom)");
+            ValidatePageIndex("disasm_page", type, page, 0);
+            uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page))
                                       : memory->RAMPageAddress(static_cast<uint16_t>(page));
             if (!pageBase) return result;
             

@@ -52,6 +52,54 @@ TEST_F(StringHelper_Test, Compare)
     }
 }
 
+TEST_F(StringHelper_Test, TryParseUInt64Valid)
+{
+    uint64_t value = 123;
+
+    EXPECT_TRUE(StringHelper::TryParseUInt64("0", value));
+    EXPECT_EQ(value, 0u);
+
+    EXPECT_TRUE(StringHelper::TryParseUInt64("16383", value));
+    EXPECT_EQ(value, 16383u);
+
+    EXPECT_TRUE(StringHelper::TryParseUInt64("18446744073709551615", value));
+    EXPECT_EQ(value, 18446744073709551615ULL);
+
+    // Hex without prefix
+    EXPECT_TRUE(StringHelper::TryParseUInt64("00FF", value, 16));
+    EXPECT_EQ(value, 255u);
+
+    EXPECT_TRUE(StringHelper::TryParseUInt64("ff", value, 16));
+    EXPECT_EQ(value, 255u);
+}
+
+TEST_F(StringHelper_Test, TryParseUInt64RejectsInvalid)
+{
+    uint64_t value = 123;
+
+    // The original bug class: std::stoul("-1") wraps to a huge value and
+    // ends up as a far out-of-bounds index
+    EXPECT_FALSE(StringHelper::TryParseUInt64("-1", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("-16384", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("+5", value));
+
+    // Non-numeric / partial / padded
+    EXPECT_FALSE(StringHelper::TryParseUInt64("", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("abc", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("12x", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("0x10", value));  // base 10, prefix is garbage
+    EXPECT_FALSE(StringHelper::TryParseUInt64("1 2", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64(" 12", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("12 ", value));
+
+    // Overflow
+    EXPECT_FALSE(StringHelper::TryParseUInt64("18446744073709551616", value));
+    EXPECT_FALSE(StringHelper::TryParseUInt64("99999999999999999999999", value));
+
+    // Rejected input must leave the output untouched
+    EXPECT_EQ(value, 123u);
+}
+
 TEST_F(StringHelper_Test, LTrim)
 {
     // Original string contains both spaces and tabs

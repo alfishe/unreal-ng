@@ -40,6 +40,15 @@ public:
     static std::string ToUpper(const std::string& str);
     static std::string ToLower(const std::string& str);
 
+    /// @brief Strictly parse an unsigned integer from user-supplied text.
+    ///        Rejects empty text, sign characters (so "-1" cannot wrap around
+    ///        to a huge unsigned value), whitespace and trailing garbage.
+    /// @param text Input text (whole text must be one number).
+    /// @param value Parsed value (left untouched when false is returned).
+    /// @param base Numeric base (default 10, 16 for hex without "0x" prefix).
+    /// @return true when the text is a single in-range unsigned number.
+    static bool TryParseUInt64(const std::string& text, uint64_t& value, int base = 10);
+
     /// @brief Convert an integer to a hex string (zero-padded, no prefix).
     /// Fast path for 8/16/32/64-bit integers, falls back to stringstream for other types.
     /// @tparam T Integer type (uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, etc.)

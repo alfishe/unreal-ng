@@ -77,6 +77,27 @@
 namespace py = pybind11;
 
 
+/// Shared page-index validation for the page_* bindings: an invalid index
+/// must raise instead of silently returning zeros or touching memory outside
+/// the page (a negative cache/misc page reads before the buffer)
+inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
+{
+    int maxPage;
+    if (type == "ram") maxPage = MAX_RAM_PAGES - 1;
+    else if (type == "rom") maxPage = MAX_ROM_PAGES - 1;
+    else if (type == "cache") maxPage = MAX_CACHE_PAGES - 1;
+    else if (type == "misc") maxPage = MAX_MISC_PAGES - 1;
+    else
+        throw std::invalid_argument(std::string(api) + ": unknown page type '" + type + "' (use ram, rom, cache, misc)");
+
+    if (page < 0 || page > maxPage)
+        throw std::invalid_argument(std::string(api) + ": page " + std::to_string(page) +
+                                    " out of range for '" + type + "' (0-" + std::to_string(maxPage) + ")");
+    if (offset < 0 || offset >= PAGE_SIZE)
+        throw std::invalid_argument(std::string(api) + ": offset " + std::to_string(offset) +
+                                    " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
+}
+
 /// The recorded machine of a TTD session / file as a dict (the same keys as the
 /// WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
 /// peripherals, general_sound, turbo_sound)
@@ -830,72 +851,70 @@ namespace PythonBindings
             .def("page_read", [](Emulator& self, const std::string& type, int page, int offset) -> int {
                 Memory* mem = self.GetMemory();
                 if (!mem) return 0;
+                ValidatePageIndex("page_read", type, page, offset);
                 uint8_t* pagePtr = nullptr;
-                if (type == "ram" && page < MAX_RAM_PAGES)
-                    pagePtr = mem->RAMPageAddress(page);
-                else if (type == "rom" && page < MAX_ROM_PAGES)
-                    pagePtr = mem->ROMPageHostAddress(page);
-                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                if (type == "ram")
+                    pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+                else if (type == "rom")
+                    pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+                else if (type == "cache")
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-                else if (type == "misc" && page < MAX_MISC_PAGES)
+                else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return 0;
                 return pagePtr[offset];
             }, "Read byte from physical page", py::arg("type"), py::arg("page"), py::arg("offset"))
             .def("page_write", [](Emulator& self, const std::string& type, int page, int offset, uint8_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
+                ValidatePageIndex("page_write", type, page, offset);
                 uint8_t* pagePtr = nullptr;
-                if (type == "ram" && page < MAX_RAM_PAGES)
-                    pagePtr = mem->RAMPageAddress(page);
-                else if (type == "rom" && page < MAX_ROM_PAGES)
-                    pagePtr = mem->ROMPageHostAddress(page);  // Allows ROM patching
-                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                if (type == "ram")
+                    pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+                else if (type == "rom")
+                    pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));  // Allows ROM patching
+                else if (type == "cache")
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-                else if (type == "misc" && page < MAX_MISC_PAGES)
+                else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                    self.EditMemoryFromTool("Python page write", [&] {
-                        pagePtr[offset] = value;
-                        if (type == "ram")
-                            mem->MarkRamPageEdited(static_cast<uint16_t>(page));
-                    });
-                }
+                self.EditMemoryFromTool("Python page write", [&] {
+                    pagePtr[offset] = value;
+                    if (type == "ram")
+                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+                });
             }, "Write byte to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("value"))
             .def("page_read_block", [](Emulator& self, const std::string& type, int page, int offset, int len) -> py::bytes {
                 Memory* mem = self.GetMemory();
                 if (!mem) return py::bytes("");
+                ValidatePageIndex("page_read_block", type, page, offset);
+                if (len < 0)
+                    throw std::invalid_argument("page_read_block: len must be >= 0");
                 uint8_t* pagePtr = nullptr;
-                if (type == "ram" && page < MAX_RAM_PAGES)
-                    pagePtr = mem->RAMPageAddress(page);
-                else if (type == "rom" && page < MAX_ROM_PAGES)
-                    pagePtr = mem->ROMPageHostAddress(page);
-                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                if (type == "ram")
+                    pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+                else if (type == "rom")
+                    pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+                else if (type == "cache")
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-                else if (type == "misc" && page < MAX_MISC_PAGES)
+                else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                if (!pagePtr) return py::bytes("");
                 // Clamp to page boundary
-                if (offset < 0) offset = 0;
-                if (offset >= PAGE_SIZE) return py::bytes("");
-                if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+                if (len > PAGE_SIZE - offset) len = PAGE_SIZE - offset;
                 return py::bytes(reinterpret_cast<char*>(pagePtr + offset), len);
             }, "Read block from physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("len"))
             .def("page_write_block", [](Emulator& self, const std::string& type, int page, int offset, py::bytes data) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
+                ValidatePageIndex("page_write_block", type, page, offset);
                 uint8_t* pagePtr = nullptr;
-                if (type == "ram" && page < MAX_RAM_PAGES)
-                    pagePtr = mem->RAMPageAddress(page);
-                else if (type == "rom" && page < MAX_ROM_PAGES)
-                    pagePtr = mem->ROMPageHostAddress(page);
-                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                if (type == "ram")
+                    pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+                else if (type == "rom")
+                    pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+                else if (type == "cache")
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-                else if (type == "misc" && page < MAX_MISC_PAGES)
+                else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                if (!pagePtr) return;
                 std::string bytes = data;
-                if (offset < 0 || offset >= PAGE_SIZE) return;
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
