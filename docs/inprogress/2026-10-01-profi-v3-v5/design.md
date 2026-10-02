@@ -270,6 +270,23 @@ The v5 board holds a CPU RAM access until the CPU's DRAM slot comes round (/REDY
 - **Still to check:** floatspy, the TEST 4.30 timing pages and the demos Gromov names (QARX, ACADEMY, SHOCK
   MEGADEMO) as emulated test programs.
 
+### 6.5 Cost (A/B)
+
+`BM_HostFrame_*` (`core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp`), A = master ff8c5d3ec, B = the
+branch at e861cd694 (the waits, the floating bus, the switch), Release builds, 2026-10-02, load 9-13, rounds A B A
+B A B B A B A; CPU time per host frame, paired differences B / A:
+
+| Benchmark | Pairs | Mean |
+|:--|:--|:--|
+| 48K fast | -0.7 -0.1 +0.2 +0.0 -0.5 | -0.2 % |
+| Pentagon fast | -1.4 -0.1 -0.2 +2.6 -0.8 | +0.0 % |
+| Scorpion fast | -0.4 -0.2 -0.9 +1.0 +0.1 | -0.1 % |
+| Profi v5 fast | +2.3 +2.8 +3.3 +2.2 +3.1 | +2.7 % |
+| Profi v5 debug | +4.0 +1.8 +1.5 +4.4 +3.6 | +3.1 % |
+
+Other machines pay nothing. The v5 pays about 3 % for its video WAIT, the overlay it now runs at 3.5 MHz. The v3
+(no overlay at 3.5 MHz) runs its BIOS menu at 1303 us per host frame (B only; A has no v3).
+
 ## 7. TTD, snapshots, automation, UI
 
 | Area | Change |
@@ -299,5 +316,5 @@ The v5 board holds a CPU RAM access until the CPU's DRAM slot comes round (/REDY
 | 7 | v5 open items: palette gate, 15 MHz clock, the CP/M boot switch | sources | Q5, Q6, R34 |
 
 Phases 1, 2 and 3 have no open questions and can start now; 3b waits for E4. Each phase ends with the full build with zero warnings
-and `core-tests` green (AGENTS.md); phase 5 also gets an A/B benchmark of a Profi without turbo
+and `core-tests` green (AGENTS.md); the A/B benchmark is in section 6.5
 (`docs/guidelines/performance-guidelines.md`).
