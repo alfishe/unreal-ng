@@ -12,6 +12,7 @@
 #include <emulator/ports/portdecoder.h>
 #include <debugger/debugmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
+#include <emulator/io/mouse/mousemanager.h>
 #include <json/json.h>
 
 #include <cstdint>
@@ -445,7 +446,8 @@ void EmulatorAPI::mouseStatus(const HttpRequestPtr& req, std::function<void(cons
 
     if (!state.available)
         body["warning"] = "Mouse device not available";
-    else if (!state.present)
+    // `present` is the Kempston interface; a machine-built mouse (the Sprinter's board mouse) reads the input without it
+    else if (!state.present && !(context && context->pMouseManager && context->pMouseManager->HasMouseDevice()))
         body["warning"] = "mouse not present: guest reads floating bus on the mouse ports";
     sendJson(callback, body);
 }

@@ -95,7 +95,7 @@ anything. Problem 1 did.
 | Device | Machines | What changes |
 |:--|:--|:--|
 | Kempston interface (`Mouse`) | 48K, 128K, +3, Pentagon, Scorpion, Profi, Sprinter (PLD port), ATM3 / TS-Conf *only through the AVR* | becomes an `IMouseSink`; no message center subscription |
-| Sprinter serial mouse (`MsSerialMouse`) | Sprinter | a sink that is always fitted (the board has it), so `Mouse=NONE` no longer removes the host mouse. It still samples the board's mouse counters, which the Kempston device keeps for both views of the one mouse (the counters move whether or not the Kempston port is fitted); its TTD blob is unchanged |
+| Sprinter serial mouse (`MsSerialMouse`) | Sprinter | a sink that is always fitted (the board has it), so `Mouse=NONE` no longer removes the host mouse. `SprinterInput` keeps the board mouse counters that both views read (the serial packets and the PLD's Kempston view, code `#58`); TTD blob 31 v2 carries them (branch `sprinter-mouse`, `s4-input-outcome.md`) |
 | ZX-Evo AVR PS/2 mouse (new, in `EvoAvr`) | ATM3 (ZX-Evo), TS-Conf | the host mouse becomes PS/2 packets (wheel mouse, ID 3, as the AVR's init sequence asks); the AVR firmware logic (`ps2.c`: buttons `(b ^ 7) & 0x0F`, X / Y added to 8-bit counters, wheel steps in the high nibble, keypad resolution keys) updates the Kempston registers the FPGA shows. The decoders read those registers |
 | AY mouse | (configs ask for it, `Mouse=AY`) | later; stays "not emulated" until a machine needs it |
 | ATM450 / ATM710 | ATM Turbo 2 | check the hardware first (does an ATM2 have a mouse at #FADF?); either decode Kempston or drop `Wheel=KEMPSTON` from the configs |

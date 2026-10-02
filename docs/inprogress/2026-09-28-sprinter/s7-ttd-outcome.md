@@ -18,7 +18,7 @@ reaches the machine only through the TTD input journal.
 | Video RAM, 256 KB | `SprinterVideoRam` | 28, 1 + 262 144 |
 | Z84C15 beside the registers: WCR / MWBR / CSBR / MCR, the wait generator (power-on M1 counter, the RETI rule's after-ED flag), watchdog, CTC, SIO (receive FIFOs), PIO, daisy chain IP / IUS | `Z84C15` (`Z84C15::SaveState`) | 29, 1 + 171 |
 | Fast RAM, 64 KB | `SprinterFastRam` | 30, 1 + 65 536 |
-| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 85 |
+| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 88 (v2: + the board mouse counters) |
 | WD1793 command in flight beyond the BetaDisk blob: queued steps (as tags), transfer pointers (drive, track, offset), byte cell, rotational delay, rate-retry search, read-track noise seed | `Wd1793Context` | 35, 1 + 112 |
 | CMOS, IDE (two channels, adapter latch), WD1793 + drives, AY / TSFM, Kempston mouse and joystick | shared serializers | 18, 17, 1, 0 / 4, 7, 23 |
 
@@ -34,9 +34,10 @@ are not on master. They move to regions when those land.
   (`PcKey`: the PS/2 stream to SIO A). Replay applies the journal at the recorded instruction
   boundary; the bytes already on the wire, the typematic timer and the SIO A FIFO are in the
   checkpoint.
-- **Mouse:** the journal holds the Kempston counters and buttons (`MouseMove` / `MouseButtons` /
-  `MouseCounters`). The Microsoft serial mouse on SIO B is a packet generator that samples those
-  counters when SIO B is accessed; its packet in flight and the SIO B FIFO are in the checkpoint.
+- **Mouse:** the journal holds the mouse input at the MouseManager (`MouseMove` / `MouseButtons` /
+  `MouseCounters`). The board mouse keeps its own counters (blob 31 v2, bytes 85-87); the Microsoft
+  serial mouse on SIO B is a packet generator that samples them when SIO B is accessed; its packet
+  in flight and the SIO B FIFO are in the checkpoint.
   A restore in the middle of a packet resumes on the same byte (tested).
 
 ## Findings that changed shared code

@@ -61,7 +61,10 @@ MouseInjectResult DebugMouseManager::Success(const std::string& message) const
 {
     MouseInjectResult result;
     result.message = message;
-    if (Mouse* mouse = Device(); mouse && !mouse->IsPresent())
+    // No warning while another mouse device of the machine reads the input (the Sprinter's board
+    // mouse with [INPUT] Mouse=NONE): only a machine with no fitted mouse device at all ignores it
+    const bool anyDevice = _context && _context->pMouseManager && _context->pMouseManager->HasMouseDevice();
+    if (Mouse* mouse = Device(); mouse && !mouse->IsPresent() && !anyDevice)
         result.warning = "mouse not present: guest reads floating bus on the mouse ports";
     return result;
 }

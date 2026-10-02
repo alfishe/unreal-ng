@@ -10,10 +10,11 @@
 ///   byte 3: 0 0 Y5 Y4 Y3 Y2 Y1 Y0
 /// X, Y: signed 8-bit movement since the last packet, + = right / down.
 ///
-/// The mouse here is the host mouse the machine already has: the Kempston
-/// counters (Mouse: X grows to the right, Y grows upward, buttons active low)
-/// sampled through a callback, so the serial view and the Kempston view of the
-/// same board stay in step and the input goes through the journaled Mouse path.
+/// The mouse here is the host mouse the machine already has: the board's mouse
+/// counters (Kempston-style: X grows to the right, Y grows upward, buttons
+/// active low) sampled through a callback, so the serial view and the Kempston
+/// view of the same board stay in step and the input goes through the
+/// journaled MouseManager path.
 /// A packet starts when the sampled state differs from the state last sent; a
 /// move larger than 127 is sent over several packets.
 ///
