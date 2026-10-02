@@ -52,6 +52,7 @@
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "recordingrequest.h"
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -4653,18 +4654,38 @@ namespace PythonBindings
                 float fps = 50.0f;
                 int scale = 1;
                 std::string region = "full";
+                std::string audio;
+                long videoBitrate = 0;
+                long audioBitrate = 0;
                 if (py::isinstance<py::dict>(optsValue))
                 {
                     py::dict opts = optsValue;
-                    if (opts.contains("format") && py::isinstance<std::string>(opts["format"]))
+                    // Optional sound track: "aac" (or True = aac); None/False = video only
+                    if (opts.contains("audio") && !opts["audio"].is_none())
+                    {
+                        if (py::isinstance<py::bool_>(opts["audio"]))
+                            audio = opts["audio"].cast<bool>() ? "aac" : "";
+                        else if (py::isinstance<py::str>(opts["audio"]))
+                            audio = RecordingRequest::NormalizeAudioCodec(opts["audio"].cast<std::string>());
+                        else
+                        {
+                            d["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a bool";
+                            return d;
+                        }
+                    }
+                    if (opts.contains("video_bitrate"))
+                        videoBitrate = opts["video_bitrate"].cast<long>();
+                    if (opts.contains("audio_bitrate"))
+                        audioBitrate = opts["audio_bitrate"].cast<long>();
+                    if (opts.contains("format") && py::isinstance<py::str>(opts["format"]))
                         format = opts["format"].cast<std::string>();
-                    if (opts.contains("filename") && py::isinstance<std::string>(opts["filename"]))
+                    if (opts.contains("filename") && py::isinstance<py::str>(opts["filename"]))
                         filename = opts["filename"].cast<std::string>();
                     if (opts.contains("fps"))
                         fps = opts["fps"].cast<float>();
                     if (opts.contains("scale"))
                         scale = opts["scale"].cast<int>();
-                    if (opts.contains("region") && py::isinstance<std::string>(opts["region"]))
+                    if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
                         region = opts["region"].cast<std::string>();
                 }
 
@@ -4683,6 +4704,24 @@ namespace PythonBindings
                     const long long stamp =
                         static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
                     filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
+                }
+
+                // Same rules as the WebAPI/CLI/Lua (RecordingRequest): the codec must fit the container
+                if (videoBitrate < 0 || audioBitrate < 0 || videoBitrate > 1000000 || audioBitrate > 1000000)
+                {
+                    d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
+                    return d;
+                }
+                {
+                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
+                                                                        static_cast<uint32_t>(audioBitrate), audio);
+                    if (!codecError.empty())
+                    {
+                        d["error"] = codecError;
+                        return d;
+                    }
                 }
 
                 if (fps < 1.0f) fps = 1.0f;
@@ -4704,7 +4743,8 @@ namespace PythonBindings
                 const bool wasRunning = self.IsRunning() && !self.IsPaused();
                 if (wasRunning) self.Pause();
 
-                const bool started = rm->StartRecording(filename, format, "");
+                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                        static_cast<uint32_t>(audioBitrate));
 
                 if (wasRunning) self.Resume();
 
@@ -4721,6 +4761,10 @@ namespace PythonBindings
                 d["fps"] = fps;
                 d["scale"] = scale;
                 d["region"] = region;
+                d["audio"] = rm->HasAudio();
+                d["audio_codec"] = audio;
+                d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+                d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
                 d["feature_auto_enabled"] = featureWasOff;
                 d["output"] = filename;
                 return d;
@@ -4768,6 +4812,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else
@@ -4802,6 +4853,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else

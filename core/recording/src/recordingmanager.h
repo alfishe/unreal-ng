@@ -176,6 +176,44 @@ public:
         return _outputFilename;
     }
 
+    /// Video codec of the current (or last) session ("" = audio only)
+    const std::string& GetVideoCodec() const
+    {
+        return _videoCodec;
+    }
+
+    /// Audio codec of the current (or last) session ("" = video only)
+    const std::string& GetAudioCodec() const
+    {
+        return _audioCodec;
+    }
+
+    /// True when the current (or last) session records an audio track
+    bool HasAudio() const
+    {
+        return !_audioCodec.empty() && _audioChannels > 0 && !_audioTracks.empty();
+    }
+
+    /// Audio sample rate (Hz) the recording is stamped with - the emulator's core audio rate
+    uint32_t GetAudioSampleRate() const
+    {
+        return _audioSampleRate;
+    }
+
+    /// Audio channels of the current (or last) session (0 = no audio)
+    uint32_t GetAudioChannels() const
+    {
+        return _audioChannels;
+    }
+
+    /// Emulated seconds of audio captured so far (0 without audio)
+    double GetAudioDuration() const
+    {
+        if (_audioChannels == 0 || _audioSampleRate == 0)
+            return 0.0;
+        return static_cast<double>(_stats.audioSamplesRecorded / _audioChannels) / _audioSampleRate;
+    }
+
     /// Check if encoder can keep up with realtime
     bool IsRealtimeCapable() const
     {

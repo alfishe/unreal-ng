@@ -60,6 +60,7 @@ matches; it names the recipe(s) for that action.
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
 | A full multi-step investigation (memory corruption, boot verification, disk protection) | check [articles/](articles/) first — it may already compose the recipes you'd otherwise assemble by hand | the individual recipes it cites; open those only if the article sends you there |
@@ -89,6 +90,7 @@ call.
 | [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` load), verify a state took effect, snapshot round-trips |
 | [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
+| [media/video-recording.md](media/video-recording.md) | Record the screen to GIF/H.264/HEVC with an optional sound track (`audio: aac`) from MCP, WebAPI, CLI, Lua, Python; codec/container rules; ffprobe checks |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
 
