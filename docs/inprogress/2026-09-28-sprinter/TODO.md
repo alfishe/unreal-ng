@@ -137,7 +137,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - [ ] Z3 (M) "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`), A/B benchmark
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
-    write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51)
+    write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
+    2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline
+    ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84, T3) - its P0-P3 first, the Sprinter commit policy is its P4
   - [ ] Z6 (M) `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, TTD replay test
   - Open questions Q1-Q7 for the owner: [tdd-zx-mode.md](tdd-zx-mode.md) §10
 - **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items

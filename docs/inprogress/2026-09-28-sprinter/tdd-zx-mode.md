@@ -36,7 +36,7 @@ Worked example of the split:
 |---|---|---|---|---|
 | `SprinterZxMode` (detector + state view) | new | `core/src/emulator/ports/models/sprinter/sprinterzxmode.{h,cpp}` | Sprinter only | reads PLD cells and the CNF / ALL_MODE bits; no other machine has vROM |
 | `SprinterZxSnapshot` (apply a parsed snapshot to Spectrum pages) | new | `core/src/emulator/ports/models/sprinter/sprinterzxsnapshot.{h,cpp}` | Sprinter only | the page resolution is the Sprinter cell table |
-| Snapshot parse/apply split | changed (shared, small) | `core/src/loaders/snapshot/loader_sna.*`, `loader_z80.*` (SZX later) | shared | the parsers already hold `_memoryPages[]` + registers; expose them as a `ParsedSnapshot` so a machine with its own paging can apply them; other machines keep the current apply. See Q4 |
+| Snapshot parse/apply split | changed (shared, small) | `core/src/loaders/snapshot/loader_sna.*`, `loader_z80.*` (SZX later) | shared | the parsers already hold `_memoryPages[]` + registers; expose them as a `ParsedSnapshot` so a machine with its own paging can apply them; other machines keep the current apply. See Q4: decided 2026-10-02, done as the shared [snapshot pipeline](../2026-10-02-snapshot-pipeline/proposal.md) (`SnapshotImage`, PLAN #84) |
 | `SnapshotLauncher` routing | changed (shared, one branch) | `core/src/loaders/snapshot/snapshotlauncher.cpp` | shared | Sprinter: in ZX mode → `SprinterZxSnapshot`; otherwise refuse with a reason (goals FR-51) |
 | "Original waits" | new | `core/src/emulator/ports/models/sprinter/sprinterwaits.{h,cpp}` (+ the memory access path that already charges the 21 MHz waits) | Sprinter only | PLD `WAIT_ORIG` (research §7.3); zero cost when ALL_MODE bit 2 = 1 or turbo (the default) |
 | Tape time base on clock-ratio machines | changed (shared, opt-in) | `core/src/emulator/io/tape/tape.cpp` | shared, opt-in per model (as the WD1793's `SetBaseClockTimeBase`) | real tapes play in real time; the Sprinter turns it on; other turbo machines are a separate decision (Q2) |
@@ -245,7 +245,7 @@ justify their length in a comment (tests README).
 | **Z2** | Tape: I5 test, the base-clock tape time base (Sprinter opt-in), T-ZX-7, T-ZX-8; one-line note in the shared tape docs | S-M | none; Q2 for other machines |
 | **Z3** | "Original waits": model, gate, T-ZX-9, A/B T-ZX-10; Q1 for the CT phase | M | none (real-board measurement for Q1 is a follow-up) |
 | **Z4** | `SprinterZxMode` state + automation of the `zx` block on all five surfaces, OpenAPI, MCP resource text | S-M | the automation audit P1 branch (`sprinter-automation`) merged first, to extend its `state/sprinter` instead of forking it |
-| **Z5** | Snapshots: parse/apply split (SNA, Z80; SZX after), `SprinterZxSnapshot`, `SnapshotLauncher` routing and refusal, T-ZX-11, T-ZX-12, all surfaces | M | Z4; Q4 |
+| **Z5** | Snapshots: parse/apply split (SNA, Z80; SZX after), `SprinterZxSnapshot`, `SnapshotLauncher` routing and refusal, T-ZX-11, T-ZX-12, all surfaces. Done through the shared snapshot pipeline ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84): its steps P0-P3 first, then `SprinterZxSnapshot` is the Sprinter's commit policy (pipeline step P4) | M (+ P0-P3 of the pipeline, about M) | Z4; Q4 (decided 2026-10-02); PLAN #84 P0-P3 |
 | **Z6** | `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, T-ZX-13, T-ZX-14 (TTD) | M | Z1, Z4; S7-TTD (done) |
 
 Total about M-L (5-7 weeks of focused work at the repo's scale, Z1 first). **No dependency on S6b
@@ -268,6 +268,9 @@ Z3 can run in parallel with Z1.
    its own way. *Recommendation:* do it (a `ParsedSnapshot` struct + the existing apply as the default);
    it is small, keeps the parsers single, and other machines with non-identity paging (ATM, TS-Conf) can
    use it later.
+   **Owner decision 2026-10-02: yes, via the shared pipeline proposal, lower priority**
+   ([2026-10-02-snapshot-pipeline/proposal.md](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84, T3). The `ParsedSnapshot` of this design
+   becomes the shared `SnapshotImage`, and `SprinterZxSnapshot` becomes the Sprinter's commit policy.
 5. **Q5 — may `zx run` copy the file into an attached hard-disk image?** *Recommendation:* no: only into
    an attached host folder, or use a file already on a volume; refuse otherwise with the reason. Images
    are the user's data.
