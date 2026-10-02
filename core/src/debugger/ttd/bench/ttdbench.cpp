@@ -1092,9 +1092,8 @@ std::vector<Case> Matrix(const std::string& set)
                                    atm710Turbo,
                                    atm3,
                                    Base("TSCONF", "TSL"),
-                                   Base("PROFI", "PROFI")};
-    // (SPRINTER is not here: it refuses to record until its PLD state has a
-    // serializer, Sprinter phase S7 - see ttd.ksy, peripheral id 25)
+                                   Base("PROFI", "PROFI"),
+                                   Base("SPRINTER", "SPRINTER")};
     for (const Configuration& c : bases)
         add(c, Idle(3000));
 

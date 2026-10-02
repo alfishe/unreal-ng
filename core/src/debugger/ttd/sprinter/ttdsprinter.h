@@ -41,6 +41,7 @@
 
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 class PortDecoder_Sprinter;
 
@@ -116,7 +117,7 @@ private:
 };
 
 /// Id 28: the 256 KB video RAM (the palette cache and the INT list are rebuilt from it)
-class TTDSprinterVideoRam : public TTDSerializable
+class TTDSprinterVideoRam : public TTDSerializable, public ITTDRegionSource
 {
 public:
     static constexpr uint8_t kVersion = 1;
@@ -130,12 +131,18 @@ public:
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterVideoRam; }
     uint64_t TTDHashState() const override;
 
+    /// Time-travel engine region (compared at each capture; restore rebuilds the palette and the INT list)
+    void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool) override {}
+    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+
 private:
     PortDecoder_Sprinter& _decoder;
+    TTDRegionTracker _tracker;
 };
 
 /// Id 30: the 64 KB fast RAM (Memory's four cache pages; not RAM pages, so not in the page store)
-class TTDSprinterFastRam : public TTDSerializable
+class TTDSprinterFastRam : public TTDSerializable, public ITTDRegionSource
 {
 public:
     static constexpr uint8_t kVersion = 1;
@@ -150,8 +157,14 @@ public:
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterFastRam; }
     uint64_t TTDHashState() const override;
 
+    /// Time-travel engine region (compared at each capture: written through the generic CPU path)
+    void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool) override {}
+    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+
 private:
     PortDecoder_Sprinter& _decoder;
+    TTDRegionTracker _tracker;
 };
 
 /// Id 32: the Covox / Covox-Blaster (CovoxBlasterState, little-endian fields). The PLD blob keeps its copy

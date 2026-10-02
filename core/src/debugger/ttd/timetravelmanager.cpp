@@ -3316,7 +3316,8 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         for (const uint16_t p : _dirtyScratch)
             addPage(p);
     for (size_t i = 0; i < _shadowDeviceRegions.size(); ++i)
-        addDevicePieces(static_cast<uint32_t>(i + 1), _shadowDeviceRegions[i], _shadowRescan);
+        addDevicePieces(static_cast<uint32_t>(i + 1), _shadowDeviceRegions[i],
+                        _shadowRescan || _shadowDeviceRegions[i].compareEachCapture);
     _shadowRescan = false;
 
     if (!engine.CaptureFrame(in, error))

@@ -19,6 +19,7 @@
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -69,7 +70,28 @@ TEST_P(TimeTravelManager_ShadowModels_Test, EveryFrameRestoresAsV1)
         ASSERT_EQ(got->position.frame, want->time.frame);
         EXPECT_EQ(std::memcmp(&got->cpu, &want->cpu, sizeof(want->cpu)), 0) << "CPU, checkpoint " << i;
         EXPECT_EQ(std::memcmp(&got->chipset, &want->chipset, sizeof(want->chipset)), 0) << "chipset, checkpoint " << i;
-        EXPECT_EQ(got->deviceBlobs, want->peripheralBlobs) << "devices, checkpoint " << i;
+        // Device state: identical blobs, except a device whose memory the engine
+        // keeps as a region - then v1's state = the engine's state + that region
+        ASSERT_EQ(got->deviceBlobs.size(), want->peripheralBlobs.size()) << "checkpoint " << i;
+        for (const auto& [id, blob] : want->peripheralBlobs)
+        {
+            ASSERT_TRUE(got->deviceBlobs.count(id)) << "device " << int(id) << ", checkpoint " << i;
+            if (got->deviceBlobs.at(id) == blob)
+                continue;
+            const std::vector<uint8_t> full = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
+            std::vector<uint8_t> rebuilt = ttd::TTDPeripheralRegistry::DecodeBlob(id, got->deviceBlobs.at(id));
+            bool found = false;
+            for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+                if (_engine.Regions()[r].ownerType == id)
+                {
+                    std::vector<uint8_t> mem(size_t(_engine.Regions()[r].pieces) * ttd::kTTDPieceSize, 0);
+                    ASSERT_TRUE(_engine.RestoreRegion(i, r, mem.data()).Ok());
+                    rebuilt.insert(rebuilt.end(), mem.begin(), mem.begin() + _engine.Regions()[r].bytes);
+                    found = true;
+                }
+            ASSERT_TRUE(found) << "device " << int(id) << " differs and owns no region, checkpoint " << i;
+            ASSERT_TRUE(rebuilt == full) << "device " << int(id) << " (state + region), checkpoint " << i;
+        }
         ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, i, v1Ram, v1Present, err)) << err;
         engineRam.assign(v1Ram.size(), 0);
         ASSERT_TRUE(_engine.RestoreRegion(i, 0, engineRam.data(), &enginePresent).Ok());

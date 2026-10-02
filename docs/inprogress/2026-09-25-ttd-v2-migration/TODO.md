@@ -31,7 +31,8 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [ ] The lightweight GS player's upload store
   - [x] Machines with large RAM — region 0 on every model, no per-model code: `TimeTravelManager_ShadowModels_Test` checks every frame against v1 on Pentagon, Scorpion, ProfScorpion, Profi, ATM710, ATM450, ZX-Evo, TS-Conf and Sprinter. Matrix (600 frames, v1 → engine): capture p50 TS-Conf 223 → 6.3 µs, ZX-Evo 273 → 16.6, ATM710 112 → 7.5, Profi 74 → 4.9; memory restore p50 TS-Conf 585 → 32 µs, ZX-Evo 728 → 124; references TS-Conf / ZX-Evo 4,103 → 87 / 111 B per frame
   - [x] Region records per checkpoint only for regions that changed (an idle card costs nothing per frame; references below v1 on every model, 48K 96 → 60 B per frame)
-  - [ ] Sprinter video RAM and fast RAM, VDAC2 graphics memory (restored through the device)
+  - [x] Sprinter video RAM (256 KB) and fast RAM (64 KB): compared at each capture (no write hook: the fast RAM is written through the generic CPU path); restore rebuilds the palette and the INT list; the engine's blobs hold the version byte only. Sprinter per frame v1 → engine: 13,290 → 1,611 bytes, capture p50 367 → 17.8 µs, memory restore 754 → 169 µs
+  - [ ] VDAC2 graphics memory (restored through the device)
   - [ ] ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model
 

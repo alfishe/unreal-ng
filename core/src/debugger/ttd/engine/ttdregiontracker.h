@@ -77,6 +77,11 @@ struct TTDDeviceRegion
 {
     TTDRegionDesc desc;               ///< memory, pieces, bytes, restore hooks
     TTDRegionTracker* tracker = nullptr;
+    /// No write hook: every piece is offered at each capture and the engine
+    /// keeps those whose content changed. For small memories written through
+    /// shared paths (Sprinter fast RAM: the generic CPU write path) or many
+    /// paths; the cost follows the region's size, a few microseconds for 64 KB
+    bool compareEachCapture = false;
 };
 
 /// Implemented by a device whose memory the engine records as regions

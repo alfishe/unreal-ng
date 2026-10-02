@@ -307,6 +307,12 @@ The game is the one case slower than v1 (+8%): the pieces that differ between tw
 - In shadow mode v1 still copies the GS RAM into its blob; the engine's region is checked against it by the oracle. NeoGS, MoonSound, VDAC2 and the EEPROMs are not in v1 files, so their regions are checked by round-trip tests (record, write, seek back, compare) and by live shadow runs.
 - With the device blobs still whole in Phase 1, the GS blob shrinks only in the engine: v1 keeps its own format.
 
+**As built (2026-10-02).** A device offers its memory through `ITTDRegionSource` (`engine/ttdregiontracker.h`): its regions with a `TTDRegionTracker` each, arming, an optional before-capture hook, and, when its blob also carries that memory, its state without it (`TTDStateWithoutRegions`). Sources are registered next to the serializers (`TTDPeripheralRegistry::RegisterRegionSource`; every model serializer that is a source is registered automatically). Two ways to find written pieces:
+- **write hooks** (NeoGS RAM and flash, General Sound RAM): the device marks the tracker on its write paths; it holds the tracker pointer only while the engine records, so the path pays one null check otherwise (A/B `BM_HostFrame_NeoGS_*`: within noise); MoonSound uses the wave memory's own dirty bitmap through the before-capture hook;
+- **compare at each capture** (`compareEachCapture`: Sprinter video RAM and fast RAM): every piece is offered and the engine keeps those whose content differs from its delta base. Used where writes go through shared paths (the fast RAM is written by the generic CPU path, which no machine-specific hook may slow down) or many paths; the cost follows the region's size, not its changes.
+
+The engine skips any offered piece whose content equals its delta base before doing anything else, so a dirty page rewritten with the same bytes costs a comparison only.
+
 ### 4.8 What Phase 4 will serialize
 
 The engine has no file before Phase 4. Phase 1 fixes what the file must hold, so the file needs no new concepts: the region table (id u16, owner type u16, owner instance, pieces u32, bytes u32, name); the piece versions with their encoding, depth, base, CRC and payload; the reference blocks and region tables, each written once and referred to by later checkpoints; checkpoints with their parent; the frame table. Every field width is checked against the largest value it can hold (a one-byte `model_ram_pages` once turned 256 pages into 0).

@@ -404,6 +404,34 @@ uint64_t TTDSprinterVideoRam::TTDHashState() const
     return Fnv1a(_decoder.GetVideoRam().Data(), SprinterVideoRam::kSize);
 }
 
+void TTDSprinterVideoRam::TTDRegions(std::vector<TTDDeviceRegion>& out)
+{
+    SprinterVideoRam& vram = _decoder.GetVideoRam();
+    _tracker.Bind(vram.Data(), SprinterVideoRam::kSize);
+    TTDDeviceRegion r;
+    r.desc.id = TTDRegionId::SprinterVideoRam;
+    r.desc.name = "sprinter.vram";
+    r.desc.ownerType = static_cast<uint16_t>(PeripheralId::SprinterVideoRam);
+    r.desc.memory = vram.Data();
+    r.desc.bytes = static_cast<uint32_t>(SprinterVideoRam::kSize);
+    r.desc.pieces = _tracker.Pieces();
+    PortDecoder_Sprinter& decoder = _decoder;
+    r.desc.onRestored = [&decoder]() {
+        decoder.GetVideoRam().RefreshPalette();   // the pens' RGBA cache
+        decoder.GetIntSource().Invalidate();      // the INT list comes from the mode table
+    };
+    r.tracker = &_tracker;
+    r.compareEachCapture = true;
+    out.push_back(r);
+}
+
+bool TTDSprinterVideoRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+{
+    peripheralId = static_cast<uint8_t>(PeripheralId::SprinterVideoRam);
+    state.assign(1, kVersion);
+    return true;
+}
+
 /// endregion </TTDSprinterVideoRam>
 
 /// region <TTDSprinterFastRam>
@@ -432,6 +460,31 @@ uint64_t TTDSprinterFastRam::TTDHashState() const
 {
     SprinterMemory* memory = _decoder.GetSprinterMemory();
     return memory ? Fnv1a(memory->FastRam(), kFastRamSize) : 0;
+}
+
+void TTDSprinterFastRam::TTDRegions(std::vector<TTDDeviceRegion>& out)
+{
+    SprinterMemory* memory = _decoder.GetSprinterMemory();
+    if (!memory)
+        return;
+    _tracker.Bind(memory->FastRam(), kFastRamSize);
+    TTDDeviceRegion r;
+    r.desc.id = TTDRegionId::SprinterFastRam;
+    r.desc.name = "sprinter.fastram";
+    r.desc.ownerType = static_cast<uint16_t>(PeripheralId::SprinterFastRam);
+    r.desc.memory = memory->FastRam();
+    r.desc.bytes = static_cast<uint32_t>(kFastRamSize);
+    r.desc.pieces = _tracker.Pieces();
+    r.tracker = &_tracker;
+    r.compareEachCapture = true;
+    out.push_back(r);
+}
+
+bool TTDSprinterFastRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+{
+    peripheralId = static_cast<uint8_t>(PeripheralId::SprinterFastRam);
+    state.assign(1, kVersion);
+    return true;
 }
 
 /// endregion </TTDSprinterFastRam>

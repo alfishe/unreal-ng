@@ -160,6 +160,13 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 base.assign(size_t(_regions[r].pieces) * kTTDPieceSize, 0);
             uint8_t* previousBytes = base.data() + size_t(c.piece) * kTTDPieceSize;
             const TTDPieceId previous = _live[r][c.piece];
+            // Offered but unchanged (a dirty page rewritten with the same bytes,
+            // a compare-mode region): nothing to store, nothing to copy
+            if (previous != TTDPieceStore::kNone && std::memcmp(previousBytes, c.bytes, kTTDPieceSize) == 0)
+            {
+                _inMemory[r][c.piece] = previous;
+                continue;
+            }
             const TTDPieceId next = previous == TTDPieceStore::kNone ? _store->InternFirst(c.bytes)
                                                                      : _store->Intern(previous, previousBytes, c.bytes);
             std::memcpy(previousBytes, c.bytes, kTTDPieceSize);

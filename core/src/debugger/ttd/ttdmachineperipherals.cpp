@@ -160,6 +160,8 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             continue;
 
         registry.Register(serializer->TTDPeripheralId(), serializer.get());
+        // A model serializer whose memory the engine records as regions (Sprinter video and fast RAM)
+        registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(serializer.get()));
         ownedSerializers.push_back(std::move(serializer));
     }
 
