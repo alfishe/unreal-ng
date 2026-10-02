@@ -22,9 +22,12 @@ results: [README.md](README.md).
 
 ### Follow-up, branch `cd-folder-audio` (2026-10-02, [README §6](README.md#6-follow-up-2026-10-02-branch-cd-folder-audio))
 
-- [x] PLAY AUDIO per MMC-3: a start outside an audio track 05h / 64h, a range into a data track 05h / 63h,
-  both before anything moves (head and audio status kept); a play ends at its session's lead-out; the
-  front panel follows the same rules
+- [x] PLAY AUDIO per MMC-3: only the start is checked (past the disc 05h / 21h, outside audio 05h / 64h);
+  an end past the disc plays to the session's lead-out; a data track in the range: (10) / (12) 05h / 63h,
+  MSF plays the audio before it; a refused PLAY moves nothing; the front panel follows the same rules
+- [x] Sprinter `CDPLAYER.FLX` (Flex Navigator) did not play: its PLAY MSF 00:02:00 - 80:00:74 was refused
+  for the end past the lead-out; fixed per MMC-3 5.13; disassembly and notes in
+  [docs/disasm/software/sprinter/cdplayer-flx/](../../disasm/software/sprinter/cdplayer-flx/README.md)
 - [x] cdplay's frozen `[PLAYING] 00:00` and "`1` played the track under the cursor": cdplay ignores the
   drive's errors (documented; the ZX-Evo keyboard delivers the digits right)
 - [x] Activity LED: data reads only (READ, READ CD); audio shows on the HUD's "CD"

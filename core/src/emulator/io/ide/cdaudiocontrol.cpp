@@ -414,8 +414,8 @@ CdAudioReply CdAudioControl::Play(int unit, const std::map<std::string, std::str
     {
         return Fail("bad-request", "play needs track=N (to=M), lba=X frames=N, or msf=MM:SS:FF end=MM:SS:FF");
     }
-    if (end > disc.LeadOutLba())
-        return Fail("bad-request", "the range ends past the lead-out (LBA " + std::to_string(disc.LeadOutLba()) + ")");
+    if (start >= disc.LeadOutLba())
+        return Fail("bad-request", "LBA " + std::to_string(start) + " is past the lead-out (LBA " + std::to_string(disc.LeadOutLba()) + ")");
     const int index = disc.TrackIndexAt(static_cast<uint32_t>(start));
     if (index < 0 || !disc.TrackAt(static_cast<size_t>(index)).IsAudio())
         return Fail("bad-request", "LBA " + std::to_string(start) + " is no audio frame");

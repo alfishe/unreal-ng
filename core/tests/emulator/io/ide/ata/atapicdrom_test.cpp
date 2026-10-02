@@ -557,11 +557,16 @@ TEST_F(AtapiCdromAudio_Test, PlayCommandsAndTheirErrors)
     SendPacket({0x47, 0, 0, 0, 2, 8, 0, 2, 8});
     EXPECT_TRUE(Completed());
 
-    // The data track: ILLEGAL MODE FOR THIS TRACK; past the lead-out: LBA out of range; end before start
+    // The data track: ILLEGAL MODE FOR THIS TRACK; a start past the lead-out: LBA out of range; an end past
+    // it plays to the lead-out (MMC-3 checks the start only); end before start
     SendPacket({0x45, 0, 0, 0, 0, 1, 0, 0, 2});
     ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
-    SendPacket({0x45, 0, 0, 0, 0, 20, 0, 0, 5});
+    SendPacket({0x45, 0, 0, 0, 0, 22, 0, 0, 5});
     ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscLbaOutOfRange);
+    SendPacket({0x45, 0, 0, 0, 0, 20, 0, 0, 5});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, 22u);
+    SendPacket({0x4E});
     SendPacket({0x47, 0, 0, 0, 2, 16, 0, 2, 8});
     ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidField);
     SendPacket({0x48, 0, 0, 0, 9, 1, 0, 9, 1});
@@ -777,6 +782,11 @@ TEST_F(AtapiCdromAudio_Test, PlayRunningIntoADataTrackIsRefused)
     EXPECT_EQ(sense[12], 0x63) << "END OF USER AREA ENCOUNTERED ON THIS TRACK";
     EXPECT_EQ(sense[13], 0x00);
     EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+    // PLAY AUDIO MSF has no such rule: the contiguous audio before the data track plays (MMC-3 5.13)
+    SendPacket({0x47, 0, 0, 0, 2, 2, 0, 2, 21});  // LBA 2-18
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, 10u);
+    SendPacket({0x4E});
     SendPacket({0x45, 0, 0, 0, 0, 2, 0, 0, 8});  // LBA 2-9: audio only
     EXPECT_TRUE(Completed());
     EXPECT_EQ(_cd->Audio().State().endLba, 10u);
@@ -888,3 +898,38 @@ TEST_F(AtapiCdromAudio_Test, ActivityLedLightsOnlyOnDataTransfers)
 }
 
 /// endregion </Data tracks, multisession, the activity LED>
+
+TEST_F(AtapiCdromAudio_Test, SprinterCdplayerFlxPlaysFromTheFirstTrack)
+{
+    // The Sprinter's Flex Navigator plugin CDPLAYER.FLX (Shaos, 2002, "1.0 beta1"; disassembly in
+    // docs/disasm/software/sprinter/cdplayer-flx/): IDENTIFY DEVICE (aborted: the signature), IDENTIFY
+    // PACKET DEVICE, then "Play CD from first track" = PLAY AUDIO MSF 00:02:00 - 80:00:74 (its own
+    // "to the end of any disc") without reading the status afterwards. MMC-3 checks only the start:
+    // the drive plays from track 1 to the audio session's lead-out. Before the fix the end past the
+    // lead-out was refused (LBA OUT OF RANGE) and nothing ever played
+    std::string error;
+    UseDisc(CdImageFormats::Open(cdtest::WriteMusicDisc(_folder->Path(), 3, 4, 300), &error));
+    const cdtest::MusicDiscLayout l = cdtest::MusicLayoutOf(3, 4, 300, cdtest::MusicLayout::Enhanced);
+    _channel.WriteRegister(DeviceHead, 0xA0);
+    _channel.WriteRegister(StatusCommand, Command::Identify);
+    EXPECT_EQ(Status() & Status::ERR, Status::ERR);
+    _channel.WriteRegister(StatusCommand, Command::IdentifyPacket);
+    for (int i = 0; i < 256; i++)
+        _channel.ReadData();
+    SendPacket({0x47, 0x00, 0x00, 0x00, 0x02, 0x00, 0x50, 0x00, 0x4A, 0x00, 0x00, 0x00}, 0xEB14);
+    EXPECT_TRUE(Completed()) << "plays: no CHECK CONDITION";
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Playing);
+    EXPECT_EQ(_cd->Audio().HeadLba(), 0u) << "track 1";
+    EXPECT_EQ(_cd->Audio().State().endLba, l.audioLeadOut) << "through the last audio track";
+    // FF:FF:FF as the end (another player's "to the end"): the same
+    SendPacket({0x47, 0, 0, 0, 2, 0, 0xFF, 0xFF, 0xFF});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, l.audioLeadOut);
+
+    // The older mixed-mode disc (track 1 = data): the start is in the data track - refused per MMC-3
+    // (05h / 64h). The plugin assumes an audio track 1 and does not look at the error: nothing plays,
+    // as on a real drive
+    UseDisc(CdImageFormats::Open(cdtest::WriteMusicDisc(_folder->Path(), 2, 4, 300, cdtest::MusicLayout::Mixed), &error));
+    SendPacket({0x47, 0x00, 0x00, 0x00, 0x02, 0x00, 0x50, 0x00, 0x4A, 0x00, 0x00, 0x00}, 0xEB14);
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+}

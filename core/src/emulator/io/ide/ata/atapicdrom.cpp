@@ -785,7 +785,7 @@ void AtapiCdrom::ReadHeader()
     StartReply(std::min<uint32_t>(8, allocation ? allocation : 8u));
 }
 
-void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length)
+void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length, bool msf)
 {
     if (!DiscReady())
         return;
@@ -796,39 +796,45 @@ void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length)
         CompletePacket();  // no play, not an error
         return;
     }
-    const uint64_t end = static_cast<uint64_t>(start) + length;
-    if (start >= _disc->LeadOutLba() || end > _disc->LeadOutLba())
+    // MMC-3 r10g 5.11-5.13 (PLAY AUDIO (10) / (12) / MSF) check the STARTING address only: not found
+    // (past the lead-out, between two sessions): LOGICAL BLOCK ADDRESS OUT OF RANGE; not in an audio
+    // track: ILLEGAL MODE FOR THIS TRACK. Nothing moves then: the head and the audio status stay
+    if (start >= _disc->LeadOutLba() || InSessionGap(start, 1))
     {
         CheckCondition(kSenseIllegalRequest, kAscLbaOutOfRange);
         return;
     }
-    // PLAY AUDIO (10) / (12) / MSF (MMC-3 r10g, PLAY AUDIO (10)): a start that is not in an audio track ends the
-    // command at once (ILLEGAL MODE FOR THIS TRACK); a range whose sub-channel mode changes (it runs
-    // into a data track) ends it with END OF USER AREA ENCOUNTERED ON THIS TRACK. Both are checked
-    // before anything moves: the head stays, the audio status stays what it was
     const int index = _disc->TrackIndexAt(start);
     if (index < 0 || !_disc->TrackAt(static_cast<size_t>(index)).IsAudio())
     {
         CheckCondition(kSenseIllegalRequest, kAscIllegalModeForTrack);
         return;
     }
-    // A range past the session's lead-out (an Enhanced CD player playing its last audio track "to the
-    // next track's start", which is in the data session) plays to the lead-out: the session's audio
-    // ends there, as the drive's head finds the lead-out
-    const uint32_t playEnd = std::min<uint32_t>(static_cast<uint32_t>(end),
-                                                _disc->SessionLeadOutLba(_disc->TrackAt(static_cast<size_t>(index)).session));
+    // The end is not checked: "All contiguous audio sectors between the starting and the ending MSF
+    // address shall be played" (5.13). An end past the disc - players ask for 80:00:74 or FF:FF:FF
+    // ("to the end", the Sprinter's CDPLAYER.FLX) - plays to the start track's session lead-out, where
+    // the head finds the lead-out
+    uint64_t playEnd = std::min<uint64_t>(static_cast<uint64_t>(start) + length,
+                                          _disc->SessionLeadOutLba(_disc->TrackAt(static_cast<size_t>(index)).session));
     for (size_t i = static_cast<size_t>(index); i < _disc->TrackCount(); i++)
     {
         const cd::Track& track = _disc->TrackAt(i);
         if (track.pregapLba >= playEnd)
             break;
-        if (!track.IsAudio())
+        if (track.IsAudio())
+            continue;
+        // A data track inside the range. PLAY AUDIO (10) / (12): "If the CD Sub-channel mode type (data vs.
+        // audio) ... changes within the transfer length" - END OF USER AREA ENCOUNTERED ON THIS TRACK.
+        // PLAY AUDIO MSF has no such clause: the contiguous audio before the data track plays
+        if (!msf)
         {
             CheckCondition(kSenseIllegalRequest, kAscEndOfUserArea);
             return;
         }
+        playEnd = track.pregapLba;
+        break;
     }
-    _audio.Play(start, playEnd);
+    _audio.Play(start, static_cast<uint32_t>(playEnd));
     CompletePacket();
 }
 
@@ -853,7 +859,7 @@ void AtapiCdrom::PlayAudioMsf()
         CheckCondition(kSenseIllegalRequest, kAscInvalidField);
         return;
     }
-    PlayAudio(static_cast<uint32_t>(start), static_cast<uint32_t>(end - start));
+    PlayAudio(static_cast<uint32_t>(start), static_cast<uint32_t>(end - start), /*msf*/ true);
 }
 
 void AtapiCdrom::PlayAudioTrackIndex()

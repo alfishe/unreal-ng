@@ -167,7 +167,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     and `CDPLAYER.FLX` ([2026-10-02-cd-audio](../2026-10-02-cd-audio/TODO.md)). Since branch `cd-folder-audio`
     (2026-10-02) the test disc `testdata/machines/sprinter/cd/music.cue` (untracked) is an Enhanced CD: audio
     tracks 1-3 first, the data track 4 in session 2 (what `CD_PLAY.TRD` should list as tracks 1-3); a folder of
-    MP3 / FLAC / WAV files in the CD slot is an audio CD too.
+    MP3 / FLAC / WAV files in the CD slot is an audio CD too. `CD_PLAY.TRD` plays (owner, live, BIOS 3.06 + DSS
+    1.71); the Flex Navigator plugin `C:\FN\FLX\cdplayer.flx` did not - its PLAY MSF 00:02:00 - 80:00:74 was refused
+    for the end past the lead-out, fixed per MMC-3 (only the start is checked); the plugin plays from track 1
+    only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by

@@ -137,10 +137,15 @@ slot is an audio CD anyway; `media targets <folder>` offers the CD drive first.
 - **Turbo mode renders no audio** (like every sound source), but the head keeps moving with the
   emulated frames: a guest polling the position sees the same values at any speed.
 - **A data track never plays.** The drive refuses a PLAY that starts in a data track at once (sense
-  05h / 64h ILLEGAL MODE FOR THIS TRACK) and one whose range runs into a data track (05h / 63h END OF
-  USER AREA ENCOUNTERED ON THIS TRACK); the head and the audio status stay. Outside the guest the
-  same is `bad-request`. A play ends at its session's lead-out: on an Enhanced CD a player asking
-  for "the last audio track up to the data track's start" plays to the end of the audio session.
+  05h / 64h ILLEGAL MODE FOR THIS TRACK) and a PLAY AUDIO (10) / (12) whose range runs into a data
+  track (05h / 63h END OF USER AREA ENCOUNTERED ON THIS TRACK); PLAY AUDIO MSF plays the audio before
+  it. A refused PLAY moves nothing. Outside the guest a start in data is `bad-request`. Only the start
+  is checked (MMC-3): an end past the disc plays to the session's lead-out - on an Enhanced CD
+  "track 3 up to the data track's start" plays to the end of the audio session.
+- **Sprinter `CDPLAYER.FLX`** (Flex Navigator plugin) plays from the first track only (it has no
+  track skip), asks for 00:02:00 - 80:00:74, never reads the status and sends no TEST UNIT READY:
+  track 1 must be audio, and the first press after a disc change only clears the drive's unit
+  attention ([its disassembly](../../docs/disasm/software/sprinter/cdplayer-flx/README.md)).
 - **cdplay does not check the drive's errors**: `3` on the Enhanced CD's data track (or `1` on a
   mixed-mode disc) shows `[PLAYING]` and then follows the drive back to the track that still
   plays (or stays at 00:00 when nothing played) - the player's behavior, a real drive answers the same.

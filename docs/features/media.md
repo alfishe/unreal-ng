@@ -202,10 +202,12 @@ stops from outside the guest (not while TTD records). Recipe:
 [cd-audio.md](../../.recipe/media/cd-audio.md); design and tests:
 [2026-10-02-cd-audio](../inprogress/2026-10-02-cd-audio/README.md).
 
-The drive's rules for audio, as MMC-3 sets them: a PLAY whose start is not in an audio track fails at
-once (ILLEGAL REQUEST, ILLEGAL MODE FOR THIS TRACK, sense 05h / 64h / 00h), a range that runs into a
-data track fails too (END OF USER AREA ENCOUNTERED ON THIS TRACK, 05h / 63h / 00h); neither moves the
-head nor changes the audio status. A play ends at its session's lead-out. The IDE activity LED lights
+The drive's rules for audio, as MMC-3 sets them, check the start: a PLAY whose start is past the disc
+fails with LBA OUT OF RANGE (05h / 21h), one whose start is not in an audio track with ILLEGAL MODE FOR
+THIS TRACK (05h / 64h / 00h); neither moves the head nor changes the audio status. The end is not
+checked: an end past the disc (players ask for 80:00:74 or FF:FF:FF, "to the end") plays to the
+session's lead-out. A data track inside the range: PLAY AUDIO (10) / (12) fail (END OF USER AREA
+ENCOUNTERED ON THIS TRACK, 05h / 63h), PLAY AUDIO MSF plays the audio before it. The IDE activity LED lights
 only while the drive moves data from the disc to the host (READ (10) / (12), READ CD); status polls
 and audio play leave it dark - playing audio shows on the HUD's "CD" indicator (the drive's mixer row).
 
