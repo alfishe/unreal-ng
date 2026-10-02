@@ -113,10 +113,12 @@ public:
 
 /// The serial ports' peers on the network (an ESP module's stack, a TCP or
 /// serial-device link): the #xxEF port's (a ZX-Evo AVR UART or a ZX-WiFi
-/// card) and the machine's own (ATM Turbo 2+ keyboard controller). In the TTD
-/// tables they are guests 2 and 3; the card's chip is guest 1
+/// card), the machine's own (ATM Turbo 2+ keyboard controller) and the
+/// ATM2IOESP card's. In the TTD tables they are guests 2, 3 and 4; the
+/// ZXNETUSB card's chip is guest 1
 struct SerialGuests
 {
     INetGuest* com = nullptr;
     INetGuest* machine = nullptr;
+    INetGuest* atmIo = nullptr;   ///< the ATM2IOESP card's peer (guest 4)
 };

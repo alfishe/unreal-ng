@@ -25,6 +25,7 @@ class VirtualNetwork;
 class ZxNetUsb;
 class ComPort;
 class ISerialPeer;
+class Atm2IoEsp;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -130,6 +131,8 @@ public:
 	// The peer on the machine's own serial port when that port is no 16550 on
 	// #xxEF (ATM Turbo 2+ keyboard controller's RS-232), when fitted
 	ISerialPeer* pMachineSerialPeer = nullptr;
+	// The ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, when fitted (NetworkManager owns it)
+	Atm2IoEsp* pAtm2IoEsp = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

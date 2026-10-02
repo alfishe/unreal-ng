@@ -285,6 +285,24 @@ void NetworkWindow::buildUi()
     cardsLayout->addLayout(wifiPeer);
     page->addWidget(cards);
 
+    // ATM2IOESP: not a ZX-Bus card - the ATM Turbo 2+ INTERNAL I/O connector
+    auto* ioCard = new QGroupBox(tr("ATM Turbo 2+ INTERNAL I/O connector"), _settingsPage);
+    auto* ioLayout = new QVBoxLayout(ioCard);
+    _atm2IoEsp = new QCheckBox(tr("Wi-Fi: ATM2IOESP card (TL16C550C + ESP32; bus address by #FB, data by #FA)"), ioCard);
+    _atm2IoEsp->setToolTip(tr("NedoOS: espcom.ini comType = 3, the registers at 0xF0..0xF7 (0xF8..0xFF on Rev 1.0)"));
+    ioLayout->addWidget(_atm2IoEsp);
+    _atm2IoEspWhy = why(ioCard);
+    ioLayout->addWidget(_atm2IoEspWhy);
+    auto* ioForm = new QFormLayout();
+    _atm2IoEspPeer = new SerialPeerEditor(ioCard);
+    ioForm->addRow(tr("Its 16550 is wired to"), _atm2IoEspPeer);
+    _atm2IoEspAddress = new QComboBox(ioCard);
+    _atm2IoEspAddress->addItem(tr("#F0..#F7 (Rev 1.5 / 2.0, default)"), 0xF0u);
+    _atm2IoEspAddress->addItem(tr("#F8..#FF (Rev 1.0)"), 0xF8u);
+    ioForm->addRow(tr("Bus address"), _atm2IoEspAddress);
+    ioLayout->addLayout(ioForm);
+    page->addWidget(ioCard);
+
     // The machine's own serial port
     auto* com = new QGroupBox(tr("Machine serial port"), _settingsPage);
     auto* comLayout = new QVBoxLayout(com);
@@ -383,15 +401,16 @@ void NetworkWindow::buildUi()
 
     connect(_apply, &QPushButton::clicked, this, &NetworkWindow::onApply);
     connect(_revert, &QPushButton::clicked, this, &NetworkWindow::onRevert);
-    for (QCheckBox* box : {_zxNetUsb, _zxWifi, _modemLines, _hostAccess})
+    for (QCheckBox* box : {_zxNetUsb, _zxWifi, _atm2IoEsp, _modemLines, _hostAccess})
         connect(box, &QCheckBox::toggled, this, &NetworkWindow::onEdited);
-    for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _espChip, _dnsMode})
+    for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _atm2IoEspAddress, _espChip, _dnsMode})
         connect(combo, &QComboBox::currentIndexChanged, this, &NetworkWindow::onEdited);
     for (QLineEdit* edit : {_hosts, _forwards})
         connect(edit, &QLineEdit::textEdited, this, &NetworkWindow::onEdited);
     connect(_timeout, &QSpinBox::valueChanged, this, &NetworkWindow::onEdited);
     connect(_comPort, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zxWifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
+    connect(_atm2IoEspPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
 }
 
 void NetworkWindow::setBinding(EmulatorBinding* binding)
@@ -456,6 +475,7 @@ void NetworkWindow::refresh()
     }
     _comPort->setDevices(devices);
     _zxWifiPeer->setDevices(devices);
+    _atm2IoEspPeer->setDevices(devices);
 
     if (!_dirty)
     {
@@ -467,6 +487,7 @@ void NetworkWindow::refresh()
         _applied.zxBus = form.zxBus;
         _applied.serialPort = form.serialPort;
         _applied.kbcFirmware = form.kbcFirmware;
+        _applied.internalIo = form.internalIo;
     }
     updateAvailability();
     updateStatusTree(network);
@@ -478,6 +499,9 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     _zxNetUsb->setChecked(form.zxNetUsb);
     _zxWifi->setChecked(form.zxWifi);
     _zxWifiPeer->setSpec(form.zxWifiPeer);
+    _atm2IoEsp->setChecked(form.atm2IoEsp);
+    _atm2IoEspPeer->setSpec(form.atm2IoEspPeer);
+    _atm2IoEspAddress->setCurrentIndex(std::max(0, _atm2IoEspAddress->findData(form.atm2IoEspAddress)));
     _comPort->setSpec(form.comPort);
     _avrFirmware->setCurrentIndex(std::max(0, _avrFirmware->findData(Q(form.avrFirmware))));
     _kbcFirmware->setCurrentIndex(std::max(0, _kbcFirmware->findData(Q(form.kbcFirmware.empty() ? "V41" : form.kbcFirmware))));
@@ -499,6 +523,9 @@ NetworkForm NetworkWindow::readForm() const
     form.zxNetUsb = _zxNetUsb->isChecked();
     form.zxWifi = _zxWifi->isChecked();
     form.zxWifiPeer = _zxWifiPeer->spec();
+    form.atm2IoEsp = _atm2IoEsp->isChecked();
+    form.atm2IoEspPeer = _atm2IoEspPeer->spec();
+    form.atm2IoEspAddress = _atm2IoEspAddress->currentData().toUInt();
     form.comPort = _comPort->spec();
     form.avrFirmware = S(_avrFirmware->currentData().toString());
     if (!form.kbcFirmware.empty())   // only where the board has the socket
@@ -526,6 +553,11 @@ void NetworkWindow::updateAvailability()
     _zxWifiWhy->setText(Q(a.zxWifiWhy));
     _zxWifiWhy->setVisible(!a.zxWifi);
     _zxWifiPeer->setEnabled(a.zxWifi && form.zxWifi);
+    _atm2IoEsp->setEnabled(a.atm2IoEsp || form.atm2IoEsp);
+    _atm2IoEspWhy->setText(Q(a.atm2IoEspWhy));
+    _atm2IoEspWhy->setVisible(!a.atm2IoEsp);
+    _atm2IoEspPeer->setEnabled(a.atm2IoEsp && form.atm2IoEsp);
+    _atm2IoEspAddress->setEnabled(a.atm2IoEsp && form.atm2IoEsp);
     _comPort->setEnabled(a.comPort);
     _comPortWhy->setText(Q(a.comPortWhy));
     _comPortWhy->setVisible(!a.comPort);
@@ -537,10 +569,12 @@ void NetworkWindow::updateAvailability()
     _kbcWhy->setVisible(!a.kbcFirmware && a.avrFirmware);   // one "only the X has" line is enough
     if (!a.kbcFirmware && !a.avrFirmware)
         _avrWhy->setText(Q(a.avrFirmwareWhy + " " + a.kbcFirmwareWhy));
-    const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer));
+    const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer)) ||
+                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer));
     _espChip->setEnabled(esp);
     const bool serial = form.comPort.kind == ComPortSpec::Kind::Serial ||
-                        (form.zxWifi && form.zxWifiPeer.kind == ComPortSpec::Kind::Serial);
+                        (form.zxWifi && form.zxWifiPeer.kind == ComPortSpec::Kind::Serial) ||
+                        (form.atm2IoEsp && form.atm2IoEspPeer.kind == ComPortSpec::Kind::Serial);
     _modemLines->setEnabled(serial);
 }
 

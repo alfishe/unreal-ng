@@ -715,6 +715,12 @@ struct CONFIG
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];
+		/// What the ATM2IOESP card's 16550 is wired to (ATM Turbo 2+ INTERNAL I/O
+		/// connector, Card=ATM2IOESP): ComPortSpec, empty = AT (its shipped firmware)
+		char atm2IoEsp[256];
+		/// The card's bus address (#FB latch): #F0 (Rev 1.5 / 2.0 default) or #F8
+		/// (Rev 1.0); its 16550 answers base .. base + 7
+		uint8_t atm2IoEspAddress;
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;

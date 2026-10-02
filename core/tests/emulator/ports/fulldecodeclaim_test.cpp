@@ -582,8 +582,9 @@ protected:
 // the dedicated screen/beeper test suites).
 TEST_F(FullDecodeClaim_ATM710_Test, NoClaim_LegacyDoubleDecodeUnchanged)
 {
-    EXPECT_TRUE(_portDecoder->IsPort_FE(0x04C4)) << "Pre-fix behavior: #C4 still decodes as #FE (A0=0)";
-    EXPECT_TRUE(_portDecoder->IsPort_FE(0x04C6)) << "Pre-fix behavior: #C6 still decodes as #FE (A0=0)";
+    // #FE is A2..A0 = 110 on the ATM 7.10 board (since 2026-10-02; before, A0 alone): #C6 aliases it, #C4 not
+    EXPECT_FALSE(_portDecoder->IsPort_FE(0x04C4)) << "#C4 (A2..A0 = 100) is not #FE";
+    EXPECT_TRUE(_portDecoder->IsPort_FE(0x04C6)) << "Pre-fix behavior: #C6 still decodes as #FE (A2..A0 = 110)";
 
     ASSERT_EQ(_context->emulatorState.p7FFD, 0);
     FunnelOut(_portDecoder, 0x04C5, 0x81);

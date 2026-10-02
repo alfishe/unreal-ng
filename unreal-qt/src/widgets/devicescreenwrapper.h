@@ -137,6 +137,11 @@ public:
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const;
 
+protected:
+    /// GPU backend: Tab / Shift+Tab that reach the window container (the container has the Qt focus while the
+    /// native focus is still in the main window) go to the GL window instead of moving the focus
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     QPointer<QWidget> _widget;  // Guarded: the parent may destroy the widget before the wrapper
     DeviceScreen* _software = nullptr;

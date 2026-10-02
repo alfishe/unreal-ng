@@ -1739,6 +1739,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << ", Even M1";
                                     if (value.isMember("scorpion_turbo_logic"))
                                         out << ", Turbo+ logic " << value["scorpion_turbo_logic"].asString();
+                                    if (value.isMember("atm710_turbo_waits"))
+                                        out << ", 7 MHz RAM waits " << value["atm710_turbo_waits"].asString();
                                     if (value["statistics"].isObject())
                                     {
                                         const Json::Value& last = value["statistics"]["last_frame"];
@@ -1779,6 +1781,14 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << ", RTS " << (machineSerial["rts"].asBool() ? "on" : "off") << ", in "
                                             << machineSerial["bytes_in"].asUInt64() << " / out " << machineSerial["bytes_out"].asUInt64() << " bytes, lost "
                                             << machineSerial["lost"].asUInt64();
+                                    const Json::Value& ioEsp = value["atm2ioesp"];
+                                    if (ioEsp["fitted"].asBool())
+                                        out << "\n[com] ATM2IOESP at " << ioEsp["address"].asString() << ", " << ioEsp["peer"].asString()
+                                            << (ioEsp.isMember("target") ? " " + ioEsp["target"].asString() : std::string())
+                                            << (ioEsp["connected"].asBool() ? "" : " (not connected)") << ", " << ioEsp["baud"].asUInt()
+                                            << " baud, rx " << ioEsp["rx_fifo"].asInt() << " / tx " << ioEsp["tx_fifo"].asInt() << " in FIFO, in "
+                                            << ioEsp["bytes_in"].asUInt64() << " / out " << ioEsp["bytes_out"].asUInt64() << " bytes, overruns "
+                                            << ioEsp["overruns"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];

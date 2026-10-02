@@ -27,18 +27,7 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
             _intSource.LatchKeyboardInt();
     });
 
-    _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) {
-        const ::Mouse* mouse = _context ? _context->pMouse : nullptr;
-        if (!mouse)
-        {
-            x = y = 0;
-            buttons = 0xFF;
-            return;
-        }
-        x = mouse->GetX();
-        y = mouse->GetY();
-        buttons = mouse->GetButtons();
-    });
+    _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) { SampleMouse(x, y, buttons); });
     _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) { _chip.sio.Receive(1, value); });
 
     if (_context && _context->pMouseManager)
@@ -49,6 +38,32 @@ SprinterInput::~SprinterInput()
 {
     if (_context && _context->pMouseManager)
         _context->pMouseManager->RemoveSink(this);
+}
+
+void SprinterInput::SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const
+{
+    // The counters are the host mouse's (Mouse): read whether or not a Kempston interface is configured
+    // ([INPUT] Mouse=), because the board's mouse is not that interface
+    const ::Mouse* mouse = _context ? _context->pMouse : nullptr;
+    if (!mouse)
+    {
+        x = y = 0;
+        buttons = 0xFF;
+        return;
+    }
+    x = mouse->GetX();
+    y = mouse->GetY();
+    buttons = mouse->GetButtons();
+}
+
+uint8_t SprinterInput::ReadMouseView(uint16_t port) const
+{
+    // MAME sprinter.cpp case 0x58: #FADF buttons, #FBDF X, #FFDF Y (the Kempston address bits A8, A10)
+    uint8_t x = 0, y = 0, buttons = 0xFF;
+    SampleMouse(x, y, buttons);
+    if ((port & 0x0100) == 0)
+        return static_cast<uint8_t>(0xF8 | (buttons & 0x07));
+    return (port & 0x0400) == 0 ? x : y;
 }
 
 uint64_t SprinterInput::Now() const

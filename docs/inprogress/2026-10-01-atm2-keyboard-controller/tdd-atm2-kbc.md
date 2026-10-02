@@ -212,9 +212,19 @@ Why (from the v4.1 source and the v7.10 schematic `cp7_2`):
   `divider = 3` and runs at 3.5 MHz while it polls (or with I/O waits in
   turbo - WAIT_H not traced yet).
 
-Open: whether the real ATM2 holds 3.5 MHz (or adds I/O waits) during the
-NedoOS network loop; an end-to-end fixture needs a NedoOS image with an
-`espcom.ini` for the ATM2 COM.
+Resolved the same day: the real board has no I/O waits in turbo, but it
+stretches every RAM access by 2-3 T at 7 MHz (the video arbiter D68 / D69.1,
+[2026-10-02-atm710-turbo-waits](../2026-10-02-atm710-turbo-waits/README.md)).
+The NedoOS loop runs from RAM, so its gaps grow into the serial window in
+part of the iterations. With those waits modeled, 7 MHz and 38400:
+
+| Z80 | Line | received / sent / lost | Result |
+|---|---|---|---|
+| 7 MHz with the RAM waits | 38400 | 1319 / 379 / 1 | DNS, CONNECT, HTTP request, 1028-byte reply |
+
+115200 still loses bytes, as on the board. Open: an end-to-end fixture needs
+a NedoOS image with an `espcom.ini` for the ATM2 COM (the shipped floppy is
+full and runs `wizcfg`).
 
 ## 8. Configuration and surfaces
 
