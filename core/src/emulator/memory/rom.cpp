@@ -694,6 +694,12 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         "+3 Editor ROM", "+3 128 BASIC Syntax ROM", "+3DOS ROM", "48K BASIC ROM"
     };
 
+    // ATM Turbo 2 v4.50 (data/rom/atm1.rom, page order verified against the image)
+    static const char* ATM450_ROLES[] =
+    {
+        "System ROM (CP/M BIOS, boot menu)", "TR-DOS ROM", "128K Editor/Menu ROM", "48K BASIC ROM"
+    };
+
     // Profi 1024 ROM layout (data/rom/profi.rom): SYS/menu, TR-DOS, 128K + STS monitor, 48K
     static const char* PROFI_ROLES[] =
     {
@@ -713,6 +719,9 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_SCORP:
         case MM_PROFSCORP:
             return (page < 4) ? PENTAGON_SCORP_ROLES[page]
+                              : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_ATM450:
+            return (page < 4) ? ATM450_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         case MM_PROFI:
             return (page < 4) ? PROFI_ROLES[page]

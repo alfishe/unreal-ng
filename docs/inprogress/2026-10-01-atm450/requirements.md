@@ -1,11 +1,25 @@
 # ATM450 requirements
 
 Machine: **ATM Turbo 2 v4.50** ("ATM-Turbo v4.50", UnrealSpeccy model name),
-short name `ATM450`, `MM_ATM450`. References: UnrealSpeccy 0.37.x
-(`emulators/github/unreal-speccy`), ZXMAK2 (`emulators/github/ZXMAK2`,
+short name `ATM450`, `MM_ATM450`.
+
+**Hardware source (primary):** the MicroArt manual "Многофункциональный
+компьютер ATM Turbo — Инструкция по наладке. Описание компьютера" (~1992,
+board versions 4.10-5.20): [index](https://zxpress.ru/book.php?id=170),
+[appendix 2, port table](https://zxpress.ru/ru/books/chapter/2356),
+[Ver 4.50 schematic sheet](https://zxpress.ru/chapters_images/atmturbo-6.jpg).
+Where it is explicit it wins over the emulators; where it is silent (PAL
+marker timing, palette intensity order) the emulators' shared behavior ships.
+No PLD dump or HDL reimplementation of the board exists in public.
+
+References: UnrealSpeccy 0.37.x
+(`emulators/github/unreal-speccy`, **primary** — where the references differ,
+UnrealSpeccy's behavior is the one we ship until hardware documentation says
+otherwise), ZXMAK2 (`emulators/github/ZXMAK2`,
 `src/ZXMAK2.Hardware/Atm/MemoryAtm450.cs`). Xpeccy is **not** a reference for
 this machine (its `HW_ATM1` is a dead enum; there is no `atm1.c`). All
-reference line numbers: see [cross-mapping.md](cross-mapping.md) §3.
+reference line numbers: see [cross-mapping.md](cross-mapping.md) §3; every
+place where the two references disagree is listed in cross-mapping §3.3.
 
 ## R1 — Model registry and creatability
 
@@ -20,127 +34,194 @@ reference line numbers: see [cross-mapping.md](cross-mapping.md) §3.
   (`config.cpp` `intstart=1756`, `intlen=32`, frame 69888, line 224). No change.
 - `data/configs/atm450/unreal.ini` derives from `data/configs/atm710/unreal.ini`
   with: `HIMEM=ATM450`, `RAMSize=512`, `[ROM] ATM1=rom/atm1.rom` +
-  `ROMSET=ROM.ATM1` (label offsets chosen after resolving OQ-1, below),
+  a `ROMSET=ROM.ATM1` whose labels match the verified page order of R3
+  (`sys=atm1.rom:0`, `dos=atm1.rom:1`, `128=atm1.rom:2`, `sos=atm1.rom:3`),
   ZX-Evo-only sections removed (`[ZC]`, `[NETWORK] ComPort` — the AVR serial
   and the SD slot are ATM3 hardware; `[EVO]` if present). GS/Covox/MoonSound
   stay: they are bus cards, not machine features.
 
-## R2 — Memory map (the core of the work)
+## R2 — Memory map and ports (the core of the work)
 
 State (all fields already exist in `EmulatorState`): `pFDFD`, `aFE`, `aFB`
 (`platform.h:1120,1141-1142`), `p7FFD`, `atmMemSwapped` (vestigial, keep as-is).
 
-Port arms (UnrealSpeccy `memory.cpp:134-162`, `io.cpp:577-582`):
+**The two address-bus latches hold the LOW address byte (A7-A0) of the I/O
+cycle**, not the high byte: UnrealSpeccy `set_atm_aFE((unsigned char)port)`
+(`io.cpp:466`) and `comp.aFB = (unsigned char)port` (`io.cpp:1045`); ZXMAK2
+`AFE = (byte)addr` / `AFB = (byte)addr` (its `"High address byte"` attribute
+description is wrong — the code truncates to the low byte). The software
+interface therefore is *which port address* is used: `OUT (#FE)` / `#BE` /
+`#9E` / `#7E` select ROM/RAM at `#0000` and the video mode, `IN A,(#FB)` /
+`IN A,(#7B)` switch the system ROM on/off.
 
-1. **`pFDFD` latch** — write decode `(port & 0x8202) == 0x8000`
-   (A15=1, A9=0, A1=0 — i.e. the `#FDFD` group, not an exact port). Bits:
-   - 2-0: RAM page extension — page at `#C000` becomes
-     `(p7FFD & 7) | (pFDFD & 7) << 3` (512 KiB = 5 bits, 1024 KiB = 6 bits
-     via `ram_mask`);
-   - 3: TR-DOS ROM priority (see arm 4).
-   Note the reference comment: "original ATM uses D2 as ROM address extension,
-   not RAM" — the emulated behavior (all of D2-D0 as RAM extension) is what
-   every emulator ships; follow it.
-2. **`aFE` latch** — on every write in the `#xxFE` group (`!(port & 1)`),
-   latch the *high address byte* (`set_atm_aFE`, `atm.cpp:286-292`):
-   - bit 7 = 0 → RAM at `#0000`: window 0 = RAM page 0, window 1 = RAM
-     page 4 (not 5 — reference `memory.cpp:140-145`), window 2 unchanged,
-     window 3 per arm 1; aFE.7 transition triggers a bank update;
-   - bits 6-5: video mode (R4);
-   - bit 6 transition toggles the (non-emulated) memswap flag — mirror the
-     `atmMemSwapped` bookkeeping the 710 decoder already does for FF77.0.
-3. **`aFB` latch** — on every read with A2=0 (the `#xxFB`/`#xx7B` group;
-   UnrealSpeccy deliberately uses the wide `(port & 0x04) == 0` decode,
-   "for MODPLAYi", the strict `& 0x7F == 0x7B` variant is commented out):
-   latch the high address byte; **bit 7 = CPSYS** (system ROM select).
-4. **ROM at `#0000`** (when aFE.7 = 1), in priority order:
-   1. `p7FFD & 0x20` (48K paging lock) **clears** `aFB.7` first;
-   2. TR-DOS active **and** `pFDFD & 8` → `aFB.7 = 1` (highest priority);
+Write decode groups on A15/A9/A1 (all four are disjoint — this answers the old
+OQ-3, there is no collision with the AY):
+
+| Group | A15 | A9 | A1 | `port & 0x8202` | Meaning on ATM450 |
+|---|---|---|---|---|---|
+| `#7DFD` | 0 | 0 | 0 | `0x0000` | palette write (R4) |
+| `#7FFD` | 0 | 1 | 0 | `0x0200` | 128K paging (with the usual 48K lock) |
+| `#FDFD` | 1 | 0 | 0 | `0x8000` | `pFDFD` extension latch |
+| `#FFFD`/`#BFFD` | 1 | 1 | 0 | `0x8200` | AY (A14 picks select/data) |
+
+Port arms (UnrealSpeccy `memory.cpp:134-162`, `io.cpp:533-537,577-582`):
+
+1. **`pFDFD` latch** — write decode `(port & 0x8202) == 0x8000`. Bits:
+   - 1-0 (EA16 / EA17): RAM page extension — page at `#C000` becomes
+     `((p7FFD & 7) | (pFDFD & 3) << 3) & ramMask`, 32 pages = 512 KiB, the
+     board's maximum (16 × 565РУ7).
+   - 2 (RA16): ROM A16, the upper half of a 128 KiB "ROM disc" (27C010);
+     selects nothing with the shipped 64 KiB image.
+   - 3: CPNET — TR-DOS forces the system ROM (see arm 4).
+   Manual schematic (latch D3: D0→EA16, D1→EA17, D2→RA16, D3→CPNET,
+   D4/D5 = phone line TON/TNAB) and ZXMAK2 agree. UnrealSpeccy feeds D2 into
+   the RAM page instead (its own comment says the hardware does not) — no
+   difference at 512 KiB. The model table still offers 1024 KiB for
+   UnrealSpeccy parity; with the hardware decode nothing reaches pages 32-63
+   (OQ-5).
+2. **`aFE` latch** — on every write with A0=0 (`#xxFE` group), latch the
+   **low address byte** (`set_atm_aFE`, `atm.cpp:286-292`):
+   - bit 7 (A7) = 0 → **RAM at `#0000`** ("CPUS"): window 0 = RAM page 0
+     (writable), window 1 = RAM page **4** (not 5 — `memory.cpp:140-145`),
+     window 2 unchanged, window 3 per arm 1; an A7 transition rebuilds the banks;
+   - bits 6-5 (A6-A5): video mode (R4);
+   - no memory swap: the manual wires A6 to RG0 only; UnrealSpeccy's
+     `atm_memswap()` on an A6 change is gated behind its default-off
+     `AtmMemSwap` option and is not ported (`atmMemSwapped` stays false).
+   The `#FE` write itself (border, beeper, tape) and the ATM bright-border bit
+   from A3 (arm 5) happen on the same cycle.
+3. **`aFB` latch** — on a read with A2=0 that **no earlier read arm claimed**,
+   latch the **low address byte**; bit 7 (A7) = CPSYS (system ROM select). Read
+   order matters: UnrealSpeccy checks `#FE` (A0=0), GS `#B3/#BB`
+   (`io.cpp:724`), the DOS ports, the AY etc. first, and only the fall-through
+   reaches the latch (`io.cpp:1040-1055`), which then returns `#FF`. The wide
+   `(port & 0x04) == 0` decode is deliberate ("for MODPLAYi"; the strict
+   `(port & 0x7F) == 0x7B` line is commented out). Divergence: ZXMAK2 latches
+   on every A2=0 read without claiming the bus. We follow UnrealSpeccy: fall-
+   through position, floating `#FF` result.
+4. **ROM at `#0000`** (when aFE.7 = 1), evaluated on every bank rebuild in this
+   order:
+   1. `p7FFD & 0x20` (48K paging lock) **clears** `aFB.7` (a sticky state
+      change, not just a mapping decision);
+   2. TR-DOS active **and** `pFDFD & 8` → **sets** `aFB.7` (sticky, wins over 1);
    3. `aFB & 0x80` (CPSYS) → **sys** ROM;
-   4. TR-DOS active → **dos** ROM;
-   5. else standard 128K rule: `p7FFD & 0x10` selects **128** / **sos** ROM.
-   TR-DOS-active itself comes from the boot ROM mode (R6) and the model's
-   Beta-128/DOS-entry path exactly as on ATM710.
+   4. TR-DOS active → **dos** ROM (whatever 7FFD.4 says);
+   5. else standard 128K rule: `p7FFD & 0x10` selects **sos** (48) / **128** ROM.
+   TR-DOS-active is the common `CF_TRDOS` session (entry on `#3Dxx` fetch from
+   the 48 ROM, exit on execution from RAM), as on every Beta-128 machine.
 5. **`#FE` write side effects** shared with the ATM family: bright border from
-   A3 (`(port & 8) ^ 8`, `io.cpp:461-463`).
-6. **`#FE` read**: bit 7 = PAL flag `atm450_z(t)` — 0x80 normally, three short
-   zero windows (normal-speed frame: t in [7200,7240), [7284,7324),
-   [7326,7366); ZXMAK2 phases it as `Tact % FrameTactCount`). Implement
-   faithfully with unit tests pinning the windows; the copy-protection games
-   that read it are the point of having the machine at all.
-7. **No ATM register file**: `#xx77`/`#xxFF7`/`#EFF7`/`#xxBF`/`#xxBE`/gluk/SD
-   must **not** decode (the 710 arms the subclass inherits must be disabled or
-   re-gated). `#FF77`-style palette writes are 710/ATM3-only in the reference
-   (`io.cpp:231` gate) — but see OQ-2 for ZXMAK2's `#7DFD` palette claim.
+   A3 (`(port & 8) ^ 8`, `io.cpp:461-463`) into `atmBorderBright`.
+6. **`#FE` read**: bit 7 = `atm450_z(t)` — 0x80 normally, three short zero
+   windows in a normal-speed frame: t in [7200,7240), [7284,7324),
+   [7326,7366) (t = T-state within the frame; ZXMAK2 `Tact % FrameTactCount`).
+   Bits 6-0 come from the normal keyboard/tape read. Implement faithfully with
+   unit tests pinning the windows; the copy-protection games that read it are
+   the point of having the machine at all.
+7. **No ATM 7.10 register file**: `#xx77`, `#xxF7` windows, `#EFF7`, the 710
+   `#xx9F/#xxBF/#xxDF/#xxFF` palette group, `#xxBF`/`#xxBE`, gluk CMOS, SD must
+   **not** decode on ATM450 (the 710 arms are not inherited — the 450 decoder
+   has its own arm list).
 
 ## R3 — ROM
 
 - File: `data/rom/atm1.rom` (already shipped, 65536 bytes = 4 × 16 KiB).
-- Page mapping already ported (`rom.cpp:242-248`, from UnrealSpeccy
-  `config.cpp:898-904`): `sys=0, dos=1, 128=2, sos=3` for the whole-file load.
-- **OQ-1 (resolve before shipping the ini):** the inherited `ROM.ATM1` sets in
-  other configs (e.g. `data/configs/spectrum3/unreal.ini:645-648`) label
-  `sos=atm1.rom:0` — contradicting the `sys=0` whole-file order. The ROMSET
-  loader is label-based so either can be made consistent; resolve by boot test
-  (a CPM/sys boot shows immediately which physical page holds the sys ROM) and
-  pin the shipped `ROM.ATM1` offsets to the verified layout.
+- Page order **verified** from the image (old OQ-1, resolved 2026-10-01):
+  page 0 = **sys** (`DI; JP #3F00` at `#0000`, character set inside, no
+  Sinclair strings), page 1 = **TR-DOS 5.03**, page 2 = **128** (menu strings,
+  "1986 Sinclair Research"), page 3 = **48 BASIC** ("1982 Sinclair Research").
+  This matches `rom.cpp:238-241` (`sys=0, dos=1, 128=2, sos=3`, from
+  UnrealSpeccy `config.cpp:898-904`) and ZXMAK2 `GetRomIndex`. The inherited
+  `ROM.ATM1` ROMSET in other configs (`data/configs/spectrum3/unreal.ini:645-648`,
+  `sos=atm1.rom:0`) is wrong and must not be copied.
+- A decoder test pins the page order (signature bytes of each page mapped at
+  `#0000` under the R2 arm-4 conditions).
 
-## R4 — Video
+## R4 — Video and palette
 
 - Mode select already implemented and green:
   `Screen::DetectModeATM1` (`screen.cpp:336-357`) reads `(aFE >> 5) & 3`:
   0 → `M_ATM16` (EGA 320×200 16-color), 1 → `M_ATMHR` (640×200 multicolor),
-  2 → unused (falls back to ZX mode on the 320×200 raster), 3 → ZX 256×192.
-  Matrix test already exists: `atm_video_modes_suite_test.cpp:167`
-  (`ModeMatrix_ATM450_AFEBits`).
-- Text mode 6 (`FF77_TL`) is ATM3-only — no ATM450 text mode.
-- Renderers (`ScreenAtm`, `AtmVideoMapper`, `atmgeometry`) are family-shared;
-  no video work beyond wiring the model → family selection if one is needed.
-- Border: bright bit from A3 of the `#FE` write (R2 arm 5) — same code path
-  the 710 uses for `atmBorderBright`.
+  2 → unused (no picture), 3 → ZX 256×192.
+  Port addresses: `#9E`/`#1E` → EGA, `#BE`/`#3E` → hi-res, `#FE`/`#7E` → ZX
+  (A7 = ROM/RAM at 0 in each pair). Matrix test exists:
+  `atm_video_modes_suite_test.cpp:167` (`ModeMatrix_ATM450_AFEBits`).
+- The decoder must trigger `Screen::InitRaster()` when aFE bits 6-5 change
+  (same role as `Port_FF77_Out` on 710).
+- Text mode 6 is ATM3-only — no ATM450 text mode.
+- **Palette exists on ATM450** (old OQ-2, resolved: both references and the
+  manual — appendix 2 "PORT 7DFD (WRITE WITH A15=A9=A1=0): D0-D5 bgrBGR").
+  Write decode: the `#7DFD` group, `(port & 0x8202) == 0x0000`, no DOS gate,
+  no `pen2` gate (UnrealSpeccy `io.cpp:533-537`, ZXMAK2
+  `BusWritePort7DFD`). The cell is the 4-bit border color (`border_attr` + the
+  A3 bright bit). The data byte layout differs from 7.10: **ATM1 = `--grbGRB`**
+  (bits active-low: v = value ^ 0xFF; G=v.2, R=v.1, B=v.0 high bits, g=v.5,
+  r=v.4, b=v.3 low bits; bits 7-6 unused), versus ATM2 `grbG--RB`. The
+  manual's one-line "bgrBGR" does not say which triplet is the bright one;
+  the system ROM settles it: at reset it loads the Sinclair palette, and with
+  this layout cell 1 (blue) comes out `#0000AA` and cell 9 (bright blue)
+  `#0000FF` (boot test `ATM450Boot_Test.SystemRomBootMenu`, OQ-8). Same 2-bit
+  per channel DAC (`0xA * high + 5 * low` on the 4-bit ladder used by
+  `Port_ATM_Palette_Out`). UnrealSpeccy `draw.cpp:440-447`, ZXMAK2
+  `UlaAtm450.cs` `InitStaticTables` (identical tables).
+- Renderers (`ScreenAtm`, `AtmVideoMapper`, `atmgeometry`) are family-shared.
+- Border: bright bit from A3 of the `#FE` write (R2 arm 5).
 
 ## R5 — Peripherals
 
-- **FDD**: Beta-128 WD1793 as on 710 (ZXMAK2 has `FddAtm450.cs` with its own
-  decode — diff it against the 710 decode during implementation; expect only
-  the DOS-gate to differ). DOS entry/boot modes per R6.
+- **FDD**: Beta-128 WD1793 on `#1F/#3F/#5F/#7F/#FF` while the TR-DOS session
+  has the DOS ports (`CF_DOSPORTS`), like every Beta-128 machine. ZXMAK2
+  `FddAtm450.cs` decodes `(port & 0x83) == 0x03` / `(port & 0xE3) == 0xE3`
+  — the same partial decode (old OQ-4, resolved). Its gate is `DOSEN ||
+  SYSEN` (`General/FddController.cs:205`), and on ATM450 SYSEN = CPSYS with
+  ROM at 0, so ZXMAK2 also opens the FDC while the system ROM is mapped;
+  UnrealSpeccy opens it only inside the TR-DOS session (`CF_DOSPORTS`). We ship
+  UnrealSpeccy (OQ-7); the system-ROM boot test shows whether the sys ROM
+  needs the FDC outside a session. The 7.10-only "`#FF` bit 6 ignored"
+  quirk (no DDEN wiring) is **not** carried over without evidence: UnrealSpeccy
+  ignores bit 6 for every model, so the result is the same either way — keep
+  the 710 mask for parity and note it.
 - **IDE**: `[HDD] Scheme=ATM` already fits `MM_ATM450`
-  (`idecontroller.cpp:149-150`) — the ATM IDE status read is 710-or-IDE_ATM
-  in the reference (`io.cpp:1007`); keep the config-driven fitment.
-- **AY**, Kempston, Covox, GS cards: same decodes as 710 unless the reference
-  differs — verify in `io.cpp`/ZXMAK2 during implementation.
+  (`idecontroller.cpp:149-150`); keep the config-driven fitment.
+- **AY** (`#FFFD`/`#BFFD`), GS (`#B3/#BB/#33`), Kempston and the low-byte
+  cards: same decodes as 710.
 - **Not present on 450** (must not decode): gluk CMOS, Z-Controller SD,
   `EvoAvr`, PS/2 keyboard, board NMI (`xxBF`/`xxBE`).
 
-## R6 — Boot ROM modes (`ApplyBootROMDefaults` override)
+## R6 — Reset and boot ROM modes (`ApplyBootROMDefaults` override)
 
-Port of UnrealSpeccy `memory.cpp:375-400` for `MM_ATM450`:
-- `RM_128`: clear TR-DOS, clear `p7FFD.4`;
-- `RM_SOS`: clear TR-DOS, set `p7FFD.4`;
-- `RM_SYS`: set TR-DOS, clear `p7FFD.4`;
-- `RM_DOS`: set TR-DOS, **set** `p7FFD.4` (unlike 710/ATM3, which clear it
-  again — `memory.cpp:396-398` — the 450 keeps the bit; sos/128 selection is
-  then overridden by the dos ROM rule in R2 arm 4).
-The UnrealSpeccy `CF_SETDOSROM` step-trap (PC in `#3Dxx`, `z80_main.inl:113-122`)
-is their DOS-entry mechanism; our equivalent is the existing Beta-128/DOS-entry
-path used by the 710 decoder — do not port the trap itself.
+Port of UnrealSpeccy `z80.cpp:123-133` (reset) plus the shared
+`memory.cpp:375-400` boot-mode table (already in `Memory::SetROMMode`):
+- reset clears `pFDFD` (`z80.cpp:91`);
+- `RM_DOS`: `aFE = 0x80 | 0x60` (ROM at 0, ZX mode), `aFB = 0` — boots the
+  TR-DOS ROM (CF_TRDOS set, 7FFD.4 **kept set**, unlike 710/ATM3; the dos ROM
+  wins by the R2 arm-4 rule);
+- every other mode (`RM_128`, `RM_SOS`, `RM_SYS`): `aFE = 0x80` (ROM at 0,
+  video mode 0 = EGA), `aFB = 0x80` (CPSYS) — the machine **always starts in
+  the system ROM**, which then selects the ROM/video mode itself. ZXMAK2's reset
+  does the same (`AFE |= 0x80`, `AFB |= 0x80`).
+The UnrealSpeccy `CF_SETDOSROM` step trap is the generic TR-DOS entry
+mechanism our `Z80Step` already implements — nothing model-specific to port.
 
 ## R7 — State, TTD, automation
 
-- `TTDAtmPaging` already serializes `aFE`/`aFB` (`ttdatmpaging.cpp:30-31`);
-  `pFDFD` rides the model-agnostic paging state — verify it is inside the ATM
-  blob's contract and add it if not (bump the blob layout consciously).
+- `TTDAtmPaging` serializes `aFE`/`aFB` (`ttdatmpaging.cpp:30-31`) but **not
+  `pFDFD`** (audit done). `pFDFD` takes the blob's former zero filler byte
+  (`reserved0`): the 136-byte layout is unchanged, older recordings restore
+  0 = the reset value, ATM710/ATM3 never set it. The ATM450 palette rides the existing `atmPalette` /
+  `atmPaletteRegs` state the blob already carries for 710 — verify.
 - `TtdClockUnits()` returns **1** (no turbo states; 710 returns 2). If R8's
   turbo ever lands, this becomes 2 and old recordings invalidate — deliberate.
 - `DeviceState`/WebAPI/MCP/CLI already reference `MM_ATM450` in their ATM
-  branches (`devicestate.cpp:1477`, `state_memory_api.cpp:370`) — audit each
-  branch for fields the 450 lacks (CMOS, SD) rather than adding new ones.
+  branches (`devicestate.cpp:1477`, `state_memory_api.cpp:370`,
+  `cli-processor-state.cpp:550`) — audit each branch for fields the 450 lacks
+  (FF77, xFF7 windows, CMOS, SD) and report `pFDFD`/`aFE`/`aFB` instead.
 - Port-trace session model name and port-map rows for the new decoder
-  (`portdecoder.cpp:571` pattern, `getPortMapEntries`).
+  (`portdecoder.cpp:571` pattern).
 
 ## R8 — Non-goals
 
-- **7 MHz turbo**: no software port switches it on the 4.50 board. References:
+- **7 MHz turbo**: no software port switches it on the 4.50 board — the
+  manual: a "Turbo" toggle switch, latched into D50 by the next `OUT (#FE)`. References:
   UnrealSpeccy ships 3.5 MHz only (its `atm450_z` has dead turbo branches);
   ZXMAK2 ships a separate `UlaAtmTurbo` machine variant that doubles the frame
   tact count. If wanted later, do it as an ini-selectable machine variant,
@@ -153,20 +234,25 @@ path used by the 710 decoder — do not port the trap itself.
 
 ## Open questions
 
-| # | Question | Resolution path |
+| # | Question | Status |
 |---|---|---|
-| OQ-1 | Which physical page of `data/rom/atm1.rom` holds the sys ROM (`sys=0` per `rom.cpp` vs `sos=0` per inherited ROMSET labels) | Boot test with both layouts; CPM boot is the discriminator; pin the ini + a decoder test |
-| OQ-2 | Palette on 450: UnrealSpeccy gates the `#xx9F`/`#FF` palette writes to 710/ATM3 only; the ZXMAK2 survey attributes a `#7DFD` palette to ATM450 | Read `MemoryAtm450.cs` paging table; if it writes a palette, decide follow-the-majority (no palette) vs ZXMAK2; note in cross-mapping §2 |
-| OQ-3 | Does the `#FDFD` group write collide with the AY `#FFFD` data write (both A15=1,A9=0,A1=0)? Reference order in `out1` decides which latch wins | Port the reference's handler order exactly; pin with a test writing `#FFFD` and asserting both latches |
-| OQ-4 | ZXMAK2 `FddAtm450.cs` decode vs the 710 FDD decode | Diff during implementation; only the gate is expected to differ |
+| OQ-1 | Page order of `data/rom/atm1.rom` | **Resolved**: sys/dos/128/sos = 0/1/2/3 (R3) |
+| OQ-2 | Palette on 450 | **Resolved**: yes, `#7DFD` group, ATM1 bit layout (R4) |
+| OQ-3 | `#FDFD` vs AY `#FFFD` collision | **Resolved**: none, A9 separates them (R2 table) |
+| OQ-4 | ZXMAK2 `FddAtm450.cs` vs the 710 FDD decode | **Resolved**: same partial decode (R5) |
+| OQ-5 | `pFDFD` bit 2: RAM (UnrealSpeccy) or ROM A16 | **Resolved by the schematic**: ROM A16 (RA16), shipped. Left open: drop `RAM_1024` from the ATM450 model row (hardware maximum 512 KiB) or keep it for UnrealSpeccy parity |
+| OQ-6 | `aFB` latch: fall-through + `#FF` (UnrealSpeccy) or side effect on every A2=0 read (ZXMAK2) | Open. The manual: the A2=0, A0=1 read is the **printer port** read (CPSYS from A7, BUSY on D7, ULINE on D6), so the board drives the bus. Shipped: UnrealSpeccy (fall-through, `#FF`, GS claimed first). On the real board a GS `#BB` read would also flip CPSYS - not emulated |
+| OQ-7 | FDC ports while the system ROM is mapped outside a TR-DOS session (ZXMAK2 SYSEN: open; UnrealSpeccy: closed) | Open; ship UnrealSpeccy. The boot menu's TR-DOS / 128 / 48 entries work with it; CP/M needs a CP/M disk to tell |
+| OQ-8 | Palette intensity order (`bgrBGR` in the manual) | **Resolved empirically**: the system ROM's Sinclair palette is right with the emulators' `--grbGRB` layout (R4) |
+| OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | Open; the UnrealSpeccy windows ship. The PLM has no public dump |
 
 ## Definition of done
 
 - `ninja -C cmake-build-agent-release` zero warnings; `test-parallel` green
   (job cap at 50 % cores per `AGENTS.md`).
-- `ATM450` creatable and boots: 128 BASIC, TR-DOS (`#3D13`), sys/CPM ROM
-  entry; a real ATM-mode game runs (candidate: an ATM 16-color title from the
-  ATM software catalog, mirroring `atm710_game2048_repro_test.cpp`).
+- `ATM450` creatable and boots: system ROM by default, 128 BASIC, TR-DOS
+  (`RM_DOS` and `#3D13` entry); a real ATM-mode program runs (candidate: an
+  ATM 16-color title, mirroring `atm710_game2048_repro_test.cpp`).
 - TTD record/replay across a mode switch; model switch away/back keeps state.
 - `.recipe/_common/machines.md`, `AGENTS.md`, `docs/features/automation.md`
   list the model; `unreal-qt` menu shows it.

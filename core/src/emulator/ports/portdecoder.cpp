@@ -16,6 +16,7 @@
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/ports/models/portdecoder_atm450.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
@@ -109,6 +110,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_PROFI:
         case MM_SCORP:
         case MM_PROFSCORP:
+        case MM_ATM450:
         case MM_ATM710:
         case MM_ATM3:
         case MM_TSL:
@@ -164,6 +166,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             // ProfROM variant shares the decoder: it branches on
             // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
+            break;
+        case MM_ATM450:
+            result = new PortDecoder_ATM450(context);
             break;
         case MM_ATM710:
             result = new PortDecoder_ATM710(context);
@@ -573,6 +578,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
             case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
+            case MM_ATM450:      info.modelName = "ATM450"; break;
             case MM_ATM710:      info.modelName = "ATM710"; break;
             case MM_ATM3:        info.modelName = "ZXEvoBaseConf"; break;
             default:             info.modelName = "Unknown"; break;
