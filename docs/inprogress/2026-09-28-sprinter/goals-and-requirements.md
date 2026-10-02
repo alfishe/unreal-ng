@@ -99,7 +99,7 @@ D1-D4 are the minimum for calling the machine "supported"; D5-D7 complete it.
 | ID | Requirement |
 |---|---|
 | FR-50 | TTD: every piece of Sprinter state (PLD cells, port-table page is ordinary RAM, video RAM, accelerator, CBL, SIO/CTC, IDE latch, CMOS) is captured and restored; replay is deterministic |
-| FR-51 | Snapshots: a Sprinter state file (no Spectrum snapshot format can hold it); loading a `.sna`/`.z80` is refused with a clear error |
+| FR-51 | Snapshots: a Sprinter state file (no Spectrum snapshot format can hold it); loading a `.sna`/`.z80` is refused with a clear error **outside the ZX mode**; inside it, it is applied to the Spectrum pages through the cell table as an emulator convenience (S8 Z5, [tdd-zx-mode.md](tdd-zx-mode.md) §3.5; not built yet: today nothing refuses) |
 | FR-52 | Debugger: physical-page memory views; a port-table view (address → code, per map, DOS, R/W); a video mode-table view; breakpoints on internal codes |
 | FR-53 | Automation parity: WebAPI, CLI, MCP, Lua, Python can create the model, insert media, read the Sprinter state (`sprinter` state block: pages, cells, map, clock, video) |
 

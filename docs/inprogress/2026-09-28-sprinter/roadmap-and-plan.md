@@ -29,6 +29,9 @@ flowchart LR
     S5 --> S7
     S6 --> S7
     V1["TTD Phase 1 regions<br/>(PLAN #40)"] -.-> S7
+    S4 --> S8["S8 ZX mode<br/>(Z1-Z6)"]
+    S3a --> S8
+    AU["automation audit P1<br/>(sprinter-automation)"] -.-> S8
 ```
 
 Dashed arrows are work owned by other PLAN rows. The Sprinter is the **last** machine program
@@ -47,6 +50,7 @@ earlier.
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, **default on** because the PLD has it (Q3, decided 2026-10-01) | T-ACC-*; part of **ACC-9** | M | S2 |
 | **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub. **Status 2026-10-02: done** (branch `sprinter-s6`, [s6-sound-outcome.md](s6-sound-outcome.md)): `CovoxBlaster` in the COVOX mixer slot, one AY at 1.75 MHz, TTD id 32, PT3PLAY / WAVPLAY against MAME; the accelerator INT suspend default is off since (WAVPLAY) | T-CBL-*; **ACC-9** | S-M | S2 |
 | **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD Phase 1 (PLAN #40) |
+| **S8** | ZX (Spectrum-compatible) mode end to end ([research-zx-mode.md](research-zx-mode.md), [tdd-zx-mode.md](tdd-zx-mode.md) §9): **Z1** faithful path checked against the MAME captures (DSS launcher v2.03 + TRD / SCL into the BIOS RAM disk, TR-DOS 7.03, Ctrl+Alt+Del back to DSS, the Peters Plus launcher with a TRD) (S); **Z2** tape: I5 test and the base-clock tape time base under turbo (S-M); **Z3** "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`) with A/B (M); **Z4** `SprinterZxMode` state on the five surfaces (S-M); **Z5** snapshots into the ZX mode through the cell table + the refusal outside it (M); **Z6** `zx run` macro, recipe, TTD replay (M) | T-ZX-1..14; ACC-6 extended (RAM disk, SCL, tape) | M-L | S3a, S3b, S4 (done); Z4 after the automation audit P1 branch; Z6 after Z1 and Z4; **not** on S6b (General Sound from Spectrum programs is S6b's matter) |
 
 Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work).
 
