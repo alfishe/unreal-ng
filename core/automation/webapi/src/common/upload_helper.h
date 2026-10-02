@@ -16,7 +16,7 @@ namespace api::v1
 
 // Size limits (bytes) per webapi-media-upload-tdd.md §2.5
 constexpr size_t MAX_SNAPSHOT_SIZE = 4 * 1024 * 1024;   // 4 MB - ZX Evolution full state
-constexpr size_t MAX_DISK_SIZE     = 1 * 1024 * 1024;   // 1 MB - single TRD/SCL/FDI
+constexpr size_t MAX_DISK_SIZE     = 4 * 1024 * 1024;   // 4 MB - TRD/SCL/FDI, 1.44 MB PC floppies (Sprinter DSS), HD UDI
 constexpr size_t MAX_TAPE_SIZE     = 1 * 1024 * 1024;   // 1 MB - TAP/TZX
 constexpr size_t MAX_UPLOAD_BODY_SIZE = 5 * 1024 * 1024; // 5 MB - drogon body buffer limit
 

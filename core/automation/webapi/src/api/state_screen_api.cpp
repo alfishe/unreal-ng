@@ -134,6 +134,11 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             ret["framebuffer"] = "608x288";
             ret["raster"] = "312 lines x 224 T (69888 T frame)";
             break;
+        case M_SPRINTER:
+            ret["framebuffer"] = "736x288";
+            ret["raster"] = "320 or 312 lines x 224 T (71680 / 69888 T frame), 4 pixels per T";
+            ret["sprinter_modes"] = "per 8x8 square from the video RAM mode table: GET /state/sprinter (video)";
+            break;
         default: break;
     }
 

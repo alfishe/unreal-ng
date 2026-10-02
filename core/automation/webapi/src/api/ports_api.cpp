@@ -5,12 +5,14 @@
 // (PortDecoder::getPortMapEntries / GetMouseRoutingState, single source).
 
 #include "../emulator_api.h"
+#include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/ports/portdecoder.h>
+#include <emulator/state/devicestate.h>
 #include <json/json.h>
 
 using namespace drogon;
@@ -108,6 +110,14 @@ void EmulatorAPI::getPortsMap(const HttpRequestPtr& req, std::function<void(cons
         live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
     else
         live["shadow_monitor_paged"] = Json::Value(Json::nullValue);  // latch does not exist on this model
+
+    // Sprinter: every port goes through the PLD's port table; the map / DOS / PN5 it is read with now
+    if (config.mem_model == MM_SPRINTER)
+    {
+        const StateNode sprinter = DeviceState::Sprinter(context);
+        if (const StateNode* decoderNode = sprinter.find("decoder"))
+            live["sprinter_port_table"] = StateNodeToJson(*decoderNode);
+    }
 
     ret["live"] = live;
 

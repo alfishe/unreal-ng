@@ -2445,6 +2445,68 @@ public:
             return StateNodeToLua(s, DeviceState::TsConfTsu(emulator->GetContext()));
         });
 
+        // Sprinter Sp2000: the same reports every interface uses (DeviceState::Sprinter,
+        // SprinterPortTable, SprinterPortLookup). Options {map=0-3, dos=0|1, pn5=0|1, rw="r"|"w"|"rw"},
+        // omitted = the machine's current map / DOS / PN5 and both directions
+        auto sprinterQuery = [](sol::optional<sol::table> options, DeviceState::SprinterPortQuery& query, std::string& error) {
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::boolean)
+                    return value.as<bool>() ? "1" : "0";
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            return DeviceState::SprinterPortQueryFromStrings(text("map"), text("dos"), text("pn5"), text("rw"), query, error);
+        };
+        lua.set_function("sprinter_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Sprinter(emulator->GetContext()));
+        });
+        lua.set_function("sprinter_text", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterText(emulator->GetContext()));
+        });
+        lua.set_function("sprinter_ports", [this, sprinterQuery](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            DeviceState::SprinterPortQuery query;
+            std::string error;
+            if (!sprinterQuery(options, query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterPortTable(emulator->GetContext(), query)));
+            return out;
+        });
+        // sprinter_port(0x21BC [, {rw="w"}]) or sprinter_port("21BC", ...)
+        lua.set_function("sprinter_port", [this, sprinterQuery](sol::this_state s, sol::object portArg, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            uint16_t port = 0;
+            if (portArg.get_type() == sol::type::number)
+            {
+                const long long value = portArg.as<long long>();
+                if (value < 0 || value > 0xFFFF)
+                    return mouseError(s, "port must be 0-0xFFFF");
+                port = static_cast<uint16_t>(value);
+            }
+            else if (portArg.get_type() != sol::type::string || !DeviceState::SprinterPortFromString(portArg.as<std::string>(), port))
+                return mouseError(s, "port: a number or a hex string (\"21BC\", \"#21BC\")");
+            DeviceState::SprinterPortQuery query;
+            std::string error;
+            if (!sprinterQuery(options, query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterPortLookup(emulator->GetContext(), port, query)));
+            return out;
+        });
+
         // Network adapters: the same report every interface uses (DeviceState::Network)
         lua.set_function("network_state", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
@@ -4157,6 +4219,13 @@ public:
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             // else: key absent = the #1FFD latch does not exist on this model
+            // Sprinter: the map / DOS / PN5 the port table is read with now (as WebAPI /ports)
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::Sprinter(context);
+                if (const StateNode* decoderNode = sprinter.find("decoder"))
+                    live["sprinter_port_table"] = StateNodeToLua(s, *decoderNode);
+            }
             result["live"] = live;
 
             results.push_back(sol::make_object(s, result));
@@ -4276,6 +4345,25 @@ public:
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.add(bank);
+            }
+
+            // Sprinter: the PLD maps the windows - kind and physical page from DeviceState::SprinterPaging
+            // (the /state/paging view), and the whole view as `sprinter`
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::SprinterPaging(context);
+                if (const StateNode* windows = sprinter.find("windows"))
+                {
+                    for (size_t i = 0; i < windows->items.size() && i < 4; i++)
+                    {
+                        sol::table bank = banks[i + 1];
+                        if (const StateNode* kind = windows->items[i].find("kind"))
+                            bank["type"] = kind->s;
+                        if (const StateNode* page = windows->items[i].find("page"))
+                            bank["page"] = page->i;
+                    }
+                }
+                result["sprinter"] = StateNodeToLua(s, sprinter);
             }
             result["banks"] = banks;
 

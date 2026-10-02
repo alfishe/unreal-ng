@@ -1948,6 +1948,54 @@ namespace PythonBindings
             .def("tsconf_tsu", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConfTsu(self.GetContext()));
             }, "TS-Conf TSU and palette for debug views: tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells; available=False on other machines")
+            // Sprinter Sp2000: the same reports every interface uses (DeviceState::Sprinter,
+            // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
+            .def("sprinter_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
+            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            .def("sprinter_text", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
+            }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
+            .def("sprinter_ports", [](Emulator& self, py::object map, py::object dos, py::object pn5, const std::string& rw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortTable(self.GetContext(), query));
+            }, py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(), py::arg("rw") = "",
+               "The decoded Sprinter port table (RAM page #40): rows of code, name, address pattern; map 0-3, dos 0/1 (1 = TR-DOS on), pn5 0/1, rw 'r'/'w'/'rw'")
+            .def("sprinter_port", [](Emulator& self, py::object port, const std::string& rw, py::object map, py::object dos, py::object pn5) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                uint16_t number = 0;
+                if (py::isinstance<py::int_>(port))
+                {
+                    const long long value = port.cast<long long>();
+                    if (value < 0 || value > 0xFFFF)
+                        throw py::value_error("port must be 0-0xFFFF");
+                    number = static_cast<uint16_t>(value);
+                }
+                else if (!py::isinstance<py::str>(port) || !DeviceState::SprinterPortFromString(port.cast<std::string>(), number))
+                    throw py::value_error("port: an int or a hex string ('21BC', '#21BC')");
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortLookup(self.GetContext(), number, query));
+            }, py::arg("port"), py::arg("rw") = "", py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(),
+               "One Sprinter port through the port table: index into page #40, code and name (or the Z84C15 when the chip answers it)")
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
@@ -4040,6 +4088,13 @@ namespace PythonBindings
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             else
                 live["shadow_monitor_paged"] = py::none();  // latch does not exist on this model
+            // Sprinter: the map / DOS / PN5 the port table is read with now (as WebAPI /ports)
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::Sprinter(context);
+                if (const StateNode* decoderNode = sprinter.find("decoder"))
+                    live["sprinter_port_table"] = StateNodeToPy(*decoderNode);
+            }
             d["live"] = live;
             return d;
         }, "Static port map: which devices answer which I/O ports on this model, "
@@ -4154,6 +4209,25 @@ namespace PythonBindings
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.append(bank);
+            }
+
+            // Sprinter: the PLD maps the windows - kind and physical page from DeviceState::SprinterPaging
+            // (the /state/paging view), and the whole view as `sprinter`
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::SprinterPaging(context);
+                if (const StateNode* windows = sprinter.find("windows"))
+                {
+                    for (size_t i = 0; i < windows->items.size() && i < 4; i++)
+                    {
+                        py::dict bank = banks[i].cast<py::dict>();
+                        if (const StateNode* kind = windows->items[i].find("kind"))
+                            bank["type"] = kind->s;
+                        if (const StateNode* page = windows->items[i].find("page"))
+                            bank["page"] = page->i;
+                    }
+                }
+                d["sprinter"] = StateNodeToPy(sprinter);
             }
             d["banks"] = banks;
             return d;

@@ -779,6 +779,48 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
             break;
         }
+        case MM_SPRINTER:
+        {
+            // Sprinter Sp2000: the PLD decodes every port through the table the BIOS writes to RAM page
+            // #40 (PortDecoder_Sprinter::LookupCode); the rows below are BIOS 3.04's map 0 with DOS off
+            // (tools/machines/sprinter/dcp-table). No live latch binding: #7FFD / #1FFD live in the PLD
+            // state (GET /state/sprinter, the `sprinter` block of /state/paging)
+            const char* table = "port table (RAM page #40): map, DOS and PN5 decide; BIOS 3.04 map 0 shown";
+            entries.push_back({0x7FFD, 0xC0E7, 0x40E5, "#7FFD Spectrum paging (code #C1)", table,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen});
+            entries.push_back({0x1FFD, 0xE0E7, 0x00E5, "#1FFD Scorpion paging (code #C0)", table,
+                               Tags(PortTag::Memory) | PortTag::Rom});
+            entries.push_back({0x0082, 0x00E7, 0x0082, "Window 0 page (code #E8)", table, Tags(PortTag::Memory)});
+            entries.push_back({0x00A2, 0x00E7, 0x00A2, "Window 1 page (code #E9)", table, Tags(PortTag::Memory)});
+            entries.push_back({0x00C2, 0x00E7, 0x00C2, "Window 2 page (code #EA)", table, Tags(PortTag::Memory)});
+            entries.push_back({0x00E2, 0x00E7, 0x00E2, "Window 3 page (code #F0)", table, Tags(PortTag::Memory)});
+            entries.push_back({0x0024, 0x00A7, 0x0024, "CNF / SYS: port map, clean rules, turbo, system RAM (code #C6)", table,
+                               Tags(PortTag::Memory) | PortTag::System});
+            entries.push_back({0x0089, 0x00E7, 0x0081, "PORT_Y / RGADR: graphics row (code #C4)", table, Tags(PortTag::Screen)});
+            entries.push_back({0x00C1, 0x00E7, 0x00C1, "RGMOD: mode table page (code #C5)", table, Tags(PortTag::Screen)});
+            entries.push_back({0x204E, 0xE0E7, 0x2046, "ALL_MODE (code #C3)", table, Tags(PortTag::Screen) | PortTag::System});
+            entries.push_back({0x00BD, 0x00E7, 0x00A5, "#xxBD group: density #01BD / #21BD, CMOS #DFBD / #BFBD / #FFBD, ISA #9FBD, "
+                               "frame #40BD / #60BD (codes #16-#1E, #2C, #2D)", table, Tags(PortTag::System) | PortTag::StorageFdc});
+            entries.push_back({0x001F, 0x0087, 0x0007, "WD1793 #1F / #3F / #5F / #7F, Beta #FF (codes #10-#15)", "TR-DOS on (/DOS)",
+                               Tags(PortTag::StorageFdc)});
+            entries.push_back({0x0050, 0x00E0, 0x0040, "IDE task file (codes #20-#29)", "IDE adapter: phase S3b",
+                               Tags(PortTag::StorageIde)});
+            entries.push_back({0x007B, 0x007F, 0x007B, "IN #FB / #7B: fast RAM in window 0 on / off (fixed decode)", nullptr,
+                               Tags(PortTag::Memory)});
+            entries.push_back({0x003C, 0x00BF, 0x003C, "OUT #3C / #7C: system ROM out of / into window 0 (fixed decode)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom});
+            entries.push_back({0x005C, 0x00FF, 0x005C, "OUT #5C: ROM_RG while the system ROM is in (fixed decode)", nullptr,
+                               Tags(PortTag::Rom)});
+            entries.push_back({0x0010, 0x00FC, 0x0010, "Z84C15 CTC channels 0-3 (on-chip)", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x0018, 0x00FC, 0x0018, "Z84C15 SIO A / B data and control: AT keyboard, serial mouse (on-chip)",
+                               nullptr, Tags(PortTag::Keyboard) | PortTag::Mouse | PortTag::Serial});
+            entries.push_back({0x001C, 0x00FC, 0x001C, "Z84C15 PIO A / B (on-chip)", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x00EE, 0x00FE, 0x00EE, "Z84C15 SCRP / SCDP: WCR, MWBR, CSBR, MCR (on-chip)", nullptr,
+                               Tags(PortTag::System)});
+            entries.push_back({0x00F0, 0x00FE, 0x00F0, "Z84C15 watchdog WDTMR / WDTCR (on-chip)", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x00F4, 0x00FF, 0x00F4, "Z84C15 interrupt priority (on-chip)", nullptr, Tags(PortTag::System)});
+            break;
+        }
         default:
             break;  // MM_SPECTRUM48: no paging / system latches
     }
@@ -814,7 +856,8 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     // FDC is off the bus outside a TR-DOS session / Shadow Monitor / armed
     // magic-button trigger (DecodePortIn Beta128 gating); elsewhere it answers
     // through the registered device key.
-    if (_context->config.trdos_present)
+    // (the Sprinter reaches its WD1793 through the port table: its own row above)
+    if (_context->config.trdos_present && model != MM_SPRINTER)
     {
         const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger"
                                : (model == MM_PROFI) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
