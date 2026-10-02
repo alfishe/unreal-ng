@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
@@ -619,6 +620,19 @@ void DeviceScreenGL::paintGL()
 
     glDisable(GL_TEXTURE_2D);
     _texture->release();
+}
+
+bool DeviceScreenGL::event(QEvent* event)
+{
+    // A PC-keyboard machine owns the bare F-keys while the view has focus: accepting the
+    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here
+    if (event->type() == QEvent::ShortcutOverride &&
+        KeyboardManager::machineOwnsKey(static_cast<QKeyEvent*>(event), _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+    {
+        event->accept();
+        return true;
+    }
+    return QOpenGLWidget::event(event);
 }
 
 void DeviceScreenGL::keyPressEvent(QKeyEvent* event)

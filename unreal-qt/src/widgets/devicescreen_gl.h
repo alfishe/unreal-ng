@@ -90,6 +90,7 @@ protected:
     void resizeGL(int w, int h) override;
     void paintGL() override;
 
+    bool event(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;

@@ -265,3 +265,15 @@ void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
         messageCenter.Post(MC_PCKEY_RELEASED, new PcKeyEvent(pcKey, KEY_RELEASED, targetId));
     _heldPcKeys.clear();
 }
+
+bool KeyboardManager::machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard)
+{
+    if (!event || !keyboard || !keyboard->RoutesToPs2())
+        return false;
+    const int key = event->key();
+    if (key < Qt::Key_F1 || key > Qt::Key_F12)
+        return false;
+    // Keypad and Shift do not make a GUI shortcut; Ctrl / Alt / Cmd (Meta) do
+    const Qt::KeyboardModifiers gui = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+    return (event->modifiers() & gui) == 0;
+}
