@@ -177,7 +177,7 @@ equals the controller's data rate. The default data rate is 250 kbit/s (DD).
 | `ATM3` (ZX-Evo BaseConf) | `AutoStepTurbo` | FPGA `vg93.v`: the STEP rising edge sets `turbo_state` (CLK 28 MHz / 14 = 2 MHz), the first DRQ clears it; the separator stays at 250 kHz. Override in `PortDecoder_ATM3::DefaultFdcClockPolicy()` |
 | `PROFI` | `Fixed1MHz` | no evidence of turbo VG on the original Profi. Its FPGA clone Karabas-Pro has STEP/DRQ turbo VG (can be switched off by port `#028B` bit 2); use `TurboVG=1` to model it |
 | `PLUS2A`, `PLUS3` | (not used) | these read disks through the uPD765, not the WD1793 |
-| Sprinter (planned) | `Latched` | port `#BD` latch sets CLK and separator together (PLD `SP2_MAX.TDF`); see the [Sprinter storage design](../inprogress/2026-09-28-sprinter/tdd-storage.md) §2.3 |
+| `SPRINTER` | `Latched` | port `#BD` latch sets CLK and separator together (PLD `SP2_MAX.TDF`); built 2026-10-01 (S3a), see the [Sprinter storage design](../inprogress/2026-09-28-sprinter/tdd-storage.md) §2.3, §2.6. Also the only machine with `SetBaseClockTimeBase(true)` (§4.6) |
 
 ### 4.3 The `[Beta128] TurboVG=` option
 
@@ -228,10 +228,30 @@ When the rates match, one byte takes one revolution divided by the track length:
    Reset the latch to DD on machine reset. `SetLatchedClock` returns `false` and changes nothing
    under any other policy.
 
+   A latch written **while a command searches** for an ID field (READ ADDRESS, Type I verify) that had
+   found nothing at the old rate makes the search run again at the new rate, keeping the first deadline
+   (5 index holes from the start): the separator is outside the chip, so a running command reads the
+   address marks as soon as the rate matches. This is what the Sprinter BIOS density probe relies on
+   (READ ADDRESS at 720 KB, the BIOS's own 175 ms time-out, latch to 1.44 MB, the ID arrives). Type II
+   commands do not re-run their search (no software seen needs it).
+
 The policy, the clock and the data rate are saved in TTD checkpoints (WD1793 blob, 254 bytes) and
 shown in the FDC device-state report.
 
-### 4.6 Not modeled
+### 4.6 Time base under a CPU turbo
+
+The chip has its own clock, so its time counts 3.5 MHz T-states (`TSTATES_PER_MS` = 3 500) whatever the
+CPU runs at. Its time source is `emulatorState.t_states` (the base frame added at each frame end) plus the
+frame's `Z80::t`; under a hardware turbo of ratio N (`hw_turbo_ratio_applied`) `Z80::t` holds N CPU clocks
+per base T-state. `WD1793::SetBaseClockTimeBase(true)` divides that part by N, so the disk keeps 300 rpm at
+21 MHz. Without it the FDC runs N times fast inside a frame and its time steps back at the frame end.
+
+Only the Sprinter sets it (its BIOS density probe depends on the real 1 s Record Not Found against a 175 ms
+poll loop). The other turbo machines (ATM3 / ZX-Evo, Scorpion, ATM710 turbo) keep the old time base for
+now: switching them changes their TTD captures (the ATM3 CI-gate device-blob figures) and is a separate
+change with a re-recording.
+
+### 4.7 Not modeled
 
 - Turbo VG that ends at the read/write strobe instead of DRQ (Sprinter in DD mode, Pentagon mods
   switched by the write gate). `AutoStepTurbo` ends at DRQ; for a DD disk the difference is only

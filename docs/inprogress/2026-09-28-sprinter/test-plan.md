@@ -105,6 +105,11 @@ ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.
 
 ### 2.6 Floppy — `wd1793_test.cpp` additions, `loader_rawpc_test.cpp` (T-FDD)
 
+Built in S3a (2026-10-01): T-FDD-1/2/3 in `loader_rawpc_test.cpp` (S0, PLAN #60(f)) and
+`WD1793Clock_Test.Latched_RateChange*` (the latch flipped during the search), T-FDD-4..7 as
+`PortDecoderSprinter_Test.Fdc_*` / `Dos_M1HookOpensAndClosesTheFloppyPorts`; R-4 / R-7 as
+`SprinterBoot_Test.Dss162_*`.
+
 | ID | Case | Expected |
 |---|---|---|
 | T-FDD-1 | raw 1.44 MB image load/save round trip | byte-identical |
@@ -162,7 +167,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 | R-4 | ACC-3 | "Starting DOS..." then the DSS prompt text in VRAM; density port = HD |
 | R-5 | ACC-4 | same from `ide0.master` built image |
 | R-6 | ACC-5 | same from a folder; folder tree hash unchanged |
-| R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM) |
+| R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM). As built: through DSS `SPECTRUM.EXE` (BIOS 3.04 has no Spectrum ROMs); `LOAD "smReadMe" CODE` compared with the file's bytes |
 | R-8 | ACC-7/8 | native program frames equal MAME captures |
 | R-9 | ACC-10 | TTD record 5 s of R-4, seek, replay: equal frame hashes |
 
