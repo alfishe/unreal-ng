@@ -20,6 +20,7 @@
 #include "widgets/tintedsvgicon.h"
 #include "emulator/mousecapturecontroller.h"
 #include <QMenu>
+#include <QStatusBar>
 
 namespace
 {
@@ -247,6 +248,24 @@ void ToolBarManager::refreshMouseAction()
     }
     if (_mouseGateMenuAction)
         _mouseGateMenuAction->setChecked(_mouseGateOpen);
+
+    // Status bar hint while the window holds the mouse; gone with the capture (release
+    // key, focus loss, leaving the application). Only our own message is cleared
+    QStatusBar* statusBar = _mainWindow ? _mainWindow->statusBar() : nullptr;
+    if (statusBar)
+    {
+        if (state == State::Captured)
+        {
+            _mouseStatusMessage = tr("Mouse captured: press %1 to release it").arg(releaseText);
+            statusBar->showMessage(_mouseStatusMessage);
+        }
+        else if (!_mouseStatusMessage.isEmpty())
+        {
+            if (statusBar->currentMessage() == _mouseStatusMessage)
+                statusBar->clearMessage();
+            _mouseStatusMessage.clear();
+        }
+    }
 }
 
 /// endregion </Host mouse>
