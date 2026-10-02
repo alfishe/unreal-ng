@@ -148,7 +148,7 @@ Columns: **Common today** = how often a real Sprinter has it now (mass / some / 
 |---|---|---|---|---|---|
 | **Centronics printer** | `Centronics` connector: data on PIO A (STROBE from PIO A RDY), INIT from PIO B RDY, AUTOLF / SELECT IN on PIO B bits 6 / 7, BUSY on SIO B CTS (and PIO A STB), ACK and SELECT on SIO B DCD, PAPER END on SIO A CTS, ERROR on PIO B STB; SIO A RTS / DTR enable and turn the data buffer (LPT-WIRING) | DSS `#5F PRINT` (all DSS versions), anything printing through DSS | rare | **no** | **not planned** (§8 item 1) |
 | LPT-to-LPT link to a PC | the same port, a "LapLink"-style cable | proposals only (FORUM 7876); the buffer cannot read the data lines without a board change (LPT-WIRING) | none | no | not needed |
-| Serial link to a PC | SIO B on the `MOUSE` connector with a null-modem cable, or a SprinterSerial card | forum experiments; SprinterSerial COM1 has a USB bridge | rare | `rs232` slot accepts any serial device | SprinterSerial in the ISA design (I4); SIO B as a COM port: §9 Q4 |
+| Serial link to a PC | SIO B on the `MOUSE` connector with a null-modem cable, or a SprinterSerial card | forum experiments; SprinterSerial COM1 has a USB bridge | rare | `rs232` slot accepts any serial device | SprinterSerial in the [network design](../2026-10-02-sprinter-network/tdd.md) (phase SN4, `DUAL16552`); SIO B as a COM port: §9 Q4 |
 
 ### 5.3 Storage
 
