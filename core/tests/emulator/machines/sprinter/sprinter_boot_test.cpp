@@ -137,6 +137,36 @@ protected:
         EmulatorTestHelper::RunFramesFast(_emulator.get(), 4);
     }
 
+    /// The picture against a golden image in testdata/machines/sprinter/golden (ScreenSprinter's own render,
+    /// reviewed by eye): every pixel equal. Two frames without the turbo mode render the screen in full; on a
+    /// difference our frame is saved to the scratch folder for review
+    void ExpectScreenMatchesGolden(const std::string& name)
+    {
+        _emulator->DisableTurboMode();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+        const std::string golden =
+            (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "sprinter" / "golden" / name).string();
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        std::vector<unsigned char> rgba(static_cast<size_t>(fb.width) * fb.height * 4);
+        for (size_t i = 0; i < static_cast<size_t>(fb.width) * fb.height; i++)
+        {
+            for (unsigned c = 0; c < 3; c++)
+                rgba[i * 4 + c] = static_cast<unsigned char>(pixels[i] >> (8 * c));
+            rgba[i * 4 + 3] = 0xFF;
+        }
+        std::vector<unsigned char> expected;
+        unsigned width = 0, height = 0;
+        const bool loaded = lodepng::decode(expected, width, height, golden) == 0;
+        if (!loaded || width != fb.width || height != fb.height || expected != rgba)
+        {
+            const std::string ours = TestPathHelper::GetUniqueTestScratchPath(name);
+            lodepng::encode(ours, rgba, fb.width, fb.height);
+            ADD_FAILURE() << "the screen differs from " << golden << "; ours: " << ours;
+        }
+        _emulator->EnableTurboMode();
+    }
+
     bool SpectrumScreenHas(const std::string& text) { return ScreenOCR::containsText(_emulator->GetId(), text); }
 
     static std::vector<uint8_t> ReadAll(const std::string& path)
@@ -265,6 +295,11 @@ TEST_F(SprinterBoot_Test, Dss162_BootsFromTheHdFloppyToThePrompt)
     EXPECT_EQ(wd->GetClock(), FdcClock::Clock2MHz);
     EXPECT_EQ(wd->GetDataRate(), FdcDataRate::Rate500Kbps);
     EXPECT_EQ(wd->getSelectedDriveIndex(), 1) << "drive B";
+
+    // The prompt screen through the S2 renderer (BIOS 80-column text, DSS output) against its golden image,
+    // tolerance 0: the screen is static from the prompt until Flex Navigator prints its banner (~60 frames
+    // later), so two frames after the prompt is found (5-frame polling) give the same picture every run
+    ExpectScreenMatchesGolden("dss-prompt.png");
 }
 
 // ACC-6: Spectrum mode with TR-DOS reads a TRD in drive A through the WD1793 at 720 KB.
@@ -416,33 +451,8 @@ TEST_F(SprinterBoot_Test, Bios304_SetupSavesSettingToCmos)
     ASSERT_TRUE(ScreenHas("Memory Test")) << ScreenText();
 
     // The SETUP screen (80-column text, the BIOS palettes, a blue border) against its golden
-    // image (ScreenSprinter's own render, reviewed by eye; no MAME capture: MAME's Sprinter
-    // runs without a keyboard here). Two frames without the turbo mode render it in full
-    _emulator->DisableTurboMode();
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
-    {
-        const std::string golden =
-            (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "sprinter" / "golden" / "setup-menu.png").string();
-        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
-        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
-        std::vector<unsigned char> rgba(static_cast<size_t>(fb.width) * fb.height * 4);
-        for (size_t i = 0; i < static_cast<size_t>(fb.width) * fb.height; i++)
-        {
-            for (unsigned c = 0; c < 3; c++)
-                rgba[i * 4 + c] = static_cast<unsigned char>(pixels[i] >> (8 * c));
-            rgba[i * 4 + 3] = 0xFF;
-        }
-        std::vector<unsigned char> expected;
-        unsigned width = 0, height = 0;
-        const bool loaded = lodepng::decode(expected, width, height, golden) == 0;
-        if (!loaded || width != fb.width || height != fb.height || expected != rgba)
-        {
-            const std::string ours = TestPathHelper::GetUniqueTestScratchPath("setup-menu.png");
-            lodepng::encode(ours, rgba, fb.width, fb.height);
-            ADD_FAILURE() << "SETUP screen differs from " << golden << "; ours: " << ours;
-        }
-    }
-    _emulator->EnableTurboMode();
+    // image (no MAME capture: MAME's Sprinter runs without a keyboard here)
+    ExpectScreenMatchesGolden("setup-menu.png");
 
     const uint8_t before = rtc.PeekRegister(0x0E);
     key({0xE0, 0x72}, {0xE0, 0xF0, 0x72});  // Down: item 1, Memory Test

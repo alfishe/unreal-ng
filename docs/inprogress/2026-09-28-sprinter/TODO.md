@@ -105,6 +105,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - FDC off bit (density write data bit 1, MAME) unverified in the PLD;
   - a MAME reference for the floppy boot time needs a MAME whose WD1793 PLL follows `set_clock_scale`
     during a command (0.289 does not).
+- Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
+  outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
+  the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least
+  68 T per poll at 21 MHz (ours ~59 T): settle with the origin of the wait rule (below).
 - Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
   before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
   hardware.

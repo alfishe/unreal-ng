@@ -319,8 +319,30 @@ Estex DSS Version 1.62.92
 B:\>fn
 ```
 
-`SYSTEM.BAT` runs `ver`, then `fn` (Flex Navigator, ACC-8, needs the S2 renderer). The latch ends at
-1.44 MB (2 MHz, 500 kbit/s), drive B selected.
+`SYSTEM.BAT` runs `ver`, then `fn` (Flex Navigator, ACC-8). The latch ends at 1.44 MB (2 MHz, 500 kbit/s),
+drive B selected. Since the merge with S2 the test also compares the prompt screen, as `ScreenSprinter`
+draws it, with `testdata/machines/sprinter/golden/dss-prompt.png` (every pixel; the screen does not change
+from the prompt until Flex Navigator prints its banner about 60 frames later).
+
+**On the Z84C15 CPU library and the S2 renderer** (merge of master into `sprinter-s3a`, 2026-10-02): the
+S3a code needed no change for the CPU engine. The `#1F` rewrite reads `Z80::m1_pc`, which
+`Z80::EngineStep` records before every engine step; the WD1793 reads `Z80::t`, which the engine publishes
+at every bus callback; the base-clock time base is set next to the engine install. The prompt is still at
+**frame 357**: the boot tests use the fast start (`FastStart=1`, the PLD starts configured), so the
+loader's 142 T per bitstream byte does not apply, and the 5-frame polling of the prompt hides any
+difference of a few frames from the chip's wait generator.
+
+**Flex Navigator (ACC-8, open for S4).** `fn` loads from drive B, prints "The Flex Navigator, ver 1.10,
+Copyright (C) 1999 by Enin Anton", draws its splash logo (graphics mode, frame ~688), then the machine
+stops (`DI : HALT` at ROM page 0 `#0000`, frame ~735). Traced: Flex Navigator calls the BIOS `RESETD`
+(page 0 `#0609`) with the head on track 71. `RESETD` runs the density probe, then RESTORE (`#08`, 3 ms
+steps at 2 MHz) and waits for INTRQ in `WREST` (`#092E`): 65 536 polls, here 184 ms. 71 steps take
+213 ms, so the wait ends first; `RESETD` then writes 0 to the track register, and the running RESTORE
+stops at track 9 (track register = data register). The next READ SECTOR (track 0, sector 1) finds no ID,
+the BIOS read loop times out (4 x 65 536 polls) and its error path (`ERR_XRD`) pops the return address
+as the retry counter. The same happens on the pre-merge CPU, so it is not a CPU library regression. To
+pass, the `WREST` loop must take at least 68 T per poll at 21 MHz (ours: ~59 T with the wait states):
+it points at the board's wait states, the open question "origin of the wait rule" (TODO).
 
 **The density probe** (ROM page 0 `FddProbeDensity`): latch at 720 KB, SEEK, READ ADDRESS; the BIOS polls
 `#FF` for `#F000` loops, which at 21 MHz is **175.55 ms**, shorter than the chip's 5-revolution Record Not
