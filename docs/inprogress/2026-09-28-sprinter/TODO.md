@@ -1,9 +1,10 @@
 # TODO — Peters Plus Sprinter Sp2000 machine support
 
-**Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done except the
-MAME captures** (2026-10-01, branch `sprinter-s0`); **S1 done** (2026-10-01, branch
-`sprinter-s1`); S2-S7 not started. PLAN.md row **#59**: the owner started the program on
-2026-10-01 (TSConf exists); the shared pieces this design introduced are PLAN row **#60** (done).
+**Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
+(2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
+(2026-10-01, branch `sprinter-s1`); S2-S7 not started. PLAN.md row **#59** (T4): the owner started
+the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
+this design introduced are PLAN row **#60** (shared infrastructure, done).
 
 ## Goal
 
@@ -41,6 +42,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     `testdata/NOTICE.md`; `LoaderRawPcFloppyDss_Test` reads the real floppy through the WD1793 at
     500 kbit/s
   - [x] Sprinter sources added to the local corpus ([materials.md](materials.md))
+  - [x] MAME reference captures (2026-10-01, branch `sprinter-mame`; MAME 0.289 subset build
+    `zxsp` with the `sprinter` driver, scripts in `tools/verification/sprinter/`) in
+    [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md): page `#40` after POST (equals the static table,
+    CRC `b7f09600`), the logo frame (frame 60, 1.229 s) and the boot screen (frame 507, 10.383 s),
+    INT positions for the FN_SYNC modes (Scorpion = 3.04 default, Pentagon +16 lines, Spectrum +8
+    more), the first 10 000 port accesses with codes, the loader write count at run time (473 720,
+    confirms Q4)
 
 - [x] S1 (2026-10-01, branch `sprinter-s1`; outcome and deviations in
   [roadmap-and-plan.md](roadmap-and-plan.md) §6): creatable `SPRINTER`; `PortDecoder_Sprinter`,
@@ -64,11 +72,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - optional: DD-mode turbo VG ending at the PLD read/write strobe (`TURBING`, `SP2_MAX.TDF:272-306`);
     not modeled, only seek time differs. Settle first which pins `WSTB`/`RSTB` are (research open
     question 2).
-- S0 remainder, **deferred: needs MAME** (not installed; owner: do not install it): page `#40`
-  after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port
-  accesses of BIOS 3.04 with codes, a runtime trace of the loader (confirms the 473 720 writes, the
-  extra clocks before the PLD starts and the CPU reset). From S1 on the emulator itself can take
-  the page `#40` and loader captures.
+- Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
+  before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
+  hardware.
 - Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
   off before the PLD check).
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).

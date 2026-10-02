@@ -1,7 +1,7 @@
 # Peters Plus Sprinter Sp2000 machine support
 
 **Created:** 2026-09-28 · **Status:** design drafted, review round 1 done (2026-09-28); S0 done
-except the MAME captures (2026-10-01); **S1 done** (2026-10-01, branch `sprinter-s1`: creatable `SPRINTER`, BIOS 3.04 reaches its boot prompt); PLAN row #59, after TSConf and the shared-infrastructure row #60 (see
+(2026-10-01, MAME captures included, branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`: creatable `SPRINTER`, BIOS 3.04 reaches its boot prompt); S2-S7 not started; PLAN row #59, started by the owner on 2026-10-01, with the shared-infrastructure row #60 done (see
 [TODO.md](TODO.md))
 
 Add the Sprinter Sp2000 (Peters Plus, 2000) as a creatable machine `SPRINTER`: its own BIOS boots,

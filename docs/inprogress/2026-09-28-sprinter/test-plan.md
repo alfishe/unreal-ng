@@ -171,7 +171,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 | DSS 1.60R files | `testdata/machines/sprinter/dss160r/` (`SYSTEM.DOS`, `SYSTEM.EXE`, `CMD/BOOT.EXE`…) | "believed public domain" (DSS repo README); NOTICE entry |
 | Built HDD image | generated **by the test** into the scratch folder from the DSS files (MBR + loader + FAT16), never committed | `TestPathHelper::GetUniqueTestScratchPath()` |
 | Folder volume source | `testdata/machines/sprinter/dssfolder/` (a copy of the DSS files) | read-only for tests |
-| MAME captures | `testdata/machines/sprinter/mame/` (page `#40` dump, INT T-states, golden frames, trace excerpt) with a `SOURCES.md` saying how they were made | small files only |
+| MAME captures | `testdata/machines/sprinter/reference/` (page `#40` dump, INT positions, logo and boot-screen frames, the first 10 000 port accesses, the loader write count) with a `README.md` saying how they were made (S0, 2026-10-01) | small files only |
 | Sample programs | chosen SPRINTEM `disk/*.EXE` or app.sprinter.ru titles, each with its source and license note | only after checking each license |
 
 ## 5. Coverage matrix
