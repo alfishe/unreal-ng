@@ -26,6 +26,7 @@ class ZxNetUsb;
 class ComPort;
 class ISerialPeer;
 class Atm2IoEsp;
+class ZiFi;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -133,6 +134,8 @@ public:
 	ISerialPeer* pMachineSerialPeer = nullptr;
 	// The ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, when fitted (NetworkManager owns it)
 	Atm2IoEsp* pAtm2IoEsp = nullptr;
+	// The TS AVR firmware's ZiFi block beside the #xxEF COM port (TS-Conf, ZX-Evo + TS firmware); NetworkManager owns it
+	ZiFi* pZiFi = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

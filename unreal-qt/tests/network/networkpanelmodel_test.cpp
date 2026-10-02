@@ -124,13 +124,34 @@ TEST(NetworkPanelModel_Test, APentagonTakesCardsOnly)
     EXPECT_FALSE(a.avrFirmware);
 }
 
-TEST(NetworkPanelModel_Test, TsConfKeepsItsZiFi)
+TEST(NetworkPanelModel_Test, TsConfHasItsComPortAndZiFi)
 {
-    const NetworkAvailability a = NetworkFormAvailability(NetworkFormFromState(State("zifi", true, "NONE", "NONE", "AT")));
+    StateNode state = State("zifi", true, "NONE", "NONE", "AT");
+    state["machine"]["zifi"] = true;
+    state["settings"]["zifi"] = "AT";
+    const NetworkForm form = NetworkFormFromState(state);
+    EXPECT_TRUE(form.zifiMachine);
+    EXPECT_EQ(form.zifiPeer.kind, ComPortSpec::Kind::At);
+    const NetworkAvailability a = NetworkFormAvailability(form);
     EXPECT_TRUE(a.cards);
-    EXPECT_FALSE(a.zxWifi);
-    EXPECT_FALSE(a.comPort);
-    EXPECT_NE(a.comPortWhy.find("ZiFi"), std::string::npos);
+    EXPECT_FALSE(a.zxWifi) << "#xxEF is the AVR's";
+    EXPECT_TRUE(a.comPort) << "the TS AVR's 16550";
+    EXPECT_TRUE(a.zifi);
+    EXPECT_FALSE(a.avrFirmware);
+
+    NetworkForm after = form;
+    after.zifiPeer.kind = ComPortSpec::Kind::Loopback;
+    const auto changes = NetworkFormChanges(form, after);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, "zifi");
+    EXPECT_EQ(changes[0].second, "LOOPBACK");
+}
+
+TEST(NetworkPanelModel_Test, ZiFiOnlyWithTheTsFirmware)
+{
+    const NetworkAvailability a = NetworkFormAvailability(NetworkFormFromState(State("evo-avr", true, "NONE", "NONE", "AT")));
+    EXPECT_FALSE(a.zifi);
+    EXPECT_NE(a.zifiWhy.find("TS2016"), std::string::npos);
 }
 
 TEST(NetworkPanelModel_Test, NoZxBusNoCards)

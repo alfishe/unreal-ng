@@ -59,8 +59,8 @@ guest ports 1024 and up on the same host port, lower ones only through a
 ## COM port (16550 UART)
 
 A 16550 on `#F8EF..#FFEF` (register = A10..A8) with a peer on its other end.
-On the ZX-Evo (ATM3) it is the AVR's COM port, always there; `ComPort=` says
-what is plugged into it. Other machines get one with a ZX-WiFi card
+On the ZX-Evo (ATM3) and TS-Conf (`TSL`) it is the AVR's COM port, always
+there; `ComPort=` says what is plugged into it. Other machines get one with a ZX-WiFi card
 (`Card=ZXWIFI`, or `ZXNETUSB,ZXWIFI` for both cards); `ZxWifi=` (default `AT`)
 takes the same values for the card's side:
 
@@ -112,6 +112,31 @@ data through `#FA`; 115200, no interrupt, RTS pulsed by software. NedoOS:
 not depend on the keyboard controller, so it does not lose bytes the way the
 COM port can. `inspect_state network` shows it as `atm2ioesp`. Details:
 [2026-10-02-atm2ioesp](../../docs/inprogress/2026-10-02-atm2ioesp/README.md).
+
+**ZiFi** (TS-Conf; a ZX-Evo with `[EVO] Avr=TS2016-02` / `TS2016-04`): the
+TS-Labs AVR firmware passes bytes between the Z80 and an ESP module on its own
+UART (115200, no flow control) through two rings, 511 bytes in and 255 out.
+`ZiFi=` says what is on that UART: `NONE` (default: no ZiFi board), `AT` (the
+original board: an ESP-01 with Espressif's AT firmware, HackerVBI's
+`zifi.spg`), or any `ComPort=` value (`LOOPBACK`, `TCP:...`, `SERIAL:...` for
+a real ESP on USB). The Z80 sees the same `#xxEF` range as the COM port:
+
+| Port | What |
+|:--|:--|
+| `#C7EF` | write: command (`#F1` API on, `#FF` version, `#00..#03` / `#04..#07` clear the ZiFi / RS-232 rings); read: the last result |
+| `#C0EF` / `#C1EF` | ZiFi bytes waiting / room (capped at `#BF`); the read makes `#00EF..#BFEF` the ZiFi data register |
+| `#C2EF` / `#C3EF` | the same for the COM port's rings (the "enhanced RS-232" data register) |
+| `#00EF..#BFEF` | the data register: `INIR` from `#BFEF` with B = the count reads the whole batch |
+| `#C4EF` | write: interrupt mask (OR-in, one-shot), read: sources (then cleared); TS-Conf raises the wait-port INT (vector `#F9`, INTMASK bit 3) while it is not zero |
+| `#C5EF`, `#C6EF`, `#C8EF`, `#C9EF` | interrupt threshold (bytes) and timeout (ms) for ZiFi / RS-232 |
+| `#F8EF..#FFEF` | the 16550 COM port |
+
+Until `#F1` goes to `#C7EF` every ZiFi register reads `#FF`. Every access
+holds the Z80 while the AVR answers. `inspect_state network` shows it as
+`zifi` (API, which ring the data register reaches, IMR / ISR, ring fill, the
+line's peer, `dropped` = bytes the full ring lost); at runtime
+`network set zifi=at`. Details:
+[2026-10-02-tsconf-zifi](../../docs/inprogress/2026-10-02-tsconf-zifi/README.md).
 
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",

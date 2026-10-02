@@ -303,6 +303,19 @@ void NetworkWindow::buildUi()
     ioLayout->addLayout(ioForm);
     page->addWidget(ioCard);
 
+    // ZiFi: the TS AVR firmware's own UART to an ESP module (TS-Conf; a ZX-Evo with a TS-Labs firmware)
+    auto* zifi = new QGroupBox(tr("ZiFi (TS-Labs AVR firmware: registers #C0EF..#C9EF, data #00EF..#BFEF)"), _settingsPage);
+    auto* zifiLayout = new QVBoxLayout(zifi);
+    _zifiWhy = why(zifi);
+    zifiLayout->addWidget(_zifiWhy);
+    auto* zifiForm = new QFormLayout();
+    _zifiPeer = new SerialPeerEditor(zifi);
+    _zifiPeer->setToolTip(tr("None: no ZiFi board. AT: the original board, an ESP-01 with Espressif's AT firmware "
+                             "(zifi.spg). 115200, no flow control: the AVR's rings hold 511 bytes in, 255 out"));
+    zifiForm->addRow(tr("Its UART is wired to"), _zifiPeer);
+    zifiLayout->addLayout(zifiForm);
+    page->addWidget(zifi);
+
     // The machine's own serial port
     auto* com = new QGroupBox(tr("Machine serial port"), _settingsPage);
     auto* comLayout = new QVBoxLayout(com);
@@ -411,6 +424,7 @@ void NetworkWindow::buildUi()
     connect(_comPort, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zxWifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_atm2IoEspPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
+    connect(_zifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
 }
 
 void NetworkWindow::setBinding(EmulatorBinding* binding)
@@ -461,7 +475,7 @@ void NetworkWindow::refresh()
     const NetworkForm form = NetworkFormFromState(network);
 
     const QString serial = form.serialPort == "evo-avr"    ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
-                           : form.serialPort == "zifi"     ? tr("TS-Conf ZiFi (not emulated yet)")
+                           : form.serialPort == "zifi"     ? tr("the TS AVR's 16550 (#F8EF..#FFEF) and ZiFi")
                            : form.serialPort == "atm2-kbc" ? tr("the keyboard controller's RS-232 (IN #FE commands)")
                                                            : tr("none");
     _machine->setText(tr("This machine: ZX-Bus %1; its own serial port: %2.")
@@ -476,6 +490,7 @@ void NetworkWindow::refresh()
     _comPort->setDevices(devices);
     _zxWifiPeer->setDevices(devices);
     _atm2IoEspPeer->setDevices(devices);
+    _zifiPeer->setDevices(devices);
 
     if (!_dirty)
     {
@@ -488,6 +503,7 @@ void NetworkWindow::refresh()
         _applied.serialPort = form.serialPort;
         _applied.kbcFirmware = form.kbcFirmware;
         _applied.internalIo = form.internalIo;
+        _applied.zifiMachine = form.zifiMachine;
     }
     updateAvailability();
     updateStatusTree(network);
@@ -502,6 +518,7 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     _atm2IoEsp->setChecked(form.atm2IoEsp);
     _atm2IoEspPeer->setSpec(form.atm2IoEspPeer);
     _atm2IoEspAddress->setCurrentIndex(std::max(0, _atm2IoEspAddress->findData(form.atm2IoEspAddress)));
+    _zifiPeer->setSpec(form.zifiPeer);
     _comPort->setSpec(form.comPort);
     _avrFirmware->setCurrentIndex(std::max(0, _avrFirmware->findData(Q(form.avrFirmware))));
     _kbcFirmware->setCurrentIndex(std::max(0, _kbcFirmware->findData(Q(form.kbcFirmware.empty() ? "V41" : form.kbcFirmware))));
@@ -526,6 +543,7 @@ NetworkForm NetworkWindow::readForm() const
     form.atm2IoEsp = _atm2IoEsp->isChecked();
     form.atm2IoEspPeer = _atm2IoEspPeer->spec();
     form.atm2IoEspAddress = _atm2IoEspAddress->currentData().toUInt();
+    form.zifiPeer = _zifiPeer->spec();
     form.comPort = _comPort->spec();
     form.avrFirmware = S(_avrFirmware->currentData().toString());
     if (!form.kbcFirmware.empty())   // only where the board has the socket
@@ -558,6 +576,9 @@ void NetworkWindow::updateAvailability()
     _atm2IoEspWhy->setVisible(!a.atm2IoEsp);
     _atm2IoEspPeer->setEnabled(a.atm2IoEsp && form.atm2IoEsp);
     _atm2IoEspAddress->setEnabled(a.atm2IoEsp && form.atm2IoEsp);
+    _zifiPeer->setEnabled(a.zifi);
+    _zifiWhy->setText(Q(a.zifiWhy));
+    _zifiWhy->setVisible(!a.zifi);
     _comPort->setEnabled(a.comPort);
     _comPortWhy->setText(Q(a.comPortWhy));
     _comPortWhy->setVisible(!a.comPort);
@@ -570,11 +591,12 @@ void NetworkWindow::updateAvailability()
     if (!a.kbcFirmware && !a.avrFirmware)
         _avrWhy->setText(Q(a.avrFirmwareWhy + " " + a.kbcFirmwareWhy));
     const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer)) ||
-                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer));
+                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer)) || NetworkPeerIsEsp(form.zifiPeer);
     _espChip->setEnabled(esp);
     const bool serial = form.comPort.kind == ComPortSpec::Kind::Serial ||
                         (form.zxWifi && form.zxWifiPeer.kind == ComPortSpec::Kind::Serial) ||
-                        (form.atm2IoEsp && form.atm2IoEspPeer.kind == ComPortSpec::Kind::Serial);
+                        (form.atm2IoEsp && form.atm2IoEspPeer.kind == ComPortSpec::Kind::Serial) ||
+                        form.zifiPeer.kind == ComPortSpec::Kind::Serial;
     _modemLines->setEnabled(serial);
 }
 

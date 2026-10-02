@@ -85,6 +85,8 @@ enum class PeripheralId : uint8_t
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
     Atm2IoEsp = 37,       // the ATM2IOESP card on it: the 16550 and its peer (netstate::SerialPort)
     EvoMouse = 38,        // ZX-Evo AVR PS/2 mouse: the Kempston-address registers, plugged in (ATM3, TSConf)
+    ZiFiLine = 39,        // the TS AVR's ZiFi UART (USART0) and its peer (netstate::SerialPort)
+    ZiFi = 40,            // the TS AVR's ZiFi API block: registers, selector, last-byte times (ZiFi::State)
     // Future: SAA1099, GS512, etc.
     Count
 };

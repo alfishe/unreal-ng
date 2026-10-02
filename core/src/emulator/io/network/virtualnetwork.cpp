@@ -444,7 +444,7 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     std::map<uint16_t, Socket> kept;
     for (const auto& [id, s] : _sockets)
     {
-        if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo))
+        if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi))
             kept[id] = s;
     }
     if (_host)
@@ -681,6 +681,7 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
                      : s.guest == serial.com     ? 2
                      : s.guest == serial.machine ? 3
                      : s.guest == serial.atmIo   ? 4
+                     : s.guest == serial.zifi    ? 5
                                                  : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
@@ -773,6 +774,7 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
         s.guest = o.hasGuest == 2   ? serial.com
                   : o.hasGuest == 3 ? serial.machine
                   : o.hasGuest == 4 ? serial.atmIo
+                  : o.hasGuest == 5 ? serial.zifi
                   : o.hasGuest      ? guest
                                     : nullptr;
         s.cookie = o.cookie;

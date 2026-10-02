@@ -23,6 +23,12 @@ void TsConfInterrupts::RaiseDma()
         _ts.intPending |= TsConfInt::Dma;
 }
 
+void TsConfInterrupts::RaiseWaitPort()
+{
+    if (_ts.regs[TsConfReg::IntMask] & TsConfInt::WaitPort)
+        _ts.intPending |= TsConfInt::WaitPort;
+}
+
 uint32_t TsConfInterrupts::Multiplier() const
 {
     const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier;

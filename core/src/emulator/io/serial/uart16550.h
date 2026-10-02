@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 
 #include "common/network/nettypes.h"
 
@@ -25,9 +26,10 @@ class ISerialPeer;
 /// firmware and the FPGA decide (ZX-Evo with a TS-Labs AVR firmware differs)
 struct ComPortRegister
 {
-    static constexpr int kDataRegion = -1;    ///< TS ZiFi data area: reads #FF, writes dropped (API off)
-    static constexpr int kZiFiRegister = -2;  ///< TS ZiFi control registers: #FF with the API off
+    static constexpr int kDataRegion = -1;    ///< TS ZiFi data area (AVR index #00): ZiFi or the RS-232 rings
     static constexpr int kNothing = -3;       ///< nothing answers: reads #00
+    static constexpr int kZiFiBase = -32;     ///< kZiFiBase + n: TS ZiFi register #C0 + n (n = 0..15)
+    static constexpr bool IsZiFi(int reg) { return reg >= kZiFiBase && reg < kZiFiBase + 16; }
 };
 
 class Uart16550
@@ -82,6 +84,9 @@ public:
         /// Only CTS reaches the chip; DSR' and DCD' are tied asserted, RI' tied inactive (the ATM2IOESP card:
         /// reference-atm2ioesp.md open question 5). The peer's DSR / DCD / RI are not seen
         bool ctsOnly = false;
+        /// The receiver's frame length in bits, 0: the programmed line's. A line whose two ends differ (the TS AVR's
+        /// ZiFi USART sends 8N2, the ESP 8N1: reference-zifi.md §2.1)
+        uint8_t rxFrameBits = 0;
 
         // AVR firmware behavior
         bool dataPath = true;            ///< false: the 2010 register file (no byte moves)
@@ -137,6 +142,21 @@ public:
     /// The chip's interrupt output (IIR bit 0 clear and MCR OUT2 set, as on a
     /// PC card). ZX-WiFi only; the Evo AVR has none
     bool InterruptActive() const;
+
+    /// The TS firmware's direct ring access (the ZiFi data register on the RS-232 rings, the ZiFi line itself:
+    /// reference-zifi.md §2.3): no register side effects
+    uint16_t RxUsed() const { return _rxCount; }
+    uint16_t TxFree() const { return static_cast<uint16_t>(TxDepth() > _txCount ? TxDepth() - _txCount : 0); }
+    /// Pop a received byte, #FF when none
+    uint8_t DataRead(uint64_t now);
+    /// Queue a byte to send; dropped when the ring is full (THRE / TEMT clear when it fills)
+    void DataWrite(uint8_t value, uint64_t now);
+    /// Empty the rings (a byte already on the line still goes out); LSR is not touched
+    void ClearRx();
+    void ClearTx();
+
+    /// Called for every received byte with its arrival time (base T-states), after it is in the ring
+    std::function<void(uint64_t at)> onRxByte;
 
     /// Current line: baud rate from the divisor, frame bits (start + data +
     /// parity + stop)

@@ -59,6 +59,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         form.zxBus = Flag(machine->find("zx_bus"), true);
         form.internalIo = Flag(machine->find("internal_io"), false);
         form.serialPort = Text(machine->find("serial_port"), "none");
+        form.zifiMachine = Flag(machine->find("zifi"), false);
     }
     const StateNode* set = network.find("settings");
     if (!set)
@@ -72,6 +73,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
         const std::string address = Text(set->find("atm2ioesp_address"), "0xF0");
         form.atm2IoEspAddress = static_cast<unsigned>(std::strtoul(address.c_str(), nullptr, 0));
     }
+    form.zifiPeer = Peer(Text(set->find("zifi")), "NONE");
     form.comPort = Peer(Text(set->find("com_port")), "NONE");
     form.zxWifiPeer = Peer(Text(set->find("zx_wifi")), "AT");
     form.espChip = Upper(Text(set->find("esp_chip"), "ESP32"));
@@ -100,6 +102,8 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
         std::snprintf(text, sizeof text, "0x%02X", after.atm2IoEspAddress);
         out.emplace_back("atm2ioesp_address", text);
     }
+    if (before.zifiPeer.ToString() != after.zifiPeer.ToString())
+        out.emplace_back("zifi", after.zifiPeer.ToString());
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
@@ -146,7 +150,7 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
     else if (form.serialPort == "zifi")
     {
         a.zxWifi = false;
-        a.zxWifiWhy = "Ports #xxEF are TS-Conf's ZiFi.";
+        a.zxWifiWhy = "Ports #xxEF are the TS-Conf AVR's (its COM port and ZiFi): use the machine's serial port and ZiFi below.";
     }
 
     // ATM Turbo 2+: the port follows the controller firmware chosen (V31 on has RS-232)
@@ -157,8 +161,7 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
 
     if (form.serialPort == "zifi")
     {
-        a.comPort = false;
-        a.comPortWhy = "TS-Conf's serial port (ZiFi) is not emulated yet.";
+        // TS-Conf: the TS AVR firmware's 16550 at #F8EF..#FFEF takes a peer like the ZX-Evo's
     }
     else if (kbcSocket)
     {
@@ -176,10 +179,20 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
         a.comPortWhy = "This machine has no serial port of its own: a ZX-WiFi card adds one.";
     }
 
-    if (form.serialPort != "evo-avr")
+    if (form.serialPort == "zifi")
+    {
+        a.avrFirmware = false;
+        a.avrFirmwareWhy = "TS-Conf runs the TS-Labs AVR firmware (2016-04 and later).";
+    }
+    else if (form.serialPort != "evo-avr")
     {
         a.avrFirmware = false;
         a.avrFirmwareWhy = "Only the ZX-Evo has the AVR.";
+    }
+    if (!form.zifiMachine)
+    {
+        a.zifi = false;
+        a.zifiWhy = "ZiFi is the TS-Labs AVR firmware's: TS-Conf, or a ZX-Evo with the AVR firmware TS2016-02 / TS2016-04.";
     }
     if (!kbcSocket)
     {

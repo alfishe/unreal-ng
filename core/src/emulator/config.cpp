@@ -928,6 +928,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.zxWifi[0] = '\0';
 		}
 	}
+	config.network.zifi[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ZiFi", nullptr), config.network.zifi, sizeof config.network.zifi);
+	if (config.network.zifi[0])
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.zifi, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ZiFi=%s: %s - no ZiFi board", config.network.zifi, error.c_str());
+			config.network.zifi[0] = '\0';
+		}
+	}
 	config.network.atm2IoEsp[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "Atm2IoEsp", nullptr), config.network.atm2IoEsp, sizeof config.network.atm2IoEsp);
 	{

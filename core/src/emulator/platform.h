@@ -722,6 +722,9 @@ struct CONFIG
 		/// The card's bus address (#FB latch): #F0 (Rev 1.5 / 2.0 default) or #F8
 		/// (Rev 1.0); its 16550 answers base .. base + 7
 		uint8_t atm2IoEspAddress;
+		/// What the TS AVR firmware's ZiFi UART (TS-Conf; ZX-Evo with a TS-Labs AVR firmware) is wired to:
+		/// ComPortSpec, empty = NONE (no ZiFi board). AT = the original ZiFi (an ESP-01 with Espressif's AT)
+		char zifi[256];
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;

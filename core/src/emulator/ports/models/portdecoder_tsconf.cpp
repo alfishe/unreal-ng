@@ -1113,6 +1113,33 @@ void PortDecoder_TSConf::ApplyVideoPage()
 
 /// region <TTD>
 
+PortDecoder::NetworkCapabilities PortDecoder_TSConf::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::ZiFi;
+    // The TS-Conf FPGA needs a TS-Labs AVR firmware: 2016-02 or the current line (2016-04 on), the default
+    const auto configured = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    const Uart16550::AvrFirmware firmware = configured == Uart16550::AvrFirmware::Ts2016Feb
+                                                ? Uart16550::AvrFirmware::Ts2016Feb
+                                                : Uart16550::AvrFirmware::Ts2016Apr;
+    caps.uart = Uart16550::EvoAvrParams(firmware);
+    caps.firmware = Uart16550::AvrFirmwareName(firmware);
+    caps.zifi = true;
+    // The FPGA packs the high byte into 5 bits (slavespi.v: ~&a[7:6] ? 10h : {&a[7:4], a[3:0]}), the AVR
+    // expands them: #00..#BF and #F0..#F7 the data register, #C0..#EF the registers #C0..#CF (#D0..#EF
+    // are aliases), #F8..#FF the 16550 (reference-zifi.md §2.2)
+    caps.serialRegister = [](uint16_t port) {
+        const uint8_t high = static_cast<uint8_t>(port >> 8);
+        if (high < 0xC0 || (high >= 0xF0 && high < 0xF8))
+            return ComPortRegister::kDataRegion;
+        if (high >= 0xF8)
+            return static_cast<int>(high - 0xF8);
+        return ComPortRegister::kZiFiBase + (high & 0x0F);
+    };
+    caps.waitPortInterrupt = [this]() { _interrupts.RaiseWaitPort(); };
+    return caps;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
     return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887,

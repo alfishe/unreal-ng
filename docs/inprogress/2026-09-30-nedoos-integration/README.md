@@ -19,6 +19,7 @@ Two linked topics, both driven by running the full NedoOS card on ZX-Evo
 | [reference-evo-com-port.md](reference-evo-com-port.md) | The ZX-Evo COM port (the AVR's 16550 emulation: decoding, registers, FIFOs, /WAIT timing) and the ZX-WiFi 16550, how NedoOS drives them, how the model follows |
 | [reference-esp-modules.md](reference-esp-modules.md) | The emulated ESP modules: NedoOS ESPNET protocol 1.27 (both host drivers, byte-level frames), the AT dialect ZX software uses, the ZiFi API, other emulators' ESP code, how the model follows, open questions |
 | [reference-wizcfg.md](reference-wizcfg.md) | `wizcfg.com` disassembled: presence check, reset, MAC / IP setup, the `#AA` chip test, DHCP exchange |
+| [handoff-serial-cards-on-other-buses.md](handoff-serial-cards-on-other-buses.md) | For a 16550 + ESP / modem card on another bus (Sprinter ISA, ATM INTERNAL I/O): reuse `ComPort` without #xxEF, chip parameters, interrupts, peers and settings, virtual-network guest ids, TTD, every surface, testing pitfalls |
 
 Why together: NedoOS network programs (e.g. `zxdb.com`) are the main consumers
 of the adapters, and the layer's socket view (NK-14) is how we debug them.

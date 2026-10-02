@@ -488,6 +488,12 @@ void Uart16550::Advance(uint64_t now)
     // the Evo pulses RTS (MCR 2, then 0) and gets about one byte per pulse
     if (!loop && _peer)
     {
+        uint64_t rxCharT = charT;
+        if (_params.rxFrameBits)
+        {
+            const uint64_t baud = Baud() ? Baud() : 1;
+            rxCharT = (static_cast<uint64_t>(_params.rxFrameBits) * _baseClockHz + baud - 1) / baud;
+        }
         uint64_t rxStart = now;
         while (true)
         {
@@ -498,12 +504,14 @@ void Uart16550::Advance(uint64_t now)
                 _rxInFlight = false;
                 PushRx(_rxShift);
                 rxStart = _rxArriveAt;
+                if (onRxByte)
+                    onRxByte(_rxArriveAt);
             }
             if (!_peer->HasByte() || (_peer->HonorsRts() && !RtsAsserted()))
                 break;
             _rxShift = _peer->TakeByte();
             _rxInFlight = true;
-            _rxArriveAt = rxStart + charT;
+            _rxArriveAt = rxStart + rxCharT;
         }
     }
     UpdateModemStatus();
@@ -544,6 +552,38 @@ uint8_t Uart16550::Iir() const
     if ((_ier & 0x08) && (_msr & 0x0F))
         return static_cast<uint8_t>(fifo | 0x00);
     return static_cast<uint8_t>(fifo | 0x01);
+}
+
+uint8_t Uart16550::DataRead(uint64_t now)
+{
+    Advance(now);
+    if (_rxCount == 0)
+        return 0xFF;
+    const uint8_t value = PopRx();
+    Advance(now);
+    return value;
+}
+
+void Uart16550::DataWrite(uint8_t value, uint64_t now)
+{
+    Advance(now);
+    if (_txCount >= TxDepth())
+        return;   // the firmware drops it
+    _tx[(_txHead + _txCount) % kMaxTx] = value;
+    ++_txCount;
+    if (_txCount >= TxDepth())
+        _lsr &= static_cast<uint8_t>(~(kLsrThre | kLsrTemt));
+    Advance(now);
+}
+
+void Uart16550::ClearRx()
+{
+    _rxCount = _rxHead = 0;
+}
+
+void Uart16550::ClearTx()
+{
+    _txCount = _txHead = 0;
 }
 
 bool Uart16550::InterruptActive() const

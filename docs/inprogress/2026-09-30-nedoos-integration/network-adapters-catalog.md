@@ -38,8 +38,8 @@ the ZXNETUSB card.
 | **ESP AT personality** | behind any UART | - | ESP8266 / ESP32 stock AT firmware | ESPCOM apps (zxdb, time2, girc, gopher, zifi.com ...), Moon Rabbit, zx-net-tools | jnext (full AT engine, GPLv3: reference only) | **N3** |
 | **ESPNET personality** | behind any UART | - | ESP running NedoOS ESPNET firmware 1.27 | NedoOS `sd_bootesp.$C` kernel, `currentNetwork=2` apps, `enet`, `espcfg` | none | **N3** |
 | **ATM Turbo 2+ COM port** | ATM Turbo 2+ (ATM710) | `IN #55FE` enters command mode, then commands in the high byte (`#02FE` read, `#03FE` write, `#42FE` status, `#C2FE` RX count, `#C3FE` baud ...) | 8051-family keyboard controller | NedoOS ATM ESP kernels (comType 1), Moon Rabbit `mrfua.com` | none | **N4** |
-| **ZiFi** (TS-Labs) | TS-Conf only | `#00EF..#BFEF` data, `#C0EF..#C9EF` FIFO state / control | ESP-01 AT on the TS AVR, FIFOs 512 / 256 | ZiFi shell `zifi.spg`, FT812 SDK | TS Unreal (COM pass-through), MAME tsconf, pico-spec | N5 (with TS-Conf) |
-| **ATM2IOESP** | ATM | 16550 index via `OUT #FB`, data via `#FA` | 16550 + ESP | NedoOS comType 3 | none | N6, only if a board or user shows up |
+| **ZiFi** (TS-Labs) | TS-Conf only | `#00EF..#BFEF` data, `#C0EF..#C9EF` FIFO state / control | ESP-01 AT on the TS AVR, FIFOs 512 / 256 | ZiFi shell `zifi.spg`, FT812 SDK | TS Unreal (COM pass-through), MAME tsconf, pico-spec | N5: the AVR side and `ZiFi=AT` done 2026-10-02 ([2026-10-02-tsconf-zifi](../2026-10-02-tsconf-zifi/README.md)); the 2026 native protocol next |
+| **ATM2IOESP** | ATM | 16550 index via `OUT #FB`, data via `#FA` | 16550 + ESP | NedoOS comType 3 | none | done 2026-10-02 ([2026-10-02-atm2ioesp](../2026-10-02-atm2ioesp/README.md)) |
 | **AY-UART** | any 128K | bit-banged on AY port A (register 14) | ESP-01 / ESP-12 AT | Moon Rabbit `AY-64.C`, zx-net-tools (uGophy, wget, IRC) | none known | N6 |
 | **ZX-Uno UART** | ZX-Uno, Karabas-Pro | `#FC3B` / `#FD3B` | ESP8266 AT | Moon Rabbit `UN-64.C`, uzifi | pico-spec, ZEsarUX | out of scope (machines not emulated) |
 | **ZX Next UART** | ZX Next | `#133B..#163B` | ESP-01 AT | Next tools | jnext, MAME, CSpect | out of scope |
@@ -58,7 +58,7 @@ RTL8019 (Sprinter only).
 | **N1** | ZXNETUSB (W5300) | the user's NedoOS card needs it; fixes the zxdb hang; the widest NedoOS software set |
 | **N2** | ZX-Evo COM port + ZX-WiFi (16550) | carries both ESP personalities; also a plain host serial bridge |
 | **N3** | ESP personalities: ESPNET, then AT | ESPNET kernel and apps; AT for TR-DOS software and zx-net-tools |
-| **N4** | ATM Turbo 2+ COM port | the same ESP personalities on ATM710 |
+| **N4** | ATM Turbo 2+ COM port (done 2026-10-02, with the ATM2IOESP card) | the same ESP personalities on ATM710 |
 | **N5, N6** | ZiFi (with TS-Conf), AY-UART, ATM2IOESP | smaller audiences |
 
 ## 4. Sources
