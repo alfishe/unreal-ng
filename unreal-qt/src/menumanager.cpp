@@ -667,7 +667,8 @@ void MenuManager::createMachineMenu()
         MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
                           // quadrant switching + #7EFD window; same design doc)
         MM_PROFI,         // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
-        MM_TSL            // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
     };
 
     for (const auto& model : models)
@@ -841,6 +842,48 @@ void MenuManager::createMachineMenu()
     _contentionAction->setCheckable(true);
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
+
+    // Where the host keyboard goes ([INPUT] HostKeyboard=): the ZX matrix, the PS/2
+    // keyboard controller (ZX-Evo AVR, ATM Turbo 2+), both
+    _hostKeyboardMenu = _machineMenu->addMenu(tr("Host &Keyboard"));
+    _hostKeyboardMenu->setStatusTip(tr("Where host keys go: the ZX keyboard matrix, the PS/2 keyboard controller, or both"));
+    _hostKeyboardGroup = new QActionGroup(this);
+    _hostKeyboardGroup->setExclusive(true);
+    const struct
+    {
+        const char* route;
+        QString text;
+        QString tip;
+    } routes[] = {
+        {"auto", tr("&Auto"), tr("Both where the machine has a PS/2 keyboard controller, the matrix elsewhere")},
+        {"matrix", tr("ZX &Matrix"), tr("Only the Spectrum keyboard matrix")},
+        {"ps2", tr("&PS/2 Controller"), tr("Only the PC keyboard on the machine's PS/2 controller")},
+        {"both", tr("&Both"), tr("The matrix and the PS/2 controller at once")},
+    };
+    for (const auto& r : routes)
+    {
+        QAction* action = _hostKeyboardMenu->addAction(r.text);
+        action->setCheckable(true);
+        action->setData(QString::fromLatin1(r.route));
+        action->setStatusTip(r.tip);
+        _hostKeyboardGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, action] { emit hostKeyboardRouteRequested(action->data().toString()); });
+    }
+    connect(_machineMenu, &QMenu::aboutToShow, this, &MenuManager::machineMenuAboutToShow);
+}
+
+void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller)
+{
+    if (!_hostKeyboardGroup)
+        return;
+    for (QAction* action : _hostKeyboardGroup->actions())
+    {
+        const QString name = action->data().toString();
+        action->setChecked(name.compare(route, Qt::CaseInsensitive) == 0);
+        // Without a PS/2 controller only the matrix is there to choose
+        action->setEnabled(ps2Controller || name == "auto" || name == "matrix");
+    }
+    _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)

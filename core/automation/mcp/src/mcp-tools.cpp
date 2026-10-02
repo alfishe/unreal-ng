@@ -136,7 +136,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
-        "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
+        "SCORPION, PROFSCORP, SPRINTER, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
@@ -2078,12 +2078,19 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys"})
+    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once.";
+        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
+        "ATM Turbo 2+, both); 'status' shows it.";
+    schema["properties"]["route"]["type"] = "string";
+    schema["properties"]["route"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* route : {"auto", "matrix", "ps2", "both"})
+        schema["properties"]["route"]["enum"].append(route);
+    schema["properties"]["route"]["description"] = "For 'route': where host and injected keys go";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["text"]["type"] = "string";
@@ -2119,6 +2126,18 @@ void RegisterTypeInput(ToolRegistry& registry)
             if (action == "status")
             {
                 ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", done);
+                return;
+            }
+            if (action == "route")
+            {
+                if (!args.isMember("route"))
+                {
+                    done(ToolResult::Error("route requires 'route' (auto | matrix | ps2 | both)"));
+                    return;
+                }
+                Json::Value body;
+                body["route"] = args["route"].asString();
+                ResolveAndForward(args, "POST", "/keyboard/route", &body, caller, "Keyboard route set", done);
                 return;
             }
             if (action == "list_keys")

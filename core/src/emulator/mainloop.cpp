@@ -500,6 +500,10 @@ void MainLoop::CompleteFrame()
     {
         _context->pCore->OnNetworkFrame();
     }
+
+    // Board devices on their own clock (ATM Turbo 2+ keyboard controller)
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->OnFrameEnd();
 }
 
 void MainLoop::RestartFrame()

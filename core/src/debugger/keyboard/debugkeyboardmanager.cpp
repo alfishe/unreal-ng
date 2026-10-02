@@ -89,21 +89,26 @@ bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed, bool derivePcK
         return false;
 
     // The PS/2 controller hears the PC keys the ZX key stands for (the ZX key as
-    // given, before it is decomposed into matrix keys: Up is E0 75, not Shift + 7)
-    if (derivePcKeys && _keyboard->HasPs2Sink())
+    // given, before it is decomposed into matrix keys: Up is E0 75, not Shift + 7),
+    // when the host keyboard's route includes it
+    if (derivePcKeys && _keyboard->RoutesToPs2())
     {
         const std::vector<PcKey> pcKeys = pckey::FromZxKey(key);
         if (pressed)
         {
             for (PcKey pc : pcKeys)
-                ApplyPcKey(pc, true);
+                SchedulePcKey(pc, true);
         }
         else
         {
             for (auto it = pcKeys.rbegin(); it != pcKeys.rend(); ++it)
-                ApplyPcKey(*it, false);
+                SchedulePcKey(*it, false);
         }
     }
+
+    // The matrix side follows the route too (a release always gets through)
+    if (pressed && !_keyboard->RoutesToMatrix())
+        return true;
 
     if (!pressed)
     {
@@ -230,6 +235,7 @@ void DebugKeyboardManager::ReleaseAllKeys()
     std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
 
     // Clear direct pressed keys (the reset below releases them on the PS/2 side too)
+    _pcSchedule.clear();
     _directPressedKeys.clear();
     _directPressedPcKeys.clear();
     
@@ -439,7 +445,7 @@ void DebugKeyboardManager::QueueSequence(const KeyboardSequence& sequence)
 bool DebugKeyboardManager::IsSequenceRunning() const
 {
     std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
-    return !_eventQueue.empty() || _inTapHoldPhase || _frameCountdown > 0;
+    return !_eventQueue.empty() || _inTapHoldPhase || _frameCountdown > 0 || !_pcSchedule.empty();
 }
 
 void DebugKeyboardManager::AbortSequence()
@@ -451,6 +457,7 @@ void DebugKeyboardManager::AbortSequence()
     {
         _eventQueue.pop();
     }
+    _pcSchedule.clear();
     
     // Release any held keys
     for (ZXKeysEnum key : _tapHeldKeys)
@@ -569,10 +576,10 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
     KeyboardSequence seq;
     seq.name = "type_text";
 
-    // A PS/2 keyboard (ZX-Evo) gets the PC keys that type each character, not
+    // A PS/2 keyboard (ZX-Evo, ATM Turbo 2+) gets the PC keys that type each character, not
     // the ones behind its ZX key combination ('&' is Symbol Shift + 6 on the ZX,
     // Shift + 7 on a PC)
-    const bool ps2 = _keyboard && _keyboard->HasPs2Sink();
+    const bool ps2 = _keyboard && _keyboard->RoutesToPs2();
     
     for (char c : text)
     {
@@ -777,6 +784,16 @@ void DebugKeyboardManager::OnFrame()
 
     _frameIndex++;
 
+    // One PC key change per frame (SchedulePcKey); the sequence waits for them
+    if (!_pcSchedule.empty())
+    {
+        const auto [key, pressed] = _pcSchedule.front();
+        _pcSchedule.pop_front();
+        ApplyPcKey(key, pressed);
+        _pcAppliedFrame = _frameIndex;
+        return;
+    }
+
     // Decrement countdown if active
     if (_frameCountdown > 0)
     {
@@ -797,7 +814,7 @@ void DebugKeyboardManager::OnFrame()
                 }
                 _tapHeldKeys.clear();
                 for (auto it = _tapHeldPcKeys.rbegin(); it != _tapHeldPcKeys.rend(); ++it)
-                    ApplyPcKey(*it, /*pressed=*/false);
+                    SchedulePcKey(*it, /*pressed=*/false);
                 _tapHeldPcKeys.clear();
                 _inTapHoldPhase = false;
                 
@@ -1056,11 +1073,11 @@ void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)
     const bool derive = event.pcKeys.empty();
     auto pressPcKeys = [this, &event]() {
         for (PcKey pc : event.pcKeys)
-            ApplyPcKey(pc, /*pressed=*/true);
+            SchedulePcKey(pc, /*pressed=*/true);
     };
     auto releasePcKeys = [this, &event]() {
         for (auto it = event.pcKeys.rbegin(); it != event.pcKeys.rend(); ++it)
-            ApplyPcKey(*it, /*pressed=*/false);
+            SchedulePcKey(*it, /*pressed=*/false);
     };
     
     switch (event.action)
@@ -1212,3 +1229,15 @@ std::vector<ZXKeysEnum> DebugKeyboardManager::CharToKeys(char c)
 }
 
 /// endregion </Private Methods>
+
+void DebugKeyboardManager::SchedulePcKey(PcKey key, bool pressed)
+{
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+    if (_pcSchedule.empty() && _pcAppliedFrame != _frameIndex)
+    {
+        ApplyPcKey(key, pressed);
+        _pcAppliedFrame = _frameIndex;
+        return;
+    }
+    _pcSchedule.emplace_back(key, pressed);
+}

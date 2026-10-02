@@ -1,0 +1,14 @@
+frame=520 time_s=10.649600000 t35=37273600 IM=2, ISR entry 8101, turbo=1
+frame=520 time_s=10.649600000 t35=37273600 booted: 1 INT position(s) in a 320-line frame, frame period 0.020480000 s, rgmod=01
+frame=525 time_s=10.752000000 t35=37632000 FN_SYNC A=1: stub at 7CEC, return to 9E4B, SP=80EA, IM=2 I=80
+frame=527 time_s=10.794597857 t35=37781092 FN_SYNC returned, carry=1
+frame=528 time_s=10.813440000 t35=37847040 scorpion: 1 INT position(s) in a 320-line frame, frame period 0.020480000 s, rgmod=01
+frame=533 time_s=10.915840000 t35=38205440 FN_SYNC A=2: stub at 7CEC, return to 9E4D, SP=80EA, IM=2 I=80
+frame=535 time_s=10.958431000 t35=38354508 FN_SYNC returned, carry=1
+frame=536 time_s=10.977280000 t35=38420480 pentagon: 1 INT position(s) in a 320-line frame, frame period 0.020480000 s, rgmod=01
+frame=541 time_s=11.079680000 t35=38778880 FN_SYNC A=3: stub at 7CE0, return to 8108, SP=80DE, IM=2 I=80
+frame=543 time_s=11.122201857 t35=38927706 FN_SYNC returned, carry=1
+frame=544 time_s=11.141120000 t35=38993920 spectrum: 1 INT position(s) in a 320-line frame, frame period 0.020480000 s, rgmod=01
+frame=549 time_s=11.243520000 t35=39352320 FN_SYNC A=0: stub at 7CEC, return to 9E4A, SP=80EA, IM=2 I=80
+frame=551 time_s=11.286164143 t35=39501574 FN_SYNC returned, carry=1
+frame=552 time_s=11.304960000 t35=39567360 default: 1 INT position(s) in a 320-line frame, frame period 0.020480000 s, rgmod=01

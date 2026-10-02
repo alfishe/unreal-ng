@@ -252,3 +252,34 @@ TEST(FolderSnapshot_Test, CancelRequestedUnwindsNestedRecursion)
     // contract (every level's `if (_cancelled) break;`)
     EXPECT_EQ(seen.size(), 2u);
 }
+
+/// A folder disappearing mid-walk (the host disk unmounted) must fail the
+/// whole scan, never hand back a tree that silently stops wherever the
+/// source went away. `sub` is removed from under the walk via onProgress -
+/// idempotent and order-independent, so this is deterministic regardless of
+/// which top-level entry std::filesystem::directory_iterator visits first
+TEST(FolderSnapshot_Test, DirectoryGoneMidWalkFailsInsteadOfTruncating)
+{
+    ScratchFolder folder("snapshot-io-error");
+    folder.File("sub/a.bin", "a");
+    folder.File("sub/b.bin", "b");
+    folder.File("top.bin", "t");
+
+    const std::filesystem::path subPath = folder.Path() / "sub";
+
+    FolderScanOptions options;
+    options.onProgress = [&](uint64_t, uint64_t) {
+        std::error_code ec;
+        fs::remove_all(subPath, ec);  // already gone on a later call: a harmless no-op
+    };
+
+    FolderSnapshot snapshot;
+    std::string error;
+    EXPECT_FALSE(FolderSnapshot::Scan(folder.Path(), options, snapshot, &error));
+    EXPECT_NE(error, FolderSnapshot::kCancelledError) << "this is an I/O failure, not a cancellation";
+    EXPECT_FALSE(error.empty());
+    // Scan() never populates `snapshot` on this path either - same
+    // no-half-built-result contract as cancellation
+    EXPECT_EQ(snapshot.EntryCount(), 0u);
+    EXPECT_TRUE(snapshot.Skipped().empty()) << "a structural I/O failure is not reported as a skip";
+}

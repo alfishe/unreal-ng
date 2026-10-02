@@ -3305,6 +3305,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media list` | every slot and the detached media |
 | `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
 | `media formats [--kind floppy]` | accepted formats |
+| `media targets <path>` | where a file can go: what it is, the slots that take it (`*` = used without asking), or why nothing does |
 | `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
 | `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |

@@ -12,6 +12,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include <cassert>
 #include <array>
@@ -290,12 +291,32 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [EVO] Avr=%s, BASECONF (the latest NedoPC firmware) used", avr);
 		config.atm.evo_avr = static_cast<uint8_t>(firmware);
 	}
+	{
+		// [ATM] Kbc=: the keyboard controller of ATM Turbo 2+ boards (its real firmware on an MCS-51 core)
+		const char* kbc = inimanager.GetValue("ATM", "Kbc", nullptr);
+		Atm2Kbc::Firmware firmware = Atm2Kbc::kDefaultFirmware;
+		// The Unreal Speccy key [INPUT] ATMKBD=0 (no controller) counts when Kbc= is not given
+		if (!kbc && inimanager.GetValue(input, "ATMKBD", nullptr) && inimanager.GetLongValue(input, "ATMKBD", 1) == 0)
+			firmware = Atm2Kbc::Firmware::None;
+		else if (!Atm2Kbc::ParseFirmware(kbc, firmware))
+			MLOGWARNING("Config: unknown [ATM] Kbc=%s, V41 used (NONE | V22-7 | V22-11 | V22-12 | V31-7 | V31-11 | V32-7 | "
+			            "V32-11 | V40 | V41)", kbc);
+		config.atm.kbc_firmware = static_cast<uint8_t>(firmware);
+		config.atm.kbc_rom_path[0] = '\0';
+		CopyStringValue(inimanager.GetValue(rom, "ATM2KBC", nullptr), config.atm.kbc_rom_path, sizeof config.atm.kbc_rom_path);
+	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
+
+	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
+	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
+	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
 	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
@@ -310,6 +331,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a
@@ -359,6 +381,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.trdos_interleave = 0;
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr), config.appendboot, sizeof config.appendboot);
+
+	// [INPUT] HostKeyboard=: where the host keyboard goes (the ZX matrix, the PS/2 controller, both)
+	{
+		config.input.hostKeyboard[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "HostKeyboard", nullptr), config.input.hostKeyboard, sizeof config.input.hostKeyboard);
+		HostKeyboardRoute route;
+		if (!Keyboard::ParseHostRoute(config.input.hostKeyboard, route))
+		{
+			MLOGWARNING("Config: unknown [INPUT] HostKeyboard=%s, AUTO used (AUTO | MATRIX | PS2 | BOTH)", config.input.hostKeyboard);
+			config.input.hostKeyboard[0] = '\0';
+		}
+	}
 
 	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
 	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
@@ -1325,6 +1359,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_TSL:
                 // TS-Conf: 320 lines x 224 T (the Pentagon raster, hardware-spec §4). INT comes from the
                 // machine's interrupt source (VS_INT / HS_INT), so intstart / intlen are not used
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            case MM_SPRINTER:
+                // Sprinter: 320 lines x 224 T after reset (Sprinter hardware-reference §6.1). INT comes from
+                // the mode table through the machine's interrupt source, so intstart / intlen are not used
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
                 break;

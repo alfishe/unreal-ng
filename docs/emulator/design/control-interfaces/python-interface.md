@@ -154,6 +154,10 @@ class Emulator:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""
 
+    def key_route(self, route: str = "") -> str:
+        """Where host and injected keys go: 'auto' | 'matrix' | 'ps2' | 'both' (the ZX matrix, the PS/2 keyboard
+        controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
+
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
@@ -316,6 +320,7 @@ emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs sa
 emu.media_eject("B", export="/tmp/b.trd")
 emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
+emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
 emu.media(verb, slot, path, **options)                   # any verb
 ```

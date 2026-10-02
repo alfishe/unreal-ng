@@ -41,3 +41,4 @@ atm merge `59e37f38`); it was previously the only content of this folder, marked
 ## Decisions still open
 
 None blocking; defaults are recorded in [gap-analysis.md](gap-analysis.md) §4 and the designs' decision tables.
+- [x] Kempston joystick on Pentagon 128/512/1024 and Profi (2026-10-01): [tdd-kempston-joystick.md](tdd-kempston-joystick.md) §10.x

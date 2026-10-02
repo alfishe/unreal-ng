@@ -43,6 +43,8 @@ public:
     ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state, uint32_t paperStartT,
                          ScorpionTurboLogic logic = ScorpionTurboLogic::SC151);
 
+    ScorpionTurboLogic Logic() const { return _logic; }
+
     /// The I/O cycle's extra T in turbo (the port decoder adds them)
     uint32_t IoWaits() const { return _logic == ScorpionTurboLogic::SC153 ? 1u : 2u; }
 

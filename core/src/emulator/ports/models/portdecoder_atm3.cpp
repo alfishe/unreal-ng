@@ -20,7 +20,7 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
+PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context, false)
 {
     _zc.SetDevice(&_sdCard);
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
@@ -375,7 +375,7 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
         case PortArm::Joystick:
             // Kempston joystick outside shadow (zports.v: kj_in, the AVR's SPI register). No device
             // or not fitted: nothing is pressed, 0x00
-            result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
+            result = Default_Port_KempstonJoystick_In();
             break;
         case PortArm::Mouse:
         {

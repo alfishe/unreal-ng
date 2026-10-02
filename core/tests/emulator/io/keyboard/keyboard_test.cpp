@@ -270,13 +270,27 @@ namespace
 {
     void PostHostKey(Keyboard* keyboard, uint8_t zxKey, PcKey pcKey, bool pressed)
     {
-        // The front end's event, delivered as MessageCenter would (payload kept by the caller)
-        KeyboardEvent event(zxKey, static_cast<uint8_t>(pcKey), pressed ? KEY_PRESSED : KEY_RELEASED, "");
-        Message message(0, &event, /*cleanupPayload=*/false);
-        if (pressed)
-            keyboard->OnKeyPressed(0, &message);
-        else
-            keyboard->OnKeyReleased(0, &message);
+        // The front end's two messages, delivered as MessageCenter would (payloads kept by the caller):
+        // the physical key to its handler, the ZX key to the matrix handler
+        const KeyEventEnum type = pressed ? KEY_PRESSED : KEY_RELEASED;
+        if (pcKey != PcKey::None)
+        {
+            PcKeyEvent pc(static_cast<uint8_t>(pcKey), type, "");
+            Message message(0, &pc, /*cleanupPayload=*/false);
+            if (pressed)
+                keyboard->OnPcKeyPressed(0, &message);
+            else
+                keyboard->OnPcKeyReleased(0, &message);
+        }
+        if (zxKey != ZXKEY_NONE)
+        {
+            KeyboardEvent zx(zxKey, type, "");
+            Message message(0, &zx, /*cleanupPayload=*/false);
+            if (pressed)
+                keyboard->OnKeyPressed(0, &message);
+            else
+                keyboard->OnKeyReleased(0, &message);
+        }
     }
 
     std::vector<uint8_t> DrainPs2Log(EvoAvr& avr)
@@ -337,5 +351,47 @@ TEST(Keyboard_Ps2_Test, WithoutAControllerThePhysicalKeyIsIgnored)
     PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, true);  // no ZX key, no controller: nothing
     PostHostKey(keyboard, ZXKEY_NONE, PcKey::Function1, false);
 
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The host keyboard's route gates each side: MATRIX keeps the PS/2 controller
+/// out, PS2 keeps the matrix out, AUTO on a PS/2 machine is both
+TEST(Keyboard_Ps2_Test, TheRouteGatesTheMatrixAndThePs2Side)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EvoAvr& avr = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder)->GetEvoAvr();
+    auto* keyboard = static_cast<KeyboardCUT*>(context->pKeyboard);
+    EXPECT_EQ(keyboard->EffectiveHostRoute(), HostKeyboardRoute::Both) << "AUTO with a PS/2 controller";
+
+    keyboard->SetHostRoute(HostKeyboardRoute::Matrix);
+    PostHostKey(keyboard, ZXKEY_A, PcKey::A, true);
+    EXPECT_TRUE(DrainPs2Log(avr).empty()) << "MATRIX: the controller hears nothing";
+    EXPECT_EQ(keyboard->_keyboardMatrixState[1] & 0x01, 0) << "A on the matrix";
+    PostHostKey(keyboard, ZXKEY_A, PcKey::A, false);
+    DrainPs2Log(avr);
+
+    keyboard->SetHostRoute(HostKeyboardRoute::Ps2);
+    PostHostKey(keyboard, ZXKEY_A, PcKey::A, true);
+    EXPECT_EQ(DrainPs2Log(avr), (std::vector<uint8_t>{0x1C})) << "PS2: the controller hears A";
+    EXPECT_EQ(keyboard->_keyboardMatrixState[1] & 0x01, 0x01) << "the matrix stays up";
+    PostHostKey(keyboard, ZXKEY_A, PcKey::A, false);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(Keyboard_Ps2_Test, TheRouteIsSetByName)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    Keyboard* keyboard = emulator->GetContext()->pKeyboard;
+    std::string error;
+    EXPECT_EQ(keyboard->EffectiveHostRoute(), HostKeyboardRoute::Matrix) << "AUTO without a PS/2 controller";
+    EXPECT_TRUE(keyboard->RequestHostRoute("both", error));
+    EXPECT_EQ(keyboard->GetHostRoute(), HostKeyboardRoute::Both);
+    EXPECT_FALSE(keyboard->RoutesToPs2()) << "no controller to route to";
+    EXPECT_FALSE(keyboard->RequestHostRoute("sideways", error));
+    EXPECT_NE(error.find("auto | matrix | ps2 | both"), std::string::npos);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

@@ -198,6 +198,19 @@ public:
     /// Clear all storage. Used by session reset.
     void Reset();
 
+    /// Work the store did since ResetWork(), counted rather than timed: for a
+    /// replayable workload it is the same on every host and under any load,
+    /// so a CI gate can compare it exactly (core/tests/debugger/ttd/bench)
+    struct Work
+    {
+        uint64_t bytesScanned = 0;        ///< bytes XOR'd and zero-checked while interning
+        uint64_t compressCalls = 0;
+        uint64_t compressInputBytes = 0;
+        uint64_t slotsDecoded = 0;        ///< chain links decoded (an XorPrev base, recursively)
+    };
+    const Work& GetWork() const { return _work; }
+    void ResetWork() { _work = Work{}; }
+
 private:
     /// One stored page slot. Variable-size via payload vector — the legacy
     /// fixed-flat-vector trick doesn't apply when payloads compress to
@@ -217,6 +230,10 @@ private:
     /// Scratch buffer for recursive decompression in GetPage(XorPrev).
     /// Marked mutable so GetPage can stay const.
     mutable std::vector<uint8_t> _prevScratch;
+
+    /// Counted work (GetWork). Mutable: decoding is const, and counting it
+    /// changes no stored state
+    mutable Work _work;
 
     /// Allocate a free slot index (grows _slots if needed).
     uint32_t AllocateSlot();

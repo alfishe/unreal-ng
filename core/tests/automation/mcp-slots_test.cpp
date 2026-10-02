@@ -136,3 +136,41 @@ TEST(McpSlots_Test, ActionsBecomeMediaRoutes)
     EXPECT_EQ(caller->calls.back().method, "GET");
     EXPECT_EQ(caller->calls.back().path, "/api/v1/emulator/emu-1/media");
 }
+
+/// targets is a GET with the path in the query; the summary names the targets and the default
+TEST(McpSlots_Test, TargetsBecomesAQuery)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+    caller->routes["GET /api/v1/emulator"] = {200, OneEmulator()};
+
+    Json::Value reply;
+    reply["ok"] = true;
+    reply["file"]["kinds"].append("sdcard");
+    reply["file"]["kinds"].append("hdd");
+    reply["file"]["format"] = "fat";
+    reply["file"]["evidence"].append("FAT boot sector at sector 0");
+    Json::Value zc;
+    zc["action"] = "insert";
+    zc["slot"] = "sd.zc";
+    zc["label"] = "SD card (Z-Controller)";
+    Json::Value ngs = zc;
+    ngs["slot"] = "sd.ngs";
+    ngs["label"] = "SD card (NeoGS)";
+    reply["targets"].append(zc);
+    reply["targets"].append(ngs);
+    reply["default"] = Json::Value();
+    reply["refusal"] = Json::Value();
+    caller->routes["GET /api/v1/emulator/emu-1/media/targets?path=cards%2Fnedo%20os.img"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "targets";
+    args["path"] = "cards/nedo os.img";
+    const mcp::ToolResult result = RunMediaTool(*registry, args, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.back().method, "GET");
+    EXPECT_EQ(caller->calls.back().path, "/api/v1/emulator/emu-1/media/targets?path=cards%2Fnedo%20os.img");
+    EXPECT_NE(result.text.find("file: sdcard hdd (fat)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("sd.ngs - SD card (NeoGS)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("several targets: ask the user"), std::string::npos) << result.text;
+}

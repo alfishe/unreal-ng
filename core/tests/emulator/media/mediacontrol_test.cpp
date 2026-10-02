@@ -190,8 +190,7 @@ TEST_F(MediaControl_Test, AutoPicksTheSlotFromTheContent)
     folder.File("card.img", std::string(64 * 512, '\0'));
     folder.File("notes.txt", "not a medium");
     reply = Run(Request("insert", "auto", Utf8(folder.Path() / "card.img")));
-    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
-    EXPECT_EQ(reply.slot, "sd.zc");
+    EXPECT_EQ(reply.result.error, MediaError::AmbiguousSlot) << "the SD card or the hard disk: the caller names one";
 
     reply = Run(Request("insert", "auto", Utf8(folder.Path() / "notes.txt")));
     EXPECT_EQ(reply.result.error, MediaError::UnknownFormat);
@@ -202,25 +201,33 @@ TEST_F(MediaControl_Test, AutoPicksTheSlotFromTheContent)
     EXPECT_EQ(reply.slot, "fdd.c");
 }
 
-/// insert auto with two SD slots: the card goes to the one tagged "primary"
-/// (the Z-Controller), not to an add-on's slot listed before it
-TEST_F(MediaControl_Test, AutoPutsACardIntoThePrimarySdSlot)
+/// insert auto with several slots for a file names them (in the chooser's
+/// order: the Z-Controller before an add-on's slot, the SD slots before the
+/// hard disk) and inserts nothing; one slot takes it at once
+TEST_F(MediaControl_Test, AutoNamesTheSlotsWhenSeveralTakeAFile)
 {
     Create("ATM3");
     MediaManager& manager = *_context->pMediaManager;
     LooseSlot addon("sd.addon", {"sd", "addon"});  // sorts before sd.zc, as sd.ngs does
     manager.RegisterSlot(addon);
 
-    ScratchFolder folder("control-auto-primary");
-    folder.File("card.img", std::string(64 * 512, '\0'));
-    MediaReply reply = Run(Request("insert", "auto", Utf8(folder.Path() / "card.img")));
-    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
-    EXPECT_EQ(reply.slot, "sd.zc");
+    ScratchFolder folder("control-auto-several");
+    const std::string card = Utf8(folder.File("card.img", std::string(64 * 512, '\0')));
+    MediaReply reply = Run(Request("insert", "auto", card));
+    EXPECT_EQ(reply.result.error, MediaError::AmbiguousSlot);
+    const std::string& message = reply.result.message;
+    EXPECT_NE(message.find("several slots take 'card.img'"), std::string::npos) << message;
+    EXPECT_LT(message.find("sd.zc"), message.find("sd.addon")) << message;
+    EXPECT_LT(message.find("sd.addon"), message.find("ide0.master")) << message;
+    EXPECT_FALSE(manager.Info("sd.zc")->present);
+    EXPECT_FALSE(manager.Info("sd.addon")->present);
 
-    folder.File("card2.img", std::string(64 * 512, '\0'));
-    reply = Run(Request("insert", "auto", Utf8(folder.Path() / "card2.img")));
+    std::string hdf(0x16 + 64 * 512, '\0');
+    hdf.replace(0, 7, "RS-IDE\x1A");
+    hdf[9] = 0x16;
+    reply = Run(Request("insert", "auto", Utf8(folder.File("system.hdf", hdf))));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
-    EXPECT_EQ(reply.slot, "sd.addon") << "the primary slot is taken: the next empty one";
+    EXPECT_EQ(reply.slot, "ide0.master") << "the slave is the CD-ROM drive: one target";
     manager.UnregisterSlot("sd.addon");
 }
 
@@ -387,6 +394,44 @@ TEST_F(MediaControl_Test, ReplyShape)
 
     const MediaReply formats = Run(Request("formats", "", {}, {{"kind", "floppy"}}));
     EXPECT_NE(formats.ToJson().find(R"("floppy":["trd")"), std::string::npos) << formats.ToJson();
+}
+
+/// targets (media-drop-targets §4.4): the plan as data; a refusal is an answer, not an error
+TEST_F(MediaControl_Test, TargetsListWhereAFileCanGo)
+{
+    ScratchFolder folder("control-targets");
+    std::string iso(0x8000 + 2048, '\0');
+    iso.replace(0x8001, 5, "CD001");
+    const std::string disc = Utf8(folder.File("disc.iso", iso));
+
+    Create("ATM3");
+    MediaReply reply = Run(Request("targets", "", disc));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    StateNode body = reply.ToValue();
+    EXPECT_EQ(body.find("file")->find("kinds")->items.front().s, "optical");
+    EXPECT_EQ(body.find("file")->find("format")->s, "iso");
+    ASSERT_EQ(body.find("targets")->items.size(), 1u);
+    const StateNode& target = body.find("targets")->items.front();
+    EXPECT_EQ(target.find("action")->s, "insert");
+    EXPECT_EQ(target.find("slot")->s, "ide0.slave");
+    EXPECT_EQ(target.find("label")->s, "IDE slave (CD-ROM)");
+    EXPECT_EQ(target.find("occupiedBy")->kind, StateNode::Kind::Null);
+    EXPECT_EQ(body.find("default")->i, 0);
+    EXPECT_EQ(body.find("refusal")->kind, StateNode::Kind::Null);
+    EXPECT_EQ(reply.slot, "ide0.slave");
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.slave")->present) << "targets inserts nothing";
+
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
+    Create("PENTAGON");
+    reply = Run(Request("targets", "", disc));
+    ASSERT_TRUE(reply.result.Ok()) << "a refusal is an answer";
+    body = reply.ToValue();
+    EXPECT_TRUE(body.find("targets")->items.empty());
+    EXPECT_EQ(body.find("default")->kind, StateNode::Kind::Null);
+    EXPECT_NE(body.find("refusal")->s.find("no CD-ROM drive"), std::string::npos) << body.find("refusal")->s;
+
+    EXPECT_EQ(Run(Request("targets", "")).result.error, MediaError::BadRequest) << "targets needs a path";
 }
 
 TEST_F(MediaControl_Test, CreateProtectAndRescan)

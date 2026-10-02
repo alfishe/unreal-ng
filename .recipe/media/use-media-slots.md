@@ -16,6 +16,7 @@ Related: [insert-disk.md](insert-disk.md) (the older drive-letter calls, disk in
 
 ```text
 media {"action":"list"}                                             # slots, media, dirty state, revision
+media {"action":"targets","path":"/discs/dna_nemo.iso"}             # where it can go: slots in order, default, refusal
 media {"action":"insert","slot":"auto","path":"/games/elite-1.trd"} # the slot comes from the content
 media {"action":"insert","slot":"sd","path":"/home/me/zx/sdcard"}   # ZX-Evo: a folder as the SD card (FAT16)
 media {"action":"insert","slot":"tape","path":"/home/me/zx/tapefiles"}  # a folder as a tape (then LOAD "")
@@ -27,12 +28,20 @@ media {"action":"eject","slot":"B","discard":true}
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (no upload here; `load_software` uploads).
 - The reply's `slot` is the canonical id; `revision` grows with every change.
+- **Unsure which slot?** Ask `targets` first. `default` is the index to use without asking
+  (`null`: several slots fit - pick one, or ask the user); `refusal` says why nothing takes the
+  file (a CD image on a machine without a CD-ROM drive). `insert auto` works when one slot takes
+  the file (or for floppies: the first empty drive); with several it answers `ambiguous-slot`
+  and names them.
 
 ## WebAPI
 
 ```bash
 BASE=http://localhost:8090/api/v1
 curl -s $BASE/emulator/$EMU_ID/media | jq '.slots[] | {id, aliases, state, medium}'
+
+# Where a file can go (nothing is inserted)
+curl -s "$BASE/emulator/$EMU_ID/media/targets?path=/discs/dna_nemo.iso" | jq '{file, targets, default, refusal}'
 
 # A folder as the SD card, FAT32, room for 16 MiB of guest writes
 curl -s -X POST $BASE/emulator/$EMU_ID/media/sd/insert -H 'Content-Type: application/json' \

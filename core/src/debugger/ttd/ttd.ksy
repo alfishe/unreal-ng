@@ -545,7 +545,11 @@ types:
           23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
           machines whose decoder answers #1F - ATM3, Scorpion, TS-Conf),
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
-          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs).
+          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs),
+          25 SprinterPld (Sprinter Sp2000 PLD state + configuration module; reserved: no blob is
+          written before its serializer, Sprinter phase S7 - the machine refuses to record until then),
+          26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
+          interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

@@ -989,6 +989,10 @@ public:
             }
             return mediaCall(s, "formats", "", "", opts);
         });
+        // Where a file can go: what it is, the slots that take it (in a chooser's order), the default, the refusal
+        lua.set_function("media_targets", [mediaCall](sol::this_state s, const std::string& path) {
+            return mediaCall(s, "targets", "", path, sol::nullopt);
+        });
         for (const char* verb : {"insert", "swap"})
         {
             lua.set_function(std::string("media_") + verb,
@@ -1181,6 +1185,28 @@ public:
         // back to pckey::FromName for a PC-only key with no ZX equivalent at
         // all - e.g. "f12", "rshift"; combos accept a mix of both, needed for
         // TS-Conf's BIOS Setup entry, Right Shift + F12)
+        // key_route("auto"|"matrix"|"ps2"|"both") -> route in force | nil, err; key_route() queries
+        lua.set_function("key_route", [this](sol::this_state s, sol::optional<std::string> route) -> sol::variadic_results {
+            sol::variadic_results out;
+            Emulator* emulator = effectiveEmulator();
+            Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
+            if (!keyboard)
+            {
+                out.push_back(sol::make_object(s, sol::lua_nil));
+                out.push_back(sol::make_object(s, std::string("no keyboard")));
+                return out;
+            }
+            std::string error;
+            if (route && !route->empty() && !keyboard->RequestHostRoute(*route, error))
+            {
+                out.push_back(sol::make_object(s, sol::lua_nil));
+                out.push_back(sol::make_object(s, error));
+                return out;
+            }
+            out.push_back(sol::make_object(s, std::string(Keyboard::HostRouteName(keyboard->EffectiveHostRoute()))));
+            return out;
+        });
+
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/profifixture.h"
 
@@ -238,6 +239,10 @@ TEST_F(ProfiPortDecoder_Test, FdcRegistersSilentOutsideDosAndCpm)
 {
     DosLatchOff();
     ASSERT_EQ(State().flags & CF_DOSPORTS, 0);
+    // #1F is the Kempston joystick outside the DOS set while one is fitted (KempstonJoystickAt1FInTheNormalPortSet);
+    // take it off the bus so this test sees the VG93 rule alone
+    if (_context->pJoystick)
+        _context->pJoystick->SetPresent(false);
     for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
     {
         ReadPort(port);
@@ -422,4 +427,29 @@ TEST_F(ProfiPortDecoder_Test, RtcOnlyInExtMode)
     EXPECT_EQ(ReadPort(0x00DF), 0x5A) << "#DF is the second data port";
     WritePort(0x00FF, 0x0D);
     EXPECT_EQ(ReadPort(0x009F), 0x80) << "register D through #FF: battery good";
+}
+
+/// JOY-P5: the Profi's Kempston joystick answers `#1F` in the NORMAL port set (no DOS latch, no CP/M); with the
+/// DOS ports in, `#1F` is the VG93
+TEST_F(ProfiPortDecoder_Test, KempstonJoystickAt1FInTheNormalPortSet)
+{
+    Joystick joystick(_context);
+    joystick.SetPresent(true);
+    _context->pJoystick = &joystick;
+    EXPECT_TRUE(_context->pPortDecoder->HasKempstonJoystick());
+
+    DosLatchOff();
+    EXPECT_EQ(ReadPort(0x001F), 0x00);
+    joystick.SetState(Joystick::kLeft | Joystick::kFire);
+    EXPECT_EQ(ReadPort(0x001F), 0x12);
+    EXPECT_EQ(ReadPort(0xFB1F), 0x12) << "the full low byte decides";
+
+    State().flags |= CF_TRDOS | CF_DOSPORTS;
+    EXPECT_NE(ReadPort(0x001F), 0x12) << "the VG93 owns #1F while the DOS ports are in";
+
+    DosLatchOff();
+    joystick.SetPresent(false);
+    ReadPort(0x001F);
+    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << "not fitted: nothing drives the bus";
+    _context->pJoystick = nullptr;
 }

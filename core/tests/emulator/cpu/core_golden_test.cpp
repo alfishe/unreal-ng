@@ -59,7 +59,7 @@ const Golden kGolden[] = {
     {"SCORPION", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFSCORP", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFI", nullptr, 0xECE6582A89C2FD05ull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE360A9F00E0771B9ull, 10483200ull},
+    {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE983E879C9C60C20ull, 10483200ull},   // 2026-10-01: the v7.xx keyboard controller (v4.1) answers IN #FE
     // ATM3 re-recorded 2026-09-30 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
     // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)
     // ATM3 re-recorded 2026-10-01 (E8): the BIOS enters TR-DOS through #3Dxx, where the FPGA holds the clock

@@ -52,7 +52,7 @@ public:
 
 signals:
     void fileDropped(const QString& filePath);
-    void dragEntered();
+    void dragEntered(const QString& filePath);  ///< the first dragged file (empty: not a local file)
     void dragLeft();
 
 public slots:

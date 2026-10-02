@@ -55,7 +55,7 @@ medium (source, format, access, dirty, dirty units, and `changes`: the unsaved c
 | alias | `B`, `b:`, `sd` | the slot with that alias (case does not matter; a trailing `:` is ignored) |
 | kind:index | `floppy:1` | the second floppy slot |
 | tag query | `tag:sd+neogs` | the one slot with all these tags |
-| `auto` | (insert only) | the slot the file's content calls for: the first empty slot of its kind, else the main one |
+| `auto` | (insert only) | the slot the file's content calls for, when one takes it (`targets` lists them); with several it answers `ambiguous-slot` and names them - except floppy drives, where the first empty drive is used (drive A first) |
 
 A selector that matches nothing answers `unknown-slot` and lists the machine's slots; one that
 matches several answers `ambiguous-slot` and lists them. A letter the machine does not have (`C`
@@ -68,6 +68,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `list` | — | every slot and the detached media |
 | `info` | slot | one slot, and the medium's report (skipped folder entries, notes) |
 | `formats` | `kind`? | accepted file extensions per kind |
+| `targets` | path | where a file can go on this machine: what it is, the slots that take it, the default, or why nothing does (below) |
 | `insert` | slot or `auto`, path | a file or a folder into the slot |
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
@@ -222,7 +223,7 @@ Every surface returns the same fields:
 | `pending` | the change waits for the next frame boundary |
 | `revision` | grows with every change; poll it to know when to reload `list` |
 | `report` | notes: skipped folder entries, a retargeted save |
-| verb fields | `slots` and `detached` (list), `info`, `formats`, `savedPath` / `retargeted` (save), ... |
+| verb fields | `slots` and `detached` (list), `info`, `formats`, `file` / `targets` / `default` / `refusal` (targets), `savedPath` / `retargeted` (save), ... |
 
 | Code | HTTP | Meaning |
 |---|---|---|
@@ -239,6 +240,34 @@ Every surface returns the same fields:
 | `io-error` | 500 | host I/O failed |
 | `not-supported` | 501 | a valid request this build cannot do yet |
 
+### Where a file can go: `targets`
+
+`targets <path>` answers before anything is inserted. The file is recognized by its content
+first and its extension second: a CD image by the ISO 9660 mark, a hard-disk image by its HDF or
+VHD header, a card or hard-disk image by a FAT boot sector or a partition table, a floppy image by
+the floppy formats' rules, a tape by its extension. Then the machine's slots that take it are
+listed in the order a chooser shows them: an empty slot before an occupied one, the main (boot)
+slot first, an add-on card's slot last. A CD image goes only to a unit that is a CD-ROM drive.
+
+| Field | Meaning |
+|---|---|
+| `file` | `kinds` (most likely first: `floppy`, `tape`, `hdd`, `sdcard`, `optical`, `snapshot`, `rzx`, `zxpoly`, `symbols`, `rom`), `format`, `evidence` (why) |
+| `targets` | each: `action` (`insert`; `load` for a snapshot, a recording or labels), `slot`, `label`, `occupiedBy` (what it replaces), `dirty`, `autostart` (drive A of a TR-DOS machine) |
+| `default` | the index used without asking: the only target, or drive A for a floppy image; `null`: ask |
+| `refusal` | why nothing takes the file ("no CD-ROM drive on this machine (its IDE units are hard disks)") |
+
+A refusal is an answer, not an error: `ok` stays true. Example, a card image on a ZX-Evo with a
+NeoGS card:
+
+```text
+> media targets /cards/nedoos.img
+  file: sdcard hdd (fat) - FAT boot sector at sector 0
+    sd.zc       SD card (Z-Controller)    empty
+    sd.ngs      SD card (NeoGS)           empty
+    ide0.master IDE master (hard disk)    empty
+  several targets: name the slot (media insert <slot> <path>)
+```
+
 ## On each surface
 
 ### WebAPI
@@ -248,6 +277,7 @@ BASE=http://localhost:8090/api/v1
 curl -s $BASE/emulator/$ID/media                                     # list
 curl -s "$BASE/emulator/$ID/media/b:"                                # info
 curl -s "$BASE/emulator/$ID/media/formats?kind=floppy"               # formats
+curl -s "$BASE/emulator/$ID/media/targets?path=/discs/dna_nemo.iso"  # targets
 curl -s -X POST $BASE/emulator/$ID/media/A/insert -H 'Content-Type: application/json' \
      -d '{"path":"/games/elite-1.trd"}'
 curl -s -X POST $BASE/emulator/$ID/media/A/swap -H 'Content-Type: application/json' \
@@ -267,6 +297,7 @@ media insert sd ~/zx/sdcard/ --fs fat32
 media swap A /games/elite-2.trd --save
 media eject B --export /tmp/b-saved.trd
 media info sd --json
+media targets /discs/dna_nemo.iso
 media help
 ```
 
@@ -278,6 +309,7 @@ One tool, `media`, with `action` and the same argument names:
 {"action": "insert", "slot": "auto", "path": "/games/dizzy.trd"}
 {"action": "swap", "slot": "A", "path": "/games/elite-2.trd", "save": true}
 {"action": "list"}
+{"action": "targets", "path": "/cards/nedoos.img"}
 ```
 
 ### Lua
@@ -289,7 +321,7 @@ media_swap("A", "/games/elite-2.trd", {save = true})
 for _, s in ipairs(media_list().slots) do print(s.id, s.state) end
 ```
 
-Also `media_info`, `media_formats`, `media_eject`, `media_save`, `media_export`,
+Also `media_info`, `media_formats`, `media_targets(path)`, `media_eject`, `media_save`, `media_export`,
 `media_discard`, `media_rescan`, `media_create`, `media_protect`, and `media(verb, slot, path,
 opts)`. They act on the selected emulator.
 

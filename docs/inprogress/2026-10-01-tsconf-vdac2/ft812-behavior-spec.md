@@ -235,7 +235,8 @@ Touch registers (0x104-0x190) read their reset values; touch is not wired on VDA
 - **Frame period** = `HCYCLE × VCYCLE` pixel clocks. The TS-Labs mode table gives the
   expected rates [ESP32 `ft8xx.h`]: mode 7 (1024×768, f_sys 64 MHz, `PCLK` 1, 1344 × 806)
   = 59.081 Hz; mode 1 (640×480, 64 MHz, `PCLK` 2, 832 × 520) = 73.964 Hz; mode 14
-  (1024×768, 64 MHz, 1344 × 938) = 48.7 Hz. Unit tests reproduce all 15 rows.
+  (64 MHz, `HCYCLE` 1344, `VSIZE` 938, `VCYCLE` 976) = 48.790 Hz; the SDK names it
+  1024×768 but programs 938 visible lines. Unit tests reproduce all 15 rows.
 - STANDBY, SLEEP, PWRDOWN and `REG_PCLK` = 0 stop the scan; `REG_FRAMES` and `REG_CLOCK`
   stop with the system clock (STANDBY / SLEEP / PWRDOWN) (TO VERIFY whether `REG_CLOCK`
   runs while `REG_PCLK` = 0: it should, the system clock runs).

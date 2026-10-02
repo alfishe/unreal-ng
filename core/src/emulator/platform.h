@@ -254,7 +254,7 @@ enum PlatformRecordingSubmodulesEnum : uint16_t
 const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x4000 or 16384)
 
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
-const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
+const uint16_t MAX_CACHE_PAGES = 4;     // 64K cache (the Sprinter's fast RAM)
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
 const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
 const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
@@ -327,6 +327,7 @@ enum MEM_MODEL : uint8_t
 	MM_NEXT,                // ZX Next
 	MM_PLUS2,               // ZX Spectrum +2 (grey): 128K hardware, Amstrad ROM
 	MM_PLUS2A,              // ZX Spectrum +2A (black): +3 hardware without the floppy controller
+	MM_SPRINTER,            // Peters Plus Sprinter Sp2000 (PLD port table, Z84C15, 21 MHz turbo)
 	N_MM_MODELS             // <End of enumeration>
 };
 
@@ -735,6 +736,8 @@ struct CONFIG
 		bool joystickConfigured;
 		bool joystickKeysConfigured;
 		char joystickKeys[160];
+		/// [INPUT] HostKeyboard= AUTO | MATRIX | PS2 | BOTH (Keyboard::ParseHostRoute)
+		char hostKeyboard[16];
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -769,6 +772,10 @@ struct CONFIG
 		// ZX-Evo AVR firmware ([EVO] Avr=): Uart16550::AvrFirmware - the COM
 		// port's emulation differs between NedoPC and TS-Labs releases
 		uint8_t evo_avr;
+		// ATM Turbo 2+ keyboard controller ([ATM] Kbc=): Atm2Kbc::Firmware
+		uint8_t kbc_firmware;
+		// Its image instead of the preset's ([ROM] ATM2KBC=); empty = the preset's
+		char kbc_rom_path[FILENAME_MAX];
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
@@ -777,6 +784,17 @@ struct CONFIG
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
 	// for the session only
 	char profi_nvram_path[FILENAME_MAX];
+
+	// Sprinter Sp2000 ([SPRINTER] section, Sprinter tdd-integration §1.1)
+	struct
+	{
+		// 1 = skip the ROM's PLD loader (test default); 0 = full start (user default)
+		uint8_t fast_start;
+		// 1 = the front-panel turbo allows 21 MHz (MAME "turbo hard")
+		uint8_t turbo_allowed;
+		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
+		char cmos_path[FILENAME_MAX];
+	} sprinter;
 
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals
@@ -816,6 +834,7 @@ struct CONFIG
 	char tsl_rom_path[FILENAME_MAX];
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
+	char sprinter_rom_path[FILENAME_MAX];
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];

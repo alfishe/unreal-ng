@@ -135,7 +135,7 @@ test:
 | Hobeta header, file of at most 64 KB | floppy |
 | a tape extension the tape registry reads | tape |
 | `ZXST`, `.z80`, `.sna` | snapshot; `RZX!` rzx; `.zxp` / `.prom` zxpoly; `.map` / `.sym` symbols |
-| a folder | floppy and sdcard (and hdd) |
+| a folder | floppy, sdcard, hdd and tape (each slot that takes a folder) |
 
 The size cap on the TR-DOS and Hobeta rules closes the suspected ISO-as-floppy path of §1.
 
@@ -166,8 +166,20 @@ an RZX, a ZX-Poly file, a floppy image with the Pentagon default) and a refusal 
 
 `MediaTargets::Apply(context, Plan, targetIndex, options)` performs the choice through
 `MediaControl` (the insert with the slot's default access, the TTD guard, the dirty-medium
-disposition) so no entry point repeats that logic. `MediaControl::ChooseSlot` becomes
-`Plan` + `defaultTarget`; with several targets and no default it names them instead of guessing.
+disposition) so no entry point repeats that logic. It performs insert targets only: a `Load`
+target (snapshot, recording, ZX-Poly group, labels) and a `NewMachine` target (no machine yet)
+belong to the caller, which owns the model replacement and the machine start.
+`MediaControl::ChooseSlot` becomes `Plan` + `defaultTarget`; with several targets and no default
+it names them instead of guessing.
+
+**As built in M1 (2026-10-01):** `ChooseSlot` runs `Classify` + `Plan` and takes the chooser's
+first entry (an empty slot before an occupied one, the primary / boot slot first, an add-on's
+last), naming the alternatives in the reply's report. Superseded by M2b (below, §4.4): several
+targets (floppy drives excepted) answer `ambiguous-slot` with the list, now that the Qt window
+asks through its chooser instead of sending `insert auto`.
+The TR-DOS rule of the floppy probe (`FloppyFormats::Probe`) is capped at the largest TR-DOS
+image (2 x 86 x 16 x 256 bytes); sector 0 is read by `ClassifySectorZero`
+(`blockadvisory.h`), the rules the boot advisory of §10 uses.
 
 ### 4.4 Surfaces
 
@@ -175,6 +187,24 @@ Automation parity: `media targets <file>` (CLI), `GET /api/v1/emulator/{id}/medi
 (WebAPI + OpenAPI), MCP `media` action `targets`, Lua / Python `media_targets(path)`: the plan as
 data (targets, default, refusal). `media insert <file>` without a slot takes the single target (or the
 floppy shortcut); with several it names them, and it refuses what no slot takes.
+
+**As built in M2 (2026-10-01):** one verb, `targets`, in `MediaControl`, so every surface serves
+the same data: reply fields `file` (`kinds`, `format`, `evidence`), `targets` (`action`, `as`,
+`slot`, `label`, `occupiedBy`, `dirty`, `autostart`, `model` for a new machine), `default` (index
+or null) and `refusal` (or null); a refusal is an answer (`ok` true). WebAPI
+`GET /api/v1/emulator/{id}/media/targets?path=` (served by the `/media/{slot}` route, like
+`/media/formats`). Naming several targets in `media insert` landed with M3 (M2b): `ambiguous-slot`
+with the list, floppy drives excepted (the first empty drive, as before: the drives are
+interchangeable and scripts rely on it).
+
+**As built in M3 (2026-10-01):** `MainWindow::loadFile` classifies first; a medium goes to
+`placeMedium` (Plan, then the default, a plain `QMenu` chooser at the cursor, or - command line,
+the CLI's `open` - the first entry, logged), everything else keeps the old by-extension path. The
+drop is handled after the drop event returns (`QTimer::singleShot`), so the menu never opens inside
+the platform's drag session. While dragging, `showDropVerdict` plans the first file: blue border and
+"file -> Drive A" / "choose a slot (...)" in the status bar, red border and the refusal otherwise; a
+refused drop does nothing but repeat the reason in the status bar. The media panel checks a row's
+slot against the plan.
 
 ## 5. Qt: the drop overlay
 
@@ -354,6 +384,16 @@ sets them.
   `QMetaObject::invokeMethod`; `MediaPanelWindow`'s destructor cancels and joins unconditionally
   before any member is torn down, so that queued call can never fire on a half-destroyed object
   (same contract `TapeExportAudioDialog` already relies on).
+- **A directory disappearing mid-walk fails the scan, not just that subtree**: `FolderSnapshot`'s
+  `Scanner` originally treated a `std::filesystem::directory_iterator` failure (the initial open, or
+  `increment` partway through) the same as a policy exclusion - `Skip()` the affected path and keep
+  going, so the final tree could silently stop wherever the host disk went away while still coming
+  back as an overall success. Developer call: no truncated image, ever - an I/O failure at that
+  level now sets `_ioError` (tracked and unwound through every recursion level exactly like
+  `_cancelled`) and `Scan()` returns false with the `ec.message()`-derived text, which
+  `OpenFolderVolume`/`BuildTrd` already map to `MediaError::UnreadableSource` with no further
+  change needed. Policy exclusions (symlinks, the manifest's `exclude`, service files, size/count
+  limits) are untouched - only a genuine filesystem error now fails the operation.
 
 **Not done here**: a true mid-scan cancellation only exists for the folder-scan and
 TR-DOS-file-read loops added above; nothing else in the insert path (`HostFolderFat::Build`'s
@@ -361,7 +401,8 @@ in-memory FAT layout math, `MediaFormatRegistry::WrapBlock`) has a cancellation 
 neither does any I/O - per `OpenFolderVolume`'s own trace (§3 of the research that fed this
 section), the scan is already the dominant cost for the SD/IDE block-volume path this bug names.
 Verification: `FolderSnapshot_Test` (progress counting incl. bytes, cancellation, nested-recursion
-unwind) and `FolderDiskBuilder_Test` (cancellation during the scan vs. during the file-read loop) in
+unwind, a directory disappearing mid-walk failing the whole scan) and `FolderDiskBuilder_Test`
+(cancellation during the scan vs. during the file-read loop) in
 `core/tests/`; the GUI wiring was also interactively verified (built and run in an isolated git
 worktree - the shared working tree had unrelated concurrent breakage at the time - no automation
 surface reaches `QFileDialog`/native file pickers, so this had to be a manual run), developer-

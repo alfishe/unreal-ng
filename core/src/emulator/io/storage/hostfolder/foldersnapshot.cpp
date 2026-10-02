@@ -42,7 +42,15 @@ namespace
             std::filesystem::directory_iterator it(hostPath, std::filesystem::directory_options::skip_permission_denied, ec);
             if (ec)
             {
-                Skip(relative.empty() ? "." : relative, "unreadable folder");
+                // The directory itself cannot be opened - a structural I/O
+                // failure (the host disk unmounted, the folder deleted),
+                // never just "this one entry has a problem". Fails the whole
+                // scan rather than silently building a volume with a hole in
+                // it: Skip()/continue is for policy exclusions (symlinks,
+                // the manifest's exclude list, service files), not for "we
+                // can no longer tell what is actually in here"
+                _ioError = true;
+                _ioErrorMessage = "unreadable folder: " + (relative.empty() ? ToUtf8(hostPath) : relative) + ": " + ec.message();
                 return;
             }
 
@@ -58,7 +66,13 @@ namespace
 
                 if (ec)
                 {
-                    Skip(relative.empty() ? "." : relative, "folder listing stopped: " + ec.message());
+                    // Same reasoning as above: the listing stopped mid-walk
+                    // (ENOENT/EIO from the host disk going away), not a
+                    // single bad entry - fail the scan, do not return a
+                    // truncated tree that looks like a complete success
+                    _ioError = true;
+                    _ioErrorMessage =
+                        "folder listing stopped: " + (relative.empty() ? ToUtf8(hostPath) : relative) + ": " + ec.message();
                     break;
                 }
 
@@ -143,7 +157,7 @@ namespace
                     _entryCount++;
                     ScanFolder(entry.path(), path, depth + 1, item);
                     folders.push_back(std::move(item));
-                    if (_cancelled)
+                    if (_cancelled || _ioError)
                         break;  // unwind every recursion level without visiting further siblings
                 }
                 else
@@ -177,6 +191,8 @@ namespace
         uint32_t EntryCount() const { return _entryCount; }
         uint64_t TotalFileBytes() const { return _totalFileBytes; }
         bool IsCancelled() const { return _cancelled; }
+        bool IsIoError() const { return _ioError; }
+        const std::string& IoErrorMessage() const { return _ioErrorMessage; }
 
     private:
         void Skip(const std::string& path, std::string reason) { _skipped.push_back({path, std::move(reason)}); }
@@ -196,6 +212,8 @@ namespace
         uint64_t _totalFileBytes = 0;
         uint64_t _progressCounter = 0;
         bool _cancelled = false;
+        bool _ioError = false;
+        std::string _ioErrorMessage;
     };
 
     void HashTree(const FolderEntry& entry, const std::string& relative, uint64_t& hash)
@@ -240,6 +258,17 @@ bool FolderSnapshot::Scan(const std::filesystem::path& folder, const FolderScanO
     {
         if (error)
             *error = kCancelledError;
+        return false;
+    }
+    if (scanner.IsIoError())
+    {
+        // The source went away (or became unreadable) partway through the
+        // walk - fail outright rather than hand back a tree that silently
+        // stops wherever the host disk did. `out` stays default-constructed,
+        // same contract as the cancelled path: no half-built result to
+        // mistake for a complete one
+        if (error)
+            *error = scanner.IoErrorMessage();
         return false;
     }
     out._entryCount = scanner.EntryCount();
