@@ -91,6 +91,17 @@ struct TTDEngineHeapBreakdown
     }
 };
 
+/// Counted work of one capture (deterministic; the CI gate compares it with v1's, D33)
+struct TTDEngineCaptureWork
+{
+    uint64_t piecesOffered = 0;       ///< pieces handed to the capture (dirty or rescanned)
+    uint64_t versionsStored = 0;      ///< new versions (content really changed)
+    uint64_t deltaBaseBytes = 0;      ///< bytes copied into the delta base
+    uint64_t compressCalls = 0;
+    uint64_t compressInputBytes = 0;
+    uint64_t deviceBlobBytes = 0;     ///< device state copied into the checkpoint
+};
+
 class TimeTravelEngine
 {
 public:
@@ -130,6 +141,10 @@ public:
     /// piece the session should know; later frames list the pieces whose
     /// content changed. Frames must increase
     bool CaptureFrame(const TTDFrameInput& input, std::string& error);
+
+    /// Work and time of the last CaptureFrame
+    const TTDEngineCaptureWork& LastCaptureWork() const { return _lastWork; }
+    uint64_t LastCaptureNs() const { return _lastCaptureNs; }
 
     /// endregion </Capture>
 
@@ -180,6 +195,8 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
+    TTDEngineCaptureWork _lastWork;
+    uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
     /// Per region: its latest contents (allocated when the region's first
     /// piece arrives), the base each new difference is computed against

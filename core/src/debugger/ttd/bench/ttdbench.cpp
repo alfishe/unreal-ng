@@ -406,8 +406,8 @@ public:
         return _ttd->GetPerfCounters().lastCaptureNs;
     }
 
-    /// The recorded v1 session (the time-travel engine is fed from it)
-    const TimeTravelManager* Manager() const { return _ttd; }
+    /// The recorded v1 session (the time-travel engine records next to it)
+    TimeTravelManager* Manager() const { return _ttd; }
 
 private:
     EmulatorContext* _context = nullptr;
@@ -419,27 +419,19 @@ private:
 /// region <Engine: TimeTravelEngine>
 
 /// The time-travel engine (docs/inprogress/2026-09-25-ttd-v2-migration/).
-/// Phase 1, Step 1: it does not capture the emulator yet. The workload is
-/// recorded with v1 and fed to the engine frame by frame when recording
-/// stops (ttdv1feeder), so its bytes and memory compare with v1's on every
-/// case; capture, seek and file metrics come as the engine gains them
+/// Phase 1, Step 4: it records the running emulator in shadow mode, next to
+/// v1 (TimeTravelManager::SetShadowEngine), so its capture time, counted
+/// work, bytes and memory are its own on every case; seek and file metrics
+/// come as the engine gains them
 class EngineTimeTravel final : public Engine
 {
-    /// UNREAL_TTD_ENGINE_BLOCK_PIECES: reference-table block size, to measure
-    /// alternatives (0 or unset = the engine's default)
-    static uint32_t BlockPiecesOverride()
-    {
-        const char* v = std::getenv("UNREAL_TTD_ENGINE_BLOCK_PIECES");
-        return v && *v ? static_cast<uint32_t>(std::strtoul(v, nullptr, 10)) : 0;
-    }
-
 public:
     std::string Name() const override { return "engine"; }
 
     Capabilities Supports() const override
     {
         Capabilities c;
-        c.liveCapture = false;
+        c.liveCapture = true;
         c.seek = false;
         c.saveLoad = false;
         return c;
@@ -451,22 +443,35 @@ public:
         // UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL: full reference table every N checkpoints, to measure alternatives
         if (const char* v = std::getenv("UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL"); v && *v)
             _engine.SetSnapshotInterval(static_cast<uint32_t>(std::strtoul(v, nullptr, 10)));
-        return _recorder.Start(emulator, mode, error);
+        _feedError.clear();
+        if (!_recorder.Start(emulator, mode, error))
+            return false;
+        _recorder.Manager()->SetShadowEngine(&_engine);
+        return true;
     }
 
     void Stop() override
     {
+        if (TimeTravelManager* v1 = _recorder.Manager())
+            v1->SetShadowEngine(nullptr);
         _recorder.Stop();
-        _feedError.clear();
-        const TimeTravelManager* v1 = _recorder.Manager();
-        if (!v1)
-            _feedError = "no v1 session to feed";
-        else if (!FeedV1Session(*v1, _engine, _feedError, nullptr, BlockPiecesOverride()) && _feedError.empty())
-            _feedError = "feeding the engine failed";
+        if (!_engine.IsSessionOpen())
+            _feedError = "the shadow engine holds no session";
     }
 
-    uint64_t LastCaptureNs() const override { return 0; }
-    CaptureWork LastCaptureWork() const override { return {}; }
+    uint64_t LastCaptureNs() const override { return _engine.LastCaptureNs(); }
+    CaptureWork LastCaptureWork() const override
+    {
+        const TTDEngineCaptureWork& e = _engine.LastCaptureWork();
+        CaptureWork w;
+        w.pagesVisited = e.piecesOffered / 4;   // pieces handed over, in 16 KB pages like v1's count
+        w.deltaBaseBytes = e.deltaBaseBytes;
+        w.bytesScanned = e.piecesOffered * kTTDPieceSize;
+        w.compressCalls = e.compressCalls;
+        w.compressInputBytes = e.compressInputBytes;
+        w.deviceBlobBytes = e.deviceBlobBytes;
+        return w;
+    }
     size_t Checkpoints() const override { return _engine.CheckpointCount(); }
     uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
     uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
@@ -512,7 +517,11 @@ public:
         error = "the engine has no file before Phase 4";
         return false;
     }
-    uint64_t CaptureNow() override { return 0; }
+    uint64_t CaptureNow() override
+    {
+        _recorder.CaptureNow();
+        return _engine.LastCaptureNs();
+    }
 
     std::string LastError() const override { return _feedError; }
 

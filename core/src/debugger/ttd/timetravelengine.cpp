@@ -1,5 +1,6 @@
 #include "timetravelengine.h"
 
+#include <chrono>
 #include <cstring>
 #include <unordered_set>
 
@@ -119,6 +120,10 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
         error = "frame " + std::to_string(input.position.frame) + " does not follow the last recorded frame";
         return false;
     }
+    const auto started = std::chrono::steady_clock::now();
+    _store->ResetWork();
+    _lastWork = TTDEngineCaptureWork{};
+    _lastWork.piecesOffered = input.changed.size();
 
     TTDEngineCheckpoint cp;
     cp.position = input.position;
@@ -126,7 +131,11 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
     if (input.deviceBlobs)
+    {
         cp.deviceBlobs = *input.deviceBlobs;
+        for (const auto& blob : cp.deviceBlobs)
+            _lastWork.deviceBlobBytes += blob.second.size();
+    }
     const size_t index = _checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
     cp.regions.resize(_regions.size());
@@ -148,6 +157,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             const TTDPieceId next = previous == TTDPieceStore::kNone ? _store->InternFirst(c.bytes)
                                                                      : _store->Intern(previous, previousBytes, c.bytes);
             std::memcpy(previousBytes, c.bytes, kTTDPieceSize);
+            _lastWork.deltaBaseBytes += kTTDPieceSize;
             if (next == previous)
             {
                 _store->Release(next);   // unchanged content: no record
@@ -184,6 +194,13 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
 
     _checkpoints.push_back(std::move(cp));
     _streams.CaptureEnabled(input.position);
+
+    const TTDPieceStore::Work& w = _store->GetWork();
+    _lastWork.versionsStored = w.versionsStored;
+    _lastWork.compressCalls = w.compressCalls;
+    _lastWork.compressInputBytes = w.compressInputBytes;
+    _lastCaptureNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
     return true;
 }
 

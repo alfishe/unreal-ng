@@ -74,7 +74,7 @@ class EmulatorContext;
 class Memory;
 struct Z80State;
 struct EmulatorState;
-namespace ttd { class TTDDirtyTracker; }
+namespace ttd { class TTDDirtyTracker; class TimeTravelEngine; }
 
 namespace ttd {
 
@@ -525,6 +525,17 @@ public:
     /// Bytes of checkpoint data held now: the page store's slots and every
     /// checkpoint's device blobs (what the byte limit measures)
     uint64_t HistoryBytes() const;
+
+    /// Shadow mode (TTD v2 migration, Phase 1, Step 4): every capture is also
+    /// handed to @p engine - the same dirty pages, live memory, CPU and device
+    /// state - so the new engine records the running emulator next to v1 and
+    /// can be checked against it. When v1's history is cleared, loaded or cut
+    /// short, the engine starts a new session; after a restore it rescans all
+    /// pieces once. Null detaches and leaves the engine's session as it is.
+    /// Without an engine attached this costs one pointer check per frame.
+    /// Tests and benchmarks only
+    void SetShadowEngine(TimeTravelEngine* engine);
+    TimeTravelEngine* GetShadowEngine() const { return _shadowEngine; }
 
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
@@ -1885,6 +1896,14 @@ private:
     /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
     TTDPerfCounters _perf;
     TTDCaptureWork _captureWork;   ///< filled while CaptureNow runs, published in _perf
+
+    /// Shadow engine (see SetShadowEngine); not owned
+    TimeTravelEngine* _shadowEngine = nullptr;
+    bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
+    /// Hand this capture to the shadow engine
+    void FeedShadow(const TTDCheckpoint& out, bool baseline);
+    /// The shadow engine's history no longer matches v1's: it starts over at the next capture
+    void ResetShadow();
     TTDPeripheralRegistry _peripherals;
 
     /// Serializers owned by this manager for the lifetime of a session. Held

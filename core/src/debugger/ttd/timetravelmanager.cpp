@@ -8,6 +8,8 @@
 #include "timetravelmanager.h"
 #include "ttddisplayparticipant.h"
 
+#include "timetravelengine.h"
+
 
 #include <algorithm>
 #include <cassert>
@@ -232,6 +234,7 @@ bool TimeTravelManager::StartRecording()
     }
 
     // Clear any prior history (StartRecording always begins a fresh session).
+    ResetShadow();
     if (!_timeline.empty())
     {
         for (auto& cp : _timeline)
@@ -449,6 +452,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
+    ResetShadow();
     _lastDropReason = reason ? reason : "";
 
     for (auto& cp : _timeline)
@@ -1053,7 +1057,8 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
                             || (out.time.frame - _lastKeyFrameIdx >= kKeyFrameInterval);
     out.frameKind = isKeyFrame ? TTDFrameKind::KeyFrame : TTDFrameKind::DeltaFrame;
 
-    if (_timeline.empty())
+    const bool baseline = _timeline.empty();
+    if (baseline)
     {
         CaptureBaselineRamPages(out.ramPages);
         out.keyFrameAnchor = out.time.frame;
@@ -1087,6 +1092,9 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // This caches current RAM content so we can compute XOR deltas without
     // decompressing the slots we just created.
     UpdatePrevPageCache();
+
+    if (_shadowEngine)
+        FeedShadow(out, baseline);
 
     const TTDCodecPageStore::Work& storeWork = _pageStore.GetWork();
     _captureWork.bytesScanned = storeWork.bytesScanned;
@@ -1448,6 +1456,7 @@ void TimeTravelManager::ReleaseModelPeripherals()
 void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 {
     assert(_context && _memory);
+    _shadowRescan = true;   // live memory now differs from the shadow engine's delta base
 
     MLOGINFO("TimeTravelManager::RestoreCheckpoint — frame=%llu, globalT=%llu, ramPages=%zu",
              static_cast<unsigned long long>(cp.time.frame),
@@ -3174,6 +3183,71 @@ void TimeTravelManager::EvictOldest(size_t count)
     ClearFrameCache();
 }
 
+void TimeTravelManager::SetShadowEngine(TimeTravelEngine* engine)
+{
+    // Detaching keeps what the engine recorded (a benchmark reads it after the run)
+    _shadowEngine = engine;
+    _shadowRescan = true;
+}
+
+void TimeTravelManager::ResetShadow()
+{
+    if (_shadowEngine)
+        _shadowEngine->EndSession();
+}
+
+void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
+{
+    TimeTravelEngine& engine = *_shadowEngine;
+    std::string error;
+    const uint32_t pieces = static_cast<uint32_t>(_modelRamPages) * 4;
+    if (baseline || !engine.IsSessionOpen() || engine.Regions().empty() || engine.Regions()[0].pieces != pieces)
+    {
+        TTDRegionDesc ram;
+        ram.id = TTDRegionId::MachineRam;
+        ram.name = "ram";
+        ram.pieces = pieces;
+        ram.bytes = pieces * kTTDPieceSize;
+        ram.dirtyGranularity = kTTDPieceSize * 4;
+        if (!engine.BeginSession({ram}, error))
+        {
+            MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());
+            return;
+        }
+        _shadowRescan = true;
+    }
+
+    TTDFrameInput in;
+    in.position.frame = out.time.frame;
+    in.start = GlobalT(out.time);
+    in.cpu = out.cpu;
+    in.chipset = out.chipset;
+    in.deviceBlobs = &out.peripheralBlobs;
+    auto addPage = [&](uint16_t page) {
+        const uint8_t* bytes = _memory->RAMPageAddress(page);
+        if (!bytes)
+            return;
+        for (uint32_t sub = 0; sub < 4; ++sub)
+            in.changed.push_back({0, uint32_t(page) * 4 + sub, bytes + sub * kTTDPieceSize});
+    };
+    if (_shadowRescan)
+    {
+        in.changed.reserve(pieces);
+        for (uint16_t p = 0; p < _modelRamPages; ++p)
+            addPage(p);
+        _shadowRescan = false;
+    }
+    else
+        for (const uint16_t p : _dirtyScratch)
+            addPage(p);
+
+    if (!engine.CaptureFrame(in, error))
+    {
+        MLOGWARNING("TimeTravelManager: shadow engine capture failed: %s", error.c_str());
+        engine.EndSession();
+    }
+}
+
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
 {
     // ------------------------------------------------------------------
@@ -3194,6 +3268,7 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
     }
 
     const size_t dropCount = static_cast<size_t>(_timeline.end() - upperIt);
+    ResetShadow();   // the engine records the trunk only until branches exist
 
     // Release page refs for each dropped checkpoint before erasing. The
     // refs are how the page store knows which slots are still in use by
@@ -4040,6 +4115,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         err = _unavailableReason;
         return false;
     }
+    ResetShadow();
     return DeserializeSessionImpl(in, err, nullptr);
 }
 

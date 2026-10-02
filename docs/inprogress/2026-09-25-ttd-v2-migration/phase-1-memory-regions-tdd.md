@@ -261,6 +261,15 @@ The engine records the running emulator in parallel with v1 ("shadow mode"), so 
 
 The engine can also run alone (no v1) for benchmarks and for tests that restore into the emulator. Shadow mode is a test and benchmark setting; users do not see it.
 
+**As built (2026-10-02).** `TimeTravelManager::SetShadowEngine(engine)`; `CaptureNow` calls `FeedShadow` after its own capture with the same dirty page list (four pieces per dirty 16 KB page), live memory, CPU, chipset and device blobs. v1's history being cleared (`StartRecording`, `InvalidateSession`), loaded (`DeserializeSession`) or cut short (`TruncateTimelineAfter`) ends the engine's session, which restarts with a full rescan at the next capture (the engine records the trunk only until branches exist). A v1 restore (`RestoreCheckpoint`) marks the live memory as differing from the engine's delta base, so the next capture hands over every piece once. The benchmark's `"engine"` runs in shadow mode, so its capture time and counted work are its own. Measured on 600-frame runs at host load ~10:
+
+| Case | Capture p50, µs (v1 → engine) | Capture p99, µs | Delta-base copy per frame |
+|---|---|---|---|
+| ZX-Evo, BASIC | 355 → 18.5 | 822 → 64.5 | 4 MB → 72 KB (the first frame's full rescan averaged in) |
+| Pentagon 1024, BASIC | 110 → 5.6 | 481 → 14.6 | 1 MB → 18 KB |
+| Pentagon 128, game | 426 → 64 | 1,098 → 114 | 128 KB → 40 KB |
+| Across the Edge | 407 → 42 | 1,004 → 90 | 128 KB → 66 KB |
+
 ### 4.6 Step 5 — Restore only the pieces that differ
 
 - Each region keeps a **live map**: for every piece, the version whose content is in live memory now. A capture sets it to the new version, a restore to the target's version.
