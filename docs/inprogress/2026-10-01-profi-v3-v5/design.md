@@ -130,8 +130,10 @@ From the 5.06 netlist and the 5.0 album ([research-profi-v5-open-items.md](resea
 | #DFFD decode | 5.0x: A13=0, A1=0 (A15 not decoded, so a 128K `OUT` to `#1FFD` writes #DFFD too); 5.06: high byte #DF, A1=0, and never from `OUT (n),A` (DD75 `/BLOCK`) | `[PROFI] DffdDecode=emulators` (A15=1, A13=0, A1=0, the default), `v50`, `v506` |
 | CP/M switch | holds #DFFD (and the 5.06 `/BLOCK` flip-flop) cleared through the latches' clear input while pressed; #7FFD and the ROM lines untouched; the front-panel RST clears only #7FFD | `FrontPanelSwitch::Cpm` on v5 (`[PROFI] CpmSwitch`), on every surface next to TURBO; TTD records it, ProfiPaging byte 33 bit 1 |
 
-Whether the CP/M switch also selects the start ROM page, as the manual says, is open: nothing on the processor
-board connects it there.
+The switch needs no link to the ROM pages. No other emulator or RTL models it (ZXMAK2, Xpeccy, xpeccy-plus,
+UnrealSpeccy, pico-spec, Karabas-Pro: all reset into the SYS ROM with #DFFD cleared), and the emulated BIOS shows
+where the manual's behavior comes from: with #DFFD held at #00 it cannot raise its hi-res menu and starts Spectrum
+128 instead ("pressed = Spectrum 128"; `ProfiBoot_Test.CpmSwitchAtPowerOnStartsSpectrum128`).
 
 ## 5. Video timing
 
