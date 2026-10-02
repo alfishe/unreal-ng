@@ -30,6 +30,13 @@ The floppy run (S3a, 2026-10-01; `SPC_FLOP2` puts the image into drive B, a 3.5"
 `./mame-capture.sh boot SPC_FLOP2=../../../../testdata/machines/sprinter/dss_1_62_92.img SPC_CODES=10-17 SPC_PORTS=3000000 SPC_END=2500`,
 then the rows with code `#15` removed (245 765 polls of port `#FF`) give `fdc-probe.csv`.
 
+The hard disk runs (S3b, 2026-10-02) boot the owner's MAME-pack system disk (`sp_hdd_sys.chd`, DSS 1.71.57; not
+in the repo, see [materials.md](../../../../docs/inprogress/2026-09-28-sprinter/materials.md) §3) on the primary
+master, with MAME's own BIOS images (`MAME_ROMPATH` = the pack's `roms/`, which holds MAME's `sprinter.zip`):
+`./mame-capture.sh boot SPC_BIOS=v3.06 SPC_HARD1=<sp_hdd_sys.chd> SPC_CODES=20-2B SPC_PORTS=300000 SPC_END=700 "SPC_WAIT_TEXT=Estex DSS" SPC_PORTS_FILE=ide-ports.csv`
+(and `SPC_BIOS=v3.04 ... SPC_END=900 SPC_WAIT_TEXT=Fatal`); the events, the screen at the milestone and the ATA
+command list of the IDE trace give `hdd-boot-306.txt` / `hdd-boot-304.txt`.
+
 The boot mode can also trace one range of internal codes over the whole boot instead of the first
 10 000 accesses, e.g. the IDE (Z84C15 ports are always included):
 `./mame-capture.sh boot SPC_END=520 SPC_PORTS=200000 SPC_CODES=20-29 SPC_PORTS_FILE=ide.csv`
@@ -69,6 +76,8 @@ configuration shortcut ends; the script only works in its first run (power-on, t
 | `events.txt`, `events-sync.txt` | the milestones of the `boot` and `sync` runs |
 | `palette.csv` | the sum of the palette bytes in video RAM, per frame (rows where it changed) |
 | `fdc-probe.csv` | the floppy controller accesses (codes `#10-#17`) of a boot with the DSS 1.62 floppy in drive B, without the `#15` status polls |
+| `hdd-boot-306.txt` | BIOS 3.06 with the DSS 1.71.57 hard disk on the primary master: events, the screen at the DSS banner (frame 385, 7.885 s), the ATA commands of the boot |
+| `hdd-boot-304.txt` | the same disk on BIOS 3.04: the DSS loader reads SYSTEM.DOS, then DSS 1.71 stops with "Fatal error" (frame 475, 9.728 s) |
 
 ### `page40.bin`: the port table after POST
 
@@ -188,3 +197,19 @@ the IDE master, then the alternative device, floppy B (SETUP's default CMOS `#10
   ADDRESS. On the board the data separator is outside the chip and switches at once. unreal-ng issues the
   same accesses with the same 175.55 ms spacing up to the first flip, then finds the ID and boots DSS
   (Sprinter roadmap §8); MAME gives no time-to-prompt reference for the floppy boot.
+
+### `hdd-boot-306.txt`, `hdd-boot-304.txt`: DSS from a hard disk (S3b)
+
+MAME's default IDE slots hold a hard disk (here with the image) on the primary master, an ATAPI CD unit on
+the primary slave and image-less hard disks on the secondary channel (`sprinter.cpp:1966-1968`), so the BIOS
+detects "MAME Virtual CDROM" and "None" quickly; on the board (and in unreal-ng) an empty channel floats and
+the BIOS waits for BSY (hardware-reference §9.1, tdd-storage §3.4).
+
+- **BIOS 3.06**: IDENTIFY and INITIALIZE DEVICE PARAMETERS on the master at frame 175, then 200 frames of
+  packet commands to the CD unit, the secondary channel at frame 375, the boot at 376: LBA 1 (the loader),
+  LBA 2-4, the MBR, the partition boot sector (63), the FAT (176), the root (432) and SYSTEM.DOS (448 x 32,
+  480 x 3), then DSS reads on its own. The banner "Estex DSS version 1.71.57. Shell version 1.2.522." is at
+  frame 385. unreal-ng reads the same LBAs in the same order (`SprinterBoot_Test.RealHdd_Dss171BootsFromTheMamePackImage`).
+- **BIOS 3.04**: the same loader reads up to SYSTEM.DOS (frames 472-474), then SYSTEM.DOS's start-up fails and
+  the loader prints "Fatal error! Press RESET to restart." (frame 475). The DSS 1.71 floppy stops the same
+  way on BIOS 3.04: DSS 1.71 needs a newer BIOS (bios-versions.md). unreal-ng shows the same screen.

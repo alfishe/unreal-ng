@@ -9,7 +9,9 @@
 --   boot:   SPC_PORTS (accesses to record, default 10000), SPC_SNAP_EVERY (0 = off), SPC_SNAP_AT,
 --           SPC_DUMP_AT (frame of the page #40 dump and the final snapshot),
 --           SPC_CODES ("lo-hi" in hex: record only port-table accesses with a code in that range, e.g.
---           "20-29" for the IDE), SPC_PORTS_FILE (output name, default ports.csv)
+--           "20-29" for the IDE), SPC_PORTS_FILE (output name, default ports.csv),
+--           SPC_WAIT_TEXT (text to look for in the text-mode screen every frame: the first frame that shows it
+--           is logged as an event and saved as text-found.png, e.g. "Estex DSS" for the DSS banner)
 --   sync:   SPC_SYNC_AT (frame of the first FN_SYNC call), SPC_SYNC_FRAMES (frames measured per mode)
 --   loader: SPC_ROM (the 256 KB BIOS image, to check the reassembled bitstream)
 --
@@ -130,6 +132,25 @@ if mode == "boot" then
 	local opened = false
 	local was_loading = true
 
+	local wait_text = os.getenv("SPC_WAIT_TEXT")
+	-- The text-mode screen as unreal-ng's tests read it: a text square's Mode1 byte is the character code,
+	-- 40 squares x 2 characters per row, 32 rows, both mode pages (tdd-video §3)
+	local function screen_text()
+		local chars = {}
+		for page = 0, 1 do
+			for b = 0, 31 do
+				for a = 0, 39 do
+					for half = 0, 1 do
+						local c = vram:read_u8((1 + 2 * a + half + 0x80 * page) * 1024 + 0x301 + 4 * b)
+						chars[#chars + 1] = (c >= 0x20 and c < 0x7f) and string.char(c) or " "
+					end
+				end
+				chars[#chars + 1] = "\n"
+			end
+		end
+		return table.concat(chars)
+	end
+
 	local function record(dir, port, data)
 		if nports >= max_ports then return end
 		local loading = it_conf_loading:read(0) ~= 0
@@ -182,6 +203,15 @@ if mode == "boot" then
 		was_loading = loading
 		if snap_every > 0 and frame % snap_every == 0 then
 			snapshot(string.format("snap-%05d.png", frame))
+		end
+		if wait_text ~= nil then
+			local text = screen_text()
+			if string.find(text, wait_text, 1, true) then
+				event("text '%s' on screen at frame %d (%.3f s)", wait_text, frame, emu.time())
+				write_file("text-found.txt", text)
+				snapshot("text-found.png")
+				wait_text = nil
+			end
 		end
 		if snap_at[frame] ~= nil then
 			snapshot(snap_at[frame] .. ".png")

@@ -6,6 +6,9 @@
 # (SPC_END, SPC_DUMP_AT, ...). Output: $SPC_OUT (default build/<mode>/ here).
 # SPC_FLOP1 / SPC_FLOP2=<image> put a floppy in drive A / B (a 3.5" HD drive; SPC_FLOP_DRIVE: 35hd by default, or
 # 35dd / 525qd). With a blank CMOS the BIOS boots the IDE master, then the alternative device, floppy B.
+# SPC_HARD1=<image> puts a hard disk on the primary master (MAME -hard1, ata1:0: a CHD, e.g. the owner's MAME pack
+# sp_hdd_sys.chd), SPC_HARD2 on the secondary master (-hard2, ata2:0). SPC_BIOS: the MAME BIOS set (default v3.04;
+# v3.06 needs MAME_ROMPATH with MAME's own sprinter.zip, e.g. the MAME pack's roms/ folder).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -46,12 +49,18 @@ fi
 if [ -n "${SPC_FLOP2:-}" ]; then
 	MEDIA+=(-beta:wd179x:1 "${SPC_FLOP_DRIVE:-35hd}" -flop2 "$(abspath "$SPC_FLOP2")")
 fi
+if [ -n "${SPC_HARD1:-}" ]; then
+	MEDIA+=(-hard1 "$(abspath "$SPC_HARD1")")
+fi
+if [ -n "${SPC_HARD2:-}" ]; then
+	MEDIA+=(-hard2 "$(abspath "$SPC_HARD2")")
+fi
 
 # A fresh CMOS each run (MAME starts from its own default contents), so runs repeat
 rm -rf "$BUILD/run/nvram/sprinter" "$BUILD/run/cfg/sprinter.cfg"
 cd "$BUILD/run"
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-"$MAME" sprinter -bios v3.04 -kbd "" -rompath "$ROMPATH" \
+"$MAME" sprinter -bios "${SPC_BIOS:-v3.04}" -kbd "" -rompath "$ROMPATH" \
 	-video none -sound none -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins \
 	-cfg_directory "$BUILD/run/cfg" -nvram_directory "$BUILD/run/nvram" -snapshot_directory "$OUTDIR" -snapview native \
 	${MEDIA[@]+"${MEDIA[@]}"} \
