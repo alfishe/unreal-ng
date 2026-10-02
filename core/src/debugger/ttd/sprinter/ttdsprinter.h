@@ -49,6 +49,7 @@ namespace ttd
 class TTDSprinterPld : public TTDSerializable
 {
 public:
+    /// 1: the layout with the accelerator section (SprinterAccelState, 280 bytes since S5)
     static constexpr uint8_t kVersion = 1;
     /// Bytes before the module state: version, SprinterPldState, the decoder fields, the module name
     static constexpr size_t kFixedSize = 175;

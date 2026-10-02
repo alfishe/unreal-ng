@@ -65,15 +65,27 @@ are not on master. They move to regions when those land.
 | `ExactRestore_MidIdeSector` | DSS from a hard disk; restore from a boundary with the ATA buffer half moved |
 | `ExactRestore_MidPs2ByteAndMidMousePacket` | a program polls SIO A and B with interrupts off and logs every byte; restores from a PS/2 byte on the wire and from a mouse packet half sent: the log (RAM), FIFOs, streams equal |
 | `SeekAnywhere_InsideFramesBackAndForth` | seeks to positions inside frames, back and forth: CPU and video RAM as recorded |
-| accelerator tests | see "Accelerator" below |
+| `ExactRestore_AcceleratorArmedAndInIntSuspendWindow` | a program repeats `LD D,D : LD E,16` and `LD C,C : LD (HL),A` with interrupts on; every other handler runs past the frame end: restores from a boundary with the fill armed and from one inside the INT suspend window (`blocked`) |
 
-A mutation check (the mouse state not loaded) fails `ExactRestore_MidPs2ByteAndMidMousePacket`, and
-before the WD1793 context the mid-sector restore failed at the first frame.
+Mutation checks: the mouse state not loaded fails `ExactRestore_MidPs2ByteAndMidMousePacket`; the
+accelerator state not loaded fails both accelerator restores; before the WD1793 context the
+mid-sector restore failed at the first frame. Run time of the machine tests: ~15 s together under `test-parallel`, the DSS boot ~9 s of it (boot-bound,
+justified in each test's comment).
 
 Corpus: `testdata/machines/sprinter/ttd/boot.ttd` (`record_fixtures.py --only sprinter_boot`): the cold
 full start, 300 frames - the PLD load, then BIOS POST at 21 MHz; `TTD_Corpus_Test` restores
 checkpoints 0 / 50 / 51 / 300 and replays 37 + 25 (inside the PLD load). The other fixtures and the
 CI gate are unchanged.
+
+## Accelerator (S5)
+
+S5 was not on master when this work finished; branch `sprinter-s5` (0800d2a17, 7d1e19552) is merged
+into `sprinter-ttd`. The standard accelerator's `SprinterAccelState` (280 bytes: mode, direction,
+function, length, prefix / ED / RETI tracking, `blocked`, the alternate addressing, the 256-byte
+buffer, the counters) is the PLD blob's accelerator section; on load the engine's data watch follows
+the mode and the active accelerator is the CPU's bus agent again (`RefreshAccelerator`). The write in
+progress between `BeforeWrite` and `AfterWrite` is inside one bus cycle, never at a boundary. A
+configuration module that brings its own accelerator carries it in its module state.
 
 ## Reserved ids and sections (for S6 and later)
 

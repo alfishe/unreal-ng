@@ -106,14 +106,29 @@ TEST_F(TTDSprinter_Test, Pld_RoundTripsThePldTheDecoderAndTheIntSource)
     _decoder->StandardWriteCode(SprinterCode::CovoxBlaster, 0x89, 0x5A);
     _decoder->GetIntSource().RestoreState(1, 312, 0x123456789ALL, true);
 
+    // The accelerator: a mode armed, a length, a buffer, blocked by an INT acknowledge
+    SprinterAccelState& acc = _decoder->StandardAccelerator().State();
+    for (size_t i = 0; i < sizeof(acc.buffer); i++)
+        acc.buffer[i] = static_cast<uint8_t>(i ^ 0x5A);
+    acc.mode = 5;
+    acc.dir = SprinterAccelerator::kDir[5];
+    acc.length = 16;
+    acc.fn = 2;
+    acc.blocked = 1;
+    acc.aagr = 0x2AB;
+    acc.operations = 1234;
+
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 2) << "Standard brings no module state, no accelerator yet";
+    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 2 + sizeof(SprinterAccelState))
+        << "Standard brings no module state; the accelerator section";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(saved[0], ttd::TTDSprinterPld::kVersion);
     const SprinterPldState pldBefore = pld;
+    const SprinterAccelState accBefore = acc;
 
     // Power-on scrambles all of it
     _decoder->PowerCycle();
+    std::memset(&acc, 0, sizeof(acc));
     _decoder->GetIntSource().RestoreState(0, 320, -1, false);
     ASSERT_NE(Save(serializer), saved);
 
@@ -125,6 +140,8 @@ TEST_F(TTDSprinter_Test, Pld_RoundTripsThePldTheDecoderAndTheIntSource)
     EXPECT_EQ(_decoder->GetIntSource().FrameLines(), 312);
     EXPECT_EQ(_decoder->GetIntSource().AckedPulse(), 0x123456789ALL);
     EXPECT_TRUE(_decoder->GetIntSource().KeyboardIntLatched());
+    EXPECT_EQ(std::memcmp(&acc, &accBefore, sizeof(acc)), 0) << "the accelerator";
+    EXPECT_TRUE(_decoder->StandardAccelerator().watchData) << "a mode on: the engine watches data accesses";
 }
 
 TEST_F(TTDSprinter_Test, Wd1793Context_RoundTripsTheRateRetrySearch)
@@ -162,7 +179,8 @@ TEST_F(TTDSprinter_Test, Pld_TheModuleTravelsByNameWithItsState)
     std::memcpy(stub->state, "\x11\x22\x33\x44", 4);
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 4 + 2) << "room for the largest module state";
+    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + 4 + 2 + sizeof(SprinterAccelState))
+        << "room for the largest module state";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(saved.data()) + 139), "TtdStateModule");
 
@@ -855,11 +873,97 @@ TEST_F(TTDSprinterMachine_Test, SeekAnywhere_InsideFramesBackAndForth)
     }
 }
 
-/// The accelerator's INT suspend window (phase S5): a checkpoint taken while an INT acknowledge
-/// blocks new block operations until RETI. Pending: the accelerator is not on this branch yet
-TEST_F(TTDSprinterMachine_Test, DISABLED_ExactRestore_InAcceleratorIntSuspendWindow)
+/// The block accelerator (phase S5): a program repeats `LD D,D : LD E,16` (the length) and
+/// `LD C,C : LD (HL),A` (a 16-byte fill) with interrupts on; every other interrupt its handler runs
+/// past the frame end before RETI, so frame boundaries fall both while a mode is armed (the mode, length, function and
+/// buffer in the PLD blob) and inside the INT suspend window (an INT acknowledge blocked new
+/// operations until the fetch after RETI: AccelIntSuspend=1). Restores from both continue exactly.
+/// ~60 frames recorded, replayed from two points
+TEST_F(TTDSprinterMachine_Test, ExactRestore_AcceleratorArmedAndInIntSuspendWindow)
 {
-    GTEST_SKIP() << "pending phase S5 (the block accelerator and its TTD state)";
+    PowerOn(true);
+    Skip(150);  // BIOS POST and SETUP: the mode table places the frame INT
+    ASSERT_FALSE(_decoder->GetIntSource().Positions().empty()) << "no frame INT to suspend the accelerator";
+    ASSERT_NE(_decoder->GetAccelerator(), nullptr);
+
+    static const uint8_t program[] = {
+        0xF3,                    // 8000 DI
+        0xED, 0x5E,              // 8001 IM 2
+        0x3E, 0x81,              // 8003 LD A,#81       IM 2 table #8100-#8200, every byte #83: any vector -> #8383
+        0xED, 0x47,              // 8005 LD I,A
+        0x3E, 0x5A,              // 8007 LD A,#5A       the fill byte
+        0x21, 0x00, 0xA0,        // 8009 LD HL,#A000    the fill target
+        0xFB,                    // 800C EI
+        0x52,                    // 800D loop: LD D,D   length mode
+        0x1E, 0x10,              // 800E LD E,16        the operand read loads the length
+        0x49,                    // 8010 LD C,C         fill mode
+        0x77,                    // 8011 LD (HL),A      16 bytes; then NOPs with the fill still armed (8012..)
+    };
+    // after the NOPs: LD B,B (off: the JR's operand must be a plain fetch), INC HL, JR loop
+    static const uint8_t tail[] = {0x40, 0x23, 0x18, 0x00};
+    constexpr uint16_t kNops = 100;  // the JR back stays in range
+    // Every other INT the handler waits past the frame end (a boundary inside the suspend window);
+    // the others return at once (boundaries in the main loop, the fill armed)
+    static const uint8_t handler[] = {
+        0xF5,                    // 8383 PUSH AF        (plain: blocked)
+        0xC5,                    // 8384 PUSH BC
+        0x3A, 0x00, 0x90,        // 8385 LD A,(#9000)   the INT counter
+        0x3C,                    // 8388 INC A
+        0x32, 0x00, 0x90,        // 8389 LD (#9000),A
+        0x01, 0x00, 0x0C,        // 838C LD BC,#0C00    ~150 K clocks at 21 MHz with the RAM waits: past the frame end
+        0xE6, 0x01,              // 838F AND 1
+        0x20, 0x03,              // 8391 JR NZ,wait     odd: the long wait
+        0x01, 0x10, 0x00,        // 8393 LD BC,#0010    even: a short one
+        0x0B,                    // 8396 wait: DEC BC
+        0x78,                    // 8397 LD A,B
+        0xB1,                    // 8398 OR C
+        0x20, 0xFB,              // 8399 JR NZ,wait
+        0xC1,                    // 839B POP BC
+        0xF1,                    // 839C POP AF
+        0xFB,                    // 839D EI
+        0xED, 0x4D,              // 839E RETI           the next fetch unblocks
+    };
+    Memory* memory = _context->pMemory;
+    uint16_t at = 0x8000;
+    for (uint8_t b : program)
+        memory->DirectWriteToZ80Memory(at++, b);
+    for (uint16_t i = 0; i < kNops; i++)
+        memory->DirectWriteToZ80Memory(at++, 0x00);
+    for (uint8_t b : tail)
+        memory->DirectWriteToZ80Memory(at++, b);
+    memory->DirectWriteToZ80Memory(static_cast<uint16_t>(at - 1), static_cast<uint8_t>(0x800D - at));  // JR loop
+    for (size_t i = 0; i < sizeof(handler); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8383 + i), handler[i]);
+    // The PLD answers #FF, the Z84C15's sources their own vectors (the BIOS programmed them): one handler
+    for (uint16_t a = 0x8100; a <= 0x8200; a++)
+        memory->DirectWriteToZ80Memory(a, 0x83);
+    memory->DirectWriteToZ80Memory(0x9000, 0);
+    _decoder->GetPldState().allMode |= 0x01;  // ALL_MODE bit 0: the accelerator on
+    _z80->iff1 = _z80->iff2 = 0;  // no BIOS interrupt before the program's own DI / IM 2
+    _decoder->GetZ84().Reset();   // the BIOS's CTC / SIO / PIO interrupts off: the frame INT alone
+    _z80->halted = 0;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xBF00;
+    RunToBoundary();
+
+    StartRecording();
+    size_t armed = 0;
+    size_t suspended = 0;
+    Record(60, {}, [&] {
+        const SprinterAccelState& acc = _decoder->GetAccelerator()->State();
+        const size_t idx = _ttd->GetCheckpointCount() - 1;
+        if (!armed && acc.dir && !acc.blocked && acc.operations > 1)
+            armed = idx;
+        if (!suspended && acc.blocked)
+            suspended = idx;
+    });
+    _ttd->StopRecording();
+    ASSERT_GT(armed, 0u) << "no boundary with an accelerator mode armed";
+    ASSERT_GT(suspended, 0u) << "no boundary inside the INT suspend window";
+    EXPECT_GT(_decoder->GetAccelerator()->State().operations, 10u);
+
+    ExpectExactReplay(armed, 30, "from a boundary with the accelerator armed");
+    ExpectExactReplay(suspended, 30, "from inside the INT suspend window");
 }
 
 /// endregion </Exact restore on the real BIOS>

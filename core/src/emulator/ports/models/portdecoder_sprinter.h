@@ -174,12 +174,13 @@ public:
     /// engine's boundary hand-over, the turbo and its wait overlay, the bank windows, the step hook
     void OnTtdStateLoaded();
 
-    /// The block accelerator's state, carried in the PLD blob (tdd-integration §2.1).
-    /// TODO(S5 accelerator): return sizeof the accelerator state and copy it here; a non-zero size changes
-    /// the PLD blob's size, so bump TTDSprinterPld::kVersion with it
-    size_t AccelStateSize() const { return 0; }
-    void SaveAccelState(uint8_t* dst) const { (void)dst; }
-    void LoadAccelState(const uint8_t* src) { (void)src; }
+    /// The standard block accelerator's state (SprinterAccelState: mode, length, function, the INT block,
+    /// the alternate addressing, the 256-byte buffer, the counters), carried in the PLD blob
+    /// (tdd-integration §2.1). A module's own accelerator travels in its module state. The write
+    /// in progress between BeforeWrite and AfterWrite is inside one bus cycle, never at a boundary
+    size_t AccelStateSize() const { return sizeof(SprinterAccelState); }
+    void SaveAccelState(uint8_t* dst) const;
+    void LoadAccelState(const uint8_t* src);
     /// endregion </TTD>
 
 private:

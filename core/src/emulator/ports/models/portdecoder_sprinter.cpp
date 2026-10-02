@@ -510,7 +510,19 @@ void PortDecoder_Sprinter::OnTtdStateLoaded()
     // The windows first: the turbo's wait slots follow the bank modes
     UpdateBanks();
     ApplyTurbo();
+    RefreshAccelerator();  // the configured module's accelerator as the CPU's bus agent (none while loading)
     RefreshStepHook();
+}
+
+void PortDecoder_Sprinter::SaveAccelState(uint8_t* dst) const
+{
+    std::memcpy(dst, &_accelerator.State(), sizeof(SprinterAccelState));
+}
+
+void PortDecoder_Sprinter::LoadAccelState(const uint8_t* src)
+{
+    std::memcpy(&_accelerator.State(), src, sizeof(SprinterAccelState));
+    _accelerator.watchData = _accelerator.State().dir != 0;  // the engine watches data accesses while a mode is on
 }
 
 const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
