@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "3rdparty/lodepng/lodepng.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -359,4 +360,120 @@ TEST_F(SprinterBoot_Test, Dss162_SpectrumModeTrDosReadsATrd)
         differ += _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(start + i)) != trdBytes[offset + i];
     EXPECT_EQ(differ, 0u) << "LOAD CODE through TR-DOS and the WD1793 at 250 kbit/s";
     EXPECT_FALSE(_decoder->IsFdcHighDensity());
+}
+
+namespace
+{
+/// BIOS SETUP's CMOS checksum (SETUP #9B32 CHEKSUM): registers #0E-#1F folded into
+/// H = #DE as H = RLC(H - v) - v; the result lives in register #3F (TCHEKSM)
+uint8_t SetupChecksum(const Ds12887& rtc)
+{
+    uint8_t h = 0xDE;
+    for (uint8_t reg = 0x0E; reg < 0x0E + 0x12; reg++)
+    {
+        const uint8_t v = rtc.PeekRegister(reg);
+        uint8_t a = static_cast<uint8_t>(h - v);
+        a = static_cast<uint8_t>((a << 1) | (a >> 7));
+        h = static_cast<uint8_t>(a - v);
+    }
+    return h;
+}
+}  // namespace
+
+// ACC-2 (adapted to BIOS 3.04): enter SETUP with DEL, change a setting, save with F10.
+// SETUP 1.58 of BIOS 3.04 has no date / time page (its 22 items are the START FEATURES:
+// language, memory test, boot disks, IDE, screen position, TR-DOS drives), so the setting
+// is "Memory Test". After the save the BIOS restarts SETUP with the saved values (no
+// checksum warning any more), and the CMOS file ([SPRINTER] CmosFile) holds them.
+// The keys go in as AT set 2 scan codes through the Z84C15 SIO channel A, a make and its
+// break in separate frames (the SIO FIFO holds 3 bytes). SETUP's codes (KEY.ASM XLAT):
+// DEL E0 71 -> #4F (TSETUP), Down E0 72 -> #52 (next item), PgDn E0 7A -> #53 (next
+// value), F10 #09 -> #44 (save and exit).
+// Boot-bound (the logo, SETUP and its restart: ~400 frames of real ROM), the turbo mode on
+TEST_F(SprinterBoot_Test, Bios304_SetupSavesSettingToCmos)
+{
+    const std::string cmosPath = TestPathHelper::GetUniqueTestScratchPath("sprinter-acc2.cmos");
+    std::strncpy(_context->config.sprinter.cmos_path, cmosPath.c_str(), sizeof(_context->config.sprinter.cmos_path) - 1);
+    Ds12887& rtc = _decoder->GetRtc();
+
+    auto key = [&](std::initializer_list<uint8_t> make, std::initializer_list<uint8_t> brk) {
+        for (uint8_t code : make)
+            _decoder->GetZ84().sio.Receive(0, code);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+        for (uint8_t code : brk)
+            _decoder->GetZ84().sio.Receive(0, code);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+    };
+
+    // The logo runs ~130 frames of HALTs; a key pressed then waits in SETUP's buffer
+    // for TSETUP after the boot screen
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Sprinter BIOS: ver 3.04"); }, 300, 5);
+    ASSERT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("CMOS CHECKSUM ERROR")) << "a blank CMOS: the defaults";
+    key({0xE0, 0x71}, {0xE0, 0xF0, 0x71});  // DEL
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("SETUP UTILITY"); }, 400, 5);
+    ASSERT_TRUE(ScreenHas("SPRINTER SETUP UTILITY Version 1.58")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Memory Test")) << ScreenText();
+
+    // The SETUP screen (80-column text, the BIOS palettes, a blue border) against its golden
+    // image (ScreenSprinter's own render, reviewed by eye; no MAME capture: MAME's Sprinter
+    // runs without a keyboard here). Two frames without the turbo mode render it in full
+    _emulator->DisableTurboMode();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+    {
+        const std::string golden =
+            (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "sprinter" / "golden" / "setup-menu.png").string();
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        std::vector<unsigned char> rgba(static_cast<size_t>(fb.width) * fb.height * 4);
+        for (size_t i = 0; i < static_cast<size_t>(fb.width) * fb.height; i++)
+        {
+            for (unsigned c = 0; c < 3; c++)
+                rgba[i * 4 + c] = static_cast<unsigned char>(pixels[i] >> (8 * c));
+            rgba[i * 4 + 3] = 0xFF;
+        }
+        std::vector<unsigned char> expected;
+        unsigned width = 0, height = 0;
+        const bool loaded = lodepng::decode(expected, width, height, golden) == 0;
+        if (!loaded || width != fb.width || height != fb.height || expected != rgba)
+        {
+            const std::string ours = TestPathHelper::GetUniqueTestScratchPath("setup-menu.png");
+            lodepng::encode(ours, rgba, fb.width, fb.height);
+            ADD_FAILURE() << "SETUP screen differs from " << golden << "; ours: " << ours;
+        }
+    }
+    _emulator->EnableTurboMode();
+
+    const uint8_t before = rtc.PeekRegister(0x0E);
+    key({0xE0, 0x72}, {0xE0, 0xF0, 0x72});  // Down: item 1, Memory Test
+    key({0xE0, 0x7A}, {0xE0, 0xF0, 0x7A});  // PgDn: the next value
+    const uint8_t edited = rtc.PeekRegister(0x0E);
+    EXPECT_EQ(edited, before) << "SETUP edits its copy; the CMOS changes at the save";
+    key({0x09}, {0xF0, 0x09});              // F10: save and exit
+
+    const uint8_t after = rtc.PeekRegister(0x0E);
+    EXPECT_NE(after, before) << "register #0E (options: memory test, ...) saved";
+    EXPECT_EQ(rtc.PeekRegister(0x3F), SetupChecksum(rtc)) << "checksum #3F";
+
+    // SETUP starts over with the saved values: the boot screen without the checksum warning
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Memory    : 4096K"); }, 600, 5);
+    ASSERT_TRUE(ScreenHas("Memory    : 4096K")) << ScreenText();
+    EXPECT_FALSE(ScreenHas("CMOS CHECKSUM ERROR")) << ScreenText();
+
+    // The machine goes away: the decoder writes the CMOS file
+    _emulator.reset();
+    for (const auto& id : _manager->GetEmulatorIds())
+        _manager->RemoveEmulator(id);
+    std::vector<uint8_t> image(128);
+    FILE* f = std::fopen(cmosPath.c_str(), "rb");
+    ASSERT_NE(f, nullptr) << cmosPath;
+    const size_t got = std::fread(image.data(), 1, image.size(), f);
+    std::fclose(f);
+    std::remove(cmosPath.c_str());
+    ASSERT_EQ(got, 128u);
+    EXPECT_EQ(image[0x0E], after);
+    Ds12887 fromFile{128};
+    for (uint8_t reg = 0x0E; reg < 0x40; reg++)
+        fromFile.WriteRegister(reg, image[reg]);
+    EXPECT_EQ(image[0x3F], SetupChecksum(fromFile)) << "the file's checksum is valid";
 }

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4). **§2 floppy built in S3a** (2026-10-01, branch `sprinter-s3a`; as-built notes in §2.6, outcome in [roadmap-and-plan.md](roadmap-and-plan.md) §7) |
+| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4). **§2 floppy built in S3a** (2026-10-01, branch `sprinter-s3a`; as-built notes in §2.6, outcome in [roadmap-and-plan.md](roadmap-and-plan.md) §8) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §9, §10, §12, §14 |
 | **Plugs into** | media manager [technical-design.md](../2026-09-28-storage-manager/technical-design.md) (PLAN #58), [integration-ide-cd.md](../2026-09-28-storage-manager/integration-ide-cd.md), [integration-floppy.md](../2026-09-28-storage-manager/integration-floppy.md); shared IDE core [2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) (PLAN #13a) |
 

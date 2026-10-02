@@ -15,6 +15,8 @@
 
 const char* const MC_KEY_PRESSED = "KEY_PRESSED";
 const char* const MC_KEY_RELEASED = "KEY_RELEASED";
+const char* const MC_PCKEY_PRESSED = "PCKEY_PRESSED";
+const char* const MC_PCKEY_RELEASED = "PCKEY_RELEASED";
 
 ZXKeyMap Keyboard::_zxKeyMap({
     {ZXKEY_CAPS_SHIFT, Keyboard::_keys[0]}, {ZXKEY_Z, Keyboard::_keys[1]},          {ZXKEY_X, Keyboard::_keys[2]},
@@ -86,6 +88,12 @@ Keyboard::Keyboard(EmulatorContext* context)
     ObserverCallbackMethod callbackOnKeyReleased = static_cast<ObserverCallbackMethod>(&Keyboard::OnKeyReleased);
     messageCenter.AddObserver(MC_KEY_PRESSED, observerInstance, callbackOnKeyPressed);
     messageCenter.AddObserver(MC_KEY_RELEASED, observerInstance, callbackOnKeyReleased);
+    messageCenter.AddObserver(MC_PCKEY_PRESSED, observerInstance, static_cast<ObserverCallbackMethod>(&Keyboard::OnPcKeyPressed));
+    messageCenter.AddObserver(MC_PCKEY_RELEASED, observerInstance, static_cast<ObserverCallbackMethod>(&Keyboard::OnPcKeyReleased));
+
+    HostKeyboardRoute route = HostKeyboardRoute::Auto;
+    if (_context && ParseHostRoute(_context->config.input.hostKeyboard, route))
+        _hostRoute = route;
 }
 
 Keyboard::~Keyboard()
@@ -97,6 +105,65 @@ Keyboard::~Keyboard()
     ObserverCallbackMethod callbackOnKeyReleased = static_cast<ObserverCallbackMethod>(&Keyboard::OnKeyReleased);
     messageCenter.RemoveObserver(MC_KEY_PRESSED, observerInstance, callbackOnKeyPressed);
     messageCenter.RemoveObserver(MC_KEY_RELEASED, observerInstance, callbackOnKeyReleased);
+    messageCenter.RemoveObserver(MC_PCKEY_PRESSED, observerInstance, static_cast<ObserverCallbackMethod>(&Keyboard::OnPcKeyPressed));
+    messageCenter.RemoveObserver(MC_PCKEY_RELEASED, observerInstance, static_cast<ObserverCallbackMethod>(&Keyboard::OnPcKeyReleased));
+}
+
+HostKeyboardRoute Keyboard::EffectiveHostRoute() const
+{
+    if (_hostRoute != HostKeyboardRoute::Auto)
+        return _hostRoute;
+    return _ps2Sink ? HostKeyboardRoute::Both : HostKeyboardRoute::Matrix;
+}
+
+bool Keyboard::ParseHostRoute(const char* text, HostKeyboardRoute& out)
+{
+    if (!text || !*text)
+    {
+        out = HostKeyboardRoute::Auto;
+        return true;
+    }
+    std::string t(text);
+    for (char& c : t)
+    {
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<char>(c - 32);
+    }
+    if (t == "AUTO") out = HostKeyboardRoute::Auto;
+    else if (t == "MATRIX") out = HostKeyboardRoute::Matrix;
+    else if (t == "PS2" || t == "PS/2") out = HostKeyboardRoute::Ps2;
+    else if (t == "BOTH") out = HostKeyboardRoute::Both;
+    else
+        return false;
+    return true;
+}
+
+bool Keyboard::RequestHostRoute(const std::string& name, std::string& error)
+{
+    HostKeyboardRoute route;
+    if (!ParseHostRoute(name.c_str(), route) || name.empty())
+    {
+        error = "route: auto | matrix | ps2 | both";
+        return false;
+    }
+    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    {
+        error = "a TTD recording is running: the keyboard route is fixed until it stops";
+        return false;
+    }
+    _hostRoute = route;
+    return true;
+}
+
+const char* Keyboard::HostRouteName(HostKeyboardRoute route)
+{
+    switch (route)
+    {
+        case HostKeyboardRoute::Matrix: return "MATRIX";
+        case HostKeyboardRoute::Ps2: return "PS2";
+        case HostKeyboardRoute::Both: return "BOTH";
+        default: return "AUTO";
+    }
 }
 
 /// endregion </Constructors / Destructors>
@@ -451,7 +518,7 @@ bool Keyboard::WantsPcKey(PcKey key) const
 {
     if (key == PcKey::None)
         return false;
-    if (_ps2Sink)
+    if (RoutesToPs2())
         return true;
     return _context && _context->pJoystick && _context->pJoystick->WantsKey(key);
 }
@@ -463,7 +530,8 @@ void Keyboard::ApplyPcKey(PcKey key, bool pressed)
 
     // The same event feeds both consumers: a bound key still reaches the PS/2 controller (NedoOS reads
     // the keypad there) and drives the joystick button
-    if (_ps2Sink)
+    // The PS/2 side follows the route (a release always gets through: no stuck keys)
+    if (_ps2Sink && (RoutesToPs2() || !pressed))
         _ps2Sink->OnPcKey(key, pressed);
     if (_context && _context->pJoystick)
         _context->pJoystick->OnPcKey(key, pressed);
@@ -500,14 +568,9 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
         if (IsHostInputSuppressed())
             return;
 
-        // The physical key reaches the PS/2 controller as its own journaled event,
-        // never derived from the matrix keys below (host Up is Caps Shift + 7 there)
-        const auto pcKey = static_cast<PcKey>(event->pcKeyCode);
-        if (pcKey != PcKey::None)
-            SubmitHostPcKey(pcKey, /*pressed=*/true);
-
-        // A key with no ZX equivalent (F1, Home, ...) carries only the physical key
-        if (event->zxKeyCode == ZXKEY_NONE)
+        // The matrix side only: the physical key is its own event (MC_PCKEY_*),
+        // never derived from the matrix keys (host Up is Caps Shift + 7 here)
+        if (event->zxKeyCode == ZXKEY_NONE || !RoutesToMatrix())
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
@@ -565,10 +628,7 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
         if (IsHostInputSuppressed())
             return;
 
-        const auto pcKey = static_cast<PcKey>(event->pcKeyCode);
-        if (pcKey != PcKey::None)
-            SubmitHostPcKey(pcKey, /*pressed=*/false);
-
+        // Releases pass whatever the route: a key pressed before a route change must not stick
         if (event->zxKeyCode == ZXKEY_NONE)
             return;
 
@@ -643,3 +703,27 @@ std::string Keyboard::DumpKeyboardState()
 }
 #endif
 /// endregion </Debug>
+
+void Keyboard::OnPcKeyPressed([[maybe_unused]] int id, Message* message)
+{
+    PcKeyEvent* event = message ? dynamic_cast<PcKeyEvent*>(message->obj) : nullptr;
+    if (!event || event->eventType != KEY_PRESSED)
+        return;
+    if (!event->targetEmulatorId.empty() && event->targetEmulatorId != std::string(_context->pEmulator->GetUUID()))
+        return;
+    if (IsHostInputSuppressed())
+        return;
+    SubmitHostPcKey(static_cast<PcKey>(event->pcKeyCode), /*pressed=*/true);
+}
+
+void Keyboard::OnPcKeyReleased([[maybe_unused]] int id, Message* message)
+{
+    PcKeyEvent* event = message ? dynamic_cast<PcKeyEvent*>(message->obj) : nullptr;
+    if (!event || event->eventType != KEY_RELEASED)
+        return;
+    if (!event->targetEmulatorId.empty() && event->targetEmulatorId != std::string(_context->pEmulator->GetUUID()))
+        return;
+    if (IsHostInputSuppressed())
+        return;
+    SubmitHostPcKey(static_cast<PcKey>(event->pcKeyCode), /*pressed=*/false);
+}

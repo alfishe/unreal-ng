@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`); **S3a done** (2026-10-01, branch `sprinter-s3a`, §7); S2, S3b, S4-S7 not started. The owner started the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"). PLAN row **#59** (T4); its shared prerequisites are row **#60** (done) |
+| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`); CPU on its own Z84C15 library (2026-10-01, branch `sprinter-cpu`, [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md)); **S2 done** (2026-10-01, branch `sprinter-s2`, §7); **S3a done** (2026-10-01, branch `sprinter-s3a`, §8); S3b, S4-S7 not started. The owner started the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"). PLAN row **#59** (T4); its shared prerequisites are row **#60** (done) |
 | **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, its tests passing; nothing is committed without an explicit request |
 | **Inputs** | [goals-and-requirements.md](goals-and-requirements.md) (ACC-*), [technical-design.md](technical-design.md), [test-plan.md](test-plan.md) |
 
@@ -40,8 +40,8 @@ earlier.
 |---|---|---|---|---|
 | **S0** | Provisioning: BIOS 3.04 (+3.06) in `data/rom/sprinter/` + README entry (3.04 source: HW-2000 `fw/bios/sp2k-3.04.253.bin`, [materials.md](materials.md) §5); **disassembly of ROM pages 8 and 0 of 3.04**, cross-checked against BIOS-TT `0271ac3`, into `docs/disasm/rom/sprinter/`, symbols into `data/symbols/sprinter/`; the loader traced once to capture the exact bitstream write count (Q4); the PLD (AHDL) sources checked for the accelerator INT-suspend (Q3); DSS 1.62 floppy and DSS 1.60R files in `testdata/machines/sprinter/` + `testdata/NOTICE.md`; add BIOS-TT, Shared_Includes, DSS and the PLD sources to the local emulator corpus; reference captures from MAME (page `#40` after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port accesses of BIOS 3.04 with codes); a small script that decodes a port-table page into the table of HW §4.4 | reference files checked in; decoded table equals HW §4.4; disassembly and symbol files in place. **Status 2026-10-01: done** (branch `sprinter-s0`; MAME captures on branch `sprinter-mame`): BIOS 3.04 in `data/rom/sprinter/` (3.06 not found publicly, recorded in `data/rom/README-ROMS.md`); listings of pages 8, 0, SETUP and the loader in [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md), symbols in `data/symbols/sprinter/`; port-table decoder `tools/sprinter/dcp-table.py`, 3.04 table checked (HW §4.4: three differences to the BIOS-TT table); Q4 = 473 720 writes (static, tdd-ports-memory §6); Q3 = the PLD has the INT-suspend (tdd-accel-sound-input §1.3); DSS fixtures in `testdata/machines/sprinter/` + real-floppy WD1793 tests. **MAME captures** (MAME 0.289 subset build `zxsp` with the `sprinter` driver, `tools/verification/coemu/mame/README.md`; scripts `tools/verification/sprinter/`; files in `testdata/machines/sprinter/reference/`): page `#40` after POST equals the static table (CRC `b7f09600`, HW §4.4), the logo frame (frame 60, 1.229 s) and the no-media boot screen (frame 507, 10.383 s), INT positions for the FN_SYNC modes (MAME lines 271 / 287 / 295 for Scorpion / Pentagon / Spectrum, HW §6.1), the first 10 000 port accesses with codes, and the loader's write count at run time (473 720, Q4 confirmed). The end of configuration (CONF_DONE, PLD start-up clocks, CPU reset) is not visible in MAME (no PLD model) | S-M | — (can start now) |
 | **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened"). **Status 2026-10-01: done** (branch `sprinter-s1`, see [§6](#6-s1-outcome-2026-10-01)) | L | S0; PLAN #60 |
-| **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save) | L | S1 |
-| **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density: the `#BD` latch (codes `#16`/`#17`) wired to the WD1793 `Latched` clock policy via `WD1793::SetLatchedClock` (built 2026-09-29, commits `64756638`, `f304dde1`), `LoaderRawPcFloppy` from PLAN #60(f); TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD). **Status 2026-10-01: done** (branch `sprinter-s3a`, see [§7](#7-s3a-outcome-2026-10-01)): DSS 1.62.92 boots from the floppy to `B:\>`; Spectrum mode (through DSS `SPECTRUM.EXE`: BIOS 3.04 holds no Spectrum ROMs) lists and loads a TRD | M | S1 |
+| **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save). **Status 2026-10-01: done** (branch `sprinter-s2`, see [§7](#7-s2-outcome-2026-10-01)) | L | S1 |
+| **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density: the `#BD` latch (codes `#16`/`#17`) wired to the WD1793 `Latched` clock policy via `WD1793::SetLatchedClock` (built 2026-09-29, commits `64756638`, `f304dde1`), `LoaderRawPcFloppy` from PLAN #60(f); TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD). **Status 2026-10-01: done** (branch `sprinter-s3a`, see [§8](#8-s3a-outcome-2026-10-01)): DSS 1.62.92 boots from the floppy to `B:\>`; Spectrum mode (through DSS `SPECTRUM.EXE`: BIOS 3.04 holds no Spectrum ROMs) lists and loads a TRD | M | S1 |
 | **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image) | S-M | S1; IDE R1-1 (PLAN #13a) |
 | **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, **default on** because the PLD has it (Q3, decided 2026-10-01) | T-ACC-*; part of **ACC-9** | M | S2 |
@@ -212,7 +212,9 @@ cycle; the decoder runs 1 T into the 4-T I/O cycle). `SprinterWaits::IoCycleStar
 start, Sprinter-local; no shared Z80 code changed.
 
 Open (recorded, not changed in S1):
-- **CPU emulation approach: pending the CPU research (`research-cpu-z84c15.md`)**. The Sprinter
+- **CPU emulation approach: decided (owner, 2026-10-01): its own CPU library**,
+  `core/src/3rdparty/z84c15/` (CMOS core + the on-chip block), the Sprinter only; design and status in
+  [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md). Earlier note: the Sprinter
   CPU is a Z84C15 (CMOS Z84C00 core + SIO/CTC/PIO/WDT/chip selects); the CPU variant settings
   (`OUT (C),0` value, CMOS undocumented flags, the NMOS LD A,I / LD A,R parity quirk the shared core
   always applies) are left as they are until that research decides; a CPU-specific part, if any,
@@ -231,7 +233,74 @@ Open (recorded, not changed in S1):
 - MAME's timestamps are not usable around a turbo switch (they jump back 4.77 ms at the
   `set_clock_scale` call), so 21-MHz comparisons use durations from the access after the switch.
 
-## 7. S3a outcome (2026-10-01)
+## 7. S2 outcome (2026-10-01)
+
+Branch `sprinter-s2`. The Sprinter draws its picture: every mode of the mode table (graphics 320 x 256
+colors and 640 x 16 colors with the low-res 2x2 variant, text 40 and 80 columns with the Line2 right
+half, the Spectrum screens through the `#7FFD` bit 3 block, border and blank squares), the 8 palettes,
+flash, HOLD, the mode page (RGMOD bit 0) and the 320 / 312-line frame.
+
+| Item | Where | Tests |
+|---|---|---|
+| `M_SPRINTER` (`RasterDescriptor` 736 x 288, picture 640 x 256 at (48, 16)), raster row `R_736_288`, `VideoFamily::Sprinter`; `Screen::DescribeBeam` became virtual (the Sprinter raster is visible-first) | `core/src/emulator/video/screen.*`, `videofamily.h` | the mode-name and mode-count tests extended |
+| `ScreenSprinter : Screen` (chosen by `VideoController::CreateScreen`): beam catch-up from the frame T-state / clock ratio, the frame height applied at the frame start (`config.frame`, the raster, the CPU frame), `DescribeScreenState` (frame height, mode page, square counts) | `core/src/emulator/video/sprinter/screensprinter.*` | `screensprinter_test.cpp` |
+| `SprinterVideoRenderer` (the Standard picture, MAME `draw_tile` / `draw_symbol` + the PLD where checked); configuration-module hook 3 `SprinterPldConfiguration::VideoRenderer()` | `sprintervideorenderer.*`, `sprinterpldconfiguration.h`, `sprinterpldstandard.*` | T-VID-1..7, T-VID-9, T-PLDM-2 (video part) |
+| `SprinterVideoRam`: the 2 048-pen RGBA cache, the "before a change" notification (catch-up) | `sprintervideoram.h` | T-VID-5, the mid-frame tests |
+| `SprinterVideoMapper` (PLAN #42): one 736 x 288 layer, sources = video RAM addresses (mode bytes, pixel / font / attribute byte, the pen), RAM pages `#50-#5F` as the CPU copy | `sprintervideomapper.*` | `VideoMapper_SourcesOfAGraphicsPixel` |
+| Screenshots ("screen only" = the 640 x 256 picture), recordings with doubled lines (`StoresHalfHeightLines`) | shared tables | `Geometry_736x288_320Lines` |
+| Benchmarks `BM_SprinterRender_Logo`, `BM_SprinterFrame_Logo` | `core/benchmarks/emulator/video/screensprinterbenchmark.cpp` | |
+
+Acceptance:
+
+- **ACC-1** (`SprinterVideoBoot_Test.Bios304_LogoFrameMatchesMame`): BIOS 3.04 frame 60 (the logo at
+  full brightness, palette sum 302 548) against MAME's `logo.png`, all 211 968 pixels. Drawn with
+  the state at the frame end - what MAME's frame means (see below) - **0 pixels differ**. As the
+  beam drew it, 13 239 pixels (the logo's) differ by at most 2 levels per channel: one step of the
+  BIOS fade. MAME turns its pen bitmap into colours when the frame is shown, so the fade the BIOS
+  does in frame 60's INT (line 271, after the logo) colours MAME's whole frame; the beam - and
+  `ScreenSprinter` - colours each pixel with the palette of its moment. The test asserts both: the
+  beam frame within one fade step (max delta 2, fewer than 736 x 72 pixels), the frame-end render exact.
+- **ACC-2** (`SprinterBoot_Test.Bios304_SetupSavesSettingToCmos`), **adapted**: SETUP 1.58 of BIOS
+  3.04 has no date / time page (its 22 items are the START FEATURES: language, memory test, boot
+  disks, IDE, screen position, TR-DOS drives), so the test changes "Memory Test": DEL (`E0 71`) during
+  the logo enters SETUP, Down (`E0 72`) and PgDn (`E0 7A`) change the item, F10 (`#09`) saves; CMOS
+  `#0E` changes, `#3F` holds SETUP's checksum (`CHEKSUM`, `#9B32`), SETUP restarts without the
+  checksum warning, and the CMOS file written when the machine goes away holds the value and a valid
+  checksum. The keys go in as AT set 2 scan codes through SIO A (a make and its break in separate
+  frames: the SIO FIFO holds 3 bytes). The SETUP screen is compared against a golden image
+  (`testdata/machines/sprinter/golden/setup-menu.png`, ScreenSprinter's render reviewed by eye; MAME's
+  Sprinter has no keyboard in our captures).
+
+Findings and deviations from the design (applied in the documents named):
+
+- **Palette byte order: R, G, B in video RAM** (MAME is right), not B, G, R (hardware-reference §4.5
+  with the evidence: the PLD's bank wiring, BIOS 3.04 function `#A4` at page 8 `#0E10`, the logo).
+  B, G, R is the order the BIOS function takes (BMP / CGA-table order), which the manual describes.
+  T-VID-5 now checks VRAM `#00,#00,#A8` = blue (the CGA "blue" after `#A4`).
+- **640 graphics: the high nibble is the left pixel** (MAME; the PLD's `BRVA` mux), not "low nibble
+  first" (tdd-video §3, hardware-reference §6.3; T-VID-2 checks the high nibble).
+- **Blank square = pen `#400`** (text paper colour 0, the PLD's `DCOL` clear; MAME the same), not a
+  forced black (tdd-video §3).
+- **HOLD after power-on = `#77`** (no shift): the S1 decoder had 0, which is a 14-pixel / 7-line offset;
+  MAME starts with no offset and the BIOS sets HOLD from CMOS `#1F`.
+- **Hook 3 is the renderer only**: `SprinterPldConfiguration::VideoRenderer()`; the INT source stays
+  Standard's until a module needs another rule (tdd-video §1).
+- **Frame origin**: line 0 / T 0 is the first visible pixel (MAME's), unlike the ZX rasters (blanking
+  first); `ScreenSprinter::DescribeBeam` describes its own zones.
+- **Beam catch-up** before every change to the picture (a changed VRAM byte, RGMOD, HOLD, the border),
+  as MAME's `update_now`; MAME converts pens at frame end (above).
+- Performance (naive v1, performance guidelines rule 5): `BM_SprinterRender_Logo` 512 µs per whole
+  frame (TS-Conf setup screen 46 µs), `BM_SprinterFrame_Logo` 3.5 ms per frame with the CPU at 21 MHz,
+  on a loaded machine (load ~100). The square cache (MAME's tilemap) is in the TODO.
+
+Open (recorded, not changed in S2):
+- A configuration module's own INT source (hook 3, second half) - with the first module that needs it.
+- The square cache for the renderer (TODO).
+- `SaveZXSpectrumNativeScreen` has no caller; left as it is.
+- The boot screen at frame 507 is not compared with MAME: MAME emulates IDE drives (S1 §6.1 (b)) and
+  prints the host clock, so the screens differ by design.
+
+## 8. S3a outcome (2026-10-01)
 
 Branch `sprinter-s3a`. Tests: `SprinterBoot_Test.Dss162_*` (ACC-3, ACC-6), `SprinterBoot_Test.FloppySlots_*`,
 `PortDecoderSprinter_Test.Fdc_*` / `Dos_*` (T-FDD-4..7), `WD1793Clock_Test.Latched_RateChange*`,

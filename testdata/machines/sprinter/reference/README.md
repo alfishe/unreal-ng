@@ -187,4 +187,4 @@ the IDE master, then the alternative device, floppy B (SETUP's default CMOS `#10
   written while a search runs, so the 2 MHz clock (`set_clock_scale`) never reaches the running READ
   ADDRESS. On the board the data separator is outside the chip and switches at once. unreal-ng issues the
   same accesses with the same 175.55 ms spacing up to the first flip, then finds the ID and boots DSS
-  (Sprinter roadmap §7); MAME gives no time-to-prompt reference for the floppy boot.
+  (Sprinter roadmap §8); MAME gives no time-to-prompt reference for the floppy boot.

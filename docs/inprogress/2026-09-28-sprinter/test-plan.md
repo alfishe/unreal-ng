@@ -73,13 +73,17 @@ Configuration modules — `sprinterpldconfiguration_test.cpp` (T-PLDM):
 
 ### 2.4 Video — `screensprinter_test.cpp`, `sprinterintsource_test.cpp` (T-VID)
 
+Built in S2 (2026-10-01): T-VID-1..7 and 9 in `screensprinter_test.cpp` (T-VID-8 and 10 since S1);
+ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.cpp`
+(roadmap §7).
+
 | ID | Case | Expected |
 |---|---|---|
 | T-VID-1 | graphics 320: one square with known bytes and palette 2 | golden 16-pixel strip |
-| T-VID-2 | graphics 640: nibble order | low nibble first |
+| T-VID-2 | graphics 640: nibble order | high nibble first (S2: MAME and the PLD; the design said low) |
 | T-VID-3 | text 320 and 640 (Line2 override) | golden strips; flash swaps at frame bit 4 |
-| T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = black |
-| T-VID-5 | palette byte order | BIOS CGA entry 1 (`#A8,#00,#00`) renders blue (decision HW §4.5) |
+| T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = pen `#400` (text paper colour 0, S2) |
+| T-VID-5 | palette byte order | video RAM holds R, G, B: the BIOS CGA "blue" (`#A8,#00,#00` as B, G, R to function `#A4`) is `#00,#00,#A8` in video RAM and renders blue (decision HW §4.5, S2) |
 | T-VID-6 | RGMOD bit 0 flips mid-frame | lines after the beam use page 1 |
 | T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 7 lines |
 | T-VID-8 | INT list from a hand-built mode page (run of `#FD` squares) | INT T-states match MAME's `update_int` on the same page |
@@ -159,7 +163,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 |---|---|---|
 | R-1 | ACC-1a | page `#40` equals the S0 capture after "DCP opened"; boot-menu text in VRAM |
 | R-2 | ACC-1 | logo frame equals the golden image (no turbo mode) |
-| R-3 | ACC-2 | setup date change persists in the CMOS file |
+| R-3 | ACC-2 | a SETUP setting change (BIOS 3.04's SETUP has no date page: "Memory Test") persists in the CMOS file with a valid checksum |
 | R-4 | ACC-3 | "Starting DOS..." then the DSS prompt text in VRAM; density port = HD |
 | R-5 | ACC-4 | same from `ide0.master` built image |
 | R-6 | ACC-5 | same from a folder; folder tree hash unchanged |

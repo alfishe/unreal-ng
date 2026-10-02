@@ -228,7 +228,7 @@ TEST_F(SprinterMemory_Test, IsaView_ReadsFFWritesIgnored)
 TEST_F(SprinterMemory_Test, LoaderLayout_RomPagesAndFastRamAboveCs0)
 {
     _decoder->BeginLoading();
-    _decoder->GetZ84().system.PowerOn();
+    _decoder->GetZ84().PowerOn();
     _decoder->UpdateBanks();
     EXPECT_EQ(Tag(0x0000), kRomTagBase + 0x0C);
     EXPECT_EQ(Tag(0x4000), kRomTagBase + 0x0D);

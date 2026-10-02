@@ -1,7 +1,7 @@
 # Peters Plus Sprinter Sp2000 machine support
 
 **Created:** 2026-09-28 · **Status:** design drafted, review round 1 done (2026-09-28); S0 done
-(2026-10-01, MAME captures included, branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`: creatable `SPRINTER`, BIOS 3.04 reaches its boot prompt); **S3a done** (2026-10-01, branch `sprinter-s3a`: DSS 1.62 boots from the floppy, Spectrum mode with TR-DOS); S2, S3b, S4-S7 not started; PLAN row #59, started by the owner on 2026-10-01, with the shared-infrastructure row #60 done (see
+(2026-10-01, MAME captures included, branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`: creatable `SPRINTER`, BIOS 3.04 reaches its boot prompt); **CPU library** (2026-10-01, branch `sprinter-cpu`: the Z84C15 runs on its own CPU library, [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md)); **S2 done** (2026-10-01, branch `sprinter-s2`: the video renderer, the BIOS logo equals MAME's frame); **S3a done** (2026-10-01, branch `sprinter-s3a`: DSS 1.62 boots from the floppy, Spectrum mode with TR-DOS); S3b, S4-S7 not started; PLAN row #59, started by the owner on 2026-10-01, with the shared-infrastructure row #60 done (see
 [TODO.md](TODO.md))
 
 Add the Sprinter Sp2000 (Peters Plus, 2000) as a creatable machine `SPRINTER`: its own BIOS boots,

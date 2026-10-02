@@ -503,11 +503,12 @@ Which peer is plugged is configuration (§8) and switchable at runtime.
 
 ### 7.3 ATM Turbo 2+ COM port (N4)
 
-The keyboard-controller protocol (`IN #55FE`, then commands in the high byte:
-`#02FE` read, `#03FE` + data write, `#42FE` status, `#43FE` DTR/RTS, `#C2FE`
-RX count, `#C3FE` baud divider) in front of the same `ISerialPeer`s. The
-command codes come from NedoOS and Moon Rabbit drivers only (no spec found);
-the design mirrors what they use.
+The port is the keyboard controller's own UART (an i8031 / AT89S52 behind
+`IN #FE`; commands after the escape `#55`: `#02` read, `#03` + data write,
+`#42` status, `#82` modem lines, `#43` DTR / RTS, `#C2` RX count, `#C3` baud
+divisor). The firmware sources and images were found (2.2 .. 4.1), so the
+emulator runs the real firmware on an MCS-51 core, in front of the same
+`ISerialPeer`s: [2026-10-01-atm2-keyboard-controller](../2026-10-01-atm2-keyboard-controller/README.md).
 
 ## 8. Configuration (NET-8)
 

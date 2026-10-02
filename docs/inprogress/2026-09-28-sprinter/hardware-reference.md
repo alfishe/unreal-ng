@@ -298,7 +298,7 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
 | `#C3` | reserved | ALL_MODE | ALL_MODE | — | ALL_MODE |
 | `#C7` | reserved | SCALE (`#FC`) | alternate accelerator addressing | — | one register; semantics from PLD `ACCELER.TDF` in S5 |
 | ISA access byte | bit 1 = port/memory, bit 2 = slot | bit 2 = memory/port, bit 1 = slot ("fixed bug … functional exchange", `SP2000.inc:596-602`) | bit 2 io, bit 1 slot (`:1254`) | — | follow INC/MAME |
-| Palette byte order | Blue, Green, Red | BIOS palette data is stored B, G, R (`Shared_Includes constants/standart_colors.inc`) | reads offset+0 as **red** (`:1241-1242`) | — | follow MAN + BIOS data; **test**: the BIOS CGA "blue" entry must render blue |
+| Palette byte order | Blue, Green, Red | BIOS palette data is stored B, G, R (`Shared_Includes constants/standart_colors.inc`) | reads offset+0 as **red** (`:1241-1242`) | — | **video RAM holds R, G, B (MAME is right; settled in S2, 2026-10-01).** B, G, R is the order of the BIOS's palette *function* `#A4` input (and of BMP palettes), which it writes reversed: 3.04 page 8 `#0E10` stores byte 0 → `(IX+2)`, byte 2 → `(IX+0)`; BIOS-TT `FUNC_SCREEN.ASM` `PIC_SET_PAL` / `SET_TXT_PALETTE` (`(IX) = red`). The PLD agrees: offset 0 of a 4-byte group is RAM bank 3 (`VIDEO2.TDF` `MODE0 = VDM3`, `V_EN3` for A1 A0 = 00), and its own colour output drives bank 3 as RED, 2 GREEN, 1 BLUE (`SP2_1K30.TDF:455-466`). The BIOS logo (LOGPAL `#AD,#08,#08` = B, G, R) renders blue and equals MAME's `logo.png` (`SprinterVideoBoot_Test`) |
 | Kempston mouse | `#FADF/#FBDF/#FFDF` | same | same | `#1A/#1B` SIO path | both paths exist (serial raw + PLD Kempston view) |
 
 ## 5. System ports: CNF, SYS, ALL_MODE
@@ -362,11 +362,15 @@ Each 8×8 square `(a, b)` (a = 0..55, b = 0..39) has 4 mode bytes at VRAM row
 | Mode0 bit 4 | Mode | Mode0 | Mode1 | Mode2 | Source |
 |---|---|---|---|---|---|
 | 1 | **text / Spectrum** (ZX-40 = 1 char per square, ZX-80 = 2) | bits 3-0: font block bits 4-1 (bit 0 from `#7FFD` bit 3); bit 5: 320 (1) / 640 (0); bits 7-6: bits 12-11 inside the block; `%1111` in bits 7-4 = border/sync square: bits 3-2 = `11` blank, bit 0 = INT | character address (low 8 bits) | attribute address (Spectrum) or the attribute itself (text) | MAN §4.6; MAME `draw_symbol` `:453-497` |
-| 0 | **graphics** 8×8 × 256 colors (320) or 16×8 × 16 colors (640, low nibble first) | bits 3-0: tile column high bits; bit 5: 320/640; bits 7-6: palette 0-3 | bits 1-0 column low, bit 2 block low bit, bits 7-3 tile row | unused (bit 2 in MAME: low-res 2×2) | MAN §4.7; MAME `draw_tile` `:430-451` |
+| 0 | **graphics** 8×8 × 256 colors (320) or 16×8 × 16 colors (640, **high nibble = left pixel**: MAME, and the PLD shows `DCOL[7..4]` first, `VIDEO2.TDF` `BRVA`; settled in S2) | bits 3-0: tile column high bits; bit 5: 320/640; bits 7-6: palette 0-3 | bits 1-0 column low, bit 2 block low bit, bits 7-3 tile row | unused (bit 2 in MAME: low-res 2×2) | MAN §4.7; MAME `draw_tile` `:430-451` |
 
 Palettes (MAN §4.8): color *n* of palette *k* sits at VRAM row *n*, columns `#3E0 + 4k` .. `+2`;
 four graphics palettes (`#3E0`, `#3E4`, `#3E8`, `#3EC`) and four text palettes (`#3F0` paper,
-`#3F4` ink, `#3F8` flash paper, `#3FC` flash ink). 8 bits per component. Byte order: §4.5.
+`#3F4` ink, `#3F8` flash paper, `#3FC` flash ink). 8 bits per component, **red, green, blue** in
+that order (§4.5). A blank square (`Mode0` = `%1111 11xx`) shows text paper colour 0 (pen `#400`):
+the PLD clears its colour register and the palette address is `#400` (`VIDEO2.TDF` `DCOL.clrn =
+!BLANK`; MAME the same), not a forced black. HOLD (code `#CB`) after power-on = `#77` (no shift,
+MAME `m_hold = {0, 0}`).
 
 The "Game" configuration (`Thunder in the Deep`) uses a different renderer with per-square
 scroll (MAME `sprinter.cpp:499-545`); it is a separate PLD bitstream, out of scope for v1.

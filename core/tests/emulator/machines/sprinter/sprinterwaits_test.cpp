@@ -55,6 +55,6 @@ TEST_F(SprinterWaits_Test, Turbo_RamSlowerThanFastRam)
     _z80->pc = 0x0100;
     const uint32_t start = _z80->t;
     for (int i = 0; i < 3; i++)
-        _z80->Z80Step();
+        Step();
     EXPECT_EQ(_z80->t - start, 3u * 13) << "fast RAM: no waits at 21 MHz";
 }

@@ -19,6 +19,10 @@
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "loaders/disk/loader_trd.h"
+#include "base/featuremanager.h"
+#include "emulator/ports/portdiagrecorder.h"
 #include "emulator/ports/models/portdecoder_atm450.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -30,6 +34,28 @@ namespace
     constexpr uint16_t kRom128 = 2;
     constexpr uint16_t kRomSos = 3;
 }  // namespace
+
+/// CP/M console capture: every character CP/M prints goes through the ATM BIOS CONOUT vector #F809
+/// (C = the character; `CPM-ATM dizasm` lea5a -> #F809). The step hook sees the next instruction's PC,
+/// so PC == #F809 means CONOUT is about to run with its argument in C - at full emulation speed
+class CpmConsoleHook : public IMachineStepHook
+{
+public:
+    explicit CpmConsoleHook(Z80* z80) : _z80(z80) {}
+    void OnMachineStep(uint32_t t) override
+    {
+        (void)t;
+        if (_z80->pc == 0xF809 && _z80->pc != _lastPc)
+            text += static_cast<char>(_z80->c & 0x7F);
+
+        _lastPc = _z80->pc;
+    }
+    std::string text;
+
+private:
+    Z80* _z80;
+    uint16_t _lastPc = 0;
+};
 
 class ATM450Boot_Test : public ::testing::Test
 {
@@ -98,6 +124,49 @@ protected:
             EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->emulatorState.aFE != 0xBE; }, 60, 1);
         }
         return _context->emulatorState.aFE != 0xBE;
+    }
+
+    /// Type a CP/M command line and ENTER the way a user does: a key that did not echo is pressed again,
+    /// a key that echoed the wrong character is erased (CAPS SHIFT + 0) and typed again. The ROM's
+    /// keyboard handler sometimes turns a key into scan code + 1 - the next matrix row ("DIR" -> "DKR",
+    /// "R" -> "4", " " -> "Z"). Probed: every row read returns the current matrix and the scan runs
+    /// once per frame, so the slip is in the ROM's shift-state machine (#5F40, l141d..l14c3); whether
+    /// the real board shows it with this key timing is open (docs/inprogress/2026-10-01-atm450/TODO.md)
+    static constexpr int kTypeHold = 12;
+    void TypeAtPrompt(const CpmConsoleHook& console, const std::string& line)
+    {
+        for (char c : line)
+        {
+            for (int tries = 0; tries < 6; tries++)
+            {
+                const size_t before = console.text.size();
+                TapChar(c);
+                EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != before; }, 60, 1);
+                if (console.text.size() == before)
+                    continue;  // missed in a deaf phase: press again
+                if (console.text.back() == c)
+                    break;
+                // Mistranslated (see kTypeHold): erase it like a user would and type it again
+                const size_t echoed = console.text.size();
+                Tap({ZXKEY_CAPS_SHIFT, ZXKEY_0}, kTypeHold);
+                EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != echoed; }, 60, 1);
+            }
+        }
+        Tap({ZXKEY_ENTER}, kTypeHold);
+    }
+
+    void TapChar(char c)
+    {
+        if (c == ':')
+            Tap({ZXKEY_SYM_SHIFT, ZXKEY_Z}, kTypeHold);
+        else if (c == ' ')
+            Tap({ZXKEY_SPACE}, kTypeHold);
+        else if (c == 'H')
+            Tap({ZXKEY_H}, kTypeHold);
+        else if (c == 'I')
+            Tap({ZXKEY_I}, kTypeHold);
+        else if (c >= 'A' && c <= 'Z')
+            Tap({static_cast<ZXKeysEnum>(0x41 + (c - 'A'))}, kTypeHold);
     }
 
     /// Decode the standard ZX screen of RAM page 5 / 7 to ASCII against the 48K ROM font (atm1.rom page 3)
@@ -203,6 +272,92 @@ TEST_F(ATM450Boot_Test, MenuSpectrum48)
 
     ASSERT_TRUE(RunUntilScreenShows("1982SinclairResearch", 300)) << DecodeZXScreen();
     EXPECT_EQ(_context->pMemory->GetROMPage(), kRomSos);
+}
+
+/// Menu entry 0: CP/M with the ATM CP/M system disk (testdata/machines/atm450/cpm/sys.trd, the
+/// NedoPC "CP/M-SYSTEM" disk for ATM1 / ATM2 / ATM2+) in drive A. CCP and BDOS come from the ROM (the
+/// decrypted loader); the BIOS signs on, runs the ROM's default autostart "B:XC /R" - XC is not on
+/// this disk, so the CCP answers "B:XC?" - and leaves the A> prompt. DIR on the floppy then lists the
+/// disk's catalog, read through the TR-DOS-session FDC path.
+/// Slow by nature (~2 s): boots the real ROM and CP/M, then types at the prompt
+TEST_F(ATM450Boot_Test, CpmBootsFromSystemDiskAndListsIt)
+{
+    LoaderTRD trd(_context, TestPathHelper::GetTestDataPath("machines/atm450/cpm/sys.trd"));
+    ASSERT_TRUE(trd.loadImage());
+    _context->coreState.diskDrives[0]->insertDisk(trd.getImage());
+
+    Z80* z80 = _context->pCore->GetZ80();
+    ASSERT_EQ(z80->GetMachineStepHook(), nullptr) << "ATM450 uses no step hook of its own";
+    CpmConsoleHook console(z80);
+    z80->SetMachineStepHook(&console);
+
+    ASSERT_TRUE(WaitForBootMenu());
+    ASSERT_EQ(MenuIndex(), 0);
+    console.text.clear();  // the menu prints its items through the same vector
+    auto prompt = [&] { return console.text.find("A>") != std::string::npos; };
+    auto signedOn = [&] { return console.text.find("CP/M") != std::string::npos; };
+    for (int tries = 0; tries < 4 && !signedOn(); tries++)
+    {
+        Tap({ZXKEY_ENTER});
+        EmulatorTestHelper::RunUntil(_emulator.get(), signedOn, 150, 5);
+    }
+    EmulatorTestHelper::RunUntil(_emulator.get(), prompt, 300, 5);
+    ASSERT_TRUE(prompt()) << "console: " << console.text;
+    EXPECT_NE(console.text.find("CP/M  V2.2"), std::string::npos) << console.text;
+    EXPECT_NE(console.text.find("BIOS  V1.03"), std::string::npos) << console.text;
+    EXPECT_NE(console.text.find("B:XC?"), std::string::npos) << "the ROM's default autostart" << console.text;
+
+    // B: is the floppy (A: is the BIOS's electronic disk, empty after a cold boot)
+    size_t before = console.text.size();
+    TypeAtPrompt(console, "DIR B:");
+    auto backAtPrompt = [&] { return console.text.find("A>", before + 6) != std::string::npos; };
+    EmulatorTestHelper::RunUntil(_emulator.get(), backAtPrompt, 600, 5);
+    const std::string catalog = console.text.substr(before);
+    ASSERT_TRUE(backAtPrompt()) << catalog;
+    EXPECT_NE(catalog.find("DIR B:"), std::string::npos) << catalog;
+    for (const char* file : {"STAT     COM", "PIP      COM", "SUBMIT   COM", "FORMAT   COM", "SYSGEN   COM"})
+        EXPECT_NE(catalog.find(file), std::string::npos) << file << " missing from the catalog:\n" << catalog;
+
+    before = console.text.size();
+    TypeAtPrompt(console, "DIR A:");
+    EmulatorTestHelper::RunUntil(_emulator.get(), backAtPrompt, 600, 5);
+    EXPECT_NE(console.text.find("NO FILE", before), std::string::npos) << console.text.substr(before);
+
+    z80->SetMachineStepHook(nullptr);
+}
+
+/// Menu entry 0: CP/M. Before starting it the system ROM measures the frame, samples the PAL marker
+/// (#FE bit 7, from the protected PLM on the board) 16 times after HALT and decrypts its CP/M loader
+/// with the result. With the right Z timing the loader runs from RAM in the CP/M user map (RAM at
+/// #0000, aFE = #3E), opens a TR-DOS session and reads the system tracks of drive A. No disk is
+/// inserted (the repository has no ATM 4.50 CP/M system disk), so the test stops at the disk access
+TEST_F(ATM450Boot_Test, MenuCpmLoaderReachesTheDisk)
+{
+    ASSERT_TRUE(WaitForBootMenu());
+    ASSERT_EQ(MenuIndex(), 0);
+
+    // The port trace sees what reaches the WD1793: a command write to #1F that the decoder passed on
+    ASSERT_TRUE(_emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = _context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+    auto fdcCommandSent = [&] {
+        for (const PortTraceEvent& event : recorder->getAll())
+        {
+            if ((event.flags & PortTraceFlags::kDirectionOut) && (event.rawPort & 0x00FF) == 0x1F && event.wasDecoded())
+                return true;
+        }
+        return false;
+    };
+
+    // ENTER starts CP/M; a press in the menu's deaf phase is retried like a user would
+    for (int tries = 0; tries < 4 && !fdcCommandSent(); tries++)
+    {
+        Tap({ZXKEY_ENTER});
+        EmulatorTestHelper::RunUntil(_emulator.get(), fdcCommandSent, 150, 5);
+    }
+    EXPECT_TRUE(fdcCommandSent()) << "the CP/M loader never commanded the FDC - wrong Z key, the loader stayed encrypted";
+    recorder->stop();
 }
 
 /// RESET=DOS (RM_DOS): straight into TR-DOS - aFE = #E0 (ROM, ZX screen), CPSYS off, 7FFD.4 kept

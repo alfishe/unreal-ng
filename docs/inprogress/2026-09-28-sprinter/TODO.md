@@ -2,7 +2,7 @@
 
 **Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
 (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
-(2026-10-01, branch `sprinter-s1`); **S3a done** (2026-10-01, branch `sprinter-s3a`); S2, S3b, S4-S7 not started. PLAN.md row **#59** (T4): the owner started
+(2026-10-01, branch `sprinter-s1`); CPU library (2026-10-01, branch `sprinter-cpu`); **S2 done** (2026-10-01, branch `sprinter-s2`); **S3a done** (2026-10-01, branch `sprinter-s3a`); S3b, S4-S7 not started. PLAN.md row **#59** (T4): the owner started
 the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
 this design introduced are PLAN row **#60** (shared infrastructure, done).
 
@@ -60,9 +60,24 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   accesses identical (order, values, PCs, codes) and timed to the T-state at 3.5 MHz; the turbo
   port wait fixed (2 clocks early; 21-MHz drift over the trace 1 245 µs → 5.7 µs); logo palette,
   INT positions per FN_SYNC mode, INT acknowledge, loader count equal; `SprinterReference_Test`
+- [x] S2 (2026-10-01, branch `sprinter-s2`; outcome and deviations in
+  [roadmap-and-plan.md](roadmap-and-plan.md) §7): `ScreenSprinter` (every mode of the mode table,
+  palettes, border, flash, HOLD, RGMOD page, 320 / 312 lines), `M_SPRINTER` / `R_736_288`,
+  `SprinterVideoRenderer` + configuration-module hook 3, `SprinterVideoMapper`, screenshots and
+  recordings; palette order settled (R, G, B in video RAM); ACC-1 (the logo frame equals MAME's
+  `logo.png` exactly when drawn with the frame-end state, within one fade step as the beam drew it),
+  ACC-2 adapted (SETUP 1.58 has no date page: "Memory Test" saved to the CMOS file)
+
+- [x] The Sprinter runs on its own CPU library (2026-10-01, branch `sprinter-cpu`; owner decision,
+  [research-cpu-z84c15.md](research-cpu-z84c15.md) §8.0): `core/src/3rdparty/z84c15/` - the CMOS
+  Z84C00 core forked from unreal-z80 0.5.0 with the Z84C15's wait generator, chip selects,
+  watchdog, CTC / SIO / PIO and daisy chain; the engine seam in `Z80` keeps every other machine on
+  the native interpreter. Timing changes: the loader 142 T per bitstream byte (MAME 113), the BIOS
+  start 22 T before `InitCpuPorts` clears WCR
+  ([2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md))
 
 - [x] S3a (2026-10-01, branch `sprinter-s3a`; outcome and deviations in
-  [roadmap-and-plan.md](roadmap-and-plan.md) §7): the `#BD` latch on the WD1793 `Latched` policy, the FDC
+  [roadmap-and-plan.md](roadmap-and-plan.md) §8): the `#BD` latch on the WD1793 `Latched` policy, the FDC
   off bit, code `#15` with the Kempston bits, the `#1F` operand rewrite, the WD1793 time base at 21 MHz;
   shared WD1793 fixes: drive select (bits 1-0 of `#FF` were ignored) and a separator-rate change during an
   ID search; **ACC-3**: DSS 1.62.92 boots from the HD floppy in drive B to `B:\>` (the BIOS probe flips to
@@ -77,7 +92,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
   codes), TTD v2 (PLAN #40), video mappers (PLAN #42), media manager (PLAN #58),
   IDE core (PLAN #13a), ZX-Evo E2b keyboard event (PLAN #55), TSConf (PLAN #41).
-- Floppy follow-ups after S3a ([roadmap-and-plan.md](roadmap-and-plan.md) §7):
+- Floppy follow-ups after S3a ([roadmap-and-plan.md](roadmap-and-plan.md) §8):
   - optional: DD-mode turbo VG ending at the PLD read/write strobe (`TURBING`, `SP2_MAX.TDF:272-306`);
     not modeled, only seek time differs. Settle first which pins `WSTB`/`RSTB` are (research open
     question 2);
@@ -98,7 +113,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
 - ACC-6 as written ("ESC at the boot menu → Spectrum mode") does not hold for BIOS 3.04: the Spectrum
   ROMs come from DSS `ZX\SPECTRUM.EXE` (or a later BIOS). Whether 3.06 carries them is open.
-- Unverified items: palette byte order (S2). Settled in S1: BIOS 3.04 never programs the Z84C15
+- Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank
+  square = pen `#400`; HOLD power-on `#77` (hardware-reference §4.5, §6.3). Settled in S1: BIOS 3.04 never programs the Z84C15
   watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no
   Z84C15 interrupts, the keys are polled in the frame INT). Settled against MAME and the board files
   (2026-10-01, [roadmap-and-plan.md](roadmap-and-plan.md) §6.1): IDE with no drive reads `#FF`
@@ -107,6 +123,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
   Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
   MAME 32 T).
+- Renderer speed (naive v1): `BM_SprinterRender_Logo` 512 µs per frame against 46 µs for the TS-Conf
+  setup screen. Idea for the backlog: cache decoded squares (MAME's tilemap: the mode bytes and the
+  source address once per square, invalidated by video RAM writes into the mode table or the
+  square's source) and measure with the same benchmark.
+- Hook 3, second half: a configuration module's own INT source (with the first module that needs
+  it, e.g. Game).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams

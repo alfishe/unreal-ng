@@ -166,7 +166,7 @@ TEST_F(SprinterPldConfig_Test, FastStartEqualsFullStart_Bios304)
     uint64_t steps = 0;
     while (Pld().configState != SprinterConfigState::Configured && steps < 4'000'000)
     {
-        _z80->Z80Step();
+        Step();
         if (Pld().resetPending)
             _decoder->OnMachineStep(_z80->t);
         steps++;
@@ -199,4 +199,51 @@ TEST_F(SprinterPldConfig_Test, FastStartEqualsFullStart_Bios304)
     for (size_t i = 0; i < 256u * PAGE_SIZE; i++)
         h = (h ^ _memory->RAMBase()[i]) * 0x100000001b3ULL;
     EXPECT_EQ(h, fullRam) << "main RAM";
+}
+
+// The loader runs on the Z84C15's wait generator (research-cpu-z84c15.md section 5, CPU library
+// design section 6): it sets WCR = #04 (one memory wait per cycle, M1s included), so one bitstream
+// byte - 29 memory cycles, 113 T in MAME, which stores WCR without applying it - takes 142 T, and
+// the 59 215-byte stream ends about 1.7 M T later than MAME's last write at 6 691 665 T.
+// Slow on purpose (~2.3 M loader instructions at 3.5 MHz): it runs the whole loader
+TEST_F(SprinterPldConfig_Test, FullStart_LoaderRunsWithTheChipWaits)
+{
+    if (Rom304().empty())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+
+    ASSERT_TRUE(RebuildWithRealRom(false));
+    ASSERT_NE(_z80->GetEngine(), nullptr);
+    ASSERT_EQ(Pld().configState, SprinterConfigState::Loading);
+    _z80->t = 0;
+
+    const uint32_t kBytes = SprinterPldConfig::kPldConfigurationWrites / 8;
+    uint32_t tByte1 = 0;
+    uint32_t tByte1001 = 0;
+    uint32_t tLast = 0;
+    uint32_t lastCount = 0;
+    for (uint64_t steps = 0; Pld().configState == SprinterConfigState::Loading && steps < 4'000'000; steps++)
+    {
+        Step();
+        const uint32_t count = Pld().bitstreamCount;
+        if (count != lastCount)
+        {
+            if (count == 8)
+                tByte1 = _z80->t;
+            else if (count == 8 * 1001)
+                tByte1001 = _z80->t;
+            else if (count == SprinterPldConfig::kPldConfigurationWrites)
+                tLast = _z80->t;
+            lastCount = count;
+        }
+        if (Pld().resetPending)
+            _decoder->OnMachineStep(_z80->t);
+    }
+    ASSERT_EQ(Pld().configState, SprinterConfigState::Configured) << "the loader did not finish";
+    EXPECT_EQ(tByte1001 - tByte1, 1000u * 142) << "142 T per bitstream byte with WCR = #04";
+    EXPECT_EQ(_decoder->GetZ84().system.wcr, 0x04);
+
+    // The last stream write: the 59 214 bytes after the first at 142 T, plus the loader's start.
+    // 6 691 671 T without the chip's waits (S1, roadmap section 6.1: MAME 6 691 665 + 6)
+    EXPECT_EQ(tLast - tByte1, (kBytes - 1) * 142u);
+    std::cout << "[Sprinter loader] last stream write at T " << tLast << " (MAME, no WCR: 6 691 665)" << std::endl;
 }
