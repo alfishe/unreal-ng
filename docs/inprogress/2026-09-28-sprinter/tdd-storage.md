@@ -221,11 +221,23 @@ MAME, [reference/hdd-boot-304.txt](../../../testdata/machines/sprinter/reference
 | a disk | status `#50`; IDENTIFY | the model string ("UNREAL-NG HDD"), INITIALIZE DEVICE PARAMETERS (`#91`) | at once |
 | no unit, the other unit on the channel present | the present unit answers for it (ATA): status `#00`, its sector count echoes | NOP (`#00`), then `WXREADY` waits for DRDY: `#118` HALTs | 280 frames (5.7 s), then "None" |
 | an empty CD unit | ATAPI signature | IDENTIFY PACKET DEVICE: "UNREAL-NG CD-ROM" | at once |
-| no unit on the channel at all | `#FF` (BSY: the bus floats, hardware-reference §9.1) | `CLRBUSY` waits for BSY: `#060E` HALTs | 1 550 frames (31.7 s) unless F4 |
+| no unit on the channel at all | `#7F` from every register: the ATA host pull-down on DD7, so BSY = 0 (hardware-reference §9.1) | 3.04: no BSY, the sector count written with 5 reads `#7F`; 3.06 / 3.07: `CheckChanel` does not match, `Clear_BUSY` passes, `DETECTORS.Counter` reads `#7F` | 1 frame per unit, "None" |
 
-BIOS 3.04 probes the primary channel only (two units); BIOS 3.06 probes all four (the secondary after
-`OUT (#BC),#01`). So a disk on `ide0.master` boots BIOS 3.04 at frame ~475 with no key; BIOS 3.06 also waits on an
-empty secondary channel unless a disk is there or F4 is pressed.
+BIOS 3.04 probes the primary channel only (two units); BIOS 3.06 and 3.07 probe all four (the secondary after
+`OUT (#BC),#01`). No unit of an empty channel waits, so no BIOS needs F4 for a missing drive; the only wait left is
+3.04's absent slave next to a master (280 frames, F4 skips it).
+
+**Empty channel: deviation from S3b (2026-10-02, owner decision).** S3b read `#FF` (an undriven LS-TTL bus, BSY
+set): each unit of an empty channel then waited until F4 - 1 549 / 1 550 frames on BIOS 3.04 with no drive,
+1 648-1 650 frames on a master (the 2 s `Bug31SecCheck` wait, then 31 s) and 1 550 on a slave on 3.06 Hotfix 2 and
+3.07 BETA 1, e.g. on the empty secondary channel next to a disk on `ide0.master`. The owner rejected that outcome
+(it was checked against 3.04 only, which probes one channel); the ATA standard asks the host for a 10 kOhm
+pull-down on DD7 precisely so that an absent device reads BSY = 0. `AtaChannel::SetEmptyBus` holds the value a
+channel reads with no unit on it: `#FF7F` (`kEmptyBusDd7PullDown`) for `IDE_SPRINTER`, set by `IdeController`;
+every other board keeps `#FFFF` (Nemo, ATM, ZX-Evo, SMUC, Profi, DivIDE: their firmware was not shown to wait on
+an empty channel, so their behavior stays). Measured (`SprinterBoot_Test.EmptyChannels_*`, BIOS 3.04 / 3.06
+Hotfix 2 / 3.07 BETA 1 with a disk on `ide0.master` only, no drive, a disk on `ide1.master` only): every unit of
+an empty channel 1 frame; an absent slave next to a master unchanged (3.04: 280 frames, 3.06 / 3.07: 1 frame).
 
 ## 4. CMOS
 

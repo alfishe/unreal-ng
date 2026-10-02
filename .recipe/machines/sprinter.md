@@ -72,8 +72,8 @@ bitstream hashes name the image (3.04: `full_hash 0xFC0928F2`, `head_hash 0x78ED
 ### 2. Boot DSS from a floppy
 
 SETUP boots the IDE master first, then the "alternative device", floppy B.
-There is no IDE yet (phase S3b), so the BIOS waits about 31 s per IDE unit
-unless F4 is pressed - the screen says `[Press F4 to skip]`.
+With no hard disk both IDE units read an empty channel and SETUP prints
+"None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
 
 The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect
 (`screen_ocr` reads Spectrum mode only).
@@ -81,16 +81,12 @@ The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect
 ```text
 load_software {"path":"/abs/path/testdata/machines/sprinter/dss_1_62_92.img","drive":"B"}
 #   → Inserted disk dss_1_62_92.img (uploaded) into drive B of <id>
-inspect_state {"aspects":["sprinter_text"]}          # poll until "[Press F4 to skip]"
+inspect_state {"aspects":["sprinter_text"]}          # poll until "B:\>"
 #   → [sprinter_text] 1280 text squares, mode page 1
 #       Model name: Sprinter                    Sprinter BIOS: ver 3.04.253
 #       ...
-#        Detecting IDE Primary Master   ... [Press F4 to skip]
-type_input {"action":"tap","key":"f4"}               # the master
-type_input {"action":"tap","key":"f4"}               # the slave, once its line shows "[Press F4"
-inspect_state {"aspects":["sprinter_text"]}          # poll until "B:\>"
-#   →    Detecting IDE Primary Master   ... Skip
-#        Detecting IDE Primary Slave    ... Skip
+#        Detecting IDE Primary Master   ... None
+#        Detecting IDE Primary Slave    ... None
 #       Start from Hard disk...fail
 #       Alternative Start from Diskette...Ok
 #       Starting DOS...
@@ -162,7 +158,7 @@ started was not seen by the launcher):
 ```text
 load_software {"path":"/abs/path/scratch/dss162-a.img","drive":"A"}      # cp scratch/dss162-nofn.img scratch/dss162-a.img
 load_software {"path":"/abs/path/scratch/dss162-nofn.img","drive":"B"}
-# ... F4, F4, wait for "B:\>" as in step 2 ...
+# ... wait for "B:\>" as in step 2 ...
 type_input {"action":"type","text":"a:\\zx\\spectrum.exe a:\\zx\\pent128.zx\n"}
 inspect_state {"aspects":["screen_ocr"]}             # poll until the 128 menu
 #   →        Sprinter?????
@@ -270,10 +266,6 @@ curl -s -X POST "$BASE/emulator/$EMU/disk/B/insert" -H 'Content-Type: applicatio
      -d "{\"path\":\"$PWD/scratch/dss162-nofn.img\"}" | jq .status          # "success"
 
 txt() { curl -s "$BASE/emulator/$EMU/state/sprinter/text" | jq -r '.lines[].text'; }
-for unit in Master Slave; do
-  until txt | grep -q "$unit *\.\.\. \[Press F4"; do sleep 1; done
-  curl -s -X POST "$BASE/emulator/$EMU/keyboard/tap" -H 'Content-Type: application/json' -d '{"key":"f4"}' | jq -c .
-done                                                                      # {"frames":2,"key":"f4","message":"Key tapped: f4","success":true}
 until txt | grep -q 'B:\\>$'; do sleep 1; done
 curl -s -X POST "$BASE/emulator/$EMU/keyboard/type" -H 'Content-Type: application/json' -d '{"text":"dir\n"}' | jq -c .
 sleep 3                                                                   # the keys take a few frames
@@ -346,7 +338,7 @@ print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    #
 | DS12887A CMOS (`[SPRINTER] CmosFile=` keeps it) | implemented |
 | Flex Navigator (DSS's `fn`) | **hangs** after its logo - boot a floppy without it |
 | DSS 1.71 (`dss171u.img`) | **stops** with "Fatal error! Press RESET to restart." after the BIOS loaded it |
-| IDE hard disks | **not yet** (phase S3b): codes `#20-#2B` decode, no drive answers; the BIOS waits per unit until F4 |
+| IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Accelerator, Covox-Blaster, ISA cards | not yet (phases S5, S6); CBL control is only stored |
 | TTD (time travel) | refuses to record this machine until phase S7 |
 

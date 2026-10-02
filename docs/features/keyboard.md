@@ -29,6 +29,6 @@ fire and the key press reaches the machine.
 - To use the F-key shortcuts on a PC-keyboard machine: set the route to `matrix`, click outside the
   screen, or use the menu.
 
-Worked example: the Sprinter's BIOS shows "Detecting IDE Secondary Slave ... [Press F4 to skip]".
+Worked example: the Sprinter's BIOS 3.04 shows "Detecting IDE Primary Slave ... [Press F4 to skip]" (a disk on the master, none on the slave).
 With the screen focused, F4 goes to the SIO as the set 2 code `#0C` and the BIOS moves on; the
 emulator's speed stays as it was. On a Pentagon, F4 still selects speed 8x.
