@@ -18,11 +18,17 @@ emulated machine. Tests: `core/tests/emulator/machines/tsconf/tsconf_boot_test.c
 
 ## 1. The BIOS Setup Utility
 
-A new machine starts with **blank NVRAM**: the CMOS has no NVRAM file in the
-ts-conf config, so every new instance opens the Setup Utility first (text
-mode). Any option change saves NVRAM with a valid CRC; the next reset boots
-with it. There is no F12 on the ZX keyboard, so "change one option, then reset"
-is the way out.
+The CMOS has no NVRAM file in the ts-conf config. A new machine therefore
+starts with the settings `[EVO] TsBiosNvram=` gives (2026-10-02):
+
+| Value | NVRAM cells #B0-#E7 | What the BIOS does |
+|:--|:--|:--|
+| `SDBOOT` (default) | as Setup saves them after "Reset to" → BD boot.$c on blank settings (#B4 = 3, CRC valid; captured from the BIOS) | boots `boot.$C` (Wild Commander) from the SD card; no card: "Boot-Device NOT READY" |
+| `SETUP` | blank | opens the Setup Utility (text mode), as a new board does |
+
+With an `[EVO] NvramFile` that exists, its cells win. In Setup, any option
+change saves NVRAM with a valid CRC; the next reset boots with it. Right Shift
++ F12 enters Setup on a running machine (the PS/2 path).
 
 Keys (the ZX matrix works here): CAPS SHIFT+6 = down, ENTER = next value.
 
@@ -33,7 +39,7 @@ Keys (the ZX matrix works here): CAPS SHIFT+6 = down, ENTER = next value.
 | 5 | CS Reset to | (default BD boot.$c: a reset with CAPS SHIFT held) |
 | 7 | Boot Device | **SD Z-contr** → **IDE Nemo M** → IDE Nemo S → RS-232 → IDE Smuc M → IDE Smuc S → back |
 
-Worked example - boot Wild Commander from the SD card (BOOT-3): 3 × down,
+Worked example, with `SETUP` - boot Wild Commander from the SD card (BOOT-3): 3 × down,
 3 × ENTER (Reset to = BD boot.$c), reset. From the Nemo IDE master (BOOT-4):
 the same, then 4 × down more and 1 × ENTER (Boot Device = IDE Nemo M), reset.
 
@@ -42,6 +48,29 @@ Press SS + Reset to change start-up options"**. Holding SYMBOL SHIFT through a
 reset from automation did not reach the BIOS in our tests (the press is
 dropped by the reset); creating a new instance (blank NVRAM) is the reliable
 way back into Setup.
+
+### 1.1 What TS-BIOS needs on the SD card
+
+TS-BIOS (`tsfat.asm`, `HDD`) reads sector 0 and looks for a partition entry
+of type #05, #0B, #0C or #0F. It has no path for a bare FAT boot sector at
+sector 0. The SD images that boot "with no partition table" were made by
+mtools' `mformat`. Their boot sector carries one partition entry, type #0C,
+starting at LBA 0, so that entry points back at the boot sector itself.
+
+A host folder in `sd.zc` is built the same way (2026-10-02): a FAT32 volume from
+sector 0 with no MBR in front, and that partition entry in its boot sector.
+(Before, the folder volume had an MBR with the partition at LBA 2048.) Loaders
+that look for a BPB first see a superfloppy:
+
+- **Zuma VDAC2** (`ts-dos.asm`, `RawPak_OpenRoot`) checks for a BPB at sector
+  0 first. If it finds one, it uses the card's own addressing (OCR.CCS from
+  CMD58).
+- **With an MBR, Zuma assumes block addressing.** It reads "MBR means SDHC"
+  and ignores CCS. The emulated card is SDSC (byte addressing) up to 2 GB, so
+  behind an MBR the game read the wrong sectors.
+- **That was the loading-screen flicker.** The garbage went to the FT812 as a
+  `CMD_INFLATE` stream, the coprocessor faulted, and the game kept swapping
+  the two display list buffers: the picture alternated with a black frame.
 
 ## 2. Wild Commander
 
@@ -68,9 +97,10 @@ way back into Setup.
   features, #50 sector count, #70 sector, #90 / #B0 cylinder low / high,
   #D0 drive / head (WC writes it as #FFD0), #F0 status / command; data #10 with
   the high byte through the #11 latch; #C8 alternate status.
-- **No partition table needed.** Both TS-BIOS and WC boot / mount a FAT32
-  superfloppy on IDE (the SD card image serves unchanged) as well as an
-  MBR-partitioned disk (partition at LBA 2048, type #0C). The media manager's
+- **No MBR needed.** Both TS-BIOS and WC boot / mount the SD card image on IDE
+  unchanged: a FAT32 volume from sector 0 with the `mformat` partition entry
+  in its boot sector (§1.1). They also handle an MBR-partitioned disk
+  (partition at LBA 2048, type #0C). The media manager's
   insert report "this IDE hard-disk boot path expects an MBR partition table
   ... it likely will not boot here" is written for other machines' HDD boot
   loaders and does not apply to TS-Conf.

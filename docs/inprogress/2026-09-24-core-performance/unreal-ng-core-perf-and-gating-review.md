@@ -582,7 +582,7 @@ Against the design target in `2026-09-13-0217-opl4-core-tdd.md:603` ("under 3% o
 
 ### C.5 HALT: no change proposed, but a correction to the rationale
 
-- `op_76` (`op_noprefix.cpp:711-718`) re-executes the HALT through the full `Z80Step`/M1 path every 4T; `vm1` is never set (`z80.h:299`, only read at `z80.cpp:341`). That is where the 17.9k steps in HALT-heavy frames come from.
+- `op_76` (`op_noprefix.cpp:711-718`) re-executes the HALT through the full `Z80Step`/M1 path every 4T; `vm1` is never set (`z80.h:299`, only read at `z80.cpp:341`). That is where the 17.9k steps in HALT-heavy frames come from. (2026-10-02: a halted step now runs `Z80::HaltedM1`, the idle fetch of the byte after the HALT, instead of the full opcode path; still one step per 4 T. [2026-10-02-halt-fetch-address](../2026-10-02-halt-fetch-address/design.md))
 - **Most of the non-goal's reasons no longer hold for the current code.** `06-overrun-root-cause-analysis.md` lists several things that would break if HALT were fast-forwarded:
   - "starves the GS Z80 coprocessor" (line ~125);
   - "desynchronizes … OPL4 hardware timers" (line ~116);

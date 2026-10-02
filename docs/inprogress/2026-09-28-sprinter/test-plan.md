@@ -151,7 +151,9 @@ acknowledge a store is plain, the mode register is unchanged, the first opcode a
 ### 2.9 Sound — `covoxblaster_test.cpp` (T-CBL)
 
 Rate table (16 rows), mono/stereo, 8/16-bit pairing (`XOR #80`), INT every 128 samples, `#FE` bit 7
-and bit 5 semantics, CBL off → plain Covox.
+and bit 5 semantics, CBL off → plain Covox. Built in S6 (`core/tests/emulator/sound/sprinter/`), plus the
+machine wiring (codes, INT, page `#FD`, mixer slot, single AY, TTD blob) and the 21 MHz checks (AY pitch, CBL
+rate, CPU throughput against MAME): [s6-sound-outcome.md](s6-sound-outcome.md) §6.
 
 ### 2.10 Z84C15 — `z84sio_test.cpp`, `z84ctc_test.cpp`, `z84pio_test.cpp` (T-Z84)
 

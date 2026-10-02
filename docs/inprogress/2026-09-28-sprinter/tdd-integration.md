@@ -12,7 +12,7 @@
 | Step | Where | Change |
 |---|---|---|
 | Enum | `core/src/emulator/platform.h:305-325` (`MEM_MODEL`) | append `MM_SPRINTER` before `N_MM_MODELS` (no renumbering of existing values) |
-| Model table | `core/src/emulator/config.h:47-68` (`Config::mem_model[]`) | `{ "Sprinter Sp2000", "SPRINTER", MM_SPRINTER, 4096, RAM_4096 }` |
+| Model table | `core/src/emulator/config.h:47-68` (`Config::mem_model[]`) | `{ "Sprinter 2000", "SPRINTER", MM_SPRINTER, 4096, RAM_4096 }` |
 | Creatable | `PortDecoder::IsModelSupported` + `GetPortDecoderForModel` (`core/src/emulator/ports/portdecoder.cpp:56-135`) | add `MM_SPRINTER` to both (they must stay in sync) |
 | Config folder | `Config::GetConfigFolderForModel` (`core/src/emulator/config.cpp:749`) | default rule (lowercased short name) → `data/configs/sprinter/unreal.ini` |
 | Memory subclass | `Core` factory (`core/src/emulator/cpu/core.cpp:105-108`, the `ScorpionMemory` precedent) | `new SprinterMemory(context)` for `MM_SPRINTER` |
@@ -74,7 +74,8 @@ As built in phase S7 (2026-10-02, branch `sprinter-ttd`; outcome and tests:
 | 30 | `SprinterFastRam` | the 64 KB fast RAM (Memory's cache pages are not RAM pages) | 1 + 65 536 |
 | 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter | 85 |
 | 35 | `Wd1793Context` | the WD1793 command in flight beyond the 254-byte BetaDisk blob: queued steps as tags, transfer pointers as (drive, track, offset), byte cell, rotational delay, rate-retry search | 1 + 112 |
-| 32-34 | `SprinterCovoxBlaster`, `SprinterIsa`, `SprinterPads` | **reserved** for S6 (Covox-Blaster ring, DAC), S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |
+| 32 | `SprinterCovoxBlaster` | the Covox / Covox-Blaster (S6, 2026-10-02): `CovoxBlasterState`, v1, 545 bytes | |
+| 33-34 | `SprinterIsa`, `SprinterPads` | **reserved** for S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |
 
 The CPU registers are `TTDCpuState`: the Z84C15 engine executes on the `Z80State` register file
 (zero copy), and the library's boundary state is mirrored into `Z80State::boundary`; a restore makes

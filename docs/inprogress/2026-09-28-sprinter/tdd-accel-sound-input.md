@@ -69,6 +69,15 @@ side-by-side comparisons (round 1 had chosen off before the PLD was checked):
   the next store fills again;
 - off: MAME's behavior; the accelerator stays active while an interrupt handler runs.
 
+**Default changed to off in S6 (2026-10-02).** Two findings say the board does not block: the `ACC_BLK`
+preset term read literally (`ACC_BLK.prn = /RESET & ACC_MODE3`, `ACC_MODE3` clears itself one clock after a
+mode select, so the preset holds `ACC_BLK` at "enabled" almost all the time; S5 outcome open point 1), and
+real software: the Covox-Blaster WAV player `WAVPLAY.EXE` v2.02 (Ivan Mak, the board's designer, 2025)
+refills the ring from its INT handler with accelerator copies into page `#FD`. With the option on, each refill
+stores one byte instead of 128 and the player falls silent after 0.45 s; with it off, all 655 360 samples of
+`MISSION.WAV` reach the ring (128 per INT), as on MAME ([s6-sound-outcome.md](s6-sound-outcome.md) §3). The
+option stays (`[SPRINTER] AccelIntSuspend=1`) for comparisons; the shipped config and the built-in default are 0.
+
 **What the PLD does** (BIOS-TT `0271ac3` `src/altera/acex/k30/ACCELER.TDF`):
 
 | Lines | Logic | In plain words |
@@ -129,6 +138,55 @@ from §1.1-§1.3 (each time the PLD's `ACCELER.TDF` decided; MAME differs where 
 
 The CBL output is a timed sample stream; it is rendered into the same audio frame as the
 beeper/Covox (the existing DAC path), sampled at its own rate by the CBL tick in emulated time.
+
+### 2.1 As implemented (S6, 2026-10-02)
+
+Outcome and evidence: [s6-sound-outcome.md](s6-sound-outcome.md). Where the build differs from the table above,
+the PLD (`SP2_1K30.TDF` "COVOX" section, `:1066-1166`) decided:
+
+- **Where it lives.** `CovoxBlaster` (`core/src/emulator/sound/sprinter/covoxblaster.{h,cpp}`) is one device for
+  the plain Covox and the Covox-Blaster: the PLD has one output register (`CBL_R`) for both. The port decoder
+  owns it (`PortDecoder_Sprinter::GetCovoxBlaster`); SoundManager mixes it through a small interface,
+  `IModelAudioSource` (`sound/modelaudiosource.h`), in the **COVOX mixer slot** (row "Covox-Blaster", recording
+  source `COVOX`, HUD LED). Other machines hold a null pointer: one test per frame. The Sprinter config fits
+  no generic Covox / SoundDrive (`SD=0`, `CovoxFB=0`).
+- **Time base.** Base T-states (3.5 MHz) within the frame, `z80->t / current multiplier`: one 218.75 kHz step is
+  16 T (42 MHz = 12 x 3.5 MHz), a play tick every `16 x (CBL_TAB + 1)` T, on the grid of the frame start
+  (14 steps per 224-T line). The play position is advanced lazily (at every bus access of the device, at the
+  INT check when the INT is on, and at the frame end); the audio is a band-limited step stream (blip_buf, as
+  the Covox) on the Covox's time axis. Turbo (21 MHz) and the host speed control change neither rate.
+- **Rates 2-7** play at 218.75 kHz (`CBL_TAB = 0`: the PLD reloads 0 and counts every step); MAME never ticks.
+- **Write address.** INT on: `CBL_WA`, +1 per entry, held at the start of the other half while a request is
+  pending (`WA = ~CNT & #80`) and the 16-bit phase restarts there. INT off: `~A15..A8` of the access (so `OTIR`
+  with `B = 0` fills 0, 1, ..., 255) and `CBL_WA = 0`. The ring is written in Covox mode too (the PLD's write
+  enable is not gated by `CBL_MODE`). MAME always uses `m_cbl_wa++`.
+- **Play.** On a tick `CNT += 1` (mono) or 2 (stereo), then the DAC follows `ring[CNT]` (mono) or
+  `ring[CNT & #FE]` left / `ring[CNT | 1]` right **continuously**: a write into the entry being played is heard
+  at once. No channel swap in 16-bit stereo (MAME swaps; the file's left channel plays left here, right on MAME).
+  Turning CBL off clears `CNT` and the DAC keeps its last word until a Covox write; reset puts it at `#8000`.
+- **INT.** `CNT` bit 6 falling (#7F -> #80, #FF -> #00) raises the request; the PLD INT acknowledge (vector `#FF`)
+  ends it, as for the frame and keyboard INTs (`SprinterIntSource`); INT off drops it. Turning CBL off while
+  `CNT` bit 6 is set raises it too (the flip-flop is clocked by the bit, whatever moves it).
+- **Page `#FD`.** A store into RAM page `#FD` (bank action `CblPage`) reaches the ring when the CBL INT is on and
+  the accelerator mode has `ACC_DIR` bit 1 (the copy modes) - the CPU's own store in such a mode included
+  (`CBL_WR`'s page term). MAME takes every accelerator copy, INT or not.
+- **`#FE`** (code `#40`) with CBL on: bit 7 = `CNT7 XOR WA7` (the half that needs data), bit 5 = the beam on line
+  272 or below (MAME); with CBL off the keyboard byte is unchanged.
+- **Level.** A DAC word maps to `(word - #8000) / 2` in the mix (full scale +-16 384, the Covox's mono scale). The
+  PLD adds the CBL word to the AY sum in one 16-bit DAC; the emulator keeps the AY and the DAC as two mixer rows.
+- **AY.** One chip: `[SOUND] TurboSound=Single` (new kind: the TurboSound pair without the chip switch, so
+  `#FE` / `#FF` written to `#FFFD` select no register, as on a lone AY). Its clock is 3.5 MHz / 2 = 1.75 MHz on
+  every model already (= 42 MHz / 24); `[AY] FQ=` is not read (the ini says 1750000 now). ABC panning is the
+  shared preset (B at half to both sides; the PLD feeds B to both sides at full level, MAME at a quarter).
+- **ISA register stub.** What S1 built: code `#1B` keeps A19-A14 (RESET and AEN are not stored: no card), window
+  3 on `#D0-#D6` with `#1FFD` bit 4 reads `#FF` and drops writes. No new state, so TTD id 33 stays reserved for
+  S6b (the ISA I/O window and the ZX-bus adapter).
+- **TTD.** Id 32 `SprinterCovoxBlaster`, v1, 1 + 544 bytes (`CovoxBlasterState`: the ring, control, indices,
+  16-bit phase, request, DAC words, next tick, counters). The PLD blob keeps its copy of the control byte
+  (layout v1 unchanged).
+- **Automation.** `state/sprinter` gains `sound` (`ay`, `beeper`, `covox_blaster`: control decoded, rate and
+  divider, play / write index, request, the half that needs data, DAC words, counters); the shared Covox report
+  (`/state/audio/covox` and its CLI / MCP / Lua / Python twins) shows the device when it holds the COVOX slot.
 
 ## 3. Keyboard
 

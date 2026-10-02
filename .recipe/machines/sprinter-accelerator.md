@@ -78,6 +78,6 @@ pixels (`testdata/machines/sprinter/reference/mame-acctest-306.png`).
 `PortDecoder_Sprinter::GetAccelerator()` returns the accelerator in use (null while the PLD loads);
 `State()` is the POD `SprinterAccelState`: `mode` (0-7, `SprinterAccelerator::ModeName`), `length`
 (0 = 256), `fn` (`FunctionName`: plain / or / xor / and), `blocked` (an INT acknowledge suspended it,
-`[SPRINTER] AccelIntSuspend=1`), `alt` / `xcnt` / `aagr` (the `#C7` addressing), `buffer[256]`,
+`[SPRINTER] AccelIntSuspend=1`; off by default since S6, see [sprinter-sound.md](sprinter-sound.md)), `alt` / `xcnt` / `aagr` (the `#C7` addressing), `buffer[256]`,
 `operations`, `lastExtraClocks`. A WebAPI / MCP view of it (`state/sprinter`) comes with the
 `sprinter-automation` work.

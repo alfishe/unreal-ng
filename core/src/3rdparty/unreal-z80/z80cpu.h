@@ -62,7 +62,7 @@ typedef enum
 {
     Z80CpuAccessM1 = 0,    // opcode/prefix fetch (M1, refresh), 4 T cycle;
                            // also every 4 T quantum of a halted CPU
-                           // (addr = PC, i.e. the HALT opcode)
+                           // (addr = PC + 1: the byte after the HALT)
     Z80CpuAccessOperand,   // instruction byte after the opcode (immediate,
                            // displacement, address), 3 T cycle at PC
     Z80CpuAccessRead,      // data memory read, 3 T cycle

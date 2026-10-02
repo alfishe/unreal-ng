@@ -310,6 +310,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	{
+		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
+		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
+		if (preset == "SETUP" || preset == "setup")
+			config.atm.ts_bios_sd_boot = 0;
+		else
+		{
+			config.atm.ts_bios_sd_boot = 1;
+			if (preset != "SDBOOT" && preset != "sdboot")
+				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
@@ -318,7 +330,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
 	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
-	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 1) ? 1 : 0);
+	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 0) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
@@ -567,7 +579,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.moonsound.boardAnalog = (inimanager.GetLongValue(moonsound, "BoardAnalog", 0) != 0) ? 1 : 0;
 
 	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
-	// default), FM (TSFM) or None (no sound chip fitted). Unknown values warn and fall back to AY; a missing
+	// default), FM (TSFM), Single (one AY: the chip-switch values #FE / #FF
+	// select no register, as on a lone AY) or None (no sound chip fitted). Unknown values warn and fall back to AY; a missing
 	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
 	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
 	// honouring them now would silently switch every machine to TSFM.
@@ -588,6 +601,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 		else if (StringHelper::CompareCaseInsensitive(line, "None", strlen("None")) == 0)
 		{
 			config.sound.turboSoundKind = TurboSoundKind::None;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "Single", strlen("Single")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::Single;
 		}
 		else if (line[0] != '\0')
 		{

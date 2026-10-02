@@ -99,6 +99,9 @@ protected:
     /// region <Interfacing fields>
 protected:
     bool _chipAttachedToPortDecoder = false;
+    /// One AY only ([SOUND] TurboSound=Single): #FE / #FF written to #FFFD select an invalid register
+    /// of the one chip instead of switching chips (a lone AY ignores register numbers above 15)
+    bool _singleChip = false;
     PortDecoder* _portDecoder = nullptr;
     /// endregion </Interfacing fields>
 
@@ -148,6 +151,8 @@ public:
 
     int getChipCount() const override
     {
+        if (_singleChip)
+            return 1;
         int count = 0;
         if (_chip0)
             count++;
@@ -161,6 +166,14 @@ public:
 
     /// region <Constructors / destructor>
 public:
+    void setSingleChip(bool single)
+    {
+        _singleChip = single;
+        if (single)
+            _currentChip = _chip0;
+    }
+    bool isSingleChip() const { return _singleChip; }
+
     SoundChip_TurboSound(EmulatorContext* context) : ITurboSoundDevice(context)
     {
         _chip0 = new SoundChip_AY8910(_context);

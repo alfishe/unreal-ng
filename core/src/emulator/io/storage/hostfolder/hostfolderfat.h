@@ -15,7 +15,9 @@
 ///   +reserved    FAT 1, FAT 2
 ///   (FAT16)      root directory region
 ///   data         cluster 2...: directories (breadth-first), then files
-/// With `mbr = false` the volume starts at LBA 0 ("superfloppy").
+/// With `mbr = false` the volume starts at LBA 0 ("superfloppy"); its boot
+/// sector still carries one partition entry, over the volume from LBA 0 (as
+/// mtools' mformat writes it), for loaders that only follow a partition table.
 ///
 /// Cluster counts stay clear of the FAT type limits that strict readers
 /// (ChaN FatFs, used by the ZX Next firmware) check: FAT16 4 086-65 525,

@@ -50,7 +50,10 @@ surface calls), design in
 
 Games read their data files from the SD card: insert the game's folder into slot
 `sd.zc`, then open its `.spg`. Zuma expects to be started from Wild Commander (it
-takes its path from WC's panel page): put it on a WC SD image instead.
+takes its path from WC's panel page): put WC (`boot.$C` and `WC/`) and the game's
+folder into one host folder, insert it into `sd.zc` and reset. The BIOS boots WC
+from the card ([tsconf.md](tsconf.md#wild-commander-the-ts-conf-shell-from-the-sd-card)),
+and you open the game's `.spg` from WC.
 
 ## MCP (preferred)
 

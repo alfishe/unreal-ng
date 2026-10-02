@@ -198,6 +198,7 @@ private:
         config.ramPowerOn = RamPowerOn::Zero;
         config.sprinter.fast_start = _fastStart ? 1 : 0;
         config.sprinter.turbo_allowed = 1;
+        config.sound.turboSoundKind = TurboSoundKind::Single;  // the shipped config: one AY
         std::strncpy(config.sprinter.cmos_path, _cmosPath.c_str(), sizeof(config.sprinter.cmos_path) - 1);
 
         Config configHelper(_context);
