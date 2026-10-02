@@ -95,11 +95,13 @@ static Z80INLINE void Z80PoutT(Z80Regs*& rf, Z80CPU* cpu, uint16_t port, uint8_t
     Z80ContendRT(rf, cpu, port, Z80CpuAccessPortOutPost, tact, tact);
 }
 
-// HALT quantum (z80step.inc): one 4 T M1 cycle at PC, reported to the
+// HALT quantum (z80step.inc): one 4 T M1 cycle at PC + 1, reported to the
 // contention hook like any M1 (waits extend the quantum).
 static Z80INLINE void Z80HaltT(Z80Regs*& rf, Z80CPU* cpu, int& tact)
 {
-    Z80ContendRT(rf, cpu, rf->pc, Z80CpuAccessM1, tact, tact);
+    // The halted Z80 fetches the byte after the HALT (its PC already points there on the bus; the engine
+    // keeps PC on the HALT): HALT2INT v3 on a real 48K, MAME
+    Z80ContendRT(rf, cpu, static_cast<uint16_t>(rf->pc + 1), Z80CpuAccessM1, tact, tact);
     tact += 4;
 }
 

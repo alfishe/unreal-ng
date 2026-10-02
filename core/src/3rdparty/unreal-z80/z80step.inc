@@ -12,7 +12,7 @@
 
 // HALT: no opcode processing until INT/NMI releases the CPU. Burns the 4-T
 // quantum and ticks R (core: 1 T per loop iteration, R every 4th). The halted
-// CPU keeps running M1 cycles at PC (the HALT opcode): Z80HaltT reports each
+// CPU keeps running M1 cycles at the byte after the HALT (PC stays on the HALT): Z80HaltT reports each
 // quantum to the contention hook as an M1 cycle on the buses that fire it (a
 // no-op on the flat bus).
 static Z80INLINE int HaltedQuantum(Z80CPU* cpu, Z80Regs* rf)

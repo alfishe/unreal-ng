@@ -148,6 +148,23 @@ protected:
         _z80->Z80Step();
         return _z80->t - t0;
     }
+
+    /// A HALT at `addr`, executed in the top border; then one idle fetch of the halted CPU starting at `fetchT`.
+    /// Returns that step's T-states (docs/inprogress/2026-10-02-halt-fetch-address: the halted Z80 fetches the
+    /// byte after the HALT, so the wait is that byte's). PC stays on the HALT, R advances by one
+    uint32_t runHaltedFetch(uint16_t addr, uint32_t fetchT)
+    {
+        runAt(addr, { 0x76 }, 1000);
+        EXPECT_TRUE(_z80->halted) << "the HALT executed";
+        const uint8_t r0 = _z80->r_low & 0x7F;
+        _z80->t = fetchT;
+        const uint32_t t0 = _z80->t;
+        _z80->Z80Step();
+        EXPECT_EQ(_z80->pc, addr) << "PC stays on the HALT";
+        EXPECT_EQ(_z80->r_low & 0x7F, (r0 + 1) & 0x7F) << "one refresh per idle fetch";
+        EXPECT_TRUE(_z80->halted);
+        return _z80->t - t0;
+    }
 };
 
 class Contention48K_Test : public ContentionTestBase
@@ -344,6 +361,15 @@ TEST_F(Contention48K_Test, M1_CodeAndDataInContendedRam)
     EXPECT_EQ(runAt(0x4000, { 0x7E }, _firstContendedT), 7u + 6u + 4u);
 }
 
+/// The halted CPU's idle fetch goes to the byte after the HALT (HALT2INT v3 on a real 48K, MAME): a HALT on the
+/// last contended byte fetches #8000 and does not wait; one byte earlier the fetch is at #7FFF and does
+TEST_F(Contention48K_Test, HaltedFetchGoesToTheByteAfterTheHalt)
+{
+    EXPECT_EQ(runHaltedFetch(0x7FFF, _firstContendedT), 4u) << "HALT at #7FFF: the idle fetch at #8000";
+    EXPECT_EQ(runHaltedFetch(0x7FFE, _firstContendedT), 4u + kPattern[0]) << "HALT at #7FFE: the idle fetch at #7FFF";
+    EXPECT_EQ(runHaltedFetch(0x3FFF + 0x4000, _firstContendedT + 6), 4u) << "on the cell's no-wait T";
+}
+
 /// endregion </ZX-Spectrum 48K>
 
 /// region <ZX-Spectrum 128K>
@@ -459,6 +485,16 @@ TEST_F(Contention128K_Test, M1_FetchFromOddPageAtC000Waits)
     _memory->SetRAMPageToBank3(2);
     EXPECT_EQ(runAt(0xC000, { 0x00 }, _firstContendedT), 4u) << "page 2 at $C000";
     _memory->SetRAMPageToBank3(0);
+}
+
+/// A HALT on the last byte of bank 2 fetches #C000 while halted: it waits when a contended (odd) page is there
+TEST_F(Contention128K_Test, HaltedFetchGoesToTheByteAfterTheHalt)
+{
+    _memory->SetRAMPageToBank3(1);
+    EXPECT_EQ(runHaltedFetch(0xBFFF, _firstContendedT), 4u + kPattern[0]) << "page 1 at #C000: contended";
+    _memory->SetRAMPageToBank3(0);
+    EXPECT_EQ(runHaltedFetch(0xBFFF, _firstContendedT), 4u) << "page 0 at #C000: uncontended";
+    EXPECT_EQ(runHaltedFetch(0x7FFF, _firstContendedT), 4u) << "HALT at #7FFF: the idle fetch at #8000 (page 2)";
 }
 
 /// endregion </ZX-Spectrum 128K>
