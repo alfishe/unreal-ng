@@ -4,6 +4,16 @@
 [target-architecture.md](target-architecture.md) §7–8 and
 [requirements.md](requirements.md) FR-11…FR-13 state a *direction*; the
 mechanisms need a separate investigation because of the nuances below.
+It is concluded in Phase 4, Step 1 of the [roadmap](README.md#2-phases).
+
+Already fixed by [engine-decisions.md](engine-decisions.md) (2026-10-02), so
+the questions below are narrowed accordingly: the file is written as the
+session records, append-only, by a background writer with no forced flush on
+the capture path, and survives a crash from its first version (D28, part of
+I-5); parts of the file are cut by explicit dependencies (D6, part of I-2);
+every stored item records what it depends on (D5, the input to the damage
+range of I-4); region ids are their own table and devices have a u16 type id
+plus an instance name (D3, D23, part of V-7).
 
 What is established so far:
 
@@ -29,8 +39,8 @@ What is established so far:
 
 ### I-2. Granularity
 
-Per piece (4 KB), per checkpoint, per chunk (~50 frames), per stream, whole
-file. Finer = better localisation of damage and less data lost to one flip,
+Per piece (4 KB), per checkpoint, per chunk (a self-contained part of the
+file, cut by dependencies: D6), per stream, whole file. Finer = better localisation of damage and less data lost to one flip,
 coarser = less overhead and fewer fields to get wrong. Device blobs, the
 reference table and CPU/chipset have **no** checksum today — which unit covers
 them?
@@ -141,7 +151,8 @@ v2 builds are exempt.
 
 ### V-7. Identifiers
 
-`PeripheralId` and region ids become permanent once files are versioned
+`PeripheralId` and region ids (in the engine: the u16 device type id with
+its instance name, D23, and `TTDRegionId`, D3) become permanent once files are versioned
 (the id-9 collision between the three branches shows the risk). Rules for
 allocation, retirement (never reuse) and renames.
 

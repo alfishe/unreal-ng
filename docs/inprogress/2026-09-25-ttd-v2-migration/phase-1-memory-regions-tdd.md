@@ -1,122 +1,182 @@
-# Phase 1 — Memory that costs only what changes: technical design
+# Phase 1 — Engine core: memory that costs only what changes — technical design
 
-Status: **design, not implemented** (2026-10-01). Parameters measured on real recordings: [Phase 1 experiments](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md) (E1–E4). Roadmap and checks: [README.md](README.md#phase-1--memory-that-costs-only-what-changes). Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)).
+Status: **design, not implemented** (rewritten 2026-10-02 for the new engine; the in-place version of 2026-10-01 is in git history). Roadmap: [README §2, Phase 1](README.md#phase-1--engine-core-memory-that-costs-only-what-changes). Decisions: [engine-decisions.md](engine-decisions.md) D1–D6, D15, D19–D22, D27, D31, D33. Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)). Parameters measured on real recordings: [experiments E1–E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md).
 
-Code references are to master at `99467101`. `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `PS` = `core/src/debugger/ttd/ttdcodecpagestore.{h,cpp}`.
+Code references are to master at `8ddaf708e`. `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `PS` = `core/src/debugger/ttd/ttdcodecpagestore.{h,cpp}`.
 
 ## 1. Glossary
 
 | Term | Meaning |
 |---|---|
-| Piece | 4 KB of emulated memory as the page store keeps it. The code calls it a *slot* |
-| Full / XorPrev / Zero | How a piece is stored: compressed copy; compressed difference (XOR) from the previous version of the same piece; "all zero", no payload |
-| Chain | The XorPrev pieces that must be decoded, newest to oldest, until a Full or Zero one, to rebuild one piece |
-| Chain length limit | The most links a chain may have; a piece that would exceed it is stored Full |
+| Engine | `ttd::TimeTravelEngine`, the new time-travel engine. v1 is `ttd::TimeTravelManager` |
+| Piece | 4 KB of emulated memory, the unit the engine stores |
+| Full / Xor / Zero | How a piece version is stored: a compressed copy; the compressed difference (XOR) from the previous version of the same piece; "all zero", no payload |
+| Chain | The Xor versions decoded, newest to oldest, until a Full or Zero one, to rebuild a piece |
+| Chain length limit (K) | The most links a chain may have; a version that would exceed it is stored Full |
 | Region | A block of emulated memory tracked by pieces: machine RAM (region 0) or memory a device owns |
-| Delta base | The previous contents of a piece, needed to compute its XOR difference |
-| Reference table | For each checkpoint: which stored piece holds each piece of memory at that frame |
-| Copy-on-write block | A part of the reference table shared between checkpoints until one of them changes it |
-| Device blob | A device's small state (registers, latches), saved whole in every checkpoint |
+| Delta base | The previous contents of a piece, needed to compute its difference |
+| Reference table | For each checkpoint: which stored version holds each piece of memory at that frame |
+| Block | A part of the reference table (8 pages = 32 pieces), shared by checkpoints until one of them changes it |
+| Checkpoint | The engine's record of one frame boundary: position, parent, the reference tables, CPU and device state |
+| Arena | The memory the piece payloads live in, allocated in large chunks instead of one heap block per piece |
+| Oracle | The test that restores a position from the engine and from v1 and compares the bytes |
+| Machine time | The engine's single time line: main-CPU cycles in top-clock units since the session start (D20) |
 
 ## 2. What changes, in one example
 
-ZX-Evo (4 MB RAM, 256 pages of 16 KB) at the BASIC prompt, one frame in which the program writes two pages:
+ZX-Evo (4 MB RAM, 256 pages of 16 KB) at the BASIC prompt, one frame in which the program writes two pages, then a General Sound card with 512 KB uploads a sample:
 
-| Work per frame | Today | After Phase 1 |
+| Work per frame | v1 | Engine |
 |---|---|---|
-| Find what changed | dirty bitmap, 2 pages | same |
-| Store the changed pieces | 8 pieces, each compressed **twice** (as XOR and as a full copy, the smaller kept) | 8 pieces compressed once as XOR; the full copy only when the XOR is large |
-| Every 50th frame | **all ~1,000 non-zero pieces stored again in full** (the key frame) | nothing; a piece is stored Full only when its own chain reaches the limit |
-| Keep the delta base | **copy all 4 MB** | copy the 8 changed pieces (32 KB) |
-| Reference table | **write 256 × 16 B = 4 KB** | copy the blocks that changed (2–3 × 128 B) and share the other ~30; measured 520 B per frame in memory, 280 B in the file (E3) |
-| Device memory (with a GS card) | **copy 128–512 KB into the GS blob** | the GS RAM is a region: only its changed pieces are stored |
-| Seek one frame back | **decode all ~1,000 pieces** into RAM (765–785 µs) | decode the 8 pieces that differ |
+| Store the changed pieces | 8 pieces, each compressed **twice** | 8 pieces compressed once, as XOR; the full copy only when the XOR is larger than 128 bytes |
+| Every 50th frame | **all ~1,000 non-zero pieces stored again** | nothing; a piece is stored Full only when its own chain reaches K |
+| Keep the delta base | copy all 4 MB | copy the 8 changed pieces (32 KB) |
+| Reference table | 256 × 16 B = 4 KB | the 2–3 changed blocks of 128 B; measured 520 B per frame in memory (E3) |
+| General Sound RAM | **512 KB copied into the GS blob every frame** | a region: only its changed pieces |
+| NeoGS RAM (4 MB), MoonSound wave memory (1 MiB) | **not recorded** | regions, only changed pieces |
+| Seek one frame back | decode all ~1,000 pieces (765–785 µs) | decode the pieces that differ (E4: ~145 µs) |
+| Memory for a minute of Across the Edge | 107 MB (v1 with exact-size allocation, `67e5aff28`) | modeled 32 MB (E6), most of it the write journal, which Phase 3 owns |
 
-Measured today (Phase 0, Step 2): 190 µs per capture on ZX-Evo with nothing written, 7–60 µs on 128K-class machines, p99 2.9× the median, 300–420 µs with a GS card. Target: capture cost follows the number of changed pieces, the same on every machine.
+## 3. How v1 works today
 
-## 3. How it works today
+### 3.1 Capture (`OnFrameBoundary`, TTM `CaptureNow`)
 
-### 3.1 Capture (`OnFrameBoundary`, TTM:881)
+1. CPU and chipset structs; every device blob, whole (`CaptureAll`).
+2. Key-frame decision: every 50 frames (`kKeyFrameInterval`) or after `_forceNextKeyFrame`.
+3. RAM: the first checkpoint stores every piece Full; later checkpoints take the dirty pages from `TTDDirtyTracker::CollectAndClear` (16 KB bits, set by the debug write path, `DirectWriteToZ80Memory` and `MarkRamPageEdited`) and intern each dirty piece as XOR against `_prevPageCache`; a key frame stores every non-zero piece again.
+4. `UpdatePrevPageCache()` copies **all** RAM into the cache.
 
-`CaptureNow` (TTM:979-1056) runs, in order:
-1. CPU and chipset structs (TTM:994, 998);
-2. every device blob (`CaptureAll`, TTM:1005);
-3. the key-frame decision: `frame - _lastKeyFrameIdx >= 50` (TTM:1019, `kKeyFrameInterval`, timetravelmanager.h:386), or `_forceNextKeyFrame` (set after `InvalidateSession` TTM:486 and after a load TTM:4588);
-4. RAM:
-   - the first checkpoint interns every piece Full (`CaptureBaselineRamPages`, TTM:1058-1087);
-   - later checkpoints call `CollectAndClear` on the dirty tracker, then `UpdateRamPages` (TTM:1046-1049, 1107-1253):
-     - a clean page adds a reference to its 4 previous pieces;
-     - a dirty page is XOR'd against `_prevPageCache` (`InternXorCached`);
-     - on a key frame every non-zero page, clean or not, is stored again Full (TTM:1146-1167);
-5. `UpdatePrevPageCache()` copies **all** model RAM into the cache (TTM:1282-1296).
-
-Dirty tracking: one bit per 16 KB page (`ttddirtytracker.h:7-19`), set by the debug write path (`memory.cpp:438-445`), `DirectWriteToZ80Memory` (`memory.cpp:1806-1812`) and `MarkRamPageEdited` (TSConf DMA, `tsconfdma.cpp:162`). Recording forces debug mode on so the fast write path is never used (TTM:183-197).
+Recording forces debug mode on, so the fast write path that skips dirty bits is never used.
 
 ### 3.2 Page store (PS)
 
-- A slot is `{encoding, refcount, prevSlot, crc32c, payload}` (PS.h:205-211). An XorPrev slot references its base by slot id and holds a reference to it (PS.cpp:115-126).
-- `InternXor`: an all-zero difference returns the previous slot with one more reference (no new slot); otherwise both the XOR and the full piece are compressed and the smaller kept (PS.cpp:73-181). zstd level 1, CRC32C of the raw piece.
-- Decoding walks the whole chain recursively (PS.cpp:253-312). Nothing in the store bounds chain length; only the key frame does (comment PS.cpp:221).
+A slot is `{encoding, refcount, prevSlot, crc32c, payload}`. An XorPrev slot references its base by slot id. `InternXor` compresses both the XOR and the full piece and keeps the smaller. Payloads are stored at their exact size since `67e5aff28`. Nothing bounds chain length except the key frame.
 
-### 3.3 Checkpoint references
+### 3.3 Checkpoints and restore
 
-`ramPages`: one `TTDPageRef` (4 × u32 slot ids, 16 B) per RAM page, in every checkpoint (ttdcheckpoint.h:262-282, 316). Clean pages repeat the previous ids.
+Each checkpoint holds `ramPages`: 4 slot ids per 16 KB page, 16 B, in every checkpoint. A restore writes CPU, chipset, device blobs, banking, then decodes **every** piece into live RAM, then resyncs the screen.
 
-### 3.4 Restore (`RestoreCheckpoint`, TTM:1404-1492)
+### 3.4 Device memory today
 
-CPU → chipset → device blobs (`RestoreAll`, before banking because model serializers restore paging latches) → `UpdateZ80Banks` → `RestoreRamPages` (every piece decoded straight into live RAM, CRC failure zero-fills, TTM:1532-1574) → screen resync.
-
-### 3.5 File (`SerializeSession`, TTM:3479-3879)
-
-- Live slots, ordered so each XorPrev follows its base.
-- Then per checkpoint:
-  - frame, `globalT`, `frameKind`, `keyFrameAnchor`, CPU, chipset;
-  - `model_ram_pages × 4 × u32` references;
-  - the device blobs.
-- `kSchemaVersion = 1`; the format has been amended in place before (ttddumpformat.h:37-47), each time with the fixtures re-recorded.
-
-### 3.6 Device memory today
-
-| Memory | Size | In checkpoints today | Where |
-|---|---|---|---|
-| General Sound RAM | 128–512 KB | whole, inside the GS blob, every checkpoint | soundchip_gs.cpp:835-844 |
-| GS lightweight upload store | up to the card RAM size, variable | whole, inside its blob (variable blob size) | soundchip_gslw.cpp:1311-1313 |
-| MoonSound wave memory | up to 1 MiB | **not captured** | soundchip_moonsound.h:169-172 |
-| NeoGS RAM / flash | 2–4 MB / 512 KB | **not captured** | soundchip_neogs.h:244-257 |
-| ZX-Evo AVR EEPROM | 4 KiB | **not captured** | evoavr.h:149-151 |
-| Scorpion SMUC EEPROM + serial-link state | 2 KiB + ~30 B | **not captured** | smucnvram.h:20-40 |
-
-No region concept exists in the code yet; several headers already point at it (ttdserializable.h:58, ttddumpformat.h:219).
+| Memory | Size | In v1 checkpoints |
+|---|---|---|
+| General Sound RAM | 128–512 KB | whole, inside the GS blob, every checkpoint |
+| GS lightweight upload store | up to the card RAM size | whole, inside its blob |
+| MoonSound wave memory | up to 1 MiB | **not recorded** |
+| NeoGS RAM / flash | 2–4 MB / 512 KB | **not recorded** |
+| Sprinter video RAM / fast RAM | 256 KB / 64 KB | whole blobs (Sprinter TTD, phase S7) |
+| VDAC2 (FT812) graphics memory, display list, registers, command FIFO | 1 MB, 2 × 8 KB, 4 KB, 4 KB | **refuses to record** until regions exist |
+| ZX-Evo AVR EEPROM | 4 KiB | **not recorded** |
+| Scorpion SMUC EEPROM + serial-link state | 2 KiB + ~30 B | **not recorded** |
 
 ## 4. Design
 
 ### 4.1 Overview
 
 ```
- region table (session header)          page store (shared by all regions)
- ┌────┬───────────────┬────────┐        ┌──────────────────────────────┐
- │ id │ name          │ pieces │        │ slot: Full | XorPrev | Zero   │
- │ 0  │ ram           │ 1024   │        │       depth (chain length)    │
- │ 1  │ gs.ram        │ 128    │        └──────────────────────────────┘
- └────┴───────────────┴────────┘                      ▲
-                                                      │ slot ids
- checkpoint N:  per region → [block 0][block 1]…[block k]   (copy-on-write,
- checkpoint N+1:            → [block 0][block 1']…[block k]  shared when equal)
+            TimeTravelEngine (one per emulator instance)
+                 │
+   ┌─────────────┼──────────────────────────────┐
+   │ session: frame table, checkpoints (each links its parent),
+   │          optional streams, regions
+   │                                             │
+   │  region 0 (ram)    region 1 (neogs.ram) ... │      TTDPieceStore (shared, D22)
+   │  ┌──────────────┐                           │      ┌───────────────────────┐
+   │  │ dirty bits   │                           │      │ versions: Full|Xor|Zero│
+   │  │ delta base   │  checkpoint N ──► region  ├────► │ depth, base, CRC       │
+   │  │ live map     │  table ──► [blk][blk']…   │      │ payload in the arena   │
+   │  └──────────────┘                           │      └───────────────────────┘
+   └─────────────────────────────────────────────┘
+        ▲ frame input                    ▲ frame input
+   live capture (Step 4)          v1 file feeder (Step 1, verification)
 ```
 
-Each region keeps:
-- its own dirty bitmap;
-- its delta base (previous contents of every piece);
-- a reference table cut into copy-on-write blocks.
+Both producers hand the engine the same thing, a **frame input**: the frame's position and, per region, the pieces that changed with their new contents, plus CPU, chipset and device state. The engine never needs to know which producer it is fed by.
 
-All regions share one page store, so every piece — machine RAM or device memory — gets the same deltas, the same sharing and the same chain length limit.
+New code lives in `core/src/debugger/ttd/timetravelengine.{h,cpp}` and `core/src/debugger/ttd/engine/`. v1 is not changed, except for one gated call in Step 4.
 
-### 4.2 Step 1 — Memory regions
+### 4.2 Step 1 — Engine skeleton and verification
 
-**Data.**
+**Time and positions** (`engine/ttdtime.h`):
 
 ```cpp
-enum class TTDRegionId : uint16_t      // stable: stored in files
+using TTDMachineTime = uint64_t;          // main-CPU cycles in top-clock units since the session start (D20)
+
+struct TTDPosition                         // D15
+{
+    uint32_t branch = 0;                   // 0 = the trunk; branches come later, the field is there now
+    uint64_t frame = 0;
+    uint64_t tInFrame = 0;                 // machine time since the frame's start
+};
+
+class TTDFrameTable                        // D21: frames have no fixed length
+{
+public:
+    void Append(uint64_t frame, TTDMachineTime start);
+    TTDMachineTime Start(uint64_t frame) const;
+    uint64_t FrameAt(TTDMachineTime t) const;   // binary search
+};
+```
+
+A position of another CPU (`{cpu, cycle}`) comes with Phase 3; `TTDPosition` is the type every engine call takes from the start, so adding it changes no signature.
+
+**Checkpoints** (`engine/ttdcheckpointrecord.h`): position, machine time, `parent` (the previous checkpoint of the same history, D7), one reference-table handle per region (Step 3), CPU and chipset state as v1 stores it (168 B), and the device blobs as v1 stores them (whole; Phase 2 replaces this).
+
+**Optional streams** (D19, `engine/ttdstreamregistry.h`): a stream has a stable id, a name and an enabled flag. At a frame boundary the engine reads one bitmask of enabled streams and calls only those; a stream that is off costs that one check per frame. Phase 1 registers no optional stream; the screenshot stream comes with the file in Phase 4. Every surface gets its on/off control when the engine is switched in (Phase 5).
+
+**Memory accounting** from the first commit (FR-16, E5): every part reports its bytes (`TTDEngineHeapBreakdown`), and the benchmark's `bm4_heap_*` split covers the engine as it covers v1.
+
+**Feeding the engine from a v1 file** (D31, `core/src/debugger/ttd/bench/ttdv1feeder.{h,cpp}`, verification code, not part of the engine):
+1. load the file into a `TimeTravelManager` with `DeserializeSession` (TTM:588);
+2. for each checkpoint in order (`GetCheckpoint`), decode its RAM pieces through `GetPageStore().GetPage` and compare with the previous checkpoint's; the pieces whose content changed form the frame input, with the checkpoint's CPU, chipset and device blobs;
+3. the General Sound RAM, which v1 keeps inside the GS blob, is split off into its region's pieces (as experiment E6 did), so the GS region can be checked from v1 files.
+
+Only content changes are fed, not v1's key-frame re-stores, so the engine sees what really changed.
+
+**The oracle** (`core/tests/debugger/ttd/engine/`): for every checkpoint of a session, restore the engine's memory into a buffer and compare it with v1's decoded memory, region by region, byte for byte, plus CPU, chipset and device blobs. Inputs: the fixture corpus (`testdata/ttd/`) and the real-use sessions of `common/record-real-sessions.sh` (`scratch/ttd-experiments/real/`). Points inside a frame need the recorded events and replay, which Phase 3 adds; Phase 1 compares every frame boundary.
+
+**Benchmark**: the harness's `Engine` interface (`core/src/debugger/ttd/bench/ttdbench.h`) gains a second implementation, `"engine"`. Until live capture exists (Step 4) it records through the feeder: the workload is recorded with v1 and fed to the engine, so bytes and memory are comparable on every matrix case from Step 1. From Step 4 it records live.
+
+### 4.3 Step 2 — Piece store
+
+`engine/ttdpiecestore.{h,cpp}`, `TTDPieceStore`, replaces `TTDCodecPageStore` for the engine.
+
+```cpp
+using TTDPieceId = uint32_t;               // opaque; never an address or an offset
+
+struct TTDPieceVersion
+{
+    uint8_t encoding;                      // Full, Xor, Zero
+    uint16_t depth;                        // 0 for Full and Zero, base depth + 1 for Xor
+    uint32_t refcount;
+    TTDPieceId base;                       // Xor only: the version it is a difference from (its dependency, D5)
+    uint32_t crc32c;                       // of the raw 4 KB
+    TTDArenaRef payload;                   // where the compressed bytes live; empty for Zero
+};
+```
+
+**Interning a change.** `TTDPieceId Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* newBytes)`:
+1. XOR the two; an all-zero XOR returns `previous` with one more reference (no new version);
+2. new content all zero → a Zero version;
+3. the previous version's depth + 1 reaches K → compress the new bytes once, Full;
+4. otherwise compress the XOR; only if the result is larger than **T = 128 bytes**, compress the full bytes too and keep the smaller (E2: the full piece wins in 5% of changes; at T = 128 the full compression is skipped for 83% of changes, encoding takes 0.28 of v1's time, bytes +0.07%).
+
+`K` and `T` are parameters of the store (D4), defaults 50 and 128. E1 measured at most 4 forced Full versions per frame at K = 50 on 17 real recordings (v1's key frame: up to 30), without staggering.
+
+**Decoding** walks the chain iteratively from the newest version to the first Full or Zero, then applies the XORs forward, with one scratch buffer per thread. The CRC of the result is checked (the in-memory CRC question, I-6, is decided in Phase 4).
+
+**The arena** (`engine/ttdarena.{h,cpp}`): payloads are allocated from chunks of 1 MB by bumping a pointer, at their exact size. `TTDArenaRef` is `{chunk, offset, size}`. A chunk records its live bytes; a chunk whose live bytes drop to zero is returned. Small payloads (median 39–93 B, E2 / phase-5 results) cost no heap header each. The reference is location-independent on purpose: in Phase 4 a chunk can be written to the session file and released, and `TTDArenaRef` then names the bytes in the file (D28).
+
+**Dependencies** (D5): a version's `base` is its only dependency on another version; blocks (Step 3) depend on the versions they list. The store can therefore answer "what depends on this" for eviction (Phase 4) and for damage ranges (I-4) without a new structure.
+
+**Shared by sessions** (D22): the store is owned by a `std::shared_ptr` that sessions hold. ZX-Poly's four machines can share one later; in Phase 1 each engine has its own.
+
+### 4.4 Step 3 — Regions and the copy-on-write reference table
+
+**Regions** (`engine/ttdregion.h`):
+
+```cpp
+enum class TTDRegionId : uint16_t          // stable, stored in files, appended, never reused (D3)
 {
     MachineRam = 0,
     GeneralSoundRam = 1,
@@ -124,201 +184,161 @@ enum class TTDRegionId : uint16_t      // stable: stored in files
     MoonSoundWaveMemory = 3,
     NeoGSRam = 4,
     NeoGSFlash = 5,
-    EvoAvrEeprom = 6,
-    SmucEeprom = 7,
-    // future: TSConf VDAC2 (FT812) memory, Spec256 shadow RAM, Sprinter video RAM, DivIDE RAM, ...
+    SprinterVideoRam = 6,
+    SprinterFastRam = 7,
+    Vdac2GraphicsMemory = 8,
+    Vdac2DisplayList = 9,
+    Vdac2Registers = 10,
+    Vdac2CommandFifo = 11,
+    EvoAvrEeprom = 12,
+    SmucEeprom = 13,
 };
 
 struct TTDRegionDesc
 {
     TTDRegionId id;
-    PeripheralId owner;      // PeripheralId::Count for machine RAM
-    uint8_t* memory;         // live memory, owned by the device
-    uint32_t pieces;         // capacity in 4 KB pieces (a 2 KiB EEPROM is 1 piece)
-    uint32_t bytes;          // real size (the last piece may be partial)
-    const char* name;        // "ram", "gs.ram", "moonsound.wave", ...
+    uint16_t ownerType;                    // the owning device's type id (Phase 2 registry); 0xFFFF for machine RAM
+    std::string ownerInstance;             // e.g. "ngs0"; empty for machine RAM
+    uint8_t* memory;                       // live memory, owned by the device
+    uint32_t pieces;                       // capacity in 4 KB pieces; no fixed cap (D27)
+    uint32_t bytes;                        // real size; the last piece may be partial (2 KiB SMUC EEPROM)
+    uint32_t dirtyGranularity;             // 16 KB for machine RAM (today's tracker), 4 KB for devices
+    TTDPieceRestoreFn restorePiece;        // optional: restore through the device (VDAC2 registers)
+    TTDRegionRestoredFn onRestored;        // optional: rebuild caches after the region is restored
 };
 ```
 
-- **Ids** are a fixed table, like `PeripheralId`: appended, never reused. The first change to reach master takes the next free number.
-- **Registration.** `RegisterMachinePeripherals` (`ttdmachineperipherals.cpp`) registers machine RAM as region 0. A device that owns memory registers its regions next to its blob serializer. The set is fixed for a session, which holds because a device change (the GS card switch) is already refused during a recording (FR-4).
-- **Partial pieces** (2 KiB SMUC EEPROM): the unused tail of the last piece is treated as zero and never read from or written to device memory.
-- **Variable used size** (GS upload store): the region has the capacity of the largest store, and the used size stays in the device blob. This removes the only variable-size blob.
+The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed in Phase 1; Phase 2 makes device-set changes timeline events (D26).
 
-**Dirty marking.**
-- Machine RAM keeps the existing 16 KB tracker; one dirty page means 4 dirty pieces.
-- A device region keeps a bitmap at 4 KB piece granularity, set by the device's own write path:
+**The reference table, two levels** (E3: 8-page blocks, 0.21 of v1's table bytes over all inputs; ZX-Evo 4,096 → 520 B per frame):
 
-| Region | Write path to hook |
-|---|---|
-| General Sound RAM | `SoundChip_GeneralSound::writeMem` (soundchip_gs.cpp:674) |
-| GS upload store | the lightweight player's store writes (soundchip_gslw.cpp) |
-| MoonSound wave memory | libopl4 already keeps a dirty bitmap: `Opl4::RamDirtyBitmap` / `ClearRamDirty` (opl4.h:113-114) |
-| NeoGS RAM / flash | `NeoGSMemory::write` / `writeFlash` (neogsmemory.h:67, 99) |
-| ZX-Evo AVR EEPROM | the EEPROM-window write (evoavr.cpp:36) |
-| SMUC EEPROM | the page commit on STOP (smucnvram.cpp:63) |
+```cpp
+struct TTDRefBlock                         // 32 piece ids = 8 pages; shared, reference-counted
+{
+    std::atomic<uint32_t> refcount;
+    TTDPieceId pieces[32];
+};
 
-- **Cost rule** (performance guidelines): the GS and NeoGS write paths run per card-CPU write. The hook is one gated bit-set: no work at all when no recording runs, and an A/B benchmark (`core-benchmarks`, GS frame) shows it within noise.
+struct TTDRegionTable                      // one pointer per block; shared, reference-counted
+{
+    std::atomic<uint32_t> refcount;
+    std::vector<TTDRefBlockPtr> blocks;
+};
+```
 
-**Device blobs shrink.** The GS blob loses its RAM copy (`95 + RAM` bytes → 95), and the lightweight blob loses its store. Their blob layout versions increase.
+A checkpoint holds one `TTDRegionTablePtr` per region. A capture clones a block only when one of its pieces got a **new version id**: a dirty page whose pieces came out unchanged clones nothing. A region with no changed block keeps the previous checkpoint's table, so an unchanged frame costs one pointer per region (PR-10). A block holds one reference to each version it lists, taken when the block is created and released when it is freed.
 
-**Restore order.**
+**Branches** (D7, FR-22): a checkpoint's `parent` is the checkpoint it continues. A branch's first checkpoint shares its parent's tables, so nothing in the table assumes one straight line. Phase 1 records only the trunk.
 
-1. CPU, chipset.
-2. Device blobs.
-3. Banking.
-4. **All regions.**
-5. Screen.
+### 4.5 Step 4 — Live capture next to v1
 
-After its region is restored, a device with derived caches gets an `OnRegionRestored(id)` call. NeoGS, for example, may cache memory windows.
+The engine records the running emulator in parallel with v1 ("shadow mode"), so every live recording is also an oracle run.
 
-**Restore through the device, where memory is not plain memory.** By default a region is restored by copying pieces into `memory`. A device may instead supply a restore function per piece, for memory where a write has side effects or where some words are computed on read rather than stored. The first such device is the TSConf VDAC2 card (design in progress: `docs/inprogress/2026-10-01-tsconf-vdac2/vdac2-tdd.md`): FT812's register page holds computed registers (`REG_ID`, `REG_CLOCK`, the command-ring pointers), and its display list must be rebuilt after a restore. Its regions are graphics memory (1 MB), display list (2 × 8 KB), registers (4 KB) and command FIFO (4 KB).
+- **One gated call in v1.** `TimeTravelManager::CaptureNow` already collects the dirty pages once per frame (`CollectAndClear`). When a shadow engine is attached, it hands the same list and the live memory to `TimeTravelEngine::CaptureFrame`. Without an engine attached this is one pointer check per frame; the dirty bits are not collected twice, so v1 is unaffected.
+- **Delta base for changed pieces only.** Each region keeps a copy of its previous contents. After a capture, only the pieces that changed are copied into it (v1 copies all 4 MB of ZX-Evo RAM every frame). It is rebuilt in full only before the next capture after recording starts, resumes from a position or a load. A device region allocates its delta base when its first piece is written, so an idle card costs nothing.
+- **Invariant:** the delta base equals the decoded contents of the latest checkpoint. A debug build compares it with live memory for the clean pieces every N captures and asserts; a test that writes memory through a raw pointer without marking it dirty trips it and is fixed to call `MarkRamPageEdited`.
+- **Counted work** (`bm2_work_*`) is reported for the engine as for v1, so D33's "capture work not larger than v1" runs in the CI gate.
 
-### 4.3 Step 2 — Chain length limit per piece
+The engine can also run alone (no v1) for benchmarks and for tests that restore into the emulator. Shadow mode is a test and benchmark setting; users do not see it.
 
-- Each slot records its **depth**: 0 for Full and Zero, the base's depth + 1 for XorPrev (PS.h slot gains `uint16_t depth`).
-- `InternXor` stores the piece Full instead of XorPrev when the new depth would reach **K**, so a chain has at most K − 1 XorPrev links. K = 50 (confirmed by [E1](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e1-chain-limit/README.md) and [E4](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e4-restore-differences/README.md)): the deepest chain is 49 links, exactly today's maximum (a key frame every 50 frames), so the worst-case seek decode does not change. The final value comes from BM-5 (seek) against BM-8 (capture).
-- What a link costs, measured: decoding an XOR piece takes about 1 µs and a Full one about 2 µs on real data (phase-5 results, `2026-07-19-time-travel/phase-5-codec-poc-results.md:1389`); with today's 50-frame bound a seek walks 24 links on average and 47 at p95 (same document, :107-117).
-- The global key frame goes away: `kKeyFrameInterval`, `_lastKeyFrameIdx` and the key-frame branch of `UpdateRamPages` (TTM:1146-1167).
-- `_forceNextKeyFrame` keeps one meaning only: the next capture is a **baseline** (all pieces Full), after `StartRecording`, a load or `InvalidateSession`.
-- **No synchronized spike, without staggering.** The concern: every piece starts its chain at the same baseline and changes every frame, so all chains reach K on the same frame, which is the old key-frame spike again. Measured on 17 real recordings ([E1](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e1-chain-limit/README.md)): pieces change at different moments, so with K = 50 at most 4 pieces per frame are forced to Full (v1's key frame: up to 30), and stored bytes are 0.51 of v1. Staggered per-piece limits brought that to 2–3 but cost 5–9% more bytes, so they are **not** part of the design. A test pins the spike bound on the benchmark workloads.
+### 4.6 Step 5 — Restore only the pieces that differ
 
-### 4.4 Step 3 — Delta base for changed pieces only
+- Each region keeps a **live map**: for every piece, the version whose content is in live memory now. A capture sets it to the new version, a restore to the target's version.
+- A write after that point makes the entry unknown; the region's dirty bits already say which pieces were written.
+- A restore decodes a piece only if its target version differs from the live map, or the piece was written since. E4: on ZX-Evo memory restore drops from ~760 to ~145 µs (most of v1's restore writes zeros into untouched memory), on Pentagon 1024 from 188 to 34 µs.
+- The oracle restores everything into a buffer, so a wrongly skipped piece fails it. A debug-build mode decodes everything and compares.
 
-- The delta base stays a full copy of each region's previous contents (4 MB on ZX-Evo), so a changed piece is XOR'd without decoding anything. It is no longer copied every frame: after a capture, **only the pieces dirty in that frame** are copied from live memory.
-- Invariant: the delta base equals the decoded contents of the latest checkpoint. It holds as long as every write reaches a dirty bit, which recording guarantees by forcing debug mode, the DMA path and tool edits (`MarkRamPageEdited`).
-- **Explicit rebuild only before the next capture**: when recording starts or resumes from a position, and after a load. A seek in a stopped session only marks the delta base stale, so seeking pays nothing for it (a full rebuild costs about 5.4 ms per 4 MB, `ttd-v1-architecture-and-format.md:460`). This is also the definitive fix of the stale-cache class of bugs (B1).
-- **Memory cost**: the delta base is a permanent copy of every region - 4 MB for ZX-Evo RAM, up to 4.5 MB more for NeoGS, 1 MiB for MoonSound. A device region gets its delta base only when one of its pieces is first written, so an idle card costs nothing. Phase 4 reports it in the memory accounting.
-- Safety net in debug builds: every N-th capture compares the delta base with live memory for the clean pieces and asserts. Existing tests that write memory through raw pointers (`RAMPageAddress()`) without marking it dirty will trip this check (`2026-07-19-time-travel/phase-2-seek-engine.md:196-200`); they are found by running the suite once with the check on every capture and fixed to call `MarkRamPageEdited`.
+### 4.7 Step 6 — Device memory as regions, large memories first
 
-### 4.5 Step 4 — Copy-on-write reference table
+| Order | Device | Region(s) | Size | Dirty marking (write path) | Restore |
+|---|---|---|---|---|---|
+| 1 | NeoGS | `NeoGSRam`, `NeoGSFlash` | 2–4 MB, 512 KB | `NeoGSMemory::write`, `writeFlash` | copy; `onRestored` refreshes cached memory windows |
+| 2 | MoonSound | `MoonSoundWaveMemory` | up to 1 MiB | libopl4's own dirty bitmap (`Opl4::RamDirtyBitmap` / `ClearRamDirty`) | copy |
+| 3 | General Sound (classic) | `GeneralSoundRam` | 128–512 KB | `SoundChip_GeneralSound::writeMem` | copy; the GS blob keeps registers only (95 B) |
+| 4 | GS lightweight | `GeneralSoundUploadStore` | up to the card RAM | the player's store writes | copy; used size stays in the blob |
+| 5 | Sprinter | `SprinterVideoRam`, `SprinterFastRam` | 256 KB, 64 KB | the Sprinter memory write paths | copy |
+| 6 | VDAC2 (FT812) | graphics memory, display list, registers, command FIFO | 1 MB, 2 × 8 KB, 4 KB, 4 KB | the card's bus writes | through the device: computed registers (`REG_ID`, `REG_CLOCK`, ring pointers) and the display list rebuilt ([VDAC2 design](../2026-10-01-tsconf-vdac2/vdac2-integration-design.md) §9.3) |
+| 7 | ZX-Evo AVR | `EvoAvrEeprom` | 4 KiB (1 piece) | the EEPROM-window write | copy |
+| 8 | Scorpion SMUC | `SmucEeprom` | 2 KiB (1 partial piece) | the page commit on STOP | copy; the serial-link state goes into a SMUC blob |
 
-- A region's reference table is cut into **blocks of 8 pages**: 32 pieces, 8 × 4 slot ids = 128 B. Measured ([E3](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e3-reference-blocks/README.md)): table bytes 0.21 of v1 over all inputs, and on ZX-Evo 4,096 → 520 B per frame in memory and 280 B in the file. 16-page blocks give 0.26, 4-page blocks 0.22.
-- **Two levels, both shared.** A region's block table (one pointer per block) is itself copy-on-write: a checkpoint holds one pointer per region to its block table. A frame in which nothing changed costs one pointer per region in memory, independent of installed memory. A one-level design (one pointer per block in every checkpoint) would still grow with installed memory: 32 entries for ZX-Evo RAM at 8-page blocks, 16-32 more for NeoGS, and in the file it alone would exceed the PR-10 limit of 64 B per unchanged frame.
-- Capture clones a block only when one of its pieces got a **new slot id**, not merely a dirty bit: a dirty 16 KB page whose 4 KB pieces came out unchanged (the all-zero XOR fast path) clones nothing. Measured: 92.9% of dirty 16 KB pages have only one changed 4 KB piece (phase-5 results :73-80).
-- The block size is tuned with BM-3; the estimate in [target-architecture §3](target-architecture.md) is 8–16× less table memory at 1–2 dirty pages per frame.
-- Reference counting of slots does not change: a block holds one reference per slot id it contains, taken when the block is created and released when the block is freed. Sharing a block costs nothing.
-- **Branched histories** (FR-22): a branch's first checkpoint shares its parent's blocks, so Phase 1 adds nothing that assumes one straight timeline.
+- **Cost rule** (performance guidelines): the NeoGS, GS and MoonSound write paths run per card-CPU write. The hook is one bit-set behind the existing "recording" check: no work at all when nothing records, and an A/B benchmark (`core-benchmarks`, the card's frame benchmark) shows it within noise before it lands.
+- In shadow mode v1 still copies the GS RAM into its blob; the engine's region is checked against it by the oracle. NeoGS, MoonSound, VDAC2 and the EEPROMs are not in v1 files, so their regions are checked by round-trip tests (record, write, seek back, compare) and by live shadow runs.
+- With the device blobs still whole in Phase 1, the GS blob shrinks only in the engine: v1 keeps its own format.
 
-### 4.6 Step 5 — Device memory as regions
+### 4.8 What Phase 4 will serialize
 
-| Device | Region(s) | Notes |
+The engine has no file before Phase 4. Phase 1 fixes what the file must hold, so the file needs no new concepts: the region table (id u16, owner type u16, owner instance, pieces u32, bytes u32, name); the piece versions with their encoding, depth, base, CRC and payload; the reference blocks and region tables, each written once and referred to by later checkpoints; checkpoints with their parent; the frame table. Every field width is checked against the largest value it can hold (a one-byte `model_ram_pages` once turned 256 pages into 0).
+
+## 5. Performance
+
+| Path | Runs | Cost rule |
 |---|---|---|
-| General Sound (classic) | `GeneralSoundRam` | the blob keeps registers only |
-| GS lightweight | `GeneralSoundUploadStore` | used size in the blob |
-| MoonSound | `MoonSoundWaveMemory` | uses libopl4's dirty bitmap; completes MoonSound "Tier B" ([MoonSound TDD](../2026-09-13-moonsound/2026-09-13-0217-opl4-ttd-integration-tdd.md)) |
-| NeoGS | `NeoGSRam`, `NeoGSFlash` | flash writes are rare; its blob layout version increases (`TTD_LAYOUT`) |
-| ZX-Evo AVR | `EvoAvrEeprom` | 1 piece |
-| Scorpion SMUC | `SmucEeprom` | 1 partial piece; the serial-link state (mode, shift register, address, page buffer) goes into a new SMUC blob next to the existing `Ds12887` one |
+| Capture | once per frame | follows the number of changed pieces, not installed memory (BM-8); p99 ≤ 3× the median (PR-3) |
+| Device write hooks | per card-CPU write | one gated bit-set, A/B benchmark required |
+| Optional streams | once per frame | one bitmask check when all are off |
+| Shadow call in v1 | once per frame | one pointer check when no engine is attached |
+| Restore | per seek | follows the pieces that differ (Step 5) |
 
-Not regions:
-- TSConf: its main RAM is machine RAM, and CRAM / SFILE stay in its 2 KB blob.
-- ZX-Poly: each of the four members records its own machine RAM, as today.
+Measured by the benchmark matrix with both engines: bytes and counted work are deterministic and go in the CI gate; times are measured on an idle host (load < 12), twice.
 
-### 4.7 Step 6 — Restore only the pieces that differ
+## 6. Tests
 
-Today a seek writes every piece of memory into live RAM (TTM:1532-1574). On ZX-Evo memory restore takes 765-785 µs at p50, the largest part of a seek (Phase 0, Step 2, BM-6), although two nearby positions differ in a handful of pieces. Measured ([E4](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e4-restore-differences/README.md)):
-- **about 550 of those 760 µs is writing zeros**: v1's baseline stores every piece, all-zero ones as Zero slots, and ZX-Evo at the BASIC prompt has 1,003 all-zero pieces out of 1,024;
-- restoring only differing pieces: an estimated **~145 µs** on ZX-Evo (5×) and 34 µs on Pentagon 1024. A fully used 128K machine saves about a third, because the pieces that differ are the busy ones with the longest chains.
-
-- Each region keeps a **live slot map**: for every piece, the slot id whose content is in live memory now. It is set by a capture (the piece's new slot) and by a restore (the target's slot).
-- A write after that point makes the piece's map entry unknown. The region's dirty bits already say which pieces were written, so no new tracking is needed.
-- Restore decodes a piece only if its target slot id differs from the live map, or if the piece was written since; every other piece already holds the right bytes.
-- Expected effect: restore cost follows the difference between the two positions, not installed memory. A seek one frame back on ZX-Evo decodes about as many pieces as that frame changed.
-- Guard: the corpus and state-completeness tests compare full memory after restore, so a wrongly skipped piece fails them. A debug-build mode decodes everything and compares.
-
-### 4.8 Step 7 — Encode a changed piece once
-
-`InternXor` compresses both the XOR difference and the full piece and keeps the smaller (PS.cpp:73-181). The full compression costs 8.6 µs against 0.96 µs for the XOR on real data and almost never wins: mean stored XOR piece 39-93 B, full about 1.4 KB (phase-5 results :1387-1392; `ttd-v1-architecture-and-format.md:958-981`).
-
-- Compress the XOR first. Compress the full piece only when the XOR result is larger than **128 bytes**, and keep the smaller. Measured on 70,283 real changes ([E2](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e2-encode-once/README.md)): the full piece wins in 5% of changes; at T = 128 the full compression is skipped for 83% of changes, encoding takes 0.28 of the v1 time, and stored bytes grow by 0.07%. 1 KB would cost 3.7% bytes for little more speed.
-- A piece the chain limit forces to Full is compressed once, as Full.
-- Expected effect: the cost per changed piece drops several-fold, which sets the slope of BM-8 (PR-4).
-- Bytes: identical whenever the XOR is below the threshold; the matrix comparison shows the rest.
-
-### 4.9 File format
-
-Amended in place (the versioned format comes in Phase 5); `ttd.ksy`, the Python analyzer and `testdata/ttd/README.md` change with it:
-
-- the header gains the **region table**: id u16, owner u8, pieces u32, bytes u32, name (u8 length + bytes). Every field width is checked against the largest possible value before the format is fixed: the one-byte `model_ram_pages` once turned 256 pages into 0 (`2026-07-19-time-travel/phase-S1-session-serialization.md:267-274`);
-- checkpoints lose `frameKind` / `keyFrameAnchor`;
-- references are written as **blocks**: a block section holds each distinct block once (block index u32); each checkpoint lists only what changed since the previous checkpoint - (region, block position, block index) triples - and the reader rebuilds the tables going forward. An unchanged frame writes a zero count (PR-10). The first checkpoint and every checkpoint after a baseline list all blocks;
-- device blobs change as listed in §4.6;
-- the fixture corpus and the CI gate baseline are re-recorded once, at the end of the phase.
-
-### 4.10 What does not change
-
-- The public API: every WebAPI route, CLI command, MCP tool and Lua/Python function keeps working (QR-8). Phase 1 adds no new automation fields; memory accounting per region comes in Phase 4.
-- Dirty tracking of machine RAM stays at 16 KB.
-- The stored codec stays as it is: Full / XorPrev / Zero, zstd level 1, CRC32C per piece, reference counting. Only the encoder's choice changes (Step 7).
-- Not adopted, with the measurement behind it: content deduplication across pieces (4% hit rate, turned off; phase-5 results :22, :235, :413); 4 KB dirty tracking and a fast "hot tier" (target-architecture §3).
-
-## 5. Tests
-
-Every new test is checked by mutation: it must fail when the mechanism it guards is removed.
+Every test is checked by mutation: it must fail when the mechanism it guards is removed.
 
 | Step | Test | Proves |
 |---|---|---|
-| 1 | Region round trip per device: write device memory, record, seek back past the write | old contents come back (GS, upload store, MoonSound, NeoGS, both EEPROMs) |
-| 1 | State-completeness test extended to regions | every registered region is restored on every creatable model |
-| 1 | Session file round trip with regions | save / load restores every region byte for byte |
-| 2 | A piece changed every frame is stored Full exactly when its chain reaches K | the limit works per piece |
-| 2 | Benchmark workloads: forced Full stores per frame stay at the E1 bound (≤ 4) | no synchronized spike |
-| 2 | Pieces that never change stay at depth 0 and are never re-stored | cost follows change |
-| 3 | Delta base equals live memory after capture, seek, resume and load | the delta base invariant |
-| 3 | Mutation: skip the dirty-piece refresh → the test fails | the guard is real |
-| 4 | Consecutive checkpoints with one dirty page share all but one block | copy-on-write works |
-| 4 | Block reference counts after releasing checkpoints | no leak, no early free |
-| 4 | An unchanged frame adds one pointer per region in memory and a zero count in the file | cost does not follow installed memory |
-| 6 | Seek one frame back decodes only the pieces that frame changed; seek after replay decodes the pieces the replay wrote | restore follows the difference |
-| 6 | Mutation: treat every piece as equal → the corpus test fails | the guard is real |
-| 7 | Small XOR difference: full compression not run; large difference: the smaller result kept | encode once |
+| 1 | Oracle on the fixture corpus and the real-use sessions: every checkpoint, every region, CPU, chipset, device blobs | the engine restores what v1 restores |
+| 1 | Frame table: variable frame lengths, `FrameAt` at every boundary | no fixed frame length is assumed |
+| 1 | Optional stream off: the frame-boundary path calls nothing | zero cost when off |
+| 2 | Piece store: unchanged content adds a reference, not a version; all-zero content gives Zero | change stored once |
+| 2 | A piece changed every frame is stored Full exactly when its depth reaches K; K is a parameter | the chain limit per piece |
+| 2 | Small XOR: one compression call; large XOR: both, the smaller kept | encode once (T) |
+| 2 | Payload bytes per region equal E6's model for the same session, byte for byte | the model and the code agree |
+| 2 | Arena: chunk returned when its last payload is released; no heap allocation per payload | exact-size storage |
+| 2 | Forced Full versions per frame stay at the E1 bound (≤ 4) on the benchmark workloads | no synchronized spike |
+| 3 | Consecutive checkpoints with one dirty page share all but one block | copy-on-write works |
+| 3 | An unchanged frame adds one pointer per region | cost does not follow installed memory (PR-10) |
+| 3 | Reference counts after releasing checkpoints: no leak, no early free | sharing is safe |
+| 3 | A checkpoint's parent chain reaches the session start | branches are possible |
+| 4 | Shadow mode: every live frame of the benchmark workloads restores identically from both engines | live capture matches v1 |
+| 4 | Delta base equals live memory after capture, seek, resume and load; mutation: skip the refresh → fails | the delta-base invariant |
+| 4 | No engine attached: v1's capture work and bytes unchanged (CI gate) | v1 unaffected |
+| 5 | Seek one frame back decodes only the pieces that frame changed | restore follows the difference |
+| 5 | Mutation: treat every piece as equal → the oracle fails | the guard is real |
+| 6 | Per region: write device memory, record, seek back past the write, compare | each device region restores exactly |
+| 6 | VDAC2: computed registers and the display list are right after a restore | restore through the device |
+| 6 | A/B benchmark of each card's write hook, recording off | the hooks cost nothing when off |
+| all | D33 on the whole matrix: file-equivalent bytes, memory and counted capture work not larger than v1's in any case | the engine beats v1 |
 
-Existing tests that change because the key frame goes away (`ttdformatv2_test.cpp` `IFrame_*` / `PFrame_*`, `ttdfullrestore_test.cpp` `KeyFrame_*`, `ttdseekexhaustive_test.cpp` `Setup_RecordsSessionSpanningTwoKeyFrames`) are rewritten around the chain length limit, keeping what they proved: a seek anywhere restores exactly.
+## 7. Order of work
 
-**Regression guards for the whole phase** ([README §2](README.md#phase-1--memory-that-costs-only-what-changes)):
-- `TTD_Corpus_Test` compares RAM after restore and replay;
-- `TTDBench_Test` gate, with the baseline re-exported and every byte change explained;
-- the full benchmark matrix against the Phase 0 baseline: no metric worse by more than 5% on configurations without device memory, and BM-8 / PR-3 met everywhere;
-- the full `core-tests` suite with zero warnings.
+Each step lands as its own commits and passes the full gate (zero warnings, `core-tests`, CI gate); v1 keeps running the emulator throughout.
 
-## 6. Order of work
+1. **Step 1** — skeleton, feeder, oracle, benchmark engine. The engine stores pieces naively at first (every changed piece Full) so the oracle and the comparison exist before the clever parts.
+2. **Step 2** — piece store: chains, K, T, arena. The engine's bytes now follow E6.
+3. **Step 3** — regions and the reference table.
+4. **Step 4** — live capture in shadow mode, delta base.
+5. **Step 5** — restore only the pieces that differ.
+6. **Step 6** — device regions, one device per commit, in the order of §4.7.
+7. Phase check: D33 on the matrix, the results document, the baseline stored for Phase 2.
 
-Each step lands as its own commits, and each commit passes the full gate:
-
-1. **Step 3** (delta base) first: smallest, and it removes the 4 MB copy on its own.
-2. **Step 7** (encode once): local to the page store, no format change.
-3. **Step 2** (chain length limit): removes the key frame; file change (`frameKind`).
-4. **Step 6** (restore only differing pieces): restore path only, no format change.
-5. **Step 4** (copy-on-write table): file change (blocks).
-6. **Step 1** (regions, machine RAM as region 0): file change (region table). No device regions yet, so behavior and bytes stay the same apart from the format.
-7. **Step 5** (device regions), one device per commit: GS, GS lightweight, MoonSound, NeoGS, EEPROMs.
-8. Re-record fixtures, re-export the CI baseline, run the full matrix, store it as the Phase 1 baseline, write the results document.
-
-The order 3 → 7 → 2 → 6 → 4 → 1 → 5 keeps every intermediate state a complete, working engine. Implementation order differs from the step numbers, which follow the roadmap.
-
-## 7. Risks and open questions
+## 8. Risks and open questions
 
 | Risk / question | Plan |
 |---|---|
-| K too large: seek decode gets slow on busy pieces; too small: more Full stores | Start at 50 (today's 49-link bound); pick the final value from BM-5 against BM-8 |
-| A write path that bypasses the dirty bit (a new device, a tool edit) leaves the delta base stale | Debug-build comparison (§4.4); the state-completeness test covers every region |
-| GS / NeoGS write hooks cost time on the card CPU's hot path | One gated bit-set; A/B benchmark required before landing (performance guidelines) |
-| Region ids collide with another branch | Fixed table, first to master takes the number (same rule as `PeripheralId`) |
-| 8-page blocks are wrong for some device region | Per-region block size; E3 found idle device memory cheap at any size thanks to the second level |
-| The file grows a block section that older readers cannot read | Amended in place: old files are re-recorded, as with every amendment so far; versioning comes in Phase 5 |
-| Without key frames a damaged Full piece spoils every checkpoint until that piece changes again; key frames used to bound the damage to 50 frames (phase-5 results :358-367) | Recorded as an input for the integrity decision (Phase 4, Step 1); CRC32C per piece still detects it |
-| Experiment figures are simulations on recordings, not the implemented engine | The benchmark matrix checks them after implementation: BM-6 memory restore on ZX-Evo expected ~150 µs (E4), table and payload bytes per frame (E1, E3), capture cost per changed piece (E2) |
+| K too large makes seeks on busy pieces slow; too small stores more Full versions | Start at 50 (v1's own bound); pick the final value from BM-5 against BM-8 after Step 5 (E1) |
+| A write path that bypasses the dirty bit (a new device, a tool edit) leaves the delta base stale | Debug-build comparison; the oracle and the round-trip tests per region |
+| Card write hooks cost time on the card CPU's hot path | One gated bit-set; A/B benchmark before landing |
+| The feeder sees only frame boundaries, not what happened inside a frame | Phase 1 compares frame boundaries; points inside a frame are compared from Phase 3, when events are recorded |
+| Without key frames a damaged Full version spoils every checkpoint until the piece changes again | Recorded as an input for the integrity decision (Phase 4, Step 1); the CRC per version detects it; dependencies give the damaged range (D5) |
+| Region ids collide with another branch | Fixed table, the first change to reach master takes the number |
+| v1 files lack NeoGS, MoonSound, VDAC2 and EEPROM memory | Those regions are checked by round-trip tests and live shadow runs, not by the feeder |
 
-## 8. Sources and what was not carried over
+No question needs the user's decision before Step 1.
 
-- Code: master `99467101` (references above).
-- Phase 0 measurements: [v0b-benchmark-results.md](v0b-benchmark-results.md).
-- Codec and change statistics: `docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md` (0.98-1.19 dirty 16 KB pages per frame, 651-810 changed bytes per frame, 92.9% of dirty pages with one changed 4 KB piece, encode / decode times), `docs/emulator/design/debugger/time-travel-debug/ttd-v1-architecture-and-format.md` (piece sizes on the fixtures, chain depth, full-capture speed).
-- POC 011 (`tools/poc/011-ttd-v2-capture-analysis/`): kept its reference-index measurements (a sparse per-frame index of dirty pages, 36 B + 4 B per dirty page; `knowledge/v2-index-overhead.md`), which shaped the two-level table and the sparse file records of Step 4. **Not carried over**:
-  - its "model scalability" numbers: the benchmark always booted a Pentagon and only varied the number of written pages (`benchmarks/ttd_v2_model_scalability_bench.cpp:62`), so they are not measurements of 4 MB or TSConf machines;
-  - its "v1 vs v2" gains, measured against a format that stores the whole machine every frame, not against the shipped engine;
-  - per-untouched-page back-references and content hashing (`knowledge/ttd-v2-design.md:292-309`): they grow with installed memory;
-  - batching several pieces per compression call (its own audit contradicts itself on the effect);
-  - its General Sound write rates, which contradict each other; the GS region relies on the measured write hook instead.
+## 9. Sources
 
+- Code: master `8ddaf708e` (references above).
+- Measurements: [v0b-benchmark-results.md](v0b-benchmark-results.md); experiments [E1](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e1-chain-limit/README.md) (K), [E2](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e2-encode-once/README.md) (T), [E3](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e3-reference-blocks/README.md) (blocks), [E4](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e4-restore-differences/README.md) (restore), [E5](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e5-heap-split/README.md) (where memory goes), [E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e6-v1-v2-model/README.md) (the engine modeled on real sessions).
+- Device memory and write paths: the earlier version of this design (git history of this file, 2026-10-01), the [MoonSound TTD design](../2026-09-13-moonsound/2026-09-13-0217-opl4-ttd-integration-tdd.md), the [VDAC2 integration design](../2026-10-01-tsconf-vdac2/vdac2-integration-design.md), the Sprinter TTD outcome (`../2026-09-28-sprinter/s7-ttd-outcome.md`).
+- Not carried over from POC 011: its model-scalability numbers (always a Pentagon), its "v1 vs v2" gains (against a format storing the whole machine every frame), per-untouched-page back-references and content hashing (they grow with installed memory), batching several pieces per compression call.

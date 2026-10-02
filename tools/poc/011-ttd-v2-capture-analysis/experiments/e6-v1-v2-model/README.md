@@ -52,23 +52,23 @@ Full tables, per stream and per session: [results.md](results.md).
 
 | Session | v1 memory | v2 memory | v1 file | v2 file |
 |---|---|---|---|---|
-| Pentagon 128, BASIC prompt | 23.8 | 6.4 | 3.9 | 3.2 |
-| Pentagon 128, game | 192.9 | 35.1 | 32.8 | 30.0 |
-| 7th Reality | 96.8 | 15.7 | 17.5 | 12.2 |
-| Across the Edge | 211.5 | 32.3 | 32.5 | 27.8 |
-| Eye Ache | 195.9 | 41.4 | 35.0 | 36.9 |
-| ZX-Evo, BASIC prompt | 100.7 | 9.9 | 24.0 | 5.9 |
+| Pentagon 128, BASIC prompt | 23.8 | 5.2 | 3.9 | 2.0 |
+| Pentagon 128, game | 192.9 | 33.9 | 32.8 | 28.8 |
+| 7th Reality | 96.8 | 14.6 | 17.5 | 11.0 |
+| Across the Edge | 211.5 | 31.2 | 32.5 | 26.6 |
+| Eye Ache | 195.9 | 40.3 | 35.0 | 35.7 |
+| ZX-Evo, BASIC prompt | 100.7 | 8.6 | 24.0 | 4.6 |
 
 **Five minutes of recording, MB held at the end:**
 
 | Session | v1 memory | v2 memory | v1 file | v2 file |
 |---|---|---|---|---|
-| Pentagon 128, BASIC prompt | 104 | 19 | 19 | 16 |
-| Pentagon 128, game | 683 | 137 | 76 | 131 |
-| 7th Reality | 198 | 33 | 60 | 30 |
-| Across the Edge | 350 | 58 | 66 | 53 |
-| Eye Ache | 539 | 188 | 81 | 183 |
-| ZX-Evo, BASIC prompt | 489 | 36 | 120 | 29 |
+| Pentagon 128, BASIC prompt | 104 | 13 | 19 | 10 |
+| Pentagon 128, game | 683 | 131 | 76 | 125 |
+| 7th Reality | 198 | 28 | 60 | 24 |
+| Across the Edge | 350 | 52 | 66 | 47 |
+| Eye Ache | 539 | 182 | 81 | 177 |
+| ZX-Evo, BASIC prompt | 489 | 30 | 120 | 23 |
 
 v1's journal ring is full after 0.8–3.2 minutes on the active sessions. From then on, v1's memory and file keep only the last 8.4 million writes (under the last minute of Eye Ache), while v2 keeps the whole history. Where v2's file is larger (game, Eye Ache), it holds more.
 
@@ -81,13 +81,14 @@ v1's journal ring is full after 0.8–3.2 minutes on the active sessions. From t
 
 ## Analysis
 
-- **v2 memory is 3–14× smaller than v1.** The largest single cause is not a v2 mechanism: v1 allocates every stored piece and coverage block at `ZSTD_compressBound` (E5). Exact-size payloads alone take most of it.
+- **v2 memory is 3–16× smaller than v1.** The largest single cause is not a v2 mechanism: v1 allocates every stored piece and coverage block at `ZSTD_compressBound` (E5). Exact-size payloads alone take most of it.
 - **Memory pieces, v2:** 0.2–3.5 MB per minute against 13–93 MB in v1. Storing each change once (no key frames) halves the stored bytes (E1). Exact allocation removes the rest.
 - **The write journal decides everything else.**
   - 870–3,500 memory writes per frame on the demos and the game, 2.5–3.4 bytes per write compressed: 7–31 MB per minute in v2, in memory and in the file.
   - It is most of the v2 file on every active session, and it grows without a bound once the history is kept whole, which v1's ring does not do.
   - Phase 4 has to decide what to keep. The deciding fact is that the journal is reproducible: with the inputs recorded (sealed replay), re-running a frame regenerates its writes exactly. It could be kept only near the current position, or regenerated on demand.
-- **Device state is a constant 2 MB per minute,** and only partly reduced by v2. Every frame changes the state of the default cards: the MoonSound, NeoGS and TurboSound FM blobs (386, 191 and 189 bytes) carry timers and counters. They change although no music plays. Storing the XOR of a changed blob saves only a quarter. Phase 2 should store the fields that changed, and treat counters that advance with time as derived from time, not as state.
+- **Device state costs 2.7 MB per minute in v1 at any content, 0.8–0.9 MB in v2.** Every frame changes the state of the default cards: the MoonSound, NeoGS and TurboSound FM blobs (386, 191 and 189 bytes) carry timers and counters, which change although no music plays. Storing the compressed XOR of the decoded state removes two thirds. Phase 2 stores the fields that changed and treats counters that advance with time as derived from time, which takes most of the rest ([Phase 2 TDD](../../../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-2-device-state-tdd.md)).
+  *Corrected 2026-10-02:* the first version of the model XOR'd the stored, mostly compressed blobs instead of the decoded state, and reported 2.0–2.1 MB per minute for v2. The tables above are the corrected run.
 - **Reference tables:** v2 removes them on large machines (ZX-Evo 12.3 → 1.6 MB per minute in memory, 0.8 in the file). On 128 KB machines they are 0.4 MB either way.
 - **Seeks get longer chains:** up to 12 links per piece on average at 5 minutes, against v1's at most 5. E4 measured about 60 µs for a busy piece at depth 49. With Step 6 (restore only differing pieces) that stays far inside the 5 ms budget, but it is the price of the K = 50 saving and is measured, not assumed.
 
@@ -103,5 +104,5 @@ v1's journal ring is full after 0.8–3.2 minutes on the active sessions. From t
 1. **Fix the v1 allocation first.** Exact-size payloads release half or more of a recording's memory today, independent of v2. Done: 15–68% less memory on every benchmark case, bytes unchanged ([E5, Follow-up](../e5-heap-split/README.md#follow-up-the-fix)). The v1 column above is the memory before that fix.
 2. **v2 Phase 1 then removes most of what remains of memory pieces and reference tables.** The numbers support its design as is: K = 50, T = 128, 8-page blocks.
 3. **The write journal is the next design decision, before Phase 4.** It is the largest stream in memory and in the file on any active session. Next experiment: what keeping the journal only for a window around the current position, and regenerating the rest by replay, would cost.
-4. **Phase 2 has to treat free-running device counters as derived from time.** Otherwise idle cards cost 2 MB per minute forever.
+4. **Phase 2 has to treat free-running device counters as derived from time.** Otherwise idle cards cost 0.8–0.9 MB per minute forever.
 5. **This model is the reference for the C++ v2.** A standalone v2 fed with these sessions frame by frame has to match these bytes, and restore every frame bit-exact against v1.

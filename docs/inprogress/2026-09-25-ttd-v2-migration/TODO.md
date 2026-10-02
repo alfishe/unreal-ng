@@ -1,66 +1,78 @@
 # TODO — TTD v1 → v2 migration
 
-Status: **Phase 0 done, Phase 1 next.** Roadmap (what each phase does, why, how it is checked): [README.md](README.md); step details: [migration-trajectory.md](migration-trajectory.md); requirements: [requirements.md](requirements.md). Until 2026-10-01 the steps were numbered V0…V6 ([README §5](README.md#5-former-step-names)).
+Status: **Phase 0 done, Phase 1 next.** v2 is a new engine, `ttd::TimeTravelEngine`, built next to v1 and checked against it ([engine-approach-and-naming.md](engine-approach-and-naming.md)); decisions D1–D33 in [engine-decisions.md](engine-decisions.md). Roadmap: [README.md](README.md); where the earlier steps went: [README §5](README.md#5-former-step-names).
 
-Awaiting user decisions (migration-trajectory §6): default memory budget / disk mode, storage-mode switching, integrity and versioning mechanism ([integrity-and-versioning.md](integrity-and-versioning.md), open, due in Phase 4, Step 1). None of them blocks Phase 1. Settled 2026-09-28: option B vs A (all three branches merged before Phase 1, so A happened; Phase 1 now fixes the GS whole-RAM checkpoint blob); the MoonSound port-claim model is design debt tracked in the [MoonSound TODO](../2026-09-13-moonsound/TODO.md), not a Phase 1 prerequisite.
+After every phase: the quality bar of D33 on the whole benchmark matrix (identical restores; file size, memory and capture work not larger than v1's in any case, for the same history kept; seek time within PR-5).
+
+Still open for the user: the default memory budget (Phase 4) and the integrity and versioning mechanism ([integrity-and-versioning.md](integrity-and-versioning.md), Phase 4, Step 1). Neither blocks Phase 1.
 
 ## Phase 0 — Preparation (done)
 
-- [x] Step 0 of the merge strategy: `PeripheralId` table + notification enum on master - **done** (checked 2026-09-28): ids 5 GS, 9 ProfiPaging, 10 MoonSound, 11 GS-LW, 12 NeoGS in `ttdserializable.h`, `ttd.ksy` and the analyzer (later ids 13-15 appended the same way); audio-activity enum GS = 6, MoonFM = 7, MoonPCM = 8 in `notifications.h`; the branch fast-forward is moot (profi, generalsound, moonsound merged)
-- [x] Step 1 — Make v1 honest - **done 2026-09-28** (B7-B10, FR-3 with TR-DOS, FR-4, analyzer bookmarks; ~~page-255 gap~~ done 2026-09-27, suspected bugs with tests — ~~B1 B2 B3 B5~~ fixed `a2d265df`/`86813dcb`, ~~B4~~ fixed 2026-09-28 (top-clock TTD time), ~~F3 feature-flag side effect~~ done `005771c8`, analyzer fixes)
-- [x] Step 2 — Benchmark harness - **done 2026-09-29** ([results](v0b-benchmark-results.md)): harness `core/src/debugger/ttd/bench/`, matrix `TTDMatrix/*` in core-benchmarks, compare script `tools/verification/ttd-bench/`, CI gate `TTDBench_Test` replaces `TTD_Capture_Cost_Gate_Test`, v1 baselines in `testdata/ttd/bench/`
-- [x] Step 3 — Merge the feature branches - **done**: `profi`; `generalsound` (GS RAM as a region moves into Phase 1); `moonsound` (`e18f3a29`; left over: automation (PLAN #11), port-claim unification (design debt, MoonSound TODO), wave memory as a region (Phase 1))
-- [x] ~~Step 4 — Checkpoints inside a frame~~ - **dropped** (Step 2, 2026-09-29): seek p99 ≤ 3.5 ms on the heaviest turbo configuration over a 10-minute session. The part above 5 ms is drawing the full frame of the position after the seek (intended), which in-frame checkpoints do not shorten
+- [x] Step 0 of the merge strategy: `PeripheralId` table and notification enum on master
+- [x] Step 1 — Make v1 honest (done 2026-09-28)
+- [x] Step 2 — Benchmark harness (done 2026-09-29, [results](v0b-benchmark-results.md))
+- [x] Step 3 — Merge the feature branches
+- [x] ~~Step 4 — Checkpoints inside a frame~~ (dropped 2026-09-29)
+- [x] Since: experiments E1–E6 ([POC 011](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md)); v1 stores compressed data at its exact size (`67e5aff28`)
 
-## Phase 1 — Memory that costs only what changes
+## Phase 1 — Engine core: memory that costs only what changes
 
 Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 
-- [ ] Step 1 — Memory regions (machine RAM = region 0, region table, registry API)
-- [ ] Step 2 — Chain length limit per piece (replaces the 50-frame key frame)
-- [ ] Step 3 — Delta base for changed pieces only
-- [ ] Step 4 — Copy-on-write page reference table
-- [ ] Step 5 — Device memory as regions: General Sound RAM and lightweight upload store, MoonSound wave memory, NeoGS memory, device EEPROMs
-  - [ ] Device EEPROMs (2026-09-30): the ZX-Evo AVR's 4 KiB EEPROM (`EvoAvr`) and the Scorpion SMUC's 2 KiB LC16 serial EEPROM (`SMUCNvram`), the latter together with its serial-link state (mode, shift register, address, page buffer). Today neither is in a checkpoint: a seek back past a guest write keeps the newer contents. Not added to the v1 blobs, which store every device blob whole in every checkpoint (+4 / +2 KiB per frame for data the guest writes rarely); in a region only a change costs anything
-- [ ] Step 6 — Restore only the pieces that differ (a seek decodes all memory today: 765–785 µs on ZX-Evo)
-- [ ] Step 7 — Encode a changed piece once (today: compressed as XOR and as full, the full almost never wins)
+- [ ] Step 1 — Engine skeleton and verification: `TimeTravelEngine`, machine time, frame table, positions with a branch, optional streams; v1 file reader; the oracle against v1; both engines in the benchmark
+- [ ] Step 2 — Piece store: change stored once, encoded once (T = 128 B), chain limit per piece (K = 50), arena with exact sizes, dependencies, shareable by sessions
+- [ ] Step 3 — Regions and the copy-on-write reference table (8-page blocks, two levels, parent link)
+- [ ] Step 4 — Live capture next to v1, delta base for changed pieces only
+- [ ] Step 5 — Restore only the pieces that differ
+- [ ] Step 6 — Device memory as regions, large memories first: NeoGS RAM and flash, MoonSound wave memory, General Sound RAM and upload store, Sprinter video RAM, VDAC2 graphics memory; then the ZX-Evo AVR and Scorpion SMUC EEPROMs
+- [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model
 
 ## Phase 2 — Device state with versions
 
-- [ ] Step 1 — Device table with layout versions
-- [ ] Step 2 — Unchanged device state shared
+Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
+
+- [ ] Step 1 — Device registry: type id u16 + instance name, layout version, restore order, firmware fingerprint
+- [ ] Step 2 — Unchanged state shared, changed fields only, time-derived counters
 - [ ] Step 3 — Degraded restores reported on every surface
-- [ ] Step 4 — Sound devices on the device contract
+- [ ] Step 4 — Sound devices on the contract; device-set changes as timeline events
 
-## Phase 3 — Everything a replay needs, in the file
+## Phase 3 — Everything a replay needs
 
-- [ ] Step 1 — Input and external events in the file - **pulled forward** by the offline-analysis program: not saved today (verified 2026-09-29); see [ttd-offline-analysis.md](../2026-09-28-debugger-family/ttd-offline-analysis.md) O-1
-- [ ] Step 2 — Configuration fingerprint
-- [ ] Step 3 — Reset and debugger-edit markers
-- [ ] Step 4 — Emulated clock for RTC / CMOS
-- [ ] Step 5 — No writes outside the session while replaying
-- [ ] Step 6 — Isolation beyond port reads (DMA, interrupt vectors)
-- [ ] Step 7 — Media identity per session (2026-09-28): storage in TTD v2 through the unified media manager (PLAN #58, [technical design](../2026-09-28-storage-manager/technical-design.md)): media identity per session, the journaled session layer (manager phase M7). Requirements: roadmap [§6 ST-1…ST-6](../2026-09-21-roadmap/01-roadmap-and-machine-state.md). TTD v1 stays media-agnostic (port-level recording)
+Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 
-## Phase 4 — Memory budget
+- [ ] Step 1 — One event stream (input, external events, markers, port reads, bus data, DMA, network)
+- [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
+- [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
+- [ ] Step 4 — Configuration fingerprint and media versions
+- [ ] Step 5 — Emulated real-time clocks
+- [ ] Step 6 — No writes outside the session during replay
+- [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)
 
-- [ ] Step 1 — Integrity and versioning decision written (prerequisite)
-- [ ] Step 2 — Real memory accounting
-- [ ] Step 3 — Budget, releasing the oldest frames
-- [ ] Step 4 — Clean stop when TTD or debug mode is switched off
+## Phase 4 — The session file
 
-## Phase 5 — Versioned file and disk mode
+Design: [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md).
 
-- [ ] Step 1 — Chunked container with the decided integrity mechanism
-- [ ] Step 2 — Disk mode
-- [ ] Step 3 — Format description and analyzer for chunks
-- [ ] Step 4 — Write-journal coverage window
-- [ ] Step 5 — Stream ids reserved for branched histories (FR-23)
+- [ ] Step 1 — Integrity and versioning decision
+- [ ] Step 2 — Written as it records: append-only, background writer, crash-safe
+- [ ] Step 3 — Memory as a cache: budget, eviction with rebasing, read-back on seek, accounting
+- [ ] Step 4 — Optional frame-boundary streams in the file (screenshot first)
+- [ ] Step 5 — v1 files read into the engine's format
+- [ ] Step 6 — `ttd.ksy` and the Python analyzer
+
+## Phase 5 — Switch the emulator to the engine
+
+Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
+
+- [ ] Step 1 — The emulator and every surface on the engine; clean stop on TTD / debug mode off
+- [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events
+- [ ] Step 3 — Black-box setting in unreal-qt (off for automation); session file location in the UI, default `scratch/ttd/`
+- [ ] Step 4 — v1 only in the verification tools
 
 ## Phase 6 — Cleanup
 
-- [ ] Retire the proof-of-concept readers, TDD truth pass, re-enable the long seek test, move this folder to DONE
+- [ ] Delete `TimeTravelManager` (keep the v1 file reader for verification), retire the proof-of-concept readers, TDD truth pass, move this folder to DONE
 
-## Across phases
+## Later
 
-- [ ] Branch readiness (FR-22 … FR-24, proposed 2026-09-29): no linear-timeline assumption in Phases 1–4; stream ids for branches reserved in Phase 5, Step 5. Branches themselves: PLAN #76 ([design](../2026-09-29-model-what-if/design.md))
+- [ ] Branch operations in the UI: PLAN #76 ([design](../2026-09-29-model-what-if/design.md))
+- [ ] Groups of machines (ZX-Poly) over a shared piece store (D22)
