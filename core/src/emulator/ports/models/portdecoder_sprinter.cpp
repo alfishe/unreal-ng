@@ -46,6 +46,11 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
+
+    // The Covox-Blaster: its half-ring INT is a PLD source (vector #FF); SoundManager mixes it
+    _intSource.SetCovoxBlaster(&_cbl);
+    if (_context->pSoundManager)
+        _context->pSoundManager->attachModelAudioSource(&_cbl);
     // A video RAM byte that changes the picture: the beam is drawn up to now with the old one first
     _vram.SetBeforeChangeListener([this]() { CatchUpScreen(); });
 
@@ -89,6 +94,9 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    if (_context->pSoundManager)
+        _context->pSoundManager->detachModelAudioSource(&_cbl);
+
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_input)
         _context->pKeyboard->SetPs2Sink(nullptr);
 
@@ -204,7 +212,7 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     _pld.fdcHd = 0;
     _pld.fdcOff = 0;
     ApplyFdcDensity();
-    _cblControl = 0;
+    _cbl.Reset();
     _dcpOpenedFrame = -1;
 
     _intSource.Reset();
@@ -725,6 +733,26 @@ void PortDecoder_Sprinter::ApplyFdcDensity()
     }
 }
 
+uint32_t PortDecoder_Sprinter::BaseTstate() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return 0;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+    return z80->t / multiplier;
+}
+
+void PortDecoder_Sprinter::OnCblPageWrite(uint16_t addr, uint8_t value)
+{
+    // SP2_1K30.TDF CBL_WR: DECODE.PAGE = #FD on a memory write, enabled by CBL_INT_ENA & ACC.ACC_DIR1 (the copy
+    // modes; the CPU's own store in such a mode counts too). MAME takes every accelerator copy, INT or not
+    if (!_cbl.AcceptsPageWrites() || !_activeAccelerator)
+        return;
+    if (!(_activeAccelerator->State().dir & SprinterAccelerator::kDirBuffer))
+        return;
+    _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(addr >> 8));
+}
+
 /// The standard configuration's reads (hardware-reference §4.3; MAME dcp_r)
 uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
 {
@@ -747,7 +775,8 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             return _rtc.ReadData();
 
         case SprinterCode::Keyboard:
-            return Default_Port_FE_In(port, _pc);
+            // CBL on: bit 7 = the half of the ring that needs data, bit 5 = the beam below line 272
+            return _cbl.ApplyFeBits(BaseTstate(), Default_Port_FE_In(port, _pc));
 
         case SprinterCode::AyRead:
             return PeripheralPortIn(0xFFFD);
@@ -756,7 +785,7 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             return Default_Port_KempstonMouse_In(port, _pc);
 
         case SprinterCode::CovoxBlaster:
-            return _cblControl;
+            return _cbl.State().control;
 
         default:
             break;
@@ -825,9 +854,11 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
 
         case SprinterCode::Covox:
-            return;  // Covox / Covox-Blaster samples: phase S6
+            // Port #FB / #4F: the Covox DAC, or the next ring entry (INT off: entry ~A15..A8, so OTIR fills in order)
+            _cbl.WriteData(BaseTstate(), value, static_cast<uint8_t>(port >> 8));
+            return;
         case SprinterCode::CovoxBlaster:
-            _cblControl = value;
+            _cbl.WriteControl(BaseTstate(), value);
             return;
 
         case SprinterCode::RomPage:
@@ -956,7 +987,7 @@ std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
     // serial mouse streams, the video RAM and the fast RAM (whole-array blobs until TTD v2 memory regions)
     std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887,
                                           ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
-                                          ttd::PeripheralId::SprinterInput};
+                                          ttd::PeripheralId::SprinterInput, ttd::PeripheralId::SprinterCovoxBlaster};
     if (_context->pBetaDisk)
         ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
     if (_sprinterMemory)
@@ -972,6 +1003,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateT
     serializers.push_back(std::make_unique<ttd::TTDSprinterPld>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterZ84>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterInput>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterCovoxBlaster>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
     if (_sprinterMemory)
         serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));

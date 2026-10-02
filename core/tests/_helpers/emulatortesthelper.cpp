@@ -37,14 +37,20 @@ namespace
             ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
 
-        const char* value = kind == TurboSoundKind::FM ? "FM" : kind == TurboSoundKind::None ? "None" : "AY";
+        const char* value = kind == TurboSoundKind::FM       ? "FM"
+                            : kind == TurboSoundKind::None   ? "None"
+                            : kind == TurboSoundKind::Single ? "Single"
+                                                             : "AY";
         const std::string to = std::string("TurboSound=") + value;
-        size_t at = ini.find("TurboSound=AY");
-        if (at == std::string::npos)
-            at = ini.find("TurboSound=FM");
+        // The active line (not a comment): "TurboSound=" at a line start, its value up to the line end
+        size_t at = ini.find("\nTurboSound=");
         if (at == std::string::npos)
             return std::string();
-        ini.replace(at, strlen("TurboSound=AY"), to);  // both shipped literals are the same length
+        at++;
+        size_t end = ini.find_first_of("\r\n ;\t", at + strlen("TurboSound="));
+        if (end == std::string::npos)
+            end = ini.size();
+        ini.replace(at, end - at, to);
 
         const fs::path target =
             TestPathHelper::GetUniqueTestScratchPath("forced-slot-" + modelConfigFolder + ".ini");

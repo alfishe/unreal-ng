@@ -4,6 +4,10 @@
 --               loader  counts the CPU memory writes of the PLD configuration loader (runtime Q4 check)
 --               sync    calls BIOS function #F2 (FN_SYNC) for each INT mode and records the INT positions
 --               palette per-frame sum of the palette bytes in video RAM (the logo fade, no renderer needed)
+--               loop    CPU throughput: at SPC_LOOP_AT puts `INC BC : JR -3` at SPC_LOOP_ADDR (hex, default 8000, a RAM
+--                       window), PC there, BC = 0, interrupts off; records BC (iterations) at each frame end for
+--                       SPC_LOOP_FRAMES frames into loop.csv, with the turbo flag (phase S6: ours vs MAME, 26 T a pass
+--                       by the book: INC BC 6 + JR 12 = 18 T, plus the memory waits at 21 MHz)
 --   SPC_OUT     output folder (must exist)
 --   SPC_END     frame to exit at (default 600)
 --   boot:   SPC_PORTS (accesses to record, default 10000), SPC_SNAP_EVERY (0 = off), SPC_SNAP_AT,
@@ -507,6 +511,36 @@ elseif mode == "palette" then
 		if frame >= end_frame then
 			write_file("palette.csv", table.concat(rows, "\n") .. "\n")
 			finish("palette done")
+		end
+	end)
+elseif mode == "loop" then
+	local at = tonumber(os.getenv("SPC_LOOP_AT") or "600")
+	local addr = tonumber(os.getenv("SPC_LOOP_ADDR") or "8000", 16)
+	local frames = tonumber(os.getenv("SPC_LOOP_FRAMES") or "20")
+	local rows = { "frame,bc,iterations,turbo" }
+	local prev = nil
+	subs.frame = emu.add_machine_frame_notifier(function()
+		if finished then return end
+		frame = frame + 1
+		if frame == at then
+			prg:write_u8(addr, 0x03)      -- INC BC
+			prg:write_u8(addr + 1, 0x18)  -- JR -3
+			prg:write_u8(addr + 2, 0xFD)
+			cpu.state["IFF1"].value = 0
+			cpu.state["IFF2"].value = 0
+			cpu.state["BC"].value = 0
+			cpu.state["PC"].value = addr
+			prev = 0
+			event("loop injected at %04X (turbo %d)", addr, it_turbo:read(0))
+		elseif prev ~= nil then
+			local bc = cpu.state["BC"].value
+			rows[#rows + 1] = string.format("%d,%d,%d,%d", frame, bc, (bc - prev) & 0xffff, it_turbo:read(0))
+			prev = bc
+			if frame >= at + frames then
+				write_file("loop.csv", table.concat(rows, "\n") .. "\n")
+				write_file("events.txt", table.concat(events, "\n") .. "\n")
+				finish("loop done")
+			end
 		end
 	end)
 else

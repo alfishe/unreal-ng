@@ -828,6 +828,17 @@ StateNode Covox(EmulatorContext* context)
     SoundManager* sm = context ? context->pSoundManager : nullptr;
     if (!sm)
         return Unavailable("Sound manager not available");
+    if (IModelAudioSource* dac = sm->getModelAudioSource())
+    {
+        // The machine's own DAC holds the COVOX slot (the Sprinter's Covox / Covox-Blaster)
+        StateNode ret = StateNode::Object();
+        ret["available"] = true;
+        ret["device"] = dac->AudioSourceName();
+        ret["fitment"] = "machine";
+        for (const auto& [name, value] : dac->AudioStateFields())
+            ret[name] = value;
+        return ret;
+    }
     ::Covox* covox = sm->getCovox();
     if (!covox)
         return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
