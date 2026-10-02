@@ -2,7 +2,7 @@
 
 **Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
 (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
-(2026-10-01, branch `sprinter-s1`); S2-S7 not started. PLAN.md row **#59** (T4): the owner started
+(2026-10-01, branch `sprinter-s1`); **S2 done** (2026-10-01, branch `sprinter-s2`); S3-S7 not started. PLAN.md row **#59** (T4): the owner started
 the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
 this design introduced are PLAN row **#60** (shared infrastructure, done).
 
@@ -60,6 +60,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   accesses identical (order, values, PCs, codes) and timed to the T-state at 3.5 MHz; the turbo
   port wait fixed (2 clocks early; 21-MHz drift over the trace 1 245 µs → 5.7 µs); logo palette,
   INT positions per FN_SYNC mode, INT acknowledge, loader count equal; `SprinterReference_Test`
+- [x] S2 (2026-10-01, branch `sprinter-s2`; outcome and deviations in
+  [roadmap-and-plan.md](roadmap-and-plan.md) §7): `ScreenSprinter` (every mode of the mode table,
+  palettes, border, flash, HOLD, RGMOD page, 320 / 312 lines), `M_SPRINTER` / `R_736_288`,
+  `SprinterVideoRenderer` + configuration-module hook 3, `SprinterVideoMapper`, screenshots and
+  recordings; palette order settled (R, G, B in video RAM); ACC-1 (the logo frame equals MAME's
+  `logo.png` exactly when drawn with the frame-end state, within one fade step as the beam drew it),
+  ACC-2 adapted (SETUP 1.58 has no date page: "Memory Test" saved to the CMOS file)
 
 ## Remaining
 
@@ -82,7 +89,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
   off before the PLD check).
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
-- Unverified items: palette byte order (S2). Settled in S1: BIOS 3.04 never programs the Z84C15
+- Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank
+  square = pen `#400`; HOLD power-on `#77` (hardware-reference §4.5, §6.3). Settled in S1: BIOS 3.04 never programs the Z84C15
   watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no
   Z84C15 interrupts, the keys are polled in the frame INT). Settled against MAME and the board files
   (2026-10-01, [roadmap-and-plan.md](roadmap-and-plan.md) §6.1): IDE with no drive reads `#FF`
@@ -91,6 +99,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
   Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
   MAME 32 T).
+- Renderer speed (naive v1): `BM_SprinterRender_Logo` 512 µs per frame against 46 µs for the TS-Conf
+  setup screen. Idea for the backlog: cache decoded squares (MAME's tilemap: the mode bytes and the
+  source address once per square, invalidated by video RAM writes into the mode table or the
+  square's source) and measure with the same benchmark.
+- Hook 3, second half: a configuration module's own INT source (with the first module that needs
+  it, e.g. Game).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
