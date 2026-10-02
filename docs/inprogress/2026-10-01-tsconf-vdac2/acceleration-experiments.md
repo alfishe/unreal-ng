@@ -62,14 +62,6 @@ straight back to the CPU SIMD path.
 | 10 | Coprocessor timing | eve-emu already charges each command a cost in clocks, but every cost is 0; a measurement plan for a VDAC2 board |
 | 11 | Cheapest picture that changes | skipping frames whose inputs did not change is exact and drops 35-39 % of boot's lines; draw-1-in-N and half vertical resolution keep the chip's timing answers exact |
 
-![R-Type stage 5, frame 39297: per-line cost, full quality vs protected mode](rtype-stage5-line-cost.jpg)
-
-R-Type stage 5, frame 39297 (picture above, captions in Russian): per-line cost in FT812
-clocks on the right. At full quality the worst line costs 1462 clocks and 96 lines exceed
-1300; the same frame in the game's protected mode (sprites without the B pass) peaks at
-1092. So real games do reach the line budget in play, unlike the boot sequence measured in
-experiment 08: the overflow behavior must be modeled and checked on a card.
-
 Firmware-level execution: studied separately, not in this repository.
 
 ## TS-Labs' hypotheses, checked
