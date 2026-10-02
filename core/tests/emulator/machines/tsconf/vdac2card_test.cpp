@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "emulator/platforms/tsconf/vdac2card.h"
+#include "emulator/video/screen.h"
 
 namespace
 {
@@ -34,6 +35,26 @@ constexpr uint32_t kRegId = 0x302000;
 constexpr uint32_t kRegClock = 0x302008;
 constexpr uint32_t kRegCpuReset = 0x302020;
 constexpr uint8_t kRegIdValue = 0x7C;
+constexpr uint32_t kRamDl = 0x300000;
+constexpr uint32_t kRegHcycle = 0x30202C;
+constexpr uint32_t kRegHoffset = 0x302030;
+constexpr uint32_t kRegHsize = 0x302034;
+constexpr uint32_t kRegVcycle = 0x302040;
+constexpr uint32_t kRegVoffset = 0x302044;
+constexpr uint32_t kRegVsize = 0x302048;
+constexpr uint32_t kRegDlswap = 0x302054;
+constexpr uint32_t kRegPclk = 0x302070;
+constexpr uint32_t kRegIntFlags = 0x3020A8;
+constexpr uint32_t kRegIntEn = 0x3020AC;
+constexpr uint32_t kRegIntMask = 0x3020B0;
+constexpr uint32_t kIntSwap = 0x01;
+constexpr uint32_t kDlswapFrame = 2;
+constexpr uint32_t kDlClear = 0x26000007;    // CLEAR(1, 1, 1)
+constexpr uint32_t kDlDisplay = 0x00000000;  // DISPLAY
+constexpr uint32_t kDlClearColorRed = 0x02FF0000;  // CLEAR_COLOR_RGB(255, 0, 0)
+constexpr uint8_t kMsel = 0x04;              // V_CONFIG bit 2: the monitor shows the FT812
+// One FT812 frame of the small scan in raster tacts, rounded up
+constexpr uint32_t kSmallFrameTacts = static_cast<uint32_t>((100ull * 50 * 3500000 + 48000000 - 1) / 48000000);
 constexpr uint32_t kRamG = 0x000000;
 
 constexpr uint8_t kMul48MHz = 6;  // 8 MHz crystal x 6 (TS-Labs modes 0, 5, ...)
@@ -136,6 +157,50 @@ protected:
     {
         const std::vector<uint8_t> b = Read(address, 4);
         return static_cast<uint32_t>(b[0] | (b[1] << 8) | (b[2] << 16) | (static_cast<uint32_t>(b[3]) << 24));
+    }
+
+    void Write32(uint32_t address, uint32_t value)
+    {
+        Write(address, {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8), static_cast<uint8_t>(value >> 16),
+                        static_cast<uint8_t>(value >> 24)});
+    }
+
+    /// A tiny FT812 scan (100 x 50 clocks, PCLK = system clock: one frame =
+    /// 5000 clocks, 364.6 raster tacts at 48 MHz), a cleared display list,
+    /// a frame swap requested and INT_N enabled for SWAP only
+    void StartSmallScanWithSwapInterrupt()
+    {
+        Write32(kRegHcycle, 100);
+        Write32(kRegHoffset, 20);
+        Write32(kRegHsize, 40);
+        Write32(kRegVcycle, 50);
+        Write32(kRegVoffset, 10);
+        Write32(kRegVsize, 20);
+        Write32(kRamDl + 0, kDlClear);
+        Write32(kRamDl + 4, kDlDisplay);
+        Write32(kRegPclk, 1);
+        Write32(kRegIntMask, kIntSwap);
+        Write32(kRegIntEn, 1);
+        Write32(kRegDlswap, kDlswapFrame);
+    }
+
+    /// One CPU step's worth of interrupt and engine work at the current tact
+    /// (TsConfEngine::OnMachineStep, as Z80 calls it after an instruction)
+    void Step() { _decoder->GetEngine().OnMachineStep(_z80->t); }
+    bool LineIntPending() { return (_decoder->GetState().intPending & TsConfInt::Line) != 0; }
+
+    /// Tick in steps of `stride` tacts until the line INT latches (max `limit` tacts)
+    /// @return tacts it took, or UINT32_MAX
+    uint32_t TactsUntilLineInt(uint32_t limit, uint32_t stride = 1)
+    {
+        for (uint32_t elapsed = 0; elapsed <= limit; elapsed += stride)
+        {
+            Step();
+            if (LineIntPending())
+                return elapsed;
+            Tick(stride);
+        }
+        return UINT32_MAX;
     }
 
     /// ft_init's power-up: external clock x `mul`, reset pulse, wait for
@@ -275,6 +340,105 @@ TEST_F(Vdac2Card_Test, ClockIndependentOfCpuTurbo)
     const uint32_t start = Read32(kRegClock);
     Tick(TsConfEngine::kFrameTacts);
     EXPECT_EQ(Read32(kRegClock) - start, TsConfEngine::kFrameTacts * kHz48MHz / Vdac2Card::kRasterHz);
+}
+
+/// msel = 0: the line INT keeps the line starts (tact 224 n - 1) with the
+/// card fitted, and FT812 edges do not reach it
+TEST_F(Vdac2Card_Test, LineInterruptFromLineStartsWithoutMsel)
+{
+    Boot();
+    StartSmallScanWithSwapInterrupt();
+    Tick(TsConfEngine::kFrameTacts - _position);  // a fresh frame
+    _decoder->WriteRegister(TsConfReg::IntMask, TsConfInt::Line);
+    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts - 1);
+}
+
+/// msel = 1: no line starts; the FT812's INT_SWAP edge starts the line INT,
+/// within one FT812 frame of the swap request, at the tact the chip lowers
+/// INT_N (stepped between bus accesses, not at one)
+TEST_F(Vdac2Card_Test, Ft812SwapInterruptIsTheLineInterruptWithMsel)
+{
+    Boot();
+    Tick(TsConfEngine::kFrameTacts - _position);
+    _decoder->WriteRegister(TsConfReg::VConfig, kMsel);  // from line 1: line 0 has latched it already
+    Tick(TsConfEngine::kLineTacts);
+    Step();
+    _decoder->WriteRegister(TsConfReg::IntMask, TsConfInt::Line);
+    Read32(kRegIntFlags);  // nothing pending
+
+    // No FT812 interrupt: no line INT for a whole frame
+    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kFrameTacts - 2 * TsConfEngine::kLineTacts, 7), UINT32_MAX);
+
+    StartSmallScanWithSwapInterrupt();
+    const uint32_t tacts = TactsUntilLineInt(2 * kSmallFrameTacts);
+    ASSERT_NE(tacts, UINT32_MAX) << "INT_SWAP never reached the line INT";
+    EXPECT_LE(tacts, kSmallFrameTacts + 1);
+    EXPECT_GT(tacts, 0u) << "the edge comes from the scan, not from the bus write";
+
+    // Acknowledged on both sides: the next swap interrupts again
+    EXPECT_EQ(_decoder->GetInterrupts().AcknowledgeInterrupt(_z80->t), 0xFD);
+    EXPECT_EQ(Read32(kRegIntFlags) & kIntSwap, kIntSwap);
+    Write32(kRegDlswap, kDlswapFrame);
+    EXPECT_NE(TactsUntilLineInt(2 * kSmallFrameTacts), UINT32_MAX);
+}
+
+/// The edge counts only on a line latched with msel: msel written mid-line
+/// takes effect from the next line start
+TEST_F(Vdac2Card_Test, MselIsLatchedAtTheLineStart)
+{
+    Boot();
+    Tick(TsConfEngine::kFrameTacts - _position + 10);  // tact 10 of line 0
+    _decoder->WriteRegister(TsConfReg::IntMask, TsConfInt::Line);
+    _decoder->WriteRegister(TsConfReg::VConfig, kMsel);  // line 0 already latched msel = 0
+    EXPECT_EQ(TactsUntilLineInt(TsConfEngine::kLineTacts), TsConfEngine::kLineTacts - 1 - 10)
+        << "line 0 still ends with its line-start INT";
+    EXPECT_EQ(_decoder->GetInterrupts().AcknowledgeInterrupt(_z80->t), 0xFD);
+    Tick(1);
+    EXPECT_EQ(TactsUntilLineInt(3 * TsConfEngine::kLineTacts, 3), UINT32_MAX) << "lines 1.. drive from the FT812";
+}
+
+/// msel = 1 at a machine frame end: the Screen shows the FT812 picture
+/// (HSIZE x VSIZE), latched at the FT812's frame end with its pixels in the
+/// framebuffer's RGBA order; msel = 0 brings the Evo's raster back
+TEST_F(Vdac2Card_Test, MonitorShowsTheFt812PictureWhileMselIsSet)
+{
+    Screen* screen = _context->pScreen;
+    ASSERT_NE(screen, nullptr);
+
+    Boot();
+    StartSmallScanWithSwapInterrupt();
+    Write32(kRamDl + 0, kDlClearColorRed);
+    Write32(kRamDl + 4, kDlClear);
+    Write32(kRamDl + 8, kDlDisplay);
+    Write32(kRegDlswap, kDlswapFrame);
+
+    _decoder->WriteRegister(TsConfReg::VConfig, kMsel);
+    Tick(TsConfEngine::kFrameTacts - _position);  // the frame end sees msel latched
+    EXPECT_TRUE(Card()->IsShowing());
+    ASSERT_TRUE(screen->IsExternalPictureActive());
+    const FramebufferDescriptor& shown = screen->GetFramebufferDescriptor();
+    EXPECT_EQ(shown.width, 40);
+    EXPECT_EQ(shown.height, 20);
+
+    const uint64_t before = Card()->LatchedFrames();
+    Tick(4 * kSmallFrameTacts);
+    Read32(kRegId);  // any access brings the chip to now
+    EXPECT_GE(Card()->LatchedFrames(), before + 3) << "one latch per FT812 frame";
+
+    std::vector<uint8_t> presented(shown.memoryBufferSize);
+    screen->SetPresentDelayFrames(0);
+    ASSERT_TRUE(screen->CopyPresentedFramebuffer(presented.data(), presented.size()));
+    const size_t center = (static_cast<size_t>(10) * 40 + 20) * 4;
+    EXPECT_EQ(presented[center + 0], 0xFF) << "R";
+    EXPECT_EQ(presented[center + 1], 0x00) << "G";
+    EXPECT_EQ(presented[center + 2], 0x00) << "B";
+    EXPECT_EQ(presented[center + 3], 0xFF) << "A";
+
+    _decoder->WriteRegister(TsConfReg::VConfig, 0x00);
+    Tick(TsConfEngine::kFrameTacts - _position);
+    EXPECT_FALSE(Card()->IsShowing());
+    EXPECT_FALSE(screen->IsExternalPictureActive());
+    EXPECT_EQ(&screen->GetFramebufferDescriptor(), &screen->GetNativeFramebufferDescriptor());
 }
 
 /// DMA RAM -> SPI (the SDK's ft_load_cfifo_dma path) delivers the bytes to

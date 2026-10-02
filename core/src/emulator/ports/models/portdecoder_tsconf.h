@@ -280,7 +280,21 @@ private:
     SdSlot _sdSlot{*this};
     bool _sdWriteProtect = false;
 
+    /// The VDAC2 card's INT_N as the line interrupt's source on msel lines
+    /// (vdac2-integration-design.md §6)
+    class Vdac2LineSource : public ITsConfLineSource
+    {
+    public:
+        explicit Vdac2LineSource(PortDecoder_TSConf& owner) : _owner(owner) {}
+        bool DrivesLine(uint32_t line) const override;
+        size_t TakeLineEdges(uint32_t raster, uint32_t* out, size_t max) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+    };
+
     // The VDAC2 card: slot 1 of the SPI hub (declared after _zc, so it is
     // destroyed first; the destructor detaches it)
     std::unique_ptr<Vdac2Card> _vdac2;
+    Vdac2LineSource _vdac2Lines{*this};
 };

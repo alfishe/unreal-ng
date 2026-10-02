@@ -43,7 +43,14 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {
         if (_vdac2)
+        {
             _vdac2->OnFrameEnd();
+            // The monitor follows msel as the last line latched it (the
+            // card's CPLD switches the whole signal, vdac2-tdd.md §2.1);
+            // switched per machine frame
+            constexpr uint8_t kMsel = 0x04;
+            _vdac2->SetShowing((_ts.latVConfig & kMsel) != 0);
+        }
     });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
@@ -81,6 +88,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
+    _interrupts.SetLineSource(nullptr);
     _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
     _vdac2.reset();
 
@@ -148,13 +156,32 @@ void PortDecoder_TSConf::RefreshVdac2Card()
         _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
         _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
                          Vdac2Card::kSpiSelectActiveHigh);
+        _interrupts.SetLineSource(&_vdac2Lines);
     }
     else if (!wanted && _vdac2)
     {
+        _interrupts.SetLineSource(nullptr);
         _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
         _vdac2.reset();
     }
 #endif
+}
+
+bool PortDecoder_TSConf::Vdac2LineSource::DrivesLine(uint32_t line) const
+{
+    // msel = V_CONFIG bit 2 as latched at the line's start ([V] video_ports.v:
+    // vconf <= vconf_r at line_start_s). A line that has not started yet will
+    // latch the register as it is now: a V_CONFIG write brings the engine up
+    // to the write first (IsVideoRegister), so no write can fall in between
+    constexpr uint8_t kMsel = 0x04;
+    const TsConfState& ts = _owner._ts;
+    const uint8_t vConfig = line < ts.engNextLine ? _owner._engine.Line(line).vConfig : ts.regs[TsConfReg::VConfig];
+    return (vConfig & kMsel) != 0;
+}
+
+size_t PortDecoder_TSConf::Vdac2LineSource::TakeLineEdges(uint32_t raster, uint32_t* out, size_t max)
+{
+    return _owner._vdac2 ? _owner._vdac2->TakeIntEdges(raster, out, max) : 0;
 }
 
 /// Warm reset (hardware-spec §10). Not reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE,

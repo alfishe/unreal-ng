@@ -1311,9 +1311,8 @@ void ScreenZX::RenderOnlyMainScreen_Original()
     }
 
     // Get Framebuffer
-    uint32_t* framebuffer;
-    size_t size;
-    GetFramebufferData(&framebuffer, &size);
+    uint32_t* framebuffer = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    size_t size = _framebuffer.memoryBuffer ? _framebuffer.memoryBufferSize : 0;  // the machine's raster
     int offset = 0;
 
     // Render ZX-Spectrum screen to framebuffer

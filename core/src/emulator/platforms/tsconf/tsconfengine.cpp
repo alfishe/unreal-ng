@@ -316,10 +316,12 @@ void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)
     // the next frame starts at line 0
     CatchUp(kFrameTacts * std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u));
     AccountBudget(kFrameTacts);
-    if (_frameEnd)
-        _frameEnd();
     _ts.engNextLine = 0;
     _ts.budgetRaster = 0;
     _cpuLineRunning = 0;
     _interrupts.OnMachineFrameRollover(frameLength);
+    // Last: the interrupt controller has taken the old frame's line events
+    // (the VDAC2 card's edges are tacts of the frame it closes here)
+    if (_frameEnd)
+        _frameEnd();
 }

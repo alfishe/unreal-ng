@@ -100,9 +100,9 @@ public:
     /// Draw the picture up to raster tact `raster` (the screen's hook): a DMA
     /// CRAM write draws the dots before it with the old colour (TIM-5)
     void SetVideoFlush(std::function<void(uint32_t raster)> flush) { _videoFlush = std::move(flush); }
-    /// Called at the frame rollover once the old frame is fully accounted
-    /// (its DMA included), before positions restart at raster 0: a device
-    /// that keeps time in raster tacts (the VDAC2 card) closes its frame here
+    /// Called at the end of the frame rollover, once the old frame is fully
+    /// accounted (its DMA and its interrupt events included): a device that
+    /// keeps time in raster tacts (the VDAC2 card) closes its frame here
     void SetFrameEndListener(std::function<void()> listener) { _frameEnd = std::move(listener); }
 
     /// Tact of ts_start in the current line: where the TSU draws the next line (TSU-6)

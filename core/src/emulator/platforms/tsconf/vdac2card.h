@@ -18,9 +18,15 @@
 ///   - The FT812 runs from its own 8 MHz crystal (CLKEXT); its system clock
 ///     is that times the multiplier the guest programs (CLKSEL), 48-80 MHz in
 ///     the TS-Labs mode table. It is not tied to the Evo's clocks.
-///   - The rest of the card (the CPLD that switches the monitor between the
-///     Evo and the FT812, the INT_N route to the TS line interrupt) is phase
-///     I2 of D-C; this class is the I1 part: the chip, its time and its bus.
+///   - The card's CPLD switches the whole monitor signal between the Evo
+///     and the FT812 by msel = V_CONFIG bit 2 ([C] cpld/top.v, vdac2-tdd.md
+///     §2.1), and routes INT_N to the Evo's line interrupt while msel = 1.
+///
+/// Picture (D-C §7). While the monitor shows the FT812 the card gives the chip
+/// a frame buffer, converts each finished FT812 frame (ARGB8888) into the
+/// emulator's RGBA8888 and hands it to the Screen as the external picture,
+/// latched at the FT812's own frame end (its rate, not the machine's). While
+/// the Evo is shown the chip draws nothing (all its timing still runs).
 ///
 /// Time (D-C §5.2). TS-Conf time is the raster tact: 3.5 MHz, 71 680 per
 /// frame, whatever the CPU turbo. The card keeps an absolute raster-tact
@@ -42,10 +48,18 @@
 /// advances in OnFrameEnd, which the engine calls once the old frame is
 /// fully accounted.
 ///
-/// Lazy stepping is exact for everything the guest can observe in I1: it can
-/// only see the chip through the bus, and every bus access first brings the
-/// chip to "now". The interrupt pin and the FT812 picture (I2) add event-time
-/// stepping on top.
+/// Stepping. Every bus access first brings the chip to "now", which is exact
+/// for everything the guest reads. The interrupt pin needs more: INT_N can
+/// fall between two accesses (a swap, the coprocessor finishing). So the card
+/// steps the chip from event to event (EveClocksToNextEvent) whenever it
+/// advances, records each falling edge of INT_N with its raster tact, and
+/// keeps the tact of the chip's next event: the TS-Conf interrupt controller
+/// asks for edges after every instruction (TakeIntEdges), which costs one
+/// comparison until that tact is reached (D-C §5.2, §6).
+///
+/// INT_N reaches the Evo only while the card shows the FT812 (msel = 1),
+/// where it replaces the line interrupt; deciding that is the interrupt
+/// controller's job (ITsConfLineSource). The card reports every edge.
 
 #include <cstdint>
 #include <functional>
@@ -91,7 +105,12 @@ public:
         uint64_t frameBase = 0;   // absolute raster tact of the current frame's tact 0
         uint64_t position = 0;    // absolute raster tact the chip has been advanced to
         uint64_t remainder = 0;   // tacts x f_sys not yet converted (< kRasterHz)
+        uint64_t nextEvent = 0;   // absolute raster tact of the chip's next event (UINT64_MAX: none)
+        uint8_t intAsserted = 0;  // INT_N low at `position`
     };
+
+    /// Falling INT_N edges not yet taken by the interrupt controller
+    static constexpr size_t kMaxPendingEdges = 16;
 
     /// `rasterInFrame` returns the raster tact inside the current frame
     /// (0..kFrameTacts) the owner has reached
@@ -126,6 +145,24 @@ public:
     /// Bring the chip up to the owner's current raster position
     void Synchronize();
 
+    /// The monitor shows the FT812 (msel latched) or the Evo. The owner
+    /// calls it at each machine frame end; a change switches the Screen's
+    /// external picture on or off
+    void SetShowing(bool showing);
+    bool IsShowing() const { return _showing; }
+    /// The latest FT812 picture (RGBA8888), its size; empty before the first frame
+    const std::vector<uint8_t>& Picture() const { return _picture; }
+    uint16_t PictureWidth() const { return _pictureWidth; }
+    uint16_t PictureHeight() const { return _pictureHeight; }
+    /// FT812 frames latched to the Screen since the card was fitted
+    uint64_t LatchedFrames() const { return _latchedFrames; }
+
+    /// Falling edges of INT_N up to raster tact `rasterInFrame` of the
+    /// current frame, oldest first, as tacts of the current frame (an edge
+    /// carried over from the frame before reads as 0). Advances the chip
+    /// first when its next event is due. Taken edges are forgotten
+    size_t TakeIntEdges(uint32_t rasterInFrame, uint32_t* out, size_t max);
+
     /// region <SpiDevice>
     void select(bool selected) override;
     uint8_t exchange(uint8_t mosi) override;
@@ -138,6 +175,19 @@ public:
 private:
     void LoadRom();
     void AdvanceTo(uint64_t absoluteRaster);
+    /// Look at INT_N after the chip moved or was accessed at tact `at`
+    void SampleInt(uint64_t at);
+    /// The tact of the chip's next event, from the current position
+    void PlanNextEvent();
+    /// The chip finished a frame: present it while showing
+    void OnChipFrame();
+    /// Size the buffers for the chip's current mode and give it the output
+    /// (drawing only while showing); true when the picture size changed
+    bool ConfigureOutput();
+    /// Tell the Screen what the monitor shows now (the FT812 picture or the Evo)
+    void PublishPicture();
+    /// The chip should draw its next frame
+    bool Drawing() const;
     uint64_t Now() const { return _time.frameBase + _rasterInFrame(); }
 
     EmulatorContext* _context;
@@ -145,4 +195,17 @@ private:
     std::vector<uint8_t> _rom;
     EveChip* _chip = nullptr;
     Time _time;
+    uint64_t _edges[kMaxPendingEdges] = {};
+    size_t _edgeCount = 0;
+
+    // Picture: the chip draws ARGB8888 into _chipFrame; _picture is the RGBA
+    // copy the Screen presents
+    bool _showing = false;
+    bool _drawing = false;         // the chip was told to draw (EveSetOutput)
+    uint64_t _chipFrames = 0;      // EveCompletedFrames seen last
+    uint64_t _latchedFrames = 0;
+    std::vector<uint32_t> _chipFrame;
+    std::vector<uint8_t> _picture;
+    uint16_t _pictureWidth = 0;
+    uint16_t _pictureHeight = 0;
 };

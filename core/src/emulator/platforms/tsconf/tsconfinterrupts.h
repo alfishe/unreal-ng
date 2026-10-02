@@ -7,6 +7,23 @@
 class EmulatorContext;
 struct TsConfState;
 
+/// Another source for the line interrupt: the VDAC2 card's FT812 INT_N while
+/// the card shows the FT812 picture. In the VDAC2 firmware build the line
+/// INT starts on the falling edge of INT_N instead of the line start, for the
+/// lines latched with V_CONFIG bit 2 (msel) set:
+///   int_start_lin(vdac2_msel ? int_start_ft : line_start_s)  [V] top.v:1093
+///   vdac2_msel = vconf[2], vconf latched at line_start_s      [V] video_ports.v:153-157
+/// (vdac2-integration-design.md §6)
+struct ITsConfLineSource
+{
+    virtual ~ITsConfLineSource() = default;
+    /// msel latched for raster line `line` (0..319) of the current frame
+    virtual bool DrivesLine(uint32_t line) const = 0;
+    /// Falling INT_N edges up to raster tact `raster` of the current frame,
+    /// oldest first, forgotten once taken (TsConfInterrupts::kMaxLineEdges at a time)
+    virtual size_t TakeLineEdges(uint32_t raster, uint32_t* out, size_t max) = 0;
+};
+
 /// TS-Conf interrupt controller (hardware-spec §5, technical-design §3.4).
 ///
 /// Owns /INT through the generic IInterruptSource: the ULA window of the
@@ -15,7 +32,7 @@ struct TsConfState;
 /// | Source    | INT_MASK bit | Vector | Event (raster tact in the 71680-tact frame) |
 /// |:--|:--|:--|:--|
 /// | Frame     | 0 (reset 1)  | 0xFF   | VS_INT * 224 + HS_INT (none when HS_INT >= 224 or VS_INT >= 320); a 32 CPU-clock pulse |
-/// | Line      | 1            | 0xFD   | 224 n - 1 on every one of the 320 lines                  |
+/// | Line      | 1            | 0xFD   | 224 n - 1 on every one of the 320 lines; the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
 /// | DMA       | 2            | 0xFB   | DMA completion (phase 5)                                 |
 /// | Wait-port | 3            | 0xF9   | not emulated                                             |
 ///
@@ -45,6 +62,9 @@ public:
     void OnMaskWrite(uint8_t mask);
     /// DMA completion (phase 5)
     void RaiseDma();
+    /// The line INT's other source (the VDAC2 card), nullptr = line starts only
+    void SetLineSource(ITsConfLineSource* source) { _lineSource = source; }
+    static constexpr size_t kMaxLineEdges = 8;
 
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;
@@ -62,10 +82,13 @@ public:
 private:
     /// Latch the events of raster tacts [intLastRaster, raster]
     void CatchUp(uint32_t raster);
+    /// The line events of [from, raster] with an external line source
+    void CatchUpLineWithSource(uint32_t from, uint32_t raster, bool latch);
     /// Is the frame pulse (32 CPU clocks from its event) still running at t?
     bool FramePulseActive(uint32_t t) const;
     uint32_t Multiplier() const;
 
     EmulatorContext* _context;
     TsConfState& _ts;
+    ITsConfLineSource* _lineSource = nullptr;
 };
