@@ -468,6 +468,8 @@ survives until changed; reset selects primary (MAME `:1582`).
 | Density detection | the BIOS issues READ ADDRESS; on failure it flips the density and retries. It works because a separator at the wrong rate never finds an address mark: Record Not Found | BIOS-TT `FDD_DRIVER.asm:626-650` |
 | Formats | PC FAT12 720 KB (80×2×9×512) and 1.44 MB (80×2×18×512); TR-DOS TRD (80×2×16×256) with TR-DOS 5.04Em; 5.25" drives | MAN §1.1, §23; BIOS-TT `rom/SETUP/MAIN.asm:1206-1225` (drive tables); MAME `beta_m.cpp:26-39` |
 | DSS floppies | FAT12, BPB media `#F0`/`#F9`; the boot loader needs 3 reserved sectors after the boot sector, so `BOOT.EXE` removes one FAT copy and enlarges the reserved area | DSS `SYS.ASM:97-128`; DSS-162 floppy: 10 reserved sectors, 1 FAT |
+| Default boot drive | a blank CMOS (SETUP defaults) boots the IDE master, then **floppy B** (CMOS `#10` = `#12`); the Beta drive bits select drive B (`OUT (#FF),#3D`) | BIOS 3.04 SETUP `DEFVAL` (`#9C00`), `S_FDD` (ROM page 0 `#07ED`) |
+| Spectrum mode ROMs | BIOS 3.04 holds none: ESC at SETUP prints "Spectrum ROM not installed. Use spectrum.exe". DSS `ZX\SPECTRUM.EXE <mode>.ZX` loads BASIC 128 / 48, Sprinter TR-DOS 7.01 and the expansion ROMs from `ZX\ROMS\` and starts the 128 menu; it sets the latch to 720 KB | DSS 1.62 floppy `DOCS\SPECTRUM\README.ENG`, `ZX\*.ZX`; S3a test `Dss162_SpectrumModeTrDosReadsATrd` |
 
 ## 11. ISA
 

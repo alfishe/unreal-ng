@@ -26,6 +26,10 @@ export MAME_BIN=<path to the zxsp binary> SPC_OUT=../../../testdata/machines/spr
 ./mame-capture.sh palette SPC_END=200
 ```
 
+The floppy run (S3a, 2026-10-01; `SPC_FLOP2` puts the image into drive B, a 3.5" HD drive):
+`./mame-capture.sh boot SPC_FLOP2=../../../testdata/machines/sprinter/dss_1_62_92.img SPC_CODES=10-17 SPC_PORTS=3000000 SPC_END=2500`,
+then the rows with code `#15` removed (245 765 polls of port `#FF`) give `fdc-probe.csv`.
+
 The boot mode can also trace one range of internal codes over the whole boot instead of the first
 10 000 accesses, e.g. the IDE (Z84C15 ports are always included):
 `./mame-capture.sh boot SPC_END=520 SPC_PORTS=200000 SPC_CODES=20-29 SPC_PORTS_FILE=ide.csv`
@@ -64,6 +68,7 @@ configuration shortcut ends; the script only works in its first run (power-on, t
 | `int.csv` | INT positions for the BIOS `FN_SYNC` (`#F2`) modes |
 | `events.txt`, `events-sync.txt` | the milestones of the `boot` and `sync` runs |
 | `palette.csv` | the sum of the palette bytes in video RAM, per frame (rows where it changed) |
+| `fdc-probe.csv` | the floppy controller accesses (codes `#10-#17`) of a boot with the DSS 1.62 floppy in drive B, without the `#15` status polls |
 
 ### `page40.bin`: the port table after POST
 
@@ -165,3 +170,21 @@ the logo without a renderer: the palette is written in frames 55-57 (the exact f
 between runs, with the CMOS clock MAME takes from the host), is full at **frame 58** (302 720), and
 fades one step per frame from frame 59 to frame 186 (297 696). `logo.png` (frame 60) is sum 302 548.
 unreal-ng gives the same sums from frame 58 on (`SprinterReference_Test`).
+
+### `fdc-probe.csv`: the BIOS floppy probe (S3a)
+
+The DSS 1.62 floppy (`dss_1_62_92.img`, 1.44 MB) in drive B, everything else as above. A blank CMOS boots
+the IDE master, then the alternative device, floppy B (SETUP's default CMOS `#10` = `#12`). Columns as
+`ports.csv`.
+
+- Frame 33: the BIOS resets the WD1793 (`OUT (#FF),#1C`, `#3C`, command `#00`).
+- Frame 471 (9.655 s): `FddProbeDensity` (ROM page 0 `#0669`) selects drive B (`OUT (#FF),#3D`), sets 720 KB
+  (`OUT (#01BD),#01`), seeks (`#18`) and issues READ ADDRESS (`#C0`), then polls port `#FF` (code `#15`)
+  for `#F000` loops: **175.55 ms** at 21 MHz. It times out, flips the latch (`#21BD`, `#01BD`, ...) and
+  issues `#C0` again, four tries in all (frames 471, 479, 488, 497), then FORCE INTERRUPT (`#D0`, frame 505)
+  and "Alternative Start from Diskette...fail".
+- **MAME never reads the HD disk**: its WD1793 sets the PLL clock when a command starts and defers a command
+  written while a search runs, so the 2 MHz clock (`set_clock_scale`) never reaches the running READ
+  ADDRESS. On the board the data separator is outside the chip and switches at once. unreal-ng issues the
+  same accesses with the same 175.55 ms spacing up to the first flip, then finds the ID and boots DSS
+  (Sprinter roadmap §8); MAME gives no time-to-prompt reference for the floppy boot.

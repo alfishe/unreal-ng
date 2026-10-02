@@ -697,6 +697,14 @@ protected:
     FdcClockPolicy _clockPolicy = FdcClockPolicy::Fixed1MHz;  // Who drives the clock (set by the machine)
     FdcClock _fdcClock = FdcClock::Clock1MHz;                  // Clock on CLK now (turbo VG phase / latch)
     FdcDataRate _dataRate = FdcDataRate::Rate250Kbps;          // Rate the data separator reads at
+    // An ID search that found nothing at the current data rate (READ ADDRESS or a Type I verify) waits for its
+    // index-hole limit. A latch that switches the separator rate meanwhile (Sprinter #BD) lets the chip see the
+    // track's address marks: the search runs again at the new rate, keeping the original deadline. Transient
+    // (not in the TTD blob): only a Latched machine changes the rate mid-command
+    WDSTATE _rateRetryState = WDSTATE::S_IDLE;
+    uint64_t _rateRetryDeadline = 0;
+    // Time base in base (3.5 MHz) T-states also under a hardware CPU turbo (see updateTimeFromEmulatorState)
+    bool _baseClockTimeBase = false;
 
     // Internal state for Type1 commands
     int8_t _stepDirectionIn = false;  // Head step direction. True - move head towards center cut (Step In). False -
@@ -882,6 +890,10 @@ public:
     /// Machine latch (Latched policy only): clock and separator rate switch together, e.g. Sprinter
     /// OUT (#BD),#21 = 2 MHz + 500 kbit/s. Returns false (and changes nothing) under any other policy
     bool SetLatchedClock(FdcClock clock, FdcDataRate rate);
+    /// The chip's time keeps 3.5 MHz T-states under a hardware CPU turbo (a machine with an FDC clock of its
+    /// own; the Sprinter sets it). Off by default: the frame's CPU clocks are taken as they are
+    void SetBaseClockTimeBase(bool on) { _baseClockTimeBase = on; }
+    bool IsBaseClockTimeBase() const { return _baseClockTimeBase; }
     /// Rate the chip writes at: derived from its clock (datasheet p.19, "all times double when CLK = 1 MHz")
     static FdcDataRate WriteRateForClock(FdcClock clock)
     {
@@ -923,6 +935,11 @@ public:
     /// region <Helper methods>
 protected:
     void processBeta128(uint8_t value);
+    void selectDrive(uint8_t drive);
+    /// The separator rate changed during a waiting ID search: run it again (see _rateRetryState)
+    void retrySearchAtNewRate();
+    /// Delay until the end of a not-found ID search: `full` normally; on a rate retry the rest of the first deadline
+    size_t notFoundDelay(WDSTATE search, size_t full);
     void processFDDMotorState();
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
@@ -1180,11 +1197,22 @@ protected:
         _lastTime = _time;
     }
 
-    /// Get current time mark from emulator state
+    /// Get current time mark from emulator state.
+    /// The chip has its own clock: its T-states are 3.5 MHz ones whatever the CPU runs at. Under a hardware
+    /// CPU turbo (hw_turbo_ratio_applied N: ATM 14 MHz, Sprinter 21 MHz) Z80::t counts N CPU clocks per base
+    /// T-state inside the frame. With SetBaseClockTimeBase(true) it is scaled back (the Sprinter: without it
+    /// the disk spins N times too fast and the BIOS density probe sees Record Not Found before its own
+    /// time-out; fdc-clock-and-data-rate research question 7). Other machines keep the plain sum for now: the
+    /// switch changes their TTD captures under turbo (ATM3), a separate change with its own re-recording
     virtual void updateTimeFromEmulatorState()
     {
-        uint64_t totalTime = _context->emulatorState.t_states;
+        const EmulatorState& state = _context->emulatorState;
+        const uint64_t totalTime = state.t_states;
         uint64_t frameTime = _context->pCore->GetZ80()->t;
+        if (_baseClockTimeBase && state.hw_turbo_ratio_applied > 1)
+        {
+            frameTime /= state.hw_turbo_ratio_applied;
+        }
         _time = totalTime + frameTime;
     }
 
