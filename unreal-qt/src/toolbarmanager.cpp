@@ -25,6 +25,7 @@ namespace
 {
 constexpr const char* kSettingsKey = "View/ToolBarVisible";
 constexpr const char* kMouseGateKey = "Input/HostMouseEnabled";
+constexpr const char* kMouseMatchKey = "Input/MouseMatchesHostPointer";
 
 QString formatMemorySize(uint64_t bytes)
 {
@@ -131,10 +132,24 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
         if (checked != _mouseGateOpen)
             onMouseActionTriggered();
     });
+    _mouseMatchMenuAction = new QAction(tr("Mouse Follows Host &Pointer Speed"), this);
+    _mouseMatchMenuAction->setCheckable(true);
+    _mouseMatchMenuAction->setChecked(true);
+    _mouseMatchMenuAction->setStatusTip(
+        tr("On: the captured mouse moves as far as the host pointer would over the picture (any window size or zoom). "
+           "Off: one host pixel is one mouse count"));
+    connect(_mouseMatchMenuAction, &QAction::toggled, this, [this](bool checked) {
+        _mouseMatchHostPointer = checked;
+        if (_mouseCapture)
+            _mouseCapture->setMatchHostPointer(checked);
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue(QLatin1String(kMouseMatchKey), checked);
+    });
     if (QMenu* view = _menuManager->viewMenu())
     {
         view->addSeparator();
         view->addAction(_mouseGateMenuAction);
+        view->addAction(_mouseMatchMenuAction);
     }
 
     // Breathing LED timer for active recording feedback (Apple-style breathing LED)
@@ -177,6 +192,7 @@ void ToolBarManager::setMouseCapture(MouseCaptureController* capture)
     if (_mouseCapture)
     {
         _mouseCapture->setGateOpen(_mouseGateOpen);
+        _mouseCapture->setMatchHostPointer(_mouseMatchHostPointer);
         connect(_mouseCapture, &MouseCaptureController::stateChanged, this, &ToolBarManager::refreshMouseAction);
     }
     refreshMouseAction();
@@ -629,6 +645,8 @@ void ToolBarManager::restoreSettings()
     _mouseGateOpen = settings.value(QLatin1String(kMouseGateKey), true).toBool();
     if (_mouseCapture)
         _mouseCapture->setGateOpen(_mouseGateOpen);
+    _mouseMatchHostPointer = settings.value(QLatin1String(kMouseMatchKey), true).toBool();
+    _mouseMatchMenuAction->setChecked(_mouseMatchHostPointer);  // toggled() applies it
     refreshMouseAction();
 }
 

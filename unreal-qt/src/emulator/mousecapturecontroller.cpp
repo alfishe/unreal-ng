@@ -300,7 +300,12 @@ bool MouseCaptureController::handleWheel(QWheelEvent* event)
 
     const int notches = _wheel.Feed(event->angleDelta().y());
     if (notches != 0 && !_targetId.empty())
-        MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_WHEEL, MouseEvent::Wheel(notches, _targetId));
+    {
+        if (_poster.wheel)
+            _poster.wheel(notches);
+        else
+            MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_WHEEL, MouseEvent::Wheel(notches, _targetId));
+    }
     return true;
 }
 
@@ -354,21 +359,30 @@ void MouseCaptureController::applyHostMotion(double dxLogical, double dyLogical)
     if (source.width() <= 0.0 || source.height() <= 0.0 || size.isEmpty())
         return;
 
-    // Work in physical pixels on both sides (Kempston design §5.1): host travel and the drawn image size
+    // Work in physical pixels on both sides (Kempston design §5.1): host travel and the drawn image size.
+    // The travel is the host pointer's own (Qt warp deltas or macOS NSEvent deltas: the system's pointer
+    // speed and acceleration applied), so the guest follows the pointer as it would move over the picture
     const double dpr = _surface.devicePixelRatio ? _surface.devicePixelRatio() : 1.0;
-    const double physPerEmuX = size.width() * dpr / source.width();
-    const double physPerEmuY = size.height() * dpr / source.height();
+    const double physPerEmuX = _matchHostPointer ? size.width() * dpr / source.width() : 1.0;
+    const double physPerEmuY = _matchHostPointer ? size.height() * dpr / source.height() : 1.0;
 
     const MouseDeltaAccumulator::Steps steps = _motion.Feed(dxLogical * dpr, dyLogical * dpr, physPerEmuX, physPerEmuY, _scale);
     if (steps.dx == 0 && steps.dy == 0)
         return;
 
     // Screen Y grows downward, the mouse's Y grows upward
-    MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_MOVE, MouseEvent::Move(steps.dx, -steps.dy, _targetId));
+    if (_poster.move)
+        _poster.move(steps.dx, -steps.dy);
+    else
+        MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_MOVE, MouseEvent::Move(steps.dx, -steps.dy, _targetId));
 }
 
 void MouseCaptureController::postButtons()
 {
-    if (!_targetId.empty())
+    if (_targetId.empty())
+        return;
+    if (_poster.buttons)
+        _poster.buttons(_buttonMask);
+    else
         MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_BUTTON, MouseEvent::Buttons(_buttonMask, _targetId));
 }

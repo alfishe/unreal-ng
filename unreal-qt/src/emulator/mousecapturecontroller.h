@@ -94,6 +94,27 @@ public:
     bool isGateOpen() const { return _gateOpen; }
     /// endregion
 
+    /// region <Speed>
+    /// On (default): the captured mouse moves the guest exactly as far as the host
+    /// pointer would move over the picture (host travel / size of one emulated
+    /// pixel on screen, whatever the window size, zoom or DPI; the host's own
+    /// pointer speed and acceleration are in the travel). Off: one host pixel of
+    /// travel is one mouse count, independent of the window. Either way times
+    /// 2^[INPUT] MouseScale. Switchable at any time
+    void setMatchHostPointer(bool match) { _matchHostPointer = match; _motion.Reset(); }
+    bool matchesHostPointer() const { return _matchHostPointer; }
+    /// endregion
+
+    /// Where motion, buttons and wheel go (default: the message center, for the
+    /// target emulator's MouseManager). Tests replace it
+    struct Poster
+    {
+        std::function<void(int dx, int dy)> move;  ///< emulated pixels, +y up
+        std::function<void(uint8_t activeLowMask)> buttons;
+        std::function<void(int steps)> wheel;
+    };
+    void setPoster(Poster poster) { _poster = std::move(poster); }
+
     State state() const;
     bool isCaptured() const { return _captured; }
     void capture();
@@ -135,6 +156,8 @@ private:
     HostSettingsFn _hostSettings;
     std::string _targetId;
     bool _gateOpen = true;
+    bool _matchHostPointer = true;
+    Poster _poster;
     double _scale = 1.0;         // 2^MouseScale, latched at capture
     bool _swapButtons = false;   // SwapMouse, latched at capture
     QKeySequence _releaseKey;    // latched at capture

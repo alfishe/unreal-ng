@@ -141,6 +141,15 @@ Source for the AVR behavior:
 - **What it posts:** relative motion in physical pixels (`MouseDeltaAccumulator`,
   `[INPUT] MouseScale`), buttons with `[INPUT] SwapMouse`, wheel steps
   (`MouseWheelAccumulator`), all to the shown emulator's manager.
+- **Speed matching (on by default, switchable at any time):** the travel is the
+  host pointer's own on every platform (macOS: NSEvent deltas of the dissociated
+  pointer; Windows / Linux: the offset from the center the pointer is warped back
+  to), so the system's pointer speed and acceleration are in it. Divided by the
+  size of one emulated pixel on screen (the drawn picture: the software widget,
+  or the GPU window's letterboxed quad), the guest moves as far as the pointer
+  would over the picture. Off (View → Mouse Follows Host Pointer Speed): one host
+  pixel = one count. Checked in `unreal-qt-tests` (2x / 1x, the carried fraction,
+  the warp backend).
 
 ### 3.4 Configuration
 
