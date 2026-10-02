@@ -19,8 +19,8 @@ Still open for the user: the default memory budget (Phase 4) and the integrity a
 
 Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 
-- [ ] Step 1 — Engine skeleton and verification: `TimeTravelEngine`, machine time, frame table, positions with a branch, optional streams; v1 file reader; the oracle against v1; both engines in the benchmark
-- [ ] Step 2 — Piece store: change stored once, encoded once (T = 128 B), chain limit per piece (K = 50), arena with exact sizes, dependencies, shareable by sessions
+- [x] Step 1 — Engine skeleton and verification: `TimeTravelEngine`, machine time, frame table, positions with a branch, optional streams; v1 file reader (`bench/ttdv1feeder`); the oracle against v1 (`TTDV1Feeder_Test`: every corpus checkpoint identical); both engines in the benchmark (`UNREAL_TTD_BENCH_ENGINE=all`) — branch `ttd-engine`, 2026-10-02
+- [x] Step 2 — Piece store: change stored once, encoded once (T = 128 B), chain limit per piece (K = 50), arena with exact sizes, dependencies, shareable by sessions — RAM payload already below v1 on every `ci` case (up to −28%)
 - [ ] Step 3 — Regions and the copy-on-write reference table (8-page blocks, two levels, parent link)
 - [ ] Step 4 — Live capture next to v1, delta base for changed pieces only
 - [ ] Step 5 — Restore only the pieces that differ

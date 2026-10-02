@@ -12,6 +12,8 @@
 
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
+#include "debugger/ttd/bench/ttdv1feeder.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -403,12 +405,112 @@ public:
         return _ttd->GetPerfCounters().lastCaptureNs;
     }
 
+    /// The recorded v1 session (the time-travel engine is fed from it)
+    const TimeTravelManager* Manager() const { return _ttd; }
+
 private:
     EmulatorContext* _context = nullptr;
     TimeTravelManager* _ttd = nullptr;
 };
 
 /// endregion </Engine v1>
+
+/// region <Engine: TimeTravelEngine>
+
+/// The time-travel engine (docs/inprogress/2026-09-25-ttd-v2-migration/).
+/// Phase 1, Step 1: it does not capture the emulator yet. The workload is
+/// recorded with v1 and fed to the engine frame by frame when recording
+/// stops (ttdv1feeder), so its bytes and memory compare with v1's on every
+/// case; capture, seek and file metrics come as the engine gains them
+class EngineTimeTravel final : public Engine
+{
+public:
+    std::string Name() const override { return "engine"; }
+
+    Capabilities Supports() const override
+    {
+        Capabilities c;
+        c.liveCapture = false;
+        c.seek = false;
+        c.saveLoad = false;
+        return c;
+    }
+
+    bool Start(Emulator& emulator, Mode mode, std::string& error) override
+    {
+        _engine.EndSession();
+        return _recorder.Start(emulator, mode, error);
+    }
+
+    void Stop() override
+    {
+        _recorder.Stop();
+        _feedError.clear();
+        const TimeTravelManager* v1 = _recorder.Manager();
+        if (!v1)
+            _feedError = "no v1 session to feed";
+        else if (!FeedV1Session(*v1, _engine, _feedError) && _feedError.empty())
+            _feedError = "feeding the engine failed";
+    }
+
+    uint64_t LastCaptureNs() const override { return 0; }
+    CaptureWork LastCaptureWork() const override { return {}; }
+    size_t Checkpoints() const override { return _engine.CheckpointCount(); }
+    uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
+    uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
+    uint32_t FrameSpan() const override { return _recorder.FrameSpan(); }
+
+    StreamBytes Bytes() const override
+    {
+        StreamBytes b;
+        const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
+        b.ramPayload = h.piecePayload;
+        b.pageRefs = h.referenceTables;
+        for (size_t i = 0; i < _engine.CheckpointCount(); i++)
+        {
+            const TTDEngineCheckpoint* cp = _engine.Checkpoint(i);
+            for (const auto& blob : cp->deviceBlobs)
+                b.deviceBlobs += blob.second.size();
+            b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
+        }
+        return b;
+    }
+
+    uint64_t ResidentBytes() const override { return _engine.HeapBreakdown().Total(); }
+
+    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
+    {
+        const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
+        return {
+            {"piece_versions", h.pieceVersions}, {"ram_payload", h.piecePayload},
+            {"arena_slack", h.arenaSlack}, {"reference_tables", h.referenceTables},
+            {"delta_base", h.deltaBase}, {"checkpoints", h.checkpoints},
+            {"device_blobs", h.deviceBlobs}, {"frame_table", h.frameTable},
+        };
+    }
+
+    bool Seek(uint64_t, uint32_t, SeekTiming&) override { return false; }
+    bool Save(const std::string&, uint64_t&, std::string& error) override
+    {
+        error = "the engine has no file before Phase 4";
+        return false;
+    }
+    bool Load(Emulator&, const std::string&, std::string& error) override
+    {
+        error = "the engine has no file before Phase 4";
+        return false;
+    }
+    uint64_t CaptureNow() override { return 0; }
+
+    std::string LastError() const override { return _feedError; }
+
+private:
+    EngineV1 _recorder;
+    TimeTravelEngine _engine;
+    std::string _feedError;
+};
+
+/// endregion </Engine: TimeTravelEngine>
 
 /// region <Measurements>
 
@@ -574,13 +676,15 @@ std::string PeripheralSet::Name() const
 
 std::vector<std::string> EngineNames()
 {
-    return {"v1"};
+    return {"v1", "engine"};
 }
 
 std::unique_ptr<Engine> CreateEngine(const std::string& name)
 {
     if (name == "v1")
         return std::make_unique<EngineV1>();
+    if (name == "engine")
+        return std::make_unique<EngineTimeTravel>();
     return nullptr;
 }
 
@@ -616,30 +720,39 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         CaptureWork work;
         RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work);
         engine.Stop();
+        if (!engine.LastError().empty() || engine.Checkpoints() == 0)
+        {
+            r.error = engine.Name() + ": " + (engine.LastError().empty() ? "no checkpoint recorded" : engine.LastError());
+            return r;
+        }
 
         const double frames = static_cast<double>(MeasuredFrames(c, options));
         m["frames"] = frames;
         m["checkpoints"] = static_cast<double>(engine.Checkpoints());
+        const Engine::Capabilities caps = engine.Supports();
 
         // BM-2
-        AddPercentiles(m, "bm2_capture_us", captureUs);
-        const double p50 = Percentile(captureUs, 50);
-        m["bm2_capture_p99_over_p50"] = p50 > 0 ? Percentile(captureUs, 99) / p50 : 0.0;
-        // Capture as a share of the recorded frame. Informational: under heavy
-        // host load capture's large copies slow down more than emulation, so
-        // the share drifts up; the CI gate checks the counted work below
-        const double frameP50 = Percentile(frameUs, 50);
-        m["bm2_capture_share_pct"] = frameP50 > 0 ? p50 / frameP50 * 100.0 : 0.0;
-        // BM-2 work: what the captures did, counted (deterministic, the CI
-        // gate's check of capture cost); means per recorded frame
-        const double perFrame = 1.0 / std::max(1.0, frames);
-        m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
-        m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
-        m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
-        m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
-        m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
-        m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
-        m["bm2_work_decoded_opf"] = static_cast<double>(work.slotsDecoded) * perFrame;
+        if (caps.liveCapture)
+        {
+            AddPercentiles(m, "bm2_capture_us", captureUs);
+            const double p50 = Percentile(captureUs, 50);
+            m["bm2_capture_p99_over_p50"] = p50 > 0 ? Percentile(captureUs, 99) / p50 : 0.0;
+            // Capture as a share of the recorded frame. Informational: under heavy
+            // host load capture's large copies slow down more than emulation, so
+            // the share drifts up; the CI gate checks the counted work below
+            const double frameP50 = Percentile(frameUs, 50);
+            m["bm2_capture_share_pct"] = frameP50 > 0 ? p50 / frameP50 * 100.0 : 0.0;
+            // BM-2 work: what the captures did, counted (deterministic, the CI
+            // gate's check of capture cost); means per recorded frame
+            const double perFrame = 1.0 / std::max(1.0, frames);
+            m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
+            m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
+            m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
+            m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
+            m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
+            m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
+            m["bm2_work_decoded_opf"] = static_cast<double>(work.slotsDecoded) * perFrame;
+        }
 
         // BM-3 (bytes per recorded frame, split by stream) and BM-4
         const StreamBytes b = engine.Bytes();
@@ -668,7 +781,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         const uint64_t first = engine.FirstFrame();
         const uint64_t last = engine.LastFrame();
         const uint32_t span = engine.FrameSpan();
-        if (last > first && span > 1 && options.seekSamples)
+        if (caps.seek && last > first && span > 1 && options.seekSamples)
         {
             std::mt19937 rng(options.seekSeed);
             std::uniform_int_distribution<uint64_t> pickFrame(first, last - 1);
@@ -735,7 +848,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         }
 
         // BM-7: save, then load into a fresh machine and seek once
-        if (options.saveLoad)
+        if (options.saveLoad && caps.saveLoad && caps.seek)
         {
             const std::string file = ScratchFile(options, engine.Name() + "-" + c.Name());
             uint64_t bytes = 0;
@@ -766,7 +879,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
     }
 
     // BM-8 on a fresh recording of the same start state
-    if (options.dirtySweep)
+    if (options.dirtySweep && engine.Supports().liveCapture)
     {
         Machine machine(c.config, r.error);
         if (!machine.Get() || !Prepare(*machine.Get(), c, options, r.error) ||
@@ -777,7 +890,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
     }
 
     // BM-1 last: it builds four more machines
-    if (options.overhead && !Overhead(engine, c, options, m, r.error))
+    if (options.overhead && engine.Supports().liveCapture && !Overhead(engine, c, options, m, r.error))
         return r;
 
     r.ok = true;

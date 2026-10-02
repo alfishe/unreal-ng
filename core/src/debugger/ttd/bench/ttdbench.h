@@ -200,8 +200,21 @@ enum class Mode : uint8_t
 class Engine
 {
 public:
+    /// What an engine can be measured on; the runner skips the rest. The
+    /// time-travel engine gains them step by step (Phase 1: memory and bytes
+    /// first, live capture in Step 4, seeks in Step 5, files in Phase 4)
+    struct Capabilities
+    {
+        bool liveCapture = true;   ///< BM-1 / BM-2 / BM-8 measure this engine's own capture
+        bool seek = true;          ///< BM-5 / BM-6
+        bool saveLoad = true;      ///< BM-7
+    };
+
     virtual ~Engine() = default;
     virtual std::string Name() const = 0;
+    virtual Capabilities Supports() const { return {}; }
+    /// Why the last Stop() left no usable session (empty when it did)
+    virtual std::string LastError() const { return {}; }
 
     /// Start recording on @p emulator (paused, synchronous run mode)
     virtual bool Start(Emulator& emulator, Mode mode, std::string& error) = 0;

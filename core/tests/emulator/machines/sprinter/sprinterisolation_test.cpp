@@ -38,6 +38,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/video/videocontroller.cpp",  // the screen factory (ScreenSprinter, PLAN #60(e))
     "emulator/io/ide/idecontroller.cpp",   // [HDD] Scheme=SPRINTER fits MM_SPRINTER only (IdeController::SchemeFits, S3b)
     "debugger/ttd/ttdserializable.h",   // the PeripheralId Sprinter rows (serializers in debugger/ttd/sprinter/)
+    "debugger/ttd/engine/ttdregion.h",  // the TTDRegionId Sprinter rows (the engine's region id table)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
 };
 
