@@ -229,17 +229,39 @@ protected:
 
 private:
     /// A medium (floppy, tape, hard disk, card, CD) into the slot the core's plan
-    /// names (media-drop-targets design §4-§6): one target at once, several
-    /// through the slot chooser, none refused with the reason
-    void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin);
-    /// The plan's default, else the user's pick from a menu at the cursor
-    /// (-1: cancelled), else (unattended) the first entry
-    int chooseTarget(const MediaPlan& plan, const QString& filePath, LoadOrigin origin);
+    /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
+    /// else the plan's default, else the slot chooser (the call ends there and
+    /// comes back with the pick); unattended callers take the first entry
+    void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
+                     const std::string& slot = {});
     void refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin);
-    /// While a file is dragged over the window: the highlight, red with the
-    /// reason in the status bar when nothing takes the file
+    /// Several dropped files: floppy images go to the drives in order (A first,
+    /// booted last), anything else takes the first file only
+    void dropFiles(const QStringList& paths, bool mountOnly);
+    /// While a file is dragged over the window: the highlight; nothing takes it:
+    /// the red refusal over the screen at once; several slots take it: the drop
+    /// zones after a 1.5 s hold
     void showDropVerdict(const QString& filePath);
     void clearDropVerdict();
+    void onDropDragLeft();
+    /// The screen area in global coordinates (where the overlay goes)
+    QRect dropArea() const;
+    /// File > Insert Medium...: a file, then the slot chooser with every slot that takes it
+    void insertMediumDialog();
+
+    /// The slot chooser / drop zones / refusal over the screen
+    class DropTargetOverlay* _dropOverlay = nullptr;
+    QTimer _dropHoldTimer;  ///< 1.5 s hold before the drop zones appear
+    QString _dragPath;      ///< the file being dragged over the window
+    bool _dragActive = false;
+    /// The placement waiting for the chooser's answer
+    struct PendingPlacement
+    {
+        QString path;
+        bool mountOnly = false;
+        LoadOrigin origin = LoadOrigin::Interactive;
+        bool active = false;
+    } _pendingPlacement;
 
 private:
     // Save the last directory path to settings
