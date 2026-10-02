@@ -9,6 +9,8 @@
 #include "base/featuremanager.h"
 #include "common/network/hostnetbridge.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/io/keyboard/atm2kbc.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
@@ -55,10 +57,21 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (networkOn)
             plan.peer = comPeer;
     }
+    else if (caps.serialPort == SerialPort::Atm2Kbc)
+    {
+        // Not on #xxEF: a ZX-WiFi card fits beside it
+        plan.machineSerial = true;
+        if (networkOn)
+            plan.machinePeer = comPeer;
+    }
     else if (caps.serialPort == SerialPort::ZiFi && !comPeer.empty())
         plan.notes.push_back("ComPort: the machine's serial port (ZiFi) is not emulated yet");
     else if (caps.serialPort == SerialPort::None && !comPeer.empty())
-        plan.notes.push_back("ComPort: the machine has no serial port of its own - a ZX-WiFi card adds one (Card=ZXWIFI)");
+    {
+        const bool atm = decoder && caps.reloadFirmware;
+        plan.notes.push_back(atm ? "ComPort: the keyboard controller firmware has no RS-232 (V22-*: use V31-* or later)"
+                                 : "ComPort: the machine has no serial port of its own - a ZX-WiFi card adds one (Card=ZXWIFI)");
+    }
 
     if (!networkOn)
         return plan;
@@ -72,8 +85,8 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     if (cards & networkspec::kCardZxWifi)
     {
         // The card's 16550 sits on #F8EF..#FFEF: a clash with the machine's own #xxEF device disables the card
-        if (plan.serial != Plan::Serial::None || caps.serialPort != SerialPort::None ||
-            (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
+        const bool ownOnEf = caps.serialPort != SerialPort::None && caps.serialPort != SerialPort::Atm2Kbc;
+        if (plan.serial != Plan::Serial::None || ownOnEf || (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
         {
             const char* note = caps.serialPort == SerialPort::EvoAvr
                                    ? "ZXWIFI: not fitted - ports #F8EF..#FFEF are the ZX-Evo AVR's COM port"
@@ -89,32 +102,45 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     return plan;
 }
 
-void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
+std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specText) const
 {
     ComPortSpec spec;
     std::string error;
-    ComPortSpec::Parse(plan.peer.empty() ? "NONE" : plan.peer, spec, error);
+    ComPortSpec::Parse(specText.empty() ? "NONE" : specText, spec, error);
     const EspModule::Chip chip =
         _context->config.network.espChip == 1 ? EspModule::Chip::Esp8266 : EspModule::Chip::Esp32;
-    std::unique_ptr<ISerialPeer> peer;
     switch (spec.kind)
     {
         case ComPortSpec::Kind::Loopback:
-            peer = std::make_unique<LoopbackPeer>();
-            break;
+            return std::make_unique<LoopbackPeer>();
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
-            peer = std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
-            break;
+            return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
         case ComPortSpec::Kind::At:
-            peer = std::make_unique<AtModule>(_network.get(), chip);
-            break;
+            return std::make_unique<AtModule>(_network.get(), chip);
         case ComPortSpec::Kind::Espnet:
-            peer = std::make_unique<EspnetModule>(_network.get(), chip);
-            break;
+            return std::make_unique<EspnetModule>(_network.get(), chip);
         default:
-            break;   // nothing on the line: the registers still answer
+            return nullptr;   // nothing on the line
     }
+}
+
+void NetworkManager::FitMachineSerial(const Plan& plan)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    if (!caps.attachSerialPeer)
+        return;
+    _machinePeer = MakePeer(plan.machinePeer);
+    if (!_machinePeer)
+        return;   // nothing on the line: the firmware's UART still runs
+    caps.attachSerialPeer(_machinePeer.get());
+    _context->pMachineSerialPeer = _machinePeer.get();
+}
+
+void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
+{
+    std::unique_ptr<ISerialPeer> peer = MakePeer(plan.peer);
     PortDecoder* decoder = _context->pPortDecoder;
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
@@ -186,10 +212,25 @@ void NetworkManager::Refit()
             net.espChip = *change->espChip;
         if (change->avrFirmware)
             _context->config.atm.evo_avr = *change->avrFirmware;
+        if (change->kbcFirmware)
+        {
+            // A new controller chip in the socket: it boots afresh; its peer is plugged in again below
+            _context->config.atm.kbc_firmware = *change->kbcFirmware;
+            _context->config.atm.kbc_rom_path[0] = '\0';
+            PortDecoder* decoder = _context->pPortDecoder;
+            const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+            std::string why;
+            _firmwareNote.clear();
+            if (caps.reloadFirmware && !caps.reloadFirmware(why))
+                _firmwareNote = "kbc_firmware: " + why;
+        }
         _forceRefit = true;
     }
     Plan plan = MakePlan();
-    const bool same = plan == _plan && !_forceRefit && (_network || _com || (!plan.zxNetUsb && plan.serial == Plan::Serial::None));
+    if (!_firmwareNote.empty())
+        plan.notes.push_back(_firmwareNote);
+    const bool same = plan == _plan && !_forceRefit &&
+                      (_network || _com || (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty()));
     _forceRefit = false;
     if (same)
     {
@@ -210,7 +251,7 @@ void NetworkManager::Refit()
     Unplug();
     _plan = plan;
 
-    if (plan.zxNetUsb || !plan.peer.empty())
+    if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty())
     {
         std::unique_ptr<IHostNet> host;
         if (_context->config.network.hostAccess)
@@ -231,6 +272,8 @@ void NetworkManager::Refit()
     }
     if (plan.serial != Plan::Serial::None)
         FitCom(plan, keep ? &*keep : nullptr);
+    if (plan.machineSerial)
+        FitMachineSerial(plan);
     UpdateStatus();
 }
 
@@ -238,11 +281,19 @@ void NetworkManager::Unplug()
 {
     if (_context)
     {
+        if (_machinePeer && _context->pPortDecoder)
+        {
+            const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+            if (caps.attachSerialPeer)
+                caps.attachSerialPeer(nullptr);
+        }
         _context->pZxNetUsb = nullptr;
         _context->pComPort = nullptr;
+        _context->pMachineSerialPeer = nullptr;
         _context->pVirtualNetwork = nullptr;
     }
     // The adapters first: their sockets close through the virtual network
+    _machinePeer.reset();
     _com.reset();
     _card.reset();
     _network.reset();
@@ -315,7 +366,7 @@ void NetworkManager::Reset()
         _com->Reset();
     // The card's sockets close; the COM port's link (its cable) stays
     if (_network)
-        _network->Reset(_com ? _com->NetGuest() : nullptr);
+        _network->Reset(ComPort::SerialNetGuests(_context));
     UpdateStatus();
 }
 
@@ -328,13 +379,37 @@ void NetworkManager::OnFrame()
         _network->Pump();
         if (_com)
             _com->OnFrame();
+        if (_machinePeer)
+            _machinePeer->OnFrame();
         UpdateStatus();
     }
-    else if (_com && _context && _context->emulatorState.frame_counter % 25 == 0)
+    else if ((_com || _plan.machineSerial) && _context && _context->emulatorState.frame_counter % 25 == 0)
     {
         // A serial port with nothing on its line (a ZX-Evo's AVR UART): no
         // peer to pump, the status copy twice a second is enough
         UpdateStatus();
+    }
+}
+
+void NetworkManager::FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const
+{
+    if (!peer)
+        return;
+    c.peer = peer->Kind();
+    c.target = peer->Target();
+    c.connected = peer->Connected();
+    c.pending = peer->Pending();
+    if (const auto* esp = dynamic_cast<const EspModule*>(peer))
+    {
+        c.requests = esp->RequestsServed();
+        for (const EspModule::Exchange& e : esp->RecentExchanges())
+            c.exchanges.emplace_back(e.request, e.reply);
+    }
+    if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
+    {
+        static const char* const kPhases[] = {"idle", "resolving", "connecting", "connected"};
+        c.phase = kPhases[static_cast<int>(stream->GetPhase())];
+        c.error = stream->LastError();
     }
 }
 
@@ -370,9 +445,35 @@ void NetworkManager::UpdateStatus()
         const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
         using SerialPort = PortDecoder::NetworkCapabilities::SerialPort;
         st.zxBus = caps.zxBus;
-        st.serialPort = caps.serialPort == SerialPort::EvoAvr ? "evo-avr"
-                        : caps.serialPort == SerialPort::ZiFi ? "zifi"
-                                                              : "none";
+        if (caps.reloadFirmware)   // the board has the keyboard controller socket
+            st.settings.kbcFirmware = Atm2Kbc::FirmwareName(static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware));
+        st.serialPort = caps.serialPort == SerialPort::EvoAvr    ? "evo-avr"
+                        : caps.serialPort == SerialPort::ZiFi    ? "zifi"
+                        : caps.serialPort == SerialPort::Atm2Kbc ? "atm2-kbc"
+                                                                 : "none";
+        if (caps.serialPort == SerialPort::Atm2Kbc)
+        {
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "atm2kbc";
+            m.firmware = caps.firmware;
+            m.baud = caps.serialBaud ? caps.serialBaud() : 0;
+            m.frameBits = 10;   // mode 1: start, 8 data, stop
+            m.modemLines = _context->config.network.comModemLines != 0;
+            if (const auto* atm = dynamic_cast<const PortDecoder_ATM710*>(_context->pPortDecoder))
+            {
+                if (const Atm2Kbc* kbc = atm->GetKeyboardController())
+                {
+                    const Atm2Kbc::SerialLineState& line = kbc->GetSerialLine();
+                    m.rts = kbc->Rts();
+                    m.dtr = kbc->Dtr();
+                    m.bytesIn = line.bytesIn;
+                    m.bytesOut = line.bytesOut;
+                    m.lost = line.lost;
+                }
+            }
+            FillPeerStatus(_machinePeer.get(), m);
+        }
     }
     else
         st.serialPort = "none";
@@ -410,25 +511,7 @@ void NetworkManager::UpdateStatus()
         c.flavor = evo ? "evo" : "zxwifi";
         if (evo)
             c.firmware = Uart16550::AvrFirmwareName(uart.GetParams().avr);
-        if (const ISerialPeer* peer = _com->Peer())
-        {
-            c.peer = peer->Kind();
-            c.target = peer->Target();
-            c.connected = peer->Connected();
-            c.pending = peer->Pending();
-            if (const auto* esp = dynamic_cast<const EspModule*>(peer))
-            {
-                c.requests = esp->RequestsServed();
-                for (const EspModule::Exchange& e : esp->RecentExchanges())
-                    c.exchanges.emplace_back(e.request, e.reply);
-            }
-            if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
-            {
-                static const char* const kPhases[] = {"idle", "resolving", "connecting", "connected"};
-                c.phase = kPhases[static_cast<int>(stream->GetPhase())];
-                c.error = stream->LastError();
-            }
-        }
+        FillPeerStatus(_com->Peer(), c);
         c.modemLines = _context && _context->config.network.comModemLines != 0;
         c.uart = uart.GetView();
         c.baud = uart.Baud();
@@ -593,6 +676,16 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
                 return false;
             }
             out.avrFirmware = static_cast<uint8_t>(firmware);
+        }
+        else if (key == "kbc_firmware" || key == "kbc")
+        {
+            Atm2Kbc::Firmware firmware = Atm2Kbc::kDefaultFirmware;
+            if (value.empty() || !Atm2Kbc::ParseFirmware(value.c_str(), firmware))
+            {
+                error = "kbc_firmware: none | v22-7 | v22-11 | v22-12 | v31-7 | v31-11 | v32-7 | v32-11 | v40 | v41";
+                return false;
+            }
+            out.kbcFirmware = static_cast<uint8_t>(firmware);
         }
         else if (key == "zx_wifi" || key == "zxwifi")
         {

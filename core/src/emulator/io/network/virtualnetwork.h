@@ -104,7 +104,7 @@ public:
     /// Close every socket, forget leases and listeners (machine reset, adapter
     /// removed). The sockets of `keep` stay: a ZX-Bus reset resets the card,
     /// not the COM port's cable (its TCP link or host device)
-    void Reset(const INetGuest* keep = nullptr);
+    void Reset(const SerialGuests& keep = {});
 
     // --- Time ------------------------------------------------------------
 
@@ -189,13 +189,13 @@ public:
 
     /// Guest-side tables (sockets, guest servers, leases, counters). Returns
     /// false when something did not fit the fixed limits (saved as far as it goes)
-    /// `comGuest`: the COM port's peer, saved as guest 2 (every other guest is 1)
-    bool SaveState(netstate::VirtualNetwork& out, const INetGuest* comGuest = nullptr) const;
+    /// `serial`: the serial ports' peers, saved as guests 2 and 3 (every other guest is 1)
+    bool SaveState(netstate::VirtualNetwork& out, const SerialGuests& serial = {}) const;
 
     /// Restore the tables; a socket of guest 1 is handed to `guest` (the
-    /// card's chip), of guest 2 to `comGuest` (the COM port's peer). Queued
+    /// card's chip), of guests 2 / 3 to the serial ports' peers. Queued
     /// answers are dropped: after the checkpoint they come from the journal
-    void LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, INetGuest* comGuest = nullptr);
+    void LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, const SerialGuests& serial = {});
 
 private:
     struct Socket

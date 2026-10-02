@@ -27,6 +27,8 @@
 #include "emulator/cpu/mcs51/mcs51.h"
 #include "emulator/io/keyboard/pckey.h"
 
+class ISerialPeer;
+
 class EmulatorContext;
 
 class Atm2Kbc : public IPs2KeySink
@@ -90,6 +92,16 @@ public:
     /// #FF77 bit 6
     void SetVe1(bool ve1);
 
+    /// The RS-232 port (the MCU's own UART through the 170AP2 / 170UP2 line
+    /// drivers): what is plugged in, or nullptr. The controller does not own it
+    void SetSerialPeer(ISerialPeer* peer);
+    ISerialPeer* SerialPeer() const { return _peer; }
+    /// The line the firmware programmed (baud from its timer 1 / 2), as the peer sees it
+    uint32_t SerialBaud() const;
+    /// RTS / DTR as driven at the connector (P1.4 / P1.3 low = asserted)
+    bool Rts() const { return _cpu && (_cpu->Latch(1) & 0x10) == 0; }
+    bool Dtr() const { return _cpu && (_cpu->Latch(1) & 0x08) == 0; }
+
     /// Frame end: the controller's clock, keyboard and UART run between reads
     void OnFrameEnd();
 
@@ -137,6 +149,19 @@ public:
     };
     const PcKeyboard& GetKeyboard() const { return _kbd; }
 
+    /// The RS-232 line between the MCU and its peer (state report, TTD)
+    struct SerialLineState
+    {
+        uint8_t rxBusy;                ///< a frame from the peer is on RXD
+        uint8_t rxByte;
+        uint8_t rts, dtr;              ///< as last told to the peer
+        uint32_t baud;                 ///< as last told to the peer
+        uint64_t rxDoneAt;             ///< its stop bit is sampled here (MCU clock)
+        uint64_t rxNextAt;             ///< the next frame cannot start before
+        uint64_t bytesIn, bytesOut, lost;
+    };
+    const SerialLineState& GetSerialLine() const { return _line; }
+
     /// TTD (fixed size, trivially copyable): everything that runs, not the ROM image
     struct State
     {
@@ -148,8 +173,9 @@ public:
         uint64_t tBase, mcuBase, frac, lastNow, answerClock, reads, lastWaitMcu;
         mcs51::Mcs51::State cpu;
         PcKeyboard keyboard;
+        SerialLineState line;
     };
-    static constexpr uint32_t kStateVersion = 1;
+    static constexpr uint32_t kStateVersion = 2;   ///< 2: the RS-232 line
     void SaveState(State& out) const;
     /// False (and nothing changed) when the blob is of another firmware or version
     bool LoadState(const State& in);
@@ -166,6 +192,11 @@ private:
     void KeyboardProcess(uint64_t clock);
     uint64_t KeyboardNextEvent() const;
     void KeyboardEnqueue(const std::vector<uint8_t>& bytes);
+    /// RS-232: modem inputs, the frame in from the peer, the line settings
+    void SerialProcess(uint64_t clock);
+    uint64_t SerialNextEvent() const;
+    void SerialOut(uint8_t byte);
+    void TellLine();
     uint64_t KeyboardBitClocks() const { return static_cast<uint64_t>(_crystalHz) * 80u / 1000000u; }
     void OnPortOut(int port, uint8_t latch);
     uint8_t MovxRead(uint16_t address);
@@ -193,6 +224,8 @@ private:
     bool _resetLow = false;          ///< P1.6 holds the Z80 in reset
     uint8_t _p3 = 0xFF;              ///< P3 latch as last seen (manual /VWR, /VRD strobes)
     PcKeyboard _kbd{};
+    ISerialPeer* _peer = nullptr;
+    SerialLineState _line{};
     uint64_t _reads = 0;
     uint64_t _lastWaitMcu = 0;
 };

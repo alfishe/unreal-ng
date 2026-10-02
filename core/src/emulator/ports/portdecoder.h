@@ -340,6 +340,7 @@ typedef void (PortDevice::* PortDeviceOutMethod)(uint16_t port, uint8_t value); 
 /// ============================================================================
 
 /// Base class for all model port decoders
+class ISerialPeer;
 class PortDecoder
 {
 
@@ -799,7 +800,19 @@ public:
             None,     ///< no serial port of its own (a ZX-WiFi card adds one)
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
             ZiFi,     ///< TS-Conf: ZiFi + 16550 through the TS AVR (step N5, not emulated yet)
+            Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
         } serialPort = SerialPort::None;
+
+        /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
+        std::string firmware;
+
+        /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
+        std::function<void(ISerialPeer* peer)> attachSerialPeer;
+
+        /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
+        /// of the firmware from the config ([ATM] Kbc=); false + reason
+        std::function<uint32_t()> serialBaud;
+        std::function<bool(std::string& error)> reloadFirmware;
 
         /// The serial port's behavior (EvoAvr: by the configured AVR firmware)
         Uart16550::Params uart;
