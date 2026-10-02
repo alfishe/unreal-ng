@@ -18,6 +18,8 @@ Size: S = a focused day or two of agent work, M = several days, L = a week or mo
 
 Phases are done in order. A step inside a phase is referred to as "Phase 1, Step 2 — Chain length limit per piece".
 
+**How v2 is built** (decided 2026-10-02): as a new engine, `ttd::TimeTravelEngine`, next to v1's `ttd::TimeTravelManager`. v1 runs the emulator until the engine matches it on every check, then it is deleted. Names carry no version, so nothing is renamed afterwards. Rationale and the naming table: [engine-approach-and-naming.md](engine-approach-and-naming.md). What it supports from the start, and the conflicts settled before coding: [engine-decisions.md](engine-decisions.md).
+
 ## 2. Phases
 
 ### Phase 0 — Preparation
@@ -163,6 +165,7 @@ From this phase on the format is versioned; until then it is amended in place.
 - **The benchmark matrix is the regression guard:** each phase compares the full matrix against the stored baseline ([tools/verification/ttd-bench](../../../tools/verification/ttd-bench/README.md)) and stores its own result as the next baseline.
 - **All or nothing:** a phase lands on master as a series of commits; if a problem shows up later, the phase is reverted as a whole, not left half applied. Until Phase 5 the file format is amended in place, so a revert needs no compatibility work.
 - **No linear-timeline assumption** (FR-22, FR-24): nothing in Phases 1–4 may assume that history is one straight line or add a path that truncates it, so branched histories ([PLAN #76](../2026-09-29-model-what-if/design.md)) stay possible.
+- **The engine beats v1 after every phase** ([engine-decisions.md](engine-decisions.md#g-quality-bar-after-every-phase), decision 33): every frame restores byte for byte as in v1; file size, memory and counted capture work are not larger than v1's in any case of the matrix, for the same history kept; seek time may be slower, within PR-5 and, from Phase 1, Step 6 on, within 25% of E4's estimates. Ratios fixed by design are listed there and are not regressions.
 - **A TDD before the code:** each phase starts with its technical design in this folder, linked from the roadmap above.
 
 ## 4. Documents
@@ -170,6 +173,8 @@ From this phase on the format is versioned; until then it is amended in place.
 | Document | What it answers |
 |---|---|
 | This page | The roadmap: phases, why, how each is checked |
+| [engine-approach-and-naming.md](engine-approach-and-naming.md) | How v2 is built (a new engine next to v1) and what its parts are called |
+| [engine-decisions.md](engine-decisions.md) | The design decisions taken before the engine's code: what it supports from the start, and the conflicts between documents they settle |
 | [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md) | Phase 1 technical design |
 | [migration-trajectory.md](migration-trajectory.md) | Step notes: what each step contains in detail, the history of decisions, risks per phase |
 | [current-state.md](current-state.md) | What TTD does today: code, costs, gaps, suspected bugs |
@@ -203,7 +208,7 @@ Until 2026-10-01 these documents numbered the steps V0…V6. Older documents els
 The existing documents use "v1"/"v2" in at least six different senses (file schema number, the phase-5 codec, POC 011's comparison baseline, design-doc revisions, first-delivery scope, device blob layouts). In this folder:
 
 - **v1** = TTD as shipped on master today, including its file format (header `schema_version = 1`). It already stores memory as 4 KB pieces, each either a full compressed copy or a compressed difference (XOR) from its previous version.
-- **v2** = what this migration builds: memory regions for device-owned memory, cost proportional to change, device state with versions, the inputs exact replay needs in the file, a memory budget, disk streaming, and a versioned, checksummed file.
+- **v2** = what this migration builds: memory regions for device-owned memory, cost proportional to change, device state with versions, the inputs exact replay needs in the file, a memory budget, disk streaming, and a versioned, checksummed file. In code it is the engine `ttd::TimeTravelEngine`; the name carries no version ([engine-approach-and-naming.md](engine-approach-and-naming.md)).
 
 POC 011 (`tools/poc/011-ttd-v2-capture-analysis/`) compares its "v2" against a hypothetical format that stores the full machine every frame; that "v1" is not the shipped engine, so its 30×/199× headline gains do not apply to this migration. Its codec and index-overhead measurements remain useful.
 
