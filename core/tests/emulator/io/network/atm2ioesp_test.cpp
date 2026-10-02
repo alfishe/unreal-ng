@@ -96,6 +96,7 @@ TEST_F(Atm2IoEsp_Test, FbLatchesTheBusAddress)
     EXPECT_EQ(_decoder->IoBusAddress(), 0xF3);
     Out(0x127B, 0x42);   // any port with A2..A0 = 011: #7B too (A7 = 0 also strobes the printer)
     EXPECT_EQ(_decoder->IoBusAddress(), 0x42);
+    EXPECT_EQ(In(0x00FB), 0xFF) << "IN (#FB) is the printer status (BUSY pulled up), not the latch";
 }
 
 TEST_F(Atm2IoEsp_Test, TheCardAnswersItsAddresses)
@@ -234,4 +235,15 @@ TEST_F(Atm2IoEsp_Test, ItsEspAnswersAt115200)
     }
     EXPECT_NE(reply.find("OK"), std::string::npos) << "reply: " << reply;
     EXPECT_EQ(_context->pAtm2IoEsp->Com().Uart().GetView().overruns, 0u);
+}
+
+TEST_F(Atm2IoEsp_Test, OnlyCtsIsWired)
+{
+    // DCD' and DSR' tied asserted, RI' tied off: a TCP peer's lines do not reach the card's MSR
+    Create();
+    Configure({{"card", "atm2ioesp"}, {"atm2ioesp", "loopback"}});
+    const uint8_t msr = ReadRegister(0xF6);
+    EXPECT_EQ(msr & 0xA0, 0xA0) << "DCD and DSR asserted";
+    EXPECT_EQ(msr & 0x40, 0x00) << "RI never";
+    EXPECT_EQ(msr & 0x10, 0x10) << "CTS: the loopback plug is ready";
 }

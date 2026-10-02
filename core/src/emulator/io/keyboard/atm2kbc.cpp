@@ -519,7 +519,7 @@ uint8_t Atm2Kbc::ReadPort(uint16_t port)
     if (waitOff)
     {
         _cpu->SetPin(3, 3, true);
-        return _native ? _native(port) : 0xFF;   // open question: the bus without a served read
+        return _native ? _native(port) : 0xFF;   // no WAIT: the native port answers (reference (b) item 8)
     }
 
     _board.waitSet = true;
@@ -560,7 +560,13 @@ uint8_t Atm2Kbc::ReadPort(uint16_t port)
 
 uint8_t Atm2Kbc::MovxRead(uint16_t address)
 {
-    // P2.0 (address bit 8) = 1: the native port D45; 0: the latched A15..A8
+    // The buffers D108 (A15..A8) and D45 (the native port) drive the MCU's bus only during the Z80's read
+    // cycle, i.e. while it waits for the answer. A read the board did not hold (VE1, W_ON: no WAIT) has ended
+    // before the MCU's interrupt handler runs, and so has a cycle already answered: the bus floats (#FF).
+    // A blocked controller therefore cannot see a #55 escape (reference-atm2-kbc.md (b) item 8)
+    if (!_inRead)
+        return 0xFF;
+    // P2.0 (address bit 8) = 1: the native port D45; 0: A15..A8 through D108
     if (address & 0x0100)
     {
         const uint16_t port = static_cast<uint16_t>((_board.latchedHigh << 8) | (_readPort & 0xFF));
@@ -597,7 +603,7 @@ void Atm2Kbc::OnPortOut(int port, uint8_t latch)
     if (port == 3)
     {
         // Firmware built with en_movx = 0 (3.1, 4.1) strobes the bus by hand:
-        // /VWR (P3.6) latches P0 into D102, /VRD (P3.7) puts the latch D23 or
+        // /VWR (P3.6) latches P0 into D102, /VRD (P3.7) puts A15..A8 (D108) or
         // the native port D45 (P2.0 selects, as VA8) on P0
         const uint8_t falling = static_cast<uint8_t>(_p3 & ~latch);
         const uint8_t rising = static_cast<uint8_t>(latch & ~_p3);
