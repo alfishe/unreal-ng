@@ -1,6 +1,7 @@
 #include "emulator/io/keyboard/atm2kbc.h"
 
 #include <algorithm>
+#include <type_traits>
 #include <cstring>
 #include <vector>
 
@@ -145,7 +146,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
     _board = Board{_board.latchedHigh, 0xFF, false, _board.ve1, false};
     _resetLow = false;
     _p3 = 0xFF;
-    _kbd = Keyboard{};
+    _kbd = PcKeyboard{};
     _reads = 0;
     _lastWaitMcu = 0;
     _tBase = NowBase();
@@ -251,12 +252,12 @@ void Atm2Kbc::KeyboardEnqueue(const std::vector<uint8_t>& bytes)
 {
     for (uint8_t b : bytes)
     {
-        if (_kbd.count >= _kbd.queue.size())
+        if (_kbd.count >= sizeof(_kbd.queue))
         {
             _kbd.overflow = 1;   // the keyboard sends 00 once there is room
             return;
         }
-        _kbd.queue[(_kbd.head + _kbd.count) % _kbd.queue.size()] = b;
+        _kbd.queue[(_kbd.head + _kbd.count) % sizeof(_kbd.queue)] = b;
         ++_kbd.count;
     }
 }
@@ -288,7 +289,7 @@ void Atm2Kbc::KeyboardProcess(uint64_t clock)
         {
             if ((!_kbd.count && !_kbd.overflow) || clock < _kbd.idleUntil)
                 return;
-            if (_kbd.overflow && _kbd.count < _kbd.queue.size())
+            if (_kbd.overflow && _kbd.count < sizeof(_kbd.queue))
             {
                 _kbd.frameByte = 0x00;
                 _kbd.overflow = 0;
@@ -296,7 +297,7 @@ void Atm2Kbc::KeyboardProcess(uint64_t clock)
             else
             {
                 _kbd.frameByte = _kbd.queue[_kbd.head];
-                _kbd.head = static_cast<uint8_t>((_kbd.head + 1) % _kbd.queue.size());
+                _kbd.head = static_cast<uint8_t>((_kbd.head + 1) % sizeof(_kbd.queue));
                 --_kbd.count;
             }
             _kbd.sending = true;
@@ -529,3 +530,59 @@ void Atm2Kbc::BoardReset()
     _p3 = 0xFF;
     _board.waitSet = false;
 }
+
+void Atm2Kbc::SaveState(State& out) const
+{
+    std::memset(&out, 0, sizeof(out));
+    out.version = kStateVersion;
+    out.firmware = static_cast<uint8_t>(_firmware);
+    out.latchedHigh = _board.latchedHigh;
+    out.dataOut = _board.dataOut;
+    out.waitSet = _board.waitSet ? 1 : 0;
+    out.ve1 = _board.ve1 ? 1 : 0;
+    out.answered = _board.answered ? 1 : 0;
+    out.resetLow = _resetLow ? 1 : 0;
+    out.p3 = _p3;
+    out.inRead = _inRead ? 1 : 0;
+    out.readPort = _readPort;
+    out.tBase = _tBase;
+    out.mcuBase = _mcuBase;
+    out.frac = _frac;
+    out.lastNow = _lastNow;
+    out.answerClock = _answerClock;
+    out.reads = _reads;
+    out.lastWaitMcu = _lastWaitMcu;
+    if (_cpu)
+        _cpu->SaveState(out.cpu);
+    out.keyboard = _kbd;
+}
+
+bool Atm2Kbc::LoadState(const State& in)
+{
+    if (in.version != kStateVersion || in.firmware != static_cast<uint8_t>(_firmware) || !_cpu)
+        return false;
+    _board.latchedHigh = in.latchedHigh;
+    _board.dataOut = in.dataOut;
+    _board.waitSet = in.waitSet != 0;
+    _board.ve1 = in.ve1 != 0;
+    _board.answered = in.answered != 0;
+    _resetLow = in.resetLow != 0;
+    _p3 = in.p3;
+    _inRead = in.inRead != 0;
+    _readPort = in.readPort;
+    _tBase = in.tBase;
+    _mcuBase = in.mcuBase;
+    _frac = in.frac;
+    _lastNow = in.lastNow;
+    _answerClock = in.answerClock;
+    _reads = in.reads;
+    _lastWaitMcu = in.lastWaitMcu;
+    _cpu->LoadState(in.cpu);
+    _kbd = in.keyboard;
+    // The Z80 /INT the controller drives follows its restored P1.5
+    if (_context && _context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntAtm2Kbc, (_cpu->Latch(1) & kP1IntT) == 0);
+    return true;
+}
+
+static_assert(std::is_trivial_v<Atm2Kbc::State>, "the controller's TTD blob is cleared and copied as bytes");

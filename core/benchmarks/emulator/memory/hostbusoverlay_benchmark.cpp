@@ -76,6 +76,10 @@ static void BM_HostFrame_Pentagon_Debug(benchmark::State& s) { RunHostFrame(s, "
 static void BM_HostFrame_Scorpion_Fast(benchmark::State& s) { RunHostFrame(s, "SCORPION", false); }
 static void BM_HostFrame_Scorpion_Debug(benchmark::State& s) { RunHostFrame(s, "SCORPION", true); }
 
+// ATM Turbo 2+: the BIOS menu polls the keyboard every frame (with the v7.xx
+// keyboard controller each IN #FE runs its firmware: the worst case for it)
+static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
+static void BM_HostFrame_ATM710_Debug(benchmark::State& s) { RunHostFrame(s, "ATM710", true); }
 static void BM_HostFrame_Pentagon_Overlay_Fast(benchmark::State& s) { RunHostFrame(s, "PENTAGON", false, true); }
 static void BM_HostFrame_Pentagon_Overlay_Debug(benchmark::State& s) { RunHostFrame(s, "PENTAGON", true, true); }
 
@@ -85,6 +89,8 @@ BENCHMARK(BM_HostFrame_Pentagon_Fast)->Iterations(1000)->Unit(benchmark::kMicros
 BENCHMARK(BM_HostFrame_Pentagon_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Scorpion_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Scorpion_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 

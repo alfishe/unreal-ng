@@ -117,23 +117,43 @@ public:
     uint64_t Reads() const { return _reads; }
     uint64_t LastWaitClocks() const { return _lastWaitMcu; }
 
-    /// The keyboard's side of the wire (state report, TTD)
-    struct Keyboard
+    /// The keyboard's side of the wire (state report, TTD). Trivial (no member
+    /// initializers): the TTD blob is cleared and copied as bytes; PcKeyboard{}
+    /// is the idle keyboard (all zero, repeatKey None)
+    struct PcKeyboard
     {
-        std::array<uint8_t, 64> queue{};   ///< bytes waiting to be sent (a real keyboard buffers 16)
-        uint8_t head = 0, count = 0;
-        bool sending = false;
-        uint8_t frameByte = 0;
-        uint8_t bit = 0;                   ///< 0 start, 1..8 data, 9 parity, 10 stop
-        uint8_t phase = 0;                 ///< 0 set data, 1 clock low, 2 clock high
-        uint64_t nextEdge = 0;             ///< MCU clock of the next line change
-        uint64_t idleUntil = 0;            ///< the gap between frames ends here
-        PcKey repeatKey = PcKey::None;     ///< typematic: the last key made, still held
-        uint64_t repeatAt = 0;
-        std::array<uint8_t, 16> held{};    ///< bitmap of the keys held
-        uint8_t overflow = 0;              ///< the buffer overflowed: an 00 code is due
+        uint8_t queue[64];                 ///< bytes waiting to be sent (a real keyboard buffers 16)
+        uint8_t head, count;
+        uint8_t sending;
+        uint8_t frameByte;
+        uint8_t bit;                       ///< 0 start, 1..8 data, 9 parity, 10 stop
+        uint8_t phase;                     ///< 0 set data, 1 clock low, 2 clock high
+        uint64_t nextEdge;                 ///< MCU clock of the next line change
+        uint64_t idleUntil;                ///< the gap between frames ends here
+        PcKey repeatKey;                   ///< typematic: the last key made, still held
+        uint64_t repeatAt;
+        uint8_t held[16];                  ///< bitmap of the keys held
+        uint8_t overflow;                  ///< the buffer overflowed: an 00 code is due
     };
-    const Keyboard& GetKeyboard() const { return _kbd; }
+    const PcKeyboard& GetKeyboard() const { return _kbd; }
+
+    /// TTD (fixed size, trivially copyable): everything that runs, not the ROM image
+    struct State
+    {
+        uint32_t version;              ///< kStateVersion
+        uint8_t firmware;              ///< Firmware: a blob of another image is refused
+        uint8_t latchedHigh, dataOut, waitSet, ve1, answered, resetLow, p3;
+        uint8_t inRead, reserved[3];
+        uint16_t readPort, reserved2;
+        uint64_t tBase, mcuBase, frac, lastNow, answerClock, reads, lastWaitMcu;
+        mcs51::Mcs51::State cpu;
+        PcKeyboard keyboard;
+    };
+    static constexpr uint32_t kStateVersion = 1;
+    void SaveState(State& out) const;
+    /// False (and nothing changed) when the blob is of another firmware or version
+    bool LoadState(const State& in);
+
 
 private:
     uint64_t NowBase() const;              ///< emulated time in base T-states
@@ -172,7 +192,7 @@ private:
 
     bool _resetLow = false;          ///< P1.6 holds the Z80 in reset
     uint8_t _p3 = 0xFF;              ///< P3 latch as last seen (manual /VWR, /VRD strobes)
-    Keyboard _kbd;
+    PcKeyboard _kbd{};
     uint64_t _reads = 0;
     uint64_t _lastWaitMcu = 0;
 };

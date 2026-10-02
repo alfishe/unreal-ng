@@ -1,3 +1,4 @@
+#include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
 
@@ -918,12 +919,17 @@ std::string PortDecoder_ATM710::Dump_EFF7_value(uint8_t value)
 
 std::vector<ttd::PeripheralId> PortDecoder_ATM710::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::AtmPaging};
+    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::AtmPaging};
+    if (GetKeyboardController())
+        ids.push_back(ttd::PeripheralId::Atm2Kbc);   // the v7.xx keyboard controller, when fitted
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM710::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDAtmPaging>(_context));
+    if (Atm2Kbc* kbc = GetKeyboardController())
+        serializers.push_back(std::make_unique<ttd::TTDAtm2Kbc>(*kbc));
     return serializers;
 }

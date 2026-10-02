@@ -67,7 +67,8 @@ enum class PeripheralId : uint8_t
     EvoTurboCache = 21,   // ZX-Evo BaseConf at 14 MHz: the DRAM's code and data cache words (EvoTurboOverlay)
     EvoFontRam = 22,      // ZX-Evo BaseConf text-mode font RAM (2 KB, #BF bit 2 loads it) and the glyph byte #0EBD reads
     KempstonJoystick = 23, // Kempston joystick state byte (core device; carried by machines whose decoder answers #1F)
-    SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
+    SerialPort = 24,
+    Atm2Kbc = 25,         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
     // Future: SAA1099, GS512, etc.
     Count
 };

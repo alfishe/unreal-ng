@@ -3,9 +3,15 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <memory>
 
+#include "base/featuremanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/memory/memory.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -210,4 +216,65 @@ TEST_F(Atm2Kbc_Test, AHeldKeyRepeatsLikeAPcKeyboard)
     _context->pKeyboard->ApplyPcKey(PcKey::B, false);
     _emulator->RunNFrames(1);
     EXPECT_EQ(Kbc()->GetKeyboard().repeatKey, PcKey::None);
+}
+
+TEST_F(Atm2Kbc_Test, TtdBlobRoundTrip)
+{
+    Create("ATM710", 1024);
+    Fit(Atm2Kbc::Firmware::V41);
+    Atm2Kbc* kbc = Kbc();
+    auto saved = std::make_unique<Atm2Kbc::State>();
+    kbc->SaveState(*saved);
+    const uint16_t pc = kbc->Cpu()->Pc();
+
+    _context->pKeyboard->ApplyPcKey(PcKey::Q, true);
+    _emulator->RunNFrames(3);
+    In(0x55FE);
+    In(0x08FE);
+    In(0x02FE);   // mode 2
+    ASSERT_NE(kbc->Cpu()->Clock(), saved->cpu.clock);
+
+    ASSERT_TRUE(kbc->LoadState(*saved));
+    EXPECT_EQ(kbc->Cpu()->Clock(), saved->cpu.clock);
+    EXPECT_EQ(kbc->Cpu()->Pc(), pc);
+    auto again = std::make_unique<Atm2Kbc::State>();
+    kbc->SaveState(*again);
+    EXPECT_EQ(std::memcmp(saved.get(), again.get(), sizeof(Atm2Kbc::State)), 0) << "the blob comes back byte for byte";
+
+    saved->firmware = static_cast<uint8_t>(Atm2Kbc::Firmware::V32At7);
+    EXPECT_FALSE(kbc->LoadState(*saved)) << "a blob of another image is refused";
+    _context->pKeyboard->ApplyPcKey(PcKey::Q, false);
+}
+
+TEST_F(Atm2Kbc_Test, TtdSeekReplaysTheControllerExactly)
+{
+    // Record a PC key through the controller, seek back, replay: the
+    // controller ends in the recorded state
+    Create("ATM710", 1024);
+    Fit(Atm2Kbc::Firmware::V41);
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    ASSERT_TRUE(ttd->StartRecording());
+    _emulator->RunNFrames(2);
+    const uint64_t before = _context->emulatorState.frame_counter;
+    _context->pDebugManager->GetKeyboardManager()->TapKey("pc.w", 3);
+    _emulator->RunNFrames(12);
+    const uint64_t end = _context->emulatorState.frame_counter;
+    auto recorded = std::make_unique<Atm2Kbc::State>();
+    Kbc()->SaveState(*recorded);
+    ttd->StopRecording();
+
+    ASSERT_TRUE(ttd->SeekTo({before, 0}));
+    _emulator->RunNFrames(static_cast<int>(end - before));
+    ASSERT_EQ(_context->emulatorState.frame_counter, end);
+    auto replayed = std::make_unique<Atm2Kbc::State>();
+    Kbc()->SaveState(*replayed);
+    EXPECT_EQ(replayed->cpu.clock, recorded->cpu.clock);
+    EXPECT_EQ(replayed->cpu.pc, recorded->cpu.pc);
+    EXPECT_EQ(std::memcmp(replayed->cpu.ram, recorded->cpu.ram, sizeof(recorded->cpu.ram)), 0);
+    EXPECT_EQ(std::memcmp(replayed.get(), recorded.get(), sizeof(Atm2Kbc::State)), 0) << "the whole controller as recorded";
 }
