@@ -186,7 +186,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_dropOverlay, &DropTargetOverlay::droppedOutside, this, [this]() {
         // Released away from the zones: the same slots, picked by a click
         clearDropVerdict();
-        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), _dropOverlay->plan());
+        // Re-planned: the media manager's slots may have changed since the zones were shown
+        const MediaPlan plan = _emulator ? MediaTargets::Plan(_emulator->GetContext(),
+                                                              MediaTargets::Classify(_pendingPlacement.path.toStdString()))
+                                         : _dropOverlay->plan();
+        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), plan);
     });
     connect(_dropOverlay, &DropTargetOverlay::cancelled, this, [this]() {
         _pendingPlacement.active = false;
