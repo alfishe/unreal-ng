@@ -106,6 +106,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 # OS-specific implementations (src/platform/<os>/): only the host's own.
 # posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them

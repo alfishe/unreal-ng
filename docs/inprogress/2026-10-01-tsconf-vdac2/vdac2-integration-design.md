@@ -29,37 +29,29 @@ a device-state report. The isolation test keeps passing.
 
 ## 2. Build
 
-- `eve-emu` is a git submodule at `lib/eve-emu`, like `lib/googletest` and
-  `lib/benchmark` (arch §3.2).
-- Root `CMakeLists.txt`:
-
-  ```cmake
-  option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" OFF)
-  set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/eve-emu" CACHE PATH "eve-emu checkout")
-  if (ENABLE_VDAC2)
-      if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
-          message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
-                  "Run 'git submodule update --init lib/eve-emu' or set ENABLE_VDAC2=OFF")
-      endif()
-      set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)   # A3: built-ins
-      set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
-      set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
-      add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
-  endif()
-  ```
-
-  before `add_subdirectory(core/src)`, with the library's own tests and benchmarks off.
-  `EVE_EMU_DIR` lets a developer point at a local checkout of the library while working
-  on both. The option stays **OFF until the submodule is in the tree** (the library has
-  no published repository yet); then it turns ON.
+- `eve-emu` is developed in its own repository and **vendored** at
+  `core/src/3rdparty/eve-emu` (decided 2026-10-02: the library has no published
+  repository to take as a submodule). `VENDORED.md` there names the source commit, the
+  files copied (the library and the two decoder sources it compiles, not its tests,
+  benchmarks and tools) and how to update. `core/src/CMakeLists.txt` keeps the copy out of
+  the core source glob; the library builds with its own CMake.
+- Root `CMakeLists.txt`: `ENABLE_VDAC2` (**ON** by default) and `EVE_EMU_DIR` (default the
+  vendored copy; a developer points it at an eve-emu checkout while working on both);
+  built-in decoders (A3); the library's tests, benchmarks and tools off.
 - `core/src/CMakeLists.txt`: with `ENABLE_VDAC2`, `target_link_libraries(core PRIVATE
   eve::emu)` and `target_compile_definitions(core PUBLIC ENABLE_VDAC2)`. The gate is
   PUBLIC like `UNREALNG_HAVE_OPL4`: `core-tests` compiles core sources itself and links
-  `eve::emu` too. The card's source compiles to nothing without the gate.
-- `ENABLE_VDAC2=OFF`: a configuration asking for `TS_VDAC2=1` fails machine creation
-  with "this build has no VDAC2 support" on every surface; nothing silently falls back.
-- New worktrees and CI checkouts need `git submodule update --init --recursive
-  lib/eve-emu` (the library has its own submodules: miniz and stb).
+  `eve::emu` too. Without the gate the card's methods are empty stubs (the card is never
+  fitted then).
+- `ENABLE_VDAC2=OFF`: the `TSL-VDAC2` machine is not offered and a configuration asking
+  for `TS_VDAC2=1` fails with "this build has no VDAC2 support" on every surface; nothing
+  silently falls back.
+- **The machine on every surface:** `TSL-VDAC2` (alias `TSCONF-VDAC2`) is a machine
+  variant (`core/src/emulator/machinevariants.{h,cpp}`): the TSL model with the VDAC2
+  board applied as a config override (`ts_vdac = 7`, no IDE). EmulatorManager creates it
+  by name (create and model switch), the WebAPI / CLI model lists carry it, an instance's
+  identity reports `variant`, and unreal-qt's Machine menu has it as **TS-Conf + VDAC2
+  (FT812)**.
 
 ## 3. Configuration and the IDE slot
 

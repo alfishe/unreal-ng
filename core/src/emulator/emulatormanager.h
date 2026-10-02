@@ -27,6 +27,8 @@ struct MachineIdentity
     double SpeedMultiplier = 1.0; ///< Live z80 frequency multiplier (turbo)
     std::string ConfigFolder;    ///< configs/<folder> backing this machine
     std::string RamPowerOn;      ///< "random" / "zero": RAM contents at creation (Config::RamPowerOnName)
+    std::string Variant;         ///< machine variant name ("TSL-VDAC2", MachineVariants), empty for a plain model
+    std::string VariantTitle;    ///< its title ("TS-Conf + VDAC2 (FT812)")
     bool Valid = false;          ///< False while the emulator context does not exist yet
 
     /// ZX-Poly: this instance belongs to a four-module group
