@@ -12,7 +12,13 @@
 #include <vector>
 
 #include "emulator/platforms/tsconf/vdac2card.h"
+#include "emulator/platforms/tsconf/vdac2control.h"
 #include "emulator/video/screen.h"
+
+#include <eve/eve.h>
+
+#include <cstring>
+#include <filesystem>
 
 namespace
 {
@@ -439,6 +445,176 @@ TEST_F(Vdac2Card_Test, MonitorShowsTheFt812PictureWhileMselIsSet)
     EXPECT_FALSE(Card()->IsShowing());
     EXPECT_FALSE(screen->IsExternalPictureActive());
     EXPECT_EQ(&screen->GetFramebufferDescriptor(), &screen->GetNativeFramebufferDescriptor());
+}
+
+/// A capture started on a running chip replays into a fresh chip: the state
+/// record restores it, then every byte's answer and every frame count match
+/// (vdac2-test-corpus.md §4)
+TEST_F(Vdac2Card_Test, CaptureOnARunningChipReplaysExactly)
+{
+    Boot();
+    StartSmallScanWithSwapInterrupt();
+    Tick(3 * kSmallFrameTacts);
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2card_test_capture.evr");
+    std::string error;
+    ASSERT_TRUE(Card()->StartCapture(path, &error)) << error;
+    EXPECT_TRUE(Card()->IsCapturing());
+
+    // Traffic: RAM_G writes and reads, a swap, scan frames
+    Write(kRamG + 0x100, {1, 2, 3, 4, 5, 6, 7, 8});
+    Read(kRamG + 0x100, 8);
+    Write32(kRamDl + 0, kDlClearColorRed);
+    Write32(kRamDl + 4, kDlClear);
+    Write32(kRamDl + 8, kDlDisplay);
+    Write32(kRegDlswap, kDlswapFrame);
+    Tick(5 * kSmallFrameTacts);
+    Read32(kRegClock);
+    ASSERT_TRUE(Card()->StopCapture());
+    EXPECT_FALSE(Card()->IsCapturing());
+    const Vdac2Capture::Stats stats = Card()->GetCaptureStats();
+    EXPECT_GT(stats.exchanges, 30u);
+    EXPECT_GE(stats.frames, 4u);
+
+    std::vector<uint8_t> file(static_cast<size_t>(std::filesystem::file_size(path)));
+    {
+        FILE* f = std::fopen(path.c_str(), "rb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(std::fread(file.data(), 1, file.size(), f), file.size());
+        std::fclose(f);
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    ASSERT_GE(file.size(), Vdac2Capture::kHeaderSize);
+    ASSERT_EQ(std::memcmp(file.data(), "EVR1", 4), 0);
+
+    size_t pos = 0;
+    auto u8 = [&]() { return file[pos++]; };
+    auto le = [&](int bytes) {
+        uint64_t v = 0;
+        for (int i = 0; i < bytes; i++)
+            v |= static_cast<uint64_t>(file[pos++]) << (8 * i);
+        return v;
+    };
+    pos = 40;
+    EXPECT_EQ(le(4) & 1u, 0u) << "not from power-on";
+    pos = Vdac2Capture::kHeaderSize;
+
+    // Replay into a fresh chip
+    EveConfig config{};
+    config.structSize = sizeof(EveConfig);
+    config.model = EVE_MODEL_FT812;
+    config.externalClockHz = Vdac2Card::kCrystalHz;
+    EveChip* chip = EveCreate(&config);
+    ASSERT_NE(chip, nullptr);
+    uint64_t clock = 0;
+    bool started = false;
+    size_t bytes = 0;
+    size_t frames = 0;
+    bool ended = false;
+    while (pos < file.size() && !ended && !HasFailure())
+    {
+        const uint8_t kind = u8();
+        uint64_t delta = 0;
+        for (int shift = 0;; shift += 7)
+        {
+            const uint8_t b = u8();
+            delta |= static_cast<uint64_t>(b & 0x7F) << shift;
+            if (!(b & 0x80))
+                break;
+        }
+        clock += delta;
+        if (started && clock > EveTotalClocks(chip))
+            EveAdvance(chip, clock - EveTotalClocks(chip));
+        switch (kind)
+        {
+        case Vdac2Capture::kState:
+        {
+            const size_t stateSize = static_cast<size_t>(le(4));
+            ASSERT_EQ(EveLoadState(chip, file.data() + pos, stateSize), 0) << EveLastError();
+            pos += stateSize;
+            const size_t regions = static_cast<size_t>(le(4));
+            for (size_t r = 0; r < regions; r++)
+            {
+                const size_t nameLength = u8();
+                const std::string name(reinterpret_cast<const char*>(file.data() + pos), nameLength);
+                pos += nameLength;
+                const size_t size = static_cast<size_t>(le(4));
+                EveRegion region{};
+                EveGetRegion(chip, r, &region);
+                ASSERT_EQ(name, region.name);
+                ASSERT_EQ(size, region.size);
+                std::memcpy(region.base, file.data() + pos, size);
+                pos += size;
+            }
+            EveMemoryRestored(chip);
+            ASSERT_EQ(EveTotalClocks(chip), clock) << "the state carries the chip's clock";
+            started = true;
+            break;
+        }
+        case Vdac2Capture::kSelect:
+            EveSelect(chip, u8());
+            break;
+        case Vdac2Capture::kByte:
+        {
+            const uint8_t mosi = u8();
+            const uint8_t miso = u8();
+            ASSERT_EQ(EveExchange(chip, mosi), miso) << "byte " << bytes << " at clock " << clock;
+            bytes++;
+            break;
+        }
+        case Vdac2Capture::kFrame:
+        {
+            const uint64_t count = le(8);
+            pos += 1 + 2 + 2 + 8;
+            EXPECT_EQ(EveCompletedFrames(chip), count) << "at clock " << clock;
+            frames++;
+            break;
+        }
+        case Vdac2Capture::kEnd:
+            ended = true;
+            break;
+        default:
+            FAIL() << "unknown record " << int(kind);
+        }
+    }
+    EveDestroy(chip);
+    EXPECT_TRUE(ended);
+    EXPECT_EQ(bytes, stats.exchanges);
+    EXPECT_EQ(frames, stats.frames);
+}
+
+/// Vdac2Control, what every automation surface calls: the capture through
+/// it, and the reasons it gives without a card
+TEST_F(Vdac2Card_Test, ControlStartsStopsAndExplainsRefusals)
+{
+    Boot();
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2card_test_control.evr");
+    std::string error;
+    Vdac2Control::CaptureStatus status;
+    EXPECT_TRUE(Vdac2Control::HasCard(_context, &error)) << error;
+    EXPECT_FALSE(Vdac2Control::StopCapture(_context, &error)) << "nothing runs yet";
+    EXPECT_FALSE(Vdac2Control::StartCapture(_context, "", &error)) << "no path";
+
+    ASSERT_TRUE(Vdac2Control::StartCapture(_context, path, &error)) << error;
+    Write(kRamG, {1, 2, 3, 4});
+    ASSERT_TRUE(Vdac2Control::GetCaptureStatus(_context, status, &error)) << error;
+    EXPECT_TRUE(status.capturing);
+    EXPECT_EQ(status.path, path);
+    EXPECT_GT(status.exchanges, 0u);
+    EXPECT_GT(status.bytesWritten, Vdac2Capture::kHeaderSize) << "counts what is still buffered";
+    ASSERT_TRUE(Vdac2Control::StopCapture(_context, &error)) << error;
+    ASSERT_TRUE(Vdac2Control::GetCaptureStatus(_context, status, &error));
+    EXPECT_FALSE(status.capturing);
+    EXPECT_EQ(std::filesystem::file_size(path), status.bytesWritten);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // Without the card: the reason names the configuration
+    _context->config.ts_vdac = 0;
+    _decoder->reset();
+    EXPECT_FALSE(Vdac2Control::StartCapture(_context, path, &error));
+    EXPECT_NE(error.find("TS_VDAC2"), std::string::npos) << error;
+    EXPECT_FALSE(Vdac2Control::GetCaptureStatus(_context, status, &error));
 }
 
 /// DMA RAM -> SPI (the SDK's ft_load_cfifo_dma path) delivers the bytes to

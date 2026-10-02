@@ -8,6 +8,7 @@
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 #include "../bindings/lua_porttrace.h"
+#include "../bindings/lua_vdac2.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
@@ -5269,6 +5270,9 @@ public:
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         LuaPortTrace::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

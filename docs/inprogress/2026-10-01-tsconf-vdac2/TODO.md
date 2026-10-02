@@ -28,4 +28,11 @@ Status 2026-10-01: research done, design written, nothing implemented.
   raster tacts -> FT812 clocks with exact remainder, frame-end call from the engine), tests
   `vdac2card_test.cpp`
 - [ ] Submodule `lib/eve-emu` once the library has a published repository; then `ENABLE_VDAC2` ON
-- [ ] Integration I2-I5; the TO VERIFY list in design §12.1
+- [x] I2 (branch `vdac2-i1`): FT812 INT_N as the line interrupt on msel lines, the FT812 picture
+  on the monitor through the Screen's external picture source, latched at the FT812 rate
+- [x] FT812 bus capture (.evr replay stream, test corpus §4) on every automation surface; R-Type
+  gameplay capture taken (local, 144 MB) for the library's replay tests and optimization
+- [ ] A/B benchmark of the TS-Conf per-step path (`BM_HostFrame_TSConf_*`, I1 vs I2) on a quiet machine
+- [ ] Performance: the FT812 in step with the machine saturates a core; optimize the library on the
+  replay stream, then study a parallel render thread
+- [ ] Integration I3-I5; the TO VERIFY list in design §12.1

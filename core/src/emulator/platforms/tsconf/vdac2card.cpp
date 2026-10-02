@@ -62,6 +62,14 @@ Vdac2Card::Vdac2Card(EmulatorContext* context, std::function<uint32_t()> rasterI
     else
     {
         _chipFrames = EveCompletedFrames(_chip);
+        const char* capture = _context ? _context->config.vdac2_capture_path : "";
+        if (capture[0] != '\0')
+        {
+            if (_capture.Open(capture, kCrystalHz, _rom))
+                MLOGINFO("VDAC2: capturing the FT812 bus to '%s'", capture);
+            else
+                MLOGWARNING("VDAC2: cannot write the capture file '%s'", capture);
+        }
         ConfigureOutput();
     }
 
@@ -76,7 +84,10 @@ Vdac2Card::~Vdac2Card()
     if (_showing && _context && _context->pScreen)
         _context->pScreen->ClearExternalPicture();
     if (_chip)
+    {
+        _capture.Close(EveTotalClocks(_chip));
         EveDestroy(_chip);
+    }
 }
 
 void Vdac2Card::LoadRom()
@@ -125,6 +136,7 @@ void Vdac2Card::PowerOn()
     if (_chip)
     {
         EveReset(_chip);
+        _capture.PowerOn(EveTotalClocks(_chip));
         _chipFrames = EveCompletedFrames(_chip);
         if (ConfigureOutput())
             PublishPicture();
@@ -307,6 +319,8 @@ bool Vdac2Card::Drawing() const
 {
     // Only a shown picture is drawn, and not while turbo skips the frames
     // (all timing runs either way: nothing the guest sees depends on drawing)
+    if (_capture.IsOpen())
+        return true;  // a capture hashes every frame
     const Screen* screen = _context ? _context->pScreen : nullptr;
     return _showing && !(screen && screen->IsTurboRenderSkip());
 }
@@ -314,8 +328,15 @@ bool Vdac2Card::Drawing() const
 void Vdac2Card::OnChipFrame()
 {
     _chipFrames = EveCompletedFrames(_chip);
+    if (_capture.IsOpen())
+        _capture.Frame(EveTotalClocks(_chip), _chipFrames, _drawing, _pictureWidth, _pictureHeight,
+                       _drawing ? Vdac2Capture::HashPicture(_chipFrame.data(), _chipFrame.size()) : 0);
     if (!_showing)
+    {
+        if (_capture.IsOpen())
+            ConfigureOutput();  // follow mode changes: the next frame is drawn at the right size
         return;
+    }
 
     // Set up the next frame first: a new mode resizes the buffers (the frame
     // just finished was drawn for the old size and is not presented), and the
@@ -346,12 +367,57 @@ void Vdac2Card::OnChipFrame()
     _latchedFrames++;
 }
 
+bool Vdac2Card::StartCapture(const std::string& path, std::string* error)
+{
+    if (!_chip)
+    {
+        if (error)
+            *error = "the FT812 is not available";
+        return false;
+    }
+    Synchronize();
+    StopCapture();
+
+    // The chip as it is now: the state blob and every memory region
+    Vdac2Capture::ChipState state;
+    state.state.resize(EveStateSize(_chip));
+    EveSaveState(_chip, state.state.data());
+    for (size_t i = 0; i < EveRegionCount(_chip); i++)
+    {
+        EveRegion region{};
+        EveGetRegion(_chip, i, &region);
+        state.regions.push_back({region.name ? region.name : "", std::vector<uint8_t>(region.base, region.base + region.size)});
+    }
+    if (!_capture.Open(path, kCrystalHz, _rom, &state, EveTotalClocks(_chip)))
+    {
+        if (error)
+            *error = "cannot write '" + path + "'";
+        return false;
+    }
+    ConfigureOutput();  // a capture draws every frame (Drawing)
+    MLOGINFO("VDAC2: capturing the FT812 bus to '%s'", path.c_str());
+    return true;
+}
+
+bool Vdac2Card::StopCapture()
+{
+    if (!_capture.IsOpen())
+        return false;
+    Synchronize();
+    _capture.Close(EveTotalClocks(_chip));
+    ConfigureOutput();
+    MLOGINFO("VDAC2: capture '%s' finished, %llu bytes", _capture.GetStats().path.c_str(),
+             static_cast<unsigned long long>(_capture.GetStats().bytesWritten));
+    return true;
+}
+
 void Vdac2Card::select(bool selected)
 {
     Synchronize();
     if (!_chip)
         return;
     EveSelect(_chip, selected ? 1 : 0);
+    _capture.Select(EveTotalClocks(_chip), selected);
     SampleInt(_time.position);
     PlanNextEvent();
 }
@@ -362,6 +428,7 @@ uint8_t Vdac2Card::exchange(uint8_t mosi)
     if (!_chip)
         return 0xFF;
     const uint8_t miso = EveExchange(_chip, mosi);
+    _capture.Byte(EveTotalClocks(_chip), mosi, miso);
     // A register write can raise INT_N at once (INT_EN with flags pending)
     // or release it (the REG_INT_FLAGS read)
     SampleInt(_time.position);

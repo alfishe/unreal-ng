@@ -169,6 +169,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"port-trace", &CLIProcessor::HandlePortTrace},
                         {"porttrace", &CLIProcessor::HandlePortTrace},
 
+                        // TS-Conf VDAC2 card (FT812): bus capture
+                        {"vdac2", &CLIProcessor::HandleVdac2},
+
                         // General Sound coprocessor triage (activity counters + port/DAC trace)
                         {"gsporttrace", &CLIProcessor::HandleGSPortTrace},
                         {"gs-porttrace", &CLIProcessor::HandleGSPortTrace},
@@ -633,6 +636,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (ZX-Evo AVR UART)" << NEWLINE;
     oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
     oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
+    oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;
+    oss << "                                - FT812 bus to an .evr replay stream (chip selects, bytes, clocks, frame hashes)" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;

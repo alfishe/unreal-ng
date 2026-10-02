@@ -68,6 +68,7 @@
 #include <vector>
 
 #include "emulator/io/spi/spidevice.h"
+#include "emulator/platforms/tsconf/vdac2capture.h"
 #include "emulator/platform.h"
 
 class EmulatorContext;
@@ -157,6 +158,18 @@ public:
     /// FT812 frames latched to the Screen since the card was fitted
     uint64_t LatchedFrames() const { return _latchedFrames; }
 
+    /// region <Bus capture (.evr replay stream, vdac2-test-corpus.md §4)>
+    /// Start writing everything on the FT812's bus to `path`. On a running
+    /// chip the stream begins with the chip's whole state, so it replays
+    /// from that point. Replaces a capture in progress
+    bool StartCapture(const std::string& path, std::string* error = nullptr);
+    /// Finish the stream (the end record, the file closed); false when none ran
+    bool StopCapture();
+    bool IsCapturing() const { return _capture.IsOpen(); }
+    /// What the current or the last capture wrote
+    Vdac2Capture::Stats GetCaptureStats() const { return _capture.GetStats(); }
+    /// endregion
+
     /// Falling edges of INT_N up to raster tact `rasterInFrame` of the
     /// current frame, oldest first, as tacts of the current frame (an edge
     /// carried over from the frame before reads as 0). Advances the chip
@@ -208,4 +221,8 @@ private:
     std::vector<uint8_t> _picture;
     uint16_t _pictureWidth = 0;
     uint16_t _pictureHeight = 0;
+
+    // [VDAC2] CaptureFile: the bus traffic as an .evr replay stream; while
+    // capturing, the chip draws every frame so the stream carries frame hashes
+    Vdac2Capture _capture;
 };

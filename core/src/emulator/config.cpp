@@ -817,6 +817,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// a missing file only leaves the ROM fonts blank
 	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
 	                sizeof config.vdac2_rom_path);
+	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
+	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
+	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
+	                sizeof config.vdac2_capture_path);
 
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.

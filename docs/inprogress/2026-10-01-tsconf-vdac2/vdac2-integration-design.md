@@ -338,6 +338,7 @@ TS-Conf), so all of them return the same data.
 | CLI | `state vdac2`, `vdac2 dl [active\|pending]`, `vdac2 mem <addr> <len>`, `vdac2 frame <file>`, `vdac2 linecost <line>` | CLI command table |
 | MCP | `inspect_state` aspect `vdac2`; `capture_media` source `vdac2` | `core/automation/mcp/src/mcp-tools.cpp` |
 | Lua / Python | `vdac2_state()`, `vdac2_display_list()`, `vdac2_read(addr, len)`, `vdac2_frame()`, `vdac2_line_cost(line)` | `lua_emulator.h`, `python_emulator.h` |
+| **Bus capture (built)** | WebAPI `POST …/vdac2/capture/start {path}`, `POST …/vdac2/capture/stop`, `GET …/vdac2/capture/status`; CLI `vdac2 capture start <path>\|stop\|status`; MCP `capture_media` actions `vdac2_capture_start` (filename) / `_stop` / `_status`; Lua `vdac2_capture_start/stop/status`; Python `emu.vdac2_capture_*`. All through `Vdac2Control` (`vdac2control.h`): the FT812 bus to an .evr replay stream (vdac2-test-corpus.md §4), started at any moment (the stream then begins with the chip's state) | `api/vdac2_api.cpp`, `openapi/openapi_vdac2.inc`, `cli-processor-vdac2.cpp`, `mcp-media.cpp`, `lua_vdac2.h`, `python_vdac2.h`; recipe `.recipe/machines/tsconf-vdac2.md` |
 | Qt | later (debug UI deferred, as for TS-Conf); the surfaces above are complete enough that a dock is integration only | - |
 | Recipe | `.recipe/machines/tsconf-vdac2.md`: enabling the card, the ROM image, putting a game on the SD card, starting it, taking a picture, which images `ftview` accepts (tdd §2.7) | - |
 
