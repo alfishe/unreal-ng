@@ -25,6 +25,6 @@
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — #27, #64, #40.
-- SZX: [../2026-09-29-szx-snapshots/](../2026-09-29-szx-snapshots/TODO.md).
+- SZX: [../2026-09-29-szx-snapshots/](../2026-09-29-szx-snapshots/DONE.md).
 - TTD port journals: [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md).
 - Research: `docs/inprogress/2026-09-28-debugger-family/rzx-ttd.md` (not yet in master).
