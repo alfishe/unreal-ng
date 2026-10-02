@@ -224,7 +224,7 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] =
         "Invalid path, file format, or drive parameter";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["413"]["description"] =
-        "File too large (max 1 MB)";
+        "File too large (max 4 MB: TRD / SCL / FDI, 1.44 MB PC floppies, HD UDI)";
 
     // POST /api/v1/emulator/{id}/disk/{drive}/create - Create blank disk
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["summary"] = "Create blank disk";

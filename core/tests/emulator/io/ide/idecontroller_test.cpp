@@ -66,7 +66,7 @@ namespace
 
 TEST(IdeScheme_Test, NamesRoundTrip)
 {
-    for (IDE_SCHEME scheme : {IDE_NONE, IDE_ATM, IDE_NEMO, IDE_NEMO_A8, IDE_NEMO_DIVIDE, IDE_SMUC, IDE_PROFI, IDE_DIVIDE})
+    for (IDE_SCHEME scheme : {IDE_NONE, IDE_ATM, IDE_NEMO, IDE_NEMO_A8, IDE_NEMO_DIVIDE, IDE_SMUC, IDE_PROFI, IDE_DIVIDE, IDE_SPRINTER})
     {
         IDE_SCHEME parsed = IDE_NONE;
         ASSERT_TRUE(Config::ParseIdeScheme(Config::IdeSchemeName(scheme), parsed)) << Config::IdeSchemeName(scheme);
@@ -183,6 +183,10 @@ TEST(IdeScheme_Test, SchemesFitTheirMachines)
     EXPECT_TRUE(IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_TSL)) << "TSConf keeps the ZX-Evo NemoIDE (zports.v:766-783)";
     EXPECT_TRUE(IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_ATM3));
     EXPECT_FALSE(IdeController::SchemeFits(IDE_NEMO, MM_PROFI));
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_SPRINTER, MM_SPRINTER));
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_SPRINTER, MM_PENTAGON));
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_NEMO, MM_SPRINTER)) << "the Sprinter's PLD decodes every port";
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_DIVIDE, MM_SPRINTER));
 
     EmulatorContext context(LoggerLevel::LogError);
     context.config.mem_model = MM_PENTAGON;
@@ -389,4 +393,69 @@ TEST_F(IdeController_Test, ProtectSwitchAndBusyLeaveTransfersAlone)
     ASSERT_TRUE(Manager().SetWriteProtect("ide0.master", false).Ok());
     Channel().WriteRegister(StatusCommand, Command::WriteSectors);
     EXPECT_TRUE(Channel().ReadRegister(StatusCommand) & Status::DRQ);
+}
+
+/// Sprinter (tdd-storage §1): two channels, four units, the slots ide0.master ... ide1.slave; every unit an empty
+/// hard disk by default (ide0.slave has no device: Q5); the channel the adapter selects is the one that answers
+TEST_F(IdeController_Test, SprinterHasTwoChannels)
+{
+    Create("SPRINTER");
+    IdeController& ide = *_context->pIdeController;
+    ASSERT_EQ(ide.Scheme(), IDE_SPRINTER) << "configs/sprinter: [HDD] Scheme=SPRINTER";
+    EXPECT_EQ(ide.ChannelCount(), 2);
+
+    const char* const ids[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+    const char* const labels[4] = {"IDE primary master (hard disk)", "IDE primary slave (hard disk)",
+                                   "IDE secondary master (hard disk)", "IDE secondary slave (hard disk)"};
+    for (int unit = 0; unit < 4; unit++)
+    {
+        const auto info = Manager().Info(ids[unit]);
+        ASSERT_TRUE(info.has_value()) << ids[unit];
+        EXPECT_EQ(info->descriptor.kind, MediaKind::Block) << ids[unit];
+        EXPECT_EQ(info->descriptor.label, labels[unit]);
+        EXPECT_FALSE(info->present) << ids[unit];
+        EXPECT_EQ(IdeController::UnitForSlot(ids[unit]), unit);
+        EXPECT_EQ(ide.Slot(unit)->Descriptor().id, ids[unit]);
+    }
+    std::string id;
+    ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "hd", id).Ok());
+    EXPECT_EQ(id, "ide0.master");
+    ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "tag:ide+sprinter+secondary+slave", id).Ok());
+    EXPECT_EQ(id, "ide1.slave");
+
+    // A disk on the secondary master answers only once #2A selects that channel
+    ScratchFolder folder("ide-sprinter");
+    std::string disk(512 * 512, '\0');
+    std::memcpy(disk.data() + 3 * 512, "\x34\x12", 2);
+    ASSERT_TRUE(Insert("ide1.master", Utf8(folder.File("ide1.img", disk))).Ok());
+    IdeAdapter& adapter = _context->pPortDecoder->GetIdeAdapter();
+    EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), 0xFF) << "primary: no drive, the bus floats";
+    adapter.SprinterOut(0x2A, 0x01BC, 0x01);
+    EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), Status::DRDY | Status::DSC);
+    for (const auto& [code, value] : std::vector<std::pair<uint8_t, uint8_t>>{
+             {0x26, 0xE0}, {0x22, 1}, {0x23, 3}, {0x24, 0}, {0x25, 0}, {0x27, Command::ReadSectors}})
+        adapter.SprinterOut(code, static_cast<uint16_t>(0x0150 | (code & 7)), value);
+    EXPECT_EQ(adapter.SprinterIn(0x20, 0x0050), 0x34);
+    EXPECT_EQ(adapter.SprinterIn(0x20, 0x0150), 0x12);
+
+    // The secondary slave can become a CD drive (the media verb's device=cdrom)
+    std::string error;
+    ASSERT_TRUE(ide.SetUnitKind(3, true, &error)) << error;
+    EXPECT_EQ(Manager().Info("ide1.slave")->descriptor.kind, MediaKind::Optical);
+    EXPECT_EQ(Manager().Info("ide1.slave")->descriptor.label, "IDE secondary slave (CD-ROM)");
+    ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "cd", id).Ok());
+    EXPECT_EQ(id, "ide1.slave");
+    EXPECT_EQ(_context->config.ide[3].cd, 1);
+}
+
+/// Single-channel boards keep one channel and no ide1 slots
+TEST_F(IdeController_Test, OneChannelBoardsHaveNoSecondChannel)
+{
+    Create("PENTAGON");
+    EXPECT_EQ(_context->pIdeController->ChannelCount(), 1);
+    EXPECT_FALSE(Manager().Info("ide1.master").has_value());
+    EXPECT_EQ(_context->pIdeController->Slot(2), nullptr);
+    EXPECT_EQ(&_context->pIdeController->Channel(1), &_context->pIdeController->Channel(0)) << "out of range: channel 0";
+    std::string error;
+    EXPECT_FALSE(_context->pIdeController->SetUnitKind(2, true, &error));
 }

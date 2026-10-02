@@ -12,7 +12,7 @@ using namespace ata;
 AtaChannel* IdeAdapter::Channel() const
 {
     IdeController* ide = _context ? _context->pIdeController : nullptr;
-    return ide && ide->Enabled() ? &ide->Channel() : nullptr;
+    return ide && ide->Enabled() ? &ide->Channel(_s.channel) : nullptr;
 }
 
 IDE_SCHEME IdeAdapter::Scheme() const
@@ -67,8 +67,11 @@ void IdeAdapter::DmaWriteWord(uint16_t word)
 
 void IdeAdapter::ResetUnits()
 {
-    if (AtaChannel* channel = Channel())
-        channel->HardReset();
+    IdeController* ide = _context ? _context->pIdeController : nullptr;
+    if (!ide || !ide->Enabled())
+        return;
+    for (int index = 0; index < ide->ChannelCount(); index++)
+        ide->Channel(index).HardReset();
 }
 
 uint8_t IdeAdapter::AtmIntrqBit()
@@ -446,3 +449,59 @@ bool IdeAdapter::DivideOut(uint16_t port, uint8_t value)
 }
 
 /// endregion </DivIDE>
+
+/// region <Sprinter>
+
+uint8_t IdeAdapter::SprinterIn(uint8_t code, uint16_t port)
+{
+    _reachedDrive = false;
+    if (!Channel())
+        return 0xFF;
+    const bool a8 = (port & 0x0100) != 0;
+    switch (code)
+    {
+        case 0x20: return a8 ? _s.readLatch : ReadDataLow();
+        case 0x21: case 0x22: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
+            return a8 ? 0xFF : ReadRegister(static_cast<uint8_t>(code & 0x07));
+        case 0x28: return a8 ? 0xFF : ReadRegister(Control);  // PC #3F6: alternate status
+        case 0x29:
+            // PC #3F7, drive address: the AT board drives it (the drive gives bit 7 high-Z);
+            // the shared core has no register for it: the bus floats
+            return 0xFF;
+        default: return 0xFF;
+    }
+}
+
+void IdeAdapter::SprinterOut(uint8_t code, uint16_t port, uint8_t value)
+{
+    _reachedDrive = false;
+    // The channel latch works without a board as well: it is a PLD register
+    if (code == 0x2A || code == 0x2B)
+    {
+        _s.channel = code == 0x2A ? 1 : 0;  // #2A secondary (BIOS IDE_CHANEL_1), #2B primary (IDE_CHANEL_2)
+        return;
+    }
+    if (!Channel())
+        return;
+    const bool a8 = (port & 0x0100) != 0;
+    switch (code)
+    {
+        case 0x20:
+            if (a8)
+                WriteDataWord(static_cast<uint16_t>((value << 8) | _s.readLatch));
+            else
+                _s.readLatch = value;  // the low byte waits in the same latch reads use
+            return;
+        case 0x21: case 0x22: case 0x23: case 0x24: case 0x25: case 0x26: case 0x27:
+            if (a8)
+                WriteRegister(static_cast<uint8_t>(code & 0x07), value);
+            return;
+        case 0x28:
+            if (a8)
+                WriteRegister(Control, value);  // PC #3F6: device control
+            return;
+        default: return;
+    }
+}
+
+/// endregion </Sprinter>

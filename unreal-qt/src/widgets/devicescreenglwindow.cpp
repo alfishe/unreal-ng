@@ -16,6 +16,7 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
@@ -643,6 +644,12 @@ bool DeviceScreenGLWindow::event(QEvent* event)
         {
             event->ignore();
             return false;
+        }
+        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here
+        if (KeyboardManager::machineOwnsKey(keyEvent, _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+        {
+            event->accept();
+            return true;
         }
     }
 

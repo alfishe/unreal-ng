@@ -149,9 +149,12 @@
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =
-        "The machine's IDE board ([HDD] Scheme: NEMO, NEMO-A8, NEMO-DIVIDE, ATM, SMUC, PROFI, DIVIDE) and the gate it answers in, "
-        "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ, and per unit "
-        "(master, slave): kind (disk / cdrom), media slot, medium (description, sectors, writable), CHS translation, "
+        "The machine's IDE board ([HDD] Scheme: NEMO, NEMO-A8, NEMO-DIVIDE, ATM, SMUC, PROFI, DIVIDE, SPRINTER) and the gate it answers in, "
+        "the number of channels (2 on the Sprinter, else 1) and, with two, the channel the adapter selected "
+        "(selected_channel: primary | secondary; adapter.channel, adapter.data_latch: the PLD's one data latch), "
+        "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ of the selected "
+        "channel, and per unit (master, slave; with two channels also channel and selected): kind (disk / cdrom), "
+        "media slot (ide0.master ... ide1.slave), medium (description, sectors, writable), CHS translation, "
         "the task file with status / error / device control bits decoded, the command in progress (name, phase, LBA, "
         "sectors left, buffer position), and on a CD drive the disc, unit attention, byte count limit, sense key / ASC / "
         "ASCQ and the last packet. 404 on machines without an IDE board.";
@@ -195,6 +198,112 @@
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["200"]["description"] = "TSU objects and CRAM";
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
+
+    // Sprinter Sp2000 (core DeviceState::Sprinter / SprinterPortTable / SprinterPortLookup: the same reports
+    // CLI `state sprinter`, Lua / Python sprinter_state() / sprinter_ports() / sprinter_port_lookup() and the
+    // MCP inspect_state aspect `sprinter` render)
+    {
+        const char* kState = "/api/v1/emulator/{id}/state/sprinter";
+        paths[kState]["get"]["summary"] = "Get Sprinter machine state";
+        paths[kState]["get"]["tags"].append("Machine State");
+        paths[kState]["get"]["description"] =
+            "The Peters Plus Sprinter Sp2000 (model SPRINTER): pld (configuration state unconfigured / loading / "
+            "configured, the active configuration module, bitstream writes and hashes - full FNV-1a and MAME's head "
+            "hash, fast_start, whether the BIOS opened the port decoder), decoder (CNF map 0-3, clean rules, DOS, PN5, "
+            "#7FFD / #1FFD after the clean rules), windows[] (per 16K window: kind ROM / loader ROM / fast RAM / vROM "
+            "/ RAM / graphics / ISA / port table, the physical page, writable, the cell that names it), registers "
+            "(ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD, HOLD, SCALE, CBL control), cells (#C0-#FF as hex "
+            "rows), clock (turbo requested, front-panel switch, ratio 1 or 6, MHz), frame (320 / 312 lines, base "
+            "T-states 71680 / 69888), video (mode page, the picture's dominant square kind, square counts by kind, "
+            "HOLD offsets, frame INT positions from the mode table), z84c15 (WCR / MWBR / CSBR / MCR, watchdog, CTC "
+            "channels, SIO A / B with the keyboard FIFO, PIO), fdc (the #BD density latch, the WD1793 clock and data "
+            "rate, drive), cmos (DS12887A; the full report is /state/rtc), ide (a placeholder until the IDE adapter of "
+            "phase S3b) and bios (the ROM file, the pages identified by signature, the shipped images and how to pick "
+            "one: [ROM] SPRINTER=). 404 on other machines.";
+        paths[kState]["get"]["parameters"][0]["name"] = "id";
+        paths[kState]["get"]["parameters"][0]["in"] = "path";
+        paths[kState]["get"]["parameters"][0]["required"] = true;
+        paths[kState]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kState]["get"]["responses"]["200"]["description"] = "Sprinter machine state";
+        paths[kState]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kActive = "/api/v1/emulator/state/sprinter";
+        paths[kActive]["get"]["summary"] = "Get Sprinter machine state (active emulator)";
+        paths[kActive]["get"]["tags"].append("Machine State");
+        paths[kActive]["get"]["description"] = "Same as /api/v1/emulator/{id}/state/sprinter for the only or selected emulator.";
+        paths[kActive]["get"]["responses"]["200"]["description"] = "Sprinter machine state";
+        paths[kActive]["get"]["responses"]["400"]["description"] = "Several emulators running: use the {id} form";
+        paths[kActive]["get"]["responses"]["404"]["description"] = "No emulator, or not a Sprinter";
+
+        auto addQuery = [&](const char* path, Json::ArrayIndex index, const char* name, const char* description) {
+            Json::Value& queryParam = paths[path]["get"]["parameters"][index];
+            queryParam["name"] = name;
+            queryParam["in"] = "query";
+            queryParam["required"] = false;
+            queryParam["description"] = description;
+            queryParam["schema"]["type"] = "string";
+        };
+
+        const char* kPorts = "/api/v1/emulator/{id}/state/sprinter/ports";
+        paths[kPorts]["get"]["summary"] = "Get the Sprinter port table";
+        paths[kPorts]["get"]["tags"].append("Machine State");
+        paths[kPorts]["get"]["description"] =
+            "The port table the BIOS wrote to RAM page #40, decoded for one map / DOS / PN5 (omitted = the machine's "
+            "current values) and direction: rows[] of code, name (the port trace's code names), direction r / w, the "
+            "address pattern A15..A0 (x = not decoded), an example port and the number of address combinations; "
+            "unmapped_combinations (code #00: no device, reads #FF) and z84c15_ports[] (the ports the CPU chip answers "
+            "itself, which the table never sees). Index layout: map << 12 | PN5 << 11 | /DOS << 10 | /WR << 9 | A15 "
+            "A14 A6 A5 A13 A7 A2 A1 A0. 404 on other machines.";
+        paths[kPorts]["get"]["parameters"][0]["name"] = "id";
+        paths[kPorts]["get"]["parameters"][0]["in"] = "path";
+        paths[kPorts]["get"]["parameters"][0]["required"] = true;
+        paths[kPorts]["get"]["parameters"][0]["schema"]["type"] = "string";
+        addQuery(kPorts, 1, "map", "Port map 0-3 (CNF bits 4-3); default: the current one");
+        addQuery(kPorts, 2, "dos", "1 = TR-DOS on, 0 = off; default: the current state");
+        addQuery(kPorts, 3, "pn5", "#7FFD bit 5 (48K lock): 0 / 1; default: the current value");
+        addQuery(kPorts, 4, "rw", "r (IN), w (OUT) or rw (both, the default)");
+        paths[kPorts]["get"]["responses"]["200"]["description"] = "Decoded port table";
+        paths[kPorts]["get"]["responses"]["400"]["description"] = "Bad map / dos / pn5 / rw";
+        paths[kPorts]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kLookup = "/api/v1/emulator/{id}/state/sprinter/ports/lookup";
+        paths[kLookup]["get"]["summary"] = "Look up one Sprinter port";
+        paths[kLookup]["get"]["tags"].append("Machine State");
+        paths[kLookup]["get"]["description"] =
+            "One port through the port table: results[] per direction with answered_by (PLD or Z84C15), the index "
+            "into page #40 and within the map, the 9 address bits, the code and its name, and the fixed decodes the "
+            "PLD makes before the table (#FB / #7B, #3C / #7C, #5C). A Z84C15 port gives the chip's trace code "
+            "(#100 + low byte); for a write also the PLD's table code (the PLD sees the chip's writes). map / dos / "
+            "pn5 default to the machine's current state. 404 on other machines.";
+        paths[kLookup]["get"]["parameters"][0]["name"] = "id";
+        paths[kLookup]["get"]["parameters"][0]["in"] = "path";
+        paths[kLookup]["get"]["parameters"][0]["required"] = true;
+        paths[kLookup]["get"]["parameters"][0]["schema"]["type"] = "string";
+        addQuery(kLookup, 1, "port", "The 16-bit port, hex: 21BC, #21BC or 0x21BC (required)");
+        addQuery(kLookup, 2, "rw", "r, w or rw (both, the default)");
+        addQuery(kLookup, 3, "map", "Port map 0-3; default: the current one");
+        addQuery(kLookup, 4, "dos", "1 = TR-DOS on, 0 = off; default: the current state");
+        addQuery(kLookup, 5, "pn5", "#7FFD bit 5: 0 / 1; default: the current value");
+        paths[kLookup]["get"]["responses"]["200"]["description"] = "The port's index, code and name";
+        paths[kLookup]["get"]["responses"]["400"]["description"] = "Missing or bad port, bad map / dos / pn5 / rw";
+        paths[kLookup]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kText = "/api/v1/emulator/{id}/state/sprinter/text";
+        paths[kText]["get"]["summary"] = "Get the Sprinter screen text";
+        paths[kText]["get"]["tags"].append("Machine State");
+        paths[kText]["get"]["description"] =
+            "The text of the picture's text squares from the video RAM mode table (the displayed mode page, 80 x 32: "
+            "BIOS SETUP, DSS, its programs' text screens): lines[] of row, text (trailing spaces trimmed; '.' for "
+            "codes outside #20-#7E) and codes (hex, two per square); text_squares counts the text squares. Graphics, "
+            "border and blank squares read as spaces; a 40-column square gives its character and a space. The ZX "
+            "screen OCR (/capture/ocr) reads Spectrum mode only. 404 on other machines.";
+        paths[kText]["get"]["parameters"][0]["name"] = "id";
+        paths[kText]["get"]["parameters"][0]["in"] = "path";
+        paths[kText]["get"]["parameters"][0]["required"] = true;
+        paths[kText]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kText]["get"]["responses"]["200"]["description"] = "Screen text";
+        paths[kText]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+    }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");

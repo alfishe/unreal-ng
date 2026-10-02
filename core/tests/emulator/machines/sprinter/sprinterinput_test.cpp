@@ -20,6 +20,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
+#include "emulator/state/devicestate.h"
 
 class SprinterInput_Test : public SprinterFixture
 {
@@ -333,6 +334,55 @@ TEST_F(SprinterInputBoot_Test, Bios304_EscThenCtrlAltDel)
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(noRom); }, 100, 1);
     ASSERT_FALSE(ScreenHas(noRom)) << "Ctrl+Alt+Del did not reset";
     EXPECT_TRUE(RunUntilScreen("Sprinter BIOS: ver 3.04", 300)) << ScreenText();
+}
+
+// type_input on DSS (automation-outcome.md; S4 open point "DSS typing"): text typed through the
+// automation keyboard (DebugKeyboardManager::TypeText, behind WebAPI /keyboard/type and MCP type_input)
+// reaches the DSS shell as PC keys. The DSS 1.62 floppy boots from drive B with its SYSTEM.BAT ending
+// before "fn" (Flex Navigator does not run yet); "dir" lists the floppy, read back with the automation
+// screen text (DeviceState::SprinterText, /state/sprinter/text) as well as the test's own reader.
+// Boot-bound (BIOS POST, the IDE waits, DSS from the floppy at 21 MHz, the typing): ~3 s host time
+TEST_F(SprinterInputBoot_Test, Dss162_TypeInputReachesTheShell)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+
+    // SYSTEM.BAT is the third root entry (LBA 19), cluster 49 = LBA 80; drop its last line "fn"
+    std::vector<uint8_t> disk(1474560);
+    {
+        FILE* f = std::fopen(image.c_str(), "rb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(std::fread(disk.data(), 1, disk.size(), f), disk.size());
+        std::fclose(f);
+    }
+    uint8_t* entry = disk.data() + 19 * 512 + 2 * 32;
+    ASSERT_EQ(std::string(reinterpret_cast<const char*>(entry), 11), "SYSTEM  BAT");
+    const uint32_t size = entry[28] | entry[29] << 8;
+    const std::string bat(reinterpret_cast<const char*>(disk.data() + 80 * 512), size);
+    ASSERT_EQ(bat.substr(bat.size() - 4), "fn\r\n");
+    entry[28] = static_cast<uint8_t>(size - 4);
+    const std::string copy = TestPathHelper::GetUniqueTestScratchPath("dss162-nofn.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(copy, disk.data(), disk.size()));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(copy, 1, &error)) << error;
+
+    SkipIdeWaits();
+    ASSERT_TRUE(RunUntilScreen("Estex DSS Version 1.62.92", 3000)) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);  // the prompt after "ver"
+
+    _keys->TypeText("dir\n");
+    ASSERT_TRUE(RunUntilScreen("SYSTEM   EXE", 600)) << ScreenText();
+    EXPECT_TRUE(ScreenHas("B:\\>dir")) << ScreenText();
+
+    // The automation's screen text sees the same listing
+    const StateNode text = DeviceState::SprinterText(_context);
+    std::string all;
+    for (const StateNode& line : text.find("lines")->items)
+        all += line.find("text")->s + "\n";
+    EXPECT_NE(all.find("Directory of B:\\"), std::string::npos) << all;
+    EXPECT_NE(all.find("SYSTEM   DOS"), std::string::npos) << all;
+    EXPECT_EQ(_decoder->GetInput().KeyboardOverruns(), 0u);
 }
 
 /// endregion </BIOS 3.04 with the host keyboard>

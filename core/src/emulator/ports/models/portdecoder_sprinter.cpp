@@ -13,6 +13,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterporttable.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 
@@ -89,11 +90,15 @@ PortDecoder_Sprinter::~PortDecoder_Sprinter()
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_input)
         _context->pKeyboard->SetPs2Sink(nullptr);
 
+    // Core::Release deletes the memory before the decoder and clears pMemory first: only a memory that is still
+    // the context's is alive (detaching from a freed SprinterMemory was a heap-use-after-free on every teardown)
+    SprinterMemory* memory = _sprinterMemory && _context->pMemory == _sprinterMemory ? _sprinterMemory : nullptr;
+
     Core* core = _context->pCore;
     if (core)
     {
-        if (_sprinterMemory)
-            core->RemoveBusOverlay(&_sprinterMemory->GetWriteIntercept());
+        if (memory)
+            core->RemoveBusOverlay(&memory->GetWriteIntercept());
         if (_waits)
             core->RemoveBusOverlay(_waits.get());
         Z80* z80 = core->GetZ80();
@@ -106,8 +111,9 @@ PortDecoder_Sprinter::~PortDecoder_Sprinter()
             z80->machineM1Hook = nullptr;
     }
 
-    if (_sprinterMemory)
-        _sprinterMemory->AttachDecoder(nullptr);
+    if (memory)
+        memory->AttachDecoder(nullptr);
+    _sprinterMemory = nullptr;
 
     // Battery-backed state outlives the machine ([SPRINTER] CmosFile)
     const char* cmosPath = _context->config.sprinter.cmos_path;
@@ -186,8 +192,7 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     _pld.romRg = 0;
     _pld.cacheOn = 0;
     _pld.isaAddrExt = 0;
-    _pld.ideChannel = 0;
-    _pld.ideLatch = 0;
+    GetIdeAdapter().SprinterReset();  // the primary channel (MAME machine_reset :1582)
     _pld.frameLines = 0;
     _pld.turboHard = _context->config.sprinter.turbo_allowed ? 1 : 0;
     if (kind != SprinterResetKind::SoftReset)
@@ -515,14 +520,9 @@ void PortDecoder_Sprinter::CatchUpScreen()
 
 uint16_t PortDecoder_Sprinter::LookupIndex(uint16_t port, bool isRead) const
 {
-    return static_cast<uint16_t>(((_pld.cnf >> 3) & 0x03) << 12      // map 0-3
-                                 | ((_pld.pn >> 5) & 0x01) << 11      // PN5 (#7FFD bit 5)
-                                 | (_pld.dos ? 1 : 0) << 10           // /DOS
-                                 | (isRead ? 1 : 0) << 9              // /WR
-                                 | ((port >> 14) & 0x03) << 7         // A15, A14
-                                 | ((port >> 13) & 0x01) << 4         // A13
-                                 | ((port >> 7) & 0x01) << 3          // A7
-                                 | (port & 0x67));                    // A6, A5, A2, A1, A0
+    // map 0-3 (CNF bits 4-3), PN5 (#7FFD bit 5), /DOS, /WR, the 9 address bits (sprinterporttable.h)
+    return SprinterPortTable::Index(static_cast<uint8_t>((_pld.cnf >> 3) & 0x03), (_pld.pn & 0x20) != 0, _pld.dos != 0,
+                                    isRead, port);
 }
 
 uint8_t PortDecoder_Sprinter::LookupCode(uint16_t port, bool isRead) const
@@ -737,12 +737,14 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             break;
     }
 
+    if (code >= SprinterCode::IdeData && code <= SprinterCode::IdeDriveAddress)
+        return GetIdeAdapter().SprinterIn(code, port);  // tdd-storage §3; #FF without [HDD] Scheme=SPRINTER
     if (code >= 0xC0 && code < 0xF0)
         return _pld.Cell(code);
     if (code >= 0xF0)
         return _pld.cells[_pld.pg3 & 0x3F];
 
-    // IDE (#20-#29, phase S3b) and the codes the standard configuration does not answer
+    // The codes the standard configuration does not answer
     return 0xFF;
 }
 
@@ -783,10 +785,8 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
 
         case SprinterCode::IdeSecondary:
-            _pld.ideChannel = 1;
-            return;
         case SprinterCode::IdePrimary:
-            _pld.ideChannel = 0;
+            GetIdeAdapter().SprinterOut(code, port, value);  // the channel latch (OUT (#BC),A: A13 = 1 primary)
             return;
         case SprinterCode::Frame320:
         case SprinterCode::Frame312:
@@ -904,8 +904,13 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
     }
     if (code >= 0xC0)
         return;  // plain storage cells (#CA ...)
+    if (code >= SprinterCode::IdeData && code <= SprinterCode::IdeDriveAddress)
+    {
+        GetIdeAdapter().SprinterOut(code, port, value);  // tdd-storage §3
+        return;
+    }
 
-    // IDE (#20-#29, phase S3b) and unknown codes: ignored, logged once per code
+    // Unknown codes: ignored, logged once per code
     uint64_t& bits = _loggedUnknownCodes[code >> 6];
     const uint64_t bit = 1ull << (code & 63);
     if (!(bits & bit))

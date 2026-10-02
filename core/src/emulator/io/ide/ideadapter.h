@@ -16,6 +16,7 @@
 /// | SMUC | #F8BE-#FFBE (A13 = 1); #D8BE latch (A13 = 0, always); #FFBA bit 7 turns #FEBE into the control block | A10..A8 | latch, Nemo order | TR-DOS ports on (via the Scorpion decoder) |
 /// | PROFI | (port & #9F) = #8B: read #xxCB register / #xxEB latch, write #xxCB latch / #xxEB register, #06AB device control | A10..A8 | two latches, mirrored roles | Profi EXT mode |
 /// | DIVIDE | (port & #E3) = #A3 (#E3 / #E7 / #EB are its paging, not IDE) | A4..A2 | two #A3 accesses (low, then high) | TR-DOS ports off |
+/// | SPRINTER | the PLD port table's codes #20-#2B (the decoder calls SprinterIn / SprinterOut) | code & 7 | one latch for both directions, by A8: read A8 = 0 word (high byte latched), A8 = 1 latch; write A8 = 0 latch (low byte), A8 = 1 word | the table |
 ///
 /// Worked example (Nemo write): OUT (#11),#AB : OUT (#10),#CD sends the word
 /// #ABCD; the image stores CD AB.
@@ -36,7 +37,8 @@ struct IdeAdapterState
     uint8_t readPair = 0;      ///< a same-port read pair: the low byte was read
     uint8_t writePair = 0;     ///< a same-port write pair: the low byte waits in writeLatch
     uint8_t writeHigh = 0;     ///< ZX-Evo: #11 armed a Nemo-order write
-    uint8_t reserved[3] = {};
+    uint8_t channel = 0;       ///< Sprinter: the selected channel, 0 primary (ide0), 1 secondary (ide1)
+    uint8_t reserved[2] = {};
 };
 static_assert(std::has_unique_object_representations_v<IdeAdapterState>, "IdeAdapterState must have no padding");
 
@@ -62,6 +64,25 @@ public:
     /// #FFBA latch (bit 7: the control block)
     uint8_t SmucIn(uint16_t port, uint8_t system);
     void SmucOut(uint16_t port, uint8_t system, uint8_t value);
+
+    /// Sprinter Sp2000 (tdd-storage §3): the PLD port table's IDE codes. Reads
+    /// #20 data, #21-#27 task file, #28 alternate status, #29 drive address;
+    /// writes #20 data, #21-#27 task file, #28 device control, #2A / #2B
+    /// select the secondary / primary channel. A8 of the bus address picks the
+    /// half: the data latch (the PLD's one HDDR register, `readLatch` here) is
+    /// shared by both directions; task-file reads answer only with A8 = 0 and
+    /// writes only with A8 = 1 (MAME sprinter.cpp:613-634, :755-774).
+    ///
+    /// Worked example: the BIOS sector loop LD BC,#0050 : INI x 512. INI puts
+    /// B on A15-A8 and decrements it after the input, so the ports are #0050,
+    /// #FF50, #FE50, ...: A8 = 0 reads the word and returns its low byte, A8 = 1
+    /// returns the latched high byte. OUTI decrements B before the output: the
+    /// write loop LD BC,#0150 : OUTI x 512 sends #0050 (low byte to the latch),
+    /// #FF50 (word), ...
+    uint8_t SprinterIn(uint8_t code, uint16_t port);
+    void SprinterOut(uint8_t code, uint16_t port, uint8_t value);
+    /// The PLD's reset: the primary channel selected (MAME machine_reset)
+    void SprinterReset() { _s.channel = 0; }
 
     /// ATM Turbo 2+: bit 6 of the #7FFD-class read. 1 when the selected unit
     /// raises INTRQ or no unit answers (UnrealSpeccy `read_intrq`)

@@ -136,7 +136,8 @@ bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
 {
 	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
 		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
-		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE},
+		{"SPRINTER", IDE_SPRINTER}};
 	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
 	for (const auto& [text, id] : schemes)
 	{
@@ -161,6 +162,7 @@ const char* Config::IdeSchemeName(IDE_SCHEME scheme)
 		case IDE_SMUC: return "SMUC";
 		case IDE_PROFI: return "PROFI";
 		case IDE_DIVIDE: return "DIVIDE";
+		case IDE_SPRINTER: return "SPRINTER";
 	}
 	return "?";
 }
@@ -463,7 +465,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
 		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
-		for (int unit = 0; unit < 2; unit++)
+		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
+		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+		for (int unit = 0; unit < 4; unit++)
 		{
 			IDE_CONFIG& ide = config.ide[unit];
 			ide = IDE_CONFIG{};
@@ -482,7 +486,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			}
 			// A CD drive: CDn=1, or the unit's configured image is an ISO
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
-			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
 			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";

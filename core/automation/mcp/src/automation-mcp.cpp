@@ -11,6 +11,7 @@
 
 #include <json/json.h>
 
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -104,7 +105,15 @@ void AutomationMCP::start()
         return;
     }
 
-    const int port = 8092;
+    // UNREAL_MCP_PORT (1-65535) moves the listener, as UNREAL_WEBAPI_PORT moves the WebAPI's: a second
+    // instance (another checkout, a recipe check) serves MCP beside one that owns the default port
+    int port = 8092;
+    if (const char* portEnv = std::getenv("UNREAL_MCP_PORT"))
+    {
+        const long parsed = std::strtol(portEnv, nullptr, 10);
+        if (parsed >= 1 && parsed <= 65535)
+            port = static_cast<int>(parsed);
+    }
 
     // CRITICAL: Check port availability BEFORE drogon initialization.
     // A busy port only disables MCP — the application continues.

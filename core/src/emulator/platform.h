@@ -299,6 +299,7 @@ enum IDE_SCHEME
 	IDE_SMUC,
 	IDE_PROFI,
 	IDE_DIVIDE,
+	IDE_SPRINTER,	// Sprinter Sp2000: two channels behind the PLD port table (codes #20-#2B)
 };
 
 enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMPSTON }; //0.36.6 from 0.35b2
@@ -595,7 +596,7 @@ struct CONFIG
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
-	IDE_CONFIG ide[2];				// master, slave
+	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;
 

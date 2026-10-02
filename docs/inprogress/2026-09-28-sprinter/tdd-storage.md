@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4). **§2 floppy built in S3a** (2026-10-01, branch `sprinter-s3a`; as-built notes in §2.6, outcome in [roadmap-and-plan.md](roadmap-and-plan.md) §8) |
+| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4). **§2 floppy built in S3a** (2026-10-01, branch `sprinter-s3a`; as-built notes in §2.6, outcome in [roadmap-and-plan.md](roadmap-and-plan.md) §8). **§1 slots and §3 IDE built in S3b** (2026-10-02, branch `sprinter-s3b`; as built in §3.4, outcome in roadmap §9) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §9, §10, §12, §14 |
 | **Plugs into** | media manager [technical-design.md](../2026-09-28-storage-manager/technical-design.md) (PLAN #58), [integration-ide-cd.md](../2026-09-28-storage-manager/integration-ide-cd.md), [integration-floppy.md](../2026-09-28-storage-manager/integration-floppy.md); shared IDE core [2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) (PLAN #13a) |
 
@@ -197,6 +197,35 @@ pre/post-decrement timing for `INI`/`INIR`/`OUTI`/`OTIR` (a CPU-level test in th
 - Interrupts: none; the BIOS polls status (HW §9.1).
 - ATAPI: BIOS-TT `ATAPI_DRV.ASM` (packet commands, 2048-byte blocks, eject/close through `#5E`);
   the IDE design's `AtapiCdrom` (rollout 1, R1-7) serves it unchanged.
+
+### 3.4 As built (S3b, 2026-10-02)
+
+| Item | As built | Deviation from §3.1-§3.2 |
+|---|---|---|
+| Adapter | the shared `IdeAdapter` (`core/src/emulator/io/ide/ideadapter.{h,cpp}`) got a `SPRINTER` region: `SprinterIn(code, port)` / `SprinterOut(code, port, value)`, called by `PortDecoder_Sprinter::StandardReadCode` / `StandardWriteCode` for codes `#20-#29` and `#2A` / `#2B` (the way the Scorpion decoder hands `#xxBE` to `SmucIn` / `SmucOut`) | no `IdeAdapterSprinter` class and no `idelatch.h`: rollout 1 built one adapter class for every board (IDE implementation plan §5, "Board"); the files live in `io/ide/`, not `io/hdd/adapters/` |
+| Latch (pattern e) | one register, `IdeAdapterState::readLatch` (the PLD's HDDR): read A8 = 0 fetches the word, returns the low byte, latches the high byte; read A8 = 1 returns the latch; write A8 = 0 stores the low byte there; write A8 = 1 sends `value << 8 | latch` | the latch and the channel select live in `IdeAdapterState` (the `AtaChannel` TTD blob), not in `SprinterPldState` (its two bytes are now `reservedIde`) |
+| Task file | reads `#21-#27` with A8 = 0, writes with A8 = 1; `#28` = alternate status (read) / device control (write); `#29` (drive address) reads `#FF`: the shared core has no drive-address register | `#29` floats (MAME reads its ATA device's CS1 register 7) |
+| Channels | `IdeController` owns up to two `AtaChannel`s (`ChannelCount()`: 2 for `IDE_SPRINTER`, else 1); units are numbered across channels (`unit = channel * 2 + position`, the order of `config.ide[4]` and of BIOS drive codes `#80-#83`); `IdeAdapter::Channel()` returns the channel `#2A` / `#2B` selected | as designed ("`Core` owns an array of up to 2 channels"), inside `IdeController` |
+| Config | `[HDD] Scheme=SPRINTER` (fits `MM_SPRINTER` only; Nemo / DivIDE schemes no longer fit the Sprinter: its PLD decodes every port); `CHS2` / `CHS3`, `CD2` / `CD3`, `Image2` / `Image3`, `HD2RO` / `HD3RO` and `[MEDIA] ide1.master` / `ide1.slave` for the secondary channel; `configs/sprinter` ships `Scheme=SPRINTER` with four empty hard-disk units | - |
+| Slots | `ide0.master`, `ide0.slave`, `ide1.master`, `ide1.slave`, labeled "IDE primary master (hard disk)" ... and tagged `primary` / `secondary`; alias `hd` / `cd` = the first unit of each kind. `ide0.slave` is an empty hard-disk unit (no device on the bus, Q5); `CD1=1` (or `device=cdrom` on an insert) makes it an ATAPI CD unit: the shared core's `AtapiCdrom` already serves it, BIOS 3.04 and 3.06 identify it as "UNREAL-NG CD-ROM" (T-IDE-8) | the CD option is in S3b, not S7 (it cost nothing); CD boot and CD audio stay for S7 |
+| Reset | `IdeController::Reset` (machine reset) clears the latches and resets the units of both channels; every PLD reset (RESET button, `#2E` reload, soft reset) selects the primary channel (`IdeAdapter::SprinterReset`, MAME `:1582`) | - |
+| TTD | the `AtaChannel` blob (id 17) appends the second channel (selected unit, unit kinds, both `AtaDeviceState`s) when the board has two; one-channel blobs are byte-identical to before (TTD corpus and CI gate unchanged). The Sprinter still refuses to record until S7 | instead of a Sprinter IDE blob |
+| Report | `DeviceState::Ide` (WebAPI `state/ide`, CLI `state ide`, Lua / Python `ide_state`, MCP aspect `ide`): `channels`, `selected_channel`, `adapter.channel`, `adapter.data_latch`, and per unit `channel`, `selected`, `slot` | - |
+| CPU | the Z84C15 library already drives B on A15-A8 the Z80 way (INI: before the decrement; OUTI: after it): `PortDecoderSprinterIde_Test.Z84C15_IniOutiPutBOnTheHighAddressByte`; no CPU change | - |
+
+**What the BIOS does with a drive** (BIOS 3.04 `AUTODET` / `MASTERC`, SETUP `#852A-#96FF`; the same ATA commands in
+MAME, [reference/hdd-boot-304.txt](../../../testdata/machines/sprinter/reference/hdd-boot-304.txt)):
+
+| Unit | Bus answer | BIOS | Time |
+|---|---|---|---|
+| a disk | status `#50`; IDENTIFY | the model string ("UNREAL-NG HDD"), INITIALIZE DEVICE PARAMETERS (`#91`) | at once |
+| no unit, the other unit on the channel present | the present unit answers for it (ATA): status `#00`, its sector count echoes | NOP (`#00`), then `WXREADY` waits for DRDY: `#118` HALTs | 280 frames (5.7 s), then "None" |
+| an empty CD unit | ATAPI signature | IDENTIFY PACKET DEVICE: "UNREAL-NG CD-ROM" | at once |
+| no unit on the channel at all | `#FF` (BSY: the bus floats, hardware-reference §9.1) | `CLRBUSY` waits for BSY: `#060E` HALTs | 1 550 frames (31.7 s) unless F4 |
+
+BIOS 3.04 probes the primary channel only (two units); BIOS 3.06 probes all four (the secondary after
+`OUT (#BC),#01`). So a disk on `ide0.master` boots BIOS 3.04 at frame ~475 with no key; BIOS 3.06 also waits on an
+empty secondary channel unless a disk is there or F4 is pressed.
 
 ## 4. CMOS
 

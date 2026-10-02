@@ -34,6 +34,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/ports/portdecoder.cpp",   // the decoder factory + IsModelSupported
     "emulator/cpu/core.cpp",            // the memory factory (SprinterMemory)
     "emulator/video/videocontroller.cpp",  // the screen factory (ScreenSprinter, PLAN #60(e))
+    "emulator/io/ide/idecontroller.cpp",   // [HDD] Scheme=SPRINTER fits MM_SPRINTER only (IdeController::SchemeFits, S3b)
     "debugger/ttd/ttdserializable.h",   // the PeripheralId::SprinterPld row (serializer in phase S7)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
 };

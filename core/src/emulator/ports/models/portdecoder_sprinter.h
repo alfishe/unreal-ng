@@ -159,6 +159,8 @@ public:
     /// first port read after the last PLD reset ("DCP opened"), -1 = not yet
     int64_t DcpOpenedFrame() const { return _dcpOpenedFrame; }
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
+    /// Code #89 (Covox-Blaster control, phase S6): the last value written (automation state block)
+    uint8_t CblControl() const { return _cblControl; }
     /// endregion </PLD state and parts>
 
 private:

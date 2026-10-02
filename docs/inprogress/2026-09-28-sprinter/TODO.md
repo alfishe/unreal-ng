@@ -2,7 +2,7 @@
 
 **Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
 (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
-(2026-10-01, branch `sprinter-s1`); CPU library (2026-10-01, branch `sprinter-cpu`); **S2 done** (2026-10-01, branch `sprinter-s2`); **S3a done** (2026-10-01, branch `sprinter-s3a`); S3b, S4-S7 not started. PLAN.md row **#59** (T4): the owner started
+(2026-10-01, branch `sprinter-s1`); CPU library (2026-10-01, branch `sprinter-cpu`); **S2 done** (2026-10-01, branch `sprinter-s2`); **S3a done** (2026-10-01, branch `sprinter-s3a`); **S3b done** (2026-10-02, branch `sprinter-s3b`); S4-S7 not started. PLAN.md row **#59** (T4): the owner started
 the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
 this design introduced are PLAN row **#60** (shared infrastructure, done).
 
@@ -85,6 +85,16 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   7.01 lists a TRD in drive A and `LOAD ... CODE` is byte-exact; MAME 0.289 cannot read the HD floppy
   (its PLL is set at the command start), its probe timing equals ours
 
+- [x] S3b (2026-10-02, branch `sprinter-s3b`; outcome and deviations in
+  [roadmap-and-plan.md](roadmap-and-plan.md) §9, as built in [tdd-storage.md](tdd-storage.md) §3.4): the Sprinter
+  decode in the shared `IdeAdapter` (codes `#20-#2B`, one A8-selected data latch, channel select), two
+  `AtaChannel`s in `IdeController`, slots `ide0.*` / `ide1.*`, `[HDD] Scheme=SPRINTER` + `CHS2/3`, `CD2/3`,
+  `Image2/3`; the `AtaChannel` TTD blob carries the second channel; `state ide` on every surface; **ACC-4**: DSS
+  1.62.92 boots from a built FAT16 image (BIOS 3.04, `C:\>` at frame 495, golden screen, MKDIR in the image);
+  both channels through BIOS 3.06; the owner's real disks: DSS 1.71.57 (MAME pack) on BIOS 3.06, DSS 1.62.93
+  (ZXMAK2 VHD) on BIOS 3.04; MAME HDD captures; the GUI lets PC-keyboard machines have bare F1-F12 (F4 at the
+  IDE wait); a Sprinter teardown use-after-free fixed
+
 ## Remaining
 
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
@@ -112,9 +122,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
   before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
   hardware.
-- BIOS 3.06 image (CRC `187f4382`, MAME's): a copy exists in the owner's MAME pack (`roms/sprinter.zip`)
-  and inside the official updater `UP306.EXE` on the DSS 1.71 floppy; add it to `data/rom/sprinter/`
-  next to the community builds ([bios-versions.md](bios-versions.md)).
+- BIOS 3.06 image (CRC `187f4382`, MAME's): copies exist in the owner's MAME pack (`roms/sprinter.zip`,
+  used for the S3b MAME captures) and inside the official updater `UP306.EXE` on the DSS 1.71 floppy; not
+  kept in `data/rom/` (the kept 3.06 is Hotfix 2, [bios-versions.md](bios-versions.md) §3.3).
 - **Deferred (owner, 2026-10-02: secondary feature, plan only): BIOS flash emulation.** The 256 KB ROM
   is a flash chip (write enable = ROM page port `#5C` bit 4). Model it with the JEDEC flash device that
   already exists for NeoGS (`core/src/emulator/io/flash/flash29f040b.*`, a 256 KB 29F020-class variant
@@ -124,6 +134,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   the GUI, an optional persistent flash file like `CmosFile=`; flash contents in the TTD state. End-to-end
   test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
   identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
+- IDE follow-ups after S3b ([roadmap-and-plan.md](roadmap-and-plan.md) §9):
+  - DSS 1.71 needs a BIOS newer than 3.04 (bios-versions.md §5.1): which BIOS function, and whether 3.05 does;
+  - code `#29` (drive address) reads `#FF` (the shared core has no drive-address register);
+  - the device register reads back with bits 7 / 5 set (MAME clears them); harmless for BIOS and DSS;
+  - CD boot (BIOS-TT, not 3.04) and CD audio (MAME routes it from the primary slave): S7;
+  - the GUI F-key rule has no automated test (the Qt widgets have none);
+  - teardown use-after-free of the same class in `~PortDecoder_ATM710` (keyboard) and `~PortDecoder_TSConf`
+    (memory), found with ASan in S3b, not fixed there (shared code, other machines).
 - ACC-6 as written ("ESC at the boot menu → Spectrum mode") does not hold for BIOS 3.04: the Spectrum
   ROMs come from DSS `ZX\SPECTRUM.EXE` (or a later BIOS). Whether 3.06 carries them is open.
 - Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank

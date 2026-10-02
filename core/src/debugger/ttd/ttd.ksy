@@ -532,7 +532,7 @@ types:
           10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
-          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
+          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches; a second channel appended on the Sprinter),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
