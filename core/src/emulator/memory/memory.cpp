@@ -977,7 +977,7 @@ void Memory::UpdateZ80Banks()
     }
 
     unsigned char dosflags = CF_LEAVEDOSRAM;
-    if (config.mem_model == MM_PENTAGON || config.mem_model == MM_PROFI)
+    if (config.mem_model == MM_PENTAGON || IsProfiModel(config.mem_model))
         dosflags = CF_LEAVEDOSADR;
 
     if ((state.flags & CF_TRDOS) && dosAvailable)

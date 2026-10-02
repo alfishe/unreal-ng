@@ -1,6 +1,7 @@
 #include "screenprofi.h"
 
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/video/profi/profigeometry.h"
 
 /// region <Constructors / Destructors>
@@ -102,9 +103,9 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
     const uint8_t pixels = _memory->RAMPageAddress(pixelPage)[byteOffset];
     uint8_t attr = _memory->RAMPageAddress(attrPage)[byteOffset];
 
-    if (_context->config.profi_monochrome)
+    if (ProfiMonochromeHires(_context->config))
     {
-        // Profi 3.xx / ProfiMonochrome: attribute page unused, ink = border colour, paper = its inverse
+        // Profi v3, or a v5 without palette chips: attribute page unused, ink = border colour, paper = its inverse
         attr = MonochromeAttr(state.pFE);
     }
 

@@ -109,6 +109,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_PLUS2A:
         case MM_PLUS3:
         case MM_PROFI:
+        case MM_PROFI3:
         case MM_SCORP:
         case MM_PROFSCORP:
         case MM_ATM450:
@@ -160,6 +161,8 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Spectrum3(context);
             break;
         case MM_PROFI:
+        case MM_PROFI3:
+            // One decoder for both boards; what differs is ProfiBoard::For(model)
             result = new PortDecoder_Profi(context);
             break;
         case MM_SCORP:
@@ -577,6 +580,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PLUS2:       info.modelName = "SpectrumPlus2"; break;
             case MM_PLUS2A:      info.modelName = "SpectrumPlus2A"; break;
             case MM_PROFI:       info.modelName = "Profi"; break;
+            case MM_PROFI3:      info.modelName = "Profi3"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
             case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
             case MM_ATM450:      info.modelName = "ATM450"; break;
@@ -668,6 +672,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             }
             break;
         case MM_PROFI:
+        case MM_PROFI3:
             // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,
             // #DFFD = A15=1 & A13=0 & A1=0; #DFFD bit 7 selects the 512x240 hi-res
             // mode (Screen::InitVideoMode mode detection)
@@ -676,9 +681,10 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0xDFFD, 0xA002, 0x8000,
                                "Profi extended paging (RAM high bits, SCO, WOROM, CP/M, SCR) + video mode (bit 7)",
                                nullptr, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::PDFFD});
-            // Palette write OUT #xx7E (A7=0, A0=0, only while DFFD bit 7 is set); data is in A15:A8
-            entries.push_back({0x007E, 0x0081, 0x0000, "Profi palette write (OUT #xx7E, hi-res only)", nullptr,
-                               Tags(PortTag::Screen)});
+            // Palette write OUT #xx7E (A7=0, A0=0, only while DFFD bit 7 is set); data is in A15:A8. The v5 board only
+            if (model == MM_PROFI)
+                entries.push_back({0x007E, 0x0081, 0x0000, "Profi palette write (OUT #xx7E, hi-res only)", nullptr,
+                                   Tags(PortTag::Screen)});
             break;
         case MM_SCORP:
         case MM_PROFSCORP:
@@ -817,7 +823,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     if (_context->config.trdos_present)
     {
         const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger"
-                               : (model == MM_PROFI) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
+                               : IsProfiModel(model) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
                                : evo                 ? "shadow: TR-DOS active or #BF bit 0"
                                                      : nullptr;
         // Data registers answer through exact registered device keys (IsBeta128Port /

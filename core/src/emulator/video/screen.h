@@ -502,8 +502,9 @@ public:
         {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
         {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
         {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
-        // M_PROFI: standard Profi mode. 312 lines x 224T = 69888T frame (UnrealSpeccy PRESET.PROFI,
-        // ZXMAK2, Xpeccy - the corpus consensus, not verified on real hardware)
+        // M_PROFI: standard Profi mode, both boards. 312 raster lines x 224T; the frame length and the INT
+        // position come from the board's sync PROM ([PROFI] SyncProm, ports/models/profiboard.h). A 320-line
+        // PROM (71680T) only adds 8 lines past the visible area
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD

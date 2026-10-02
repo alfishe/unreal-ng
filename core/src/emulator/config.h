@@ -58,7 +58,8 @@ private:
 		{ "ZX-Evo", "ATM3",                      MM_ATM3, 4096, RAM_4096 },
 		{ "ATM-Turbo 2+ v7.10", "ATM710",        MM_ATM710, 1024, RAM_128 | RAM_256 | RAM_512 | RAM_1024 },
 		{ "ATM-Turbo v4.50", "ATM450",           MM_ATM450, 512,  RAM_512 | RAM_1024 },
-		{ "Profi", "PROFI",                      MM_PROFI, 1024, RAM_1024 },
+		{ "Profi v5", "PROFI",                   MM_PROFI, 1024, RAM_512 | RAM_1024 },
+		{ "Profi v3", "PROFI3",                  MM_PROFI3, 512, RAM_512 | RAM_1024 },
 		{ "ZS Scorpion", "SCORPION",             MM_SCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + PROF ROM", "PROFSCORP", MM_PROFSCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + GMX", "GMX",			 MM_GMX, 2048,  RAM_2048 },
@@ -81,6 +82,7 @@ private:
 	static constexpr ModelAlias model_aliases[] =
 	{
 		{ "TSCONF", MM_TSL },  // TSConf technical-design D3: the scope named it TSCONF, the key stays TSL
+		{ "PROFI5", MM_PROFI },  // the v5 board's own name next to PROFI3 (2026-10-01-profi-v3-v5 design section 2)
 	};
 
 protected:

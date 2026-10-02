@@ -3,6 +3,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/video/alco/alcovideomapper.h"
 #include "emulator/video/atm/atmvideomapper.h"
 #include "emulator/video/profi/profivideomapper.h"
@@ -95,7 +96,7 @@ VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
     s.borderIndex = latches.borderIndex;
     s.atmBorderBright = latches.atmBorderBright != 0;
     s.zxScreenPage = latches.activeScreen ? 7 : 5;  // the page the ZX renderer draws from
-    s.profiMonochrome = config.profi_monochrome != 0;
+    s.profiMonochrome = ProfiMonochromeHires(config);
     s.atmPalette = state.atmPalette;
     s.profiPalette = state.profiPalette;
     if (_context->pMemory)

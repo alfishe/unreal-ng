@@ -1,8 +1,21 @@
-# Recipe: Profi 1024
+# Recipe: Profi v5 (`PROFI`) and v3 (`PROFI3`)
 
-The Profi is a 1024K clone with its own `#DFFD` paging extension, a SYS
-(service/menu) ROM it boots into, mode-dependent FDC port sets, RTC/CMOS, a
-Covox DAC and a 512x240 hi-res video mode with a 16-entry palette.
+The Profi is a clone with its own `#DFFD` paging extension, a SYS
+(service/menu) ROM it boots into, mode-dependent FDC port sets, a Covox DAC
+and a 512x240 hi-res video mode. It came as two board families, and both are
+machines here
+([docs/inprogress/2026-10-01-profi-v3-v5/](../../docs/inprogress/2026-10-01-profi-v3-v5/README.md)):
+
+| | `PROFI3` (v3.x, Kramis, 1990) | `PROFI` (v5.0x, Kondor, 1993-94; alias `PROFI5`) |
+|:--|:--|:--|
+| RAM | **512K**, 1024K | 512K, **1024K** |
+| ROM | `rom/profi/kramis-v02.rom` (BIOS V0.2 + TR-DOS 5.03) | `rom/profi.rom` |
+| Hi-res 512x240 | monochrome | 16 colours, palette `OUT #xx7E` |
+| Extended ports (CP/M + ROM14), RTC, IDE | none | yes |
+| Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
+
+`[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
+(71680 T, INT 48 T before paper) or `v503`.
 
 Ground truth:
 [portdecoder_profi.h](../../core/src/emulator/ports/models/portdecoder_profi.h)/[.cpp](../../core/src/emulator/ports/models/portdecoder_profi.cpp),
@@ -22,14 +35,15 @@ matrix and open gaps, `TODO.md`).
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"create","model":"PROFI"}   # 1024K only, boots into the SYS/BIOS menu
+emulator_manage {"action":"create","model":"PROFI"}    # v5, boots into the SYS/BIOS menu
+emulator_manage {"action":"create","model":"PROFI3"}   # v3, boots into the Kramis BIOS menu
 
 emulator_manage {"action":"list_models"}
 #   → models[].name (NOT .id, which is a numeric index) == "PROFI",
 #     creatable:true, available_ram_sizes_kb:[1024]
 
 inspect_state {"aspects":["paging"]}
-#   → p7FFD + pDFFD with decoded fields extended_ram_bank, sco, worom, cpm,
+#   → profi_board (v3 / v5), p7FFD + pDFFD with decoded fields extended_ram_bank, sco, worom, cpm,
 #     scr, video_512x240; banks[0].role shows which ROM page is mapped
 
 inspect_state {"aspects":["video"]}
@@ -46,14 +60,18 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 |:--|:--|
 | `#7FFD` + `#DFFD` paging, 64 RAM pages, SCO / WOROM / CPM / SCR, lock + DFFD.4 override | implemented |
 | ROM order SYS=0, DOS=1, 128=2, 48=3; reset into SYS; DOS latch via `#3Dxx` M1 trap | implemented |
-| FDC ports: normal `#1F..#7F/#FF`, CP/M `#BF`, extended `#83/#A3/#C3/#E3` + `#3F` | implemented |
-| RTC/CMOS: address `#BF/#FF`, data `#9F/#DF`, EXT mode only (CPM ∧ ROM14) | implemented |
+| FDC ports: normal `#1F..#7F/#FF`, CP/M `#BF`, extended `#83/#A3/#C3/#E3` + `#3F` (v5) | implemented; checked against both boards' port decoder PROMs |
+| RTC/CMOS: address `#BF/#FF`, data `#9F/#DF`, EXT mode only (CPM ∧ ROM14) | implemented (v5) |
+| Two boards: `PROFI3` without palette, extended ports, RTC, IDE; monochrome hi-res | implemented |
+| Frame and INT from the board's sync PROM (`[PROFI] SyncProm=`) | implemented |
+| AY decodes A13 (`IN #DFFD` does not read the AY) | implemented |
 | Covox: `#5F` left, `#3F` right, only while the disk interface is off the bus | implemented |
-| 512x240 hi-res (DS80), palette `OUT #xx7E` (9-bit), `#FE` read bit 7 (GX0) | implemented |
+| 512x240 hi-res (DS80), palette `OUT #xx7E` (9-bit), `#FE` read bit 7 (GX0) | implemented (palette and GX0: v5) |
 | NMI (magic button) → DOS latch while DS80 is off | implemented |
 | TTD: `#DFFD` + palette as `PeripheralId::ProfiPaging` | implemented |
 | IDE (`[HDD] Scheme=PROFI`, answers in EXT mode): slots `ide0.master` / `ide0.slave`; the SYS ROM boots from a hard disk image; geometry from the disk's ProfiHiDD header (16 x 16 without one) | implemented — see [Hard disk](#hard-disk-ide) |
-| Kempston joystick, extended keyboard, Covox extended-mode aliases | not implemented |
+| Kempston joystick at `#1F`, Covox extended-mode aliases (v5) | implemented |
+| Turbo, the v3 floating bus, the v5 video WAIT, extended keyboard | not implemented |
 | BIOS menu entries (CP/M, TR-DOS, Sinclair 48/128) | main menu reached; entries not yet verified |
 
 ## WebAPI
@@ -76,7 +94,7 @@ curl -s "$BASE/emulator/$EMU_ID/ports" | jq '.entries[] | {port, device}'
 
 ## Hard disk (IDE)
 
-The Profi ships with its IDE board on (`[HDD] Scheme=PROFI`). Put a hard disk
+The v5 Profi ships with its IDE board on (`[HDD] Scheme=PROFI`); the v3 board has none. Put a hard disk
 image on the master with the media verbs
 ([use-media-slots.md](../media/use-media-slots.md), reference
 [docs/features/media.md](../../docs/features/media.md)):
@@ -110,5 +128,7 @@ TTD on Profi follows the standard recipes —
   returns nothing; use `.name`.
 - **`POST /emulator/start`'s response doesn't carry `model`/`ram_kb`** —
   confirm those with a follow-up `GET /emulator/{id}`.
-- **No `ram_size` choice** — the model is 1024K only; other values are
-  rejected by the RAM bitmask check.
+- **RAM sizes** — 512K or 1024K on either board (v3 defaults to 512K, v5 to
+  1024K); other values are rejected by the RAM bitmask check.
+- **`PROFI3` has no RTC and no IDE** — `inspect_state aspects:["rtc"]` reports
+  the clock as absent, and `[HDD] Scheme=PROFI` does not fit the v3 board.

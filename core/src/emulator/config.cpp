@@ -9,6 +9,7 @@
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
@@ -296,6 +297,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
+	{
+		// The board's video sync PROM (2026-10-01-profi-v3-v5 design section 5.1)
+		const char* syncProm = inimanager.GetValue("PROFI", "SyncProm", nullptr);
+		ProfiSyncProm prom = ProfiSyncProm::Default;
+		if (!ParseProfiSyncProm(syncProm, prom))
+			MLOGWARNING("Config: unknown [PROFI] SyncProm=%s, the board's own sync PROM used", syncProm);
+		config.profi_sync_prom = static_cast<uint8_t>(prom);
+	}
 
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
@@ -311,6 +320,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     StripProfRomQuadrantSuffix(config.prof_rom_path, sizeof config.prof_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PROFI3", nullptr), config.profi3_rom_path, sizeof config.profi3_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
@@ -333,6 +343,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
 	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
 	config.frame_duration_us = CalculateFrameDurationUs(config.frame);			// Pentagon: 20480us (48.83 FPS); ZX48/128: 19968us
+	config.profi_monochrome = (uint8_t)(inimanager.GetLongValue(ula, "ProfiMonochrome", 0) ? 1 : 0);
 	
 	// Speed multiplier: 1x (default), 2x, 4x, 8x, 16x
 		config.speed_multiplier = (uint8_t)inimanager.GetLongValue(ula, "speedmultiplier", 1);
@@ -1240,16 +1251,20 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_PROFI:
-            // Profi: 312 x 224T frame, INT-to-first-paper distance 12580T, INT 28T
-            // (UnrealSpeccy PRESET.PROFI, "thanks to DDp"; also ZXMAK2 12583T).
-            // Consensus of the emulators, not verified on real hardware.
-            // The raster paper starts at T=16152 (line 72 * 224 + 24), INT fires at
-            // intstart+1 => 16152 - 3572 = 12580T.
-            config.frame    = 69888;   // 224 * 312
-            config.t_line   = 224;
-            config.intstart = 3571;
-            config.intlen   = 28;
+        case MM_PROFI3:
+        {
+            // Profi: the frame of the board's sync PROM ([PROFI] SyncProm=, ProfiSyncPromFrame), decoded from the
+            // PROM dumps (docs/inprogress/2026-10-01-profi-v3-v5/cross-check.md section 4). The defaults:
+            //   v3 (0A1DFAFD, a 3.2 board's original PROM): 69888 T, INT 12580 T before paper, 28 T (UnrealSpeccy)
+            //   v5 (D2D4A7C8, Kondor 5.04 with the DD53 fix): 69888 T, INT 14368 T before paper, 28 T
+            // The raster paper starts at T=16152 (line 72 * 224 + 24); INT fires at intstart+1
+            const ProfiFrame f = ProfiSyncPromFrame(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model);
+            config.frame    = f.frame;
+            config.t_line   = f.tLine;
+            config.intstart = ProfiIntStart(f);
+            config.intlen   = f.intLength;
             break;
+        }
 
         case MM_ATM450:
         case MM_ATM710:
@@ -1316,11 +1331,16 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.intlen = 32;
                 break;
             case MM_PROFI:
-                config.frame = 69888;   // 224 * 312
-                config.t_line = 224;
-                config.intstart = 3571;
-                config.intlen = 28;
+            case MM_PROFI3:
+            {
+                const ProfiFrame f =
+                    ProfiSyncPromFrame(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model);
+                config.frame = f.frame;
+                config.t_line = f.tLine;
+                config.intstart = ProfiIntStart(f);
+                config.intlen = f.intLength;
                 break;
+            }
             case MM_ATM450:
             case MM_ATM710:
             case MM_ATM3:

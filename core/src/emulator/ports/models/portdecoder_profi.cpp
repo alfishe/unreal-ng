@@ -34,14 +34,15 @@ namespace
 
 /// region <Constructors / Destructors>
 
-PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(context)
+PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
+    : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
-    // Battery-backed state outlives the machine ([PROFI] NvramFile)
+    // Battery-backed state outlives the machine ([PROFI] NvramFile); the v3 board has no clock (_nvramLoaded stays false)
     const char* nvramPath = _context->config.profi_nvram_path;
     if (_nvramLoaded && nvramPath[0] != '\0' && !_rtc.SaveNvram(nvramPath))
         MLOGWARNING("PortDecoder_Profi: cannot save the RTC NVRAM to '%s'", nvramPath);
@@ -66,8 +67,8 @@ void PortDecoder_Profi::reset()
     ResetPalette();
 
     // The RTC's battery-backed cells come from [PROFI] NvramFile once, at
-    // power-on; a Z80 reset does not touch the chip
-    if (!_nvramLoaded)
+    // power-on; a Z80 reset does not touch the chip. Only the v5 board has the clock
+    if (_board.extendedPorts && !_nvramLoaded)
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.profi_nvram_path;
@@ -126,16 +127,16 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     const bool dosPorts = (_state->flags & CF_DOSPORTS) != 0;
     const uint16_t fdcPort = dosPorts ? DecodeFDCPort(port) : 0;
 
-    // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
-    // address bits, so mirrored ports select it on IN too. Resolve mirrors to the
-    // canonical port BEFORE the weak FE (A0-only) check.
-    if ((port & 0xC002) == 0xC000)
+    // AY #FFFD: A15=1, A14=1, A13=1, A1=0. The Profi's AY select decodes A13 too (the v3.2 controller sheet 2:
+    // ADR13 and ADR15 into U10:D; the Black_Cat port table, Profi-1 column), so #DFFD (A13=0) never reads the
+    // AY. Mirrors with A13=1 select it on IN; resolve them to the canonical port BEFORE the weak FE (A0-only) check.
+    if ((port & 0xE002) == 0xE000)
     {
         result = PeripheralPortIn(0xFFFD);
         disp.decodedPort = 0xFFFD;
     }
-    // AY #BFFD: A15=1, A14=0, A1=0
-    else if ((port & 0xC002) == 0x8000)
+    // AY #BFFD: A15=1, A14=0, A13=1, A1=0
+    else if ((port & 0xE002) == 0xA000)
     {
         result = PeripheralPortIn(0xBFFD);
         disp.decodedPort = 0xBFFD;
@@ -164,8 +165,8 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         result = Default_Port_FE_In(port, pc);
         // GX0 (bit 7): "palette exists" detector read by Profi 5.xx software (UniCopy).
         // Default_Port_FE_In leaves bit 7 = 1 (keyboard/tape never touch it), so only
-        // override it in DS80.
-        if (_state->pDFFD & 0x80)
+        // override it in DS80, and only on the v5 board: the v3 has no palette, bit 7 reads 1
+        if (_board.fePaletteBit7 && (_state->pDFFD & 0x80))
             result = static_cast<uint8_t>((result & 0x7F) | Port_FE_In_GX0());
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
@@ -234,8 +235,8 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     // UnrealSpeccy documents titles that OUT #FC to both #FE and #7FFD.
     if (IsFEPort(port))
     {
-        // Palette write uses the PREVIOUS #FE value as index, so it must precede the latch update
-        if ((port & 0x0080) == 0 && (_state->pDFFD & 0x80))
+        // Palette write uses the PREVIOUS #FE value as index, so it must precede the latch update. The v5 board only
+        if (_board.palette && (port & 0x0080) == 0 && (_state->pDFFD & 0x80))
             Port_Palette_Out(port);
 
         Default_Port_FE_Out(port, value, pc);
@@ -258,16 +259,16 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
-    // AY #FFFD: A15=1, A14=1, A1=0 (register select / TurboSound chip select)
-    else if ((port & 0xC002) == 0xC000)
+    // AY #FFFD: A15=1, A14=1, A13=1, A1=0 (register select / TurboSound chip select); A13=0 is #DFFD, above
+    else if ((port & 0xE002) == 0xE000)
     {
         _state->pFFFD = value;
         PeripheralPortOut(0xFFFD, value);
         disp.decodedPort = 0xFFFD;
         disp.wasDecoded = true;
     }
-    // AY #BFFD: A15=1, A14=0, A1=0 (data write)
-    else if ((port & 0xC002) == 0x8000)
+    // AY #BFFD: A15=1, A14=0, A13=1, A1=0 (data write)
+    else if ((port & 0xE002) == 0xA000)
     {
         _state->pBFFD = value;
         PeripheralPortOut(0xBFFD, value);
@@ -418,6 +419,9 @@ void PortDecoder_Profi::UpdateModelMemoryBanks()
 
 PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 {
+    if (!_board.extendedPorts)
+        return {nullptr, "", "", "The Profi v3 board has no CMOS clock (it came with controller v4.0)"};
+
     RtcBinding binding;
     binding.chip = &_rtc;
     binding.ports = "#BF / #FF address, #9F / #DF data, extended mode only (CP/M + ROM14)";
@@ -427,6 +431,9 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
+    // The clock is on the v5 board only
+    if (!_board.extendedPorts)
+        return {ttd::PeripheralId::ProfiPaging};
     return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};
 }
 
@@ -434,7 +441,8 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDS
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
-    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+    if (_board.extendedPorts)
+        serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
     return serializers;
 }
 
@@ -462,9 +470,12 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
 
 bool PortDecoder_Profi::IsExtMode() const
 {
-    // UnrealSpeccy default: EXT = cpm && rom14. Karabas additionally treats
-    // dosAct && !rom14 as EXT (exposing IDE/RTC to the SYS ROM); not implemented
-    // here since it is a clone extension, not proven by UnrealSpeccy sources.
+    // The extended port map: CP/M and ROM14, on the v5 board only. The v5 port decoder PROM confirms it
+    // (docs/inprogress/2026-10-01-profi-v3-v5/decoder-prom.md): it needs CP/M = 1 and ROM14 = 1, whatever the DOS
+    // latch says. Karabas also opens it to the SYS ROM (DOS latch on, ROM14 = 0); the PROM does not, so that is a
+    // clone extension. The v3.2 PROM has ADR15 where v5 has ROM14, so v3 has no extended map at all
+    if (!_board.extendedPorts)
+        return false;
     const bool cpm = (_state->pDFFD & 0x20) != 0;
     const bool rom14 = (_state->p7FFD & 0x10) != 0;
     return cpm && rom14;
@@ -474,9 +485,8 @@ uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
 {
     const uint8_t p1 = static_cast<uint8_t>(port);
     const bool cpm = (_state->pDFFD & 0x20) != 0;
-    const bool rom14 = (_state->p7FFD & 0x10) != 0;
 
-    if (rom14 && cpm)
+    if (IsExtMode())
     {
         // "Modified" (extended) ports: #83/#A3/#C3/#E3 and #3F (system) - UnrealSpeccy io.cpp
         if ((p1 & 0x9F) == 0x83)
@@ -486,7 +496,8 @@ uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
         return 0;
     }
 
-    // BDI ports: #1F/#3F/#5F/#7F (A7=0, A1:0=11) and the system port #FF (#BF in CP/M mode)
+    // BDI ports: #1F/#3F/#5F/#7F (A7=0, A1:0=11) and the system port #FF (#BF in CP/M mode). On v3 this is the
+    // only map: CP/M with ROM14 = 1 decodes the same ports (the v3.2 decoder PROM has no ROM14 input)
     if ((p1 & 0x83) == 0x03)
         return static_cast<uint16_t>((p1 & 0x60) | 0x1F);
     if ((p1 & 0xE3) == (cpm ? 0xA3 : 0xE3))

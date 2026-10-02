@@ -1465,7 +1465,7 @@ StateNode ScreenMode(EmulatorContext* context)
         eff7["384_enabled"] = (s.pEFF7 & EFF7_384) != 0;
         ret["eff7"] = eff7;
     }
-    if (s.model == MM_PROFI)
+    if (IsProfiModel(s.model))
     {
         StateNode dffd = StateNode::Object();
         dffd["value"] = int(s.pDFFD);

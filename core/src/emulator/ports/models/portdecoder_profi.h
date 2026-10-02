@@ -4,6 +4,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
@@ -94,6 +95,8 @@ protected:
     /// the flags and UIP timing there follow the AVR firmware, not the datasheet.
     /// Battery-backed through [PROFI] NvramFile; lives with the decoder so the
     /// contents survive Core::Reset(), like the real battery
+    /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
+    const ProfiBoard _board;
     Ds12887 _rtc{256};
     bool _nvramLoaded = false;  // [PROFI] NvramFile read once, on the first reset
 

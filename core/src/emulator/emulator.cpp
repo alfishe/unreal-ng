@@ -1042,7 +1042,7 @@ void Emulator::RequestMNI()
         state.scorpionDosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
-    else if (config.mem_model == MM_PROFI)
+    else if (IsProfiModel(config.mem_model))
     {
         // Profi "magic button" (Karabas video.vhd/TOP:1197-1199 `dos_act` set condition,
         // OR-ed with the #3Dxx M1 trap): NMI with DS80=0 raises the same CF_TRDOS latch

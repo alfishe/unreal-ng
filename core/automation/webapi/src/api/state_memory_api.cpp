@@ -11,6 +11,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
@@ -171,9 +172,12 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
             paging["eff7_flags"] = eff7_flags;
         }
 
-        // pDFFD: Profi 1024 extended paging / video mode latch
-        if (config.mem_model == MM_PROFI)
+        // pDFFD: Profi extended paging / video mode latch (both boards)
+        if (IsProfiModel(config.mem_model))
         {
+            paging["profi_board"] = (config.mem_model == MM_PROFI3) ? "v3" : "v5";
+            paging["profi_sync_prom"] = ProfiSyncPromName(
+                ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
             paging["port_dffd"] = static_cast<int>(state.pDFFD);
             paging["port_dffd_hex"] = StringHelper::Format("0x%02X", state.pDFFD);
 
@@ -369,6 +373,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
         case MM_ATM710:
         case MM_ATM450:
         case MM_PROFI:
+        case MM_PROFI3:
             totalROMPages = 4;
             break;
         default:

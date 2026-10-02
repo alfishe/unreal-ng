@@ -1,11 +1,30 @@
-# ZX Profi 1024 (model `PROFI`)
+# ZX Profi (models `PROFI` = v5, `PROFI3` = v3)
 
-The Profi 1024 is creatable on this build (`emulator_manage action=create model=PROFI`, CLI `create PROFI`,
-`POST /api/v1/emulator/start {"model": "PROFI"}`). Configuration lives in `data/configs/profi/unreal.ini`; the
-default ROM image is `data/rom/profi/romain_2.91_ramdisk_d.rom` (karabas-pro's ROMain firmware, TR-DOS RAM disk on
-drive D). Alternative 64K ROM images (Micco Software menu ROM, other ROMain builds, DivMMC, Gluk+DFFD) live under
-`data/rom/profi/`, see its `README.md`. Design notes and open work:
-[technical-design.md](../inprogress/2026-09-21-profi/technical-design.md).
+The Profi came as two board families, and both are creatable on this build:
+
+| Model | Board | RAM | Default ROM | Config |
+|:--|:--|:--|:--|:--|
+| `PROFI` (alias `PROFI5`) | v5.0x (Kondor, 1993-94) | 512K, **1024K** | `data/rom/profi.rom` (Bios 2.0 + TR-DOS 6.08 + STS monitor) | `data/configs/profi/unreal.ini` |
+| `PROFI3` | v3.x (TOO "Profi" / JV Kramis, 1990) | **512K**, 1024K | `data/rom/profi/kramis-v02.rom` (factory BIOS V0.2 + TR-DOS 5.03) | `data/configs/profi3/unreal.ini` |
+
+Create one with `emulator_manage action=create model=PROFI3` (or `PROFI`), CLI `create PROFI3`, or
+`POST /api/v1/emulator/start {"model": "PROFI3"}`. The factory system ROMs of both boards are in `data/rom/profi/`
+([README-ROMS.md](../../data/rom/README-ROMS.md)).
+
+What differs between the boards (`ProfiBoard`, `core/src/emulator/ports/models/profiboard.h`):
+
+| | v3 | v5 |
+|:--|:--|:--|
+| 512x240 hi-res | monochrome: ink = border colour, paper = its inverse | 16 colours per 8 pixels from a 256-colour palette (`OUT #xx7E`) |
+| `#FE` read bit 7 | 1 | GX0 from the palette in DS80 |
+| Extended port map (CP/M + ROM14) | none: the port decoder PROM takes ADR15 instead of ROM14 | FDC `#83..#E3`, system `#3F`, 8255 / Covox `#A7` / `#C7`, IDE, RTC |
+| RTC, IDE | none | yes |
+| Frame and INT (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper (the PROM of a 3.2 board) | 69888 T, INT 14368 T before paper (the PROM of a Kondor 5.04 board) |
+
+`[PROFI] SyncProm=` selects another sync PROM: `0a1d`, `samx6`, `fb0579b6` (71680 T, INT 48 T before paper) or
+`v503`. The evidence for every difference, and the PROM decodes, are in
+[docs/inprogress/2026-10-01-profi-v3-v5](../inprogress/2026-10-01-profi-v3-v5/README.md); the original Profi design
+is [technical-design.md](../inprogress/2026-09-21-profi/technical-design.md).
 
 ## ROM layout (4 pages of 16 KB)
 
@@ -13,11 +32,11 @@ drive D). Alternative 64K ROM images (Micco Software menu ROM, other ROMain buil
 |:--|:--|
 | 0 | SYS / menu ROM (BIOS), selected after reset |
 | 1 | TR-DOS |
-| 2 | 128K editor + STS monitor |
+| 2 | 128K (the 128 editor in the factory images, the STS monitor in `profi.rom`) |
 | 3 | 48K BASIC |
 
 Automation surfaces (`/state/paging`, `/state/memory/rom`, CLI `state rom`, Lua/Python `paging_state()`) report these
-as "SYS/Menu ROM", "TR-DOS ROM", "128K Editor + STS Monitor ROM" and "48K BASIC ROM". TR-DOS is entered through the
+as "SYS/Menu ROM", "TR-DOS ROM", "128K ROM" and "48K BASIC ROM". TR-DOS is entered through the
 DOS latch (the `CF_TRDOS` flag, set by the usual `$3Dxx` M1 trap).
 
 ## Paging latches

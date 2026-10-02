@@ -102,6 +102,9 @@ std::string ROM::GetROMFilename()
         case MM_PROFI:
             result = config.profi_rom_path;
             break;
+        case MM_PROFI3:
+            result = config.profi3_rom_path;
+            break;
         case MM_SCORP:
             result = config.scorp_rom_path;
             break;
@@ -194,11 +197,13 @@ bool ROM::LoadROM()
             romname = (config.mem_model == MM_PLUS2A) ? config.plus2a_rom_path : config.plus3_rom_path;
             break;
 		case MM_PROFI:
+		case MM_PROFI3:
+			// Both boards: SYS (BIOS), TR-DOS, 128, 48 (2026-10-01-profi-v3-v5 roms.md)
 			memory.base_sys_rom = memory.ROMPageHostAddress(0);
 			memory.base_dos_rom = memory.ROMPageHostAddress(1);
 			memory.base_128_rom = memory.ROMPageHostAddress(2);
 			memory.base_sos_rom = memory.ROMPageHostAddress(3);
-			romname = config.profi_rom_path;
+			romname = (config.mem_model == MM_PROFI3) ? config.profi3_rom_path : config.profi_rom_path;
 			break;
 		case MM_SCORP:
 			// Scorpion bundle page order is BASIC128 / 48K BASIC / Service / TR-DOS.
@@ -700,10 +705,11 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         "System ROM (CP/M BIOS, boot menu)", "TR-DOS ROM", "128K Editor/Menu ROM", "48K BASIC ROM"
     };
 
-    // Profi 1024 ROM layout (data/rom/profi.rom): SYS/menu, TR-DOS, 128K + STS monitor, 48K
+    // Profi ROM layout, both boards: SYS/menu, TR-DOS, 128, 48. The 128 page holds the 128 editor in the factory
+    // images and the STS monitor in data/rom/profi.rom, so its role names the slot, not the contents
     static const char* PROFI_ROLES[] =
     {
-        "SYS/Menu ROM", "TR-DOS ROM", "128K Editor + STS Monitor ROM", "48K BASIC ROM"
+        "SYS/Menu ROM", "TR-DOS ROM", "128K ROM", "48K BASIC ROM"
     };
 
     const CONFIG& config = _context->config;
@@ -724,6 +730,7 @@ std::string ROM::GetROMPageRole(uint8_t page) const
             return (page < 4) ? ATM450_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         case MM_PROFI:
+        case MM_PROFI3:
             return (page < 4) ? PROFI_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         case MM_PLUS3:

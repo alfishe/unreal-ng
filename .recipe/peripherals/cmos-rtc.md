@@ -7,7 +7,7 @@ the board AVR's emulation of one ([evoavr.h](../../core/src/emulator/memory/atm/
 | Model | Ports the guest uses | Cells | Battery file |
 |:--|:--|:--|:--|
 | `ATM3` (ZX-Evo) | `#DFF7` address / `#BFF7` data after `#EFF7` bit 7; `#DEF7` / `#BEF7` in shadow | 256 (A/C/D and `#F0-#FF` are the AVR's) | `[EVO] NvramFile=` |
-| `PROFI` | `#BF` / `#FF` address, `#9F` / `#DF` data, extended mode only (CP/M + ROM14) | 256 | `[PROFI] NvramFile=` |
+| `PROFI` (v5 only; `PROFI3` has no clock) | `#BF` / `#FF` address, `#9F` / `#DF` data, extended mode only (CP/M + ROM14) | 256 | `[PROFI] NvramFile=` |
 | `SCORPION`, `PROFSCORP` | SMUC `#DFBA`, `#FFBA` bit 7 selects address / data | 256 | none |
 
 The Scorpion's clock lives on the SMUC board: the shipped configs have
