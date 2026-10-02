@@ -377,6 +377,19 @@ bool DeviceScreen::isMouseCaptured() const
     return _mouseManager->isCaptured();
 }
 
+bool DeviceScreen::event(QEvent* event)
+{
+    // A PC-keyboard machine owns the bare F-keys while the view has focus: accepting the
+    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here
+    if (event->type() == QEvent::ShortcutOverride &&
+        KeyboardManager::machineOwnsKey(static_cast<QKeyEvent*>(event), _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+    {
+        event->accept();
+        return true;
+    }
+    return QWidget::event(event);
+}
+
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))

@@ -18,14 +18,18 @@ ScreenAtm::ScreenAtm(EmulatorContext* context, Memory* memory) : _context(contex
 /// dxr_atm0.cpp (EGA), dxr_atm2.cpp (HW Multicolor), dxr_atm6.cpp (Text);
 /// ZX-Evo Text Linear follows ZXMAK2 EvoTxtRenderer.cs. All modes share
 /// ZX-compatible timing: 224 T-states/line, 312 lines/frame
-/// (maxFrameTiming == config.frame == 69888). Video planes are LINEAR 8KB
+/// (maxFrameTiming == config.frame == 69888); ATM450 has 308 lines (68992 T, a 4-line
+/// shorter vertical blank: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md).
+/// Video planes are LINEAR 8KB
 /// with 40 bytes per line (8000 bytes per plane) - NOT the ZX 32-byte stride
 /// - except TL, which reads a dedicated page of linear 64-byte text rows.
 void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer)
 {
     using namespace AtmGeometry;
     constexpr uint32_t TSTATES_PER_LINE = kTStatesPerLine;
-    constexpr uint32_t VSYNC_VBLANK_LINES = kVSyncVBlankLines;  // 16 vSync + 8 vBlank before the visible area
+    // 16 vSync + 8 vBlank before the visible area; 4 lines fewer on ATM450 (rd is the timing
+    // descriptor: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
+    const uint32_t VSYNC_VBLANK_LINES = static_cast<uint32_t>(rd.vSyncLines + rd.vBlankLines);
     constexpr uint32_t VISIBLE_LINES = kVisibleLines;
     constexpr uint32_t SCREEN_LINES = kScreenLines;
     constexpr uint32_t BYTES_PER_LINE = kBytesPerLine;

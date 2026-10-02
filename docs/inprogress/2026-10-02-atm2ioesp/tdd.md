@@ -11,7 +11,7 @@
 | #FA (A2..A0 = 010) | `IN` / `OUT` go to the first device whose `IAtmIoDevice::Matches(latch)`; an `IN` with none reads #FF (the bus floats) |
 | Reset | the connector's RS: every device's `Reset()` (the board reset) |
 | Devices | `IAtmIoDevice` (`Matches`, `Read`, `Write`, `Reset`), `AttachIoDevice` / `DetachIoDevice`; only the v7.10 board (`v710Board`), never the ZX-Evo |
-| TTD | the latch in its own blob `AtmIoBus` (28): `AtmPagingState` stays as it was, old recordings keep loading |
+| TTD | the latch in its own blob `AtmIoBus` (36): `AtmPagingState` stays as it was, old recordings keep loading |
 
 ## 2. The card
 
@@ -19,7 +19,7 @@
 #F8 Rev 1.0), the register is `latch & 7`. The UART and its peer are a `ComPort` built with the plain
 `Chip16550` parameters (1.8432 MHz, AFE present, no access wait, INTRPT not wired) and a register map
 `port & 7`, reached through the bus instead of #xxEF. TTD: the same `TTDSerialPort` serializer under
-its own id `Atm2IoEsp` (29). On the virtual network its peer is guest 4.
+its own id `Atm2IoEsp` (37). On the virtual network its peer is guest 4.
 
 ## 3. Configuration and surfaces
 

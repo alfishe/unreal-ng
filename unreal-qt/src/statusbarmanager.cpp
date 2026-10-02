@@ -628,12 +628,18 @@ void StatusBarManager::updateIde(EmulatorContext* context)
 
     QStringList lines;
     lines << tr("IDE board: %1").arg(QString::fromLatin1(Config::IdeSchemeName(ide->Scheme())));
-    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    const int channels = ide->ChannelCount();
+    for (int index = 0; index < channels * AtaChannel::kUnits; index++)
     {
-        const auto info = context->pMediaManager->Info(IdeUnitSlot::IdFor(0, unit));
+        const int channel = index / AtaChannel::kUnits;
+        const int unit = index % AtaChannel::kUnits;
+        const auto info = context->pMediaManager->Info(IdeUnitSlot::IdFor(channel, unit));
         if (!info)
             continue;
-        const QString position = unit ? tr("slave") : tr("master");
+        // Two channels (the Sprinter): "primary master" ... "secondary slave"
+        QString position = unit ? tr("slave") : tr("master");
+        if (channels == 2)
+            position = (channel ? tr("secondary") : tr("primary")) + QLatin1Char(' ') + position;
         const QString kind = info->descriptor.kind == MediaKind::Optical ? tr("CD-ROM") : tr("disk");
         const QString medium = info->present ? QString::fromStdString(info->source) : tr("empty");
         lines << QStringLiteral("%1 (%2): %3").arg(position, kind, medium);

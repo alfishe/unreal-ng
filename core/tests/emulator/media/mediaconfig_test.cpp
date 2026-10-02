@@ -124,6 +124,22 @@ TEST(MediaConfig_Test, LegacyKeysFillOnlyWhatMediaLeavesUnset)
     EXPECT_FALSE(Find(set, "sd.zc")->legacy);
 }
 
+/// [HDD] Image2 / Image3 (HD2RO / HD3RO): the Sprinter's secondary channel, ide1.master / ide1.slave
+TEST(MediaConfig_Test, LegacyKeysForTheSecondChannel)
+{
+    IniFile ini;
+    ini.LoadData("[HDD]\nImage2=c.img\nHD2RO=1\nImage3=d.img\n");
+    const auto set = MediaConfig::FromIni(ini, "/configs/sprinter");
+    const MediaSetEntry* master = Find(set, "ide1.master");
+    ASSERT_NE(master, nullptr);
+    EXPECT_EQ(master->source.path, FileHelper::LexicallyNormalPath("/configs/sprinter/c.img"));
+    EXPECT_EQ(master->access.value_or(AccessMode::Session), AccessMode::ReadOnly) << "HD2RO=1";
+    const MediaSetEntry* slave = Find(set, "ide1.slave");
+    ASSERT_NE(slave, nullptr);
+    EXPECT_FALSE(slave->access.has_value());
+    EXPECT_EQ(Find(set, "ide0.master"), nullptr);
+}
+
 /// [NGS] SDWrite (session / persist / off) and SDWriteProtect describe the
 /// NeoGS card's slot sd.ngs, as [ZC] SDWrite / SDWriteProtect describe sd.zc
 TEST(MediaConfig_Test, LegacyNeoGSWriteModeAndSwitch)

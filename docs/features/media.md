@@ -72,8 +72,8 @@ on a +3) is `unknown-slot`, never drive A.
 | `insert` | slot or `auto`, path | a file or a folder into the slot |
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
-| `save` | slot, path? | floppies: write the disk back into its file, or to `path` (the disk then stands for that file) |
-| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes |
+| `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again |
+| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image, or to a CHD for a `.chd` path |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
 | `rescan` | slot | build a folder medium again after the host folder changed (refused while dirty) |
 | `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`) |
@@ -96,6 +96,8 @@ on a +3) is `unknown-slot`, never drive A.
 | `wp` | bool | false | insert, swap |
 | `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create |
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
+| `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
+| `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
 | `on` | bool | true | protect |
 | `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
@@ -172,7 +174,7 @@ an empty drive changes what some firmware does at boot.
 
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
-| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder: `session`) | no: insert and eject while paused |
+| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
 | CD-ROM drive | `optical` | `.iso` (ISO 9660, read-only) | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
 
 The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard
@@ -244,7 +246,7 @@ Every surface returns the same fields:
 
 `targets <path>` answers before anything is inserted. The file is recognized by its content
 first and its extension second: a CD image by the ISO 9660 mark, a hard-disk image by its HDF or
-VHD header, a card or hard-disk image by a FAT boot sector or a partition table, a floppy image by
+VHD header, a MAME CHD by `MComprHD` (a hard disk first, an SD card too), a card or hard-disk image by a FAT boot sector or a partition table, a floppy image by
 the floppy formats' rules, a tape by its extension. Then the machine's slots that take it are
 listed in the order a chooser shows them: an empty slot before an occupied one, the main (boot)
 slot first, an add-on card's slot last. A CD image goes only to a unit that is a CD-ROM drive.

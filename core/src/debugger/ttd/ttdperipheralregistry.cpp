@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <utility>
 
 namespace ttd {
 
@@ -123,7 +124,13 @@ TTDRestoreReport TTDPeripheralRegistry::RestoreAll(
     // holding live state from whatever the machine was doing before the seek —
     // a divergence with no error anywhere. Driving from the devices lets us at
     // least name the device that is about to be left stale.
-    for (const auto& [id, device] : _devices)
+    //
+    // In ascending id order, whatever the map's order: a serializer that
+    // completes another device's state (Wd1793Context after BetaDisk) takes a
+    // higher id and finds that device already loaded.
+    std::vector<std::pair<uint8_t, TTDSerializable*>> ordered(_devices.begin(), _devices.end());
+    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [id, device] : ordered)
     {
         if (!device)
             continue;

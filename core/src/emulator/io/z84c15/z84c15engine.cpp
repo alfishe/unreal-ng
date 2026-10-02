@@ -132,6 +132,8 @@ void Z84C15Engine::ExecuteStep()
 
 void Z84C15Engine::AcknowledgeInterrupt(uint8_t vector)
 {
+    if (_agent)
+        _agent->OnInterruptAcknowledge();
     Enter();
     _vector = vector;
     Z84CpuInt(_chip.Cpu());  // Z80::ProcessInterrupts accepted it with the same boundary rules
@@ -165,10 +167,14 @@ uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind,
         value = (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
         if (z.machineM1Hook)
             z.NotifyMachineM1(addr);
+        if (e._agent)
+            e._agent->OnOpcodeFetch(addr, value);
     }
     else
     {
         value = (e._memory->*z.MemIf->MemoryRead)(addr, kind == Z84CpuAccessOperand);
+        if (e._agent && e._agent->watchData)
+            value = e._agent->OnRead(addr, value);
     }
 
     if (z.busTraceHook)
@@ -183,7 +189,12 @@ void Z84C15Engine::MemWrite(Z84CPU* cpu, uint16_t addr, uint8_t value, void* use
     Z84C15Engine& e = *static_cast<Z84C15Engine*>(user);
     Z80& z = *e._z80;
     e.Publish(cpu);
+    IZ84BusAgent* agent = (e._agent && e._agent->watchData) ? e._agent : nullptr;
+    if (agent)
+        value = agent->BeforeWrite(addr, value);
     (e._memory->*z.MemIf->MemoryWrite)(addr, value);
+    if (agent)
+        agent->AfterWrite(addr, value);
     if (z.busTraceHook)
         z.busTraceHook('W', addr, value);
     e.Absorb(cpu);

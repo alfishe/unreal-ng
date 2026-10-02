@@ -52,6 +52,7 @@
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "recordingrequest.h"
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -73,6 +74,7 @@
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
+#include "../bindings/python_vdac2.h"
 
 namespace py = pybind11;
 
@@ -1948,6 +1950,54 @@ namespace PythonBindings
             .def("tsconf_tsu", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConfTsu(self.GetContext()));
             }, "TS-Conf TSU and palette for debug views: tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells; available=False on other machines")
+            // Sprinter Sp2000: the same reports every interface uses (DeviceState::Sprinter,
+            // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
+            .def("sprinter_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
+            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            .def("sprinter_text", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
+            }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
+            .def("sprinter_ports", [](Emulator& self, py::object map, py::object dos, py::object pn5, const std::string& rw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortTable(self.GetContext(), query));
+            }, py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(), py::arg("rw") = "",
+               "The decoded Sprinter port table (RAM page #40): rows of code, name, address pattern; map 0-3, dos 0/1 (1 = TR-DOS on), pn5 0/1, rw 'r'/'w'/'rw'")
+            .def("sprinter_port", [](Emulator& self, py::object port, const std::string& rw, py::object map, py::object dos, py::object pn5) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                uint16_t number = 0;
+                if (py::isinstance<py::int_>(port))
+                {
+                    const long long value = port.cast<long long>();
+                    if (value < 0 || value > 0xFFFF)
+                        throw py::value_error("port must be 0-0xFFFF");
+                    number = static_cast<uint16_t>(value);
+                }
+                else if (!py::isinstance<py::str>(port) || !DeviceState::SprinterPortFromString(port.cast<std::string>(), number))
+                    throw py::value_error("port: an int or a hex string ('21BC', '#21BC')");
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortLookup(self.GetContext(), number, query));
+            }, py::arg("port"), py::arg("rw") = "", py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(),
+               "One Sprinter port through the port table: index into page #40, code and name (or the Z84C15 when the chip answers it)")
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
@@ -4040,6 +4090,13 @@ namespace PythonBindings
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             else
                 live["shadow_monitor_paged"] = py::none();  // latch does not exist on this model
+            // Sprinter: the map / DOS / PN5 the port table is read with now (as WebAPI /ports)
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::Sprinter(context);
+                if (const StateNode* decoderNode = sprinter.find("decoder"))
+                    live["sprinter_port_table"] = StateNodeToPy(*decoderNode);
+            }
             d["live"] = live;
             return d;
         }, "Static port map: which devices answer which I/O ports on this model, "
@@ -4154,6 +4211,25 @@ namespace PythonBindings
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.append(bank);
+            }
+
+            // Sprinter: the PLD maps the windows - kind and physical page from DeviceState::SprinterPaging
+            // (the /state/paging view), and the whole view as `sprinter`
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::SprinterPaging(context);
+                if (const StateNode* windows = sprinter.find("windows"))
+                {
+                    for (size_t i = 0; i < windows->items.size() && i < 4; i++)
+                    {
+                        py::dict bank = banks[i].cast<py::dict>();
+                        if (const StateNode* kind = windows->items[i].find("kind"))
+                            bank["type"] = kind->s;
+                        if (const StateNode* page = windows->items[i].find("page"))
+                            bank["page"] = page->i;
+                    }
+                }
+                d["sprinter"] = StateNodeToPy(sprinter);
             }
             d["banks"] = banks;
             return d;
@@ -4579,18 +4655,38 @@ namespace PythonBindings
                 float fps = 50.0f;
                 int scale = 1;
                 std::string region = "full";
+                std::string audio;
+                long videoBitrate = 0;
+                long audioBitrate = 0;
                 if (py::isinstance<py::dict>(optsValue))
                 {
                     py::dict opts = optsValue;
-                    if (opts.contains("format") && py::isinstance<std::string>(opts["format"]))
+                    // Optional sound track: "aac" (or True = aac); None/False = video only
+                    if (opts.contains("audio") && !opts["audio"].is_none())
+                    {
+                        if (py::isinstance<py::bool_>(opts["audio"]))
+                            audio = opts["audio"].cast<bool>() ? "aac" : "";
+                        else if (py::isinstance<py::str>(opts["audio"]))
+                            audio = RecordingRequest::NormalizeAudioCodec(opts["audio"].cast<std::string>());
+                        else
+                        {
+                            d["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a bool";
+                            return d;
+                        }
+                    }
+                    if (opts.contains("video_bitrate"))
+                        videoBitrate = opts["video_bitrate"].cast<long>();
+                    if (opts.contains("audio_bitrate"))
+                        audioBitrate = opts["audio_bitrate"].cast<long>();
+                    if (opts.contains("format") && py::isinstance<py::str>(opts["format"]))
                         format = opts["format"].cast<std::string>();
-                    if (opts.contains("filename") && py::isinstance<std::string>(opts["filename"]))
+                    if (opts.contains("filename") && py::isinstance<py::str>(opts["filename"]))
                         filename = opts["filename"].cast<std::string>();
                     if (opts.contains("fps"))
                         fps = opts["fps"].cast<float>();
                     if (opts.contains("scale"))
                         scale = opts["scale"].cast<int>();
-                    if (opts.contains("region") && py::isinstance<std::string>(opts["region"]))
+                    if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
                         region = opts["region"].cast<std::string>();
                 }
 
@@ -4609,6 +4705,24 @@ namespace PythonBindings
                     const long long stamp =
                         static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
                     filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
+                }
+
+                // Same rules as the WebAPI/CLI/Lua (RecordingRequest): the codec must fit the container
+                if (videoBitrate < 0 || audioBitrate < 0 || videoBitrate > 1000000 || audioBitrate > 1000000)
+                {
+                    d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
+                    return d;
+                }
+                {
+                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
+                                                                        static_cast<uint32_t>(audioBitrate), audio);
+                    if (!codecError.empty())
+                    {
+                        d["error"] = codecError;
+                        return d;
+                    }
                 }
 
                 if (fps < 1.0f) fps = 1.0f;
@@ -4630,7 +4744,8 @@ namespace PythonBindings
                 const bool wasRunning = self.IsRunning() && !self.IsPaused();
                 if (wasRunning) self.Pause();
 
-                const bool started = rm->StartRecording(filename, format, "");
+                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                        static_cast<uint32_t>(audioBitrate));
 
                 if (wasRunning) self.Resume();
 
@@ -4647,6 +4762,10 @@ namespace PythonBindings
                 d["fps"] = fps;
                 d["scale"] = scale;
                 d["region"] = region;
+                d["audio"] = rm->HasAudio();
+                d["audio_codec"] = audio;
+                d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+                d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
                 d["feature_auto_enabled"] = featureWasOff;
                 d["output"] = filename;
                 return d;
@@ -4694,6 +4813,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else
@@ -4728,6 +4854,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else
@@ -5014,5 +5147,8 @@ namespace PythonBindings
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         registerPortTraceBindings(emulatorClass);
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        registerVdac2Bindings(emulatorClass);
     }
 }

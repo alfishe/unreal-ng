@@ -28,6 +28,7 @@ openapi/
 ├── openapi_labels.inc     # Labels/symbols management
 ├── openapi_lifecycle.inc  # Emulator create/start/stop
 ├── openapi_porttrace.inc  # I/O port tracing
+├── openapi_vdac2.inc      # TS-Conf VDAC2 card (FT812): bus capture
 ├── openapi_profiler.inc   # Opcode/memory profiling
 ├── openapi_schemas.inc    # Shared JSON schemas
 ├── openapi_settings.inc   # Configuration settings
@@ -97,6 +98,7 @@ Includes are grouped by category:
 // Profiling
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
+#include "openapi/openapi_vdac2.inc"
 
 // Advanced
 #include "openapi/openapi_ttd.inc"

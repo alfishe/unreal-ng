@@ -481,7 +481,14 @@ TEST_F(Config_Test, Vdac2TakesTheIdeConnector)
         return config.LoadConfigFile(path);
     };
 
+#ifdef ENABLE_VDAC2
     ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\nTS_VDAC2=1\n[HDD]\nScheme=nemo-divide\n"));
+#else
+    // A build without the FT812 library refuses the card (design §2); the
+    // fields are parsed all the same
+    EXPECT_FALSE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\nTS_VDAC2=1\n[HDD]\nScheme=nemo-divide\n"))
+        << "no VDAC2 support in this build";
+#endif
     EXPECT_EQ(_context->config.ts_vdac, 7);
     EXPECT_EQ(_context->config.ide_scheme, IDE_NONE) << "VDAC2: no IDE";
 
@@ -490,6 +497,25 @@ TEST_F(Config_Test, Vdac2TakesTheIdeConnector)
 
     ASSERT_TRUE(load("[MISC]\nHIMEM=PROFI\nRamSize=1024\nTS_VDAC2=1\n[HDD]\nScheme=profi\n"));
     EXPECT_EQ(_context->config.ide_scheme, IDE_PROFI) << "TS_VDAC2 means nothing outside TS-Conf";
+    std::remove(path.c_str());
+}
+
+/// [VDAC2] RomImage: the FT812's ROM fonts (design §3, §10); default rom/ft81x.rom
+TEST_F(Config_Test, Vdac2RomImagePath)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2_rom_config_test.ini");
+    auto load = [&](const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << text;
+        file.close();
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\n"));
+    EXPECT_STREQ(_context->config.vdac2_rom_path, "rom/ft81x.rom");
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\n[VDAC2]\nRomImage=roms/my-ft81x.bin\n"));
+    EXPECT_STREQ(_context->config.vdac2_rom_path, "roms/my-ft81x.bin");
     std::remove(path.c_str());
 }
 

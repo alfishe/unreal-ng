@@ -423,15 +423,18 @@ register loaded from the CPU on writes and from the drive's high byte on reads (
 `SP2_1K30.TDF:181`, `:360-373`); MAME agrees (one `m_ata_data_latch`), ZXMAK2 keeps two bytes. On a
 write the latch holds the **low** byte (the reverse of the Nemo order). Reads of
 registers 1-7 with A8 = 1 and writes with A8 = 0 do nothing (MAME). The interrupt line is not
-connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). **With no drive** the status reads `#FF` (BSY
-set): the IDE data lines reach the CPU side through two K555AP6 (74LS245) transceivers (U6, U9 on
-the Sp2000 schematic, `zxgit/2000` `pcad_import/PAGE1.pdf`) with no pull-down on DD7 at the
-connectors X6/X9, and LS-TTL inputs that nothing drives read high. SETUP's auto-detect then waits
-1 550 frames (#060E HALTs, ~31.7 s) per unit for BSY to clear, unless F4 is pressed (SETUP
-`#9663`-`#967E`). MAME does not show this: its default slots hold an IDE hard disk without an image
-(primary master: status `#52`, IDENTIFY aborted with `#51`, "None" at once) and an ATAPI CD
-(primary slave: status `#10`/`#11`, polled for 280 frames), so MAME reaches the no-media boot screen
-at frame 507 (10.38 s) and unreal-ng with no drives at frame 3 291 (67.4 s). The channel select is a latch that
+connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). **With no drive** the emulator reads `#7F`
+(BSY = 0) from every register of the channel: the ATA host pull-down on DD7 (owner decision 2026-10-02,
+tdd-storage §3.4). The IDE data lines reach the CPU side through two K555AP6 (74LS245) transceivers (U6, U9
+on the Sp2000 schematic, `zxgit/2000` `pcad_import/PAGE1.pdf`); the drawing shows no pull-down at the
+connectors X6/X9, and S3b first modeled an undriven bus as `#FF` (BSY set), on which SETUP waits 1 550 frames
+(#060E HALTs, ~31.7 s) per unit unless F4 is pressed (SETUP `#9663`-`#967E`). The community BIOS shows that a
+real board does not read `#FF` either: 3.06 / 3.07 `AUTOIDE.asm` `DETECTORS.CheckChanel` recognizes an empty
+channel by three status reads returning `#78`, `#68`, `#ED` - the bytes left on the data bus by its own
+`IN` opcodes, so BSY reads 0 there as well. With `#7F` that check does not match, but the next one does
+(the sector count does not echo), and every BIOS reports "None" at once. MAME's default slots hold an IDE hard
+disk without an image (primary master: status `#52`, IDENTIFY aborted with `#51`, "None" at once) and an ATAPI
+CD (primary slave: status `#10`/`#11`, polled for 280 frames). The channel select is a latch that
 survives until changed; reset selects primary (MAME `:1582`).
 
 ### 9.2 Units and BIOS numbering

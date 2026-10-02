@@ -760,7 +760,9 @@ void ScreenZX::DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate)
 {
     if (!_atmScreen)
         _atmScreen = std::make_unique<ScreenAtm>(_context, _memory);
-    _atmScreen->DrawRange(fromTstate, toTstate, _mode, rasterDescriptors[_mode], _framebuffer);
+    // The timing descriptor: same storage geometry as rasterDescriptors[_mode], and the ATM450's
+    // shorter vertical blank (docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
+    _atmScreen->DrawRange(fromTstate, toTstate, _mode, GetTimingDescriptor(_mode), _framebuffer);
 }
 
 void ScreenZX::DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate)
@@ -1312,9 +1314,8 @@ void ScreenZX::RenderOnlyMainScreen_Original()
     }
 
     // Get Framebuffer
-    uint32_t* framebuffer;
-    size_t size;
-    GetFramebufferData(&framebuffer, &size);
+    uint32_t* framebuffer = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    size_t size = _framebuffer.memoryBuffer ? _framebuffer.memoryBufferSize : 0;  // the machine's raster
     int offset = 0;
 
     // Render ZX-Spectrum screen to framebuffer

@@ -452,8 +452,11 @@ GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offse
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
-POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
-GET  /api/v1/emulator/{id}/video/record/status    Recording state
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
+                                               "format", "filename", "fps", "scale", "region",
+                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate"})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
+                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration)
 ```
 
 #### Disassembly Response

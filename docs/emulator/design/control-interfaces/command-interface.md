@@ -735,6 +735,10 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
+| Sprinter Sp2000 machine (PLD, windows, cells, clock, video, Z84C15, floppy latch, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` |
+| Sprinter port table (map / DOS / PN5 / direction) | `state sprinter ports map=0 dos=1 rw=w` | `GET /state/sprinter/ports?map=0&dos=1&rw=w` | `sprinter_ports{map=0, dos=1, rw="w"}` | `sprinter_ports(map=0, dos=1, rw="w")` | `sprinter_ports` (current state); `invoke_api` for another map |
+| Sprinter port lookup (index, code, name) | `state sprinter port 21BC rw=w` | `GET /state/sprinter/ports/lookup?port=21BC&rw=w` | `sprinter_port(0x21BC, {rw="w"})` | `sprinter_port(0x21BC, rw="w")` | `invoke_api` |
+| Sprinter screen text (80 x 32 text squares) | `state sprinter text` | `GET /state/sprinter/text` | `sprinter_text()` | `sprinter_text()` | `sprinter_text` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
 | Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |
@@ -1329,11 +1333,19 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto]` | Start recording. Default format `gif`; default output file under the system temp directory. |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frame rate, and scale factor. |
+| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+
+**Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
+only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
+`.mkv` any of aac/mp3/opus/vorbis/flac/pcm_s16le, `.webm` opus/vorbis, `.avi` aac/mp3/pcm_s16le. A GIF
+has no audio track, so `gif` + `--audio` is refused. On macOS h264/hevc + aac in `.mp4`/`.mov` uses
+the native encoder; every other combination needs ffmpeg. The WebAPI (`"audio"`), MCP
+(`capture_media record_start` `audio`), Lua and Python (`audio` option) follow the same rules.
+Example: `videorecord start h264 scratch/run.mp4 --scale 2 --audio aac`.
 
 **Audio rate**: `--audio-rate N` (one of 44100, 48000, 88200, 96000, 176400, 192000)
 pins the core audio rate before the first sample is stamped, so the whole

@@ -5,7 +5,9 @@
 #include "sprinterfixture.h"
 
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/storage/memorydisk.h"
 
 class PortDecoderSprinter_Test : public SprinterFixture
 {
@@ -484,13 +486,164 @@ TEST_F(PortDecoderSprinter_Test, TraceCodeTable_NamesTheCodes)
     EXPECT_EQ(nameOf(PortDecoder_Sprinter::kTraceZ84Base + 0x19), "Z84 SIO A control");
 }
 
-TEST_F(PortDecoderSprinter_Test, Ttd_DeclaresThePldStateItCannotRecordYet)
+TEST_F(PortDecoderSprinter_Test, Ttd_EveryDeclaredStateHasASerializer)
 {
     const auto ids = _decoder->GetTTDModelStateIds();
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::SprinterPld), ids.end());
     const auto serializers = _decoder->CreateTTDSerializers();
-    for (const auto& s : serializers)
-        EXPECT_NE(s->TTDPeripheralId(), ttd::PeripheralId::SprinterPld) << "the PLD serializer is phase S7";
+    for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
+                                 ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput, ttd::PeripheralId::Wd1793Context})
+    {
+        EXPECT_NE(std::find(ids.begin(), ids.end(), id), ids.end()) << "declared: id " << int(id);
+        EXPECT_TRUE(std::any_of(serializers.begin(), serializers.end(), [id](const auto& s) { return s->TTDPeripheralId() == id; }))
+            << "serialized: id " << int(id);
+    }
 }
 
 /// endregion </Surfaces>
+
+/// region <T-IDE: the IDE codes through the port table and the CPU (tdd-storage §3)>
+
+namespace
+{
+    /// Sector n of the test disk: byte i = n * 16 + i (mod 256), so every byte of a sector differs from its neighbor
+    void FillDisk(MemoryDisk& disk)
+    {
+        for (uint64_t lba = 0; lba < disk.SectorCount(); lba++)
+            for (size_t i = 0; i < 512; i++)
+                disk.Data()[lba * 512 + i] = static_cast<uint8_t>(lba * 16 + i);
+    }
+}  // namespace
+
+class PortDecoderSprinterIde_Test : public PortDecoderSprinter_Test
+{
+protected:
+    MemoryDisk _disk{64};
+
+    /// [HDD] Scheme=SPRINTER with a disk on ide0.master, the BIOS 3.04 port table, the decoder open
+    bool FitIde()
+    {
+        if (!LoadTable304())
+            return false;
+        _context->config.ide_scheme = IDE_SPRINTER;
+        _core->RefitIde();
+        if (!_context->pIdeController || !_context->pIdeController->Enabled())
+            return false;
+        FillDisk(_disk);
+        _context->pIdeController->Channel(0).Unit(0)->AttachMedium(_disk, {});
+        OpenDcp();
+        return true;
+    }
+
+    /// The BIOS's command sequence (ROM page 0 PRESET #0C40): count #0152, LBA #0153-#0155, device #4152, command #4153
+    static std::vector<uint8_t> Command(uint8_t command, uint8_t lba)
+    {
+        return {0x3E, 0x21, 0xD3, 0xBC,                    // LD A,#21 : OUT (#BC),A - primary channel
+                0x01, 0x52, 0x41, 0x3E, 0xE0, 0xED, 0x79,  // LD BC,#4152 : LD A,#E0 : OUT (C),A - master, LBA
+                0x01, 0x52, 0x01, 0x3E, 0x01, 0xED, 0x79,  // LD BC,#0152 : LD A,1 : OUT (C),A - one sector
+                0x01, 0x53, 0x01, 0x3E, lba, 0xED, 0x79,   // LD BC,#0153 : LD A,lba : OUT (C),A
+                0x01, 0x54, 0x01, 0xAF, 0xED, 0x79,        // LD BC,#0154 : XOR A : OUT (C),A
+                0x01, 0x55, 0x01, 0xED, 0x79,              // LD BC,#0155 : OUT (C),A
+                0x01, 0x53, 0x41, 0x3E, command, 0xED, 0x79};  // LD BC,#4153 : LD A,command : OUT (C),A
+    }
+};
+
+// The BIOS 3.04 table maps the IDE ports to codes #20-#2B (hardware-reference §4.4) in both DOS states
+TEST_F(PortDecoderSprinterIde_Test, Table304_IdeCodes)
+{
+    if (!LoadTable304())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    for (uint8_t dos : {0, 1})
+    {
+        Pld().dos = dos;
+        EXPECT_EQ(_decoder->LookupCode(0x0050, true), 0x20);
+        EXPECT_EQ(_decoder->LookupCode(0xFF50, true), 0x20) << "INI's B on A15-A8 keeps the data code";
+        EXPECT_EQ(_decoder->LookupCode(0x0150, false), 0x20);
+        EXPECT_EQ(_decoder->LookupCode(0x0153, false), 0x23);
+        EXPECT_EQ(_decoder->LookupCode(0x4053, true), 0x27);
+        EXPECT_EQ(_decoder->LookupCode(0x4152, false), 0x26);
+        EXPECT_EQ(_decoder->LookupCode(0x4054, true), 0x28);
+        EXPECT_EQ(_decoder->LookupCode(0x01BC, false), 0x2A);
+        EXPECT_EQ(_decoder->LookupCode(0x21BC, false), 0x2B);
+    }
+}
+
+// The Z84C15 engine drives B on A15-A8 of an INI / OUTI cycle the way the Z80 does: INI with the value before the
+// decrement, OUTI with the value after it (Zilog UM0080 "INI", "OUTI"). Two port-table cells tell the bus addresses
+// apart: port #E000 (A15-A13 = 111) reads cell #EC, #C000 / #DF00 (110) reads / writes cell #ED, #BF00 (101) cell #EB
+TEST_F(PortDecoderSprinterIde_Test, Z84C15_IniOutiPutBOnTheHighAddressByte)
+{
+    OpenDcp();
+    SetCodeAll(0xE000, true, 0xEC);
+    SetCodeAll(0xC000, true, 0xED);
+    SetCodeAll(0xC000, false, 0xED);
+    SetCodeAll(0xA000, false, 0xEB);
+    Pld().Cell(0xEC) = 0xAA;
+    Pld().Cell(0xED) = 0xBB;
+
+    // LD HL,#9000 : LD BC,#E000 : INI - reads port #E000 (B = #E0 before the decrement): cell #EC
+    RunCode({0x21, 0x00, 0x90, 0x01, 0x00, 0xE0, 0xED, 0xA2});
+    EXPECT_EQ(Peek(0x9000), 0xAA) << "INI must put B before its decrement on A15-A8";
+    EXPECT_EQ(_z80->b, 0xDF);
+
+    // LD HL,#9000 : LD (HL),#5C : LD BC,#C000 : OUTI - writes port #BF00 (B = #BF after the decrement): cell #EB
+    RunCode({0x21, 0x00, 0x90, 0x36, 0x5C, 0x01, 0x00, 0xC0, 0xED, 0xA3});
+    EXPECT_EQ(Pld().Cell(0xEB), 0x5C) << "OUTI must put B after its decrement on A15-A8";
+    EXPECT_EQ(Pld().Cell(0xED), 0xBB);
+}
+
+// T-IDE-5: the BIOS sector loop LD BC,#0050 : INI x 512 (ROM page 0 RDS003 #0A8F: 32 x 16 INI) reads a whole
+// sector in order: B runs #00, #FF, #FE ... so A8 alternates word low byte / latched high byte
+TEST_F(PortDecoderSprinterIde_Test, IniLoopReadsASectorInOrder)
+{
+    if (!FitIde())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    std::vector<uint8_t> code = Command(0x20, 9);  // READ SECTORS, LBA 9
+    const std::vector<uint8_t> setup = {0x21, 0x00, 0xA0, 0x01, 0x50, 0x00};  // LD HL,#A000 : LD BC,#0050
+    code.insert(code.end(), setup.begin(), setup.end());
+    for (int i = 0; i < 512; i++)
+        code.insert(code.end(), {0xED, 0xA2});  // INI
+    RunCode(code);
+    for (uint16_t i = 0; i < 512; i++)
+        ASSERT_EQ(Peek(static_cast<uint16_t>(0xA000 + i)), _disk.Data()[9 * 512 + i]) << "byte " << i;
+    EXPECT_EQ(In(0x4053), 0x50) << "DRDY | DSC: the sector is done";
+}
+
+// T-IDE-6: the BIOS write loop LD BC,#0150 : OUTI x 512 (ROM page 0 WRS003 #0B97): OUTI decrements B first, so the
+// ports are #0050 (low byte to the latch), #FF50 (word), ...; the image gets the bytes in order
+TEST_F(PortDecoderSprinterIde_Test, OutiLoopWritesASectorInOrder)
+{
+    if (!FitIde())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    for (uint16_t i = 0; i < 512; i++)
+        Poke(static_cast<uint16_t>(0xA000 + i), static_cast<uint8_t>(0xA5 ^ i ^ (i >> 8)));
+    std::vector<uint8_t> code = Command(0x30, 5);  // WRITE SECTORS, LBA 5
+    const std::vector<uint8_t> setup = {0x21, 0x00, 0xA0, 0x01, 0x50, 0x01};  // LD HL,#A000 : LD BC,#0150
+    code.insert(code.end(), setup.begin(), setup.end());
+    for (int i = 0; i < 512; i++)
+        code.insert(code.end(), {0xED, 0xA3});  // OUTI
+    RunCode(code);
+    for (uint16_t i = 0; i < 512; i++)
+        ASSERT_EQ(_disk.Data()[5 * 512 + i], static_cast<uint8_t>(0xA5 ^ i ^ (i >> 8))) << "byte " << i;
+    EXPECT_EQ(In(0x4053), 0x50);
+}
+
+// The channel select through the table: OUT (#BC),#01 reaches the secondary channel (empty: DD7 pulled down, #7F),
+// OUT (#BC),#21 the primary again; the latch is the IDE adapter's (the AtaChannel TTD blob)
+TEST_F(PortDecoderSprinterIde_Test, ChannelSelectThroughTheTable)
+{
+    if (!FitIde())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    EXPECT_EQ(In(0x4053), 0x50);
+    Out(0x01BC, 0x01);
+    EXPECT_EQ(_decoder->GetIdeAdapter().State().channel, 1);
+    EXPECT_EQ(In(0x4053), 0x7F) << "secondary: no drive, BSY = 0";
+    Out(0x21BC, 0x21);
+    EXPECT_EQ(In(0x4053), 0x50);
+
+    // The PLD's reset (the RESET button) selects the primary channel
+    Out(0x01BC, 0x01);
+    _core->Reset();
+    EXPECT_EQ(_decoder->GetIdeAdapter().State().channel, 0);
+}
+
+/// endregion </T-IDE>

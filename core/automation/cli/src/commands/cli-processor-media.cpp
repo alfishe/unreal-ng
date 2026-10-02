@@ -20,7 +20,8 @@ namespace
 {
     /// Options that take a value; every other option is a flag
     const std::set<std::string> kValueOptions = {"access", "fs",       "codepage", "free", "format", "kind",
-                                                 "export", "cylinders", "sides",   "size", "on",     "retarget"};
+                                                 "export", "cylinders", "sides",   "size", "on",     "retarget",
+                                                 "compression", "parent"};
 
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)

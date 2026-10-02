@@ -8,6 +8,35 @@
 class EmulatorContext;
 class Memory;
 
+/// Board logic between the CPU and the machine's memory paths that needs to
+/// know the kind of each bus cycle (a block-transfer accelerator that snoops
+/// opcodes and repeats data accesses: the Sprinter's, tdd-accel-sound-input §1).
+/// Machine neutral; the engine calls it only while one is set.
+///
+/// Worked example: the Sprinter program runs `LD C,C : LD (HL),A`. The agent
+/// sees the opcode fetch of #49 (fill armed), then BeforeWrite(HL, A) returns
+/// A, the store goes out through the machine's normal write path, and
+/// AfterWrite(HL, A) stores A at HL+1 ... HL+length-1 and adds the time.
+class IZ84BusAgent
+{
+public:
+    virtual ~IZ84BusAgent() = default;
+
+    /// An opcode fetch (M1, also a halted CPU's) read `opcode`
+    virtual void OnOpcodeFetch(uint16_t addr, uint8_t opcode) = 0;
+    /// An operand or data read returned `value`; the result is what the CPU gets
+    virtual uint8_t OnRead(uint16_t addr, uint8_t value) = 0;
+    /// A write is about to go out with `value`; the result is the byte the bus carries
+    virtual uint8_t BeforeWrite(uint16_t addr, uint8_t value) = 0;
+    /// The write of `value` (the byte BeforeWrite returned) went out
+    virtual void AfterWrite(uint16_t addr, uint8_t value) = 0;
+    /// The CPU accepted an INT: its acknowledge cycle (M1 with /IORQ), before the pushes
+    virtual void OnInterruptAcknowledge() = 0;
+
+    /// false: the engine skips OnRead / BeforeWrite / AfterWrite (an idle agent costs one test per access)
+    bool watchData = false;
+};
+
 /// @file z84c15engine.h
 /// @brief The Zilog Z84C15 as a machine's CPU engine (ICpuEngine): the
 /// vendored z84c15 library (core/src/3rdparty/z84c15) executing on this
@@ -58,6 +87,13 @@ public:
     /// Give the CPU back to the native interpreter (only if this is installed)
     void Uninstall();
     bool IsInstalled() const;
+    /// The host's registers were replaced from outside (a TTD restore): its boundary is pushed to the
+    /// library at the next step even when it equals the one the library last reported
+    void InvalidateBoundary() { _boundarySeen = 0xFF; }
+
+    /// The board's bus agent (null = none): opcode fetches, data accesses, INT acknowledges
+    void SetBusAgent(IZ84BusAgent* agent) { _agent = agent; }
+    IZ84BusAgent* GetBusAgent() const { return _agent; }
 
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }
@@ -102,6 +138,7 @@ private:
     Z84Lib::Z84C15& _chip;
     ChainSource _source{*this};
     IInterruptSource* _external = nullptr;
+    IZ84BusAgent* _agent = nullptr;
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
 };

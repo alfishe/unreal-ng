@@ -1,0 +1,101 @@
+# MAME 0.289 sprinter, -bios v3.06, -hard1 sp_hdd_sys.chd (owner's MAME pack, DSS 1.71.57; not in the repo)
+# Made with: mame-capture.sh boot SPC_BIOS=v3.06 SPC_HARD1=<sp_hdd_sys.chd> SPC_CODES=20-2B SPC_PORTS=300000 SPC_WAIT_TEXT=... (MAME_ROMPATH = the pack's roms/)
+
+## events
+frame=2 time_s=0.040960000 t35=143360 MAME configuration shortcut done (m_conf_loading 1 -> 0)
+frame=28 time_s=0.592731714 t35=2074561 first port read: DCP open (port 00E2, PC 3244); page #40 saved as page40-open.bin
+frame=385 time_s=7.884800000 t35=27596800 text 'Estex DSS' on screen at frame 385 (7.885 s)
+frame=412 time_s=8.441460190 t35=29545111 port trace complete (300000 accesses)
+
+## screen at the milestone (text-mode video RAM)
+Model     : Sprinter                    Firmware v3.06
+Board ID  : 52-83-0000047E8             Copyright (c) 2002 Peters Plus
+Core 1K30 : v3.05                       Copyright (c) 2009-2025 Sprinter Team
+Memory    : 4096K                       Release 25.06.2025
+Available : 3664K
+CMOS      : Found, 00:00:00             <ALT>  for Alternative boot
+WARNING! CMOS CHECKSUM ERROR, DEFAULT VALUES SET!
+ Detecting IDE Primary Master    ... MAME    Virtual Hard Disk
+ Detecting IDE Primary Slave     ... MAME    Virtual CDROM
+ Detecting IDE Secondary Master  ... None
+ Detecting IDE Secondary Slave   ... None
+Boot from HDD Primary IDE Master OK
+Starting DSS...
+Estex DSS version 1.71.57. Shell version 1.2.522.
+
+## ATA commands (frame, channel 0 primary / 1 secondary, command, device, count, LBA); the CD unit's packet commands (#A0) folded
+174 0 00 dev=A0 cnt=0 lba=256
+175 0 00 dev=A0 cnt=5 lba=256
+175 0 EC dev=A0 cnt=5 lba=256
+175 0 91 dev=4F cnt=32 lba=251658496
+175 0 00 dev=B0 cnt=32 lba=256
+175 0 00 dev=B0 cnt=5 lba=256
+175 0 EC dev=B0 cnt=5 lba=256
+175 0 A1 dev=B0 cnt=5 lba=256
+175 0 A0 dev=B0 cnt=5 lba=524288
+   ... 402 packet commands (A0) in all
+375 1 00 dev=A0 cnt=0 lba=0
+375 1 00 dev=A0 cnt=5 lba=0
+375 1 EC dev=A0 cnt=5 lba=0
+375 1 00 dev=B0 cnt=5 lba=0
+375 1 00 dev=B0 cnt=5 lba=0
+375 1 EC dev=B0 cnt=5 lba=0
+376 0 20 dev=40 cnt=1 lba=1
+376 0 20 dev=40 cnt=3 lba=2
+376 0 20 dev=40 cnt=1 lba=0
+376 0 20 dev=40 cnt=1 lba=63
+376 0 20 dev=40 cnt=16 lba=176
+376 0 20 dev=40 cnt=1 lba=432
+376 0 20 dev=40 cnt=32 lba=448
+377 0 20 dev=40 cnt=3 lba=480
+378 0 20 dev=40 cnt=1 lba=0
+378 0 A0 dev=10 cnt=1 lba=524288
+   ... 6 packet commands (A0) in all
+380 0 20 dev=40 cnt=1 lba=63
+380 0 20 dev=40 cnt=16 lba=176
+380 0 20 dev=40 cnt=16 lba=432
+381 0 20 dev=40 cnt=16 lba=432
+381 0 20 dev=40 cnt=1 lba=512
+382 0 20 dev=40 cnt=1 lba=512
+382 0 20 dev=40 cnt=14 lba=513
+382 0 20 dev=40 cnt=1 lba=527
+382 0 20 dev=40 cnt=16 lba=432
+384 0 20 dev=40 cnt=1 lba=216320
+384 0 20 dev=40 cnt=1 lba=216320
+385 0 20 dev=40 cnt=16 lba=432
+385 0 20 dev=40 cnt=16 lba=432
+386 0 20 dev=40 cnt=32 lba=576
+387 0 20 dev=40 cnt=16 lba=432
+387 0 20 dev=40 cnt=32 lba=5376
+389 0 20 dev=40 cnt=16 lba=432
+389 0 20 dev=40 cnt=32 lba=5504
+390 0 20 dev=40 cnt=1 lba=198528
+391 0 20 dev=40 cnt=1 lba=198528
+391 0 20 dev=40 cnt=1 lba=198529
+391 0 20 dev=40 cnt=16 lba=432
+391 0 20 dev=40 cnt=1 lba=198529
+392 0 20 dev=40 cnt=56 lba=198530
+393 0 20 dev=40 cnt=1 lba=198586
+393 0 20 dev=40 cnt=1 lba=198586
+394 0 20 dev=40 cnt=5 lba=198587
+394 0 20 dev=40 cnt=22 lba=198592
+394 0 20 dev=40 cnt=1 lba=198614
+394 0 20 dev=40 cnt=1 lba=198614
+395 0 20 dev=40 cnt=12 lba=198615
+395 0 20 dev=40 cnt=1 lba=198627
+395 0 20 dev=40 cnt=1 lba=198627
+395 0 20 dev=40 cnt=22 lba=198628
+396 0 20 dev=40 cnt=1 lba=198650
+396 0 20 dev=40 cnt=1 lba=198650
+396 0 20 dev=40 cnt=5 lba=198651
+396 0 20 dev=40 cnt=17 lba=198656
+397 0 20 dev=40 cnt=1 lba=198673
+397 0 20 dev=40 cnt=1 lba=198673
+397 0 20 dev=40 cnt=6 lba=198674
+397 0 20 dev=40 cnt=1 lba=198680
+409 0 20 dev=40 cnt=16 lba=432
+409 0 20 dev=40 cnt=32 lba=5504
+410 0 20 dev=40 cnt=1 lba=198720
+411 0 20 dev=40 cnt=1 lba=198721
+411 0 20 dev=40 cnt=1 lba=199104
+412 0 20 dev=40 cnt=1 lba=198976

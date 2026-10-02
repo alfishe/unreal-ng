@@ -169,6 +169,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"port-trace", &CLIProcessor::HandlePortTrace},
                         {"porttrace", &CLIProcessor::HandlePortTrace},
 
+                        // TS-Conf VDAC2 card (FT812): bus capture
+                        {"vdac2", &CLIProcessor::HandleVdac2},
+
                         // General Sound coprocessor triage (activity counters + port/DAC trace)
                         {"gsporttrace", &CLIProcessor::HandleGSPortTrace},
                         {"gs-porttrace", &CLIProcessor::HandleGSPortTrace},
@@ -636,6 +639,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;
     oss << NEWLINE;
+    oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
+    oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;
+    oss << "                                - FT812 bus to an .evr replay stream (chip selects, bytes, clocks, frame hashes)" << NEWLINE;
+    oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
     oss << "                                - GS activity counters + opt-in port/DAC event trace" << NEWLINE;
@@ -683,7 +690,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (+ sound: --audio aac)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;

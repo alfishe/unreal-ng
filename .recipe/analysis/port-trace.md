@@ -74,7 +74,7 @@ Condition keys: `port` (decoded, hex string), `raw` (raw 16-bit port),
 `device`, `direction` `in|out`, `pc` range, `value` range, `unmapped: true`,
 `code` (the decoder's internal port code, hex string - see below).
 
-### Internal port codes (ZX-Evo today; Sprinter / TSConf later)
+### Internal port codes (ZX-Evo, Sprinter)
 
 Some decoders turn the address into a code first - what the port means under
 the current port map - and every event carries it as `code` + `code_name`. On
@@ -89,6 +89,28 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/porttrace/filter" \
      -H 'Content-Type: application/json' -d '{"include": [{"code": "Eff7Gluk"}]}' | jq '.filter'
 # the same by number: {"code": "0x0005"}
 ```
+
+On the **Sprinter** (`SPRINTER`) the code is the byte the PLD read from its
+port table in RAM page `#40` (`#10` WD1793 command, `#C1` `#7FFD`, `#2B` IDE
+primary, ...; 118 codes with the Z84C15's own ports as `#100` + the low byte).
+The table itself and single-port lookups are in
+[machines/sprinter.md](../machines/sprinter.md#ports-the-table-and-the-codes).
+TR-DOS's floppy accesses, filtered by code (real run, trimmed):
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/porttrace/filter" -H 'Content-Type: application/json' \
+     -d '{"include": [{"code": "FdcCommand"}, {"code": "FdcTrack"}, {"code": "FdcSector"}]}' | jq -c '.filter'
+# ... start, LIST in TR-DOS, stop ...
+curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/events?limit=4" | jq -c '.events[] | {direction, raw_port, value, pc, code, code_name}'
+# {"direction":"IN","raw_port":"0x800F","value":"0x00","pc":"0x3F33","code":"0x0010","code_name":"FdcCommand"}
+# {"direction":"IN","raw_port":"0x033F","value":"0x4A","pc":"0x3E87","code":"0x0011","code_name":"FdcTrack"}
+# {"direction":"IN","raw_port":"0x4A3F","value":"0x4A","pc":"0x3E50","code":"0x0011","code_name":"FdcTrack"}
+# {"direction":"OUT","raw_port":"0x180F","value":"0x18","pc":"0x3D9A","code":"0x0010","code_name":"FdcCommand"}
+```
+
+(`#xx0F`, not `#xx1F`: TR-DOS's `IN A,(#1F)` runs from RAM there, and the
+Sprinter puts such an operand on the bus as `#0F`.) Comparing a Sprinter trace
+with MAME's, code by code: [sprinter-mame-compare.md](sprinter-mame-compare.md).
 
 CLI: `port-trace codes`, `port-trace include code eff7gluk` (a name or hex).
 Lua: `porttrace_codes()`, `porttrace_include({code = "Eff7Gluk"})`. Python:

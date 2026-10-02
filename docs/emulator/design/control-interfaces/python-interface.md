@@ -142,6 +142,25 @@ class Emulator:
         notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
         line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
 
+    def sprinter_state(self) -> dict:
+        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
+        cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
+        ide, bios (images, how to select). available=False on other machines"""
+
+    def sprinter_ports(self, map=None, dos=None, pn5=None, rw="") -> dict:
+        """The decoded Sprinter port table: rows of code, name, direction, address
+        pattern, example; None = the machine's current map / DOS / PN5; rw 'r' / 'w' /
+        'rw'. ValueError on a bad value"""
+
+    def sprinter_port(self, port, rw="", map=None, dos=None, pn5=None) -> dict:
+        """One Sprinter port (int or hex string): index into page #40, code, name,
+        or the Z84C15 when the chip answers it"""
+
+    def sprinter_text(self) -> dict:
+        """The Sprinter screen text: lines[] (row, text, codes) of the mode table's
+        text squares, 80 x 32"""
+
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
         sprite_page, tile_layers (t0 / t1: enabled, draw_tile_zero, graphics_page,
@@ -1213,8 +1232,12 @@ emu.get_audio_rate()                 # {'pin': 96000, 'core_rate': 96000, 'targe
 
 # Video recording (requires a build with ENABLE_RECORDING)
 emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict optional
+emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aac"})  # with sound
+                                     # (True = aac; video_bitrate / audio_bitrate in kbps). No
+                                     # "audio" = video only; gif + audio is refused
 emu.video_record("stop")             # also "pause" / "resume"
-emu.video_record_status()             # recording state + live stats (frames, duration, fps)
+emu.video_record_status()             # recording state + live stats (frames, duration, fps,
+                                     # audio, audio_codec, audio_sample_rate, audio_duration)
 # video_record has no audio-rate option - for a fixed-rate recording pin the
 # rate first: emu.set_audio_rate(48000) before video_record("start", ...)
 

@@ -88,6 +88,36 @@ handling. The manual says the same: "В момент прихода прерыв
 по команде RETI" ("when an interrupt arrives it is switched off, and switched back on by RETI").
 ALL_MODE bit 0 is a separate, manual switch.
 
+### 1.4 As implemented (S5, 2026-10-02)
+
+Outcome and evidence: [s5-accelerator-outcome.md](s5-accelerator-outcome.md). Where the build differs
+from §1.1-§1.3 (each time the PLD's `ACCELER.TDF` decided; MAME differs where noted):
+
+- **Where the hook sits.** Not the `IMachineM1Hook`: the Z84C15 engine gets a bus agent
+  (`IZ84BusAgent`) that sees the opcode fetch with its byte, every operand / data read (it may replace
+  the byte the CPU gets), every write (it may replace the byte, before and after), and the INT
+  acknowledge. The accelerator is `SprinterAccelerator` (`memory/sprinter/`), supplied by the Standard
+  module (hook 4, `SprinterPldConfiguration::Accelerator`). RETI is decoded by the accelerator from the
+  opcode stream, as the PLD does, not through `OnReti()`.
+- **State.** `SprinterAccelState` keeps `mode` and the derived `dir`, the PRF / ED / RETI latches, the
+  block flag, the alternate addressing and two statistics; no `count` (the block runs inside one access).
+- **Function.** `FN_ACC` is loaded by every opcode fetch, so `AND / XOR / OR (HL)` act for their own
+  read only; any other opcode makes it plain, and `ADD / ADC / SUB A,(HL)` alias AND / XOR / OR (MAME
+  keeps the function until the next mode select and knows only `#A6 / #AE / #B6`).
+- **Which accesses.** Every non-M1 access starts an operation, operands included (`LD A,0` after
+  `LD D,D` sets the length). The length load is not blocked by an INT (`RGACC` is not gated).
+- **Order and result.** The CPU's access is the first of `length`; the buffer index counts down from
+  `length` to 1; a block read gives the CPU the last byte read; a copy write's first store is the buffer's.
+- **Time.** `(length - 1) x 6` clocks of 42 MHz added as wait states (the CPU's own access is the
+  first of the `length`), rounded up to whole CPU clocks per operation; "length x 6" in §1.3 counts the
+  CPU's access in. Double byte takes no extra time (MAME: 3 clocks).
+- **ALL_MODE bit 0 = 0** clears the mode (MAME keeps it and only gates it).
+- **Double byte** stores the CPU's byte at `addr ^ 1` (MAME); the PLD's high lane is the IDE latch
+  (open, S3b).
+- **INT suspend.** As §1.3, plus the `ACC_BLK` equation's corner: an INT taken before the first fetch
+  after RETI unblocks. The `ACC_BLK` preset term reads, literally, as "almost never blocked": open point 1
+  of the outcome.
+
 ## 2. Sound
 
 | Device | Design | Reuse |

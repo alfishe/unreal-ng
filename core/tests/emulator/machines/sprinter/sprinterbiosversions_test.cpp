@@ -182,8 +182,9 @@ class SprinterBiosVersions_Test : public SprinterBiosBoot, public ::testing::Wit
 {
 };
 
-// The community BIOS boots through POST, its port table, the logo and the IDE scan (no drive,
-// F4 at each unit: "Skipped") to the boot prompt, which offers SETUP and the ZX mode.
+// The community BIOS boots through POST, its port table, the logo and the IDE scan (no drive: both
+// channels read #7F, the DD7 pull-down, and each unit is "None" at once) to the boot prompt, which offers
+// SETUP and the ZX mode.
 // Boot-bound (330-520 frames of real ROM: the logo delay, the IDE scan), the turbo mode on
 TEST_P(SprinterBiosVersions_Test, FastStart_ReachesTheBootPrompt)
 {
@@ -198,10 +199,13 @@ TEST_P(SprinterBiosVersions_Test, FastStart_ReachesTheBootPrompt)
     ASSERT_GE(_decoder->DcpOpenedFrame(), 0) << "the BIOS never opened the port decoder; " << Where();
     EXPECT_EQ(TableCrc(), image.tableCrc);
 
-    // The IDE scan covers four units (3.04: two); with no drive each waits for BSY until F4
+    // The IDE scan covers four units (3.04: two); with no drive none of them waits for F4
     const char* prompt = "PRESS <ENTER> TO REBOOT, <DEL> TO ENTER SETUP OR <ESC> TO ZX-MODE";
-    RunPressingF4([&] { return ScreenHas(prompt); }, 800);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(prompt); }, 800, 5);
     EXPECT_TRUE(ScreenHas(prompt)) << Where() << "\n" << ScreenText();
+    EXPECT_FALSE(ScreenHas("Skipped")) << ScreenText();
+    for (const char* unit : {"Primary Master", "Primary Slave", "Secondary Master", "Secondary Slave"})
+        EXPECT_TRUE(ScreenHas(std::string("Detecting IDE ") + unit)) << unit << "\n" << ScreenText();
     EXPECT_TRUE(ScreenHas(image.banner)) << ScreenText();
     EXPECT_TRUE(ScreenHas("Memory    : 4096K")) << ScreenText();
     EXPECT_TRUE(ScreenHas("Alternative Boot from Diskette fail")) << ScreenText();

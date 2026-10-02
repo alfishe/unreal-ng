@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/media/blockformats.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
@@ -70,6 +71,7 @@ struct SaveOptions
 {
     std::string path;           ///< empty: the medium's own image file
     bool allowRetarget = true;  ///< floppies: save as <stem>.udi when the format cannot hold the disk
+    std::string compression;    ///< block media saved as a CHD: the codecs (BlockWriteOptions)
 };
 
 /// What a save did
@@ -152,11 +154,14 @@ public:
     /// Drop the medium's session changes
     MediaResult Discard(const std::string& slotId);
     /// Write the medium's current contents to a new image file. The medium
-    /// keeps its source and its unsaved changes. Also for a detached medium
-    MediaResult Export(const std::string& slotId, const std::string& path);
-    /// Floppies: write the disk to its image file (or to `options.path`, which
-    /// it then stands for) and mark it clean. A disk from a folder, a Hobeta
-    /// file or a blank one needs a path. The emulator must not be running
+    /// keeps its source and its unsaved changes. Also for a detached medium.
+    /// Block media: a `.chd` target is a CHD (`options`), anything else raw
+    MediaResult Export(const std::string& slotId, const std::string& path, const BlockWriteOptions& options = {});
+    /// Write the medium to its image file (or to `options.path`, which it then
+    /// stands for) and mark it clean. Floppies: in the file's format. Block
+    /// media: the changed sectors back into a raw / HDF / HDI / VHD file, a CHD
+    /// written again. A disk from a folder, a Hobeta file or a blank one needs
+    /// a path. The emulator must not be running
     MediaResult Save(const std::string& slotId, const SaveOptions& options = {}, SaveOutcome* outcome = nullptr);
     /// The slot's write-protect switch
     MediaResult SetWriteProtect(const std::string& slotId, bool on);
@@ -230,7 +235,10 @@ private:
                                  const std::string& exportPath);
     MediaResult SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                            SaveOutcome* outcome);
-    MediaResult ExportMedium(const std::string& slotId, Medium& medium, const std::string& path);
+    MediaResult ExportMedium(const std::string& slotId, Medium& medium, const std::string& path,
+                             const BlockWriteOptions& options = {});
+    MediaResult SaveBlockMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
+                                SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
     MediaResult CheckRecording(bool endRecording);

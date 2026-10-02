@@ -40,9 +40,9 @@ first paragraph; if that doesn't match your task, go back to the index
 below instead of skimming further.
 
 **Step 1 — machine model, only if the task depends on it.** If the task
-names or implies a specific model (Pentagon/Scorpion/Profi/ATM/Spectrum),
+names or implies a specific model (Pentagon/Scorpion/Profi/ATM/TS-Conf/Sprinter/Spectrum),
 read that one `machines/<model>.md` file for its port map and known
-gotchas. The other four document different hardware and won't help — skip
+gotchas. The other machine files document different hardware and won't help — skip
 them entirely. Don't know the model yet? `_common/machines.md` is the
 comparison table. Sound-card work (GS/MoonSound/TurboSound/Covox) is the
 same idea one level down: read the one matching `peripherals/*.md` file,
@@ -59,7 +59,9 @@ matches; it names the recipe(s) for that action.
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
+| Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
 | A full multi-step investigation (memory corruption, boot verification, disk protection) | check [articles/](articles/) first — it may already compose the recipes you'd otherwise assemble by hand | the individual recipes it cites; open those only if the article sends you there |
@@ -84,12 +86,14 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [media/use-media-slots.md](media/use-media-slots.md) | Every media slot (floppy drives, SD card): list, insert a file or a **host folder**, `auto` slot choice, swap multi-disk software with save/export/discard, export the guest's writes |
-| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`), drive A/B, blank disks, catalog/sysinfo inspection |
+| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`), drive A/B, blank disks, catalog/sysinfo inspection, Sprinter 1.44 MB floppies and the density latch |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
 | [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` load), verify a state took effect, snapshot round-trips |
 | [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
+| [media/video-recording.md](media/video-recording.md) | Record the screen to GIF/H.264/HEVC with an optional sound track (`audio: aac`) from MCP, WebAPI, CLI, Lua, Python; codec/container rules; ffprobe checks |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
+| [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
 
 ### `run/` — making software actually run
 
@@ -111,10 +115,12 @@ call.
 |:--|:--|
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, gaming vs development journal, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
-| [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side |
+| [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side, internal port codes (ZX-Evo, Sprinter) |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | Memory access counters: profiler start/stop, per-page summaries, per-address counters, YAML export |
 | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | Detect custom loaders (port-PC attribution, fastdisk litmus, structural pre-scan), trace hangs and crashes |
 | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) | Record once with TTD, then seek/step to any frame for guaranteed-stable inspection (registers, video aspect, per-frame screenshot) |
+| [analysis/sprinter-ttd.md](analysis/sprinter-ttd.md) | Sprinter time travel: what a checkpoint holds (PLD, Z84C15, VRAM, fast RAM, keyboard / mouse streams, floppy command), record / seek / dump on MCP, WebAPI, CLI |
+| [analysis/sprinter-mame-compare.md](analysis/sprinter-mame-compare.md) | Sprinter boot port trace against MAME's `sprinter` driver, access by access (port, value, PC, internal code); new MAME captures |
 
 ### `machines/` — per-model recipes
 
@@ -124,9 +130,12 @@ call.
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |
 | [machines/profi.md](machines/profi.md) | Profi 1024: `#7FFD`+`#DFFD` paging, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging, IDE hard disk |
 | [machines/tsconf.md](machines/tsconf.md) | TS-Conf (`TSL`): TS-BIOS, the `#xxAF` registers and memory map, TS video modes and TSU, DMA, SD slot `sd.zc`, `.spg` programs, `state tsconf` |
+| [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | TS-Conf VDAC2 card (FT812): setup (`ENABLE_VDAC2`, `TS_VDAC2=1`, ROM image), games from an SD folder, the FT812 bus capture (`vdac2 capture`, `/vdac2/capture/*`, `capture_media vdac2_capture_*`) |
 | [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes, hard disk and CD slots |
+| [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
+| [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS images and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, Z84C15), the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs
 

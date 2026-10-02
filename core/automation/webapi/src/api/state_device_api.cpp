@@ -297,6 +297,83 @@ void EmulatorAPI::getStateTsConfTsu(const HttpRequestPtr& req, std::function<voi
 }
 
 
+/// region <Sprinter>
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter - the Sprinter Sp2000 (DeviceState::Sprinter); 404 on other machines
+void EmulatorAPI::getStateSprinter(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Sprinter(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateSprinterActive(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/sprinter"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateSprinter(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/ports?map=&dos=&pn5=&rw= - the decoded port table
+/// (DeviceState::SprinterPortTable); unset parameters = the machine's current map / DOS / PN5, both directions
+void EmulatorAPI::getStateSprinterPorts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    DeviceState::SprinterPortQuery query;
+    std::string error;
+    if (!DeviceState::SprinterPortQueryFromStrings(req->getParameter("map"), req->getParameter("dos"),
+                                                   req->getParameter("pn5"), req->getParameter("rw"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::SprinterPortTable(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC&rw=w - one port: index, code, name
+/// (DeviceState::SprinterPortLookup); the port is hex (#, 0x or a plain hex number)
+void EmulatorAPI::getStateSprinterPortLookup(const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback,
+                                             const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    uint16_t port = 0;
+    if (!DeviceState::SprinterPortFromString(req->getParameter("port"), port))
+        return ReplyNotFound("port is required: a 16-bit hex port (21BC, #21BC or 0x21BC)", callback,
+                             HttpStatusCode::k400BadRequest);
+    DeviceState::SprinterPortQuery query;
+    std::string error;
+    if (!DeviceState::SprinterPortQueryFromStrings(req->getParameter("map"), req->getParameter("dos"),
+                                                   req->getParameter("pn5"), req->getParameter("rw"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::SprinterPortLookup(emulator->GetContext(), port, query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/text - the screen text of the mode table's text squares
+/// (DeviceState::SprinterText): BIOS SETUP and DSS screens, which the ZX screen OCR cannot read
+void EmulatorAPI::getStateSprinterText(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::SprinterText(emulator->GetContext()), callback);
+}
+
+/// endregion </Sprinter>
+
 /// region <CMOS clock>
 
 namespace

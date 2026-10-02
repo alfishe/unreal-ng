@@ -52,7 +52,7 @@ public:
 /// fails here rather than at someone's seek months later.
 TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 {
-    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3", "PROFI"})
+    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3", "PROFI", "SPRINTER"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (emulator == nullptr)
@@ -228,8 +228,16 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::SprinterPld, 25, "SprinterPld"},
         {ttd::PeripheralId::Atm2Kbc, 26, "Atm2Kbc"},
         {ttd::PeripheralId::MachineSerialPeer, 27, "MachineSerialPeer"},
-        {ttd::PeripheralId::AtmIoBus, 28, "AtmIoBus"},
-        {ttd::PeripheralId::Atm2IoEsp, 29, "Atm2IoEsp"},
+        {ttd::PeripheralId::SprinterVideoRam, 28, "SprinterVideoRam"},
+        {ttd::PeripheralId::Z84C15, 29, "Z84C15"},
+        {ttd::PeripheralId::SprinterFastRam, 30, "SprinterFastRam"},
+        {ttd::PeripheralId::SprinterInput, 31, "SprinterInput"},
+        {ttd::PeripheralId::SprinterCovoxBlaster, 32, "SprinterCovoxBlaster"},
+        {ttd::PeripheralId::SprinterIsa, 33, "SprinterIsa"},
+        {ttd::PeripheralId::SprinterPads, 34, "SprinterPads"},
+        {ttd::PeripheralId::Wd1793Context, 35, "Wd1793Context"},
+        {ttd::PeripheralId::AtmIoBus, 36, "AtmIoBus"},
+        {ttd::PeripheralId::Atm2IoEsp, 37, "Atm2IoEsp"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 

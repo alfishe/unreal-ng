@@ -8,6 +8,7 @@
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 #include "../bindings/lua_porttrace.h"
+#include "../bindings/lua_vdac2.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
@@ -53,6 +54,7 @@
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "recordingrequest.h"
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -2445,6 +2447,68 @@ public:
             return StateNodeToLua(s, DeviceState::TsConfTsu(emulator->GetContext()));
         });
 
+        // Sprinter Sp2000: the same reports every interface uses (DeviceState::Sprinter,
+        // SprinterPortTable, SprinterPortLookup). Options {map=0-3, dos=0|1, pn5=0|1, rw="r"|"w"|"rw"},
+        // omitted = the machine's current map / DOS / PN5 and both directions
+        auto sprinterQuery = [](sol::optional<sol::table> options, DeviceState::SprinterPortQuery& query, std::string& error) {
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::boolean)
+                    return value.as<bool>() ? "1" : "0";
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            return DeviceState::SprinterPortQueryFromStrings(text("map"), text("dos"), text("pn5"), text("rw"), query, error);
+        };
+        lua.set_function("sprinter_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Sprinter(emulator->GetContext()));
+        });
+        lua.set_function("sprinter_text", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterText(emulator->GetContext()));
+        });
+        lua.set_function("sprinter_ports", [this, sprinterQuery](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            DeviceState::SprinterPortQuery query;
+            std::string error;
+            if (!sprinterQuery(options, query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterPortTable(emulator->GetContext(), query)));
+            return out;
+        });
+        // sprinter_port(0x21BC [, {rw="w"}]) or sprinter_port("21BC", ...)
+        lua.set_function("sprinter_port", [this, sprinterQuery](sol::this_state s, sol::object portArg, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            uint16_t port = 0;
+            if (portArg.get_type() == sol::type::number)
+            {
+                const long long value = portArg.as<long long>();
+                if (value < 0 || value > 0xFFFF)
+                    return mouseError(s, "port must be 0-0xFFFF");
+                port = static_cast<uint16_t>(value);
+            }
+            else if (portArg.get_type() != sol::type::string || !DeviceState::SprinterPortFromString(portArg.as<std::string>(), port))
+                return mouseError(s, "port: a number or a hex string (\"21BC\", \"#21BC\")");
+            DeviceState::SprinterPortQuery query;
+            std::string error;
+            if (!sprinterQuery(options, query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterPortLookup(emulator->GetContext(), port, query)));
+            return out;
+        });
+
         // Network adapters: the same report every interface uses (DeviceState::Network)
         lua.set_function("network_state", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
@@ -4157,6 +4221,13 @@ public:
             if (scorpion)
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             // else: key absent = the #1FFD latch does not exist on this model
+            // Sprinter: the map / DOS / PN5 the port table is read with now (as WebAPI /ports)
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::Sprinter(context);
+                if (const StateNode* decoderNode = sprinter.find("decoder"))
+                    live["sprinter_port_table"] = StateNodeToLua(s, *decoderNode);
+            }
             result["live"] = live;
 
             results.push_back(sol::make_object(s, result));
@@ -4276,6 +4347,25 @@ public:
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.add(bank);
+            }
+
+            // Sprinter: the PLD maps the windows - kind and physical page from DeviceState::SprinterPaging
+            // (the /state/paging view), and the whole view as `sprinter`
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::SprinterPaging(context);
+                if (const StateNode* windows = sprinter.find("windows"))
+                {
+                    for (size_t i = 0; i < windows->items.size() && i < 4; i++)
+                    {
+                        sol::table bank = banks[i + 1];
+                        if (const StateNode* kind = windows->items[i].find("kind"))
+                            bank["type"] = kind->s;
+                        if (const StateNode* page = windows->items[i].find("page"))
+                            bank["page"] = page->i;
+                    }
+                }
+                result["sprinter"] = StateNodeToLua(s, sprinter);
             }
             result["banks"] = banks;
 
@@ -4803,6 +4893,43 @@ public:
                     filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
                 }
 
+                // Optional sound track: audio = "aac" (or true = aac); none = video only. Same rules as the
+                // WebAPI/CLI (RecordingRequest): the codec must fit the container, gif has no audio
+                std::string audio;
+                {
+                    const sol::object audioObj = opts["audio"];
+                    if (audioObj.valid() && audioObj.get_type() != sol::type::lua_nil)
+                    {
+                        if (audioObj.is<bool>())
+                            audio = audioObj.as<bool>() ? "aac" : "";
+                        else if (audioObj.is<std::string>())
+                            audio = RecordingRequest::NormalizeAudioCodec(audioObj.as<std::string>());
+                        else
+                        {
+                            result["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a boolean";
+                            return result;
+                        }
+                    }
+                }
+                const int videoBitrate = opts.get_or("video_bitrate", 0);
+                const int audioBitrate = opts.get_or("audio_bitrate", 0);
+                if (videoBitrate < 0 || audioBitrate < 0)
+                {
+                    result["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
+                    return result;
+                }
+                {
+                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
+                                                                        static_cast<uint32_t>(audioBitrate), audio);
+                    if (!codecError.empty())
+                    {
+                        result["error"] = codecError;
+                        return result;
+                    }
+                }
+
                 float fps = opts.get_or("fps", 50.0f);
                 if (fps < 1.0f) fps = 1.0f;
                 if (fps > 100.0f) fps = 100.0f;
@@ -4869,7 +4996,8 @@ public:
                 const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
                 if (wasRunning) emulator->Pause();
 
-                const bool started = rm->StartRecording(filename, format, "");
+                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                        static_cast<uint32_t>(audioBitrate));
 
                 if (wasRunning) emulator->Resume();
 
@@ -4888,6 +5016,10 @@ public:
                 result["region"] = region;
                 if (sound)
                     result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+                result["audio"] = rm->HasAudio();
+                result["audio_codec"] = audio;
+                result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+                result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
                 result["feature_auto_enabled"] = featureWasOff;
                 result["output"] = filename;
                 return result;
@@ -4935,6 +5067,13 @@ public:
             result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             result["average_frame_time_ms"] = stats.averageFrameTime;
             result["recent_fps"] = stats.recentFps;
+            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            result["video_codec"] = rm->GetVideoCodec();
+            result["audio"] = rm->HasAudio();
+            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
+            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             result["output"] = rm->GetOutputFilename();
             return result;
         });
@@ -4964,6 +5103,13 @@ public:
             result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             result["average_frame_time_ms"] = stats.averageFrameTime;
             result["recent_fps"] = stats.recentFps;
+            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            result["video_codec"] = rm->GetVideoCodec();
+            result["audio"] = rm->HasAudio();
+            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
+            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             result["output"] = rm->GetOutputFilename();
             return result;
         });
@@ -5291,6 +5437,9 @@ public:
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         LuaPortTrace::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

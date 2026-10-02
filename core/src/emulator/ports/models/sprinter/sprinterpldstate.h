@@ -97,8 +97,7 @@ struct SprinterPldState
     uint8_t configModule; ///< registry index of the active configuration module (0 = Standard)
     uint8_t frameLines;   ///< 0 = 320 lines, 1 = 312 lines
     uint8_t pg3;          ///< cell index (0-63) that window 3 shows: #D0-#FF by #7FFD / #1FFD
-    uint8_t ideChannel;   ///< 0 primary, 1 secondary (phase S3b)
-    uint8_t ideLatch;     ///< IDE data latch (phase S3b)
+    uint8_t reservedIde[2]; ///< unused: the IDE channel select and data latch live in IdeAdapterState (the AtaChannel blob)
 
     uint8_t resetPending; ///< a PLD-driven CPU reset waits for the instruction boundary
     uint8_t fdcHd;        ///< density latch (codes #16 / #17): 0 = 720 KB (1 MHz, 250 kbit/s), 1 = 1.44 MB (2 MHz, 500)

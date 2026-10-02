@@ -1,0 +1,36 @@
+# MAME 0.289 sprinter, -bios v3.04, -hard1 sp_hdd_sys.chd (owner's MAME pack, DSS 1.71.57; not in the repo)
+# Made with: mame-capture.sh boot SPC_BIOS=v3.04 SPC_HARD1=<sp_hdd_sys.chd> SPC_CODES=20-2B SPC_PORTS=300000 SPC_WAIT_TEXT=... (MAME_ROMPATH = the pack's roms/)
+
+## events
+frame=1 time_s=0.020480000 t35=71680 MAME configuration shortcut done (m_conf_loading 1 -> 0)
+frame=33 time_s=0.677332000 t35=2370662 first port read: DCP open (port 00E2, PC 0CD8); page #40 saved as page40-open.bin
+frame=475 time_s=9.728000000 t35=34048000 text 'Fatal' on screen at frame 475 (9.728 s)
+frame=900 time_s=18.432000000 t35=64512000 port trace ended early (32255 accesses)
+
+## screen at the milestone (text-mode video RAM)
+Model name: Sprinter                    Sprinter BIOS: ver 3.04.253
+Board ID  : 52-82-0000747E8             Copyright (c) 2002 PETERS PLUS LTD
+Memory    : 4096K                       All Rights Reserved
+Available : 3392K
+CMOS      : Found, 02:54:21
+                                        Press <ALT> for Alt. System Disk
+WARNING! CMOS CHECKSUM ERROR, INSTALL DEFAULT VALUES!
+ Detecting IDE Primary Master   ... MAME    Virtual Hard Disk
+ Detecting IDE Primary Slave    ... None
+Start from Hard disk...Ok
+                n
+Fatal error! Press RESET to restart.
+
+## ATA commands (frame, channel 0 primary / 1 secondary, command, device, count, LBA); the CD unit's packet commands (#A0) folded
+190 0 00 dev=A0 cnt=5 lba=0
+190 0 EC dev=A0 cnt=5 lba=0
+191 0 91 dev=EF cnt=32 lba=251658240
+192 0 00 dev=B0 cnt=5 lba=0
+472 0 20 dev=E0 cnt=1 lba=1
+472 0 20 dev=E0 cnt=3 lba=2
+472 0 20 dev=E0 cnt=1 lba=0
+472 0 20 dev=E0 cnt=1 lba=63
+472 0 20 dev=E0 cnt=16 lba=176
+473 0 20 dev=E0 cnt=1 lba=432
+473 0 20 dev=E0 cnt=32 lba=448
+474 0 20 dev=E0 cnt=3 lba=480

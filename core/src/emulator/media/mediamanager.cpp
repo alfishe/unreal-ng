@@ -484,7 +484,7 @@ MediaResult MediaManager::Discard(const std::string& slotId)
     return MediaResult::Success();
 }
 
-MediaResult MediaManager::Export(const std::string& slotId, const std::string& path)
+MediaResult MediaManager::Export(const std::string& slotId, const std::string& path, const BlockWriteOptions& options)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     SlotState* state = nullptr;
@@ -492,7 +492,7 @@ MediaResult MediaManager::Export(const std::string& slotId, const std::string& p
     if (!medium)
         return MediaResult::Fail(_slots.count(slotId) ? MediaError::UnreadableSource : MediaError::UnknownSlot,
                                  "slot '" + slotId + "' is empty");
-    return ExportMedium(slotId, *medium, path);
+    return ExportMedium(slotId, *medium, path, options);
 }
 
 MediaResult MediaManager::Save(const std::string& slotId, const SaveOptions& options, SaveOutcome* outcome)
@@ -817,7 +817,8 @@ MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& me
     return MediaResult::Fail(MediaError::BadRequest, "unknown disposition");
 }
 
-MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium, const std::string& path)
+MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium, const std::string& path,
+                                       const BlockWriteOptions& options)
 {
     // The guest writes into the medium without a lock; a consistent export of
     // a running machine needs the versioned change layer (media history H1)
@@ -826,6 +827,8 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
 
     if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == medium.SourceKey())
         return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
+    if (!medium.Block() && (!options.compression.empty() || !options.parent.empty()))
+        return MediaResult::Fail(MediaError::BadRequest, "compression and parent apply to block media exported as .chd");
 
     if (DiskImage* disk = medium.Floppy())
     {
@@ -839,9 +842,16 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
     }
     else if (medium.Block())
     {
-        std::string error;
-        if (!ExportBlockDevice(*medium.Block(), path, &error))
-            return MediaResult::Fail(MediaError::IoError, error);
+        // Sectors the guest did not change are the source's: a CHD export keeps
+        // the source CHD's stored hunks for them
+        std::function<bool(uint64_t, uint64_t)> unchanged;
+        if (SessionWriteMap* session = medium.Session())
+            unchanged = [session](uint64_t first, uint64_t count) { return !session->ChangedIn(first, count); };
+        else if (medium.Access() == AccessMode::ReadOnly)
+            unchanged = [](uint64_t, uint64_t) { return true; };
+        const MediaResult written = BlockFormats::Write(*medium.Block(), path, options, unchanged);
+        if (!written.Ok())
+            return written;
     }
     else if (const TapeImage* tape = medium.Tape())
     {
@@ -866,9 +876,10 @@ MediaResult MediaManager::SaveMedium(const std::string& slotId, Medium& medium, 
                                      const SaveOptions& options, SaveOutcome* outcome)
 {
     DiskImage* disk = medium.Floppy();
+    if (!disk && medium.Block())
+        return SaveBlockMedium(slotId, medium, slot, options, outcome);
     if (!disk)
-        return MediaResult::Fail(MediaError::NotSupported,
-                                 "slot '" + slotId + "': a block medium's source is never written in a session; export it to a new image file");
+        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "': this medium cannot be saved; export it");
     if (!CanApplyNow())
         return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
 
@@ -908,6 +919,31 @@ MediaResult MediaManager::SaveMedium(const std::string& slotId, Medium& medium, 
     if (written.retargeted)
         result.report.push_back(written.reason + ": saved as '" + written.savedPath + "'");
     Post(NC_MEDIA_SAVED, slotId, &medium, written.savedPath);
+    return result;
+}
+
+MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
+                                          SaveOutcome* outcome)
+{
+    if (!CanApplyNow())
+        return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
+
+    const std::string before = medium.Source().path;
+    BlockWriteOptions write;
+    write.compression = options.compression;
+    std::string savedPath;
+    MediaResult result = BlockFormats::Save(medium, options.path, write, savedPath);
+    if (!result.Ok())
+        return result;
+    if (slot && medium.Source().path != before)
+        slot->SourceChanged(medium);
+    if (outcome)
+    {
+        outcome->savedPath = savedPath;
+        outcome->retargeted = false;
+        outcome->note.clear();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
     return result;
 }
 

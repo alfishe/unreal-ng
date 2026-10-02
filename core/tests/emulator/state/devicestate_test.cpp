@@ -669,6 +669,61 @@ TEST(DeviceStateIde_Test, ReportFollowsTheBoardAndTheCommand)
     EmulatorTestHelper::CleanupEmulator(spectrum);
 }
 
+/// The Sprinter's IDE (two channels, tdd-storage §3): the report every surface serves (WebAPI state/ide, CLI
+/// state ide, Lua / Python ide_state, MCP inspect_state ide) names the selected channel, the PLD's one data
+/// latch, and all four units with their channel and slot
+TEST(DeviceStateIde_Test, SprinterReportsBothChannels)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("devicestate-ide-sprinter.img");
+    {
+        std::string disk(256 * 512, '\0');
+        disk[7 * 512 + 1] = 0x5A;
+        std::ofstream out(FileHelper::ToFsPath(image), std::ios::binary);
+        out << disk;
+    }
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide1.master", source, options).Ok());
+
+    // OUT (#BC),#01 selects the secondary channel; READ SECTORS at LBA 7; one IN (#0050) latches the high byte
+    IdeAdapter& adapter = context->pPortDecoder->GetIdeAdapter();
+    adapter.SprinterOut(0x2A, 0x01BC, 0x01);
+    for (const auto& [code, value] : std::vector<std::pair<uint8_t, uint8_t>>{
+             {0x26, 0xE0}, {0x22, 1}, {0x23, 7}, {0x24, 0}, {0x25, 0}, {0x27, 0x20}})
+        adapter.SprinterOut(code, static_cast<uint16_t>(0x0150 | (code & 7)), value);
+    adapter.SprinterIn(0x20, 0x0050);
+
+    const StateNode report = DeviceState::Ide(context);
+    ASSERT_TRUE(report.find("available")->b);
+    EXPECT_EQ(report.find("scheme")->s, "SPRINTER");
+    EXPECT_EQ(report.find("channels")->i, 2);
+    EXPECT_EQ(report.find("selected_channel")->s, "secondary");
+    EXPECT_EQ(report.find("selected")->s, "master");
+    const StateNode& latches = *report.find("adapter");
+    EXPECT_EQ(latches.find("channel")->i, 1);
+    EXPECT_EQ(latches.find("data_latch")->i, 0x5A);
+    const StateNode& units = *report.find("units");
+    ASSERT_EQ(units.items.size(), 4u);
+    const char* const slots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+    for (size_t i = 0; i < 4; i++)
+    {
+        EXPECT_EQ(units.items[i].find("slot")->s, slots[i]);
+        EXPECT_EQ(units.items[i].find("channel")->s, i < 2 ? "primary" : "secondary");
+        EXPECT_EQ(units.items[i].find("present")->b, i == 2) << slots[i];
+    }
+    EXPECT_EQ(units.items[2].find("command")->find("name")->s, "READ SECTORS");
+    const std::string text = DeviceState::ToText(report);
+    EXPECT_NE(text.find("selected_channel: secondary"), std::string::npos) << text;
+    EXPECT_NE(text.find("ide1.master"), std::string::npos);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    std::remove(image.c_str());
+}
+
 /// region <MoonSound (PLAN #11, P2-2)>
 
 TEST(DeviceStateMoonSound_Test, UnavailableWithoutTheCard)

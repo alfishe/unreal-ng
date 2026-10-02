@@ -51,6 +51,9 @@ _MODEL_NAMES = {
     14: "LSY256",
     15: "Phoenix",
     16: "ZX Next",
+    17: "ZX Spectrum +2",
+    18: "ZX Spectrum +2A",
+    19: "Sprinter Sp2000",
 }
 
 

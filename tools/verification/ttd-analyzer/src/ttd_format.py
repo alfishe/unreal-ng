@@ -197,6 +197,7 @@ def crc32c(data: bytes, seed: int = 0) -> int:
 MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT = 64
 
 # PeripheralId enum (ttdserializable.h), for readable reporting of peripheral_blobs.
+# tests/test_peripheral_ids.py keeps it equal to the C++ enum.
 # Was missing 7/8 (only went up to 6) - fixed 2026-09-23 while auditing this
 # module against the real enum; unlabelled ids used to print as bare integers
 # (e.g. KempstonMouse showed as "7" in `info` output).
@@ -225,6 +226,18 @@ PERIPHERAL_ID_NAMES = {
     21: "EvoTurboCache",
     22: "EvoFontRam",
     23: "KempstonJoystick",
+    24: "SerialPort",
+    25: "SprinterPld",
+    26: "Atm2Kbc",
+    27: "MachineSerialPeer",
+    28: "SprinterVideoRam",
+    29: "Z84C15",
+    30: "SprinterFastRam",
+    31: "SprinterInput",
+    32: "SprinterCovoxBlaster",
+    33: "SprinterIsa",
+    34: "SprinterPads",
+    35: "Wd1793Context",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

@@ -10,6 +10,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/video/atm/atmgeometry.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/keyboard/atm2kbc.h"
@@ -135,7 +136,8 @@ bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
 {
 	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
 		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
-		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE},
+		{"SPRINTER", IDE_SPRINTER}};
 	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
 	for (const auto& [text, id] : schemes)
 	{
@@ -160,6 +162,7 @@ const char* Config::IdeSchemeName(IDE_SCHEME scheme)
 		case IDE_SMUC: return "SMUC";
 		case IDE_PROFI: return "PROFI";
 		case IDE_DIVIDE: return "DIVIDE";
+		case IDE_SPRINTER: return "SPRINTER";
 	}
 	return "?";
 }
@@ -315,6 +318,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
 	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 1) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
@@ -461,7 +465,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
 		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
-		for (int unit = 0; unit < 2; unit++)
+		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
+		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+		for (int unit = 0; unit < 4; unit++)
 		{
 			IDE_CONFIG& ide = config.ide[unit];
 			ide = IDE_CONFIG{};
@@ -480,7 +486,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			}
 			// A CD drive: CDn=1, or the unit's configured image is an ISO
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
-			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
 			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
@@ -839,6 +845,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
 	}
+	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
+	// Resolved by the card like the other ROMs (working dir, executable, resources);
+	// a missing file only leaves the ROM fonts blank
+	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
+	                sizeof config.vdac2_rom_path);
+	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
+	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
+	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
+	                sizeof config.vdac2_capture_path);
 
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.
@@ -938,6 +953,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			hook(config);
 
 		result = true;
+#ifndef ENABLE_VDAC2
+		// A build without the FT812 library cannot fit the card: refuse the
+		// machine instead of running it without its video output
+		// (vdac2-integration-design.md §2)
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7)
+		{
+			MLOGERROR("Config: [MISC] TS_VDAC2=1, but this build has no VDAC2 support (CMake ENABLE_VDAC2=OFF)");
+			result = false;
+		}
+#endif
 	}
 	else
 	{
@@ -1298,9 +1323,18 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_ATM450:
+            // ATM Turbo 2 v4.50: 308 x 224 T = 68992 T, inferred from the system ROM's
+            // frame-timing protection (it corrupts typed keys unless its frame measure
+            // lands in a window that 312 lines miss). The 4 lines come out of the
+            // vertical blank, so INT moves 4 lines earlier and INT-to-paper stays 14395T.
+            // See docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+            config.intstart = AtmGeometry::kAtm450IntStart;
+            config.intlen   = 32;
+            break;
+
         case MM_ATM710:
         case MM_ATM3:
-            // ATM Turbo 1/2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
+            // ATM Turbo 2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
             // clock in every video mode; the FF77.3 turbo multiplies the CPU only.
             // INT-to-first-ZX-paper distance 14395T (UnrealSpeccy
             // PRESET.ATM1_2_3.5MHz, "thanks to DDp"; Xpeccy ULA.ATM2: 14384T).
@@ -1368,6 +1402,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.intlen = 28;
                 break;
             case MM_ATM450:
+                // 308 lines: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+                config.frame = AtmGeometry::kAtm450Frame;   // 224 * 308
+                config.t_line = 224;
+                config.intstart = AtmGeometry::kAtm450IntStart;
+                config.intlen = 32;
+                break;
             case MM_ATM710:
             case MM_ATM3:
                 config.frame = 69888;   // 224 * 312

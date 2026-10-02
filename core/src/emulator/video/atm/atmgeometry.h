@@ -13,6 +13,16 @@ namespace AtmGeometry
 constexpr uint32_t kTStatesPerLine = 224;
 constexpr uint32_t kVSyncVBlankLines = 24;  // 16 vsync + 8 vblank before the visible area
 constexpr uint32_t kVisibleLines = 288;
+
+/// ATM Turbo 2 v4.50: a 308-line raster - 4 vertical-blank lines fewer than the 312 above,
+/// visible area unchanged. Inferred from the system ROM's frame-timing protection, which
+/// corrupts typed keys when its frame measure misses the window calibrated on the board:
+/// docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+constexpr uint32_t kAtm450DroppedBlankLines = 4;
+constexpr uint32_t kAtm450Frame = kTStatesPerLine * (kVSyncVBlankLines + kVisibleLines - kAtm450DroppedBlankLines);
+/// INT moves with the dropped lines, so INT-to-first-paper stays 14395 T as on 7.10
+constexpr uint32_t kAtm450IntStart = 1756 - kTStatesPerLine * kAtm450DroppedBlankLines;
+static_assert(kAtm450Frame == 68992 && kAtm450IntStart == 860, "ATM450 raster");
 constexpr uint32_t kScreenLines = 200;
 constexpr uint32_t kBytesPerLine = 40;      // linear planes, 40 bytes per line
 constexpr uint32_t kPlaneHigh = 0x2000;     // second plane of a page

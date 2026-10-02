@@ -1402,6 +1402,7 @@ uint32_t WD1793::NoiseSeed(size_t cylinder, uint8_t side)
 
 void WD1793::FillReadTrackNoise(uint32_t seed, size_t length)
 {
+    _readTrackNoiseSeed = seed;
     // Deterministic (the same track reads the same noise every time: replay / TTD stay exact). xorshift32;
     // the MFM sync values A1 / C2 and the address mark bytes are moved off so nothing in it looks like a mark
     _readTrackNoise.resize(length);
@@ -1598,50 +1599,7 @@ void WD1793::cmdReadSector(uint8_t value)
 
     // Step 2: start sector reading (queue correspondent command to the FIFO)
     // Capture values to avoid dangling pointer issues when drive state changes
-    FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this, selectedDrive = _selectedDrive, trackReg = _trackRegister,
-                                                 sectorReg = _sectorRegister, sideUp = _sideUp]() {
-        // Validate pointers before use
-        if (!selectedDrive || !selectedDrive->isDiskInserted())
-        {
-            this->_statusRegister |= WDS_NOTRDY;
-            return;
-        }
-
-        DiskImage* diskImage = selectedDrive->getDiskImage();
-        if (!diskImage)
-        {
-            this->_statusRegister |= WDS_NOTRDY;
-            return;
-        }
-
-        // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
-        if (!track)
-        {
-            this->_statusRegister |= WDS_NOTFOUND;
-            return;
-        }
-
-        // Match the ID field as the chip does: C == track register, R == sector register, H when side compare is on
-        DiskImage::Sector* sector = this->locateSectorForType2(track, trackReg, sectorReg);
-        if (!sector)
-        {
-            this->_statusRegister |= WDS_NOTFOUND;
-            this->_rawDataBuffer = nullptr;  // Ensure processReadSector can detect and terminate
-            MLOGWARNING("cmdReadSector: Sector %d not found on track %d side %d", sectorReg, trackReg, sideUp);
-            return;
-        }
-
-        this->_currentSector = sector;
-        this->_currentReadTrack = track;
-        this->_sectorSize = sector->dataSize;  // 128 / 256 / 512 / 1024 from the sector's own ID field
-        this->_sectorData = sector->data;
-        this->_rawDataBuffer = sector->data;
-        this->_bytesToRead = sector->dataSize;
-        this->_tstatesPerByte = this->byteCellTStates(*track);
-        this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
-    });
-    _operationFIFO.push(readSector);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::ReadSector, DriveIndexOf(_selectedDrive), _trackRegister, _sectorRegister, static_cast<uint8_t>(_sideUp ? 1 : 0)}));
 
     // Start FSM playback using FIFO queue, after the head settle (30 ms @ 1 MHz, 15 ms @ 2 MHz) when E=1
     ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
@@ -1713,50 +1671,7 @@ void WD1793::cmdWriteSector(uint8_t value)
 
     // Step 2: start sector writing (queue correspondent command to the FIFO)
     // Capture values to avoid dangling pointer issues when drive state changes
-    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this, selectedDrive = _selectedDrive, trackReg = _trackRegister,
-                                                   sectorReg = _sectorRegister, sideUp = _sideUp]() {
-        // Validate pointers before use
-        if (!selectedDrive || !selectedDrive->isDiskInserted())
-        {
-            this->_statusRegister |= WDS_NOTRDY;
-            return;
-        }
-
-        DiskImage* diskImage = selectedDrive->getDiskImage();
-        if (!diskImage)
-        {
-            this->_statusRegister |= WDS_NOTRDY;
-            return;
-        }
-
-        // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
-        if (!track)
-        {
-            this->_statusRegister |= WDS_NOTFOUND;
-            return;
-        }
-
-        DiskImage::Sector* sector = this->locateSectorForType2(track, trackReg, sectorReg);
-        if (!sector)
-        {
-            this->_statusRegister |= WDS_NOTFOUND;
-            this->_rawDataBuffer = nullptr;
-            MLOGWARNING("cmdWriteSector: Sector %d not found on track %d side %d", sectorReg, trackReg, sideUp);
-            return;
-        }
-
-        this->_currentSector = sector;
-        this->_sectorSize = sector->dataSize;
-        this->_sectorData = sector->data;
-        this->_rawDataBuffer = sector->data;
-        this->_tstatesPerByte = this->byteCellTStates(*track);
-        this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
-
-        // Store track reference for dirty marking when write completes
-        this->_writeTrackTarget = track;
-    });
-    _operationFIFO.push(writeSector);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::WriteSector, DriveIndexOf(_selectedDrive), _trackRegister, _sectorRegister, static_cast<uint8_t>(_sideUp ? 1 : 0)}));
 
     // Start FSM playback using FIFO queue, after the head settle (30 ms @ 1 MHz, 15 ms @ 2 MHz) when E=1
     ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
@@ -1783,16 +1698,10 @@ void WD1793::cmdReadAddress(uint8_t value)
     }
 
     // Step 1: search for ID address mark
-    FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID, []() {});
-    _operationFIFO.push(searchIDAM);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::SearchId}));
 
     // Step 2: start IDAM read (6 bytes)
-    FSMEvent readIDAM(WDSTATE::S_READ_BYTE, [this]() {
-        this->_bytesToRead = 6;
-        this->_rawDataBuffer = this->_idamData;
-        this->_currentReadTrack = nullptr; // the ID copy is not the raw stream: a weak IDAM is handled when it is searched
-    });
-    _operationFIFO.push(readIDAM);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::ReadIdam}));
 
     // Start FSM playback using FIFO queue (after the head settle when E=1)
     ContinueAfterHeadSettle(WDSTATE::S_FETCH_FIFO);
@@ -1848,49 +1757,7 @@ void WD1793::cmdReadTrack(uint8_t value)
     }
 
     // Capture values into the lambda to avoid dangling pointer issues when drive state changes
-    FSMEvent readTrack(WDSTATE::S_READ_TRACK,
-                       [this, selectedDrive = _selectedDrive, sideUp = _sideUp]() {
-                           // Validate pointers before use
-                           if (!selectedDrive || !selectedDrive->isDiskInserted())
-                           {
-                               this->_statusRegister |= WDS_NOTRDY;
-                               return;
-                           }
-
-                           DiskImage* diskImage = selectedDrive->getDiskImage();
-                           if (!diskImage)
-                           {
-                               this->_statusRegister |= WDS_NOTRDY;
-                               return;
-                           }
-
-                           // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
-                           if (!track)
-                           {
-                               this->_statusRegister |= WDS_NOTFOUND;
-                               return;
-                           }
-
-                           if (!DataRateMatches(*track))
-                           {
-                               // Separator at the other rate: it never locks, so one revolution of bytes
-                               // assembled at its own rate comes out as noise, with no address mark in it
-                               const size_t cylinder = selectedDrive->getTrack();
-                               FillReadTrackNoise(NoiseSeed(cylinder, sideUp ? 1 : 0),
-                                                  DiskImage::RawTrack::NominalTrackSize(controllerEncoding(), _dataRate));
-                               _bytesToRead = static_cast<int32_t>(_readTrackNoise.size());
-                               _rawDataBuffer = _readTrackNoise.data();
-                               _tstatesPerByte = DISK_ROTATION_PERIOD_TSTATES / _readTrackNoise.size();
-                               return;
-                           }
-
-                           // Whole raw stream from index to index (6250 nominal MFM, 3125 FM, or whatever the image holds)
-                           _bytesToRead = static_cast<int32_t>(track->rawSize());
-                           _rawDataBuffer = track->rawData();
-                           _tstatesPerByte = byteCellTStates(*track);
-                       });
-    _operationFIFO.push(readTrack);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::ReadTrack, DriveIndexOf(_selectedDrive), 0, 0, static_cast<uint8_t>(_sideUp ? 1 : 0)}));
 
     // Per WD1793 datasheet: Wait for index pulse before starting to read
     // Store the target state in _state2 for processWaitIndex to use
@@ -1945,53 +1812,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
     raiseDrq();
 
     // Capture values into the lambda to avoid dangling pointer issues
-    FSMEvent writeTrack(WDSTATE::S_WRITE_TRACK,
-                        [this, selectedDrive = _selectedDrive, sideUp = _sideUp]() {
-                            // Validate pointers before use
-                            if (!selectedDrive || !selectedDrive->isDiskInserted())
-                            {
-                                this->_statusRegister |= WDS_NOTRDY;
-                                return;
-                            }
-
-                            DiskImage* diskImage = selectedDrive->getDiskImage();
-                            if (!diskImage)
-                            {
-                                this->_statusRegister |= WDS_NOTRDY;
-                                return;
-                            }
-
-                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
-                            if (!track)
-                            {
-                                this->_statusRegister |= WDS_NOTFOUND;
-                                return;
-                            }
-
-                            // The track takes the density the host selected and the bit rate of the controller
-                            // clock (the write rate is CLK-derived, datasheet p.19): re-formatting in the other
-                            // encoding or at the other rate replaces the stream with a blank track of the nominal
-                            // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
-                            const DiskImage::Encoding encoding = controllerEncoding();
-                            const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
-                            if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
-                            {
-                                const bool mfm = (encoding == DiskImage::Encoding::MFM);
-                                track->resizeRaw(DiskImage::RawTrack::NominalTrackSize(encoding, writeRate), encoding,
-                                                 mfm ? 0x4E : 0xFF);
-                            }
-                            _writeTrackEncoding = encoding;
-                            _tstatesPerByte = byteCellTStates(*track);
-
-                            _writeTrackLength = track->rawSize();                 // 6250 bytes nominal MFM, 3125 FM
-                            _bytesToWrite = static_cast<int32_t>(_writeTrackLength);
-                            _rawDataBuffer = track->rawData();
-                            _rawDataBufferIndex = 0;
-                            _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
-                            _writeTrackTarget = track;  // Store track for reindexing on completion
-                        });
-    _operationFIFO.push(writeTrack);
+    _operationFIFO.push(MakeFifoEvent({FifoKind::WriteTrack, DriveIndexOf(_selectedDrive), 0, 0, static_cast<uint8_t>(_sideUp ? 1 : 0)}));
 
     // Per WD1793 datasheet: Wait for index pulse before starting to write
     // Store the target state in _state2 for processWaitIndex to use
@@ -2360,6 +2181,326 @@ void WD1793::processWait()
         transitionFSM(_state2);
     }
 }
+
+/// region <Command FIFO events>
+
+/// A command's queued step from its tag (see FifoTag): every FIFO event is built here, so a TTD
+/// restore can rebuild the queue from the tags it saved (SaveTransferContext)
+WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
+{
+    switch (tag.kind)
+    {
+        case FifoKind::ReadSector:
+            return FSMEvent(WDSTATE::S_READ_SECTOR, [this, selectedDrive = DriveAt(tag.drive), trackReg = tag.track, sectorReg = tag.sector, sideUp = tag.side != 0]() {
+        // Validate pointers before use
+        if (!selectedDrive || !selectedDrive->isDiskInserted())
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+
+        DiskImage* diskImage = selectedDrive->getDiskImage();
+        if (!diskImage)
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+
+        // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+        if (!track)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            return;
+        }
+
+        // Match the ID field as the chip does: C == track register, R == sector register, H when side compare is on
+        DiskImage::Sector* sector = this->locateSectorForType2(track, trackReg, sectorReg);
+        if (!sector)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            this->_rawDataBuffer = nullptr;  // Ensure processReadSector can detect and terminate
+            MLOGWARNING("cmdReadSector: Sector %d not found on track %d side %d", sectorReg, trackReg, sideUp);
+            return;
+        }
+
+        this->_currentSector = sector;
+        this->_currentReadTrack = track;
+        this->_sectorSize = sector->dataSize;  // 128 / 256 / 512 / 1024 from the sector's own ID field
+        this->_sectorData = sector->data;
+        this->_rawDataBuffer = sector->data;
+        this->_bytesToRead = sector->dataSize;
+        this->_tstatesPerByte = this->byteCellTStates(*track);
+        this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
+    }, 0, tag);
+        case FifoKind::WriteSector:
+            return FSMEvent(WDSTATE::S_WRITE_SECTOR, [this, selectedDrive = DriveAt(tag.drive), trackReg = tag.track, sectorReg = tag.sector, sideUp = tag.side != 0]() {
+        // Validate pointers before use
+        if (!selectedDrive || !selectedDrive->isDiskInserted())
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+
+        DiskImage* diskImage = selectedDrive->getDiskImage();
+        if (!diskImage)
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+
+        // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+        if (!track)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            return;
+        }
+
+        DiskImage::Sector* sector = this->locateSectorForType2(track, trackReg, sectorReg);
+        if (!sector)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            this->_rawDataBuffer = nullptr;
+            MLOGWARNING("cmdWriteSector: Sector %d not found on track %d side %d", sectorReg, trackReg, sideUp);
+            return;
+        }
+
+        this->_currentSector = sector;
+        this->_sectorSize = sector->dataSize;
+        this->_sectorData = sector->data;
+        this->_rawDataBuffer = sector->data;
+        this->_tstatesPerByte = this->byteCellTStates(*track);
+        this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
+
+        // Store track reference for dirty marking when write completes
+        this->_writeTrackTarget = track;
+    }, 0, tag);
+        case FifoKind::SearchId:
+            return FSMEvent(WDSTATE::S_SEARCH_ID, []() {}, 0, tag);
+        case FifoKind::ReadIdam:
+            return FSMEvent(WDSTATE::S_READ_BYTE, [this]() {
+        this->_bytesToRead = 6;
+        this->_rawDataBuffer = this->_idamData;
+        this->_currentReadTrack = nullptr; // the ID copy is not the raw stream: a weak IDAM is handled when it is searched
+    }, 0, tag);
+        case FifoKind::ReadTrack:
+            return FSMEvent(WDSTATE::S_READ_TRACK, [this, selectedDrive = DriveAt(tag.drive), sideUp = tag.side != 0]() {
+                           // Validate pointers before use
+                           if (!selectedDrive || !selectedDrive->isDiskInserted())
+                           {
+                               this->_statusRegister |= WDS_NOTRDY;
+                               return;
+                           }
+
+                           DiskImage* diskImage = selectedDrive->getDiskImage();
+                           if (!diskImage)
+                           {
+                               this->_statusRegister |= WDS_NOTRDY;
+                               return;
+                           }
+
+                           // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+                           if (!track)
+                           {
+                               this->_statusRegister |= WDS_NOTFOUND;
+                               return;
+                           }
+
+                           if (!DataRateMatches(*track))
+                           {
+                               // Separator at the other rate: it never locks, so one revolution of bytes
+                               // assembled at its own rate comes out as noise, with no address mark in it
+                               const size_t cylinder = selectedDrive->getTrack();
+                               FillReadTrackNoise(NoiseSeed(cylinder, sideUp ? 1 : 0),
+                                                  DiskImage::RawTrack::NominalTrackSize(controllerEncoding(), _dataRate));
+                               _bytesToRead = static_cast<int32_t>(_readTrackNoise.size());
+                               _rawDataBuffer = _readTrackNoise.data();
+                               _tstatesPerByte = DISK_ROTATION_PERIOD_TSTATES / _readTrackNoise.size();
+                               return;
+                           }
+
+                           // Whole raw stream from index to index (6250 nominal MFM, 3125 FM, or whatever the image holds)
+                           _bytesToRead = static_cast<int32_t>(track->rawSize());
+                           _rawDataBuffer = track->rawData();
+                           _tstatesPerByte = byteCellTStates(*track);
+                       }, 0, tag);
+        case FifoKind::WriteTrack:
+            return FSMEvent(WDSTATE::S_WRITE_TRACK, [this, selectedDrive = DriveAt(tag.drive), sideUp = tag.side != 0]() {
+                            // Validate pointers before use
+                            if (!selectedDrive || !selectedDrive->isDiskInserted())
+                            {
+                                this->_statusRegister |= WDS_NOTRDY;
+                                return;
+                            }
+
+                            DiskImage* diskImage = selectedDrive->getDiskImage();
+                            if (!diskImage)
+                            {
+                                this->_statusRegister |= WDS_NOTRDY;
+                                return;
+                            }
+
+                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+                            if (!track)
+                            {
+                                this->_statusRegister |= WDS_NOTFOUND;
+                                return;
+                            }
+
+                            // The track takes the density the host selected and the bit rate of the controller
+                            // clock (the write rate is CLK-derived, datasheet p.19): re-formatting in the other
+                            // encoding or at the other rate replaces the stream with a blank track of the nominal
+                            // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
+                            const DiskImage::Encoding encoding = controllerEncoding();
+                            const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
+                            if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
+                            {
+                                const bool mfm = (encoding == DiskImage::Encoding::MFM);
+                                track->resizeRaw(DiskImage::RawTrack::NominalTrackSize(encoding, writeRate), encoding,
+                                                 mfm ? 0x4E : 0xFF);
+                            }
+                            _writeTrackEncoding = encoding;
+                            _tstatesPerByte = byteCellTStates(*track);
+
+                            _writeTrackLength = track->rawSize();                 // 6250 bytes nominal MFM, 3125 FM
+                            _bytesToWrite = static_cast<int32_t>(_writeTrackLength);
+                            _rawDataBuffer = track->rawData();
+                            _rawDataBufferIndex = 0;
+                            _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                            _writeTrackTarget = track;  // Store track for reindexing on completion
+                        }, 0, tag);
+        case FifoKind::NextReadSector:
+            return FSMEvent(WDSTATE::S_READ_SECTOR, [this]() {
+            // Increase sector number for reading
+            this->_sectorRegister += 1;
+
+            // Re-position to new sector
+            DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
+            DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
+
+            if (sector)
+            {
+                this->_currentSector = sector;
+                this->_sectorSize = sector->dataSize;
+                this->_sectorData = sector->data;
+                this->_rawDataBuffer = sector->data;
+                this->_currentReadTrack = track; // the track backing this sector, not the previous command's
+                this->_bytesToRead = sector->dataSize;
+                this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
+            }
+            else if (track)
+            {
+                uint8_t maxSectorNumber = 0;
+                for (const auto& s : track->sectors())
+                {
+                    if (s.number() > maxSectorNumber)
+                    {
+                        maxSectorNumber = s.number();
+                    }
+                }
+
+                if (this->_sectorRegister > maxSectorNumber)
+                {
+                    // Multiple-sector read ran past the last sector number on the track - per datasheet
+                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found.
+                    // TR-DOS 5.04T relies on this - its COPY machinery skips sectors with a multi-read
+                    // that polls only INTRQ and treats RNF as a disk error.
+                    this->_multiSectorOverrun = true;
+                }
+                else
+                {
+                    // Genuine gap inside the track: the chip keeps searching for the missing ID
+                    // and reports Record Not Found, same as for the initial sector search
+                    this->_statusRegister |= WDS_NOTFOUND;
+                }
+                this->_rawDataBuffer = nullptr;
+            }
+            else
+            {
+                // No track under the head - nothing can be found
+                this->_statusRegister |= WDS_NOTFOUND;
+                this->_rawDataBuffer = nullptr;
+            }
+        }, 0, tag);
+        case FifoKind::NextWriteSector:
+            return FSMEvent(WDSTATE::S_WRITE_SECTOR, [this]() {
+            // Increase sector number for writing
+            this->_sectorRegister += 1;
+
+            // Re-position to new sector
+            DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
+            DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
+
+            if (sector)
+            {
+                this->_currentSector = sector;
+                this->_sectorSize = sector->dataSize;
+                this->_sectorData = sector->data;
+                this->_rawDataBuffer = sector->data;
+                this->_bytesToWrite = sector->dataSize;
+                this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
+            }
+            else if (track)
+            {
+                uint8_t maxSectorNumber = 0;
+                for (const auto& s : track->sectors())
+                {
+                    if (s.number() > maxSectorNumber)
+                    {
+                        maxSectorNumber = s.number();
+                    }
+                }
+
+                if (this->_sectorRegister > maxSectorNumber)
+                {
+                    // Multiple-sector write ran past the last sector number on the track - per datasheet
+                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found
+                    // (same end-of-track termination as the read path)
+                    this->_multiSectorOverrun = true;
+                }
+                else
+                {
+                    // Genuine gap inside the track: Record Not Found, same as for the read path
+                    this->_statusRegister |= WDS_NOTFOUND;
+                }
+                this->_rawDataBuffer = nullptr;
+            }
+            else
+            {
+                // No track under the head - nothing can be found
+                this->_statusRegister |= WDS_NOTFOUND;
+                this->_rawDataBuffer = nullptr;
+            }
+        }, 0, tag);
+        case FifoKind::None:
+            break;
+    }
+    return FSMEvent(WDSTATE::S_END_COMMAND, []() {}, 0, tag);
+}
+
+uint8_t WD1793::DriveIndexOf(const FDD* drive) const
+{
+    if (!drive || !_context)
+        return 0xFF;
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        if (_context->coreState.diskDrives[i] == drive)
+            return i;
+    }
+    return 0xFF;
+}
+
+FDD* WD1793::DriveAt(uint8_t index) const
+{
+    return (_context && index < 4) ? _context->coreState.diskDrives[index] : nullptr;
+}
+
+/// endregion </Command FIFO events>
 
 /// Fetch next state from FIFO
 void WD1793::processFetchFIFO()
@@ -2754,61 +2895,7 @@ void WD1793::processReadSector()
     if (_commandRegister & CMD_MULTIPLE)
     {
         // Register one more READ_SECTOR operation. Lambda will be executed just before FSM state switch.
-        FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]() {
-            // Increase sector number for reading
-            this->_sectorRegister += 1;
-
-            // Re-position to new sector
-            DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
-            DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
-
-            if (sector)
-            {
-                this->_currentSector = sector;
-                this->_sectorSize = sector->dataSize;
-                this->_sectorData = sector->data;
-                this->_rawDataBuffer = sector->data;
-                this->_currentReadTrack = track; // the track backing this sector, not the previous command's
-                this->_bytesToRead = sector->dataSize;
-                this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
-            }
-            else if (track)
-            {
-                uint8_t maxSectorNumber = 0;
-                for (const auto& s : track->sectors())
-                {
-                    if (s.number() > maxSectorNumber)
-                    {
-                        maxSectorNumber = s.number();
-                    }
-                }
-
-                if (this->_sectorRegister > maxSectorNumber)
-                {
-                    // Multiple-sector read ran past the last sector number on the track - per datasheet
-                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found.
-                    // TR-DOS 5.04T relies on this - its COPY machinery skips sectors with a multi-read
-                    // that polls only INTRQ and treats RNF as a disk error.
-                    this->_multiSectorOverrun = true;
-                }
-                else
-                {
-                    // Genuine gap inside the track: the chip keeps searching for the missing ID
-                    // and reports Record Not Found, same as for the initial sector search
-                    this->_statusRegister |= WDS_NOTFOUND;
-                }
-                this->_rawDataBuffer = nullptr;
-            }
-            else
-            {
-                // No track under the head - nothing can be found
-                this->_statusRegister |= WDS_NOTFOUND;
-                this->_rawDataBuffer = nullptr;
-            }
-        });
-
-        _operationFIFO.push(readSector);
+        _operationFIFO.push(MakeFifoEvent({FifoKind::NextReadSector}));
     }
 
     // Start reading sector bytes once the data field passes under the head (rotational latency),
@@ -2940,58 +3027,7 @@ void WD1793::processWriteSector()
     if (_commandRegister & CMD_MULTIPLE)
     {
         // Register one more WRITE_SECTOR operation. Lambda will be executed just before FSM state switch.
-        FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]() {
-            // Increase sector number for writing
-            this->_sectorRegister += 1;
-
-            // Re-position to new sector
-            DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
-            DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
-
-            if (sector)
-            {
-                this->_currentSector = sector;
-                this->_sectorSize = sector->dataSize;
-                this->_sectorData = sector->data;
-                this->_rawDataBuffer = sector->data;
-                this->_bytesToWrite = sector->dataSize;
-                this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
-            }
-            else if (track)
-            {
-                uint8_t maxSectorNumber = 0;
-                for (const auto& s : track->sectors())
-                {
-                    if (s.number() > maxSectorNumber)
-                    {
-                        maxSectorNumber = s.number();
-                    }
-                }
-
-                if (this->_sectorRegister > maxSectorNumber)
-                {
-                    // Multiple-sector write ran past the last sector number on the track - per datasheet
-                    // the command terminates at the end of the track: clean INTRQ, no Record Not Found
-                    // (same end-of-track termination as the read path)
-                    this->_multiSectorOverrun = true;
-                }
-                else
-                {
-                    // Genuine gap inside the track: Record Not Found, same as for the read path
-                    this->_statusRegister |= WDS_NOTFOUND;
-                }
-                this->_rawDataBuffer = nullptr;
-            }
-            else
-            {
-                // No track under the head - nothing can be found
-                this->_statusRegister |= WDS_NOTFOUND;
-                this->_rawDataBuffer = nullptr;
-            }
-        });
-
-        _operationFIFO.push(writeSector);
+        _operationFIFO.push(MakeFifoEvent({FifoKind::NextWriteSector}));
     }
 
     // Use delayed transition to give CPU time to respond to DRQ before first byte check
@@ -4376,3 +4412,258 @@ void WD1793::TTDLoadState(const uint8_t* src)
 }
 
 /// endregion </TTDSerializable>
+
+/// region <Transfer context (TTD)>
+
+namespace
+{
+/// Where a transfer pointer points: a drive's disk track and the offset into its stream
+struct DiskRef
+{
+    uint8_t drive = 0xFF;
+    uint8_t track = 0xFF;
+    uint32_t offset = 0;
+};
+
+void PutRef(uint8_t*& cur, const DiskRef& ref)
+{
+    put_u8(cur, ref.drive);
+    put_u8(cur, ref.track);
+    const uint32_t offset = ref.offset;
+    std::memcpy(cur, &offset, 4);
+    cur += 4;
+}
+
+DiskRef GetRef(const uint8_t*& cur)
+{
+    DiskRef ref;
+    ref.drive = get_u8(cur);
+    ref.track = get_u8(cur);
+    std::memcpy(&ref.offset, cur, 4);
+    cur += 4;
+    return ref;
+}
+
+void PutU32(uint8_t*& cur, uint32_t v)
+{
+    std::memcpy(cur, &v, 4);
+    cur += 4;
+}
+
+uint32_t GetU32(const uint8_t*& cur)
+{
+    uint32_t v;
+    std::memcpy(&v, cur, 4);
+    cur += 4;
+    return v;
+}
+
+/// The track of the drives' disks that holds `p` in its stream (the end included: a pointer runs one past)
+DiskRef Locate(EmulatorContext* context, const uint8_t* p)
+{
+    DiskRef ref;
+    if (!p || !context)
+        return ref;
+    for (uint8_t d = 0; d < 4; d++)
+    {
+        FDD* fdd = context->coreState.diskDrives[d];
+        DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
+        if (!image)
+            continue;
+        for (unsigned t = 0; t < 255; t++)
+        {
+            DiskImage::Track* track = image->getTrack(static_cast<uint8_t>(t));
+            if (!track)
+                break;
+            const uint8_t* raw = track->rawData();
+            if (raw && p >= raw && p <= raw + track->rawSize())
+            {
+                ref.drive = d;
+                ref.track = static_cast<uint8_t>(t);
+                ref.offset = static_cast<uint32_t>(p - raw);
+                return ref;
+            }
+        }
+    }
+    return ref;
+}
+
+DiskImage::Track* TrackOf(EmulatorContext* context, uint8_t drive, uint8_t track)
+{
+    if (!context || drive >= 4 || track == 0xFF)
+        return nullptr;
+    FDD* fdd = context->coreState.diskDrives[drive];
+    DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
+    return image ? image->getTrack(track) : nullptr;
+}
+
+uint8_t* Resolve(EmulatorContext* context, const DiskRef& ref)
+{
+    DiskImage::Track* track = TrackOf(context, ref.drive, ref.track);
+    if (!track || !track->rawData() || ref.offset > track->rawSize())
+        return nullptr;
+    return track->rawData() + ref.offset;
+}
+
+/// A track pointer as (drive, track number)
+DiskRef LocateTrack(EmulatorContext* context, const DiskImage::Track* track)
+{
+    DiskRef ref = track ? Locate(context, track->rawData()) : DiskRef{};
+    ref.offset = 0;
+    return ref;
+}
+
+constexpr size_t kFifoSlots = 4;
+}  // namespace
+
+// Layout (kTransferContextSize = 112 bytes; little-endian):
+//    0   1  rate-retry search (WDSTATE, 0 = none)      1   8  its deadline
+//    9   1  multi-sector overrun                       10   4  byte cell (T-states)
+//   14   4  rotational delay to the data field         18   4  WRITE TRACK length
+//   22   1  WRITE TRACK encoding
+//   23   4  sector in use: drive, track, index in the track's sector list (u16, 0xFFFF none)
+//   27   2  track being read: drive, track             29   2  track being written: drive, track
+//   31   6  sector data: drive, track, offset (u32)    37   6  ID field data: the same
+//   43   1  transfer pointer: 0 none, 1 disk stream, 2 read-track noise
+//   44   6  transfer pointer: drive, track, offset (noise: the offset)
+//   50   4  read-track noise seed                      54   4  its length (0 = none)
+//   58   1  queued steps (up to 4 kept)
+//   59  40  4 x step: FifoKind, state, drive, track, sector, side, delay (u32)
+//   99  13  reserved (0)
+void WD1793::SaveTransferContext(uint8_t* dst) const
+{
+    std::memset(dst, 0, kTransferContextSize);
+    uint8_t* cur = dst;
+    put_u8(cur, static_cast<uint8_t>(_rateRetryState));
+    put_u64(cur, _rateRetryDeadline);
+    put_u8(cur, _multiSectorOverrun ? 1 : 0);
+    PutU32(cur, static_cast<uint32_t>(_tstatesPerByte));
+    PutU32(cur, static_cast<uint32_t>(_rotationalDelayTStates));
+    PutU32(cur, static_cast<uint32_t>(_writeTrackLength));
+    put_u8(cur, static_cast<uint8_t>(_writeTrackEncoding));
+
+    // The sector in use: its track, then its index in the track's list
+    DiskRef sectorTrack;
+    uint16_t sectorIndex = 0xFFFF;
+    if (_currentSector && _currentSector->id)
+    {
+        sectorTrack = Locate(_context, reinterpret_cast<const uint8_t*>(_currentSector->id));
+        if (DiskImage::Track* track = TrackOf(_context, sectorTrack.drive, sectorTrack.track))
+        {
+            const auto& sectors = track->sectors();
+            for (size_t i = 0; i < sectors.size(); i++)
+            {
+                if (&sectors[i] == _currentSector)
+                    sectorIndex = static_cast<uint16_t>(i);
+            }
+        }
+    }
+    put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.drive);
+    put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.track);
+    put_u16(cur, sectorIndex);
+
+    const DiskRef readTrack = LocateTrack(_context, _currentReadTrack);
+    put_u8(cur, readTrack.drive);
+    put_u8(cur, readTrack.track);
+    const DiskRef writeTrack = LocateTrack(_context, _writeTrackTarget);
+    put_u8(cur, writeTrack.drive);
+    put_u8(cur, writeTrack.track);
+    PutRef(cur, Locate(_context, _sectorData));
+    PutRef(cur, Locate(_context, _idamData));
+
+    const bool noise = _rawDataBuffer && !_readTrackNoise.empty() && _rawDataBuffer >= _readTrackNoise.data() &&
+                       _rawDataBuffer <= _readTrackNoise.data() + _readTrackNoise.size();
+    if (noise)
+    {
+        put_u8(cur, 2);
+        PutRef(cur, DiskRef{0xFF, 0xFF, static_cast<uint32_t>(_rawDataBuffer - _readTrackNoise.data())});
+    }
+    else
+    {
+        const DiskRef raw = Locate(_context, _rawDataBuffer);
+        put_u8(cur, raw.drive == 0xFF ? 0 : 1);
+        PutRef(cur, raw);
+    }
+    PutU32(cur, _readTrackNoiseSeed);
+    PutU32(cur, static_cast<uint32_t>(_readTrackNoise.size()));
+
+    // The queued steps, in order (std::queue has no iteration: a copy is drained)
+    std::queue<FSMEvent> fifo = _operationFIFO;
+    put_u8(cur, static_cast<uint8_t>(std::min(fifo.size(), kFifoSlots)));
+    for (size_t i = 0; i < kFifoSlots && !fifo.empty(); i++, fifo.pop())
+    {
+        const FSMEvent& event = fifo.front();
+        const FifoTag& tag = event.getTag();
+        put_u8(cur, static_cast<uint8_t>(tag.kind));
+        put_u8(cur, static_cast<uint8_t>(event.getState()));
+        put_u8(cur, tag.drive);
+        put_u8(cur, tag.track);
+        put_u8(cur, tag.sector);
+        put_u8(cur, tag.side);
+        PutU32(cur, static_cast<uint32_t>(event.getDelay()));
+    }
+}
+
+void WD1793::LoadTransferContext(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+    _rateRetryState = static_cast<WDSTATE>(get_u8(cur));
+    _rateRetryDeadline = get_u64(cur);
+    _multiSectorOverrun = get_u8(cur) != 0;
+    _tstatesPerByte = GetU32(cur);
+    _rotationalDelayTStates = GetU32(cur);
+    _writeTrackLength = GetU32(cur);
+    _writeTrackEncoding = static_cast<DiskImage::Encoding>(get_u8(cur));
+
+    const uint8_t sectorDrive = get_u8(cur);
+    const uint8_t sectorTrack = get_u8(cur);
+    const uint16_t sectorIndex = get_u16(cur);
+    _currentSector = nullptr;
+    if (DiskImage::Track* track = sectorIndex != 0xFFFF ? TrackOf(_context, sectorDrive, sectorTrack) : nullptr)
+    {
+        if (sectorIndex < track->sectors().size())
+            _currentSector = &track->sectors()[sectorIndex];
+    }
+    const uint8_t readDrive = get_u8(cur);
+    const uint8_t readTrack = get_u8(cur);
+    _currentReadTrack = TrackOf(_context, readDrive, readTrack);
+    const uint8_t writeDrive = get_u8(cur);
+    const uint8_t writeTrack = get_u8(cur);
+    _writeTrackTarget = TrackOf(_context, writeDrive, writeTrack);
+    _sectorData = Resolve(_context, GetRef(cur));
+    _idamData = Resolve(_context, GetRef(cur));
+
+    const uint8_t rawKind = get_u8(cur);
+    const DiskRef raw = GetRef(cur);
+    const uint32_t noiseSeed = GetU32(cur);
+    const uint32_t noiseLength = GetU32(cur);
+    if (noiseLength)
+        FillReadTrackNoise(noiseSeed, noiseLength);
+    _rawDataBuffer = nullptr;
+    if (rawKind == 1)
+        _rawDataBuffer = Resolve(_context, raw);
+    else if (rawKind == 2 && raw.offset <= _readTrackNoise.size())
+        _rawDataBuffer = _readTrackNoise.data() + raw.offset;
+
+    std::queue<FSMEvent> empty;
+    _operationFIFO.swap(empty);
+    const uint8_t steps = std::min<uint8_t>(get_u8(cur), static_cast<uint8_t>(kFifoSlots));
+    for (uint8_t i = 0; i < steps; i++)
+    {
+        FifoTag tag;
+        tag.kind = static_cast<FifoKind>(get_u8(cur));
+        const auto state = static_cast<WDSTATE>(get_u8(cur));
+        tag.drive = get_u8(cur);
+        tag.track = get_u8(cur);
+        tag.sector = get_u8(cur);
+        tag.side = get_u8(cur);
+        (void)state;  // MakeFifoEvent gives every kind its state (and no delay): stored for readers of the blob
+        (void)GetU32(cur);
+        if (tag.kind == FifoKind::None)
+            continue;  // an untagged step cannot be rebuilt
+        _operationFIFO.push(MakeFifoEvent(tag));
+    }
+}
+
+/// endregion </Transfer context (TTD)>
+
