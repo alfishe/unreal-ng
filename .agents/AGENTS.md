@@ -4,22 +4,33 @@
 > - Each commit permission is **one-time only** — no blanket permissions
 > - **Cap build/test parallelism at 50% of logical cores.** Several agents build on this
 >   machine at once — each one launching an unbounded `ninja`/`cmake --build`/`ctest` job
->   count stacks up across agents and brings the machine to a crawl. Always pass an explicit
->   `-j` computed as half the logical cores, e.g.:
+>   count stacks up across agents and brings the machine to a crawl. `tools/build/` (next
+>   point) applies the cap for you; for anything that bypasses it (benchmarks, a manual
+>   `cmake` configure step) pass an explicit `-j` computed as half the logical cores:
 >   ```bash
 >   JOBS=$(( $(sysctl -n hw.ncpu 2>/dev/null || nproc) / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
->   ninja -C cmake-build-agent-release -j "$JOBS"
->   cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"
 >   ```
->   This cap applies to every build/test command in this file, not just the mandatory
->   pre-commit one.
+> - **Builds and test runs go through `tools/build/`** — at most 2 builds and 1 test run at
+>   once across all agents, each at lowered priority (`nice 10`) with `-j` at half the
+>   cores. If the slots are busy the command queues and says so; it does not fail:
+>   ```bash
+>   tools/build/build.sh                        # full build (the pre-commit one)
+>   tools/build/build.sh core-tests             # one target while iterating
+>   tools/build/test.sh                         # builds core-tests, then test-parallel
+>   tools/build/test.sh --gtest_filter='*Foo*'  # builds core-tests, runs just those tests
+>   tools/build/slot.sh --status                # who holds the slots
+>   ```
+>   Start them as a **background command** and wait for completion (a queued full build can
+>   outlast a foreground tool call); a cancelled or timed-out call kills the build and frees
+>   the slot within seconds. Do not bypass the wrapper with a bare `ninja` / `cmake --build`.
+>   Benchmarks and A/B timing runs are the exception: run them on a quiet machine without
+>   lowered priority (`UNREAL_NICE=0`). Details: [`tools/build/README.md`](../tools/build/README.md).
 > - Steps before any commit:
 >   1. Run the checks that match what changed:
 >      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
 >        `unreal-videowall/`, `testclient/`, the automation modules in `core/automation/`):
->        **mandatory** full build `ninja -C cmake-build-agent-release -j "$JOBS"` with zero
->        compiler warnings, and `core-tests` must pass
->        (`cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"`)
+>        **mandatory** full build `tools/build/build.sh` with zero compiler
+>        warnings, and `core-tests` must pass (`tools/build/test.sh`)
 >      - **Documentation only** (`docs/`, `.recipe/`, other `*.md`): no build, no tests. Verify that
 >        cross-references and links resolve and that no machine-specific absolute paths slipped in
 >        (`python3 tools/fix-absolute-paths.py --path <changed files>`, dry run by default)
@@ -50,7 +61,8 @@
 | **`tools/poc/`** | Proof of Concept directory for isolated throwaway code and experiments. |
 
 ## Building the Project
-We use CMake with Ninja for building. **Cap `-j` at 50% of logical cores** — multiple agents
+We use CMake with Ninja for building. **Run builds through `tools/build/build.sh`** (it applies
+the limits above); the raw commands below are what it runs. **Cap `-j` at 50% of logical cores** — multiple agents
 build concurrently on this machine, and unbounded job counts pile up and stall everything:
 ```bash
 # Configure the build system
@@ -128,10 +140,10 @@ Rules of thumb:
 
 | You want | Command |
 |---|---|
-| Build / update the test binary | `ninja -C cmake-build-agent-release -j "$JOBS" core-tests` (explicit target) |
-| Build + run everything | `cmake --build cmake-build-agent-release --target test-parallel -- -j "$JOBS"` |
+| Build / update the test binary | `tools/build/build.sh core-tests` (explicit target) |
+| Build + run everything | `tools/build/test.sh` (builds `core-tests` itself, so never stale) |
 | Run a filter after edits | rebuild via `core-tests` target **first**, then `--gtest_filter=...` |
-| Production check only | plain `ninja -C cmake-build-agent-release -j "$JOBS"` (no test binary update) |
+| Production check only | plain `tools/build/build.sh` (no test binary update) |
 
 
 
