@@ -26,6 +26,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"list", {}},
         {"info", {}},
         {"formats", {"kind"}},
+        {"targets", {}},
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
@@ -96,6 +97,38 @@ namespace
         }
         if (action == "formats")
             return "Accepted formats per kind (structuredContent.formats)";
+        if (action == "targets")
+        {
+            const Json::Value& file = reply["file"];
+            out << "file: ";
+            if (file["kinds"].empty())
+                out << "unknown";
+            for (Json::ArrayIndex i = 0; i < file["kinds"].size(); i++)
+                out << (i ? " " : "") << file["kinds"][i].asString();
+            if (!file["format"].asString().empty())
+                out << " (" << file["format"].asString() << ")";
+            if (file["evidence"].size() > 0)
+                out << " - " << file["evidence"][0].asString();
+            if (reply["refusal"].isString())
+                out << "\nrefused: " << reply["refusal"].asString();
+            const int chosen = reply["default"].isInt() ? reply["default"].asInt() : -1;
+            for (Json::ArrayIndex i = 0; i < reply["targets"].size(); i++)
+            {
+                const Json::Value& target = reply["targets"][i];
+                out << "\n" << (static_cast<int>(i) == chosen ? "* " : "  ")
+                    << (target["slot"].isString() ? target["slot"].asString() : target["action"].asString()) << " - "
+                    << target["label"].asString();
+                if (target["occupiedBy"].isString())
+                    out << ", replaces " << target["occupiedBy"].asString();
+                if (target["dirty"].asBool())
+                    out << " (unsaved writes!)";
+                if (target["autostart"].asBool())
+                    out << ", autostart";
+            }
+            if (chosen < 0 && reply["targets"].size() > 1)
+                out << "\nseveral targets: ask the user, then insert with the chosen slot";
+            return out.str();
+        }
         out << action << " " << reply["slot"].asString() << ": ok";
         if (reply["pending"].asBool())
             out << " (pending: applied at the next frame boundary)";
@@ -120,7 +153,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "(tag:sd+neogs); 'auto' for insert (chosen from the file's content)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "insert / swap: a file or a folder on the emulator host; save / export: the target file";
+        "insert / swap: a file or a folder on the emulator host; save / export: the target file; targets: the file "
+        "or folder to place";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
     const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate"};
@@ -151,8 +185,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
 
     registry.Register(
         "media",
-        "The machine's media slots (floppy drives, SD cards, later tape / IDE / CD). Actions: list, info, formats, "
-        "insert, swap, eject, save, export, discard, rescan, create, protect. Operations are synchronous (the reply "
+        "The machine's media slots (floppy drives, tape, IDE hard disks and CD-ROM, SD cards). Actions: list, info, "
+        "formats, targets (where a file can go: what it is, the slots that take it in order, the default, or why "
+        "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect. Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,
@@ -190,6 +225,12 @@ void RegisterMediaSlots(ToolRegistry& registry)
                     path = Endpoint(id, "/media/formats");
                     if (body->isMember("kind"))
                         path += "?kind=" + EncodeSegment((*body)["kind"].asString());
+                    payload = nullptr;
+                }
+                else if (action == "targets")
+                {
+                    method = "GET";
+                    path = Endpoint(id, "/media/targets?path=" + EncodeSegment((*body).get("path", "").asString()));
                     payload = nullptr;
                 }
                 else if (action == "info")

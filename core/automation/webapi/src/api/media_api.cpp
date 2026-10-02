@@ -95,7 +95,7 @@ void EmulatorAPI::getMediaList(const HttpRequestPtr& req, std::function<void(con
     RespondReply(callback, MediaControl(emulator->GetContext()).Execute(request));
 }
 
-/// @brief GET /api/v1/emulator/{id}/media/{slot}  (and /media/formats)
+/// @brief GET /api/v1/emulator/{id}/media/{slot}  (and /media/formats, /media/targets?path=)
 void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id, const std::string& slot) const
 {
@@ -109,6 +109,11 @@ void EmulatorAPI::getMediaSlot(const HttpRequestPtr& req, std::function<void(con
         const std::string kind = req->getParameter("kind");
         if (!kind.empty())
             request.options["kind"] = kind;
+    }
+    else if (slot == "targets")
+    {
+        request.verb = "targets";
+        request.path = req->getParameter("path");
     }
     else
     {

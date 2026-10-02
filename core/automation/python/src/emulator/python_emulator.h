@@ -998,13 +998,15 @@ namespace PythonBindings
             .def("media", [](Emulator& self, const std::string& verb, const std::string& slot, const std::string& path,
                              const py::kwargs& options) { return MediaCallPy(self, verb, slot, path, options); },
                  py::arg("verb"), py::arg("slot") = "", py::arg("path") = "",
-                 "Any media verb: list, info, formats, insert, swap, eject, save, export, discard, rescan, create, protect")
+                 "Any media verb: list, info, formats, targets, insert, swap, eject, save, export, discard, rescan, create, protect")
             .def("media_list", [](Emulator& self) { return MediaCallPy(self, "list", "", "", py::kwargs()); },
                  "Every media slot and the detached media")
             .def("media_info", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "info", slot, "", py::kwargs()); },
                  py::arg("slot"), "One slot and its medium")
             .def("media_formats", [](Emulator& self, const py::kwargs& options) { return MediaCallPy(self, "formats", "", "", options); },
                  "Accepted formats per kind (kind='floppy' to filter)")
+            .def("media_targets", [](Emulator& self, const std::string& path) { return MediaCallPy(self, "targets", "", path, py::kwargs()); },
+                 py::arg("path"), "Where a file can go: what it is, the slots that take it in order, the default, or why nothing does")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")

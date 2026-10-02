@@ -192,8 +192,8 @@ MediaControl::MediaControl(EmulatorContext* context)
 
 const std::vector<std::string>& MediaControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"list", "info", "formats", "insert", "eject", "swap", "save",
-                                                   "export", "discard", "rescan", "create", "protect"};
+    static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
+                                                   "save", "export", "discard", "rescan", "create", "protect"};
     return verbs;
 }
 
@@ -203,6 +203,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"list", {}},
         {"info", {}},
         {"formats", {"kind"}},
+        {"targets", {}},
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
@@ -261,6 +262,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Info(request);
     else if (verb == "formats")
         reply = Formats(request);
+    else if (verb == "targets")
+        reply = Targets(request);
     else if (verb == "insert")
         reply = Insert(request, false);
     else if (verb == "swap")
@@ -481,6 +484,54 @@ MediaReply MediaControl::Formats(const MediaRequest& request)
     for (MediaKind kind : kinds)
         formats[MediaKindName(kind)] = Strings(MediaFormatRegistry::Extensions(kind));
     reply.body["formats"] = formats;
+    return reply;
+}
+
+/// Where a file can go on this machine (media-drop-targets design §4.4): the
+/// file's class, the targets in the chooser's order, the default and the
+/// refusal. A refusal is an answer, not an error: the reply is ok
+MediaReply MediaControl::Targets(const MediaRequest& request)
+{
+    const std::string path = Trim(request.path);
+    if (path.empty())
+        return Fail(MediaError::BadRequest, "targets needs a path (a file or a folder)");
+
+    const MediaPlan plan = MediaTargets::Plan(_context, MediaTargets::Classify(path));
+    MediaReply reply;
+
+    StateNode file = StateNode::Object();
+    file["path"] = plan.file.path;
+    file["folder"] = plan.file.folder;
+    StateNode kinds = StateNode::Array();
+    for (FileKind kind : plan.file.kinds)
+        kinds.push(StateNode(std::string(FileKindName(kind))));
+    file["kinds"] = kinds;
+    file["format"] = plan.file.format;
+    file["evidence"] = Strings(plan.file.evidence);
+    reply.body["file"] = file;
+
+    StateNode targets = StateNode::Array();
+    for (const MediaTarget& target : plan.targets)
+    {
+        StateNode t = StateNode::Object();
+        t["action"] = target.action == MediaTarget::Action::Insert   ? "insert"
+                      : target.action == MediaTarget::Action::Load ? "load"
+                                                                     : "newMachine";
+        t["as"] = FileKindName(target.as);
+        t["slot"] = target.slotId.empty() ? StateNode() : StateNode(target.slotId);
+        if (target.action == MediaTarget::Action::NewMachine)
+            t["model"] = target.model;
+        t["label"] = target.label;
+        t["occupiedBy"] = target.occupiedBy.empty() ? StateNode() : StateNode(target.occupiedBy);
+        t["dirty"] = target.dirty;
+        t["autostart"] = target.autostart;
+        targets.push(t);
+    }
+    reply.body["targets"] = targets;
+    reply.body["default"] = plan.defaultTarget < 0 ? StateNode() : StateNode(static_cast<int64_t>(plan.defaultTarget));
+    reply.body["refusal"] = plan.refusal.empty() ? StateNode() : StateNode(plan.refusal);
+    if (plan.defaultTarget >= 0)
+        reply.slot = plan.targets[static_cast<size_t>(plan.defaultTarget)].slotId;
     return reply;
 }
 

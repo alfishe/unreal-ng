@@ -189,6 +189,13 @@ Automation parity: `media targets <file>` (CLI), `GET /api/v1/emulator/{id}/medi
 data (targets, default, refusal). `media insert <file>` without a slot takes the single target (or the
 floppy shortcut); with several it names them, and it refuses what no slot takes.
 
+**As built in M2 (2026-10-01):** one verb, `targets`, in `MediaControl`, so every surface serves
+the same data: reply fields `file` (`kinds`, `format`, `evidence`), `targets` (`action`, `as`,
+`slot`, `label`, `occupiedBy`, `dirty`, `autostart`, `model` for a new machine), `default` (index
+or null) and `refusal` (or null); a refusal is an answer (`ok` true). WebAPI
+`GET /api/v1/emulator/{id}/media/targets?path=` (served by the `/media/{slot}` route, like
+`/media/formats`). Naming several targets in `media insert` waits for M3 (§4.3 "As built").
+
 ## 5. Qt: the drop overlay
 
 A widget `DropTargetOverlay` over the main window's content (`unreal-qt/src/media/`), fed by
