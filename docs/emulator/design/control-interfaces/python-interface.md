@@ -136,6 +136,16 @@ class Emulator:
         units[2] (kind, slot, medium, translation, task_file with decoded bits,
         command, atapi sense on a CD drive). available=False without a board"""
 
+    def cdaudio_state(self) -> dict:
+        """The ATAPI CD drives' audio: drives[] (unit, slot, disc with tracks, audio
+        status / status_code / lba / msf / track / index / relative_msf / play range,
+        drive_volume (page 0Eh), mixer row). available=False without a CD drive"""
+
+    def cdaudio(self, verb: str = "status", drive: str = "", **options) -> dict:
+        """A CD audio verb (CdAudioControl): play (track=2, to=3 | lba=, frames= |
+        msf="00:04:16", end=...), pause, resume, stop, volume (left=, right=, route=,
+        sotc=), mixer (volume=, mute=, solo=). Reply: ok, error, message, drive"""
+
     def tsconf_state(self) -> dict:
         """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
         lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /

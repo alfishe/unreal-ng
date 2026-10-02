@@ -878,6 +878,9 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";
+        case TTDGuardedAction::CdFrontPanel:
+            return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
+                   "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
     }
     return "This action is not allowed while TTD is recording. Stop the recording first.";
 }

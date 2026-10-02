@@ -166,6 +166,7 @@ void AtaDevice::HardReset()
     _s = AtaDeviceState{};
     _s.unitAttention = unitAttention;  // a disc change survives a bus reset until reported
     SoftResetDone();
+    PowerOnReset();
 }
 
 void AtaDevice::RunDiagnostic(bool interrupt)

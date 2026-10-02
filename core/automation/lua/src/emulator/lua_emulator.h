@@ -12,6 +12,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
+#include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
@@ -2434,6 +2435,49 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
+        });
+
+        // CD audio of the ATAPI CD drives (CdAudioControl, PLAN #83): cdaudio_state() reports every
+        // drive; cdaudio(verb, drive, {options}) runs status / play / pause / resume / stop / volume / mixer
+        lua.set_function("cdaudio_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, CdAudioControl::State(emulator->GetContext()));
+        });
+        lua.set_function("cdaudio", [this](sol::this_state s, const std::string& verb, sol::optional<std::string> drive,
+                                           sol::optional<sol::table> opts) -> sol::object {
+            CdAudioRequest request;
+            request.verb = verb;
+            request.drive = drive.value_or("");
+            if (opts)
+            {
+                for (const auto& [key, value] : *opts)
+                {
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                    {
+                        const double number = value.as<double>();
+                        text = number == static_cast<double>(static_cast<long long>(number))
+                                   ? std::to_string(static_cast<long long>(number))
+                                   : std::to_string(number);
+                    }
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, CdAudioControl(emulator->GetContext()).Execute(request).ToValue());
         });
 
         lua.set_function("tsconf_state", [this](sol::this_state s) -> sol::object {

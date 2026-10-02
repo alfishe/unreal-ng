@@ -12,7 +12,10 @@
 #include "emulator/io/ide/ata/atachannel.h"
 #include "emulator/io/ide/ata/atadisk.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
+#include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "_helpers/cdtestdisc.h"
+#include "_helpers/scratchfolder.h"
 
 using namespace ata;
 
@@ -335,3 +338,370 @@ TEST_F(AtapiCdrom_Test, RequestSenseReportsUnitAttention)
     _channel.WriteRegister(StatusCommand, Command::DeviceReset);
     EXPECT_EQ(_cd->State().control, DeviceControl::nIEN);
 }
+
+/// region <CD audio and the MMC commands of a disc with tracks>
+
+namespace
+{
+    /// The fixture disc (cdtestdisc.h): track 1 data LBA 0-3, track 2 audio (pregap 4-7, INDEX 01 at 8) to 15,
+    /// track 3 audio (PREGAP 16-17, INDEX 01 at 18) to 21; lead-out 22. The drive's clock is a variable here
+    class AtapiCdromAudio_Test : public AtapiCdrom_Test
+    {
+    protected:
+        std::unique_ptr<ScratchFolder> _folder;
+        std::unique_ptr<CdImage> _disc;
+        uint32_t _elapsed = 0;
+
+        void SetUp() override
+        {
+            AtapiCdrom_Test::SetUp();
+            _folder = std::make_unique<ScratchFolder>("atapi-audio");
+            std::string error;
+            _disc = CdImageFormats::Open(cdtest::WriteFixtureDisc(_folder->Path()), &error);
+            ASSERT_NE(_disc, nullptr) << error;
+            _cd->Audio().SetClock([this] { return _elapsed; });
+            _cd->SetDisc(_disc.get());
+            _cd->AttachMedium(*_disc, {});
+            ClearUnitAttention();
+        }
+
+        void Frames(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                _elapsed = 0;
+                _cd->Audio().FrameEnd(71680);
+            }
+        }
+
+        std::vector<uint8_t> Command(std::vector<uint8_t> cdb, uint16_t limit = 0xFFFE)
+        {
+            SendPacket(std::move(cdb), limit);
+            std::vector<uint8_t> all;
+            while (Reason() == 2 && (Status() & Status::DRQ))
+            {
+                const std::vector<uint8_t> part = ReadChunk();
+                all.insert(all.end(), part.begin(), part.end());
+            }
+            return all;
+        }
+
+        /// READ SUB-CHANNEL, current position (format 1); MSF or LBA addresses
+        std::vector<uint8_t> Position(bool msf)
+        {
+            return Command({0x42, static_cast<uint8_t>(msf ? 0x02 : 0x00), 0x40, 0x01, 0, 0, 0, 0, 16});
+        }
+    };
+
+    uint32_t Be32(const std::vector<uint8_t>& b, size_t at)
+    {
+        return (static_cast<uint32_t>(b[at]) << 24) | (static_cast<uint32_t>(b[at + 1]) << 16) | (static_cast<uint32_t>(b[at + 2]) << 8) | b[at + 3];
+    }
+}  // namespace
+
+TEST_F(AtapiCdromAudio_Test, ReadTocListsEveryTrack)
+{
+    // Format 0, LBA: 3 tracks + the lead-out
+    std::vector<uint8_t> toc = Command({0x43, 0, 0, 0, 0, 0, 0, 0x03, 0x24});
+    ASSERT_EQ(toc.size(), 4u + 4 * 8);
+    EXPECT_EQ((toc[0] << 8) | toc[1], 34);
+    EXPECT_EQ(toc[2], 1);
+    EXPECT_EQ(toc[3], 3);
+    const uint8_t expected[4][3] = {{0x14, 1, 0}, {0x10, 2, 8}, {0x10, 3, 18}, {0x10, 0xAA, 22}};
+    for (int i = 0; i < 4; i++)
+    {
+        EXPECT_EQ(toc[4 + 8 * i + 1], expected[i][0]) << "ADR / control, entry " << i;
+        EXPECT_EQ(toc[4 + 8 * i + 2], expected[i][1]) << "track, entry " << i;
+        EXPECT_EQ(Be32(toc, 4 + 8 * i + 4), expected[i][2]) << "LBA, entry " << i;
+    }
+
+    // MSF, from track 2 (what NedoOS cdplay asks: 43 02 ... 03 24)
+    toc = Command({0x43, 0x02, 0, 0, 0, 0, 2, 0x03, 0x24});
+    ASSERT_EQ(toc.size(), 4u + 3 * 8);
+    EXPECT_EQ(toc[4 + 2], 2);
+    EXPECT_EQ(toc[4 + 5], 0);
+    EXPECT_EQ(toc[4 + 6], 2) << "LBA 8 = 00:02:08";
+    EXPECT_EQ(toc[4 + 7], 8);
+    EXPECT_EQ(toc[4 + 16 + 7], 22) << "lead-out 00:02:22";
+
+    toc = Command({0x43, 0, 0, 0, 0, 0, 0xAA, 0, 12});
+    ASSERT_EQ(toc.size(), 12u) << "from the lead-out: the lead-out alone";
+    EXPECT_EQ(toc[6], 0xAA);
+    SendPacket({0x43, 0, 0, 0, 0, 0, 4, 0, 12});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidField);
+
+    // Format 1 (sessions) and the SFF-8020 format field (byte 9 bits 7-6)
+    toc = Command({0x43, 0, 0x01, 0, 0, 0, 0, 0, 12});
+    ASSERT_EQ(toc.size(), 12u);
+    EXPECT_EQ(toc[6], 1);
+    EXPECT_EQ(Command({0x43, 0, 0, 0, 0, 0, 0, 0, 12, 0x40}), toc);
+
+    // Format 2: A0 / A1 / A2 points, then one entry per track (11 bytes, MSF)
+    toc = Command({0x43, 0x02, 0x02, 0, 0, 0, 0, 0x01, 0x00});
+    ASSERT_EQ(toc.size(), 4u + 6 * 11);
+    EXPECT_EQ(toc[4 + 3], 0xA0);
+    EXPECT_EQ(toc[4 + 8], 1) << "first track";
+    EXPECT_EQ(toc[4 + 11 + 3], 0xA1);
+    EXPECT_EQ(toc[4 + 11 + 8], 3) << "last track";
+    EXPECT_EQ(toc[4 + 22 + 3], 0xA2);
+    EXPECT_EQ(toc[4 + 22 + 10], 22) << "lead-out frame";
+    EXPECT_EQ(toc[4 + 44 + 3], 2);
+    EXPECT_EQ(toc[4 + 44 + 10], 8);
+
+    SendPacket({0x43, 0, 0x05, 0, 0, 0, 0, 0, 12});  // CD-TEXT: a pressed disc without
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidField);
+}
+
+TEST_F(AtapiCdromAudio_Test, PlayAudioMsfAndTheSubChannelPosition)
+{
+    std::vector<uint8_t> position = Position(true);
+    ASSERT_EQ(position.size(), 16u);
+    EXPECT_EQ(position[1], 0x15) << "no play yet";
+
+    // PLAY AUDIO MSF 00:02:08 - 00:02:16 (track 2, as cdplay plays a track: its start to the next one's)
+    SendPacket({0x47, 0, 0, 0, 2, 8, 0, 2, 16});
+    EXPECT_TRUE(Completed());
+    Frames(1);  // 903 samples: still LBA 9
+    _elapsed = 35840;  // half a frame later: + 451 samples, LBA 10
+    position = Position(true);
+    EXPECT_EQ(position[1], 0x11) << "playing";
+    EXPECT_EQ((position[2] << 8) | position[3], 12) << "sub-channel data length";
+    EXPECT_EQ(position[4], 0x01);
+    EXPECT_EQ(position[5], 0x10) << "ADR 1, audio";
+    EXPECT_EQ(position[6], 2) << "track";
+    EXPECT_EQ(position[7], 1) << "index";
+    EXPECT_EQ(position[9], 0);
+    EXPECT_EQ(position[10], 2);
+    EXPECT_EQ(position[11], 10) << "absolute 00:02:10";
+    EXPECT_EQ(position[15], 2) << "relative 00:00:02";
+
+    position = Position(false);
+    EXPECT_EQ(Be32(position, 8), 10u);
+    EXPECT_EQ(Be32(position, 12), 2u);
+
+    // Without SubQ: the header alone
+    const std::vector<uint8_t> header = Command({0x42, 0, 0x00, 0x01, 0, 0, 0, 0, 16});
+    ASSERT_EQ(header.size(), 4u);
+    EXPECT_EQ(header[1], 0x11);
+
+    // PAUSE, RESUME
+    SendPacket({0x4B, 0, 0, 0, 0, 0, 0, 0, 0});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(Position(true)[1], 0x12);
+    SendPacket({0x4B, 0, 0, 0, 0, 0, 0, 0, 1});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(Position(true)[1], 0x11);
+
+    // To the end: 13h once, then 15h
+    Frames(10);
+    position = Position(true);
+    EXPECT_EQ(position[1], 0x13);
+    EXPECT_EQ(position[11], 15) << "the head stops at the play's last frame (00:02:15)";
+    EXPECT_EQ(Position(true)[1], 0x15);
+
+    // PAUSE with no play: command sequence error
+    SendPacket({0x4B, 0, 0, 0, 0, 0, 0, 0, 0});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscCommandSequenceError);
+}
+
+TEST_F(AtapiCdromAudio_Test, ThePregapCountsDownInIndexZero)
+{
+    SendPacket({0x45, 0, 0, 0, 0, 5, 0, 0, 3});  // PLAY AUDIO (10): LBA 5, 3 frames (track 2's pregap)
+    EXPECT_TRUE(Completed());
+    const std::vector<uint8_t> position = Position(true);
+    EXPECT_EQ(position[6], 2);
+    EXPECT_EQ(position[7], 0) << "index 0: the pregap";
+    EXPECT_EQ(position[15], 3) << "3 frames to INDEX 01";
+    EXPECT_EQ(static_cast<int32_t>(Be32(Position(false), 12)), -3);
+}
+
+TEST_F(AtapiCdromAudio_Test, PlayCommandsAndTheirErrors)
+{
+    // PLAY AUDIO (12): LBA 18, 4 frames
+    SendPacket({0xA5, 0, 0, 0, 0, 18, 0, 0, 0, 4});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, 22u);
+    // PLAY AUDIO TRACK / INDEX: track 2 index 1 to track 3 index 1 (both tracks)
+    SendPacket({0x48, 0, 0, 0, 2, 1, 0, 3, 1});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().HeadLba(), 8u);
+    EXPECT_EQ(_cd->Audio().State().endLba, 22u);
+    // ... track 2 from its pregap (index 0) to track 3 index 0: to track 3's INDEX 01
+    SendPacket({0x48, 0, 0, 0, 2, 0, 0, 3, 0});
+    EXPECT_EQ(_cd->Audio().HeadLba(), 4u);
+    EXPECT_EQ(_cd->Audio().State().endLba, 18u);
+    // From the current position (LBA #FFFFFFFF)
+    Frames(2);
+    const uint32_t head = _cd->Audio().HeadLba();
+    SendPacket({0x45, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 2});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().HeadLba(), head);
+    // A zero length plays nothing and is no error; start == end in MSF neither
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 0});
+    EXPECT_TRUE(Completed());
+    SendPacket({0x47, 0, 0, 0, 2, 8, 0, 2, 8});
+    EXPECT_TRUE(Completed());
+
+    // The data track: ILLEGAL MODE FOR THIS TRACK; past the lead-out: LBA out of range; end before start
+    SendPacket({0x45, 0, 0, 0, 0, 1, 0, 0, 2});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+    SendPacket({0x45, 0, 0, 0, 0, 20, 0, 0, 5});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscLbaOutOfRange);
+    SendPacket({0x47, 0, 0, 0, 2, 16, 0, 2, 8});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidField);
+    SendPacket({0x48, 0, 0, 0, 9, 1, 0, 9, 1});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidField);
+
+    // STOP PLAY / SCAN; a READ of data stops a play too
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 8});
+    SendPacket({0x4E});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(Position(true)[1], 0x15);
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 8});
+    EXPECT_EQ(Command({0x28, 0, 0, 0, 0, 2, 0, 0, 1}).size(), 2048u);
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+    // REQUEST SENSE while playing: ASC 00h, ASCQ 11h (audio play in progress)
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 8});
+    const std::vector<uint8_t> sense = Command({0x03, 0, 0, 0, 18});
+    EXPECT_EQ(sense[2], 0);
+    EXPECT_EQ(sense[13], 0x11);
+}
+
+TEST_F(AtapiCdromAudio_Test, ReadOfAnAudioFrameIsIllegal)
+{
+    SendPacket({0x28, 0, 0, 0, 0, 3, 0, 0, 2});  // LBA 3 (data) and 4 (audio pregap)
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+    SendPacket({0x44, 0, 0, 0, 0, 9, 0, 0, 8});  // READ HEADER of an audio frame: mode 0
+    const std::vector<uint8_t> header = ReadChunk();
+    ASSERT_EQ(header.size(), 8u);
+    EXPECT_EQ(header[0], 0);
+}
+
+TEST_F(AtapiCdromAudio_Test, ReadCdRawAudioDataAndSubchannel)
+{
+    // READ CD, CD-DA, LBA 8, 2 frames, user data: 2352 bytes each, the samples little-endian
+    std::vector<uint8_t> raw = Command({0xBE, 0x04, 0, 0, 0, 8, 0, 0, 2, 0x10, 0});
+    ASSERT_EQ(raw.size(), 2u * 2352);
+    for (uint32_t n = 0; n < 2 * 588; n++)
+    {
+        const int16_t left = static_cast<int16_t>(raw[4 * n] | (raw[4 * n + 1] << 8));
+        const int16_t right = static_cast<int16_t>(raw[4 * n + 2] | (raw[4 * n + 3] << 8));
+        ASSERT_EQ(left, cdtest::kRampA.Left(n)) << n;
+        ASSERT_EQ(right, cdtest::kRampA.Right(n)) << n;
+    }
+    // A byte count limit of 1000: the 2352-byte frames go in pieces
+    EXPECT_EQ(Command({0xBE, 0x04, 0, 0, 0, 8, 0, 0, 2, 0x10, 0}, 1000), raw);
+
+    // READ CD MSF of the same frames, with the formatted Q subchannel (16 bytes each)
+    std::vector<uint8_t> withQ = Command({0xB9, 0, 0, 0, 2, 8, 0, 2, 10, 0xF8, 0x02});
+    ASSERT_EQ(withQ.size(), 2u * (2352 + 16));
+    EXPECT_TRUE(std::equal(withQ.begin(), withQ.begin() + 2352, raw.begin()));
+    const uint8_t* q = withQ.data() + 2352;
+    EXPECT_EQ(q[0], 0x01) << "control 0 (audio), ADR 1";
+    EXPECT_EQ(q[1], 0x02) << "track 02 (BCD)";
+    EXPECT_EQ(q[2], 0x01) << "index 01";
+    EXPECT_EQ(q[5], 0x00) << "relative frame 00";
+    EXPECT_EQ(q[8], 0x02);
+    EXPECT_EQ(q[9], 0x08) << "absolute 00:02:08 (BCD)";
+
+    // Raw P-W: P set in a pregap, Q bit by bit in bit 6
+    std::vector<uint8_t> pw = Command({0xBE, 0, 0, 0, 0, 5, 0, 0, 1, 0x00, 0x01});
+    ASSERT_EQ(pw.size(), 96u);
+    EXPECT_EQ(pw[0] & 0x80, 0x80);
+    uint8_t qBits[12] = {};
+    for (int i = 0; i < 96; i++)
+        qBits[i / 8] = static_cast<uint8_t>(qBits[i / 8] | (((pw[i] >> 6) & 1) << (7 - i % 8)));
+    EXPECT_EQ(qBits[1], 0x02);
+    EXPECT_EQ(qBits[2], 0x00) << "index 0";
+
+    // A data frame raw (sync, headers, user data, EDC / ECC): the whole frame
+    std::vector<uint8_t> frame = Command({0xBE, 0x08, 0, 0, 0, 2, 0, 0, 1, 0xF8, 0});
+    const std::string expected = cdtest::DataFrames(2, 1, true);
+    ASSERT_EQ(frame.size(), 2352u);
+    EXPECT_EQ(0, std::memcmp(frame.data(), expected.data(), 2352));
+    // User data only
+    frame = Command({0xBE, 0x08, 0, 0, 0, 2, 0, 0, 1, 0x10, 0});
+    EXPECT_EQ(frame, cdtest::UserData(2));
+
+    // The expected sector type must match: CD-DA asked of a data frame
+    SendPacket({0xBE, 0x04, 0, 0, 0, 2, 0, 0, 1, 0x10, 0});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+}
+
+TEST_F(AtapiCdromAudio_Test, ModePageZeroEhVolumeAndRouting)
+{
+    // MODE SENSE (10), page 0Eh, current values: port 0 left, port 1 right, both full
+    std::vector<uint8_t> page = Command({0x5A, 0, 0x0E, 0, 0, 0, 0, 0, 24});
+    ASSERT_EQ(page.size(), 24u);
+    EXPECT_EQ(page[2], 0x03) << "medium: mixed audio / data";
+    EXPECT_EQ(page[8], 0x0E);
+    EXPECT_EQ(page[9], 14);
+    EXPECT_EQ(page[10] & 0x04, 0x04) << "IMMED";
+    EXPECT_EQ(page[16], 1);
+    EXPECT_EQ(page[17], 0xFF);
+    EXPECT_EQ(page[18], 2);
+    EXPECT_EQ(page[19], 0xFF);
+
+    // MODE SELECT (10): swap the channels, port 1 at half volume, SOTC
+    std::vector<uint8_t> parameters(24, 0);
+    parameters[8] = 0x0E;
+    parameters[9] = 14;
+    parameters[10] = 0x06;
+    parameters[16] = 2;
+    parameters[17] = 0xFF;
+    parameters[18] = 1;
+    parameters[19] = 0x80;
+    SendPacket({0x55, 0x10, 0, 0, 0, 0, 0, 0, 24});
+    ASSERT_EQ(Reason(), 0) << "data from the host";
+    ASSERT_TRUE(Status() & Status::DRQ);
+    EXPECT_EQ(ByteCount(), 24);
+    for (size_t i = 0; i < parameters.size(); i += 2)
+        _channel.WriteData(static_cast<uint16_t>(parameters[i] | (parameters[i + 1] << 8)));
+    EXPECT_TRUE(Completed());
+    const CdAudioState& state = _cd->Audio().State();
+    EXPECT_EQ(state.portSelect[0], 2);
+    EXPECT_EQ(state.portSelect[1], 1);
+    EXPECT_EQ(state.portVolume[1], 0x80);
+    EXPECT_EQ(state.sotc, 1);
+
+    page = Command({0x1A, 0, 0x0E, 0, 20});  // MODE SENSE (6) shows it
+    ASSERT_EQ(page.size(), 20u);
+    EXPECT_EQ(page[4 + 2] & 0x02, 0x02);
+    EXPECT_EQ(page[4 + 8], 2);
+    EXPECT_EQ(page[4 + 11], 0x80);
+    // Default and changeable values
+    page = Command({0x1A, 0, 0x8E, 0, 20});
+    EXPECT_EQ(page[4 + 8], 1) << "default: port 0 left";
+    page = Command({0x1A, 0, 0x4E, 0, 20});
+    EXPECT_EQ(page[4 + 9], 0xFF) << "changeable: the volume";
+    // All pages: 01h, 0Dh, 0Eh, 2Ah
+    page = Command({0x5A, 0, 0x3F, 0, 0, 0, 0, 0, 0xFF});
+    EXPECT_EQ(page.size(), 8u + 8 + 8 + 16 + 20);
+    EXPECT_EQ(page[8 + 32], 0x2A);
+    EXPECT_EQ(page[8 + 32 + 4] & 0x01, 0x01) << "audio play";
+    EXPECT_EQ((page[8 + 32 + 10] << 8) | page[8 + 32 + 11], 256) << "volume levels";
+
+    // A broken page length: invalid parameter list
+    SendPacket({0x15, 0x10, 0, 0, 8});
+    const uint8_t broken[8] = {0, 0, 0, 0, 0x0E, 20, 0, 0};
+    for (size_t i = 0; i < 8; i += 2)
+        _channel.WriteData(static_cast<uint16_t>(broken[i] | (broken[i + 1] << 8)));
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscInvalidParameter);
+}
+
+TEST_F(AtapiCdromAudio_Test, SeekStopsAndMovesTheHead)
+{
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 8});
+    SendPacket({0x2B, 0, 0, 0, 0, 19});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+    EXPECT_EQ(Be32(Position(false), 8), 19u);
+    // DEVICE RESET keeps the audio; the reset line stops it
+    SendPacket({0x45, 0, 0, 0, 0, 8, 0, 0, 8});
+    _channel.WriteRegister(StatusCommand, Command::DeviceReset);
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Playing);
+    _channel.HardReset();
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+}
+
+/// endregion </CD audio>

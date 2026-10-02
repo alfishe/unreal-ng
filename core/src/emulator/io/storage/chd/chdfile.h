@@ -72,6 +72,9 @@ namespace chd
         /// child's folder. Fails (nullptr, reason in `error`) on anything not a
         /// readable CHD, an unsupported codec, a broken map or a missing parent
         static std::unique_ptr<ChdFile> Open(const std::string& path, std::string* error = nullptr, ParentFinder finder = {});
+        /// Open a CD-ROM CHD (CHT2 / CHTR track metadata, 2448-byte frames, the
+        /// CD codecs). A hard-disk CHD is refused, as Open refuses a CD
+        static std::unique_ptr<ChdFile> OpenCd(const std::string& path, std::string* error = nullptr);
 
         /// The default parent search: every *.chd in the child's folder
         static std::unique_ptr<ChdFile> FindParentNextTo(const Sha1& sha1, const std::string& childPath, std::string* error);
@@ -114,6 +117,9 @@ namespace chd
         /// Raw file bytes (a hunk's stored payload, for a writer that copies it)
         bool ReadFileBytes(uint64_t offset, uint8_t* dst, uint32_t length);
 
+        /// A CD-ROM CHD (opened with OpenCd)
+        bool IsCd() const { return _cdRom; }
+
         /// Recompute the SHA-1 of the data and compare it with the header (a
         /// compressed CHD; an uncompressed one has no checksum: true). Also the
         /// overall SHA-1 over data and metadata (v4, v5)
@@ -125,6 +131,8 @@ namespace chd
 
     private:
         ChdFile() = default;
+        static std::unique_ptr<ChdFile> OpenAs(const std::string& path, std::string* error, ParentFinder finder, bool cdRom);
+        static std::unique_ptr<ChdFile> FindParent(const Sha1& sha1, const std::string& childPath, std::string* error, bool cdRom);
         bool ParseHeader(const uint8_t* header, std::string* error);
         bool ReadMap(std::string* error);
         bool ReadCompressedMap(std::string* error);
@@ -154,6 +162,7 @@ namespace chd
         std::vector<uint8_t> _compressed;  ///< scratch for one stored hunk
         std::vector<uint8_t> _cache;       ///< ReadBytes' last hunk
         int64_t _cacheHunk = -1;
+        bool _cdRom = false;               ///< opened as a CD-ROM CHD
         int _selfDepth = 0;                ///< guards a self reference loop in a broken file
     };
 }  // namespace chd

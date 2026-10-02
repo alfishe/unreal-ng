@@ -568,7 +568,9 @@ types:
           23 KempstonJoystick.
           36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
           37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort),
-          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved).
+          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved),
+          39 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
+          with a CD unit, so the blobs of every other machine are unchanged).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
@@ -578,6 +580,61 @@ types:
           mismatch and does not restore.
       - id: state
         type: peripheral_blob
+
+  cd_drive_blob:
+    doc: |
+      Payload of peripheral 39 CdDrive (ttdcddrive.cpp): the CD audio side and the READ CD
+      staging of every unit of the IDE board (channel * 2 + position; 2 units, 4 on the
+      Sprinter), zero for a unit that is no CD drive. Little-endian.
+    seq:
+      - id: version
+        type: u1
+        doc: 1
+      - id: cd_units
+        type: u1
+        doc: bit n set - unit n is a CD drive
+      - id: reserved
+        size: 6
+      - id: units
+        type: cd_drive_unit
+        repeat: eos
+  cd_drive_unit:
+    seq:
+      - id: head
+        type: s8
+        doc: |
+          The optical head in 1 / 3,500,000 of a 44.1 kHz sample from LBA 0; while playing it is
+          relative to the frame start (the head = this + elapsed base T-states x 44100)
+      - id: play_start_lba
+        type: u4
+      - id: end_lba
+        type: u4
+        doc: the play stops before this frame
+      - id: status
+        type: u1
+        doc: 0 idle (15h), 1 playing (11h), 2 paused (12h), 3 completed (13h, reported once), 4 error (14h, once)
+      - id: sotc
+        type: u1
+        doc: page 0Eh stop on track crossing
+      - id: port_select
+        size: 4
+        doc: page 0Eh channels routed to output ports 0-3 (bit 0 left, bit 1 right)
+      - id: port_volume
+        size: 4
+      - id: flags
+        type: u1
+        doc: bit 0 - the play ends at a data track (status 14h)
+      - id: reserved
+        size: 5
+      - id: stage_pos
+        type: u2
+      - id: stage_len
+        type: u2
+      - id: stage_reserved
+        size: 4
+      - id: stage
+        size: 2816
+        doc: the READ CD sector (with C2 and subchannel fields) still going to the 2048-byte data buffer
 
   sprinter_pld_blob:
     doc: |

@@ -279,6 +279,11 @@ public:
     // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
     ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateIdeActive, "/api/v1/emulator/state/ide", drogon::Get);
+    // CD audio of the ATAPI CD drives (implementation: api/cdaudio_api.cpp; CdAudioControl)
+    ADD_METHOD_TO(EmulatorAPI::getStateCdAudio, "/api/v1/emulator/{id}/state/cdaudio", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateCdAudioActive, "/api/v1/emulator/state/cdaudio", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postCdAudioVerb, "/api/v1/emulator/{id}/cdaudio/{verb}", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postCdAudioVerbActive, "/api/v1/emulator/cdaudio/{verb}", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateTsConf, "/api/v1/emulator/{id}/state/tsconf", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateTsConfActive, "/api/v1/emulator/state/tsconf", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateTsConfTsu, "/api/v1/emulator/{id}/state/tsconf/tsu", drogon::Get);
@@ -586,6 +591,17 @@ public:
     void switchModel(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Lifecycle Management Methods
+
+    // region CD audio (implementation: api/cdaudio_api.cpp)
+    void getStateCdAudio(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    void getStateCdAudioActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void postCdAudioVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id, const std::string& verb) const;
+    void postCdAudioVerbActive(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& verb) const;
+    // endregion CD audio
 
     // region Media (implementation: api/media_api.cpp)
     void getMediaList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

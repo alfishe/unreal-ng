@@ -332,7 +332,8 @@ enum class TTDGuardedAction : uint8_t
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
     ChangeWriteJournal,  ///< a recording keeps the journal mode it started with
-    SwitchGsCard         ///< a General Sound personality switch changes the device set (FR-4)
+    SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
+    CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
 };
 
 /// @brief String conversion for TTDCoverageKind.

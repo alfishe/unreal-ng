@@ -9,6 +9,7 @@
 #include "emulator/media/floppyformats.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/io/storage/rawimage.h"
@@ -208,7 +209,9 @@ static MediaResult OpenTape(const OpenRequest& request, std::unique_ptr<Medium>&
     return result;
 }
 
-/// A CD: an ISO 9660 image, always read-only
+/// A CD: an ISO 9660 image, a CUE sheet (BIN / WAVE files), a raw BIN or a
+/// CD-ROM CHD; always read-only. The disc (CdImage) is the base of the block
+/// stack and is also handed to the drive for its tracks and audio
 static MediaResult OpenOptical(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     const MediaSource& source = request.source;
@@ -220,21 +223,23 @@ static MediaResult OpenOptical(const OpenRequest& request, std::unique_ptr<Mediu
         return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);
 
     std::string error;
-    const std::string format = HddImageFormats::Probe(source.path, &error);
+    const std::string format = CdImageFormats::Probe(source.path, &error);
     if (format.empty())
-        return MediaResult::Fail(MediaError::UnreadableSource, error);
-    if (format == "chd")
-        return MediaResult::Fail(MediaError::NotSupported, "'" + source.path + "': CD-ROM CHDs are not supported yet (extract an ISO with chdman extractcd)");
-    const bool isoName = StringHelper::ToLower(FileHelper::GetFileExtension(source.path)) == "iso";
-    if (format != "iso" && !(format == "raw" && isoName))
-        return MediaResult::Fail(MediaError::UnknownFormat, "'" + source.path + "' is no CD image (no ISO 9660 volume)");
-    auto image = HddImageFormats::Open(source.path, "iso", RawImage::Access::ReadOnly, &error);
-    if (!image)
-        return MediaResult::Fail(MediaError::UnreadableSource, error);
+        return MediaResult::Fail(MediaError::UnknownFormat, error);
+    std::unique_ptr<CdImage> disc = CdImageFormats::Open(source.path, &error);
+    if (!disc)
+        return MediaResult::Fail(format == "chd" ? MediaError::KindMismatch : MediaError::UnreadableSource, error);
 
+    // The track list goes into the insert's report (through the medium: the manager copies it)
+    std::vector<std::string> report;
+    if (disc->TrackCount() > 1 || disc->HasAudio())
+        report.push_back("tracks: " + disc->DescribeTracks());
     MediaSource resolved = source;
     resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
-    medium = MediaFormatRegistry::WrapBlock(resolved, AccessMode::ReadOnly, "iso", std::move(image), MediaKind::Optical);
+    CdImage* cd = disc.get();
+    medium = MediaFormatRegistry::WrapBlock(resolved, AccessMode::ReadOnly, format, std::move(disc), MediaKind::Optical);
+    medium->SetCd(cd);
+    medium->Report() = report;
     return MediaResult::Success();
 }
 
@@ -270,7 +275,7 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     const std::string format = HddImageFormats::Probe(source.path, &error);
     if (format.empty())
         return MediaResult::Fail(MediaError::UnreadableSource, error);
-    if (format == "iso")
+    if (format == "iso" || (format == "chd" && CdImageFormats::IsCdChd(source.path)))
         return MediaResult::Fail(MediaError::KindMismatch, "'" + source.path + "' is a CD image: it goes into a CD drive (an IDE unit becomes one with device=cdrom)");
 
     // A CHD is never written in place: guest writes stay in the change layer
@@ -299,7 +304,7 @@ std::vector<std::string> MediaFormatRegistry::Extensions(MediaKind kind)
     switch (kind)
     {
         case MediaKind::Block: return {"img", "ima", "hdd", "hd", "hdf", "hdi", "vhd", "chd", "bin", "mmc", "sd"};
-        case MediaKind::Optical: return {"iso"};
+        case MediaKind::Optical: return {"iso", "cue", "chd", "bin"};
         case MediaKind::Floppy: return FloppyFormats::Extensions();
         case MediaKind::Tape: return TapeLoaderRegistry::Instance().SupportedExtensions();
         default: return {};

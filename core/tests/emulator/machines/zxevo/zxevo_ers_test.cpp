@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/cdtestdisc.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/fatimagebuilder.h"
 #include "_helpers/scratchfolder.h"
@@ -41,6 +42,7 @@
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -775,6 +777,98 @@ TEST_F(ZXEvoErs_Test, NedoOsBootsFromAHostFolder)
     EXPECT_TRUE(inRam("M:/bin>")) << "the NedoOS shell prompt";
     EXPECT_TRUE(inRam("UNREALNGSDBOOT")) << "the shell read autoexec.bat from the folder";
     EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty) << "booting writes nothing to the card";
+}
+
+/// PLAN #83, real software: NedoOS's audio CD player (cdplay.com, the shipped release) on the CD drive
+/// (the IDE slave) with a CUE/BIN disc of a data track and two audio tracks. It reads the TOC, lists
+/// the tracks, plays track 2 with PLAY AUDIO MSF ('2'), shows the position it reads with READ
+/// SUB-CHANNEL, pauses and resumes (Space) and stops (S); the drive's audio comes out of its mixer row.
+/// Slow (~3 s): boots the ERS and NedoOS
+TEST_F(ZXEvoErs_Test, NedoOsCdplayPlaysAudioTracks)
+{
+    const std::filesystem::path root = TestPathHelper::FindProjectRoot() / "testdata/machines/zxevo/nedoos";
+    ASSERT_TRUE(std::filesystem::exists(root / "cdplay/cdplay.com"));
+    ScratchFolder card("nedoos-cdplay");
+    std::filesystem::create_directories(card.Path() / "bin");
+    std::filesystem::copy_file(root / "sdcard/SD_BOOT.$C", card.Path() / "SD_BOOT.$C");
+    for (const char* name : {"term.com", "cmd.com"})
+        std::filesystem::copy_file(root / "sdcard/bin" / name, card.Path() / "bin" / name);
+    std::filesystem::copy_file(root / "cdplay/cdplay.com", card.Path() / "bin/cdplay.com");
+    card.File("bin/autoexec.bat", "cdplay\r\n");
+    ScratchFolder disc("nedoos-cdplay-disc");
+    const std::string cue = cdtest::WriteMusicDisc(disc.Path(), 2, 6, 75);  // data 0-74; track 2 at LBA 225 (00:05:00), 6 s each
+
+    Create();
+    _context->pSoundManager->setCoreRatePin(44100);
+    InsertOptions options;
+    options.freeBytes = 16 * 1024 * 1024;
+    MediaSource source;
+    source.path = Utf8(card.Path());
+    ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source, options).Ok());
+    source.path = cue;
+    const MediaResult inserted = _context->pMediaManager->Insert("ide0.slave", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_TRUE(RunToMainMenu());
+
+    auto screen = [this] {
+        std::string text;
+        const StateNode lines = DeviceState::VideoText(_context);
+        if (const StateNode* list = lines.find("lines"))
+        {
+            for (const StateNode& line : list->items)
+                text += line.find("text")->s + "\n";
+        }
+        return text;
+    };
+    auto shows = [&](const std::string& needle) { return screen().find(needle) != std::string::npos; };
+
+    Tap(ZXKEY_5);  // "5. SDcard boot" -> NedoOS -> autoexec.bat -> cdplay
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return shows("Track 03 [AUDIO]"); }, 1500, 20);
+    ASSERT_TRUE(shows("Audio CD Player")) << screen();
+    ASSERT_TRUE(shows("Track 02 [AUDIO]  Start 00:05:00  Dur 00:08")) << "the TOC as the player shows it\n" << screen();
+
+    AtapiCdrom* cd = static_cast<AtapiCdrom*>(_context->pIdeController->Channel().Unit(1));
+    DebugKeyboardManager* keys = _emulator->GetDebugManager()->GetKeyboardManager();
+    ASSERT_NE(keys, nullptr);
+    keys->TypeText("2");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Playing; }, 200, 5);
+    ASSERT_EQ(cd->Audio().PeekStatus(), CdAudioStatus::Playing) << screen();
+    EXPECT_EQ(cd->Audio().State().playStartLba, 225u) << "PLAY AUDIO MSF from the track's TOC start";
+    EXPECT_EQ(cd->Audio().State().endLba, 225u + 450 + 150) << "... to the next track's start";
+
+    // The position the player reads with READ SUB-CHANNEL: one emulated second later it shows 00:01
+    _emulator->RunNFrames(60, true);
+    EXPECT_TRUE(shows("[PLAYING] Track: 02 / 03")) << screen();
+    EXPECT_TRUE(shows("Time:   00:01 / 00:08")) << screen();
+
+    // Audio out of the drive's mixer row (turbo renders nothing: one frame at the normal speed)
+    _emulator->DisableTurboMode();
+    _emulator->RunNFrames(2, true);
+    const int16_t* out = _context->pSoundManager->deviceBuffer(AudioSourceType::CdAudio1);
+    ASSERT_NE(out, nullptr) << "the CD drive's row has this frame's audio";
+    EXPECT_TRUE(cd->Audio().HadSoundLastFrame()) << "a 660 Hz tone, not silence";
+    _emulator->EnableTurboMode();
+
+    // Space pauses: the head stays; Space again resumes
+    keys->TypeText(" ");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Paused; }, 200, 5);
+    ASSERT_EQ(cd->Audio().PeekStatus(), CdAudioStatus::Paused) << screen();
+    const uint64_t paused = cd->Audio().PeekHeadSample();
+    _emulator->RunNFrames(50, true);
+    EXPECT_EQ(cd->Audio().PeekHeadSample(), paused);
+    EXPECT_TRUE(shows("[PAUSE]")) << screen();
+    keys->TypeText(" ");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Playing; }, 200, 5);
+    ASSERT_EQ(cd->Audio().PeekStatus(), CdAudioStatus::Playing) << screen();
+    _emulator->RunNFrames(20, true);
+    EXPECT_GT(cd->Audio().PeekHeadSample(), paused);
+
+    // S stops
+    keys->TypeText("s");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Idle; }, 200, 5);
+    EXPECT_EQ(cd->Audio().PeekStatus(), CdAudioStatus::Idle) << screen();
+    _emulator->RunNFrames(20, true);
+    EXPECT_TRUE(shows("[STOPPED]")) << screen();
 }
 
 namespace

@@ -58,6 +58,14 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "GeneralSound";
         case AudioSourceType::GeneralSoundMp3:
             return "GeneralSoundMp3";
+        case AudioSourceType::CdAudio0:
+            return "CdAudio0";
+        case AudioSourceType::CdAudio1:
+            return "CdAudio1";
+        case AudioSourceType::CdAudio2:
+            return "CdAudio2";
+        case AudioSourceType::CdAudio3:
+            return "CdAudio3";
         case AudioSourceType::Moonsound_FM:
             return "Moonsound_FM";
         case AudioSourceType::Moonsound_PCM:

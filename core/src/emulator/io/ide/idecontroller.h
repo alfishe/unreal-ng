@@ -20,6 +20,7 @@
 #include "emulator/io/ide/ideunitslot.h"
 #include "emulator/platform.h"
 
+class CdAudioPlayer;
 class EmulatorContext;
 
 class IdeController
@@ -46,6 +47,16 @@ public:
     AtaChannel& Channel(int index = 0) { return _channels[index == 1 && ChannelCount() == 2 ? 1 : 0]; }
     /// Unit 0-3 (channel * 2 + position); nullptr for a unit this board does not have
     IdeUnitSlot* Slot(int unit) { return unit >= 0 && unit < kMaxUnits ? _slots[unit].get() : nullptr; }
+
+    /// The audio player of unit 0-3's CD drive; nullptr for a unit without one
+    CdAudioPlayer* CdAudio(int unit);
+    /// Bit n set: unit n is a CD drive (the mixer keeps one row per CD drive)
+    uint8_t CdUnitMask() const;
+    /// The mixer row name of a unit's CD drive: "CD ide0.slave"
+    static std::string CdAudioName(int unit);
+    /// The clock a CD drive's audio runs on: base (3.5 MHz) T-states into the
+    /// current frame, the hardware turbo and the host speed multiplier undone
+    static uint32_t FrameElapsedBaseT(EmulatorContext* context);
 
     /// Blocks moved through either unit's data register so far (activity
     /// LEDs). Any thread

@@ -613,7 +613,7 @@ namespace chd::flac
         }
     }  // namespace
 
-    bool Decode(const uint8_t* src, size_t length, int16_t* samples, uint32_t frames, int channels)
+    bool Decode(const uint8_t* src, size_t length, int16_t* samples, uint32_t frames, int channels, size_t* consumed)
     {
         if (channels < 1 || channels > 8)
             return false;
@@ -732,6 +732,8 @@ namespace chd::flac
                     frame[c] = static_cast<int16_t>(decoded[c][i]);
             }
         }
+        if (consumed)
+            *consumed = r.BytePos();
         return true;
     }
 

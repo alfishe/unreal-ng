@@ -102,6 +102,13 @@ state audio fm          TurboSound FM overview    state audio fm 1    one YM2203
 state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
 state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
+state cdaudio           CD drives' audio: disc, tracks, status, head (LBA, MSF, track, index), volume, mixer row (alias: state cdda)
+cdaudio [status] [drive]                      the same as `state cdaudio`, or one drive (ide0.slave, a unit 0-3)
+cdaudio play [drive] track=N [to=M]           play track N through track M (default: the last); also lba=X frames=N, msf=MM:SS:FF end=MM:SS:FF
+cdaudio pause|resume|stop [drive]             as PAUSE / RESUME and STOP PLAY / SCAN (refused while TTD records)
+cdaudio volume [drive] left=0-255 right=0-255 route=stereo|swap|mono|left|right|mute sotc=on|off   page 0Eh
+cdaudio mixer [drive] volume=0-4 mute=on|off solo=on|off                                           the drive's mixer row
+cdaudio ... --json                            the raw reply (the WebAPI's JSON)
 state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
 network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity) (alias: net)
 key route [auto|matrix|ps2|both]  Where host and injected keys go: the ZX matrix, the PS/2 keyboard controller (ZX-Evo, ATM Turbo 2+), both

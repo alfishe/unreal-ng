@@ -6,6 +6,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/media/blockadvisory.h"
 #include "emulator/media/floppyformats.h"
@@ -203,7 +204,15 @@ FileClass MediaTargets::Classify(const std::string& path)
     if (head.size() > kIsoMarkOffset + 5 && std::memcmp(head.data() + kIsoMarkOffset, "CD001", 5) == 0)
         return set({FileKind::Optical}, "iso", "CD001 at #8001 (ISO 9660)");
 
+    // A CUE sheet, or a raw image of 2352-byte frames (a sync pattern at 0): a CD
+    if (ext == "cue")
+        return set({FileKind::Optical}, "cue", "extension .cue (CUE sheet)");
+    if (head.size() >= sizeof(cd::kSync) && std::memcmp(head.data(), cd::kSync, sizeof(cd::kSync)) == 0 && size % cd::kFrameBytes == 0)
+        return set({FileKind::Optical}, "bin", "CD sync pattern at 0 (raw 2352-byte frames)");
+
     const std::string hdd = HddImageFormats::Probe(path);
+    if (hdd == "chd" && CdImageFormats::IsCdChd(path))
+        return set({FileKind::Optical}, "chd", "MComprHD signature with CD track metadata (MAME CD-ROM CHD)");
     if (hdd == "chd")
     {
         // MAME keeps every hard disk and SD card as a CHD: either slot kind, a hard disk first

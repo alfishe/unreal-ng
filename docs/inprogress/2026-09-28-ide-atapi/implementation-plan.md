@@ -100,3 +100,11 @@ flowchart LR
 | TSConf (2026-09-29) | `ts-conf` ships `NEMO-DIVIDE` (D8). For the TSConf DMA devices #3 (IDE to RAM) and #B (RAM to IDE; bit 3 of the device code = RAM to device) `IdeAdapter` has `DmaReadWord()` / `DmaWriteWord(uint16_t)`: one whole 16-bit word from / to the data register (CS0 register 0), past the Z80 half-word latches: the Z80 read / write pairs stay (their triggers move only on Z80 port accesses, `zports.v:784-808`), and a DMA read loads the read latch with the word's high byte, as every IDE bus cycle loads `iderdreg` (`zports.v:849-854`) (`common/dma.v:98, 441-445`; in `common/ide.v` the DMA request overrides the Z80 address and chip selects); no board: a read gets #FFFF. The TSConf decoder and DMA engine call them in PLAN #41 phase 6 |
 
 Tests: `atadisk_test`, `atachannel_test`, `atapicdrom_test`, `ideadapter_test` (every scheme), `idecontroller_test` (slots, formats per unit, machines through their own decoders, port maps not shadowed), `hddimageformats_test`, `ttdatachannel_test`, `devicestate_test` (IDE report), `zxevo_ers_test` (ERS HDD boot, ERS CD boot on the real ROM), `profi_hdd_test` (SYS ROM loader, skipped without `profi_mainrom_standart.rom`), `scorpionsmuc_test` (ProfROM IDENTIFY through SMUC), `mediamanager_test` / `mediacontrol_test` (auto slot choice), the golden and TTD corpus tests.
+
+## After rollout 1: CD audio (2026-10-02)
+
+The drive grew from a data-only ISO reader into a full MMC CD-ROM drive with audio: discs are
+`CdImage`s (ISO, CUE/BIN, CD CHD) handed over by the media slot beside the block stack; the audio
+side is `CdAudioPlayer` (head on emulated time, page 0Eh, mixer output); the extra state is the
+CdDrive TTD blob (id 39), so the `AtaChannel` blob (id 17) is unchanged. Design and tests:
+[2026-10-02-cd-audio/README.md](../2026-10-02-cd-audio/README.md).

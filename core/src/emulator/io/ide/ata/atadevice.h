@@ -163,6 +163,8 @@ protected:
     virtual uint8_t ResetStatus() const { return ReadyStatus(); }
     /// A new medium came (the CD raises unit attention)
     virtual void MediumChanged() {}
+    /// HardReset ran (power-on, the reset line, DEVICE RESET): state outside AtaDeviceState
+    virtual void PowerOnReset() {}
     /// endregion </Command set hooks>
 
     /// region <Helpers for the command sets>

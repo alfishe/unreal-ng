@@ -263,6 +263,10 @@ protected:
     uint64_t _accumulatorClampCount = 0;  // Diagnostics: overflow-guard activations
     uint64_t _blipMismatchCount = 0;      // Diagnostics: blip vs accumulator divergence
 
+    // IDE units with a CD drive, as the mixer rows show them (bit n: unit n)
+    uint8_t _cdUnitMask = 0;
+    size_t _lastFrameSamples = 0;
+
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
     AudioActivityIndicators _activityIndicators;  // HUD audio nudges: the LEDs above, held for a second
@@ -385,6 +389,16 @@ public:
     // personality-agnostic: LLE (Z80+firmware) or LW (in-tree mod player) both
     // arrive as GeneralSoundCard (design: docs/inprogress/2026-09-19-general-sound)
     bool hasGeneralSound() const { return _gs != nullptr; }
+    /// region <CD audio (ATAPI CD drives on the IDE board)>
+    /// The rendered frame of IDE unit `unit`'s CD drive, nullptr when it plays nothing
+    const int16_t* cdAudioBuffer(int unit) const;
+    /// One mixer row per CD drive ("CD ide0.slave"), added / removed as the IDE
+    /// board's units change; emulation thread (frame end)
+    void syncCdAudioDevices();
+    /// Render every CD drive's frame (`samples` stereo pairs at the core rate; 0: nothing this frame)
+    void renderCdAudio(size_t samples);
+    /// endregion </CD audio>
+
     /// Mixer source name of the fitted GS-slot card ("GS" / "NeoGS")
     std::string generalSoundDeviceName() const;
     /// Add or remove the "NeoGS MP3" source to match the fitted card
@@ -514,6 +528,9 @@ public:
 
     // Feature cache update (called by FeatureManager::onFeatureChanged)
     void UpdateFeatureCache();
+
+    /// Stereo sample pairs the last finished frame mixed (0 after a frame without host audio)
+    size_t lastFrameSamples() const { return _lastFrameSamples; }
 
     /// The resolved core audio rate (Hz) - recording and analysis consumers
     /// must read this instead of assuming 44100

@@ -380,6 +380,9 @@ msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register bank
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
+r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
+r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
 sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios

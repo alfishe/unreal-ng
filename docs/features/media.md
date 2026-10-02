@@ -165,7 +165,7 @@ the machine's config, `[HDD] Scheme`:
 | `NONE` | no IDE | the other machines |
 
 Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `CD0=1` / `CD1=1`,
-or an `.iso` configured as the unit's image. An empty unit changes its drive with the insert
+or an `.iso` or `.cue` configured as the unit's image. An empty unit changes its drive with the insert
 option `device=cdrom` / `device=disk` (the Qt media panel asks when you drop an ISO on a disk unit);
 the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
 from the config file). ZX-Evo ships with a CD drive in the slave position
@@ -175,7 +175,7 @@ an empty drive changes what some firmware does at boot.
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
 | hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
-| CD-ROM drive | `optical` | `.iso` (ISO 9660, read-only) | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
+| CD-ROM drive | `optical` | `.iso` (ISO 9660), `.cue` (a CUE sheet with its BINARY / MOTOROLA / WAVE files: data and audio tracks, INDEX 00 pregaps, PREGAP / POSTGAP, several files), a lone raw `.bin` of 2352-byte frames, MAME's CD-ROM `.chd` (cdlz / cdzl / cdzs / cdfl, v5); read-only | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
 
 The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard
 one for the size (16 heads, 63 sectors). On the Profi board a disk's own ProfiHiDD header decides
@@ -189,6 +189,16 @@ drive empty, the ERS keeps retrying; insert a disc and it boots.
 
 `state ide` (WebAPI `/state/ide`, Lua / Python `ide_state()`, MCP aspect `ide`) shows the board,
 its latches and each unit's task file, command in progress and, on a CD drive, the sense data.
+
+**CD audio.** A disc with audio tracks plays through the drive's own audio commands (PLAY AUDIO,
+PAUSE / RESUME, STOP, READ SUB-CHANNEL, the page 0Eh volume and routing, READ CD for raw frames) at
+75 frames per second of emulated time, whatever the host speed or turbo. Each CD drive has a mixer
+row of its own (`CD ide0.slave`: volume, mute, solo, recording source, HUD "CD"). `state cdaudio` /
+`cdaudio` (WebAPI `/state/cdaudio` and `POST /cdaudio/{verb}`, Lua / Python `cdaudio_state()` /
+`cdaudio()`, MCP aspect `cdaudio`) shows the disc's tracks and the head, and plays, pauses or
+stops from outside the guest (not while TTD records). Recipe:
+[cd-audio.md](../../.recipe/media/cd-audio.md); design and tests:
+[2026-10-02-cd-audio](../inprogress/2026-10-02-cd-audio/README.md).
 Time travel records through disk activity: a write is a replay barrier, and the board's state is in
 every checkpoint.
 

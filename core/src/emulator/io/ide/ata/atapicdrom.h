@@ -2,18 +2,30 @@
 
 /// @file atapicdrom.h
 /// @brief An ATAPI CD-ROM drive on an IDE channel (IDE design §7.5): the
-/// drive is always on the bus; the disc (an ISO, 2048-byte blocks = four
-/// 512-byte sectors of the medium) comes and goes.
+/// drive is always on the bus; the disc comes and goes. A disc is a CdImage
+/// (ISO, CUE/BIN, CHD: data and audio tracks); a bare block device attached
+/// without one (tests, old callers) is read as one data track of 2048-byte
+/// blocks (four 512-byte sectors each).
 ///
 /// ATA side: the ATAPI signature (#14 / #EB in the cylinder registers) after a
 /// reset, DEVICE RESET (#08), IDENTIFY PACKET DEVICE (#A1), PACKET (#A0);
 /// IDENTIFY DEVICE (#EC) and the disk commands abort with the signature, which
 /// is how drivers tell a CD drive from a disk.
 ///
-/// Packet side (the pico-spec list): TEST UNIT READY, REQUEST SENSE, INQUIRY,
-/// MODE SENSE (6) / (10), START STOP UNIT, PREVENT ALLOW, READ CAPACITY,
-/// READ (10) / (12), SEEK (10), SYNCHRONIZE CACHE, READ TOC (formats 0 / 1),
-/// GET EVENT STATUS NOTIFICATION, SET CD SPEED. Data CDs only, read-only.
+/// Packet side (MMC / SFF-8020): TEST UNIT READY, REQUEST SENSE, INQUIRY,
+/// MODE SENSE (6) / (10) and MODE SELECT (6) / (10) (pages 01h, 0Dh, 0Eh CD audio
+/// control, 2Ah capabilities, 3Fh all), START STOP UNIT, PREVENT ALLOW, READ
+/// CAPACITY, READ (10) / (12), SEEK (10), SYNCHRONIZE CACHE, READ SUB-CHANNEL
+/// (formats 1-3), READ TOC (formats 0, 1, 2; the SFF-8020 format field),
+/// READ HEADER, PLAY AUDIO (10) / (12) / MSF / TRACK INDEX, PAUSE / RESUME,
+/// STOP PLAY / SCAN, READ CD and READ CD MSF (any sector type, sync / header /
+/// user / EDC-ECC / C2 fields, Q or raw P-W subchannel), GET EVENT STATUS
+/// NOTIFICATION, SET CD SPEED. Read-only. The audio itself: CdAudioPlayer.
+///
+/// Timing: every command completes when its packet arrives (the drive is
+/// never BSY between commands), as the data path always has; audio starts
+/// playing at the moment PLAY arrives and moves 75 frames per second of
+/// emulated time from there.
 ///
 /// Worked example (read block 16): the host writes the byte count limit 2048
 /// into the cylinder registers and #A0; the drive asks for the packet (DRQ,
@@ -22,7 +34,25 @@
 /// registers, interrupt reason 2 (data to the host), DRQ; the host reads 1024
 /// words; the drive completes (interrupt reason 3, DRDY).
 
+#include <memory>
+#include <type_traits>
+
 #include "emulator/io/ide/ata/atadevice.h"
+#include "emulator/io/ide/ata/cdaudioplayer.h"
+
+class CdImage;
+
+/// A READ CD sector with its C2 and subchannel fields can be longer than the
+/// 2048-byte data buffer (2352 + 296 + 96 = 2744 bytes): it waits here and goes
+/// to the buffer in pieces. TTD keeps it with the audio state (CdDrive blob)
+struct AtapiStage
+{
+    uint16_t pos = 0;   ///< bytes of the staged sector already in the data buffer
+    uint16_t len = 0;   ///< bytes of the staged sector; 0: none
+    uint8_t reserved[4] = {};
+    uint8_t bytes[2816] = {};
+};
+static_assert(std::has_unique_object_representations_v<AtapiStage>, "AtapiStage must have no padding: its bytes are the TTD blob");
 
 class AtapiCdrom : public AtaDevice
 {
@@ -34,19 +64,39 @@ public:
 
     /// Sense keys and codes the drive reports
     static constexpr uint8_t kSenseNotReady = 0x02;
+    static constexpr uint8_t kSenseMediumError = 0x03;
     static constexpr uint8_t kSenseIllegalRequest = 0x05;
     static constexpr uint8_t kSenseUnitAttention = 0x06;
+    static constexpr uint8_t kAscUnrecoveredRead = 0x11;
     static constexpr uint8_t kAscInvalidCommand = 0x20;
     static constexpr uint8_t kAscLbaOutOfRange = 0x21;
     static constexpr uint8_t kAscInvalidField = 0x24;
+    static constexpr uint8_t kAscInvalidParameter = 0x26;
     static constexpr uint8_t kAscMediumChanged = 0x28;
+    static constexpr uint8_t kAscCommandSequenceError = 0x2C;
     static constexpr uint8_t kAscMediumNotPresent = 0x3A;
+    static constexpr uint8_t kAscIllegalModeForTrack = 0x64;
 
     AtapiCdrom();
+    ~AtapiCdrom() override;
 
     bool IsPresent() const override { return true; }
     bool HasDisc() const { return _medium != nullptr; }
     uint32_t Blocks() const { return _medium ? static_cast<uint32_t>(_medium->SectorCount() / kSectorsPerBlock) : 0; }
+
+    /// The disc's tracks and frames for the next AttachMedium (the media manager
+    /// passes the medium's CdImage; nullptr: the block device is one data track)
+    void SetDisc(CdImage* disc) { _pendingDisc = disc; }
+    /// The disc in the drive (a built one for a bare block device); nullptr without a disc
+    CdImage* Disc() const { return _disc; }
+
+    /// The audio side: head, play state, page 0Eh, the mixer output
+    CdAudioPlayer& Audio() { return _audio; }
+    const CdAudioPlayer& Audio() const { return _audio; }
+
+    /// TTD (CdDrive blob): the READ CD sector waiting for the data buffer
+    const AtapiStage& Stage() const { return _stage; }
+    void SetStage(const AtapiStage& stage) { _stage = stage; }
 
     void BuildIdentifyPacket(uint8_t* out) const;
 
@@ -58,6 +108,7 @@ protected:
     uint8_t ReadyStatus() const override;
     uint8_t ResetStatus() const override { return 0; }
     void MediumChanged() override;
+    void PowerOnReset() override;
 
 private:
     /// Interrupt reason (the sector count register): C/D and I/O
@@ -72,6 +123,8 @@ private:
     void ExecutePacket();
     /// `length` bytes of the buffer go to the host (and, for READ, more blocks)
     void StartReply(uint32_t length);
+    /// The host is to send `length` parameter bytes (MODE SELECT)
+    void StartParameters(uint32_t length);
     void SendChunk();
     bool LoadBlock();
     void CompletePacket();
@@ -79,4 +132,33 @@ private:
     /// A command that needs a disc: false (and NOT READY / UNIT ATTENTION reported) when it cannot run
     bool DiscReady();
     uint16_t ChunkLimit() const;
+
+    /// region <Commands>
+    void ReadData(uint32_t lba, uint32_t blocks);
+    void ReadToc();
+    void ReadSubChannel();
+    void ReadHeader();
+    void ReadCd(uint32_t lba, uint32_t blocks);
+    void PlayAudio(uint32_t start, uint32_t length);
+    void PlayAudioMsf();
+    void PlayAudioTrackIndex();
+    void ModeSense(bool ten);
+    void ModeSelectDone();
+    /// Bytes of one READ CD sector for the flags in the packet; 0 with a CHECK CONDITION already raised
+    uint32_t ReadCdSectorBytes(uint32_t lba, bool& ok);
+    bool LoadCdSector();
+    /// Page `code` (current / changeable / default values) at `out`; its length, 0 for an unknown page
+    uint32_t BuildPage(uint8_t code, uint8_t control, uint8_t* out);
+    /// The formatted Q subchannel of a frame (12 bytes: 10 data + CRC)
+    void BuildQ(uint32_t lba, uint8_t* q);
+    /// endregion </Commands>
+
+    /// The next piece of the staged READ CD sector into the data buffer
+    void UnstagePiece();
+
+    CdAudioPlayer _audio;
+    AtapiStage _stage;
+    CdImage* _pendingDisc = nullptr;
+    CdImage* _disc = nullptr;
+    std::unique_ptr<CdImage> _ownDisc;  ///< built over a bare block device
 };

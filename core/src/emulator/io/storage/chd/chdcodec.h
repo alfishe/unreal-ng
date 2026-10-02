@@ -11,8 +11,10 @@
 /// | `flac` | the hunk as 16-bit stereo, `L` / `B` byte order prefix | own (chdflac) |
 /// | `zstd` | a Zstandard frame | zstd 1.5.7 (vendored) |
 ///
-/// The CD codecs (`cdlz`, `cdzl`, `cdfl`, `cdzs`) and A/V Huffman (`avhu`) are
-/// known by name only: a CHD that uses them is refused with that reason.
+/// The CD codecs (`cdlz`, `cdzl`, `cdzs`, `cdfl`) read CD-ROM CHDs (hunks of
+/// 2448-byte frames: 2352 bytes of sector data + 96 of subcode; CreateCdCodec).
+/// They decompress only: the emulator never writes a CD CHD. A/V Huffman
+/// (`avhu`) is known by name only: a CHD that uses it is refused.
 
 #include <array>
 #include <cstdint>
@@ -59,6 +61,18 @@ namespace chd
     /// A codec for hunks of `hunkBytes`, or nullptr for an unsupported tag
     std::unique_ptr<Codec> CreateCodec(uint32_t tag, uint32_t hunkBytes);
     bool IsSupportedCodec(uint32_t tag);
+
+    /// region <CD-ROM codecs>
+    constexpr uint32_t kCdFrameBytes = 2448;    ///< one frame in a CD CHD hunk
+    constexpr uint32_t kCdSectorBytes = 2352;   ///< its sector data
+    constexpr uint32_t kCdSubcodeBytes = 96;    ///< its subcode
+    bool IsCdCodec(uint32_t tag);
+    /// A decompressor for CD hunks of `hunkBytes` (a multiple of 2448), nullptr
+    /// for another tag. The hunk's frames are put back together as MAME stores
+    /// them: the sector data (audio big-endian), then the subcode; a frame whose
+    /// sync and ECC were stripped gets them rebuilt (ECMA-130)
+    std::unique_ptr<Codec> CreateCdCodec(uint32_t tag, uint32_t hunkBytes);
+    /// endregion </CD-ROM codecs>
 
     /// "zlib", "lzma", ... ("none" for 0, the hex value for an unknown tag)
     std::string CodecName(uint32_t tag);

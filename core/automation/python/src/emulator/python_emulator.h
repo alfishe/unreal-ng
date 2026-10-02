@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
+#include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
@@ -1944,6 +1945,27 @@ namespace PythonBindings
             .def("ide_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Ide(self.GetContext()));
             }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
+            // CD audio of the ATAPI CD drives (CdAudioControl, PLAN #83)
+            .def("cdaudio_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(CdAudioControl::State(self.GetContext()));
+            }, "Every CD drive: disc and tracks, audio status, head (LBA, MSF, track, index), play range, page 0Eh, mixer row")
+            .def("cdaudio", [](Emulator& self, const std::string& verb, const std::string& drive, const py::kwargs& options) -> py::object {
+                CdAudioRequest request;
+                request.verb = verb;
+                request.drive = drive;
+                for (const auto& item : options)
+                {
+                    const std::string name = py::str(item.first);
+                    const py::handle value = item.second;
+                    if (py::isinstance<py::bool_>(value))
+                        request.options[name] = value.cast<bool>() ? "true" : "false";
+                    else
+                        request.options[name] = py::str(value);
+                }
+                return StateNodeToPy(CdAudioControl(self.GetContext()).Execute(request).ToValue());
+            }, py::arg("verb") = "status", py::arg("drive") = "",
+               "A CD audio verb: status, play (track=N [to=M] | lba=X frames=N | msf='MM:SS:FF' end=...), pause, resume, stop, "
+               "volume (left=, right=, route=, sotc=), mixer (volume=, mute=, solo=); options as keywords")
             .def("tsconf_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
             }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")

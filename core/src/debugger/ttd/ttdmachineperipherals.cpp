@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "ide/ttdcddrive.h"
 #include "emulator/io/network/atm2ioesp.h"
 #include "network/ttdmachineserialpeer.h"
 #include "network/ttdserialport.h"
@@ -86,6 +87,13 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto ide = std::make_unique<TTDAtaChannel>(context);
         registry.Register(PeripheralId::AtaChannel, ide.get());
         ownedSerializers.push_back(std::move(ide));
+        // Its CD drives' audio and READ CD staging: only when a unit is a CD drive
+        if (context->pIdeController->CdUnitMask())
+        {
+            auto cd = std::make_unique<TTDCdDrive>(context);
+            registry.Register(PeripheralId::CdDrive, cd.get());
+            ownedSerializers.push_back(std::move(cd));
+        }
     }
 
     // Network adapters (network TDD §6.3, §7): while the virtual network

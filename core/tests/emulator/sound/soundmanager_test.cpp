@@ -5,13 +5,20 @@
 #include <functional>
 #include <vector>
 
+#include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/cdtestdisc.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/scratchfolder.h"
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/storage/cd/cdimage.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -386,3 +393,164 @@ TEST(SoundManagerOutputDelay_Test, ShrinkingTheDelayDropsTheOldestFrames)
 }
 
 /// endregion </Output delay line>
+
+/// region <ATAPI CD drives (PLAN #83): one mixer row per CD drive, the line output
+/// mixed sample-exact, zero work while nothing plays, the head on emulated time
+/// whatever the host speed or turbo, volume / mute on the row>
+
+namespace
+{
+    /// A ZX-Evo (ATM3: the CD drive on the IDE slave) with the music disc in the drive
+    class SoundManagerCd_Test : public ::testing::Test
+    {
+    protected:
+        Emulator* _emulator = nullptr;
+        EmulatorContext* _context = nullptr;
+        std::unique_ptr<ScratchFolder> _folder;
+
+        void SetUp() override
+        {
+            _emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+            ASSERT_NE(_emulator, nullptr);
+            _context = _emulator->GetContext();
+            _context->pSoundManager->setCoreRatePin(44100);
+            _folder = std::make_unique<ScratchFolder>("sound-cd");
+            MediaSource source;
+            source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 2, 16);
+            InsertOptions options;
+            options.immediate = true;
+            const MediaResult result = _context->pMediaManager->Insert("ide0.slave", source, options);
+            ASSERT_TRUE(result.Ok()) << result.message;
+            _emulator->RunNFrames(1);  // the rate pin and the mixer rows settle at a frame boundary
+        }
+        void TearDown() override
+        {
+            _folder.reset();
+            if (_emulator)
+                EmulatorTestHelper::CleanupEmulator(_emulator);
+            MessageCenter::DisposeDefaultMessageCenter();
+        }
+
+        AtapiCdrom& Cd()
+        {
+            AtaDevice* unit = _context->pIdeController->Channel().Unit(1);
+            return *static_cast<AtapiCdrom*>(unit);
+        }
+        SoundManager& Sound() { return *_context->pSoundManager; }
+        const AudioDeviceInfo* Row() { return Sound().device(AudioSourceType::CdAudio1); }
+        /// Track 2 of the music disc: data LBA 0-15, pregap 16-165, INDEX 01 at 166
+        static constexpr uint32_t kTrack2 = 166;
+    };
+}  // namespace
+
+TEST_F(SoundManagerCd_Test, OneRowPerCdDrive)
+{
+    const AudioDeviceInfo* row = Row();
+    ASSERT_NE(row, nullptr);
+    EXPECT_EQ(row->name, "CD ide0.slave");
+    EXPECT_EQ(Sound().device(AudioSourceType::CdAudio0), nullptr) << "the master is a hard disk";
+    EXPECT_EQ(IdeController::CdAudioName(3), "CD ide1.slave");
+
+    // The unit becomes a hard disk: its row goes; back to a CD drive: it comes back
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.slave", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(_context->pIdeController->SetUnitKind(1, false));
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Row(), nullptr);
+    ASSERT_TRUE(_context->pIdeController->SetUnitKind(1, true));
+    _emulator->RunNFrames(1);
+    EXPECT_NE(Row(), nullptr);
+}
+
+TEST_F(SoundManagerCd_Test, MixedSampleExactAndNothingWhileIdle)
+{
+    _emulator->RunNFrames(2);
+    EXPECT_EQ(Sound().deviceBuffer(AudioSourceType::CdAudio1), nullptr) << "nothing plays: no buffer, no mixing";
+
+    // Solo the CD row: the master mix is the drive's output, untouched
+    Sound().setDeviceSolo(AudioSourceType::CdAudio1, true);
+    CdImage* disc = Cd().Disc();
+    ASSERT_NE(disc, nullptr);
+    _emulator->RunNCPUCycles(1);  // the PLAY arrives inside a frame, as from a guest
+    Cd().Audio().Play(kTrack2, kTrack2 + 150);
+    std::vector<int16_t> mixed;
+    for (int frame = 0; frame < 20; frame++)
+    {
+        _emulator->RunNFrames(1);
+        const size_t samples = Sound().lastFrameSamples();
+        ASSERT_GT(samples, 800u);
+        const int16_t* out = Sound().deviceBuffer(AudioSourceType::MasterMix);
+        mixed.insert(mixed.end(), out, out + samples * 2);
+        EXPECT_TRUE(Row()->activeRecently);
+    }
+    // The stream is the track from INDEX 01 on, after a run-in of silence before the PLAY (it came a
+    // few T-states into a frame): find where the track begins, then every sample must be the disc's
+    int16_t frame[cdtest::kSamples * 2];
+    auto discSample = [&](uint64_t k, int channel) {
+        const uint64_t index = static_cast<uint64_t>(kTrack2) * cdtest::kSamples + k;
+        disc->ReadAudio(static_cast<uint32_t>(index / cdtest::kSamples), frame);
+        return frame[(index % cdtest::kSamples) * 2 + channel];
+    };
+    size_t start = 0;
+    for (; start < 8; start++)
+    {
+        bool match = true;
+        for (uint64_t k = 0; k < 64 && match; k++)
+            match = mixed[2 * (start + k)] == discSample(k, 0);
+        if (match)
+            break;
+    }
+    ASSERT_LT(start, 8u) << "the track starts within the first samples";
+    for (size_t i = 0; i < start; i++)
+        EXPECT_EQ(mixed[2 * i], 0) << "silence before the PLAY";
+    for (size_t i = start; i < mixed.size() / 2; i++)
+    {
+        const uint64_t k = i - start;
+        if (k % cdtest::kSamples == 0 || i == start)
+            ASSERT_EQ(disc->ReadAudio(static_cast<uint32_t>(kTrack2 + k / cdtest::kSamples), frame), CdImage::ReadResult::Ok);
+        const size_t at = (k % cdtest::kSamples) * 2;
+        ASSERT_EQ(mixed[2 * i], frame[at]) << "sample " << i;
+        ASSERT_EQ(mixed[2 * i + 1], frame[at + 1]) << "sample " << i;
+    }
+
+    // Mute and volume act on the row
+    Sound().setDeviceSolo(AudioSourceType::CdAudio1, false);
+    Sound().setDeviceVolume(AudioSourceType::CdAudio1, 0.0f);
+    _emulator->RunNFrames(1);
+    EXPECT_NE(Sound().deviceBuffer(AudioSourceType::CdAudio1), nullptr) << "it still plays";
+    EXPECT_GT(Row()->peak, 0.1f) << "the meter sees the drive";
+
+    Cd().Audio().Stop();
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Sound().deviceBuffer(AudioSourceType::CdAudio1), nullptr);
+    EXPECT_EQ(Row()->peak, 0.0f);
+}
+
+TEST_F(SoundManagerCd_Test, HeadRunsOnEmulatedTimeAtAnySpeed)
+{
+    // The head moves frame x 44100 / 3.5 MHz samples per frame: at the base clock,
+    // at a 4x host multiplier (the CPU runs 4x the T-states in each frame) and in turbo
+    const uint32_t frame = _context->config.frame;
+    auto run = [&](int frames) {
+        Cd().Audio().Play(kTrack2, kTrack2 + 150);
+        const uint64_t start = Cd().Audio().HeadSample();
+        _emulator->RunNFrames(frames);
+        return Cd().Audio().HeadSample() - start;
+    };
+    _emulator->RunNFrames(1);  // a frame boundary: PLAY at elapsed 0
+    const uint64_t base = run(10);
+    EXPECT_EQ(base, static_cast<uint64_t>(10) * frame * 44100 / 3500000);
+
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(4));
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(run(10), base) << "4x host speed: the same emulated time per frame";
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(1));
+    _emulator->RunNFrames(1);
+
+    _emulator->EnableTurboMode(false);
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(run(10), base) << "turbo without audio: the head still moves";
+    EXPECT_EQ(Sound().deviceBuffer(AudioSourceType::CdAudio1), nullptr) << "nothing rendered in turbo";
+    _emulator->DisableTurboMode();
+}
+
+/// endregion </ATAPI CD drives>

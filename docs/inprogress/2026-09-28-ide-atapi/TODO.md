@@ -22,5 +22,9 @@ Follow-ups (not in rollout 1):
 - [x] A unit's drive from the media verbs and the Qt panel: `device=cdrom|disk` on insert / swap (`IdeController::SetUnitKind`)
 - [x] TSConf scheme: `data/configs/ts-conf/unreal.ini` ships `[HDD] Scheme=NEMO-DIVIDE` (the TSConf FPGA has the same NemoIDE as BaseConf; no CD drive); `IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_TSL)` is tested
 - [x] TSConf DMA devices #3 (IDE to RAM) / #B (RAM to IDE): `IdeAdapter::DmaReadWord()` / `DmaWriteWord(uint16_t)` move one whole word from / to the data register past the Z80 half-word latches: the Z80 read / write pairs stay (their triggers move only on Z80 port accesses, `zports.v:784-808`), and a DMA read loads the read latch with the word's high byte, as every IDE bus cycle loads `iderdreg` (`zports.v:849-854`); no board reads #FFFF (`IdeAdapter_Test.DmaMovesWholeWordsPastTheLatches`, `IdeAdapter_Test.DmaWithoutABoardReadsAFloatingBus`)
+- [x] CD audio (PLAN #83, 2026-10-02, branch `cdda`): CUE/BIN and CD CHD discs with audio tracks, the MMC
+  audio commands, READ CD, the page 0Eh volume, playback on emulated time, a mixer row per drive, the
+  CdDrive TTD blob (id 39), every automation surface; tested on every board and with NedoOS `cdplay.com`
+  on ZX-Evo and ATM Turbo 2+: [2026-10-02-cd-audio](../2026-10-02-cd-audio/README.md)
 - [ ] DivIDE paging and automap (the adapter decodes its IDE ports only)
 - [ ] TSConf IDE (PLAN #41 phase 6, [technical-design §3.11](../2026-09-27-tsconf/technical-design.md#311-storage)): `TryIdePortIn/Out` in the TSConf decoder, DMA #3 / #B calling the `DmaReadWord` / `DmaWriteWord` above, a "reached the drive" flag for its optional CPU stall (`[HDD] IdeStall`)

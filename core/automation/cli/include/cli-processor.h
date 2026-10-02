@@ -10,6 +10,8 @@
 
 #include "platform-sockets.h"
 
+struct StateNode;
+
 /**
  * @brief Session context for a client connection
  */
@@ -319,6 +321,10 @@ private:
 
     // Media command handlers (every slot through MediaControl)
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
+    void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowCdAudioHelp(const ClientSession& session);
+    static std::string CdAudioStateText(const StateNode& state);
     void ShowMediaHelp(const ClientSession& session);
 
     // Disk control command handlers

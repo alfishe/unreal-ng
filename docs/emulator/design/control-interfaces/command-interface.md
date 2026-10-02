@@ -733,6 +733,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
+| CD audio of the ATAPI CD drives (disc and tracks, status 11h-15h, head as LBA / MSF / track / index, play range, page 0Eh volume, mixer row) | `state cdaudio` / `cdaudio` | `GET /state/cdaudio` | `cdaudio_state()` | `cdaudio_state()` | `cdaudio` |
+| CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
 | Sprinter Sp2000 machine (PLD, windows, cells, clock, video, Z84C15, floppy latch, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` |
@@ -750,7 +752,11 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 Every report carries `available` (false with a `description` when the
 device is not on this machine — e.g. `audio/fm` on a plain TurboSound
-configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card).
+configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card;
+`cdaudio` without a CD drive reports `available: false` with a `reason` and answers 200).
+The CD audio control verbs that act on the drive (play, pause, resume, stop, volume) are refused while
+TTD records (`error: recording`, 409): a replay would not repeat them - the guest's own CD player
+commands are recorded. `mixer` (the host's mixer row) is always allowed.
 WebAPI answers 404 in that case; Lua/Python return the same object (`gs_state()`
 used to return nil - it now returns this object too); the MCP aspect reports it
 in the summary instead of failing the call. Field lists for GS and Covox: the

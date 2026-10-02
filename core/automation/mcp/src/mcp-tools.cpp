@@ -1059,7 +1059,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text"})
     {
         allowed.append(aspect);
@@ -1083,6 +1083,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "(F-number, block, Hz, key-on, feedback, route, timers, register banks), 'audio_opl4_pcm' = its 24 wavetable slots "
         "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, "
         "'ide' = IDE board (scheme, latches, both units' task file, command in progress, CD sense; unavailable without a board), "
+        "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
+        "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
+        "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
@@ -1165,12 +1168,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text"));
                     return;
                 }
             }
@@ -1431,6 +1434,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Ide via the WebAPI; 404 = no IDE board
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/ide"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "cdaudio")
+                        {
+                            // Core CdAudioControl::State via the WebAPI (available false without a CD drive)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/cdaudio"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1866,6 +1880,29 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << ", page " << value["video"]["v_page"].asInt() << ", " << value["cpu_clock"].asString()
                                         << ", DMA " << (value["dma"]["busy"].asBool() ? value["dma"]["task"].asString() : std::string("idle"))
                                         << ", sprites " << value["video"]["tsu"]["active_sprites"].asInt();
+                            }
+                            else if (aspect == "cdaudio")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[cdaudio] " << (value.isMember("reason") ? value["reason"] : value["description"]).asString();
+                                else
+                                {
+                                    for (const Json::Value& drive : value["drives"])
+                                    {
+                                        const Json::Value& audio = drive["audio"];
+                                        out << "\n[cdaudio] " << drive["slot"].asString() << ": ";
+                                        if (drive["disc"].isObject())
+                                            out << drive["disc"]["format"].asString() << " tracks " << drive["disc"]["first_track"].asInt() << "-"
+                                                << drive["disc"]["last_track"].asInt() << ", ";
+                                        else
+                                            out << "no disc, ";
+                                        out << audio["status"].asString() << " at " << audio["msf"].asString();
+                                        if (audio.isMember("track"))
+                                            out << " (track " << audio["track"].asInt() << " index " << audio["index"].asInt() << ", "
+                                                << audio["relative_msf"].asString() << ")";
+                                        out << ", volume L" << drive["drive_volume"]["left"].asInt() << " R" << drive["drive_volume"]["right"].asInt();
+                                    }
+                                }
                             }
                             else if (aspect == "ide")
                             {

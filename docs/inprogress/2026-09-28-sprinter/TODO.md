@@ -125,6 +125,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     counter-mode inputs and ZC outputs (gap I7, C11) - S.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
+    **CD audio status (PLAN #83, 2026-10-02, branch `cdda`):** done in the shared drive; any Sprinter IDE unit is
+    a CD drive with `CDn=1` or `device=cdrom` and plays audio on its own mixer row (`IdeControllerCd_Test`, the
+    secondary slave). Left for S7: whether the shipped config puts the CD on `ide0.slave` (the BIOS detection
+    screens change), and the real-software check with `CD_PLAY.TRD` (Peters Plus 2001, TR-DOS in Spectrum mode)
+    and `CDPLAYER.FLX` ([2026-10-02-cd-audio](../2026-10-02-cd-audio/TODO.md)).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02; priority order,

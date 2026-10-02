@@ -12,6 +12,8 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/ide/ata/cdaudioplayer.h"
+#include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "stdafx.h"
@@ -412,6 +414,11 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _gs ? _gs->getBuffer() : nullptr;
         case AudioSourceType::GeneralSoundMp3:
             return _gs ? _gs->getAuxBuffer() : nullptr;
+        case AudioSourceType::CdAudio0:
+        case AudioSourceType::CdAudio1:
+        case AudioSourceType::CdAudio2:
+        case AudioSourceType::CdAudio3:
+            return cdAudioBuffer(CdAudioUnitOf(type));
 #ifdef UNREALNG_HAVE_OPL4
         case AudioSourceType::Moonsound_FM:
             return _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -421,6 +428,32 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
         default:
             return nullptr;
     }
+}
+
+const int16_t* SoundManager::cdAudioBuffer(int unit) const
+{
+    IdeController* ide = _context ? _context->pIdeController : nullptr;
+    CdAudioPlayer* player = ide ? ide->CdAudio(unit) : nullptr;
+    return player ? player->Buffer() : nullptr;
+}
+
+void SoundManager::syncCdAudioDevices()
+{
+    IdeController* ide = _context ? _context->pIdeController : nullptr;
+    const uint8_t mask = ide ? ide->CdUnitMask() : 0;
+    if (mask == _cdUnitMask)
+        return;
+    for (int unit = 0; unit < IdeController::kMaxUnits; unit++)
+    {
+        const AudioSourceType type = CdAudioSourceFor(unit);
+        const bool wanted = (mask >> unit) & 1;
+        auto it = std::find_if(_devices.begin(), _devices.end(), [type](const AudioDeviceInfo& d) { return d.type == type; });
+        if (wanted && it == _devices.end())
+            _devices.push_back({type, IdeController::CdAudioName(unit), false, false, 1.0f, 0.0f, false});
+        else if (!wanted && it != _devices.end())
+            _devices.erase(it);
+    }
+    _cdUnitMask = mask;
 }
 
 void SoundManager::setDeviceMute(AudioSourceType type, bool mute)
@@ -749,8 +782,45 @@ void SoundManager::handleStep()
         _turboSound->handleStep();
 }
 
+void SoundManager::renderCdAudio(size_t samples)
+{
+    IdeController* ide = _context->pIdeController;
+    if (!ide || !_cdUnitMask)
+        return;
+    for (int unit = 0; unit < IdeController::kMaxUnits; unit++)
+    {
+        CdAudioPlayer* player = (_cdUnitMask >> unit) & 1 ? ide->CdAudio(unit) : nullptr;
+        if (!player)
+            continue;
+        if (samples)
+            player->Render(samples, _coreRate);
+        else
+            player->RenderNothing();
+    }
+}
+
 void SoundManager::handleFrameEnd()
 {
+    // CD drives: the optical head moves through the frame in every mode (machine
+    // state: READ SUB-CHANNEL, end of play); their mixer rows follow the IDE units
+    IdeController* ide = _context->pIdeController;
+    if (ide)
+    {
+        syncCdAudioDevices();
+        if (_cdUnitMask)
+        {
+            for (int unit = 0; unit < IdeController::kMaxUnits; unit++)
+            {
+                if (CdAudioPlayer* player = (_cdUnitMask >> unit) & 1 ? ide->CdAudio(unit) : nullptr)
+                    player->FrameEnd(static_cast<uint32_t>(_context->config.frame));
+            }
+        }
+    }
+    else if (_cdUnitMask)
+    {
+        syncCdAudioDevices();
+    }
+
     // §6.1 frame-end drain: the device's output stage runs here (empty for
     // the legacy device; TSFM drains its word queues). Axis trap: z80->t
     // has already been rebased by AdjustFrameCounters when this runs, so a
@@ -777,6 +847,8 @@ void SoundManager::handleFrameEnd()
             _gs->handleFrameEnd(0);
         if (_modelAudio)
             _modelAudio->AudioFrameEnd(0);
+        renderCdAudio(0);
+        _lastFrameSamples = 0;
 #ifdef UNREALNG_HAVE_OPL4
         if (_moonsound)
             _moonsound->handleFrameEnd(0);
@@ -837,6 +909,7 @@ void SoundManager::handleFrameEnd()
             }
         }
     }
+    _lastFrameSamples = samplesThisFrame;
     /// endregion </Determine actual samples for this frame>
 
     /// region <Process AY through its character chain>
@@ -969,6 +1042,9 @@ void SoundManager::handleFrameEnd()
             memset(_modelAudio->AudioBuffer(), 0x00, AudioFrameDescriptor::memoryBufferSizeInBytes);
     }
 
+    // CD drives: their line output for this frame (nothing while they do not play)
+    renderCdAudio(soundOff ? 0 : samplesThisFrame);
+
 #ifdef UNREALNG_HAVE_OPL4
     // Finalize MoonSound frame (advance the core to the frame end; render)
     if (_moonsound)
@@ -1047,6 +1123,18 @@ void SoundManager::handleFrameEnd()
             case AudioSourceType::GeneralSoundMp3:
                 srcBuffer = _gs ? _gs->getAuxBuffer() : nullptr;
                 break;
+            case AudioSourceType::CdAudio0:
+            case AudioSourceType::CdAudio1:
+            case AudioSourceType::CdAudio2:
+            case AudioSourceType::CdAudio3:
+                srcBuffer = cdAudioBuffer(CdAudioUnitOf(d.type));
+                if (!srcBuffer)
+                {
+                    // Not playing: no buffer, no work - and the meter falls to zero
+                    d.peak = 0.0f;
+                    d.activeRecently = false;
+                }
+                break;
 #ifdef UNREALNG_HAVE_OPL4
             case AudioSourceType::Moonsound_FM:
                 srcBuffer = _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -1092,6 +1180,13 @@ void SoundManager::handleFrameEnd()
             // Same reason as GS: a beeper (or tape level) left high renders
             // as a constant non-zero output - silence, not activity
             d.activeRecently = _beeper->hadSoundLastFrame();
+        }
+        else if (CdAudioUnitOf(d.type) >= 0)
+        {
+            // Silence on the disc (a pregap, a quiet passage) is not activity
+            IdeController* cdBoard = _context->pIdeController;
+            CdAudioPlayer* player = cdBoard ? cdBoard->CdAudio(CdAudioUnitOf(d.type)) : nullptr;
+            d.activeRecently = player && player->HadSoundLastFrame();
         }
         else if (d.type == AudioSourceType::COVOX)
         {

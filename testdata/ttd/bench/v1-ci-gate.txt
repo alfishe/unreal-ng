@@ -14,6 +14,7 @@
 # ATM3/idle blob and file rows updated 2026-10-01 (esp-modules): the SerialPort blob (id 24) - the ZX-Evo AVR's UART is always there (~48 compressed bytes per checkpoint).
 # All rows 2026-10-01 (ttd-gate-stable): bm2_work_* added - counted capture work, the gate's load-independent check of capture cost; every other row unchanged.
 # ATM3/idle blob, RAM and file rows updated 2026-10-02 (mouse-manager M3): the EvoMouse blob (id 38, 20 bytes per capture with its header); the idle ROM now reads the AVR mouse registers (found: X = 0, Y = 1), so the RAM payload moved slightly.
+# ATM3/idle blob and file rows updated 2026-10-02 (cdda, PLAN #83): the CdDrive blob (id 39) - the ZX-Evo's IDE slave is a CD drive (CD1=1): its audio state and READ CD staging, ~42 compressed bytes per capture.
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -39,12 +40,12 @@ ATM3/idle bm2_work_compress_calls_opf 8.216667 0
 ATM3/idle bm2_work_compress_input_bpf 33655.466667 0
 ATM3/idle bm2_work_decoded_opf 0.000000 0
 ATM3/idle bm2_work_delta_base_bpf 4194304.000000 0
-ATM3/idle bm2_work_device_blobs_bpf 2259.200000 0
+ATM3/idle bm2_work_device_blobs_bpf 2301.200000 0
 ATM3/idle bm2_work_pages_visited_opf 256.000000 0
 ATM3/idle bm2_work_scanned_bpf 66628.266667 0
 ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
 ATM3/idle bm3_coverage_bpf 55482.666667 25
-ATM3/idle bm3_device_blobs_bpf 2295.550000 0
+ATM3/idle bm3_device_blobs_bpf 2338.250000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
 ATM3/idle bm3_page_refs_bpf 4164.266667 0
 ATM3/idle bm3_ram_payload_bpf 898.833333 0
@@ -52,8 +53,8 @@ ATM3/idle bm3_total_bpf 68392.666667 25
 ATM3/idle bm3_write_journal_bpf 5401.000000 0
 ATM3/idle bm4_resident_bpf 96044.050000 25
 ATM3/idle bm4_resident_bytes 5762643.000000 25
-ATM3/idle bm7_file_bpf 8507.350000 0
-ATM3/idle bm7_file_bytes 510441.000000 0
+ATM3/idle bm7_file_bpf 8555.133333 0
+ATM3/idle bm7_file_bytes 513308.000000 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm2_work_compress_calls_opf 8.100000 0

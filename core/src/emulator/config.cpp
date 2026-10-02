@@ -500,13 +500,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 				else
 					MLOGWARNING("Config: [HDD] CHS%d=%s: expected C/H/S (heads up to 16)", unit, chs);
 			}
-			// A CD drive: CDn=1, or the unit's configured image is an ISO
+			// A CD drive: CDn=1, or the unit's configured image is a CD image (an ISO, a CUE sheet)
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
 			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
-			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
-			ide.cd = ((cd && std::atoi(cd) != 0) || iso) ? 1 : 0;
+			const std::string extension = image ? StringHelper::ToLower(FileHelper::GetFileExtension(image)) : std::string();
+			const bool cdImage = extension == "iso" || extension == "cue";
+			ide.cd = ((cd && std::atoi(cd) != 0) || cdImage) ? 1 : 0;
 		}
 	}
 
