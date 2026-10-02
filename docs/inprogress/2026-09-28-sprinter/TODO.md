@@ -68,6 +68,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   `logo.png` exactly when drawn with the frame-end state, within one fade step as the beam drew it),
   ACC-2 adapted (SETUP 1.58 has no date page: "Memory Test" saved to the CMOS file)
 
+- [x] The Sprinter runs on its own CPU library (2026-10-01, branch `sprinter-cpu`; owner decision,
+  [research-cpu-z84c15.md](research-cpu-z84c15.md) §8.0): `core/src/3rdparty/z84c15/` - the CMOS
+  Z84C00 core forked from unreal-z80 0.5.0 with the Z84C15's wait generator, chip selects,
+  watchdog, CTC / SIO / PIO and daisy chain; the engine seam in `Z80` keeps every other machine on
+  the native interpreter. Timing changes: the loader 142 T per bitstream byte (MAME 113), the BIOS
+  start 22 T before `InitCpuPorts` clears WCR
+  ([2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md))
+
 ## Remaining
 
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
