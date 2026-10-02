@@ -310,6 +310,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	{
+		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
+		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
+		if (preset == "SETUP" || preset == "setup")
+			config.atm.ts_bios_sd_boot = 0;
+		else
+		{
+			config.atm.ts_bios_sd_boot = 1;
+			if (preset != "SDBOOT" && preset != "sdboot")
+				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path

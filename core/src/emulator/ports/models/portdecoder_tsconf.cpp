@@ -142,6 +142,23 @@ void PortDecoder_TSConf::PowerOn()
         _vdac2->PowerOn();
 }
 
+void PortDecoder_TSConf::ApplyTsBiosSdBootNvram()
+{
+    // TS-BIOS (28.04.2018) NVRAM cells #B0-#E7 as its Setup Utility saves them
+    // after "Reset to" -> BD boot.$c on blank settings: every option at its
+    // default, cell #B4 (Reset to) = 3, the CRC in #E6-#E7 valid. Captured from
+    // the BIOS itself (tsconf_boot_test BOOT-3 steps, boot-and-storage-notes.md §1)
+    static constexpr uint8_t kFirstCell = 0xB0;
+    static constexpr uint8_t kCells[] = {
+        0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x42, 0x08, 0x84, 0x10, 0xC6, 0x18, 0x08, 0x21,
+        0x4A, 0x29, 0x8C, 0x31, 0xCE, 0x39, 0x21, 0x04, 0x63, 0x0C, 0xA5, 0x14, 0xE7, 0x1C, 0x29, 0x25,
+        0x6B, 0x2D, 0xAD, 0x35, 0xEF, 0x3D, 0xA0, 0x75,
+    };
+    for (size_t i = 0; i < sizeof(kCells); ++i)
+        _evoAvr.WriteRegister(static_cast<uint8_t>(kFirstCell + i), kCells[i]);
+}
+
 void PortDecoder_TSConf::RefreshVdac2Card()
 {
 #ifdef ENABLE_VDAC2
@@ -237,8 +254,12 @@ void PortDecoder_TSConf::reset()
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
+        const bool loaded = nvramPath[0] != '\0' && _evoAvr.LoadNvram(nvramPath);
+        if (nvramPath[0] != '\0' && !loaded)
             MLOGINFO("PortDecoder_TSConf: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+        // No saved settings: the TS-BIOS settings that boot from the SD card
+        if (!loaded && _context->config.atm.ts_bios_sd_boot)
+            ApplyTsBiosSdBootNvram();
     }
 
     if (_screen)
@@ -1183,6 +1204,9 @@ PortDecoder_TSConf::SdSlot::SdSlot(PortDecoder_TSConf& owner) : _owner(owner)
     // a FAT16 image is refused (BUGS.md #1)
     _descriptor.defaultFs = FatType::Fat32;
     _descriptor.fsCompatibility = {FatType::Fat32};
+    // For the same reason a folder becomes a volume from sector 0, with no MBR:
+    // TS-BIOS then boots Wild Commander (boot.$C) from a dropped folder
+    _descriptor.folderMbr = false;
     _descriptor.hasCardDetect = true;          // AVR register C bit 3
     _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
     _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};

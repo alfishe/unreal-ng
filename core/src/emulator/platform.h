@@ -782,6 +782,11 @@ struct CONFIG
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
+		// TS-Conf: the TS-BIOS settings a machine starts with when no NVRAM file
+		// gives them ([EVO] TsBiosNvram=): 1 = SDBOOT, "Reset to: BD boot.$c" (the
+		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
+		// BIOS opens its Setup Utility)
+		uint8_t ts_bios_sd_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept

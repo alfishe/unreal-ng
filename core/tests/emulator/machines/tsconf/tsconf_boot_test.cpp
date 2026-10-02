@@ -43,6 +43,7 @@ protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
     PortDecoder_TSConf* _decoder = nullptr;
+    uint8_t _sdBootNvram = 0;
 
     void SetUp() override
     {
@@ -51,7 +52,10 @@ protected:
         for (const auto& id : _manager->GetEmulatorIds())
             _manager->RemoveEmulator(id);
 
-        _emulator = _manager->CreateEmulatorWithModelAndRAM("tsconf-boot", "TSL", 4096, LoggerLevel::LogError);
+        // Blank TS-BIOS settings (the Setup Utility first), as a real board out of the box;
+        // the machine's default ([EVO] TsBiosNvram=SDBOOT) has its own test, BOOT-5
+        _emulator = _manager->CreateEmulatorWithModelAndRAM("tsconf-boot", "TSL", 4096, LoggerLevel::LogError, nullptr,
+                                                            [this](CONFIG& config) { config.atm.ts_bios_sd_boot = _sdBootNvram; });
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
         _decoder = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
@@ -308,4 +312,41 @@ TEST_F(TsConfBoot_Test, BOOT4_BootsWildCommanderFromIde)
     EXPECT_TRUE(panelsOnIde()) << "WC on drive 1: (IDE Nemo master) listing the disk's root; pc=" << std::hex << Cpu().pc;
     std::error_code ec;
     std::filesystem::remove(disk, ec);
+}
+
+/// BOOT-5: with no NVRAM file the machine starts with the TS-BIOS settings that
+/// boot from the SD card ([EVO] TsBiosNvram=SDBOOT, the default): Wild Commander
+/// comes up from the card without a visit to the Setup Utility
+class TsConfBootSd_Test : public TsConfBoot_Test
+{
+protected:
+    void SetUp() override
+    {
+        _sdBootNvram = 1;
+        TsConfBoot_Test::SetUp();
+    }
+};
+
+TEST_F(TsConfBootSd_Test, BOOT5_DefaultSettingsBootWildCommanderFromSd)
+{
+    const std::string image = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "tsconf" / "wildcommander" /
+                               "sd-images" / "wc-tslabs-v1.11rc7.img")
+                                  .string();
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "Wild Commander SD image not present: " << image;
+    ASSERT_TRUE(_decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session));
+    _emulator->Reset();
+
+    const TsConfState& ts = _decoder->GetState();
+    auto wildCommander = [&] {
+        if ((ts.regs[TsConfReg::VConfig] & 0x03) != 0x03)
+            return false;
+        for (uint8_t row = 0; row < 4; row++)
+            if (TextRow(ts.regs[TsConfReg::VPage], row).find("Wild Commander") != std::string::npos)
+                return true;
+        return false;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), wildCommander, 500);
+    ASSERT_TRUE(wildCommander()) << "pc=" << std::hex << Cpu().pc << " vconf=" << int(ts.regs[TsConfReg::VConfig]);
+    EXPECT_FALSE(SetupMenuShown());
 }

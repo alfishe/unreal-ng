@@ -66,6 +66,7 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
 
     FatVolumeOptions options;
     options.fs = request.fs;
+    options.mbr = request.mbr;
     options.codePage = request.codePage.value_or(manifest.codePage.value_or(CodePage::Cp866));
     if (manifest.label)
         options.label = *manifest.label;

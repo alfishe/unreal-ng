@@ -193,6 +193,7 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
         request.access = AccessMode::Session;
     request.fs = options.fs.value_or(descriptor.defaultFs);
     request.allowedFs = descriptor.fsCompatibility;
+    request.mbr = descriptor.folderMbr;
     request.codePage = options.codePage;
     request.freeBytes = options.freeBytes;
     request.cancelRequested = options.cancelRequested;
