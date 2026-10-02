@@ -41,8 +41,11 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   `set_switch`, Qt Machine > TURBO Switch; TTD records the switch (`TTDInputKind::FrontPanelSwitch`, ProfiPaging
   byte 33); the Qt status line now shows the clock of a machine that never changes it. No v3 TTD fixture: no Profi
   fixtures exist
-- [ ] The border demos Gromov names (QARX, ACADEMY, SHOCK MEGADEMO) and floatspy: run, not yet judged against his
-  descriptions ([test-programs.md](test-programs.md))
+- [x] Shock Megademo: the WAIT makes its opening raster work as on the 48K (Gromov); Floating Spy on v3 reads #FF in
+  the border as expected ([test-programs.md](test-programs.md))
+- [ ] Shock Megademo on v5: a seam in the left border and slanted top stripes against the 48K; likely the INT
+  position (14368 T, 32 T later than the 48K). Needs a photograph of a real v5
+- [ ] Qarx and Academy: running, effects not yet judged against Gromov's descriptions
 - [x] Phase 7 (branch): the v5 open items, from the 5.06 netlist and the 5.0 album
   ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)): the palette rule stays (DS80, A7=0, A0=0; the
   manual's "CP/M + BLOCK" sentence contradicts its own schematic); the CP/M switch holds #DFFD at #00

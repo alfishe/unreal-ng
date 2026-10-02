@@ -327,12 +327,24 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         context->pFeatureManager->setFeature(Features::kContention, false);
     if (const char* turbo = std::getenv("PROFI_TURBO"); turbo && turbo[0] == '1')
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true);
-    _emulator->RunNFrames(600, true);   // the BIOS menu
-
     const std::string path(program);
     const bool v3 = model && std::string(model) == "PROFI3";   // the Kramis menu: Sinclair second, TR-DOS fifth
+    const bool profi = !model || std::string(model).rfind("PROFI", 0) == 0;
+    if (!profi)
+    {
+        // A reference machine (48K, 128K, ...): its ROM boots to BASIC; a .tap only
+        _emulator->RunNFrames(150, true);
+        std::string error;
+        ASSERT_TRUE(_emulator->LoadTape(path, &error)) << error;
+        TapKeys("ENT,J,SP,SP,ENT");   // leave the copyright screen / the 128 menu (Tape Loader), then LOAD ""
+    }
+    else
+        _emulator->RunNFrames(600, true);   // the BIOS menu
     const bool disk = path.size() > 4 && (path.substr(path.size() - 4) == ".trd" || path.substr(path.size() - 4) == ".TRD");
-    if (disk)
+    if (!profi)
+    {
+    }
+    else if (disk)
     {
         TapKeys(v3 ? "C6,C6,C6,C6,ENT" : "C6,ENT");   // TR-DOS
         _emulator->RunNFrames(200, true);

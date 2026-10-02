@@ -47,8 +47,30 @@ reading with the video WAIT on (68096, "с торможением") has no real 
 with SB8 in its PROFI3+ position was found. The interrupt-vector and INT-length lines differ in turbo ("#FF" and
 "36 Cycles" here, "???" and "Too short!" on the board); they are not modeled checks.
 
-## Border demos
+## Shock Megademo
 
-Qarx and Academy load and run on both boards (the Qarx menu, its scroller and the game screen). Gromov's
-descriptions (letters in the top border on a correct board; border and paper pictures in line on v5) have not been
-judged yet: the effect has to be found in the running program. Shock Megademo and Floating Spy were not run yet.
+Gromov: on a v5 with the WAIT the demo is "perfect"; on a Pentagon-type board (no WAIT) it runs wrong. The demo
+was run on the emulated v5 with the video WAIT, on the same v5 with the `contention` feature off, and on the
+emulated 48K as the reference (its contention is checked against real 48K measurements).
+
+| Part | 48K | v5, video WAIT | v5, no waits |
+|:--|:--|:--|:--|
+| Opening raster (border color changed every line) | thin stripes run unbroken through border and paper; the paper area does not show | the same: the paper area does not show | the paper area shows as a rectangle of wider stripes: the timing is wrong |
+| Every later part (logos, checkerboard, sprite ring, scroller) | - | runs | runs, frames differ |
+
+So the WAIT is what makes the opening effect work, as Gromov says. Two differences from the 48K stay open: a seam
+in the left border, where the line's color change becomes visible, and slanted stripes in the top lines. The seam
+fits the INT position: the v5 PROM puts INT 14368 T before the paper, 32 T later than the 48K, which moves the
+color change out of the horizontal blanking. A photograph of a real v5 running the demo would settle it.
+
+## Floating Spy
+
+On v3 the program reads #FF at its default probe time, 14347 T after INT (the 48K's attribute time). On the v3 frame
+that moment is in the right border of paper line 7 (INT is 12580 T before the paper there), so #FF is what the
+board gives. No real v3 measurement exists; the rule itself is checked by unit tests against the schematic.
+
+## Qarx and Academy
+
+Both load and run on both boards (the Qarx menu, its scroller and the game screen). Gromov's descriptions (letters
+in the top border on a correct board; border and paper pictures in line on v5) have not been judged yet: the effect
+has to be found in the running program.
