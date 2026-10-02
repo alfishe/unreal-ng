@@ -288,6 +288,85 @@ tags or descriptor, not this analysis.
   too and fold the same signal into `evidence`/`kinds` before a target is even chosen, but that is
   M1 scope, not this slice.
 
+## 11. Async folder insert off the UI thread (BUGS.md #3, added 2026-10-01)
+
+`MediaManager::Insert`'s folder path (`FolderSnapshot::Scan`, then `HostFolderFat::Build` or
+`FolderDiskBuilder::BuildTrd`) is plain synchronous C++ - correct for every automation surface
+(WebAPI, CLI, MCP, Lua, Python all run it on their own request thread, which is fine, there is no
+UI to freeze), but `MediaPanelWindow::insertInto` called it inline on the Qt UI thread, so a large
+folder or a slow/network disk froze the whole window for the scan's duration: no repaints, no
+input, no cancel (confirmed live: the comment "File I/O and folder scans happen here, on the
+caller's thread" already sat in `mediamanager.cpp` next to the call).
+
+**Decision: keep `core/` synchronous, add the async wrapper only in the GUI.** `MediaManager`/
+`MediaControl`/`MediaFormatRegistry` gained two optional `std::function` fields threaded end to end
+(`MediaRequest` → `InsertOptions` → `OpenRequest` → `FolderScanOptions` /
+`FolderDiskBuilder::BuildTrd`'s new parameters):
+
+- `cancelRequested` - polled once per directory entry in `FolderSnapshot::Scan`'s walk and once per
+  file in `FolderDiskBuilder::BuildTrd`'s read loop. Returning true unwinds every recursion level
+  (not just the innermost one) and fails the whole operation with the new `MediaError::Cancelled`
+  (`FolderSnapshot::kCancelledError`, HTTP 499).
+- `onProgress(uint64_t entriesScanned)` - called after every entry visited (accepted or skipped),
+  off whatever thread calls `Scan`/`BuildTrd`. A monotonic counter, nothing else - no ETA, no
+  per-item name, kept deliberately minimal.
+
+Both are plain C++ callables, never serialized - `MediaRequest` carries them as struct fields
+alongside the existing string `options` map, so the wire protocols (WebAPI's JSON, the CLI's
+strings) have no way to set them and keep running `Insert` synchronously on their own calling
+thread exactly as before. Only `MediaPanelWindow` (the one caller with a UI thread to protect)
+sets them.
+
+**The GUI side** (`unreal-qt/src/media/mediapanelwindow.{h,cpp}`) follows the existing
+`std::thread` + `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` idiom already used by
+`TapeExportAudioDialog`/`TapeImportAudioDialog` - no `QThread` subclass, no `QtConcurrent`:
+
+- `insertInto` branches on `QFileInfo(path).isDir()`: a file insert stays exactly as it was
+  (synchronous, the existing disposition dialog applies); a folder insert goes through
+  `insertFolderAsync`, which starts one `std::thread`, disables every action button
+  (`updateButtons()` checks `_insertWorker.joinable()` first) and shows an indeterminate
+  `QProgressBar` (`setMaximum(0)`, the same pattern as `TapeImportAudioDialog`'s "busy" bar) plus a
+  `QLabel` status text updated once a second with the running entry count.
+- **Emulator lifetime across the worker**: the worker does not touch `EmulatorBinding`'s raw
+  `Emulator*` - it captures the emulator's id and does a fresh `EmulatorManager::GetEmulator(id)`
+  lookup on its own thread, taking its own `shared_ptr<Emulator>` for the scan's duration. This
+  keeps the `Emulator`/`EmulatorContext`/`MediaManager` alive even if the GUI unbinds or rebinds to
+  a different emulator while the scan is in flight (`EmulatorBinding::unbound` also best-effort
+  cancels the in-flight worker, since there is no reason to keep scanning for a panel that moved
+  on, but the worker is correct either way). If the emulator was removed outright, the lookup
+  returns null and the worker reports a plain failure instead of touching freed state.
+- **Watchdog, not a hard timeout**: `_scanWatchdog` (a 1 s `QTimer`) compares the progress counter
+  across ticks - a folder that is genuinely still being walked (the count keeps advancing) is never
+  aborted, however long it takes; only `_insertStallTimeoutSeconds` (30, a plain member field a
+  test can lower) consecutive ticks with **no** advancement trip `cancelRequested`. This
+  distinguishes "slow" from "stuck" per the bug's acceptance criteria - a naive "abort after 30 s
+  no matter what" would have cut off legitimately large folders.
+- **Progress display and row highlight**: `onProgress` carries both the entry count and the total
+  bytes of files accepted so far; the status label shows the slot (bold), the path, the entry count
+  and `QLocale::formattedDataSize(bytes)` (KB/MB/GB, not a raw byte count). `rebuildTable()` tints
+  the scanning slot's row with `QPalette::Accent` - deliberately not `QPalette::Highlight`, which
+  fades to a dull gray the moment the window is not key/focused, defeating the point of a "this one
+  is busy" indicator.
+- **Toolbar button**: the Tools menu's existing "Media" `QAction` (`MenuManager::mediaPanelAction()`,
+  already wired to show/hide the panel and already kept in sync by `visibilityChanged`) is also
+  added to the transport toolbar, with the `hdd` icon - no new action, no duplicated show/hide logic.
+- **Destructor safety**: the worker's completion lambda captures `this` and is marshaled back via
+  `QMetaObject::invokeMethod`; `MediaPanelWindow`'s destructor cancels and joins unconditionally
+  before any member is torn down, so that queued call can never fire on a half-destroyed object
+  (same contract `TapeExportAudioDialog` already relies on).
+
+**Not done here**: a true mid-scan cancellation only exists for the folder-scan and
+TR-DOS-file-read loops added above; nothing else in the insert path (`HostFolderFat::Build`'s
+in-memory FAT layout math, `MediaFormatRegistry::WrapBlock`) has a cancellation hook, because
+neither does any I/O - per `OpenFolderVolume`'s own trace (§3 of the research that fed this
+section), the scan is already the dominant cost for the SD/IDE block-volume path this bug names.
+Verification: `FolderSnapshot_Test` (progress counting incl. bytes, cancellation, nested-recursion
+unwind) and `FolderDiskBuilder_Test` (cancellation during the scan vs. during the file-read loop) in
+`core/tests/`; the GUI wiring was also interactively verified (built and run in an isolated git
+worktree - the shared working tree had unrelated concurrent breakage at the time - no automation
+surface reaches `QFileDialog`/native file pickers, so this had to be a manual run), developer-
+confirmed against a real folder insert, including the follow-up display/highlight/toolbar tweaks.
+
 ## 9. Decisions
 
 1. **An ISO goes only to a unit that is a CD-ROM drive** by the machine's configuration; no drop
