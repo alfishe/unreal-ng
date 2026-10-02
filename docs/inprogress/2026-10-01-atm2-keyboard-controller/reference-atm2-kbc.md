@@ -93,7 +93,8 @@ because the conversion only removed CR characters.
   [S: SCH-710 cp7_2.pdf crop; DOC-ASM d4.txt:503-504]
 * MCU side: decoder **D103 (555ID4)** and mux D108 create the strobes from /VRD, /VWR
   and VA8 (= P2.0):
-  - `movx A,@DPTR` with P2.0 = 0 reads the latched A15..A8 (D23).
+  - `movx A,@DPTR` with P2.0 = 0 reads A15..A8 through the buffer D108 while the Z80
+    waits (D23 drives the mechanical keyboard matrix; see (b) item 8).
   - `movx A,@DPTR` with P2.0 = 1 reads the native keyboard/tape/joystick port (D45).
   - `movx @DPTR,A` with P2.0 = 1 writes D102, which drives the Z80 data bus, and its
     /VWR clears WAIT.
@@ -522,24 +523,190 @@ Ctrl+Alt+Del / cmd 0x0D: Z80 reset pulse + full controller re-init (v3.2).
 
 ## (b) Open questions (sources do not answer)
 
-1. **v4.0 / v4.1 firmware source or binary**: RX/TX buffer sizes (256-byte RAM),
-   exact divisor -> baud table (Timer 2?), behavior of Ctrl+Alt+Home "blocked" mode
-   (what `#FE` returns: native port, no WAIT?), and INT_T threshold in v4.1. The
-   release notes are on atmturbo.nedopc.com, but no download link was found. Ask
-   NedoPC (LVD/Kulicheg/Maxagor) or look in the zx-pk thread t-31077, which returns
-   403 to curl/WebFetch.
-2. Which firmware and clock real NedoOS ESP users run. The fork's "8952" comments
-   suggest v4.x on AT89S52. Is 7 MHz + v3.2 (36458 baud vs ESP 38400, -5.1 %) usable
-   in practice?
-3. Does the front-panel Z80 reset also reset D100 (pin 9 RST net "RS")? This decides
-   whether a Z80 reset flushes the COM buffers.
-4. Exact /WAIT release timing relative to the Z80 cycle on real hardware (only
-   firmware cycle counts are available, no measurement).
-5. The polarity chain of the 170AP2 drivers / 170UP2 receivers is inferred from part
-   class (1488/1489-type, inverting). It agrees with the firmware comments.
-6. Board revisions 7.18 / 8.x: same D100 wiring (I2 pinout, F0 clock source)? Not
-   checked.
-7. ATM CP/M terminal or modem programs that use `#55`/`#02`/`#03` were not located.
+Second pass 2026-10-02: each item is marked **answered**, **partly** or **open**, with its
+evidence. Schematic facts come from crops of the v7.10 sheet `cp7_2.pdf` (and `cp7_1.pdf`)
+in [pcad/ver_7_10](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_7_10/);
+v8.x facts come from the netlist in the ASCII P-CAD file `АТМ Турбо 8.01+.pcb` in
+[pcad/ver_8_0_zorel](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_8_0_zorel/).
+Forum posts are on [zx-pk thread 31077](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x).html)
+(pages [2](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page2.html),
+[3](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page3.html),
+[4](https://zx-pk.ru/threads/31077-o-zapuske-raznykh-proshivok-na-kontrollere-pc-klaviatury-v-atm2-(v7-xx)-i-atm3-(v8-x)/page4.html))
+and the 92-page [zx-pk thread 17340](https://zx-pk.ru/threads/17340-atm-turbo-2-ver-7-10-sborka-i-naladka.html)
+("ATM Turbo 2+ ver 7.10 - сборка и наладка"). Both answer 200 to `curl` with a browser
+User-Agent; the old `archive/index.php/t-31077.html` URL now answers 404.
+
+1. **v4.0 / v4.1 firmware** - **answered** in §9 (sources, binaries, buffer sizes, Timer 2
+   baud table, INT_T threshold). The blocked mode is item 8 below.
+
+2. **Which firmware and clock real NedoOS ESP users run** - **partly**.
+   - The author of the ATM2 ESP path, Kulich (Kulicheg), co-wrote firmware v4.0 and says
+     it "works only on an 8952 and needs the 11 MHz crystal" (thread 31077, post 1135523,
+     2021-11-05). His NedoOS sources call the controller "8952" throughout
+     ([espnet.asm](https://raw.githubusercontent.com/alfishe/NedoOS/main/src/_sdk/espnet.asm)
+     :67, :1318, :1554, :2031; [scrnet main.asm](https://raw.githubusercontent.com/alfishe/NedoOS/main/src/scrnet/main.asm)
+     :234, :2825; commits of 2026-09). So the reference setup is **AT89S52 + v4.x @
+     11.0592 MHz**, which is the only one where divisor 3 gives 38400.
+   - Other owners: xolod runs v3.2 on an ATM 8.0 with an AT89C51 at 11 MHz (post 1035104,
+     2019-11-18); Alexey_Mikhaylov found v4.0 on an AT89S52 at 11 MHz glitchy (stuck keys in
+     TR-DOS, phantom typing in NedoOS) and went back to v3.2m on an AT89C51 (post 1190046,
+     2023-12-04). The v4.1 notes name exactly that fix: the v3.1 scan-code reader restored.
+     Earlier, many v7.xx boards ran only v2.2 because v3.x overflowed the stack on 128-byte
+     8051s (fixed in 3.2m, 2019-11-15, post 1034616) and because of noise on the MCU data bus
+     (fixed by 1 kOhm pull-ups on VD0-VD7, [dev_kbd.htm](http://atmturbo.nedopc.com/dev_kbd.htm)).
+   - 7 MHz + v3.2 for an ESP at 38400: the rate is 36458 baud, -5.1 %. An 8N1 receiver
+     samples the stop bit 9.5 bits after the start edge, so the whole budget for both ends
+     is about 5 % in theory and 2-3 % in practice: **not usable** [inferred]. v3.x at
+     11.0592 MHz gives 28800 for divisor 3: not usable either.
+   - No post or doc names the firmware of other NedoOS ESP users. **Open:** a census.
+
+3. **Does the front-panel reset also reset D100** - **answered: yes on v7.10, no on v8.01**.
+   - v7.10 (`cp7_2` crops): the board reset line `/RS` (Z80 /RES with R2 10 kOhm + C1
+     0.1 uF on `cp7_1`; reset button J33/J34 [DOC-ASM]; LPT/X3 pin `/RS` per the
+     [errata page](http://nedopc.com/ATMZAK/atm710re.htm) drawing
+     [atm710re18.png](http://nedopc.com/ATMZAK/atm710re18.png)) goes into the inverter
+     **D80 (pin 11 -> 10)**, then **R85 (3 kOhm) / C11 (0.1 uF)** to the net `RS`, which is
+     **D100 pin 9 RST**. So every board reset (power-on, button, Ctrl+Alt+Del or command
+     `#0D`) resets the MCU too.
+   - D100 pin 7 (P1.6, `/RES` in the firmware) is drawn on the same reset line. The overbar
+     cannot be read in the PDF (it falls on a wire), but the firmware pulls P1.6 low to reset
+     the computer, so it must be `/RS` [inferred]. The MCU therefore **resets itself**: v2.2
+     and v3.1 rely on it ("`sjmp $` ; жду своего сброса" - wait for my own reset;
+     `atm_at22.asm` :139-140, `atm_at31.asm` :224-225). Pull-down of `/RS`, then ~0.2 ms
+     for R85/C11, then the MCU resets, P1 = #FF releases `/RS`, which recharges through
+     R2/C1 in ~1 ms. The Z80 reset pulse is about 1 ms, not the firmware's 10 ms (v3.2m) or
+     120 ms (v4.x) [inferred from the RC values].
+   - After a reset the MCU starts at 0 -> `prog`: full cold init. **The COM buffers are
+     flushed**, the divisor goes back to 6, keyboard mode 0, `stat_rs` 0, DTR/RTS off
+     (P1 = #FF). v4.1 no longer clears the clock (`at41.txt`). The 3.2m / 4.x warm path
+     ("`reset:` ... `cjne @R0,#'A',prog` ... `jmp c0main`") is reached only on boards whose
+     MCU reset is decoupled. The headers of 3.2m and 4.1 say "для схемы с исправленным
+     RESET" (for the circuit with the corrected RESET).
+   - That circuit is on **v8.01** (Zorel netlist): D99 (I8751) RST = net `RS\``, which
+     reaches only jumper header X5 pin 2. X5.1 = D80.10, the inverted private power-on RC
+     (R117 to +5 V, C58 to GND, VD23 discharge diode, on D80.11 = X5.3). X5.4 = `~RS`. P1.6
+     drives `~RS` through diode VD20 only. So with X5 1-2 fitted the MCU is reset at power-on
+     only and survives a Z80 reset.
+   - During the cold start W_ON = 1 (P1 = #FF) until `mov P1,#7Fh`: ~10 ms (v3.2m) or
+     ~120 ms (v4.x, two `del_60ms`). The Z80 is already running then, and its `IN #FE` reads
+     get the native port with no WAIT (§(b) item 8 for the bus value).
+
+4. **/WAIT release timing on real hardware** - **partly** (mechanism and calculated windows;
+   no oscilloscope measurement found in the 92 + 4 pages read or on the NedoPC pages).
+   - Circuit (`cp7_2`): D71 (TM2) is clocked by KEYRD at the start of the read with D =
+     W_ON; Q = WAIT_V, ANDed (D79.1-3) with WAIT_H into WAIT_I. /S = D79.8 = /VWR AND /RS.
+     The MCU's /VWR or a reset releases the Z80.
+   - Data path: the native buffer **D45** is enabled by `/KRD` = NAND(KEYRD, /VWR) (D73).
+     The MCU's answer buffer **D102** (555AP6) is enabled by VEBUF = D103 output 2Y1 (pin
+     10, both D79.12/13), that is /VWR = 0 with VA8 = 1 **and /KEYRD = 0** (D103 A1 =
+     /KEYRD). D102 is a transceiver, not a latch: the Z80 sees the answer only while /VWR is
+     low and its read is still in progress.
+   - Karimov's analysis (`at32m.txt`, release note of 26/10/06, in [ver_3_2_caro](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/source/keyb_rom_805x/ver_3_2_caro/)):
+     from the WAIT release to the end of the Z80 read at 3.5 MHz takes 0.4-0.7 us; a MOVX
+     /WR lasts 6 oscillator clocks (0.54 us at 11.0592 MHz); driving P3.6 by hand gives
+     1.1 us. So MOVX-strobed images (2.2, 3.2m, 4.0) are marginal above ~10 MHz, and 3.1 /
+     4.1 strobe by hand (`en_movx equ 0`).
+   - Errata "Зависание компьютера при работе с АТ клавиатурой" ([atm710re.htm](http://nedopc.com/ATMZAK/atm710re.htm)):
+     a glitch on /KEYRD set D71 without reaching INT1 and hung the Z80; fix 750 pF from
+     /KEYRD to +5 V (D76.9-14).
+   - **Open:** a scope trace of /KEYRD -> /VWR on a real board.
+
+5. **Polarity of the 170AP2 drivers / 170UP2 receivers** - **answered: both invert**.
+   - `cp7_2` draws an inverted output (bubble, Ō) on every D104 receiver and every D105 /
+     D106 driver output (ŌA, ŌB).
+   - The BOM maps 170UP2 = SN75154 and 170AP2 = SN75150. TI:
+     [SN75154](https://www.ti.com/lit/ds/symlink/sn75154.pdf) "Inverting Output Compatible
+     With TTL"; [SN75150](https://www.ti.com/lit/ds/symlink/sn75150.pdf) "Inverting Output".
+     v8.01 uses a [GD75232](https://www.ti.com/lit/ds/symlink/gd75232.pdf) (SN75188 /
+     SN75189 cells, also inverting).
+   - Wiring: D104 I2.1 CD -> CDV P1.0, I2.2 RX -> RXV P3.0, I2.8 CTS -> CTSV P1.1, I2.9 RI
+     -> RIV P1.2. D105 / D106: TXV P3.1 -> I2.3 TX, RTSV P1.4 -> I2.7 RTS, DTRV P1.3 -> I2.4
+     DTR, from +12 V / -15 V. This matches the firmware's inverted writes and reads (§1.1).
+   - Note: the SN75150 is specified for 20 kbit/s into 2500 pF. 115200 baud (v4.x) relies on
+     short cables [inferred].
+
+6. **Boards 7.18 / 8.x: D100 wiring, I2 pinout, F0 clock** - **partly** (7.18) /
+   **answered** (8.01).
+   - **7.18** (Zorel, 2014): "fully duplicates 7.10 except the RAM (SIMM-72 chips), RAM
+     jumpers removed, R55 added for a VE31 and R56 for an AT89S5x" (zorel, thread 17340, posts
+     436905 and 725870). The binary P-CAD 2001 PCB in
+     [pcad/ver_7_18](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/pcad/ver_7_18/)
+     has no netlist that can be read here. Its strings carry the same parts (1816VE31,
+     170AP2, 170UP2, D80, R85, C11, `RS` / `~RS`, `7Mhz`). The 7.10 reset circuit and I2 are
+     assumed [inferred]. A user with 7.10 and 7.18 boards from Zorel sees the same reset
+     behavior on both (post 822501).
+   - **8.01** (Zorel, ASCII netlist): MCU D99 = **I8751** (internal ROM). I2 pins 1 DCD,
+     2 RX, 3 TX, 4 DTR, 5 GND, 6 **DSR (wired here, to P2.1 / pin 22)**, 7 RTS, 8 CTS, 9 RI,
+     10-11 GND - the same DE-9 numbering. Level shifter GD75232 (D100 / D101 footprints).
+     Clock: crystal U3 (value "7Mhz") with C41 / C54 on XTAL1 / XTAL2, or F0 through jumper
+     X20 ("7 MHz") to XTAL1 (pin 19). Reset: decoupled through X5 (item 3). P2 also carries
+     an I2C RTC (SCL / SDA to PCF8583 D124) and a PS/2 mouse (DAT_M / CLK_M), which no
+     firmware in the collection drives. The thread for
+     [8.10 rev. 2019](https://zx-pk.ru/threads/29717-atm-turbo-8-10-rev-2019.html) was not
+     read.
+   - **7.10 I2** to a PC-style DE-9 male, pin n to pin n:
+     [atm710re17.png](http://nedopc.com/ATMZAK/atm710re17.png) ("COM-порт (DB-9M папа)").
+
+7. **ATM CP/M terminal / modem programs using `#55`/`#02`/`#03`** - **answered (one found)**.
+   - **ZXTERM** ("Test RS232 for ATM", `ZXTERM.M80` + `MODEM.INC` + `ZXTERM.COM`), on the
+     ATM site as "ZX-Terminal for DialUp (+исходники)", for "ATM2+ (+keybROM v3.x)":
+     [zxterm.zip](http://atmturbo.nedopc.com/download/cpm/system/zxterm/zxterm.zip)
+     (listed on [load_cpm.htm](http://atmturbo.nedopc.com/load_cpm.htm)).
+   - Sequences: probe `55FE` -> `#AA`, `00FE` -> `#FF`; version `#01/#41/#81/#C1`, and **the
+     first byte must be 3**, so v4.x is refused ("No work vers."). Init `55FE C3FE 06FE`
+     (divisor 6, "19200"), `55FE 43FE 03FE` (DTR + RTS on). TX: wait for `#82` bit 4 (CTS)
+     and `#42` bit 5 (TX empty), then `55FE 03FE dataFE`. RX: `#42` bit 0, then
+     `55FE 02FE`. DCD = `#82` bit 7. It also carries a 16550 branch (Kondratyev `#F8EF`,
+     Shepelev `#38BF`).
+   - Probably Kamil Karimov's "primitive terminal under CP/M" that Maxagor used over a
+     null-modem cable to a laptop (thread 17340, post 975047, 2018-08-10).
+   - A byte scan of every disk image in the ATM CP/M collection found `55FE` sequences only in
+     ZXTERM (COM) and in games that set the keyboard mode (`#08`): MINER, KING, GOBLINS,
+     MAGIC SQUARES, PRINCE.
+
+8. **What `#FE` returns in v4.x "blocked" mode** - **answered**.
+   - The keys are the reverse of the release notes. `at40.txt` says Ctrl+Alt+Home blocks and
+     Ctrl+Alt+Ins unblocks. The code (identical in `atm_at40.asm` and `atm_at41.asm`
+     :523-549) compares the CP/M key code R2: keypad **'7' (7/Home) -> `clr P1.7`, W_ON = 0
+     (unblock)**; keypad **'0' (0/Ins) -> dummy /VWR, then `setb P1.7`, W_ON = 1 (block)**.
+     Ctrl+Alt+'.' (Del) is the reset. That matches the 2023 report that Ctrl+Alt+Home
+     "did not block at all" (post 1190046).
+   - With W_ON = 1, D71 is not set (D = 1), so **no WAIT**. D45 drives D0-D4 = mechanical
+     keyboard KD1-KD5 for the read's own A15..A8 (D23 drives the matrix from the Z80
+     address bus at all times, E1 = GND), D5 = Z, D6 = TIN (tape in). **D7 is not driven by
+     D45** (the floating / pulled-up bus) [inferred]. That is the same value as VE1 = 1 after
+     the parked answer, and as any read during the MCU cold start.
+   - The MCU still gets INT1 (/KEYRD is wired straight to P3.3) and runs its handler
+     3-10 us later. By then /KEYRD is high: /ACS and KRDV (D103 first half, A1 = /KEYRD)
+     stay off, so its reads of A15..A8 (D108) and of the native port see the floating VD bus
+     (#FF with the dev_kbd 1 kOhm pull-ups). Its /VWR answer never reaches the Z80 (VEBUF
+     needs /KEYRD = 0).
+   - The block lasts until Ctrl+Alt+Home or any reset (`prog` writes P1 = #7F).
+
+**Impact on the emulation** (`core/src/emulator/io/keyboard/atm2kbc.*`):
+
+- Unserved read (VE1 = 1 after the parked answer, W_ON = 1, v4 block, MCU cold start): the
+  native port for the read's own high byte, no WAIT. Current `ReadPort` already does this
+  through `_native(port)`. Keep bit 7 as the decoder's plain `#FE` read gives it [inferred].
+- **Change (done 2026-10-02, `Atm2Kbc::MovxRead`, test `ABlockedControllerSeesNoEscape`):** in the `waitOff` branch the MCU's INT1 handler runs after the Z80 cycle has
+  ended, so its MOVX reads of the address (D108) and of the native port (D45 via KRDV) must
+  see **#FF**, not `port >> 8`. Today `_board.latchedHigh` is set from the port before the
+  branch. On hardware a blocked controller cannot be armed by a `#55FE` poll; in the
+  emulator it can, and it would answer out of step after Ctrl+Alt+Home.
+- Reset: the current model (MCU reset on `BoardReset()` and on its own P1.6, RAM kept,
+  restart at 0) is the v7.10 / 7.18 circuit. Keep it as the default. The COM buffers, divisor,
+  mode and `stat_rs` reset because the firmware cold-starts. A decoupled reset (v8.01 X5) would
+  be a board option; ATM710 does not need it.
+- Do not hold the Z80 in reset for the firmware's own 10 / 120 ms pulse: on the board the
+  MCU resets itself within ~0.2 ms and `/RS` returns within ~1 ms. Then the first ~10 ms
+  (v3.2m) or ~120 ms (v4.x) of Z80 code reads the native port without WAIT, which the
+  emulator gets by running the firmware.
+- Blocked mode: no code change (the firmware decides). Docs, UI and automation text must
+  say **Ctrl+Alt+Ins blocks, Ctrl+Alt+Home unblocks**.
+- Known deviation, no change planned: the emulator always delivers the answer byte. On
+  hardware MOVX-strobed images (2.2, 3.2m, 4.0) hold it for only 0.54 us at 11.0592 MHz
+  (item 4).
+- Test fixture: ZXTERM refuses v4.x, so it exercises the `V31-*` / `V32-*` presets.
 
 ## (c) Sources
 
@@ -623,8 +790,9 @@ What v4 changes, from its source (`atm_at41.asm`):
   divisor exactly**. Divisor 0 or any other value leaves the rate alone and
   flushes both buffers, as before.
 - 11.0592 MHz only (version bytes 4,0,1,1 / 4,1,1,1 per the notes).
-- Ctrl+Alt+Home blocks the controller (no answer, no WAIT: the native port is
-  read, tape works), Ctrl+Alt+Ins unblocks it (`at40.txt`).
+- `at40.txt` says Ctrl+Alt+Home blocks the controller (no answer, no WAIT: the
+  native port is read, tape works) and Ctrl+Alt+Ins unblocks it; the code does
+  the reverse - **Ctrl+Alt+Ins blocks, Ctrl+Alt+Home unblocks** ((b) item 8).
 - v4.1 (Maxagor): the clock is not cleared at a (re)start; the v3.1 scan-code
   reader is back; the Z80 interrupt on an RX buffer overflow is enabled
   (`len_ird = len_brd - 4`, :59).

@@ -104,6 +104,8 @@ public:
     /// The INTERNAL I/O connector (v7.10 board only): devices plug in by address
     bool HasInternalIo() const { return _v710Board; }
     void AttachIoDevice(IAtmIoDevice* device);
+    /// v7.10 at 7 MHz: one wait state on the WD1793's ports (#1F / #3F / #5F / #7F)
+    void AddFdcTurboWait(uint16_t decodedPort);
     void DetachIoDevice(IAtmIoDevice* device);
     /// The #FB latch: the bus address (TTD; not readable by the Z80 - an IN #FB is the printer status)
     uint8_t IoBusAddress() const { return _ioBusAddress; }

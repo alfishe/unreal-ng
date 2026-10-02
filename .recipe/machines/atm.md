@@ -87,8 +87,14 @@ sources: [docs/inprogress/2026-10-01-atm450](../../docs/inprogress/2026-10-01-at
   and the Covox DAC), `IN` / `OUT (#FA)` reach the device that address
   selects - the ATM2IOESP Wi-Fi card ([network.md](../peripherals/network.md)).
   With no device an `IN (#FA)` reads #FF; it never reaches the keyboard
-  controller. At 7 MHz every RAM access waits 2-3 T (the contention report's
-  `atm710_turbo_waits`).
+  controller; an `IN (#FB)` reads the printer status (#FF without a printer),
+  not the latch. At 7 MHz every RAM access waits 2-3 T (the contention report's
+  `atm710_turbo_waits`) and every WD1793 access (#1F / #3F / #5F / #7F) 1 T.
+- The keyboard controller (v7.xx board, `[ATM] Kbc=`, default V41) answers
+  every `IN #FE` and holds the Z80 until it does. On v4.x **Ctrl+Alt+Ins**
+  (keypad 0) blocks it - `IN #FE` then reads the plain matrix, no wait - and
+  **Ctrl+Alt+Home** (keypad 7) unblocks it (the release notes have the keys the
+  other way round; the firmware decides). A board reset restarts the 8031 too.
 - `#FF77` — **ATM control register**: video mode select, CPU turbo,
   memory swap, INT gate. Decoder bits worth knowing: bit 8 `PEN` enables
   ATM paging, bit 9 selects TR-DOS vs **CP/M mode**, bit 14 (`pen2`)

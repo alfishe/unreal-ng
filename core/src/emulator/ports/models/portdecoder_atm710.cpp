@@ -253,6 +253,7 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x00FA;
         disp.wasHandledInline = true;
     }
+
     // Port #FFFD - AY register read
     else if (IsPort_FFFD(port))
     {
@@ -302,6 +303,18 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(decodedPort);
         _lastPortDecoded = true;
         disp.decodedPort = decodedPort;
+        AddFdcTurboWait(decodedPort);
+    }
+
+    // Port #FB read (A2..A0 = 011) that no card claimed (a ZX-Bus device answering its own port, as GS on #BB,
+    // keeps the board off the bus): the printer status - D7 = BUSY' with its pull-up (R39), D0..D6 undriven:
+    // #FF without a printer. The bus address latch cannot be read back (reference-atm2ioesp.md question 3)
+    if (!_lastPortDecoded && _v710Board && (port & 0x0007) == 0x0003)
+    {
+        result = 0xFF;
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x00FB;
+        disp.wasHandledInline = true;
     }
 
     disp.wasDecoded = _lastPortDecoded;
@@ -522,6 +535,7 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
                 }
                 PeripheralPortOut(decodedPort, fdcValue);
                 disp.decodedPort = decodedPort;  // the FDC side of a shared #FF write is attributed
+                AddFdcTurboWait(decodedPort);
             }
 
             // ATM palette RAM write. On the real bus the #xxFF access drives
@@ -993,6 +1007,18 @@ void PortDecoder_ATM710::updateTurboMode()
     SyncTurboRamWaits();
 
     MLOGDEBUG("updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X)", _state->hw_turbo_ratio, _state->pFF77);
+}
+
+void PortDecoder_ATM710::AddFdcTurboWait(uint16_t decodedPort)
+{
+    // v7.10 at 7 MHz: the WD1793 select (/VGCS: #1F, #3F, #5F, #7F - not the #FF system register) fires a short
+    // WAIT through R1 / C9 (1 kOhm, 220 pF) into D98 / D73: one wait state. Gated by TURBO, none at 3.5 MHz
+    // (reference-atm710-turbo-waits.md Q5; the assembly manual)
+    if (!_v710Board || decodedPort == 0x00FF || _state->hw_turbo_ratio_applied != 2)
+        return;
+    Core* core = _context->pCore;
+    if (core && core->IsContentionSwitchOn() && core->GetZ80())
+        core->GetZ80()->AddWaitStates(1);
 }
 
 void PortDecoder_ATM710::AttachIoDevice(IAtmIoDevice* device)

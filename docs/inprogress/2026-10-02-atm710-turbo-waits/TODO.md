@@ -12,3 +12,6 @@
 | A/B benchmark (machines without the waits; ATM710 itself) | open: the machine was loaded (load average 95-150) during the work; no code path of the other machines changed (the overlay sits on the bus only while ATM710 turbo is on) |
 | Changed baselines (ATM710 golden row, CP/M boot tests, TTD fixtures with ATM710) | none changed: they run at 3.5 MHz |
 | NedoOS over the ATM2 COM: wget and the browser at 7 MHz, 38400 | wget done 2026-10-02 (headless, tdd §4); the browser in the Qt window: next |
+| Open questions researched (schematics, manual diagrams, 313 zx-pk pages) | done 2026-10-02: reference §7; the rule unchanged |
+| WD1793 ports: one wait state at 7 MHz (/VGCS through R1C9) | done 2026-10-02: `AddFdcTurboWait`, test `FdcPortsWaitOneInTurbo` |
+| A frame-loop counter run on a real v7.10 (numeric check) | open: no measurement found anywhere |

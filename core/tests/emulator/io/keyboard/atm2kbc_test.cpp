@@ -158,6 +158,40 @@ TEST_F(Atm2Kbc_Test, Ve1TurnsTheControllerOff)
     EXPECT_EQ(In(0x55FE), 0xAA) << "back on";
 }
 
+TEST_F(Atm2Kbc_Test, ABlockedControllerSeesNoEscape)
+{
+    // Ctrl+Alt+Ins (keypad 0) blocks v4.x: W_ON = 1, the board holds no read, so the 8031's INT1 handler runs
+    // after the Z80's cycle and reads the floating bus (#FF), not A15..A8. A #55FE poll cannot arm the command
+    // mode, which Ctrl+Alt+Home (keypad 7) would carry over: it does not clear R7 (atm_at41.asm 523-549,
+    // reference-atm2-kbc.md (b) item 8). Slower than 50 ms: the firmware's 120 ms power-on delay and two
+    // typed chords run in emulated frames
+    Create("ATM710", 1024);
+    Fit(Atm2Kbc::Firmware::V41);
+    auto chord = [this](PcKey key) {
+        for (PcKey k : {PcKey::LeftCtrl, PcKey::LeftAlt, key})
+        {
+            Kbc()->OnPcKey(k, true);
+            _emulator->RunNFrames(2);
+        }
+        for (PcKey k : {key, PcKey::LeftAlt, PcKey::LeftCtrl})
+        {
+            Kbc()->OnPcKey(k, false);
+            _emulator->RunNFrames(2);
+        }
+    };
+    chord(PcKey::Keypad0);
+    ASSERT_TRUE(Kbc()->Cpu()->Latch(1) & 0x80) << "blocked: W_ON = 1";
+    uint8_t value = 0;
+    EXPECT_LT(TimedInUs(0x55FE, value), 5.0) << "no WAIT while blocked";
+    _emulator->RunNFrames(1);
+    // The handler did run (INT1), but on #FF: the firmware's command flag (R7 of register bank 1) stays clear
+    EXPECT_EQ(Kbc()->Cpu()->Ram(0x0F), 0) << "R7: no #55 seen while blocked";
+    chord(PcKey::Keypad7);
+    ASSERT_FALSE(Kbc()->Cpu()->Latch(1) & 0x80) << "unblocked";
+    EXPECT_EQ(In(0x55FE), 0xAA);
+    EXPECT_EQ(In(0x01FE), 4) << "a served #55 arms it";
+}
+
 TEST_F(Atm2Kbc_Test, Mode0PassesTheZxKeyboard)
 {
     Create("ATM710", 1024);
