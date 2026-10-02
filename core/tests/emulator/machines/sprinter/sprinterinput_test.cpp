@@ -10,10 +10,14 @@
 
 #include "sprinterfixture.h"
 
+#include <cstdio>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
+#include "emulator/media/mediamanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -243,6 +247,8 @@ protected:
     void TearDown() override
     {
         _emulator.reset();
+        if (!_blankDisk.empty())
+            std::remove(_blankDisk.c_str());
         if (_manager)
         {
             for (const auto& id : _manager->GetEmulatorIds())
@@ -281,25 +287,46 @@ protected:
         return ScreenHas(needle);
     }
 
-    /// Past the IDE detection: F4 at each unit's wait, as the screen asks
+    /// Past the IDE detection: with no drive the empty channel reads #7F (DD7 pull-down) and both units are
+    /// "None" at once
     void SkipIdeWaits()
     {
-        for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
-        {
-            ASSERT_TRUE(RunUntilScreen(unit, 300)) << ScreenText();
-            _keys->TapKey("f4");
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
-            ASSERT_FALSE(ScreenHas(unit)) << "F4 did not skip: " << ScreenText();
-        }
+        ASSERT_TRUE(RunUntilScreen("Primary Slave    ... None", 400)) << ScreenText();
+        ASSERT_TRUE(ScreenHas("Primary Master   ... None")) << ScreenText();
     }
+
+    /// F4 at the one IDE wait BIOS 3.04 still has: a blank disk on the master, so the absent slave gets status #00
+    /// from it and the NOP check waits #118 HALTs (~5.7 s) for DRDY, offering F4
+    void SkipTheSlaveWaitWithF4()
+    {
+        std::vector<uint8_t> disk(1024 * 1024, 0);
+        _blankDisk = TestPathHelper::GetUniqueTestScratchPath("input-blank-hdd.img");
+        ASSERT_TRUE(FileHelper::SaveBufferToFile(_blankDisk, disk.data(), disk.size()));
+        MediaSource source;
+        source.path = _blankDisk;
+        InsertOptions options;
+        options.immediate = true;
+        options.access = AccessMode::Session;
+        const auto result = _context->pMediaManager->Insert("ide0.master", source, options);
+        ASSERT_TRUE(result.Ok()) << result.message;
+
+        const char* waiting = "Primary Slave    ... [Press F4";
+        ASSERT_TRUE(RunUntilScreen(waiting, 400)) << ScreenText();
+        EXPECT_TRUE(ScreenHas("Primary Master   ... UNREAL-NG HDD")) << ScreenText();
+        _keys->TapKey("f4");
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(waiting); }, 100, 1);
+        ASSERT_FALSE(ScreenHas(waiting)) << "F4 did not skip: " << ScreenText();
+        EXPECT_FALSE(ScreenHas("Primary Slave    ... None")) << "F4, not the timeout, ended the wait: " << ScreenText();
+    }
+    std::string _blankDisk;
 };
 
-// The boot prompt: F4 skips the IDE waits, ENTER reboots (SETUP starts over: the boot screen again),
-// DEL on the boot screen opens SETUP.
+// The boot prompt: F4 skips the IDE wait (the absent slave next to a blank master disk), ENTER reboots (SETUP
+// starts over: the boot screen again), DEL on the boot screen opens SETUP.
 // Boot-bound (the logo, the IDE detection, the failed boot, and SETUP's restart: ~900 frames of real ROM)
 TEST_F(SprinterInputBoot_Test, Bios304_F4EnterDel)
 {
-    SkipIdeWaits();
+    SkipTheSlaveWaitWithF4();
     const char* prompt = "PRESS <ENTER> TO REBOOT, <ESC> TO CANCEL";
     ASSERT_TRUE(RunUntilScreen(prompt, 1000)) << ScreenText();
 

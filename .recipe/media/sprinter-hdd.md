@@ -92,7 +92,8 @@ curl -s $BASE/emulator/$EMU_ID/state/ide | jq -c '{scheme, channels, selected_ch
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/type -H 'Content-Type: application/json' -d '{"text":"dir"}'
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap  -H 'Content-Type: application/json' -d '{"key":"enter","frames":3}'
 
-# An empty channel floats: the BIOS waits ~31 s per unit with "[Press F4 to skip]" - skip it
+# An empty channel needs no key ("None" at once); F4 skips the one wait left: BIOS 3.04's
+# absent slave next to a master (280 frames, "[Press F4 to skip]")
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"F4","frames":3}'
 ```
 
@@ -122,8 +123,9 @@ media list
   boots DSS 1.71 from `sp_hdd_sys.chd` directly (`RealHdd_Dss171BootsFromTheMamePackChd`).
 - **DSS 1.71 on BIOS 3.04 fails** with "Fatal error" after "Start from Hard disk...Ok": switch the
   BIOS to 3.06 Hotfix 2, not the disk.
-- **Long IDE waits are the hardware's**: an empty channel reads `#FF` (BSY), so SETUP waits 1 550
-  frames per unit; with a master on the channel an absent slave takes 280 frames. Tap F4 at a
+- **No IDE wait for an empty channel**: it reads `#7F` (the ATA DD7 pull-down, BSY = 0), so every
+  BIOS prints "None" for its units at once - no F4 for the secondary channel of 3.06 / 3.07. The one
+  wait left is BIOS 3.04's absent slave next to a master (280 frames); tap F4 at its
   "[Press F4 to skip]" line. In the Qt GUI F4 reaches the machine while the screen has focus (the
   menu's F-key shortcuts give way on PC-keyboard machines, [keyboard.md](../../docs/features/keyboard.md)).
 - **TTD does not record the Sprinter yet** (phase S7).

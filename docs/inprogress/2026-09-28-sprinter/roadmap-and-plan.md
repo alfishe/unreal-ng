@@ -167,9 +167,9 @@ Findings and deviations from the design (applied in the documents named):
 - **IDE without a drive**: until the IDE adapter (S3b) the IDE codes read `#FF` (BSY set), as an
   empty bus does on the shared IDE core; SETUP then waits ~31 s per unit ("Detecting IDE ...
   [Press F4 to skip]"). The boot test presses F4 through the SIO (scan code `#0C`), which also
-  proves the keyboard path SETUP polls. **Settled (2026-10-01): `#FF` is the board's answer** - no
-  pull-down on DD7, LS-TTL transceivers read an undriven bus high (hardware-reference §9.1). MAME
-  differs because its default slots hold drives (see §6.1 (b)).
+  proves the keyboard path SETUP polls. ~~Settled (2026-10-01): `#FF` is the board's answer~~
+  **Revised 2026-10-02 (owner):** an empty channel reads `#7F`, the ATA host pull-down on DD7, so every
+  BIOS reports "None" at once (tdd-storage §3.4, hardware-reference §9.1).
 - **TTD**: `PeripheralId::SprinterPld = 25` is declared without a serializer, so TTD refuses to
   record the Sprinter until S7 instead of recording a state it cannot restore; the CMOS uses the
   shared id 18. The ids of tdd-integration §2.1 are therefore 25 (PLD) and up.
@@ -204,7 +204,7 @@ from the BIOS start, frames are MAME's.
 | (c) loader | 473 720 writes, last at 6 691 665 T (1.912 s) | 473 720, last at 6 691 671 T (+6 T: the shared Z80 reset charges 3 T before the first fetch, and the probe read the clock after the 3-T write cycle where MAME stamps its start), 113 T per byte | **equal** (the CPU reset after it is not in MAME) |
 | (a) INT positions, FN_SYNC A = 1/2/3/0 | 60 896 / 64 480 / 66 272 / 66 272 T | the same | **equal** |
 | (a) INT acknowledge | routine's first fetch 6.5-10.5 T after the edge | 7-8 T | **equal**; the acknowledge ends the pulse (PLD) |
-| (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` is the board) |
+| (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` was S0-S3b's empty bus, `#7F` since 2026-10-02, §9) |
 | (e) page `#40` | CRC `b7f09600` | equal (`SprinterBoot_Test`) | **equal** |
 
 Fix: the turbo port wait was taken 2 clocks early (`AccessStartClock()` is the start of a 3-T memory
@@ -435,14 +435,16 @@ C:\>
 The prompt screen equals `testdata/machines/sprinter/golden/dss-hdd-prompt.png` pixel for pixel, and the image
 file holds the directory `S3B` afterwards (WriteThrough access).
 
-**BIOS detection.** The 31 s-per-unit wait of S1-S3a was the floating bus of an empty channel, and it stays for
-an empty channel, as on the board (hardware-reference §9.1). With a disk on the master the BIOS finds it at once;
+**BIOS detection.** The 31 s-per-unit wait of S1-S3a was the floating bus of an empty channel. S3b kept it
+(`#FF`, checked against BIOS 3.04 only); **revised 2026-10-02:** the owner rejected that outcome, and an empty
+channel now reads `#7F` (the ATA DD7 pull-down): every BIOS reports its units "None" in 1 frame instead of
+1 550-1 650 frames each (tdd-storage §3.4, `SprinterBoot_Test.EmptyChannels_*`). With a disk on the master the BIOS finds it at once;
 the empty slave then takes 280 frames (5.7 s): the master answers the task file for an absent slave (status `#00`,
 the sector count echoes), so SETUP sends a NOP and waits `#118` HALTs for DRDY. MAME shows the same 280-frame
 slave probe with BIOS 3.04 (frames 192-472 in [reference/hdd-boot-304.txt](../../../testdata/machines/sprinter/reference/hdd-boot-304.txt)).
 An empty CD unit on the slave (`CD1=1`, MAME's default wiring) is identified at once as "UNREAL-NG CD-ROM" (T-IDE-8).
-BIOS 3.04 probes two units; BIOS 3.06 probes four, so it also waits 1 550 frames per empty secondary unit unless a
-disk is there or F4 is pressed.
+BIOS 3.04 probes two units; BIOS 3.06 probes four, and since the revision an empty secondary channel costs it no
+wait either.
 
 **Both channels.** `Bios306_DssUsesBothChannels`: BIOS 3.06 Hotfix 2 with built disks on `ide0.master` and
 `ide1.master` detects "UNREAL-NG HDD" on the primary and the secondary master and "None" on both slaves without a
@@ -452,7 +454,7 @@ key; DSS 1.62.92 boots from the primary, mounts the secondary as `D:` and `mkdir
 
 | Disk | BIOS | Result | unreal-ng | MAME 0.289 |
 |---|---|---|---|---|
-| MAME pack `sp_hdd_sys.img` (raw 1 GiB from `sp_hdd_sys.chd`; DSS 1.71.57), `UNREAL_SPRINTER_HDD` | 3.06 Hotfix 2 | "Estex DSS version 1.71.57. Shell version 1.2.522.", then `SYSTEM.BAT` starts Flex Navigator (graphics mode, both panels) | banner at frame 187 (F4 at the two empty secondary units) | banner at frame 385 (7.885 s; its CD unit on the primary slave takes 200 frames of packet commands) |
+| MAME pack `sp_hdd_sys.img` (raw 1 GiB from `sp_hdd_sys.chd`; DSS 1.71.57), `UNREAL_SPRINTER_HDD` | 3.06 Hotfix 2 | "Estex DSS version 1.71.57. Shell version 1.2.522.", then `SYSTEM.BAT` starts Flex Navigator (graphics mode, both panels) | banner at frame 187 (then: F4 at the two empty secondary units; since the DD7 revision none needed) | banner at frame 385 (7.885 s; its CD unit on the primary slave takes 200 frames of packet commands) |
 | same | 3.04 | the loader reads SYSTEM.DOS, then "Fatal error! Press RESET to restart." | on screen by frame 500 | frame 475 |
 | ZXMAK2 `sp_disk1.vhd` (fixed VHD, 2 GiB; DSS 1.62.93), `UNREAL_SPRINTER_HDD_VHD` | 3.04 | `C:\>fn` (Flex Navigator next) | frame 482 | - |
 

@@ -13,6 +13,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
 #include "emulator/config.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
@@ -102,6 +103,34 @@ TEST_F(IdeController_Test, PentagonHasTwoDiskUnits)
 
     // No disks yet: the channel floats
     EXPECT_EQ(Channel().ReadRegister(StatusCommand), 0xFF);
+}
+
+/// The DD7 pull-down is the Sprinter board's: every other board keeps the floating #FF of an empty channel
+TEST_F(IdeController_Test, OnlyTheSprinterPullsDd7Down)
+{
+    const std::pair<const char*, uint16_t> boards[] = {
+        {"PENTAGON", AtaChannel::kEmptyBusFloating}, {"PROFI", AtaChannel::kEmptyBusFloating},
+        {"SCORPION", AtaChannel::kEmptyBusFloating}, {"ATM3", AtaChannel::kEmptyBusFloating},
+        {"ATM710", AtaChannel::kEmptyBusFloating},   {"SPRINTER", AtaChannel::kEmptyBusDd7PullDown}};
+    for (const auto& [model, word] : boards)
+    {
+        Create(model);
+        if (std::string(model) == "SCORPION")
+        {
+            _context->config.ide_scheme = IDE_SMUC;  // configs/scorpion ships Scheme=NONE
+            _context->pCore->RefitIde();
+        }
+        IdeController& ide = *_context->pIdeController;
+        ASSERT_TRUE(ide.Enabled()) << model;
+        for (int index = 0; index < ide.ChannelCount(); index++)
+        {
+            EXPECT_EQ(ide.Channel(index).EmptyBus(), word) << model << " channel " << index;
+            if (!ide.Channel(index).AnyPresent())  // a shipped CD unit is on the bus with no disc
+                EXPECT_EQ(ide.Channel(index).ReadRegister(StatusCommand), word & 0xFF) << model << " channel " << index;
+        }
+        EmulatorTestHelper::CleanupEmulator(_emulator);
+        _emulator = nullptr;
+    }
 }
 
 TEST_F(IdeController_Test, DiskMediaReachTheUnit)
@@ -429,7 +458,8 @@ TEST_F(IdeController_Test, SprinterHasTwoChannels)
     std::memcpy(disk.data() + 3 * 512, "\x34\x12", 2);
     ASSERT_TRUE(Insert("ide1.master", Utf8(folder.File("ide1.img", disk))).Ok());
     IdeAdapter& adapter = _context->pPortDecoder->GetIdeAdapter();
-    EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), 0xFF) << "primary: no drive, the bus floats";
+    EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), 0x7F) << "primary: no drive, DD7 pulled down (BSY = 0)";
+    EXPECT_EQ(adapter.SprinterIn(0x28, 0x4054), 0x7F) << "alternate status as well";
     adapter.SprinterOut(0x2A, 0x01BC, 0x01);
     EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), Status::DRDY | Status::DSC);
     for (const auto& [code, value] : std::vector<std::pair<uint8_t, uint8_t>>{

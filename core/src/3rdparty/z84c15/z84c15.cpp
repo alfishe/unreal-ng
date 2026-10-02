@@ -226,6 +226,158 @@ void Z84C15::PollWatchdog()
 
 /// endregion </Watchdog>
 
+/// region <State>
+
+namespace
+{
+void Put64(uint8_t*& p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++)
+        *p++ = static_cast<uint8_t>(v >> (8 * i));
+}
+
+uint64_t Get64(const uint8_t*& p)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++)
+        v |= static_cast<uint64_t>(*p++) << (8 * i);
+    return v;
+}
+}  // namespace
+
+void Z84C15::SaveState(uint8_t* dst) const
+{
+    uint8_t* p = dst;
+    const uint8_t sys[8] = {system.scrp, system.wcr,   system.mwbr,  system.csbr,
+                            system.mcr,  system.wdtmr, system.wdtcr, system.irqPriority};
+    for (uint8_t b : sys)
+        *p++ = b;
+
+    const Z84CPU::Z84WaitGen& w = _cpu->wait;
+    *p++ = w.wcrProgrammed;
+    *p++ = w.wcr;
+    *p++ = w.mwbr;
+    *p++ = w.powerOnM1Left;
+    *p++ = w.afterEd;
+    *p++ = w.active ? 1 : 0;
+
+    *p++ = _wdtRunning ? 1 : 0;
+    *p++ = _wdtFired ? 1 : 0;
+    Put64(p, _wdtStart);
+
+    *p++ = ctc.Vector();
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        const Z84Ctc::ChannelState& ch = ctc.GetChannel(i);
+        *p++ = ch.control;
+        *p++ = ch.timeConstant;
+        *p++ = ch.awaitingConstant;
+        *p++ = ch.running;
+        Put64(p, ch.loadClock);
+        Put64(p, ch.zeroCounts);
+        *p++ = ch.ip;
+        *p++ = ch.ius;
+    }
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        const Z84Sio::Channel& ch = sio.GetChannel(i);
+        for (uint8_t r : ch.wr)
+            *p++ = r;
+        *p++ = ch.pointer;
+        for (uint8_t f : ch.fifo)
+            *p++ = f;
+        *p++ = ch.fifoCount;
+        *p++ = ch.lastData;
+        *p++ = ch.overrun;
+        *p++ = ch.rxFirstArmed;
+        *p++ = ch.rxFirstIp;
+        *p++ = ch.rxIus;
+    }
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        const Z84Pio::Port& port = pio.GetPort(i);
+        const uint8_t bytes[11] = {port.mode, port.direction, port.output,    port.vector, port.intControl, port.mask,
+                                   port.next, port.inputs,    port.condition, port.ip,     port.ius};
+        for (uint8_t b : bytes)
+            *p++ = b;
+    }
+}
+
+void Z84C15::LoadState(const uint8_t* src)
+{
+    const uint8_t* p = src;
+    system.scrp = *p++;
+    system.wcr = *p++;
+    system.mwbr = *p++;
+    system.csbr = *p++;
+    system.mcr = *p++;
+    system.wdtmr = *p++;
+    system.wdtcr = *p++;
+    system.irqPriority = *p++;
+
+    Z84CPU::Z84WaitGen& w = _cpu->wait;
+    w.wcrProgrammed = *p++;
+    w.wcr = *p++;
+    w.mwbr = *p++;
+    w.powerOnM1Left = *p++;
+    w.afterEd = *p++;
+    w.active = *p++ != 0;
+
+    _wdtRunning = *p++ != 0;
+    _wdtFired = *p++ != 0;
+    _wdtStart = Get64(p);
+
+    ctc.SetVector(*p++);
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        Z84Ctc::ChannelState& ch = ctc.Channel(i);
+        ch.control = *p++;
+        ch.timeConstant = *p++;
+        ch.awaitingConstant = *p++;
+        ch.running = *p++;
+        ch.loadClock = Get64(p);
+        ch.zeroCounts = Get64(p);
+        ch.ip = *p++;
+        ch.ius = *p++;
+    }
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        Z84Sio::Channel& ch = sio.ChannelState(i);
+        for (uint8_t& r : ch.wr)
+            r = *p++;
+        ch.pointer = *p++;
+        for (uint8_t& f : ch.fifo)
+            f = *p++;
+        ch.fifoCount = *p++;
+        ch.lastData = *p++;
+        ch.overrun = *p++;
+        ch.rxFirstArmed = *p++;
+        ch.rxFirstIp = *p++;
+        ch.rxIus = *p++;
+    }
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        Z84Pio::Port& port = pio.PortState(i);
+        port.mode = *p++;
+        port.direction = *p++;
+        port.output = *p++;
+        port.vector = *p++;
+        port.intControl = *p++;
+        port.mask = *p++;
+        port.next = *p++;
+        port.inputs = *p++;
+        port.condition = *p++;
+        port.ip = *p++;
+        port.ius = *p++;
+    }
+}
+
+/// endregion </State>
+
 /// region <Daisy chain>
 
 int Z84C15::Order(Source* out) const

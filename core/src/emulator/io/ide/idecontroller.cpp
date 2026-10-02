@@ -27,6 +27,12 @@ IdeController::IdeController(EmulatorContext* context) : _context(context)
     if (_scheme == IDE_NONE)
         return;
 
+    // The Sprinter's AT board pulls DD7 down as the ATA standard asks, so an empty channel reads
+    // BSY = 0 (#7F) and the BIOS (3.04 and the 3.06 / 3.07 four-unit scan) reports "None" at once.
+    // The other boards keep the floating #FF (IDE design §6.2)
+    for (AtaChannel& channel : _channels)
+        channel.SetEmptyBus(_scheme == IDE_SPRINTER ? AtaChannel::kEmptyBusDd7PullDown : AtaChannel::kEmptyBusFloating);
+
     const int units = ChannelCount() * AtaChannel::kUnits;
     for (int unit = 0; unit < units; unit++)
         BuildUnit(unit);

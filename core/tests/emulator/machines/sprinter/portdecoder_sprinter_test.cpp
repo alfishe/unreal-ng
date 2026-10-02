@@ -486,13 +486,17 @@ TEST_F(PortDecoderSprinter_Test, TraceCodeTable_NamesTheCodes)
     EXPECT_EQ(nameOf(PortDecoder_Sprinter::kTraceZ84Base + 0x19), "Z84 SIO A control");
 }
 
-TEST_F(PortDecoderSprinter_Test, Ttd_DeclaresThePldStateItCannotRecordYet)
+TEST_F(PortDecoderSprinter_Test, Ttd_EveryDeclaredStateHasASerializer)
 {
     const auto ids = _decoder->GetTTDModelStateIds();
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::SprinterPld), ids.end());
     const auto serializers = _decoder->CreateTTDSerializers();
-    for (const auto& s : serializers)
-        EXPECT_NE(s->TTDPeripheralId(), ttd::PeripheralId::SprinterPld) << "the PLD serializer is phase S7";
+    for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
+                                 ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput, ttd::PeripheralId::Wd1793Context})
+    {
+        EXPECT_NE(std::find(ids.begin(), ids.end(), id), ids.end()) << "declared: id " << int(id);
+        EXPECT_TRUE(std::any_of(serializers.begin(), serializers.end(), [id](const auto& s) { return s->TTDPeripheralId() == id; }))
+            << "serialized: id " << int(id);
+    }
 }
 
 /// endregion </Surfaces>
@@ -623,7 +627,7 @@ TEST_F(PortDecoderSprinterIde_Test, OutiLoopWritesASectorInOrder)
     EXPECT_EQ(In(0x4053), 0x50);
 }
 
-// The channel select through the table: OUT (#BC),#01 reaches the secondary channel (empty: the bus floats),
+// The channel select through the table: OUT (#BC),#01 reaches the secondary channel (empty: DD7 pulled down, #7F),
 // OUT (#BC),#21 the primary again; the latch is the IDE adapter's (the AtaChannel TTD blob)
 TEST_F(PortDecoderSprinterIde_Test, ChannelSelectThroughTheTable)
 {
@@ -632,7 +636,7 @@ TEST_F(PortDecoderSprinterIde_Test, ChannelSelectThroughTheTable)
     EXPECT_EQ(In(0x4053), 0x50);
     Out(0x01BC, 0x01);
     EXPECT_EQ(_decoder->GetIdeAdapter().State().channel, 1);
-    EXPECT_EQ(In(0x4053), 0xFF) << "secondary: no drive";
+    EXPECT_EQ(In(0x4053), 0x7F) << "secondary: no drive, BSY = 0";
     Out(0x21BC, 0x21);
     EXPECT_EQ(In(0x4053), 0x50);
 
