@@ -21,6 +21,9 @@ class OpcodeProfiler;
 
 namespace rzx { class RzxPlayer; }
 
+// CPU-LIBRARY-MIGRATION(register-file): attached as the engine's register file (pc .. nmi_in_progress, the
+// Z80CpuRegisterFile layout of unreal-z80 / Z84CpuRegisterFile of z84c15); the layout becomes a compile-time
+// contract checked on both sides
 struct Z80Registers
 {
     union
@@ -362,10 +365,38 @@ public:
     virtual void OnMachineFrameRollover(uint32_t frameLength) { (void)frameLength; }
 };
 
+/// An instruction engine that replaces the native interpreter for one machine
+/// (see Z80::SetEngine): the Sprinter's Z84C15 runs on its own CPU library
+/// (core/src/3rdparty/z84c15, docs/inprogress/2026-10-01-z84c15-cpu-library).
+/// The engine executes on this Z80's registers and time and sends every bus
+/// cycle through the machine's normal memory and port paths; Z80 keeps the
+/// work that belongs to the machine around it (EngineStep). Null for every
+/// other machine: they never reach the engine path (one bit of the per-step
+/// work word, kStepWorkEngine)
+// CPU-LIBRARY-MIGRATION(engine-seam): every machine installs an engine; the native interpreter becomes one
+// engine implementation or goes away, and the seam turns into the only step path
+class ICpuEngine
+{
+public:
+    virtual ~ICpuEngine() = default;
+    /// One step: the instruction at PC (opcode fetch through execution, Q),
+    /// or one M1 of a halted CPU, or the instruction a pending DD/FD prefix
+    /// introduces. tt, the registers and Z80State::boundary are current on
+    /// entry and are left current on return
+    virtual void ExecuteStep() = 0;
+    /// The INT acknowledge and what follows it (push PC, the IM2 vector
+    /// read, PC = the handler): Z80::ProcessInterrupts accepted the INT and
+    /// `vector` is the byte on the data bus
+    virtual void AcknowledgeInterrupt(uint8_t vector) = 0;
+    /// The NMI acknowledge (restart fetch, push PC, PC = #0066)
+    virtual void AcknowledgeNmi() = 0;
+};
+
 /// INT/NMI acceptance. One value at a time - each is a property of the last
 /// instruction or the last acknowledge. Set by that instruction/acknowledge,
 /// cleared when the next Z80Step starts. Same values and meaning as
 /// unreal-z80's Z80CpuBoundary.
+// CPU-LIBRARY-MIGRATION(boundary-state): the engine's boundary register becomes the source; this host copy goes
 enum Z80BoundaryEnum : uint8_t
 {
     Z80_BOUNDARY_NONE = 0,
@@ -396,6 +427,8 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
     unsigned rate;  // Rate for Z80 speed recalculations. 3.5MHz -> 256, 7MHz -> 128
     bool vm1;       // Halt handling type (True - ...; False - ...)
+    // CPU-LIBRARY-MIGRATION(cmos-variant): a variant setting of the engine per model (unreal-z80
+    // Z80CpuSetOutC0Value; the Z84C15 library writes #FF)
     uint8_t outc0;  // What to use when 'out (c), 0' is called
 
     uint16_t last_branch;
@@ -502,6 +535,7 @@ public:
     uint8_t rdM1(uint16_t addr);  // the opcode fetch: rd through the interface's MemoryReadM1
     void wd(uint16_t addr, uint8_t val);
 
+    // CPU-LIBRARY-MIGRATION(t-model): tt / rate scaling stays host-side; the engine counts plain T
     /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
     /// the same counter step as the CPU's own cycles
     inline void InsertWaitStates(uint8_t cycles) { tt += cycles * rate; }
@@ -518,6 +552,7 @@ public:
     /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
     /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without
     /// that rule (and without a bus trace hook) this is the plain cycle count
+    // CPU-LIBRARY-MIGRATION(idle-cycles): the engine's Internal access kind on the contention hook
     inline void Idle(uint16_t addr, uint8_t cycles)
     {
         if (idleContention || busTraceHook) [[unlikely]]
@@ -605,8 +640,22 @@ public:
 private:
     IInterruptSource* _interruptSource = nullptr;
     IMachineStepHook* _machineStepHook = nullptr;
+    ICpuEngine* _engine = nullptr;
 
 public:
+    /// The machine's instruction engine when it does not run on the native
+    /// interpreter (see ICpuEngine). Set by the model's port decoder at init,
+    /// nullptr when it goes away; also raises / clears the per-step work bit
+    /// (EmulatorContext::kStepWorkEngine), so the native machines' step is
+    /// the plain one. Z80Step stays the native interpreter's step: with an
+    /// engine installed, drive the CPU through StepInstruction
+    void SetEngine(ICpuEngine* engine);
+    ICpuEngine* GetEngine() const { return _engine; }
+    /// Z80Step's counterpart for a machine with an engine: the same work
+    /// around the instruction (instruction-start hooks, call trace, opcode
+    /// profiler, debug trace), the instruction itself from the engine
+    void EngineStep(bool skipBreakpoints = false);
+
     /// The machine's INT logic when it is not the ULA frame pulse (see
     /// IInterruptSource). Set by the model's port decoder at init, nullptr
     /// when it goes away. Also raises / clears the per-step work bit
