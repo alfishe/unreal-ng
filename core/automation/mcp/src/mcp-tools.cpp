@@ -2106,8 +2106,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                         const Json::Value& audio = drive["audio"];
                                         out << "\n[cdaudio] " << drive["slot"].asString() << ": ";
                                         if (drive["disc"].isObject())
+                                        {
                                             out << drive["disc"]["format"].asString() << " tracks " << drive["disc"]["first_track"].asInt() << "-"
-                                                << drive["disc"]["last_track"].asInt() << ", ";
+                                                << drive["disc"]["last_track"].asInt();
+                                            if (drive["disc"]["sessions"].asInt() > 1)
+                                                out << " in " << drive["disc"]["sessions"].asInt() << " sessions";
+                                            out << ", ";
+                                        }
                                         else
                                             out << "no disc, ";
                                         out << audio["status"].asString() << " at " << audio["msf"].asString();

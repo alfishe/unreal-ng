@@ -173,8 +173,8 @@ belong to the caller, which owns the model replacement and the machine start.
 it names them instead of guessing.
 
 **As built in M1 (2026-10-01):** `ChooseSlot` runs `Classify` + `Plan` and takes the chooser's
-first entry (an empty slot before an occupied one, the primary / boot slot first, an add-on's
-last), naming the alternatives in the reply's report. Superseded by M2b (below, §4.4): several
+first entry (the primary / boot slot first, an add-on's last; occupancy no longer reorders, so the
+tiles keep their place), naming the alternatives in the reply's report. Superseded by M2b (below, §4.4): several
 targets (floppy drives excepted) answer `ambiguous-slot` with the list, now that the Qt window
 asks through its chooser instead of sending `insert auto`.
 The TR-DOS rule of the floppy probe (`FloppyFormats::Probe`) is capped at the largest TR-DOS

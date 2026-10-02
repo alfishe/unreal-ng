@@ -3345,7 +3345,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
 | `media formats [--kind floppy]` | accepted formats |
 | `media targets <path>` | where a file can go: what it is, the slots that take it (`*` = used without asking), or why nothing does |
-| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
+| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32] [--format audio-cd]` | a file or a folder; a folder of MP3 / FLAC / WAV files in a CD slot is an audio CD (`media info cd` lists its tracks) |
 | `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
 | `media save <slot> [path] [--compression ..]`, `media export <slot> <path> [--compression none\|default\|zlib,lzma,huff,flac,zstd] [--parent <base.chd>]`, `media discard <slot>` | keep or drop the writes; a `.chd` path writes a MAME CHD (hard disks, cards; `--parent` makes a delta CHD on a base image) |

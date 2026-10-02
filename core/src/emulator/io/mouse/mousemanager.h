@@ -54,6 +54,8 @@ public:
     void RemoveSink(IMouseSink* sink);
     /// Some device of the machine can be read: capturing the host mouse makes sense
     bool HasMouseDevice() const;
+    /// Some device of the machine can be read right now (a Kempston mouse is not while TR-DOS is active)
+    bool IsMouseInUse() const;
     /// endregion </Devices>
 
     /// region <Apply: emulator thread (ttd::ApplyInputEvent), one input to every device>

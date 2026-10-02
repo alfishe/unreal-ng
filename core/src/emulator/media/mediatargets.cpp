@@ -6,6 +6,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/storage/cd/audiofolderdisc.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/media/blockadvisory.h"
@@ -57,16 +58,16 @@ namespace
         }
     }
 
-    /// The chooser's order within a kind: an empty slot first, then the slot the
-    /// machine boots from or calls primary, an add-on's slot last
+    /// The chooser's order within a kind: the slot the machine boots from or calls
+    /// primary first, an add-on's slot last. Whether a slot is occupied does not
+    /// matter: the tiles keep their place while the media change
     int Rank(const SlotInfo& info)
     {
-        const int occupied = info.present || info.pending ? 10 : 0;
         if (HasTag(info, "primary") || HasTag(info, "boot"))
-            return occupied;
+            return 0;
         if (HasTag(info, "addon"))
-            return occupied + 2;
-        return occupied + 1;
+            return 2;
+        return 1;
     }
 
     std::string NoSlotReason(const FileClass& file, const std::vector<SlotInfo>& slots)
@@ -154,13 +155,20 @@ FileClass MediaTargets::Classify(const std::string& path)
     file.path = path;
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
 
-    // A folder becomes a TR-DOS disk, a FAT volume or a tape: whichever slot takes one
+    // A folder becomes a TR-DOS disk, a FAT volume or a tape: whichever slot takes one. A folder
+    // with MP3 / FLAC / WAV files is offered to a CD drive first, as an audio CD
     if (FileHelper::IsFolder(path))
     {
         file.folder = true;
         file.kinds = {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd, FileKind::Tape};
         file.format = "folder";
         file.evidence.push_back("a folder");
+        if (AudioFolderDisc::HasAudioFiles(path))
+        {
+            file.kinds.insert(file.kinds.begin(), FileKind::Optical);
+            file.format = "audio-folder";
+            file.evidence.push_back("MP3 / FLAC / WAV files in it (an audio CD for a CD drive)");
+        }
         return file;
     }
     if (!FileHelper::FileExists(path))

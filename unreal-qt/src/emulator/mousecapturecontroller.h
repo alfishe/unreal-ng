@@ -5,6 +5,8 @@
 #include <QPoint>
 #include <QSize>
 #include <QSizeF>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <functional>
 #include <string>
 
@@ -27,12 +29,18 @@ class QWheelEvent;
 /// hands it to every mouse device of the machine.
 ///
 /// Policy:
-///   - a click on the screen captures when the machine has a mouse device and
+///   - a click on the screen captures when a program reads the machine's mouse and
 ///     the gate is open; that click is not passed to the machine;
 ///   - the release key (default Ctrl+Esc: the physical Control key on every
 ///     platform, macOS included) and focus loss release; a plain Esc reaches the
 ///     machine. While captured an application-wide event filter catches the
 ///     release key in any window, whatever has the focus or a shortcut claims;
+///   - a click captures only while a program reads the mouse (the 128K ROM does not;
+///     TR-DOS owns the ports): the machine's "mouse in use" answer decides;
+///   - captured, the mouse stops being in use: released once it has stayed unused
+///     for kUnreachableReleaseMs, so a pause in polling does not flap the capture.
+///     Worked example: unused at 10.0 s, polled again at 11.5 s: kept; unused at
+///     10.0 s and still at 13.0 s: released. No re-capture by itself
 ///   - the gate (toolbar button) closed: never captures, posts nothing.
 ///     Automation and TTD replay do not come through here and are not gated.
 /// No grabMouse(): the menus stay usable while the mouse is captured.
@@ -47,7 +55,7 @@ public:
     /// What the toolbar button shows
     enum class State
     {
-        NoDevice,  ///< no emulator shown, or its machine has no mouse device
+        NoDevice,  ///< no emulator shown, or no program reads its mouse (no device, TR-DOS, a ROM that ignores it)
         Ready,     ///< gate open, not captured: a click on the screen captures
         Captured,  ///< the host mouse drives the machine
         Gated,     ///< gate closed: never captured
@@ -70,7 +78,7 @@ public:
     /// Machine-side settings read at capture time
     struct HostSettings
     {
-        bool mouseFitted = false;  // the machine has a mouse device (MouseManager::HasMouseDevice)
+        bool mouseFitted = false;  // a program is reading the machine's mouse now (MouseManager::IsMouseInUse)
         bool swapButtons = false;  // [INPUT] SwapMouse
         int scaleLog2 = 0;         // [INPUT] MouseScale: sensitivity 2^scale, -3..3
         std::string releaseKey;    // [INPUT] MouseReleaseKey (QKeySequence text); empty = Ctrl+Esc
@@ -114,6 +122,15 @@ public:
         std::function<void(int steps)> wheel;
     };
     void setPoster(Poster poster) { _poster = std::move(poster); }
+
+    /// Unreachable this long (ms) while captured releases the capture
+    static constexpr qint64 kUnreachableReleaseMs = 3000;
+    /// Milliseconds clock for that rule (default: a monotonic timer). Tests replace it
+    using ClockFn = std::function<qint64()>;
+    void setClock(ClockFn clock) { _clock = std::move(clock); }
+    /// While captured: release when the machine's mouse has been unreachable long enough.
+    /// Runs from a timer; callable directly (tests)
+    void checkReachable();
 
     State state() const;
     bool isCaptured() const { return _captured; }
@@ -164,6 +181,13 @@ private:
     double _scale = 1.0;         // 2^MouseScale, latched at capture
     bool _swapButtons = false;   // SwapMouse, latched at capture
     QKeySequence _releaseKey;    // latched at capture
+
+    qint64 now() const { return _clock ? _clock() : _elapsed.elapsed(); }
+
+    QTimer _reachTimer;                 // runs only while captured
+    QElapsedTimer _elapsed;
+    ClockFn _clock;
+    qint64 _unreachableSince = -1;      // clock value when the mouse became unreachable; -1 = reachable
 
     bool _captured = false;
     bool _filterInstalled = false;

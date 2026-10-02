@@ -212,10 +212,12 @@ def _device_state(dump) -> Dict[str, float]:
     changes = 0
     for cp in dump.checkpoints:
         for pid, raw in cp.peripheral_blobs.items():
-            blob = raw
+            # Compare the decoded state: v1 stores most blobs zstd-compressed, and
+            # the XOR of two compressed blobs says nothing about what changed
+            # (corrected 2026-10-02; the first version XOR'd the stored bytes)
+            blob = tf.decode_peripheral_blob(pid, raw)
             if pid == th.GS_PERIPHERAL_ID:               # GS RAM is a memory region of its own in v2
-                dec = tf.decode_peripheral_blob(pid, raw)
-                blob = dec[:th.GS_FIXED_STATE_BYTES]
+                blob = blob[:th.GS_FIXED_STATE_BYTES]
             v1 += len(raw)
             old = prev.get(pid)
             if old == blob:

@@ -2,16 +2,21 @@
 // INDEX 00 pregaps in the file, PREGAP / POSTGAP silence, MOTOROLA byte order,
 // WAVE files, errors), ISO, raw BIN, and MAME CD CHDs (cdlz / cdzl / cdfl /
 // cdzs, audio stored big-endian, pregaps in the CHD, track padding), all read
-// back sample-exact against the ramps of cdtestdisc.h.
+// back sample-exact against the ramps of cdtestdisc.h. Multisession: REM SESSION
+// sheets (one BIN, a BIN per track as Redump writes, ImgBurn's filler with REM
+// LEAD-OUT), CHD session entries, the gap between sessions.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "_helpers/cdtestdisc.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
+#include "emulator/io/storage/chd/chdcodec.h"
+#include "emulator/io/storage/chd/chdwriter.h"
 
 using namespace cdtest;
 
@@ -296,3 +301,167 @@ TEST(CdImageFormats_Test, HardDiskChdIsNoCd)
     EXPECT_EQ(CdImageFormats::OpenChd(hdd, &error), nullptr);
     EXPECT_NE(error.find("hard-disk CHD"), std::string::npos) << error;
 }
+
+/// region <Multisession (Enhanced CD / CD-Extra)>
+
+TEST(CdImageFormats_Test, EnhancedCdOneBinWithRemSession)
+{
+    // The music disc's default layout: session 1 audio tracks 1-2, session 2 data track 3. The BIN
+    // holds no lead-out / lead-in: the reader puts back 6750 + 4500 frames (cdrecord README.multi)
+    ScratchFolder folder("cd-enhanced");
+    std::string error;
+    auto disc = CdImageFormats::Open(WriteMusicDisc(folder.Path(), 2, 4, 300), &error);
+    ASSERT_NE(disc, nullptr) << error;
+    const MusicDiscLayout l = MusicLayoutOf(2, 4, 300, MusicLayout::Enhanced);
+    ASSERT_EQ(disc->TrackCount(), 3u);
+    EXPECT_EQ(disc->SessionCount(), 2);
+    EXPECT_EQ(disc->TrackAt(0).session, 1);
+    EXPECT_EQ(disc->TrackAt(1).session, 1);
+    EXPECT_EQ(disc->TrackAt(2).session, 2);
+    EXPECT_TRUE(disc->TrackAt(0).IsAudio());
+    EXPECT_EQ(disc->TrackAt(0).startLba, 0u);
+    EXPECT_EQ(disc->TrackAt(1).pregapLba, 300u);
+    EXPECT_EQ(disc->TrackAt(1).startLba, l.audioStart[1]);
+    EXPECT_EQ(disc->SessionLeadOutLba(1), l.audioLeadOut);
+    EXPECT_EQ(l.audioLeadOut, 750u);
+    EXPECT_EQ(disc->TrackAt(2).mode, cd::TrackMode::Mode2);
+    EXPECT_EQ(disc->TrackAt(2).pregapLba, 750u + 11250u);
+    EXPECT_EQ(disc->TrackAt(2).startLba, l.dataStart);
+    EXPECT_EQ(l.dataStart, 750u + 11400u) << "11250 + 150 frames after session 1's lead-out";
+    EXPECT_EQ(disc->LeadOutLba(), l.leadOut);
+    EXPECT_EQ(disc->SessionLeadOutLba(2), l.leadOut);
+    EXPECT_EQ(disc->FirstTrackIndexOfSession(2), 2);
+    EXPECT_EQ(disc->LastTrackIndexOfSession(1), 1);
+
+    // Between the sessions nothing is readable; the data track is (its frames carry their own LBA)
+    uint8_t frame[cd::kFrameBytes];
+    EXPECT_EQ(disc->TrackIndexAt(750), -1);
+    EXPECT_EQ(disc->TrackIndexAt(750 + 11249), -1);
+    EXPECT_EQ(disc->ReadFrame(800, frame), CdImage::ReadResult::OutOfRange);
+    EXPECT_EQ(disc->TrackIndexAt(750 + 11250), 2) << "the data track's pregap";
+    uint8_t user[cd::kUserBytes];
+    ASSERT_EQ(disc->ReadUser(l.dataStart + 5, user), CdImage::ReadResult::Ok);
+    EXPECT_EQ(std::vector<uint8_t>(user, user + sizeof(user)), UserData(l.dataStart + 5));
+    ASSERT_EQ(disc->ReadFrame(l.dataStart, frame), CdImage::ReadResult::Ok);
+    EXPECT_TRUE(cd::VerifyEcc(frame));
+    EXPECT_NE(disc->DescribeTracks().find("session 2: 3 mode2"), std::string::npos) << disc->DescribeTracks();
+}
+
+TEST(CdImageFormats_Test, MultisessionRedumpAndImgBurnSheets)
+{
+    ScratchFolder folder("cd-multisession");
+    WriteFile(folder.Path() / "t1.bin", RampPcm(kRampA, 10));
+    WriteFile(folder.Path() / "t2.bin", Mode2Frames(0, 20));  // the LBA in the headers does not matter here
+    std::string error;
+
+    // Redump: a file per track, REM SESSION only: the standard gap (6750 + 4500), the pregap as written
+    WriteFile(folder.Path() / "redump.cue",
+              "REM SESSION 01\nFILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+              "REM SESSION 02\nFILE \"t2.bin\" BINARY\n  TRACK 02 MODE2/2352\n    INDEX 00 00:00:00\n    INDEX 01 00:00:05\n");
+    auto disc = CdImageFormats::Open(Utf8(folder.Path() / "redump.cue"), &error);
+    ASSERT_NE(disc, nullptr) << error;
+    EXPECT_EQ(disc->SessionLeadOutLba(1), 10u);
+    EXPECT_EQ(disc->TrackAt(1).pregapLba, 10u + 6750u + 4500u);
+    EXPECT_EQ(disc->TrackAt(1).startLba, 10u + 11250u + 5u);
+    EXPECT_EQ(disc->LeadOutLba(), 10u + 11250u + 20u);
+
+    // Redump's extra REMs: the lead-out and lead-in lengths and the session pregap (not in the file)
+    WriteFile(folder.Path() / "lengths.cue",
+              "REM SESSION 01\nFILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\nREM LEAD-OUT 00:00:30\n"
+              "REM SESSION 02\nREM LEAD-IN 00:00:20\nREM PREGAP 00:00:07\nFILE \"t2.bin\" BINARY\n  TRACK 02 MODE2/2352\n    INDEX 01 00:00:00\n");
+    disc = CdImageFormats::Open(Utf8(folder.Path() / "lengths.cue"), &error);
+    ASSERT_NE(disc, nullptr) << error;
+    EXPECT_EQ(disc->TrackAt(1).pregapLba, 10u + 30u + 20u);
+    EXPECT_EQ(disc->TrackAt(1).startLba, 10u + 30u + 20u + 7u);
+
+    // ImgBurn / IsoBuster: one file with filler between the sessions; REM LEAD-OUT is where the lead-out
+    // starts in the file, the gap is as long as the filler
+    WriteFile(folder.Path() / "one.bin", RampPcm(kRampA, 10) + std::string(40 * kFrame, '\0') + Mode2Frames(0, 20));
+    WriteFile(folder.Path() / "imgburn.cue",
+              "FILE \"one.bin\" BINARY\nREM SESSION 01\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\nREM LEAD-OUT 00:00:10\n"
+              "REM SESSION 02\n  TRACK 02 MODE2/2352\n    INDEX 01 00:00:50\n");
+    disc = CdImageFormats::Open(Utf8(folder.Path() / "imgburn.cue"), &error);
+    ASSERT_NE(disc, nullptr) << error;
+    EXPECT_EQ(disc->SessionLeadOutLba(1), 10u);
+    EXPECT_EQ(disc->TrackAt(1).startLba, 50u);
+    ExpectRamp(*disc, 0, 10, kRampA, 0);
+
+    // Errors: a skipped session number, a session without a track, LEAD-OUT before any track
+    const std::pair<const char*, const char*> bad[] = {
+        {"FILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\nREM SESSION 03\n  TRACK 02 AUDIO\n    INDEX 01 00:00:05\n",
+         "follow each other"},
+        {"REM SESSION 01\nREM SESSION 02\nFILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n", "has no track"},
+        {"FILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\nREM SESSION 02\n", "has no track"},
+        {"REM LEAD-OUT 00:01:00\nFILE \"t1.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n", "before any track"},
+    };
+    for (const auto& [sheet, reason] : bad)
+    {
+        error.clear();
+        EXPECT_EQ(CdImageFormats::ParseCue(sheet, Utf8(folder.Path()), "bad.cue", &error), nullptr) << sheet;
+        EXPECT_NE(error.find(reason), std::string::npos) << error;
+    }
+}
+
+TEST(CdImageFormats_Test, MultisessionChdSessionEntries)
+{
+    // chdman stores the session of each track in a CHSE entry ("SESSION:2") before the track's CHT2
+    // entry and keeps no lead-out / lead-in frames: the reader puts the standard gap back
+    ScratchFolder folder("cd-chd-sessions");
+    constexpr uint32_t kAudioFrames = 8;   // padded to 4: 8
+    constexpr uint32_t kDataFrames = 6;    // padded to 8 in the CHD
+    std::vector<uint8_t> frames(static_cast<size_t>(8 + 8) * chd::kCdFrameBytes, 0);
+    const std::string audio = RampPcm(kRampA, kAudioFrames, /*bigEndian*/ true);
+    for (uint32_t f = 0; f < kAudioFrames; f++)
+        std::memcpy(frames.data() + f * chd::kCdFrameBytes, audio.data() + f * kFrame, kFrame);
+    const std::string data = Mode2Frames(kAudioFrames + 11250, kDataFrames);
+    for (uint32_t f = 0; f < kDataFrames; f++)
+        std::memcpy(frames.data() + (8 + f) * chd::kCdFrameBytes, data.data() + f * kFrame, kFrame);
+
+    auto text = [](const std::string& s) {
+        chd::MetadataEntry e;
+        e.data.assign(s.begin(), s.end());
+        e.data.push_back('\0');
+        e.flags = 0x01;
+        return e;
+    };
+    chd::WriteOptions options;
+    options.hunkBytes = 4 * chd::kCdFrameBytes;
+    options.unitBytes = chd::kCdFrameBytes;
+    chd::MetadataEntry s1 = text("SESSION:1");
+    s1.tag = chd::MakeTag('C', 'H', 'S', 'E');
+    chd::MetadataEntry t1 = text("TRACK:1 TYPE:AUDIO SUBTYPE:NONE FRAMES:8 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0");
+    t1.tag = chd::MakeTag('C', 'H', 'T', '2');
+    chd::MetadataEntry s2 = text("SESSION:2");
+    s2.tag = chd::MakeTag('C', 'H', 'S', 'E');
+    chd::MetadataEntry t2 = text("TRACK:2 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:6 PREGAP:0 PGTYPE:MODE2_RAW PGSUB:RW POSTGAP:0");
+    t2.tag = chd::MakeTag('C', 'H', 'T', '2');
+    options.metadata = {s1, t1, s2, t2};
+    const std::string path = Utf8(folder.Path() / "sessions.chd");
+    std::string error;
+    ASSERT_TRUE(chd::WriteChd(
+        path, frames.size(),
+        [&frames, &options](uint32_t hunk, uint8_t* dst, std::string*) {
+            const size_t at = static_cast<size_t>(hunk) * options.hunkBytes;
+            std::memset(dst, 0, options.hunkBytes);
+            if (at < frames.size())
+                std::memcpy(dst, frames.data() + at, std::min<size_t>(options.hunkBytes, frames.size() - at));
+            return true;
+        },
+        options, &error))
+        << error;
+
+    auto disc = CdImageFormats::Open(path, &error);
+    ASSERT_NE(disc, nullptr) << error;
+    ASSERT_EQ(disc->TrackCount(), 2u);
+    EXPECT_EQ(disc->SessionCount(), 2);
+    EXPECT_EQ(disc->TrackAt(1).session, 2);
+    EXPECT_EQ(disc->SessionLeadOutLba(1), kAudioFrames);
+    EXPECT_EQ(disc->TrackAt(1).startLba, kAudioFrames + 11250u);
+    EXPECT_EQ(disc->LeadOutLba(), kAudioFrames + 11250u + kDataFrames);
+    ExpectRamp(*disc, 0, kAudioFrames, kRampA, 0);
+    uint8_t user[cd::kUserBytes];
+    ASSERT_EQ(disc->ReadUser(kAudioFrames + 11250 + 2, user), CdImage::ReadResult::Ok);
+    EXPECT_EQ(std::vector<uint8_t>(user, user + sizeof(user)), UserData(kAudioFrames + 11250 + 2));
+}
+
+/// endregion </Multisession>

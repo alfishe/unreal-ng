@@ -20,6 +20,23 @@ results: [README.md](README.md).
 - [x] Real software: NedoOS `cdplay.com` on the ZX-Evo (Nemo / DivIDE ports) and on the ATM Turbo 2+
   (ATM ports): TOC, play, position, pause, resume, stop
 
+### Follow-up, branch `cd-folder-audio` (2026-10-02, [README §6](README.md#6-follow-up-2026-10-02-branch-cd-folder-audio))
+
+- [x] PLAY AUDIO per MMC-3: only the start is checked (past the disc 05h / 21h, outside audio 05h / 64h);
+  an end past the disc plays to the session's lead-out; a data track in the range: (10) / (12) 05h / 63h,
+  MSF plays the audio before it; a refused PLAY moves nothing; the front panel follows the same rules
+- [x] Sprinter `CDPLAYER.FLX` (Flex Navigator) did not play: its PLAY MSF 00:02:00 - 80:00:74 was refused
+  for the end past the lead-out; fixed per MMC-3 5.13; disassembly and notes in
+  [docs/disasm/software/sprinter/cdplayer-flx/](../../disasm/software/sprinter/cdplayer-flx/README.md)
+- [x] cdplay's frozen `[PLAYING] 00:00` and "`1` played the track under the cursor": cdplay ignores the
+  drive's errors (documented; the ZX-Evo keyboard delivers the digits right)
+- [x] Activity LED: data reads only (READ, READ CD); audio shows on the HUD's "CD"
+- [x] Enhanced CD / multisession: CUE `REM SESSION` / `LEAD-OUT` / `LEAD-IN` / `PREGAP`, CHD `CHSE`, the
+  gap between sessions, READ TOC formats 0 / 1 / 2 with sessions; the generators write an Enhanced CD by
+  default (`--layout mixed` for the old disc); the owner's demo disc regenerated
+- [x] Audio CD from a folder of MP3 / FLAC / WAV (`AudioFolderDisc`, dr_flac vendored), media manager,
+  `targets`, info track list, TTD disc identity (CdDrive v2), Qt media panel, every surface + docs + recipe
+
 ## Follow-ups
 
 - [ ] **Real CD-player software for the other boards.** Searched (2026-10-02): `~/Downloads`, `testdata/`,
@@ -44,3 +61,11 @@ results: [README.md](README.md).
 - [ ] SCAN (BAh) and the PLAY AUDIO TRACK RELATIVE commands are not implemented (ILLEGAL REQUEST).
 - [ ] v3 / v4 CD CHDs (`CHCD` metadata) and GD-ROM / DVD CHDs are refused with the reason.
 - [ ] A better resampler than linear interpolation when the mixer does not run at 44.1 kHz.
+- [ ] Audio CD from a folder, v2 ideas (not needed now): decode lazily per track or on a worker thread
+  with a spill file instead of ~10 MiB a minute in memory and ~5 s for 80 minutes at insert (off the
+  UI thread already: every Qt path uses the panel's folder worker); CD-TEXT from the files' tags; Ogg /
+  Opus; a `.m3u` playlist as the track order.
+- [ ] TTD: the CdDrive blob's disc identity is reported (log + `DiscMismatches`), not shown in the TTD
+  status / GUI; a UNS media section (roadmap UNS-6) would carry it for every medium.
+- [ ] MAME reads a multisession CHD without the lead-out / lead-in gap (its CHD layout adds none); we put
+  the standard gap back, so LBAs past session 1 differ from MAME's for such a CHD (the disc's are ours).

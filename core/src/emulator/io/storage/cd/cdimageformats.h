@@ -8,8 +8,16 @@
 /// |---|---|---|
 /// | `iso` | an ISO 9660 image (2048-byte blocks) | one MODE1 data track |
 /// | `bin` | a lone raw image of 2352-byte frames with sync patterns | one MODE1 / MODE2 track (from the first header) |
-/// | `cue` | a CUE sheet and its BINARY / MOTOROLA / WAVE files | every TRACK: AUDIO, MODE1/2048, MODE1/2352, MODE2/2336, MODE2/2352, CDG; INDEX 00 / 01, PREGAP, POSTGAP; several FILEs |
-/// | `chd` | a MAME CD-ROM CHD (cdlz / cdzl / cdzs / cdfl, or uncompressed) | from the CHT2 / CHTR metadata; audio is stored big-endian |
+/// | `cue` | a CUE sheet and its BINARY / MOTOROLA / WAVE files | every TRACK: AUDIO, MODE1/2048, MODE1/2352, MODE2/2336, MODE2/2352, CDG; INDEX 00 / 01, PREGAP, POSTGAP; several FILEs; sessions: REM SESSION nn, REM LEAD-OUT / LEAD-IN / PREGAP |
+/// | `chd` | a MAME CD-ROM CHD (cdlz / cdzl / cdzs / cdfl, or uncompressed) | from the CHT2 / CHTR metadata (sessions: the CHSE entries); audio is stored big-endian |
+///
+/// Multisession: between two sessions lie the earlier one's lead-out and the next
+/// one's lead-in, which no image stores (except ImgBurn's filler, marked by REM
+/// LEAD-OUT in a one-file sheet): the reader puts back REM LEAD-OUT / LEAD-IN, else
+/// the standard 6750 (2250 after a later session) + 4500 frames. Example
+/// (tools/cd/make-audio-disc.py): `REM SESSION 01`, audio tracks 1-3 to LBA 4800 in
+/// the BIN, `REM SESSION 02`, track 4 MODE2/2352 with its pregap in the BIN: track 4's
+/// pregap is LBA 4800 + 11250 = 16050, its INDEX 01 LBA 16200.
 ///
 /// Worked example (a CUE sheet with a data track and an audio track in two files):
 /// @code

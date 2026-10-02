@@ -179,6 +179,7 @@ slot names, options and errors as the WebAPI, CLI, MCP and Python. Full referenc
 media_list()                                            -- slots + detached media
 media_insert("A", "/games/elite-1.trd")                 -- slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
 media_insert("sd", "/home/me/zx/sdcard", {fs = "fat32"})
+media_insert("cd", "/home/me/music/album", {format = "audio-cd"})  -- MP3 / FLAC / WAV files as an audio CD
 media_swap("A", "/games/elite-2.trd", {save = true})    -- a dirty disk needs save / export / discard
 media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")

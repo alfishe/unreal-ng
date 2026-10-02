@@ -549,7 +549,7 @@ TEST_P(IdeControllerCd_Test, PlaysAudioOnTheBoard)
 
     ScratchFolder folder("ide-cd-board");
     MediaSource source;
-    source.path = cdtest::WriteMusicDisc(folder.Path(), 1, 2, 16);
+    source.path = cdtest::WriteMusicDisc(folder.Path(), 1, 2, 16, cdtest::MusicLayout::Mixed);
     InsertOptions options;
     options.immediate = true;
     const std::string slot = IdeUnitSlot::IdFor(board.unit / AtaChannel::kUnits, board.unit % AtaChannel::kUnits);

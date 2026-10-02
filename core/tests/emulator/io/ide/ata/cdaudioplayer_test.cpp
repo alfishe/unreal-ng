@@ -61,7 +61,7 @@ TEST_F(CdAudioPlayer_Test, HeadMovesSeventyFiveFramesPerEmulatedSecond)
     // A disc with 3-second tracks: track 2 is LBA 166-390
     ScratchFolder folder("cd-player-music");
     std::string error;
-    auto music = CdImageFormats::Open(WriteMusicDisc(folder.Path(), 2, 3, 16), &error);
+    auto music = CdImageFormats::Open(WriteMusicDisc(folder.Path(), 2, 3, 16, MusicLayout::Mixed), &error);
     ASSERT_NE(music, nullptr) << error;
     _player.SetDisc(music.get());
     _player.Play(166, 391);

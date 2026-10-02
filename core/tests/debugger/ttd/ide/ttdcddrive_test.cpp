@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -21,6 +23,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/media/mediamanager.h"
 
 namespace
@@ -43,7 +46,7 @@ namespace
             _ttd = _context->pTimeTravelManager;
             _folder = std::make_unique<ScratchFolder>("ttd-cd");
             MediaSource source;
-            source.path = cdtest::WriteMusicDisc(_folder->Path(), 1, 3, 16);
+            source.path = cdtest::WriteMusicDisc(_folder->Path(), 1, 3, 16, cdtest::MusicLayout::Mixed);
             InsertOptions options;
             options.immediate = true;
             ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
@@ -82,7 +85,7 @@ TEST_F(TTDCdDrive_Test, RegisteredOnlyWithACdDrive)
     EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive));
     EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
     _ttd->StopRecording();
-    EXPECT_EQ(ttd::TTDCdDrive(_context).TTDStateSize(), 8u + 2 * (sizeof(CdAudioState) + sizeof(AtapiStage)));
+    EXPECT_EQ(ttd::TTDCdDrive(_context).TTDStateSize(), 8u + 2 * (sizeof(CdAudioState) + sizeof(AtapiStage) + 8));
 
     // A Pentagon's Nemo board has two hard-disk units: no CdDrive blob, its checkpoints as before
     Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
@@ -165,4 +168,66 @@ TEST_F(TTDCdDrive_Test, PlayReplaysExactlyMidTrack)
         RunTo(endFrame, endT);
         EXPECT_EQ(Blob(), recorded) << "head, status and volume as recorded";
     }
+}
+
+TEST_F(TTDCdDrive_Test, FolderDiscReplaysIdenticallyAndAnotherDiscIsReported)
+{
+    // An audio CD built from a folder (AudioFolderDisc): the disc is decoded at mount, so a replay
+    // reads the very samples the recording played. The blob carries the disc's identity: restoring
+    // onto the same content (even from another folder) is quiet, onto other content it is reported
+    ScratchFolder music("ttd-cd-folder");
+    cdtest::WriteFile(music.Path() / "1 a.wav", cdtest::Wave(cdtest::TonePcm(300, 440.0)));
+    cdtest::WriteFile(music.Path() / "2 b.wav", cdtest::Wave(cdtest::TonePcm(300, 660.0)));
+    MediaSource source;
+    source.path = cdtest::Utf8(music.Path());
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
+    _emulator->RunNFrames(1);
+    ASSERT_EQ(Cd().Disc()->Format(), "audio-cd");
+    const uint32_t track2 = Cd().Disc()->TrackAt(1).startLba;
+    EXPECT_EQ(track2, 450u);
+
+    _emulator->RunNCPUCycles(3000);
+    Cd().Audio().Play(track2, track2 + 20);
+    _emulator->RunNFrames(2);
+    ASSERT_TRUE(_ttd->StartRecording());
+    const uint64_t startFrame = _ttd->GetCheckpoint(0)->time.frame;
+    _emulator->RunNFrames(20);
+    _emulator->RunNCPUCycles(777);
+    const uint64_t endFrame = _context->emulatorState.frame_counter;
+    const uint32_t endT = _context->pCore->GetZ80()->t;
+    const std::vector<uint8_t> recorded = Blob();
+    _ttd->StopRecording();
+    ASSERT_EQ(Cd().Audio().Status(), CdAudioStatus::Completed);
+
+    ASSERT_TRUE(_ttd->SeekTo({startFrame + 3, 20000}));
+    EXPECT_EQ(Cd().Audio().Status(), CdAudioStatus::Playing);
+    int16_t first[588 * 2];
+    int16_t again[588 * 2];
+    const uint32_t lba = Cd().Audio().HeadLba();
+    ASSERT_EQ(Cd().Disc()->ReadAudio(lba, first), CdImage::ReadResult::Ok);
+    RunTo(endFrame, endT);
+    EXPECT_EQ(Blob(), recorded) << "head, status and the disc identity as recorded";
+
+    // The same files in another folder: the same disc
+    ScratchFolder copy("ttd-cd-folder-copy");
+    for (const char* name : {"1 a.wav", "2 b.wav"})
+        std::filesystem::copy_file(music.Path() / name, copy.Path() / name);
+    source.path = cdtest::Utf8(copy.Path());
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
+    _emulator->RunNFrames(1);
+    ttd::TTDCdDrive same(_context);
+    same.TTDLoadState(recorded.data());
+    EXPECT_EQ(same.DiscMismatches(), 0u);
+    ASSERT_EQ(Cd().Disc()->ReadAudio(lba, again), CdImage::ReadResult::Ok);
+    EXPECT_EQ(std::memcmp(first, again, sizeof(first)), 0) << "sample for sample";
+
+    // Other content: restored, and reported
+    cdtest::WriteFile(copy.Path() / "2 b.wav", cdtest::Wave(cdtest::TonePcm(300, 661.0)));
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
+    _emulator->RunNFrames(1);
+    ttd::TTDCdDrive other(_context);
+    other.TTDLoadState(recorded.data());
+    EXPECT_EQ(other.DiscMismatches(), 1u);
 }

@@ -186,7 +186,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_dropOverlay, &DropTargetOverlay::droppedOutside, this, [this]() {
         // Released away from the zones: the same slots, picked by a click
         clearDropVerdict();
-        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), _dropOverlay->plan());
+        // Re-planned: the media manager's slots may have changed since the zones were shown
+        const MediaPlan plan = _emulator ? MediaTargets::Plan(_emulator->GetContext(),
+                                                              MediaTargets::Classify(_pendingPlacement.path.toStdString()))
+                                         : _dropOverlay->plan();
+        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), plan);
     });
     connect(_dropOverlay, &DropTargetOverlay::cancelled, this, [this]() {
         _pendingPlacement.active = false;
@@ -2436,8 +2440,20 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
         }
         default:
         {
-            // A hard disk, a card or a CD: the media manager inserts it (async: the UI does not wait
-            // for the slot's swap delay)
+            // A folder (a FAT volume, an audio CD of MP3 / FLAC / WAV files): built off the UI
+            // thread by the media panel's folder worker (BUGS.md #3), with its pending row and
+            // completion refresh - a large music folder takes seconds to decode
+            if (plan.file.folder && mediaPanelWindow)
+            {
+                QString busy;
+                if (!mediaPanelWindow->insertFolder(target.slotId, filePath, &busy))
+                    refuseFile(filePath, busy, origin);
+                else
+                    qInfo() << "Building" << QString::fromStdString(target.slotId) << "from the folder" << filePath;
+                break;
+            }
+            // A hard disk, a card or a CD image: the media manager inserts it (async: the UI does not
+            // wait for the slot's swap delay)
             const MediaReply reply = MediaTargets::Apply(_emulator->GetContext(), plan, static_cast<size_t>(index),
                                                          {{"async", "true"}});
             if (!reply.result.Ok())

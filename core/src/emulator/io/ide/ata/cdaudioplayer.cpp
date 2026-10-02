@@ -47,12 +47,15 @@ void CdAudioPlayer::Settle()
 
 void CdAudioPlayer::Play(uint32_t startLba, uint32_t endLba)
 {
-    // A play crossing into a data track stops there with an error (14h);
-    // SOTC stops at the end of the starting track (13h)
+    // The drive refuses a PLAY that runs into a data track (MMC: END OF USER AREA); a caller
+    // that does not check (the front panel) gets a play that stops there with an error (14h).
+    // A play ends at its session's lead-out (13h); SOTC stops at the end of the starting track (13h)
     uint8_t flags = 0;
     if (_disc)
     {
         const int first = _disc->TrackIndexAt(startLba);
+        if (first >= 0)
+            endLba = std::min(endLba, _disc->SessionLeadOutLba(_disc->TrackAt(static_cast<size_t>(first)).session));
         if (first >= 0 && _s.sotc)
             endLba = std::min(endLba, _disc->TrackAt(static_cast<size_t>(first)).endLba);
         for (size_t i = first < 0 ? _disc->TrackCount() : static_cast<size_t>(first); i < _disc->TrackCount(); i++)

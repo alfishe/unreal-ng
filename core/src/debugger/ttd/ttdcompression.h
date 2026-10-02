@@ -45,24 +45,39 @@ constexpr int kDefaultZstdLevel = 1;
 /// @param src     Source data.
 /// @param size    Source size in bytes.
 /// @param level   zstd compression level (1 = fast, 9 = best, default 1).
-/// @return Compressed bytes. Empty vector only if size==0 or allocation fails.
+/// @return Compressed bytes, allocated at exactly their size. Empty vector
+///         only if size==0 or allocation fails.
+///
+/// zstd needs room for the worst case (ZSTD_compressBound: 4,174 bytes for a
+/// 4 KB page), but the result is usually far smaller. Compressing straight
+/// into a vector of the worst-case size and shrinking it left that capacity
+/// allocated for as long as the result was stored: ~4 KB per page-store
+/// slot and per coverage block, whatever they compressed to (TTD v2 POC 011
+/// experiment E5). The worst-case buffer is therefore a scratch, and only the
+/// exact bytes are copied out: a per-thread one reused by every call for
+/// inputs up to kCompressScratchMax (pages, coverage and journal blocks), a
+/// temporary one for larger inputs (clip export chunks), so no thread keeps a
+/// large buffer for good.
+constexpr size_t kCompressScratchMax = 64 * 1024;
+
 inline std::vector<uint8_t> Compress(const uint8_t* src, size_t size, int level = kDefaultZstdLevel)
 {
     if (size == 0 || src == nullptr)
     {
         return {};
     }
-    size_t bound = ZSTD_compressBound(size);
-    std::vector<uint8_t> out(bound);
-    size_t n = ZSTD_compress(out.data(), out.capacity(),
-                             src, size,
-                             level);
+    const size_t bound = ZSTD_compressBound(size);
+    thread_local std::vector<uint8_t> scratch;
+    std::vector<uint8_t> large;
+    std::vector<uint8_t>& buffer = (size <= kCompressScratchMax) ? scratch : large;
+    if (buffer.size() < bound)
+        buffer.resize(bound);
+    const size_t n = ZSTD_compress(buffer.data(), bound, src, size, level);
     if (ZSTD_isError(n))
     {
         return {};
     }
-    out.resize(n);
-    return out;
+    return std::vector<uint8_t>(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(n));
 }
 
 /// @brief Decompress compressed[] back to exactly rawSize bytes.

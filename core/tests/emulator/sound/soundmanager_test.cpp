@@ -416,7 +416,7 @@ namespace
             _context->pSoundManager->setCoreRatePin(44100);
             _folder = std::make_unique<ScratchFolder>("sound-cd");
             MediaSource source;
-            source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 2, 16);
+            source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 2, 16, cdtest::MusicLayout::Mixed);
             InsertOptions options;
             options.immediate = true;
             const MediaResult result = _context->pMediaManager->Insert("ide0.slave", source, options);

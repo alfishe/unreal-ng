@@ -26,5 +26,10 @@ Follow-ups (not in rollout 1):
   audio commands, READ CD, the page 0Eh volume, playback on emulated time, a mixer row per drive, the
   CdDrive TTD blob (id 41), every automation surface; tested on every board and with NedoOS `cdplay.com`
   on ZX-Evo and ATM Turbo 2+: [2026-10-02-cd-audio](../2026-10-02-cd-audio/README.md)
+- [x] CD follow-up (branch `cd-folder-audio`, 2026-10-02): PLAY over a data track refused per MMC-3
+  (05h / 64h start, 05h / 63h range), the activity LED on data reads only, multisession discs (Enhanced
+  CD: CUE `REM SESSION`, CHD `CHSE`, READ TOC 0 / 1 / 2 with sessions, nothing readable between sessions),
+  a folder of MP3 / FLAC / WAV as an audio CD in any CD slot:
+  [2026-10-02-cd-audio §6](../2026-10-02-cd-audio/README.md#6-follow-up-2026-10-02-branch-cd-folder-audio)
 - [ ] DivIDE paging and automap (the adapter decodes its IDE ports only)
 - [ ] TSConf IDE (PLAN #41 phase 6, [technical-design §3.11](../2026-09-27-tsconf/technical-design.md#311-storage)): `TryIdePortIn/Out` in the TSConf decoder, DMA #3 / #B calling the `DmaReadWord` / `DmaWriteWord` above, a "reached the drive" flag for its optional CPU stall (`[HDD] IdeStall`)

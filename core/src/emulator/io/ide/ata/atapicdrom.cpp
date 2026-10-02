@@ -189,14 +189,25 @@ void AtapiCdrom::MediumChanged()
         }
     }
     _pendingDisc = nullptr;
-    _audio.Stop();
+    // A new disc: the drive reads its TOC from the lead-in, the head waits at the start
     _audio.SetDisc(_disc);
+    _audio.SeekTo(0);
 }
 
 void AtapiCdrom::PowerOnReset()
 {
     _audio.Reset();
     _stage = AtapiStage{};
+}
+
+bool AtapiCdrom::CountsAsActivity() const
+{
+    // A real drive's busy LED shows the head reading the disc for the host: data transfers
+    // only. Audio play (the CD row of the mixer shows it) and status polls leave it dark
+    if (static_cast<AtaPhase>(_s.phase) != AtaPhase::DataIn || _s.command != Command::Packet)
+        return false;
+    const uint8_t op = _s.cdb[0];
+    return op == Scsi::Read10 || op == Scsi::Read12 || op == Scsi::ReadCd || op == Scsi::ReadCdMsf;
 }
 
 void AtapiCdrom::ExecuteCommand(uint8_t command)
@@ -451,7 +462,7 @@ void AtapiCdrom::ExecutePacket()
             if (!DiscReady())
                 break;
             const uint32_t lba = Be32(cdb + 2);
-            if (lba >= Blocks())
+            if (lba >= Blocks() || InSessionGap(lba, 1))
             {
                 CheckCondition(kSenseIllegalRequest, kAscLbaOutOfRange);
                 break;
@@ -523,6 +534,11 @@ void AtapiCdrom::ReadData(uint32_t lba, uint32_t blocks)
         CheckCondition(kSenseIllegalRequest, kAscInvalidField);  // 4 GiB and more in one command
         return;
     }
+    if (InSessionGap(lba, blocks))
+    {
+        CheckCondition(kSenseIllegalRequest, kAscLbaOutOfRange);  // a lead-out / lead-in between sessions
+        return;
+    }
     // An audio frame has no user data: the whole range must be data
     for (size_t i = 0; i < _disc->TrackCount(); i++)
     {
@@ -554,6 +570,7 @@ void AtapiCdrom::ReadToc()
     const CdImage& disc = *_disc;
     const uint8_t first = disc.FirstTrackNumber();
     const uint8_t last = disc.LastTrackNumber();
+    // Format 0 lists the tracks of every session and the last session's lead-out (MMC-3 5.23.1)
     const uint8_t lastControl = disc.TrackCount() ? disc.TrackAt(disc.TrackCount() - 1).Control() : 0x04;
     uint8_t* b = _s.buffer;
     std::memset(b, 0, 4);
@@ -592,12 +609,15 @@ void AtapiCdrom::ReadToc()
         }
         case 1:
         {
-            // One session: its first track
+            // Session information (MMC-3 5.23, table 235): the first and last complete
+            // session, and the first track of the last session
+            const uint8_t sessions = disc.SessionCount();
             b[2] = 1;
-            b[3] = 1;
+            b[3] = sessions;
             uint8_t* d = b + length;
             std::memset(d, 0, 8);
-            const cd::Track& track = disc.TrackAt(0);
+            const int firstOfLast = disc.FirstTrackIndexOfSession(sessions);
+            const cd::Track& track = disc.TrackAt(firstOfLast < 0 ? 0 : static_cast<size_t>(firstOfLast));
             d[1] = static_cast<uint8_t>(0x10 | track.Control());
             d[2] = track.number;
             PutAddress(d + 4, track.startLba, msf);
@@ -606,33 +626,58 @@ void AtapiCdrom::ReadToc()
         }
         case 2:
         {
-            // The full TOC as the lead-in's Q channel has it (MSF, binary)
+            // The full TOC as each session's lead-in Q channel has it (MMC-3 5.23, table 236;
+            // binary MSF): per session A0 (first track, disc type), A1 (last track), A2 (the
+            // session's lead-out), its tracks; after every session but the last the mode-5
+            // pointers B0 (where the next session's program area starts, the latest lead-out
+            // start) and, in the first session, C0 (the first lead-in's start)
+            const uint8_t sessions = disc.SessionCount();
             b[2] = 1;
-            b[3] = 1;
-            bool xa = false;
-            for (size_t i = 0; i < disc.TrackCount(); i++)
-                xa = xa || disc.TrackAt(i).mode == cd::TrackMode::Mode2;
-            auto entry = [&](uint8_t control, uint8_t point, uint8_t pmin, uint8_t psec, uint8_t pframe) {
+            b[3] = sessions;
+            auto entry = [&](uint8_t session, uint8_t adrControl, uint8_t point, cd::Msf at, uint8_t zero, cd::Msf p) {
                 uint8_t* d = b + length;
                 std::memset(d, 0, 11);
-                d[0] = 1;  // session
-                d[1] = static_cast<uint8_t>(0x10 | control);
+                d[0] = session;
+                d[1] = adrControl;
                 d[3] = point;
-                d[8] = pmin;
-                d[9] = psec;
-                d[10] = pframe;
+                d[4] = at.m;
+                d[5] = at.s;
+                d[6] = at.f;
+                d[7] = zero;
+                d[8] = p.m;
+                d[9] = p.s;
+                d[10] = p.f;
                 length += 11;
             };
-            const uint8_t firstControl = disc.TrackAt(0).Control();
-            entry(firstControl, 0xA0, first, xa ? 0x20 : 0x00, 0);
-            entry(lastControl, 0xA1, last, 0, 0);
-            const cd::Msf leadOut = cd::LbaToMsf(disc.LeadOutLba());
-            entry(lastControl, 0xA2, leadOut.m, leadOut.s, leadOut.f);
-            for (size_t i = 0; i < disc.TrackCount(); i++)
+            for (uint8_t session = 1; session <= sessions; session++)
             {
-                const cd::Track& track = disc.TrackAt(i);
-                const cd::Msf at = cd::LbaToMsf(track.startLba);
-                entry(track.Control(), track.number, at.m, at.s, at.f);
+                const int firstIndex = disc.FirstTrackIndexOfSession(session);
+                const int lastIndex = disc.LastTrackIndexOfSession(session);
+                if (firstIndex < 0)
+                    continue;
+                bool xa = false;
+                for (int i = firstIndex; i <= lastIndex; i++)
+                    xa = xa || disc.TrackAt(static_cast<size_t>(i)).mode == cd::TrackMode::Mode2;
+                const cd::Track& firstTrack = disc.TrackAt(static_cast<size_t>(firstIndex));
+                const cd::Track& lastTrack = disc.TrackAt(static_cast<size_t>(lastIndex));
+                // A0 PSEC: the program area format, 00h CD-DA / CD-ROM, 20h CD-ROM XA (MMC-3 4.2.3.7)
+                entry(session, static_cast<uint8_t>(0x10 | firstTrack.Control()), 0xA0, {}, 0,
+                      cd::Msf{firstTrack.number, static_cast<uint8_t>(xa ? 0x20 : 0x00), 0});
+                entry(session, static_cast<uint8_t>(0x10 | lastTrack.Control()), 0xA1, {}, 0, cd::Msf{lastTrack.number, 0, 0});
+                entry(session, static_cast<uint8_t>(0x10 | lastTrack.Control()), 0xA2, {}, 0, cd::LbaToMsf(lastTrack.endLba));
+                for (int i = firstIndex; i <= lastIndex; i++)
+                {
+                    const cd::Track& track = disc.TrackAt(static_cast<size_t>(i));
+                    entry(session, static_cast<uint8_t>(0x10 | track.Control()), track.number, {}, 0, cd::LbaToMsf(track.startLba));
+                }
+                if (session < sessions)
+                {
+                    const int next = disc.FirstTrackIndexOfSession(static_cast<uint8_t>(session + 1));
+                    const cd::Msf nextArea = cd::LbaToMsf(disc.TrackAt(static_cast<size_t>(next)).pregapLba);
+                    entry(session, 0x50, 0xB0, nextArea, 0x02, cd::Msf{79, 59, 74});
+                    if (session == 1)
+                        entry(session, 0x50, 0xC0, {}, 0, cd::Msf{95, 0, 0});
+                }
             }
             break;
         }
@@ -740,7 +785,7 @@ void AtapiCdrom::ReadHeader()
     StartReply(std::min<uint32_t>(8, allocation ? allocation : 8u));
 }
 
-void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length)
+void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length, bool msf)
 {
     if (!DiscReady())
         return;
@@ -751,8 +796,10 @@ void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length)
         CompletePacket();  // no play, not an error
         return;
     }
-    const uint64_t end = static_cast<uint64_t>(start) + length;
-    if (start >= _disc->LeadOutLba() || end > _disc->LeadOutLba())
+    // MMC-3 r10g 5.11-5.13 (PLAY AUDIO (10) / (12) / MSF) check the STARTING address only: not found
+    // (past the lead-out, between two sessions): LOGICAL BLOCK ADDRESS OUT OF RANGE; not in an audio
+    // track: ILLEGAL MODE FOR THIS TRACK. Nothing moves then: the head and the audio status stay
+    if (start >= _disc->LeadOutLba() || InSessionGap(start, 1))
     {
         CheckCondition(kSenseIllegalRequest, kAscLbaOutOfRange);
         return;
@@ -763,7 +810,31 @@ void AtapiCdrom::PlayAudio(uint32_t start, uint32_t length)
         CheckCondition(kSenseIllegalRequest, kAscIllegalModeForTrack);
         return;
     }
-    _audio.Play(start, static_cast<uint32_t>(end));
+    // The end is not checked: "All contiguous audio sectors between the starting and the ending MSF
+    // address shall be played" (5.13). An end past the disc - players ask for 80:00:74 or FF:FF:FF
+    // ("to the end", the Sprinter's CDPLAYER.FLX) - plays to the start track's session lead-out, where
+    // the head finds the lead-out
+    uint64_t playEnd = std::min<uint64_t>(static_cast<uint64_t>(start) + length,
+                                          _disc->SessionLeadOutLba(_disc->TrackAt(static_cast<size_t>(index)).session));
+    for (size_t i = static_cast<size_t>(index); i < _disc->TrackCount(); i++)
+    {
+        const cd::Track& track = _disc->TrackAt(i);
+        if (track.pregapLba >= playEnd)
+            break;
+        if (track.IsAudio())
+            continue;
+        // A data track inside the range. PLAY AUDIO (10) / (12): "If the CD Sub-channel mode type (data vs.
+        // audio) ... changes within the transfer length" - END OF USER AREA ENCOUNTERED ON THIS TRACK.
+        // PLAY AUDIO MSF has no such clause: the contiguous audio before the data track plays
+        if (!msf)
+        {
+            CheckCondition(kSenseIllegalRequest, kAscEndOfUserArea);
+            return;
+        }
+        playEnd = track.pregapLba;
+        break;
+    }
+    _audio.Play(start, static_cast<uint32_t>(playEnd));
     CompletePacket();
 }
 
@@ -788,7 +859,7 @@ void AtapiCdrom::PlayAudioMsf()
         CheckCondition(kSenseIllegalRequest, kAscInvalidField);
         return;
     }
-    PlayAudio(static_cast<uint32_t>(start), static_cast<uint32_t>(end - start));
+    PlayAudio(static_cast<uint32_t>(start), static_cast<uint32_t>(end - start), /*msf*/ true);
 }
 
 void AtapiCdrom::PlayAudioTrackIndex()
@@ -1191,6 +1262,21 @@ void AtapiCdrom::ModeSelectDone()
         at += 2 + pageLength;  // the other pages hold nothing this drive changes
     }
     CompletePacket();
+}
+
+bool AtapiCdrom::InSessionGap(uint32_t lba, uint32_t blocks) const
+{
+    if (!_disc)
+        return false;
+    const uint64_t end = static_cast<uint64_t>(lba) + blocks;
+    for (size_t i = 1; i < _disc->TrackCount(); i++)
+    {
+        const cd::Track& previous = _disc->TrackAt(i - 1);
+        const cd::Track& next = _disc->TrackAt(i);
+        if (previous.endLba < next.pregapLba && lba < next.pregapLba && end > previous.endLba)
+            return true;
+    }
+    return false;
 }
 
 bool AtapiCdrom::DiscReady()

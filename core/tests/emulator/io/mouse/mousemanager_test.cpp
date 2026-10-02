@@ -104,6 +104,57 @@ TEST_F(MouseManager_Test, HasMouseDeviceFollowsFittedDevices)
     EXPECT_FALSE(_manager->HasMouseDevice());
 }
 
+/// A sink is reachable as soon as it is fitted, unless it says the machine shadows it
+TEST_F(MouseManager_Test, IsMouseInUseDefaultsToFitted)
+{
+    EXPECT_FALSE(_manager->IsMouseInUse()) << "no device";
+    RecordingSink unfitted(false);
+    _manager->AddSink(&unfitted);
+    EXPECT_FALSE(_manager->IsMouseInUse());
+    RecordingSink fitted(true);
+    _manager->AddSink(&fitted);
+    EXPECT_TRUE(_manager->IsMouseInUse());
+}
+
+/// The host mouse is worth capturing only while a program reads the Kempston mouse: the 128K ROM
+/// never does, and while TR-DOS is active the ports are Beta Disk's
+TEST(MouseManagerMachine_Test, KempstonMouseIsInUseOnlyWhilePolled)
+{
+    EmulatorManager* emulators = EmulatorManager::GetInstance();
+    auto pentagon = emulators->CreateEmulatorWithModel("mouse-poll-pentagon", "PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    EmulatorContext* context = pentagon->GetContext();
+    ASSERT_TRUE(context->pMouse->IsPresent());
+    MouseManager* manager = context->pMouseManager;
+    uint64_t& frame = context->emulatorState.frame_counter;
+
+    EXPECT_TRUE(manager->HasMouseDevice());
+    EXPECT_FALSE(manager->IsMouseInUse()) << "fitted, nobody reads it (the 128K ROM)";
+
+    context->pMouse->PeekRegister(1);
+    EXPECT_FALSE(manager->IsMouseInUse()) << "a debug read is not a program";
+
+    context->pMouse->ReadRegister(1);
+    EXPECT_TRUE(manager->IsMouseInUse()) << "a program read it";
+
+    frame += Mouse::kPolledWithinFrames;
+    EXPECT_TRUE(manager->IsMouseInUse());
+    frame += 1;
+    EXPECT_FALSE(manager->IsMouseInUse()) << "not read for a second";
+
+    context->pMouse->ReadRegister(0);
+    EXPECT_TRUE(manager->IsMouseInUse());
+    context->emulatorState.flags |= CF_DOSPORTS;
+    EXPECT_TRUE(manager->HasMouseDevice()) << "still fitted";
+    EXPECT_FALSE(manager->IsMouseInUse()) << "TR-DOS active: only Beta Disk answers";
+    context->emulatorState.flags &= static_cast<uint8_t>(~CF_DOSPORTS);
+    EXPECT_TRUE(manager->IsMouseInUse());
+
+    context->pMouse->Reset();
+    EXPECT_FALSE(manager->IsMouseInUse()) << "a reset program starts over";
+    emulators->RemoveEmulator(pentagon->GetId());
+}
+
 /// The header's worked example: automation holds left, the host presses and
 /// releases right; left stays held until automation lets go
 TEST_F(MouseManager_Test, ButtonSourcesDoNotOverwriteEachOther)

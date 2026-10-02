@@ -108,14 +108,16 @@ emu.mouse_release_all()
 
 ## The host mouse (unreal-qt)
 
-- A click on the screen captures the mouse when the machine has a mouse device;
-  that click is not passed to the machine. `Ctrl+Esc` (the Control key, on macOS too;
+- A click on the screen captures the mouse when a program is reading it (the 128K
+  ROM and TR-DOS do not: a click then captures nothing); that click is not passed
+  to the machine. Captured, the mouse is let go after 3 s without any program
+  reading it (the next click captures again once one does). `Ctrl+Esc` (the Control key, on macOS too;
   `[INPUT] MouseReleaseKey=`), focus loss or switching to another application
   releases it. A plain `Esc` reaches the machine. While captured, the status bar
   says which key releases the mouse; the hint goes with the capture.
 - The mouse button on the toolbar shows the state: normal (click the screen to
   capture), highlighted (captured), crossed out (host mouse off), grayed out (no
-  mouse device). Clicking it turns the host mouse off or on; View → Host Mouse
+  mouse device, or no program reading it). Clicking it turns the host mouse off or on; View → Host Mouse
   Enabled is the same switch. Off: the host mouse never reaches the machine.
   Automation input is not affected.
 - Speed: by default the captured mouse moves the guest as far as the host

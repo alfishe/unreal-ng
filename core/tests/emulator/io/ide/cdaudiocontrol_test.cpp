@@ -1,7 +1,7 @@
 // CdAudioControl (cdaudiocontrol.h): the CD audio report and verbs every
 // automation surface shares - status, play (track / LBA / MSF), pause, resume,
 // stop, volume (page 0Eh), mixer; drive selection; the errors; refused while
-// TTD records.
+// TTD records. Multisession: the play ends at its session; a range into a data track is refused.
 
 #include <gtest/gtest.h>
 
@@ -33,7 +33,7 @@ namespace
             _context = _emulator->GetContext();
             _folder = std::make_unique<ScratchFolder>("cd-control");
             MediaSource source;
-            source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 2, 16);
+            source.path = cdtest::WriteMusicDisc(_folder->Path(), 2, 2, 16, cdtest::MusicLayout::Mixed);
             InsertOptions options;
             options.immediate = true;
             ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
@@ -170,4 +170,55 @@ TEST_F(CdAudioControl_Test, RefusedWhileRecordingAndWithoutADrive)
     EXPECT_FALSE(state.find("available")->b);
     EXPECT_EQ(CdAudioControl(spectrum->GetContext()).Execute({"play", "", {{"track", "1"}}}).error, "no-cd-drive");
     EmulatorTestHelper::CleanupEmulator(spectrum);
+}
+
+TEST_F(CdAudioControl_Test, EnhancedCdPlaysItsAudioSessionAndRefusesTheData)
+{
+    // The default test disc: session 1 audio tracks 1-2, session 2 data track 3
+    ScratchFolder folder("cd-control-enhanced");
+    MediaSource source;
+    source.path = cdtest::WriteMusicDisc(folder.Path(), 2, 4, 300);
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
+    _emulator->RunNFrames(1);
+    const cdtest::MusicDiscLayout l = cdtest::MusicLayoutOf(2, 4, 300, cdtest::MusicLayout::Enhanced);
+
+    const StateNode state = CdAudioControl::State(_context);
+    const StateNode& disc = *state.find("drives")->items.at(0).find("disc");
+    EXPECT_EQ(disc.find("sessions")->i, 2);
+    const StateNode& tracks = *disc.find("tracks");
+    ASSERT_EQ(tracks.items.size(), 3u);
+    EXPECT_EQ(tracks.items[0].find("session")->i, 1);
+    EXPECT_EQ(tracks.items[2].find("session")->i, 2);
+    EXPECT_EQ(tracks.items[2].find("type")->s, "mode2");
+    EXPECT_EQ(tracks.items[2].find("start_lba")->i, static_cast<int64_t>(l.dataStart));
+
+    // track=1 without to=: through the last audio track of the session
+    CdAudioReply reply = Run("play", "", {{"track", "1"}});
+    ASSERT_TRUE(reply.ok) << reply.message;
+    EXPECT_EQ(Audio(reply).find("play_end_lba")->i, static_cast<int64_t>(l.audioLeadOut));
+    // to=3 (the data track): the session ends first, the play stops at its lead-out
+    reply = Run("play", "", {{"track", "2"}, {"to", "3"}});
+    ASSERT_TRUE(reply.ok) << reply.message;
+    EXPECT_EQ(Audio(reply).find("play_end_lba")->i, static_cast<int64_t>(l.audioLeadOut));
+    // The data track itself: no audio frame
+    reply = Run("play", "", {{"track", "3"}});
+    EXPECT_FALSE(reply.ok);
+    EXPECT_EQ(reply.error, "bad-request");
+
+    // A mixed-mode disc with data after audio in one session: a range into it is refused
+    ScratchFolder mixed("cd-control-a-then-d");
+    cdtest::WriteFile(mixed.Path() / "d.bin", cdtest::TonePcm(300, 440) + cdtest::DataFrames(300, 300, true));
+    cdtest::WriteFile(mixed.Path() / "d.cue", "FILE \"d.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+                                              "  TRACK 02 MODE1/2352\n    INDEX 01 00:04:00\n");
+    source.path = cdtest::Utf8(mixed.Path() / "d.cue");
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok());
+    _emulator->RunNFrames(1);
+    reply = Run("play", "", {{"lba", "100"}, {"frames", "300"}});
+    EXPECT_FALSE(reply.ok);
+    EXPECT_NE(reply.message.find("data track 2"), std::string::npos) << reply.message;
+    reply = Run("play", "", {{"track", "1"}});
+    ASSERT_TRUE(reply.ok) << reply.message;
+    EXPECT_EQ(Audio(reply).find("play_end_lba")->i, 300) << "to the data track";
 }

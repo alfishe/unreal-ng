@@ -46,11 +46,39 @@ int CdImage::TrackIndexAt(uint32_t lba) const
     {
         if (lba < _tracks[i].track.endLba)
         {
+            if (lba < _tracks[i].track.pregapLba)
+                return -1;  // between two sessions
             _lastTrack = i;
             return i;
         }
     }
     return -1;
+}
+
+int CdImage::FirstTrackIndexOfSession(uint8_t session) const
+{
+    for (size_t i = 0; i < _tracks.size(); i++)
+    {
+        if (_tracks[i].track.session == session)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int CdImage::LastTrackIndexOfSession(uint8_t session) const
+{
+    for (size_t i = _tracks.size(); i-- > 0;)
+    {
+        if (_tracks[i].track.session == session)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+uint32_t CdImage::SessionLeadOutLba(uint8_t session) const
+{
+    const int last = LastTrackIndexOfSession(session);
+    return last < 0 ? LeadOutLba() : _tracks[static_cast<size_t>(last)].track.endLba;
 }
 
 uint8_t CdImage::IndexAt(uint32_t lba) const
@@ -81,6 +109,12 @@ bool CdImage::HasAudio() const
     return false;
 }
 
+const std::string& CdImage::TrackTitle(size_t index) const
+{
+    static const std::string none;
+    return index < _titles.size() ? _titles[index] : none;
+}
+
 std::string CdImage::DescribeTracks() const
 {
     std::ostringstream out;
@@ -89,6 +123,8 @@ std::string CdImage::DescribeTracks() const
         const Track& t = _tracks[i].track;
         if (i)
             out << ", ";
+        if (i && t.session != _tracks[i - 1].track.session)
+            out << "session " << int(t.session) << ": ";
         out << int(t.number) << " " << TrackModeName(t.mode) << " " << t.startLba << "-" << (t.endLba ? t.endLba - 1 : 0);
     }
     return out.str();

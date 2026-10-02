@@ -22,6 +22,20 @@
 /// user / EDC-ECC / C2 fields, Q or raw P-W subchannel), GET EVENT STATUS
 /// NOTIFICATION, SET CD SPEED. Read-only. The audio itself: CdAudioPlayer.
 ///
+/// Audio rules (MMC-3 PLAY AUDIO): only the start is checked - past the lead-out
+/// or between sessions LBA OUT OF RANGE (05h / 21h), outside an audio track
+/// ILLEGAL MODE FOR THIS TRACK (05h / 64h); an end past the disc plays to the
+/// start track's session lead-out. A data track inside the range: PLAY AUDIO
+/// (10) / (12) END OF USER AREA ENCOUNTERED ON THIS TRACK (05h / 63h), PLAY
+/// AUDIO MSF plays the audio before it. A refused PLAY moves nothing. Multisession discs (Enhanced CD): READ TOC format 0 lists every
+/// track and the last session's lead-out, format 1 the sessions, format 2 each
+/// session's A0 / A1 / A2 and tracks plus the B0 / C0 pointers; nothing between
+/// two sessions is readable (READ, SEEK: LBA OUT OF RANGE).
+///
+/// Activity LED: only the blocks of READ (10) / (12), READ CD and READ CD MSF
+/// count (CountsAsActivity), as a drive's busy LED shows the head reading for
+/// the host; packets, status polls and audio play do not.
+///
 /// Timing: every command completes when its packet arrives (the drive is
 /// never BSY between commands), as the data path always has; audio starts
 /// playing at the moment PLAY arrives and moves 75 frames per second of
@@ -75,6 +89,7 @@ public:
     static constexpr uint8_t kAscMediumChanged = 0x28;
     static constexpr uint8_t kAscCommandSequenceError = 0x2C;
     static constexpr uint8_t kAscMediumNotPresent = 0x3A;
+    static constexpr uint8_t kAscEndOfUserArea = 0x63;   ///< END OF USER AREA ENCOUNTERED ON THIS TRACK
     static constexpr uint8_t kAscIllegalModeForTrack = 0x64;
 
     AtapiCdrom();
@@ -109,6 +124,7 @@ protected:
     uint8_t ResetStatus() const override { return 0; }
     void MediumChanged() override;
     void PowerOnReset() override;
+    bool CountsAsActivity() const override;
 
 private:
     /// Interrupt reason (the sector count register): C/D and I/O
@@ -131,6 +147,8 @@ private:
     void CheckCondition(uint8_t senseKey, uint8_t asc, uint8_t ascq = 0);
     /// A command that needs a disc: false (and NOT READY / UNIT ATTENTION reported) when it cannot run
     bool DiscReady();
+    /// [lba, lba + blocks) touches the lead-out / lead-in between two sessions (nothing readable there)
+    bool InSessionGap(uint32_t lba, uint32_t blocks) const;
     uint16_t ChunkLimit() const;
 
     /// region <Commands>
@@ -139,7 +157,8 @@ private:
     void ReadSubChannel();
     void ReadHeader();
     void ReadCd(uint32_t lba, uint32_t blocks);
-    void PlayAudio(uint32_t start, uint32_t length);
+    /// PLAY AUDIO (10) / (12) / MSF / TRACK INDEX: `msf` selects the MSF form's rule for a data track in the range
+    void PlayAudio(uint32_t start, uint32_t length, bool msf = false);
     void PlayAudioMsf();
     void PlayAudioTrackIndex();
     void ModeSense(bool ten);
