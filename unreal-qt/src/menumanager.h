@@ -43,6 +43,8 @@ public:
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
     void setMediaPanelChecked(bool checked);
+    /// The route as set ("AUTO" .. "BOTH"), the route in force, and whether a PS/2 controller is fitted
+    void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller);
     void setNetworkWindowChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
@@ -111,6 +113,10 @@ signals:
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
     void contentionToggled(bool enabled);
+    /// Machine > Host Keyboard: "auto" | "matrix" | "ps2" | "both"
+    void hostKeyboardRouteRequested(const QString& route);
+    /// The Machine menu opens: the owner refreshes the route check marks
+    void machineMenuAboutToShow();
 
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
@@ -260,6 +266,8 @@ private:
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
     QAction* _contentionAction = nullptr;
+    QMenu* _hostKeyboardMenu = nullptr;
+    QActionGroup* _hostKeyboardGroup = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

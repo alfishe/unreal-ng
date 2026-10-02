@@ -12,17 +12,48 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder(context)
+PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder_ATM710(context, true)
+{
+}
+
+PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool keyboardController) : PortDecoder(context)
 {
     _context = context;
     _state = &context->emulatorState;
     _memory = context->pMemory;
     _screen = context->pScreen;
     _keyboard = context->pKeyboard;
+
+    if (keyboardController)
+    {
+        // The v7.xx board's keyboard controller: its real firmware answers IN #FE
+        const auto firmware = static_cast<Atm2Kbc::Firmware>(context->config.atm.kbc_firmware);
+        if (firmware != Atm2Kbc::Firmware::None)
+        {
+            _kbc = std::make_unique<Atm2Kbc>(context);
+            _kbc->SetNativePort([this](uint16_t port) { return Default_Port_FE_In(port, 0); });
+            std::string error;
+            if (!_kbc->Load(firmware, context->config.atm.kbc_rom_path, error))
+            {
+                MLOGWARNING("PortDecoder_ATM710: %s - no keyboard controller, #FE reads the matrix", error.c_str());
+                _kbc.reset();
+            }
+            else if (_keyboard)
+                _keyboard->SetPs2Sink(_kbc.get());   // the host's PC keys reach its keyboard lines
+        }
+    }
+}
+
+void PortDecoder_ATM710::OnFrameEnd()
+{
+    if (_kbc)
+        _kbc->OnFrameEnd();
 }
 
 PortDecoder_ATM710::~PortDecoder_ATM710()
 {
+    if (_kbc && _keyboard && _keyboard->GetPs2Sink() == _kbc.get())
+        _keyboard->SetPs2Sink(nullptr);
     MLOGDEBUG("PortDecoder_ATM710::~PortDecoder_ATM710()");
 }
 
@@ -32,6 +63,10 @@ PortDecoder_ATM710::~PortDecoder_ATM710()
 
 void PortDecoder_ATM710::reset()
 {
+    // The keyboard controller's RST is on the board's reset line
+    if (_kbc)
+        _kbc->BoardReset();
+
 
     _state->p7FFD = 0x00;
     _state->pEFF7 = 0x00;
@@ -138,7 +173,8 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     // Port #FE - keyboard, tape, border
     if (IsPort_FE(port))
     {
-        result = Default_Port_FE_In(port, pc);
+        // v7.xx boards: every read goes through the keyboard controller (it waits the Z80)
+        result = _kbc ? _kbc->ReadPort(port) : Default_Port_FE_In(port, pc);
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
@@ -581,6 +617,10 @@ void PortDecoder_ATM710::Port_FF77_Out(uint16_t port, uint8_t value, [[maybe_unu
     // Store value and full port address
     _state->pFF77 = value;
     _state->aFF77 = port;
+
+    // Bit 6 = VE1: the keyboard controller off (all reads go to the ZX keyboard)
+    if (_kbc)
+        _kbc->SetVe1((value & 0x40) != 0);
 
     // Update video mode if changed (bits 0,1,2 per original Unreal Speccy)
     if ((oldValue ^ value) & ATM_FF77_VMODE_MASK)

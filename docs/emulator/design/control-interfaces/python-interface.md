@@ -154,6 +154,10 @@ class Emulator:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""
 
+    def key_route(self, route: str = "") -> str:
+        """Where host and injected keys go: 'auto' | 'matrix' | 'ps2' | 'both' (the ZX matrix, the PS/2 keyboard
+        controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
+
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,

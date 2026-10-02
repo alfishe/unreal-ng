@@ -20,7 +20,7 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
+PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context, false)
 {
     _zc.SetDevice(&_sdCard);
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });

@@ -420,6 +420,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyReleaseAll, "/api/v1/emulator/{id}/keyboard/release_all", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyAbort, "/api/v1/emulator/{id}/keyboard/abort", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::keyRoute, "/api/v1/emulator/{id}/keyboard/route", drogon::Post, drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
 
@@ -1310,6 +1311,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void keyStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    void keyRoute(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
     void keyList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                  const std::string& id) const;
     // endregion Keyboard Injection Methods

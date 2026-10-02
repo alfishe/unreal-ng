@@ -284,6 +284,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
+    connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
+        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
+        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
+        if (keyboard)
+            _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
+                                               Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+    });
+    connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
+        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
+        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
+        if (!keyboard)
+            return;
+        std::string error;
+        if (!keyboard->RequestHostRoute(route.toStdString(), error))
+            statusBar()->showMessage(tr("Host keyboard: %1").arg(QString::fromStdString(error)), 5000);
+        _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
+                                           Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+    });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);

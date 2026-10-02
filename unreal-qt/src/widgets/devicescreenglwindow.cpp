@@ -605,10 +605,9 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? _emulator->GetUUID().toString() : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_PRESSED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_PRESSED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_PRESSED, targetId);
     }
 }
 
@@ -624,10 +623,9 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? _emulator->GetUUID().toString() : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_RELEASED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_RELEASED, targetId);
     }
 }
 

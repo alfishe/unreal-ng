@@ -505,6 +505,10 @@ public:
     /// A board NMI queued for the frame INT is due (Z80::ProcessInterrupts).
     /// Return false to drop it (ZX-Evo: its NMI page is still mapped in)
     virtual bool OnFrameIntStartNmi() { return true; }
+
+    /// The frame ended (main loop, after the network pump): board devices that
+    /// run on their own clock catch up (ATM Turbo 2+ keyboard controller)
+    virtual void OnFrameEnd() {}
     /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
     /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
     virtual bool OnNmiAccepted() { return false; }

@@ -2607,6 +2607,15 @@ namespace PythonBindings
                 return result;
             }, "Get status of all profilers")
             
+            .def("key_route", [](Emulator& self, const std::string& route) -> std::string {
+                Keyboard* keyboard = self.GetContext()->pKeyboard;
+                if (!keyboard)
+                    throw py::value_error("no keyboard");
+                std::string error;
+                if (!route.empty() && !keyboard->RequestHostRoute(route, error))
+                    throw py::value_error(error);
+                return Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
+            }, py::arg("route") = "", "Where host and injected keys go: route='auto'|'matrix'|'ps2'|'both' (the ZX matrix, the PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force")
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
