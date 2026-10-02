@@ -10,6 +10,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/sound/audio.h"
+#include "emulator/video/screendigest.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 ScreenSprinter::ScreenSprinter(EmulatorContext* context) : Screen(context)
@@ -270,31 +271,82 @@ ScreenState ScreenSprinter::DescribeScreenState() const
     s.activeRamPages.clear();
     s.contention = false;
 
-    // A summary of the squares on screen (tdd-video §7): 40 x 32 picture squares
-    unsigned text = 0, graphics320 = 0, graphics640 = 0, border = 0;
+    // A summary of the squares on screen (tdd-video §7): the 40 x 32 picture squares, classified by
+    // SprinterSquare (the classifier DeviceState::Sprinter's video summary uses too)
+    int counts[static_cast<int>(SprinterSquare::Kind::Count)] = {};
     if (in.vram)
     {
         for (uint8_t b = 0; b < 32; b++)
-        {
             for (uint8_t a = 0; a < 40; a++)
-            {
-                const uint8_t m0 = in.vram[SprinterVideoRam::ModeAddress(a, b, in.modePage)];
-                if ((m0 >> 4) == 0x0F)
-                    border++;
-                else if (m0 & 0x10)
-                    text++;
-                else if (m0 & 0x20)
-                    graphics320++;
-                else
-                    graphics640++;
-            }
-        }
+                counts[static_cast<int>(SprinterSquare::Classify(in.vram[SprinterVideoRam::ModeAddress(a, b, in.modePage)]))]++;
     }
-    s.videoMode = StringHelper::Format("Sprinter %u lines, mode page %u: text %u, graphics 320 %u, graphics 640 %u, "
-                                       "border %u squares",
-                                       static_cast<unsigned>(_frameLines), static_cast<unsigned>(in.modePage), text,
-                                       graphics320, graphics640, border);
+    auto count = [&](SprinterSquare::Kind kind) { return counts[static_cast<int>(kind)]; };
+    s.videoMode = StringHelper::Format("Sprinter %u lines, mode page %u: text 40 %d, text 80 %d, graphics 320 %d, "
+                                       "graphics 640 %d, border %d, blank %d squares",
+                                       static_cast<unsigned>(_frameLines), static_cast<unsigned>(in.modePage),
+                                       count(SprinterSquare::Kind::Text40), count(SprinterSquare::Kind::Text80),
+                                       count(SprinterSquare::Kind::Graphics320), count(SprinterSquare::Kind::Graphics640),
+                                       count(SprinterSquare::Kind::Border), count(SprinterSquare::Kind::Blank));
+    // The dominant kind for a status line ("text 80", "320x256", "mixed")
+    int best = 0;
+    for (int k = 1; k < static_cast<int>(SprinterSquare::Kind::Count); k++)
+        if (counts[k] > counts[best])
+            best = k;
+    static const char* const kBrief[] = {"320x256 256c", "640x256 16c", "text 40", "text 80", "border", "blank"};
+    s.videoModeBrief = counts[best] == 40 * 32 ? kBrief[best] : std::string(kBrief[best]) + " (mixed)";
     return s;
+}
+
+bool ScreenSprinter::IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, uint16_t& height, std::string& encoding) const
+{
+    // The pen of every visible pixel by the renderer's rules (SprinterVideoRenderer::PenAt), the state now
+    const SprinterVideoInputs in = CurrentInputs();
+    if (!in.vram)
+        return false;
+    width = static_cast<uint16_t>(SprinterVideoRenderer::kVisibleWidth);
+    height = static_cast<uint16_t>(SprinterVideoRenderer::kVisibleLines);
+    pens.resize(static_cast<size_t>(width) * height);
+    for (uint32_t y = 0; y < height; y++)
+        for (uint32_t x = 0; x < width; x++)
+            pens[static_cast<size_t>(y) * width + x] =
+                static_cast<uint16_t>(SprinterVideoRenderer::PenAt(in, x, y) & (SprinterVideoRam::kPens - 1));
+    encoding = "u16le pen per pixel: k x 256 + n (0-#3FF graphics palettes 0-3, #400-#7FF text paper / ink / flash); "
+               "the colors: /state/sprinter/palette";
+    return true;
+}
+
+bool ScreenSprinter::DigestSurface(ScreenDigestSurface& out) const
+{
+    // The whole 256 KB video RAM (pictures, fonts, the mode table, the palettes) and the latches that
+    // place the picture: mode page, HOLD, border, frame height. Pages 5 / 7 say nothing about a native screen
+    PortDecoder_Sprinter* decoder = Decoder();
+    if (!decoder)
+        return false;
+    const SprinterPldState& pld = decoder->GetPldState();
+    const SprinterVideoRam& vram = decoder->GetVideoRam();
+    uint64_t digest = ScreenDigest::DigestBytes(vram.Data(), SprinterVideoRam::kSize);
+    digest = ScreenDigest::MixValue(digest, static_cast<uint8_t>(pld.rgMod & 1));
+    digest = ScreenDigest::MixValue(digest, pld.hold);
+    digest = ScreenDigest::MixValue(digest, static_cast<uint8_t>(_frameLines == 312 ? 1 : 0));
+    out.name = "vram";
+    out.description = "Sprinter video RAM (256 KB: pictures, fonts, mode table, palettes) + RGMOD page, HOLD, frame height";
+    out.digest = digest;
+    out.bytes = SprinterVideoRam::kSize;
+    return true;
+}
+
+void ScreenSprinter::CaptureFamilyLatches(videomap::VideoLatches& latches) const
+{
+    // The video change log's Sprinter latches (videowritelog.h): what the PLD holds now
+    if (PortDecoder_Sprinter* decoder = Decoder())
+    {
+        const SprinterPldState& pld = decoder->GetPldState();
+        latches.rgMod = pld.rgMod;
+        latches.hold = pld.hold;
+        latches.portY = pld.portY;
+        latches.allMode = pld.allMode;
+        latches.frameLines = pld.frameLines ? 312 : 320;
+    }
 }
 
 const void* ScreenSprinter::VideoFamilyView() const

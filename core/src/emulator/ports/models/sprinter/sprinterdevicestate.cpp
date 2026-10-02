@@ -25,8 +25,11 @@
 #include "emulator/memory/rom.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/emulator.h"
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/screensprinter.h"
@@ -51,6 +54,11 @@ PortDecoder_Sprinter* SprinterDecoder(EmulatorContext* context)
 std::string Hex8(unsigned value) { return StringHelper::Format("0x%02X", value & 0xFFu); }
 std::string Hex16(unsigned value) { return StringHelper::Format("0x%04X", value & 0xFFFFu); }
 std::string Hex32(uint32_t value) { return StringHelper::Format("0x%08X", value); }
+
+/// The mode table's square grid: the picture is 40 x 32 squares from (0, 0), the table 56 x 40
+constexpr uint8_t kPictureColumns = 40;
+constexpr uint8_t kPictureRows = 32;
+constexpr uint8_t kSquareRowsAll = 40;
 
 /// Space-separated hex bytes ("00 05 02 ...")
 std::string HexRow(const uint8_t* data, size_t count)
@@ -90,19 +98,6 @@ std::string CodeName(const std::map<uint16_t, std::string>& names, uint16_t code
     auto it = names.find(code);
     return it != names.end() ? it->second : StringHelper::Format("Code%02X", code & 0xFFu);
 }
-
-/// The BIOS images the project ships (docs/inprogress/2026-09-28-sprinter/bios-versions.md)
-struct KnownBios
-{
-    const char* file;
-    const char* version;
-    const char* crc32;
-};
-constexpr KnownBios kKnownBios[] = {
-    {"sp2k-3.04.rom", "Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; the default)", "1729cb5c"},
-    {"sp2k-3.06-hf2.rom", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026)", "9aa7bb29"},
-    {"sp2k-3.07-beta1.rom", "Firmware v3.07 BETA 1 (community build, 24.09.2026)", "a06a1a02"},
-};
 
 /// One window of the CPU's address space as the PLD maps it
 StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_t window)
@@ -211,55 +206,6 @@ StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_
     return w;
 }
 
-/// Square kind of a mode table entry (sprintervideorenderer.h)
-enum class SquareKind
-{
-    Graphics320,
-    Graphics640,
-    Text40,
-    Text80,
-    Border,
-    Blank,
-    Count
-};
-
-SquareKind ClassifySquare(uint8_t m0)
-{
-    if (!(m0 & 0x10))
-        return (m0 & 0x20) ? SquareKind::Graphics320 : SquareKind::Graphics640;
-    if ((m0 & 0xFC) == 0xFC)
-        return SquareKind::Blank;
-    if ((m0 >> 5) == 7)
-        return SquareKind::Border;
-    return (m0 & 0x20) ? SquareKind::Text40 : SquareKind::Text80;
-}
-
-const char* SquareKindKey(SquareKind kind)
-{
-    switch (kind)
-    {
-        case SquareKind::Graphics320: return "graphics_320";
-        case SquareKind::Graphics640: return "graphics_640";
-        case SquareKind::Text40: return "text_40";
-        case SquareKind::Text80: return "text_80";
-        case SquareKind::Border: return "border";
-        default: return "blank";
-    }
-}
-
-const char* SquareKindName(SquareKind kind)
-{
-    switch (kind)
-    {
-        case SquareKind::Graphics320: return "graphics 320 x 256, 256 colors";
-        case SquareKind::Graphics640: return "graphics 640 x 256, 16 colors";
-        case SquareKind::Text40: return "text, 40 columns";
-        case SquareKind::Text80: return "text, 80 columns";
-        case SquareKind::Border: return "border";
-        default: return "blank";
-    }
-}
-
 StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
 {
     const SprinterPldState& pld = decoder.GetPldState();
@@ -269,38 +215,36 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     const uint16_t lines = screen ? screen->FrameLines() : (pld.frameLines ? 312 : 320);
 
     // The 56 x 40 squares of the mode page; the picture is the 40 x 32 squares from (0, 0)
-    int all[static_cast<int>(SquareKind::Count)] = {};
-    int picture[static_cast<int>(SquareKind::Count)] = {};
+    // (SprinterSquare: the classifier ScreenSprinter::DescribeScreenState shares)
+    constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
+    int all[kKinds] = {};
+    int picture[kKinds] = {};
     int lowres = 0;
     int intArmed = 0;
-    for (uint8_t b = 0; b < 40; b++)
+    for (uint8_t b = 0; b < kSquareRowsAll; b++)
     {
         for (uint8_t a = 0; a < SprinterIntSource::kSquareColumns; a++)
         {
-            const uint32_t address = SprinterVideoRam::ModeAddress(a, b, modePage);
-            const uint8_t m0 = vram.Read(address);
-            const SquareKind kind = ClassifySquare(m0);
-            all[static_cast<int>(kind)]++;
-            if (a < 40 && b < 32)
-                picture[static_cast<int>(kind)]++;
-            if ((kind == SquareKind::Graphics320 || kind == SquareKind::Graphics640) && (vram.Read(address + 2) & 0x04))
-                lowres++;
-            if ((m0 & 0xFD) == 0xFD)
-                intArmed++;
+            const SprinterSquare square = SprinterSquare::Decode(vram.Data() + SprinterVideoRam::ModeAddress(a, b, modePage));
+            all[static_cast<int>(square.kind)]++;
+            if (a < kPictureColumns && b < kPictureRows)
+                picture[static_cast<int>(square.kind)]++;
+            lowres += square.LowRes() ? 1 : 0;
+            intArmed += square.IntArmed() ? 1 : 0;
         }
     }
 
     StateNode v = StateNode::Object();
     v["mode_page"] = int(modePage);
     int best = 0;
-    for (int k = 1; k < static_cast<int>(SquareKind::Count); k++)
+    for (int k = 1; k < kKinds; k++)
         if (picture[k] > picture[best])
             best = k;
-    v["picture_mode"] = SquareKindName(static_cast<SquareKind>(best));
+    v["picture_mode"] = SprinterSquare::Name(static_cast<SprinterSquare::Kind>(best));
     v["picture_mode_squares"] = StringHelper::Format("%d of 1280", picture[best]);
     StateNode squares = StateNode::Object();
-    for (int k = 0; k < static_cast<int>(SquareKind::Count); k++)
-        squares[SquareKindKey(static_cast<SquareKind>(k))] = all[k];
+    for (int k = 0; k < kKinds; k++)
+        squares[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = all[k];
     squares["low_res"] = lowres;
     squares["int_armed"] = intArmed;
     v["squares"] = squares;
@@ -398,6 +342,17 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     kbd["sio_a_fifo"] = HexRow(chip.sio.GetChannel(0).fifo, chip.sio.GetChannel(0).fifoCount);
     z["keyboard"] = kbd;
 
+    // The board mouse: its counters (both views read them) and the serial packet on SIO B
+    const SprinterInput::BoardMouse board = input.GetBoardMouse();
+    const MsSerialMouse::State& serial = input.SerialMouse().GetState();
+    StateNode mouse = StateNode::Object();
+    mouse["x"] = int(board.x);
+    mouse["y"] = int(board.y);
+    mouse["buttons"] = Hex8(board.buttons);
+    mouse["packet_in_flight"] = serial.sent < 3;
+    mouse["sio_b_fifo"] = HexRow(chip.sio.GetChannel(1).fifo, chip.sio.GetChannel(1).fifoCount);
+    z["mouse"] = mouse;
+
     StateNode pio = StateNode::Array();
     static const char* const kPioModes[4] = {"output", "input", "bidirectional", "bit control"};
     for (uint8_t p = 0; p < 2; p++)
@@ -414,15 +369,151 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     }
     z["pio"] = pio;
     z["any_under_service"] = chip.AnyUnderService();
+
+    // The wait generator as WCR / MWBR program it (z84waits.cpp; PS0182 p. 318-320)
+    {
+        static const uint8_t kPairWaits[4] = {0, 2, 4, 6};
+        static const uint8_t kRetiWaits[4] = {0, 0, 2, 4};
+        StateNode w = StateNode::Object();
+        w["m1_extra"] = (sys.wcr >> 4) & 1;
+        w["memory"] = (sys.wcr >> 2) & 3;
+        w["memory_range"] = StringHelper::Format("#%X000-#%XFFF (MWBR)", sys.mwbr & 0x0F, sys.mwbr >> 4);
+        w["io"] = kPairWaits[sys.wcr & 3];
+        w["inta_daisy_chain"] = kPairWaits[sys.wcr >> 6];
+        w["inta_vector"] = (sys.wcr >> 5) & 1;
+        w["reti_extension"] = kRetiWaits[sys.wcr >> 6];
+        w["note"] = "Z84C15 clocks, inside each cycle; the board's 21 MHz RAM waits are clock.waits";
+        z["wait_generator"] = w;
+    }
+
+    // The interrupt daisy chain in priority order (the chip's priority register, Z84C15::Order)
+    {
+        static const uint8_t kPriority[6][3] = {{0, 1, 2}, {1, 0, 2}, {0, 2, 1}, {2, 1, 0}, {2, 0, 1}, {1, 2, 0}};
+        static const char* const kDevice[3] = {"CTC", "SIO", "PIO"};
+        uint8_t priority = static_cast<uint8_t>(sys.irqPriority & 0x07);
+        if (priority > 5)
+            priority &= 0x03;
+        StateNode chain = StateNode::Array();
+        std::string order;
+        for (uint8_t device : kPriority[priority])
+        {
+            order += order.empty() ? kDevice[device] : std::string(" > ") + kDevice[device];
+            const uint8_t sources = device == 0 ? 4 : 2;
+            for (uint8_t i = 0; i < sources; i++)
+            {
+                StateNode n = StateNode::Object();
+                bool ip = false;
+                bool ius = false;
+                std::string name;
+                if (device == 0)
+                {
+                    ip = chip.ctc.GetChannel(i).ip != 0;
+                    ius = chip.ctc.GetChannel(i).ius != 0;
+                    name = StringHelper::Format("CTC %u", static_cast<unsigned>(i));
+                }
+                else if (device == 1)
+                {
+                    ip = chip.sio.RxIp(i);
+                    ius = chip.sio.GetChannel(i).rxIus != 0;
+                    name = i == 0 ? "SIO A receive" : "SIO B receive";
+                }
+                else
+                {
+                    ip = chip.pio.GetPort(i).ip != 0;
+                    ius = chip.pio.GetPort(i).ius != 0;
+                    name = i == 0 ? "PIO A" : "PIO B";
+                }
+                n["source"] = name;
+                n["ip"] = ip;
+                n["ius"] = ius;
+                chain.push(n);
+            }
+        }
+        StateNode d = StateNode::Object();
+        d["priority_register"] = Hex8(sys.irqPriority);
+        d["order"] = order;
+        d["sources"] = chain;
+        z["daisy_chain"] = d;
+    }
+    z["watchdog"]["deadline_clock"] = static_cast<uint64_t>(chip.WatchdogDeadline());
     return z;
+}
+
+/// CRC-32 (IEEE, zlib's) of a small buffer: a fingerprint of the accelerator's line buffer
+uint32_t Crc32(const uint8_t* data, size_t size)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < size; i++)
+    {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+/// The block accelerator (s5-accelerator-outcome.md "For the automation branch"): the configured
+/// module's (PortDecoder_Sprinter::GetAccelerator, null while the PLD loads)
+StateNode AcceleratorSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
+{
+    StateNode a = StateNode::Object();
+    const SprinterAccelerator* accelerator = decoder.GetAccelerator();
+    if (!accelerator)
+    {
+        a["available"] = false;
+        a["description"] = "no accelerator while the PLD loads (the configured module brings it)";
+        return a;
+    }
+    const SprinterAccelState& st = accelerator->State();
+    a["available"] = true;
+    a["enabled"] = accelerator->IsEnabled();
+    a["mode"] = int(st.mode);
+    a["mode_name"] = SprinterAccelerator::ModeName(st.mode);
+    a["armed"] = (st.dir & SprinterAccelerator::kDirOn) != 0;
+    a["dir"] = Hex8(st.dir);
+    a["length"] = static_cast<uint64_t>(SprinterAccelerator::Accesses(st.length));
+    a["length_register"] = Hex8(st.length);
+    a["function"] = SprinterAccelerator::FunctionName(st.fn);
+    a["blocked"] = st.blocked != 0;
+    a["int_suspend"] = context->config.sprinter.accel_int_suspend != 0;
+    a["alt"] = st.alt != 0;
+    a["xcnt"] = int(st.xcnt);
+    a["aagr"] = int(st.aagr);
+    a["operations"] = static_cast<uint64_t>(st.operations);
+    a["last_extra_clocks"] = static_cast<uint64_t>(st.lastExtraClocks);
+    a["buffer_crc32"] = Hex32(Crc32(st.buffer, sizeof st.buffer));
+    a["buffer_head"] = HexRow(st.buffer, 16);
+    a["control"] = "LD B,B off, LD C,C fill, LD D,D length, LD E,E vertical fill, LD H,H double, LD L,L copy, "
+                   "LD A,A vertical copy, HALT off; ALL_MODE bit 0 enables (sprinter-accelerator.md)";
+    return a;
+}
+
+/// The 21 MHz wait rule (SprinterWaits, MAME do_mem_wait): which windows wait now
+StateNode WaitsSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
+{
+    StateNode w = StateNode::Object();
+    const SprinterWaits* waits = decoder.GetWaits();
+    const bool turbo = context->emulatorState.hw_turbo_ratio > 1;
+    w["active"] = turbo && waits != nullptr;
+    w["rule"] = "an access started at CPU clock t waits ((6 - t mod 6) mod 6) + 6 - taken clocks: taken 3 for "
+                "memory, 4 for a port (MAME do_mem_wait); main RAM and ports only, ROM and fast RAM never";
+    w["memory_taken"] = static_cast<uint64_t>(SprinterWaits::kMemoryTaken);
+    w["port_taken"] = static_cast<uint64_t>(SprinterWaits::kPortTaken);
+    StateNode windows = StateNode::Array();
+    for (uint8_t slot = 0; slot < 4; slot++)
+        windows.push(turbo && waits && waits->SlotWaits(slot));
+    w["windows_waiting"] = windows;
+    w["at_3_5_mhz"] = "none (the PLD's /MR_WAIT with an accelerator mode armed is not emulated: S5 open point 3)";
+    return w;
 }
 
 StateNode Bios(EmulatorContext* context)
 {
     StateNode b = StateNode::Object();
     ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
-    const std::string romFile = rom ? rom->GetROMFilename() : std::string(context->config.sprinter_rom_path);
-    b["rom_file"] = romFile;
+    const std::string selected = context->config.sprinter_rom_path;
+    b["rom_file"] = selected;
+    uint32_t loadedCrc = 0;
     if (rom && context->pMemory)
     {
         static const struct
@@ -438,35 +529,42 @@ StateNode Bios(EmulatorContext* context)
                 pages[p.key] = rom->GetROMTitle(rom->CalculateSignature(data, 0x4000));
         }
         b["identified"] = pages;
+        // The flash as loaded (16 pages of 16 KB): which shipped image it is
+        loadedCrc = SprinterBios::Crc32(context->pMemory->ROMBase(), 16 * 0x4000);
+        b["loaded_crc32"] = StringHelper::Format("%08x", loadedCrc);
     }
 
-    // The shipped images, looked up as ROM::LoadROM finds a ROM: as given, then beside the
-    // executable, then in the resources folder (macOS bundles)
-    auto exists = [](const std::string& relative) {
-        if (FileHelper::FileExists(FileHelper::NormalizePath(relative)))
-            return true;
-        for (const std::string& base : {FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath()})
-            if (!base.empty() && FileHelper::FileExists(FileHelper::PathCombine(base, relative)))
-                return true;
-        return false;
-    };
-    const std::string activeName = std::filesystem::path(romFile).filename().string();
+    const std::string selectedName = std::filesystem::path(selected).filename().string();
+    std::string loadedName;
     StateNode images = StateNode::Array();
-    for (const KnownBios& known : kKnownBios)
+    for (const SprinterBios::Image& known : SprinterBios::Known())
     {
         const std::string file = std::string("rom/sprinter/") + known.file;
+        std::string path, error;
         StateNode n = StateNode::Object();
         n["file"] = file;
+        n["alias"] = known.alias;
         n["version"] = known.version;
-        n["crc32"] = known.crc32;
-        n["present"] = exists(file);
-        n["active"] = activeName == known.file;
+        n["crc32"] = StringHelper::Format("%08x", known.crc32);
+        n["present"] = SprinterBios::Resolve(known.file, path, error);
+        n["loaded"] = loadedCrc == known.crc32;
+        n["selected"] = selectedName == known.file;
+        n["active"] = loadedCrc == known.crc32;  // kept for older clients: the image that runs
+        if (loadedCrc == known.crc32)
+            loadedName = known.file;
         images.push(n);
     }
     b["images"] = images;
-    b["select"] = "[ROM] SPRINTER=rom/sprinter/<file> in configs/sprinter/unreal.ini beside the binary (macOS: "
-                  "unreal-qt.app/Contents/Resources/configs), then create the machine again; [SPRINTER] FastStart=1 "
-                  "skips the PLD loader (docs/inprogress/2026-09-28-sprinter/bios-versions.md)";
+    b["loaded"] = loadedName.empty() ? std::string("not a shipped image (") + selectedName + ")" : loadedName;
+    b["reload_pending"] = context->pEmulator && context->pEmulator->RomReloadPending();
+    StateNode options = StateNode::Object();
+    options["fast_start"] = context->config.sprinter.fast_start != 0;
+    options["accel_int_suspend"] = context->config.sprinter.accel_int_suspend != 0;
+    b["options"] = options;
+    b["select"] = "POST /api/v1/emulator/{id}/sprinter/bios {bios: 3.04 | 3.06 | 3.07 | <file>, fast_start, "
+                  "accel_int_suspend, reset} (CLI state sprinter bios <name>, Lua / Python sprinter_bios_select); at "
+                  "create: {\"model\": \"SPRINTER\", \"sprinter\": {\"bios\": \"3.06\"}}; or [ROM] SPRINTER= in "
+                  "configs/sprinter/unreal.ini (docs/inprogress/2026-09-28-sprinter/bios-versions.md)";
     return b;
 }
 
@@ -584,7 +682,9 @@ StateNode SoundSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     ay["chip"] = "AY-3-8910 (in the PLD)";
     ay["clock_hz"] = 1750000;
     ay["clock_note"] = "42 MHz / 24 (MAME); the emulator's AY runs at 3.5 MHz / 2 on every model";
-    ay["stereo"] = "ABC";
+    const SoundChip_AY8910* chip = context->pSoundManager ? context->pSoundManager->getAYChip(0) : nullptr;
+    const AYStereoMode stereo = chip ? chip->getStereoMode() : AYStereoMode::ABC;
+    ay["stereo"] = stereo == AYStereoMode::ACB ? "ACB" : (stereo == AYStereoMode::Mono ? "mono" : "ABC");
     ay["chips"] = context->pSoundManager ? context->pSoundManager->getAYChipCount() : 0;
     ay["ports"] = "#FFFD select (code #90), #BFFD data (code #91), #FFFD read (code #52)";
     snd["ay"] = ay;
@@ -728,6 +828,7 @@ StateNode Sprinter(EmulatorContext* context)
         const unsigned ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
         c["ratio"] = ratio;
         c["mhz"] = ratio >= 6 ? "21" : "3.5";
+        c["waits"] = WaitsSummary(*decoder, context);
         ret["clock"] = c;
 
         auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
@@ -740,6 +841,7 @@ StateNode Sprinter(EmulatorContext* context)
     }
 
     ret["video"] = VideoSummary(*decoder, context);
+    ret["accelerator"] = AcceleratorSummary(*decoder, context);
     ret["sound"] = SoundSummary(*decoder, context);
     ret["z84c15"] = Z84Summary(*decoder, context);
 
@@ -820,31 +922,27 @@ StateNode SprinterText(EmulatorContext* context)
     // The text squares of the picture (a = 0..39, b = 0..31) in the current mode page: a text
     // square's Mode1 byte is its character (tdd-video §3); a 640 square holds two (Line1, then
     // Line2 one row lower), a 320 square one, shown as the character and a space. Graphics,
-    // border and blank squares read as spaces
+    // border and blank squares read as spaces (SprinterSquare::TextCode: the video mapper's text
+    // layer, /video/text and the screen OCR read the same cells)
     const SprinterVideoRam& vram = decoder->GetVideoRam();
     const uint8_t modePage = decoder->GetPldState().rgMod & 0x01;
-    constexpr uint8_t kColumns = 40;
-    constexpr uint8_t kRows = 32;
     StateNode lines = StateNode::Array();
     int textSquares = 0;
-    for (uint8_t b = 0; b < kRows; b++)
+    for (uint8_t b = 0; b < kPictureRows; b++)
     {
         std::string text;
         std::string codes;
-        for (uint8_t a = 0; a < kColumns; a++)
+        for (uint8_t a = 0; a < kPictureColumns; a++)
         {
-            const uint32_t address = SprinterVideoRam::ModeAddress(a, b, modePage);
-            const uint8_t m0 = vram.Read(address);
-            const bool isText = (m0 & 0x10) && (m0 & 0xFC) != 0xFC && (m0 >> 5) != 7;
-            for (uint8_t half = 0; half < 2; half++)
+            const uint8_t* line1 = vram.Data() + SprinterVideoRam::ModeAddress(a, b, modePage);
+            for (unsigned half = 0; half < 2; half++)
             {
                 uint8_t c = 0x20;
-                if (isText && (half == 0 || !(m0 & 0x20)))
-                    c = vram.Read(address + 1 + half * SprinterVideoRam::kRowBytes);
+                SprinterSquare::TextCode(line1, half, c);
                 text.push_back((c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : (c == 0 ? ' ' : '.'));
                 codes += StringHelper::Format("%02X", c);
             }
-            textSquares += isText ? 1 : 0;
+            textSquares += SprinterSquare::Decode(line1).IsText() ? 1 : 0;
         }
         // Trailing spaces carry nothing
         const size_t end = text.find_last_not_of(' ');
@@ -859,9 +957,342 @@ StateNode SprinterText(EmulatorContext* context)
     ret["available"] = true;
     ret["mode_page"] = int(modePage);
     ret["columns"] = 80;
-    ret["rows"] = int(kRows);
+    ret["rows"] = int(kPictureRows);
     ret["text_squares"] = textSquares;
+    // Spectrum mode (ALL_MODE bit 0 = 0: the Spectrum screen shadow on) draws the ZX screen with text
+    // squares whose "font" is the screen bitmap: their codes are not text, the screen OCR reads that
+    // picture as a ZX screen. Otherwise text is the picture when most squares are text (BIOS, DSS)
+    const bool spectrumScreen = (decoder->GetPldState().allMode & 0x01) == 0;
+    ret["spectrum_screen"] = spectrumScreen;
+    ret["picture_is_text"] = !spectrumScreen && textSquares * 2 > kPictureColumns * kPictureRows;
     ret["lines"] = lines;
+    return ret;
+}
+
+StateNode SprinterBios(EmulatorContext* context)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+    StateNode ret = Bios(context);
+    ret["available"] = true;
+    return ret;
+}
+
+StateNode SprinterBiosSelect(EmulatorContext* context, const SprinterBios::Options& options)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const std::string before = context->config.sprinter_rom_path;
+    std::string error;
+    if (!SprinterBios::ApplyToConfig(context->config, options, error))
+    {
+        StateNode n = StateNode::Object();
+        n["available"] = false;
+        n["description"] = error;
+        return n;
+    }
+    // A new image is loaded by the next reset (Emulator::RequestRomReload: the flash is reread at
+    // Reset, after TTD recording stopped); reset = true makes that reset now
+    if (!options.bios.empty() && context->pEmulator)
+        context->pEmulator->RequestRomReload();
+    if (options.reset && context->pEmulator)
+        context->pEmulator->Reset();
+
+    StateNode ret = Bios(context);
+    ret["available"] = true;
+    ret["previous_rom_file"] = before;
+    ret["reset_done"] = options.reset && context->pEmulator != nullptr;
+    return ret;
+}
+
+bool SprinterVideoQueryFromStrings(const std::string& page, const std::string& all, const std::string& squares,
+                                   SprinterVideoQuery& query, std::string& error)
+{
+    auto flag = [&](const std::string& text, const char* name, bool fallback, bool& out) {
+        std::string v = text;
+        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (v.empty())
+            out = fallback;
+        else if (v == "1" || v == "on" || v == "true" || v == "yes")
+            out = true;
+        else if (v == "0" || v == "off" || v == "false" || v == "no")
+            out = false;
+        else
+        {
+            error = std::string(name) + " must be 0 / 1";
+            return false;
+        }
+        return true;
+    };
+    query = SprinterVideoQuery();
+    if (!page.empty() && page != "current")
+    {
+        if (page != "0" && page != "1")
+        {
+            error = "page must be 0 or 1 (the mode table page; omit for RGMOD's)";
+            return false;
+        }
+        query.page = page[0] - '0';
+    }
+    return flag(all, "all", false, query.all) && flag(squares, "squares", true, query.squares);
+}
+
+namespace
+{
+/// The palettes a square's pixels take their pens from (bit k = palette k): graphics its own
+/// (0-3), text the text palettes paper / ink and their flash phase (4-7), border and blank 4
+uint8_t PalettesOf(const SprinterSquare& square)
+{
+    if (square.IsGraphics())
+        return static_cast<uint8_t>(1u << square.Palette());
+    if (square.IsText())
+        return 0xF0;
+    return 0x10;
+}
+
+const char* PaletteRole(unsigned k)
+{
+    static const char* const kRoles[8] = {"graphics 0", "graphics 1", "graphics 2", "graphics 3",
+                                          "text paper", "text ink", "text paper, flash phase", "text ink, flash phase"};
+    return kRoles[k & 7];
+}
+}  // namespace
+
+StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& query)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    const SprinterVideoRam& vram = decoder->GetVideoRam();
+    const uint8_t rgmodPage = pld.rgMod & 0x01;
+    const uint8_t page = query.page >= 0 ? static_cast<uint8_t>(query.page & 1) : rgmodPage;
+    const uint8_t columns = query.all ? SprinterIntSource::kSquareColumns : kPictureColumns;
+    const uint8_t rows = query.all ? kSquareRowsAll : kPictureRows;
+    auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["mode_page"] = int(page);
+    ret["displayed"] = page == rgmodPage;
+    ret["rgmod"] = Hex8(pld.rgMod);
+    ret["text_page"] = int((pld.pn >> 3) & 1);
+    StateNode hold = StateNode::Object();
+    hold["value"] = Hex8(pld.hold);
+    hold["x_pixels"] = (7 - static_cast<int>(pld.hold & 0x0F)) * 2;
+    hold["y_lines"] = 7 - static_cast<int>(pld.hold >> 4);
+    ret["hold"] = hold;
+    StateNode frame = StateNode::Object();
+    frame["lines_requested"] = pld.frameLines ? 312 : 320;
+    frame["lines"] = screen ? int(screen->FrameLines()) : (pld.frameLines ? 312 : 320);
+    frame["t_states"] = static_cast<uint64_t>(context->config.frame);
+    ret["frame"] = frame;
+    ret["port_y"] = Hex8(pld.portY);
+    ret["border"] = int(pld.Cell(SprinterCode::Border) & 0x07);
+    StateNode allMode = StateNode::Object();
+    allMode["value"] = Hex8(pld.allMode);
+    allMode["zx_screen_shadow"] = (pld.allMode & 0x01) == 0;
+    ret["all_mode"] = allMode;
+    ret["columns"] = int(columns);
+    ret["rows"] = int(rows);
+    ret["grid"] = query.all ? "the whole mode table: 56 x 40 squares (the beam's 896 pixels x 320 lines)"
+                            : "the picture: 40 x 32 squares from (0, 0), 16 x 8 pixels each (all=1: the whole table)";
+    ret["mode_table"] = "square (a, b): Mode0-Mode2 at video RAM row 1 + 2a + #80 x page, column #300 + 4b; Line2 "
+                        "(the right character of an 80-column text square) one row lower";
+    ret["legend"] = "G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, "
+                    ". blank, * blank with the frame INT";
+
+    constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
+    int counts[kKinds] = {};
+    int lowres = 0;
+    uint8_t palettes = 0;
+    StateNode map = StateNode::Array();
+    StateNode grid = StateNode::Array();
+    for (uint8_t b = 0; b < rows; b++)
+    {
+        std::string line;
+        StateNode row = StateNode::Array();
+        for (uint8_t a = 0; a < columns; a++)
+        {
+            const uint32_t address = SprinterVideoRam::ModeAddress(a, b, page);
+            const uint8_t* line1 = vram.Data() + address;
+            const SprinterSquare square = SprinterSquare::Decode(line1);
+            counts[static_cast<int>(square.kind)]++;
+            lowres += square.LowRes() ? 1 : 0;
+            palettes |= PalettesOf(square);
+            line.push_back(square.Letter());
+            if (!query.squares)
+                continue;
+            StateNode n = StateNode::Object();
+            n["a"] = int(a);
+            n["b"] = int(b);
+            n["kind"] = SprinterSquare::Key(square.kind);
+            n["m0"] = Hex8(square.m0);
+            n["m1"] = Hex8(square.m1);
+            n["m2"] = Hex8(square.m2);
+            if (square.IsGraphics())
+            {
+                n["palette"] = int(square.Palette());
+                n["source_column"] = Hex16(square.SourceColumn());
+                n["source_row"] = int(square.SourceRow());
+                n["low_res"] = square.LowRes();
+                if (square.LowRes())
+                    n["quarter"] = int(square.Quarter());
+            }
+            else if (square.IsText())
+            {
+                std::string chars;
+                for (unsigned half = 0; half < 2; half++)
+                {
+                    uint8_t code = 0x20;
+                    if (SprinterSquare::TextCode(line1, half, code))
+                        chars += StringHelper::Format(chars.empty() ? "%02X" : " %02X", code);
+                }
+                n["chars"] = chars;
+                if (square.kind == SprinterSquare::Kind::Text80)
+                    n["line2_m0"] = Hex8(line1[SprinterVideoRam::kRowBytes]);
+            }
+            else if (square.IntArmed())
+                n["int"] = true;
+            row.push(n);
+        }
+        map.push(line);
+        if (query.squares)
+            grid.push(row);
+    }
+
+    StateNode summary = StateNode::Object();
+    for (int k = 0; k < kKinds; k++)
+        summary[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = counts[k];
+    summary["low_res"] = lowres;
+    ret["counts"] = summary;
+    StateNode used = StateNode::Array();
+    for (unsigned k = 0; k < 8; k++)
+        if (palettes & (1u << k))
+            used.push(int(k));
+    ret["palettes_used"] = used;
+    ret["map"] = map;
+    if (query.squares)
+        ret["squares"] = grid;
+    ret["see"] = "GET /state/sprinter/palette (the pens), /video/changes (mode / palette writes with their T), "
+                 "/memory/region/vram (the bytes), /video/pixel?x=&y= (one pixel's sources)";
+    return ret;
+}
+
+bool SprinterPaletteFromString(const std::string& text, int& palette, std::string& error)
+{
+    std::string v = text;
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (v.empty() || v == "used")
+        palette = kSprinterPalettesUsed;
+    else if (v == "all")
+        palette = kSprinterPalettesAll;
+    else if (v.size() == 1 && v[0] >= '0' && v[0] <= '7')
+        palette = v[0] - '0';
+    else
+    {
+        error = "k must be 0-7, all or used (the default: the palettes the picture uses)";
+        return false;
+    }
+    return true;
+}
+
+StateNode SprinterPalette(EmulatorContext* context, int palette)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterVideoRam& vram = decoder->GetVideoRam();
+    const uint8_t page = decoder->GetPldState().rgMod & 0x01;
+    uint8_t usedMask = 0;
+    for (uint8_t b = 0; b < kPictureRows; b++)
+        for (uint8_t a = 0; a < kPictureColumns; a++)
+            usedMask |= PalettesOf(SprinterSquare::Decode(vram.Data() + SprinterVideoRam::ModeAddress(a, b, page)));
+    uint8_t selected = usedMask;
+    if (palette == kSprinterPalettesAll)
+        selected = 0xFF;
+    else if (palette >= 0)
+        selected = static_cast<uint8_t>(1u << (palette & 7));
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["selection"] = palette == kSprinterPalettesAll ? "all" : (palette >= 0 ? "one" : "used by the picture");
+    ret["layout"] = "pen k x 256 + n = the bytes R, G, B (this order) at video RAM row n, column #3E0 + 4k "
+                    "(SprinterVideoRam::PenAddress); palettes 0-3 graphics, 4-7 text paper / ink / flash paper / "
+                    "flash ink (border and blank: palette 4)";
+    StateNode list = StateNode::Array();
+    for (unsigned k = 0; k < 8; k++)
+    {
+        if (!(selected & (1u << k)))
+            continue;
+        StateNode p = StateNode::Object();
+        p["k"] = int(k);
+        p["role"] = PaletteRole(k);
+        p["used_by_picture"] = (usedMask & (1u << k)) != 0;
+        p["vram_column"] = StringHelper::Format("0x%03X", SprinterVideoRam::kPaletteColumn + 4 * k);
+        StateNode pens = StateNode::Array();
+        std::string compact;
+        for (unsigned n = 0; n < 256; n++)
+        {
+            const uint32_t address = SprinterVideoRam::PenAddress(k * 256 + n);
+            const std::string rgb =
+                StringHelper::Format("%02X%02X%02X", vram.Read(address), vram.Read(address + 1), vram.Read(address + 2));
+            StateNode pen = StateNode::Object();
+            pen["n"] = int(n);
+            pen["rgb"] = "#" + rgb;
+            pen["vram"] = StringHelper::Format("0x%05X", address);
+            pens.push(pen);
+            compact += (n ? " " : "") + rgb;
+        }
+        p["pens"] = pens;
+        p["rgb_row"] = compact;
+        list.push(p);
+    }
+    ret["palettes"] = list;
+    return ret;
+}
+
+StateNode SprinterSoundRing(EmulatorContext* context)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder)
+        return Unavailable("Not a Sprinter machine");
+
+    const CovoxBlaster& cbl = decoder->GetCovoxBlaster();
+    const CovoxBlasterState& c = cbl.State();
+    const uint8_t write = cbl.EffectiveWriteIndex();
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["control"] = Hex8(c.control);
+    ret["mode"] = (c.control & CovoxBlaster::kControlCbl) ? "covox-blaster" : "covox";
+    ret["stereo"] = (c.control & CovoxBlaster::kControlStereo) != 0;
+    ret["play_index"] = Hex8(c.cnt);
+    ret["write_index"] = Hex8(write);
+    ret["playing_half"] = (c.cnt & 0x80) ? "upper (#80-#FF)" : "lower (#00-#7F)";
+    ret["format"] = "256 unsigned 16-bit words, #8000 = silence; stereo: even entries left, odd right; rows of 16 "
+                    "from the offset, [ ] = the entry playing, < > = the next write";
+    StateNode rows = StateNode::Array();
+    for (unsigned base = 0; base < 256; base += 16)
+    {
+        std::string line = StringHelper::Format("%02X:", base);
+        for (unsigned i = base; i < base + 16; i++)
+        {
+            const char open = i == c.cnt ? '[' : (i == write ? '<' : ' ');
+            const char close = i == c.cnt ? ']' : (i == write ? '>' : ' ');
+            line += StringHelper::Format("%c%04X%c", open, c.ring[i], close);
+        }
+        rows.push(line);
+    }
+    ret["rows"] = rows;
+    StateNode words = StateNode::Array();
+    for (unsigned i = 0; i < 256; i++)
+        words.push(int(c.ring[i]));
+    ret["words"] = words;
     return ret;
 }
 

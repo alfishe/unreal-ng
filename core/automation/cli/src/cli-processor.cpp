@@ -154,6 +154,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
+                        {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
                         {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
 
                         // BASIC commands

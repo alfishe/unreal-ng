@@ -84,3 +84,46 @@ The owner's report: in the GUI, Tab did not switch FN's panels and the mouse did
   (Tab, Down, a mouse click on the right panel, `Mouse=NONE`), `RealHdd_Fn115KeysAndMouse` (`UNREAL_SPRINTER_HDD`).
 - **Open:** after a panel switch FN 1.10 reads the floppy with interrupts off for ~30 frames; keys sent then overrun
   the SIO FIFO (whether the real machine reads that fast is the S5 floppy-timing question).
+
+## The board mouse on the shared MouseManager (2026-10-02, branch `sprinter-mouse`)
+
+The mouse manager (`docs/inprogress/2026-10-02-mouse-manager/`) is the emulator's one mouse input path: the host
+window, the automation (WebAPI, MCP, CLI, Lua, Python) and TTD replay go in, every mouse device of the machine
+gets every input. The Sprinter's board mouse is one `IMouseSink` with two views:
+
+- **`SprinterInput` owns the board mouse counters** (X, Y, buttons; power-on X = 31, Y = 85 as the Kempston
+  interface's). `OnMouseMotion` / `OnMouseButtons` / `OnMouseCounters` move them; the wheel is ignored (a
+  two-button Microsoft mouse, no wheel nibble in code `#58`). The serial mouse samples them for SIO B packets
+  (DSS 1.71), `ReadMouseView` reads them for `#FADF` / `#FBDF` / `#FFDF` (DSS 1.62.9x). Nothing in the
+  Sprinter reads the Kempston device (`Mouse`) any more; that interface is another sink of the same manager and
+  sees the same input when it is fitted.
+- **Always fitted** (`IsMouseFitted`): `MouseManager::HasMouseDevice()` is true for the Sprinter whatever
+  `[INPUT] Mouse=` says, so the front end captures the host mouse and the toolbar's mouse button is live.
+  With `Mouse=NONE` the automation no longer warns "mouse not present" when another device of the machine reads
+  the input (`DebugMouseManager`, `GET /mouse/status`).
+- **Buttons:** the manager's active-low mask, D0 left, D1 right, D2 middle. The Kempston view shows all three;
+  the serial packet carries left (bit 5) and right (bit 4).
+- **TTD:** input is journaled at the manager (`MouseMove` / `MouseButtons` / `MouseCounters`, unchanged).
+  Blob 31 (`SprinterInput`) is now version 2, 88 bytes: the v1 layout plus the board counters (bytes 85-87);
+  the Sprinter fixture `testdata/machines/sprinter/ttd/boot.ttd` was re-recorded (no other fixture changed).
+- **Device state:** `sprinter.z84c15.mouse` reports the counters, the packet in flight and the SIO B FIFO.
+
+What FN does with the mouse (FN 1.10 and 1.15 alike): the pointer moves 1 pixel per count in the 640-pixel mode;
+a left click on the inactive panel activates it, a left click on a row puts the cursor bar there; a right click
+marks the file under the bar and moves the bar down (directories are not marked); the middle button does nothing.
+
+**Tests:** `SprinterInput_Test.MouseMoveReachesSioB`, `MouseWithoutAKempstonInterface`, `BoardMouseHasItsOwnCounters`,
+`MouseButtonsMapping`; `SprinterMouseMachine_Test.EverySourceReachesTheBoardMouseWithMouseNone` (automation, host
+buttons composed with automation's, the GUI's `MC_MOUSE_MOVE`); `SprinterFlexNavigator_Test.Dss162_Fn110KeysAndMouse`
+and `RealHdd_Fn115KeysAndMouse` (`UNREAL_SPRINTER_HDD`) through `ExerciseMouse`: the pointer follows right and down
+moves, D1 / D2 do not activate a panel, D0 does, a left click selects a row, a right click marks a file;
+`TTDSprinter_Test.Input_RoundTripsTheKeyboardWireAndTheMousePacket` (counters in the blob);
+`TTDSprinterMachine_Test.ExactRestore_MidPs2ByteAndMidMousePacket` (`Mouse=NONE`, moves and left / right buttons
+journaled, packets with both buttons logged, exact replays). Mutation checks: swapped D0 / D1 fails the FN and
+mapping tests; counters not restored from blob 31 fails the three TTD tests.
+
+**Live GUI check** (BIOS 3.07 beta 1, MAME's `sp_hdd_sys.chd` on `ide0.master`, `Mouse=NONE`, FN 1.15, GPU
+renderer): the toolbar's mouse button was "ready"; a click on the screen captured without reaching the machine;
+host motion moved FN's pointer; a host click reached FN; with the button switched to "off" host input did not
+reach the machine while the automation still did. The software renderer was not switched live (the macOS menu
+bar was not reachable by UI scripting in that session); it shares `MouseCaptureController` with the GPU window.

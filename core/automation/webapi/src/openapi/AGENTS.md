@@ -32,6 +32,7 @@ openapi/
 ├── openapi_profiler.inc   # Opcode/memory profiling
 ├── openapi_schemas.inc    # Shared JSON schemas
 ├── openapi_settings.inc   # Configuration settings
+├── openapi_memoryregion.inc # Device memory regions (the Sprinter's video RAM): list, read, write, save, load
 ├── openapi_moonsound.inc  # MoonSound (OPL4) state reports
 ├── openapi_rtc.inc        # CMOS clock report + cell read / write
 ├── openapi_rzx.inc        # RZX input recording playback

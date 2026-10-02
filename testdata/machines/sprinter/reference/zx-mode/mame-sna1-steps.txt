@@ -1,0 +1,13 @@
+zxsteps: frame 5 kbdonly ms_naturl | m_cnf=00 m_all_mode=00 m_dos=01 m_pg3=30 m_pn=00 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=00 PC=019C SP=FEFF
+zxsteps: keyboard : enabled=false
+zxsteps: keyboard :kbd:ms_naturl enabled=true
+zxsteps: frame 1100 keys cd \zx{ENTER} | m_cnf=04 m_all_mode=FF m_dos=01 m_pg3=30 m_pn=10 m_sc=01 m_rom_rg=00 m_turbo=01 m_ram_sys=01 PC=00B8 SP=BFED
+zxsteps: frame 1200 keys spectrum p128.zx{ENTER} | m_cnf=04 m_all_mode=FF m_dos=01 m_pg3=30 m_pn=10 m_sc=01 m_rom_rg=00 m_turbo=01 m_ram_sys=01 PC=00B8 SP=BFEC
+zxsteps: frame 1440 snap menu | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=37 m_pn=07 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=0039 SP=5BF8
+zxsteps: frame 1450 load testdata/loaders/sna/action.sna | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=37 m_pn=07 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=0039 SP=5BF7
+zxsteps: load :snapshot -> nil
+zxsteps: frame 1460 state  | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=33 m_pn=1B m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=6379 SP=61A3
+zxsteps: frame 1500 snap sna-40 | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=34 m_pn=14 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=D055 SP=1805
+zxsteps: frame 1700 snap sna-250 | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=34 m_pn=14 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=D043 SP=1805
+zxsteps: frame 1710 state  | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=34 m_pn=14 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=D042 SP=1805
+zxsteps: frame 1720 end  | m_cnf=4E m_all_mode=FE m_dos=01 m_pg3=34 m_pn=14 m_sc=00 m_rom_rg=00 m_turbo=00 m_ram_sys=01 PC=D041 SP=1805

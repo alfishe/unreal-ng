@@ -92,6 +92,7 @@ private:
     QAction* _mouseGateMenuAction = nullptr;  // View -> Host Mouse: the same gate as a menu item
     QAction* _mouseMatchMenuAction = nullptr; // View -> the captured mouse follows the host pointer's speed
     bool _mouseMatchHostPointer = true;       // persisted; applied to every new capture controller
+    QString _mouseStatusMessage;              // the status bar hint shown while captured (cleared on release)
     QPointer<MouseCaptureController> _mouseCapture;
     bool _mouseGateOpen = true;               // persisted; applied to every new capture controller
 #ifdef ENABLE_RECORDING

@@ -1,0 +1,14 @@
+zxsteps: frame 5 kbdonly ms_naturl | m_cnf=00 m_pg3=30 m_pn=00 m_turbo=00 m_all_mode=00 m_dos=01 m_rom_rg=00 m_ram_sys=00 m_sc=00 PC=019C SP=FEFF
+zxsteps: keyboard : enabled=false
+zxsteps: keyboard :kbd:ms_naturl enabled=true
+zxsteps: frame 1100 keys cd \trd{ENTER} | m_cnf=04 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FF m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=01 PC=00B8 SP=BFED
+zxsteps: frame 1200 keys spectrum atarin.trd{ENTER} | m_cnf=04 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FF m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=01 PC=00B7 SP=BFEE
+zxsteps: frame 1420 kbdonly =: | m_cnf=07 m_pg3=37 m_pn=07 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=0043 SP=5BF3
+zxsteps: keyboard : enabled=true
+zxsteps: keyboard :kbd:ms_naturl enabled=false
+zxsteps: frame 1450 keys {ENTER} | m_cnf=07 m_pg3=37 m_pn=07 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=0044 SP=5BF3
+zxsteps: frame 1550 snap trdos | m_cnf=07 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=0044 SP=FF2A
+zxsteps: frame 1560 keys r{ENTER} | m_cnf=07 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=0042 SP=FF28
+zxsteps: frame 1700 state  | m_cnf=07 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=8B79 SP=82F2
+zxsteps: frame 2300 state  | m_cnf=07 m_pg3=30 m_pn=10 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=84A7 SP=82F3
+zxsteps: frame 2600 end  | m_cnf=07 m_pg3=31 m_pn=01 m_turbo=01 m_all_mode=FE m_dos=01 m_rom_rg=00 m_ram_sys=01 m_sc=00 PC=8862 SP=82E3

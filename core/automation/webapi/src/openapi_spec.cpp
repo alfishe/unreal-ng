@@ -41,6 +41,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
 #include "openapi/openapi_cdaudio.inc"
+#include "openapi/openapi_memoryregion.inc"
 #include "openapi/openapi_moonsound.inc"
 #include "openapi/openapi_rtc.inc"
 #include "openapi/openapi_network.inc"

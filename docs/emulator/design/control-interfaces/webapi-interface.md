@@ -374,7 +374,20 @@ GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam z
 GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, beam window, dots per T) and framebuffer placement (mapped, family)
 GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too. TS-Conf: layer 0 = the graphics mode, layer 1 = "tsu" (present while tiles or sprites are on) - the answer's layer names the object ("tsu.s0" / "tsu.t0" / "tsu.s1" / "tsu.t1" / "tsu.s2") with its tilemap word or three SFILE words (space sprite_ram), graphics byte and CRAM cell; a transparent TSU pixel answers available: false
 GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture); ?space=sprite_ram&offset= (a sprite attribute word, TS-Conf SFILE word n at 2n) or ?space=palette&offset= (a 16-bit palette cell n at 2n): every pixel drawn with it
-GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
+GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL, TS-Conf text, the Sprinter's text squares): lines[] text/codes/attrs; unavailable in bitmap modes
+GET  /api/v1/emulator/{id}/video/changes      [?frames=1|2] - video change log, every machine: per frame the latches at its start, writes[] (t, line, t_in_line, pc, changes {latch: "old -> new"}), tables (palette / mode_table write counts with first / last T)
+GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binary|base64 - the picture as raw pixels (R,G,B,A; the Sprinter's u16 pens with index); X-Width / X-Height headers
+GET  /api/v1/emulator/{id}/memory/regions      Device memory regions (the Sprinter's 256 KB video RAM "vram"): name, size, pages, write path
+GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
+POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
+PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
+GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
+GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
+GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
+GET  /api/v1/emulator/{id}/state/sprinter/sound/ring  The Covox-Blaster ring: 256 words, play / write index
+GET  /api/v1/emulator/{id}/state/sprinter/bios    BIOS images, the one loaded (CRC-32), the configured one, start options
+POST /api/v1/emulator/{id}/sprinter/bios          {"bios": "3.04|3.06|3.07|<file>", "fast_start", "accel_int_suspend", "reset": true} - select; the image loads at the reset
 GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
 PUT  /api/v1/emulator/{id}/video/temporal     {"algorithm": "mod-tpgwafsd"} switches it on, "" or "off" switches it off (POST too); answers the new status; 400 {error, message, algorithms[]} on an unknown name or a bad body
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
@@ -386,7 +399,7 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
-GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
+GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/cdaudio       CD drives' audio: disc and tracks, status (11h-15h), head (LBA, MSF, track, index), play range, page 0Eh volume, mixer row (available=false without a CD drive)
@@ -419,7 +432,10 @@ for the field list. The three screen reports come from the same core
 (`DeviceState::Screen` / `ScreenMode` / `ScreenFlash`, fields in
 [command-interface.md §6.6](./command-interface.md#66-screen-configuration)); `/state/screen` keeps `is_128k` and `display_mode`, and
 `/state/screen/mode` its per-mode flags (`eff7_16col`, `eff7_hwmc`, `eff7_512`, `overscan`,
-`profi_hires`), as aliases for existing clients. Every endpoint also has an active-emulator form without
+`profi_hires`, and `framebuffer` / `raster` / `sprinter_modes` / `video_mode_brief`), now built by `DeviceState::ScreenMode`
+so CLI, Lua and Python carry them too. `/state/screen/digest` is `DeviceState::ScreenDigestReport` (on the Sprinter
+the default and active modes hash its video RAM: `active_surface.memory = "vram"`); `/audio/capture` takes
+`"source"` (a mixer key) to record one device. Every endpoint also has an active-emulator form without
 `{id}` (`/api/v1/emulator/state/audio/fm`, `/api/v1/emulator/state/fdc`).
 
 ### Labels & Symbols

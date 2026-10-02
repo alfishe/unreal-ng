@@ -96,7 +96,7 @@ uint64_t HashOf(const TTDSerializable& device)
 
 /// region <TTDSprinterPld>
 
-// Layout (v1):
+// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob):
 //    0    1  version
 //    1  112  SprinterPldState (fixed-width fields, no padding: sprinterpldstate.h)
 //  113    1  code #89 Covox-Blaster control (CovoxBlaster's; its blob, id 32, carries it too)
@@ -241,7 +241,7 @@ uint64_t TTDSprinterPld::TTDHashState() const
 
 /// region <TTDSprinterZ84>
 
-// Layout (v1): version, then Z84C15::SaveState (z84c15.h: system registers, wait generator, watchdog,
+// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob): version, then Z84C15::SaveState (z84c15.h: system registers, wait generator, watchdog,
 // CTC, SIO with its receive FIFOs, PIO; every daisy-chain source's IP / IUS)
 
 size_t TTDSprinterZ84::TTDStateSize() const
@@ -274,7 +274,7 @@ uint64_t TTDSprinterZ84::TTDHashState() const
 
 /// region <TTDSprinterInput>
 
-// Layout (v1):
+// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob):
 //    0   1  version
 //    1  16  keyboard: the bytes on the way (ring)
 //   17   1  ring head
@@ -293,6 +293,9 @@ uint64_t TTDSprinterZ84::TTDHashState() const
 //   68   1  a sample is held (the next one is compared with it)
 //   69   8  end of the frame of the packet's next byte (base T-states)
 //   77   8  keyboard bytes the SIO refused (statistics)
+//   85   1  board mouse counters: X
+//   86   1  Y
+//   87   1  buttons (active low)
 
 void TTDSprinterInput::TTDSaveState(uint8_t* dst) const
 {
@@ -321,6 +324,10 @@ void TTDSprinterInput::TTDSaveState(uint8_t* dst) const
     w.U8(m.synced);
     w.U64(m.nextByteAt);
     w.U64(input.KeyboardOverruns());
+    const SprinterInput::BoardMouse board = input.GetBoardMouse();
+    w.U8(board.x);
+    w.U8(board.y);
+    w.U8(board.buttons);
 }
 
 void TTDSprinterInput::TTDLoadState(const uint8_t* src)
@@ -349,6 +356,11 @@ void TTDSprinterInput::TTDLoadState(const uint8_t* src)
     m.synced = r.U8();
     m.nextByteAt = r.U64();
     input.SetKeyboardOverruns(r.U64());
+    SprinterInput::BoardMouse board{};
+    board.x = r.U8();
+    board.y = r.U8();
+    board.buttons = r.U8();
+    input.SetBoardMouse(board);
 
     input.KeyboardStream().SetState(k);
     input.SerialMouse().SetState(m);

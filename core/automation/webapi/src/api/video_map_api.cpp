@@ -165,5 +165,16 @@ void EmulatorAPI::getVideoText(const HttpRequestPtr& req, std::function<void(con
     UIntParam(req, "layer", layer);
     Respond(callback, StateNodeToJson(DeviceState::VideoText(context, layer)), k200OK);
 }
+
+void EmulatorAPI::getVideoChanges(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    EmulatorContext* context = ResolveContext(id, callback);
+    if (!context)
+        return;
+    unsigned frames = 2;
+    UIntParam(req, "frames", frames);
+    Respond(callback, StateNodeToJson(DeviceState::VideoChanges(context, frames)), k200OK);
+}
 } // namespace v1
 } // namespace api

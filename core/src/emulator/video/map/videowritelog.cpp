@@ -28,7 +28,7 @@ void VideoWriteLog::BeginFrame(uint64_t frame, const VideoLatches& start)
     _current.writes.reserve(16);
 }
 
-void VideoWriteLog::Record(uint32_t t, const VideoLatches& now)
+void VideoWriteLog::Record(uint32_t t, const VideoLatches& now, uint16_t pc)
 {
     if (!_current.valid)
         return;
@@ -40,7 +40,24 @@ void VideoWriteLog::Record(uint32_t t, const VideoLatches& now)
         _current.partial = true;
         return;
     }
-    _current.writes.push_back({t, now});
+    _current.writes.push_back({t, pc, now});
+}
+
+void VideoWriteLog::RecordTable(VideoTable table, uint32_t t, uint32_t address, uint16_t pc)
+{
+    if (!_current.valid || table >= VideoTable::Count)
+        return;
+    VideoTableWrites& w = _current.tables[static_cast<size_t>(table)];
+    if (w.count == 0)
+    {
+        w.firstT = t;
+        w.firstAddress = address;
+        w.firstPc = pc;
+    }
+    w.count++;
+    w.lastT = t;
+    w.lastAddress = address;
+    w.lastPc = pc;
 }
 
 VideoFrameLog VideoWriteLog::Published() const

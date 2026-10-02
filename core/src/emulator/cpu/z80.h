@@ -668,6 +668,10 @@ public:
     /// the same contract as SetInterruptSource (kStepWorkMachineStep)
     void SetMachineStepHook(IMachineStepHook* hook);
     IMachineStepHook* GetMachineStepHook() const { return _machineStepHook; }
+    /// Runs the installed hook after every step (on) or not (off), keeping it installed: it still gets
+    /// OnMachineFrameRollover, so a hook that only matters for part of the frame can turn itself off for the rest
+    /// and back on at the next frame start - the steps in between take the plain path
+    void SetMachineStepWork(bool on);
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods

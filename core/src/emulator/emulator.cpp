@@ -955,6 +955,19 @@ void Emulator::Reset(bool hardReset)
         ? _context->pKeyboard->CaptureInputState()
         : Keyboard::InputState{};
 
+    // A ROM selected at runtime (RequestRomReload: the Sprinter's BIOS) is read now, with the
+    // machine paused and TTD recording stopped; the session that relied on the old ROM is invalid
+    if (_romReloadPending.exchange(false))
+    {
+        ROM& rom = *_core->GetROM();
+        if (rom.LoadROM())
+            rom.CalculateSignatures();
+        else
+            MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
+        if (_context && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->InvalidateSession("rom-reload");
+    }
+
     _core->Reset();
 
     if (!hardReset)

@@ -12,7 +12,9 @@
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/devicememory.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
 #include "emulator/video/screen.h"
@@ -350,6 +352,22 @@ StateNode VideoAddressIn(EmulatorContext* context, const std::string& space, uns
         return VideoAddress(context, page, offset);
     if (!context || !context->pScreen)
         return Unavailable("Screen not available");
+    if (space == "vram")
+    {
+        if (!DeviceMemory::Find(context, "vram"))
+            return Unavailable("space 'vram': this machine has no video RAM of its own (its screen is in RAM pages)");
+        // A device's own video RAM (the Sprinter's 256 KB): the address is page x 16 KB + offset
+        const uint32_t address = page * 0x4000u + offset;
+        const VideoMapService service(context);
+        const std::vector<SurfaceArea> areas = service.PixelsFor({Space::Vram, 0, 0, address, 1, 0xFF, SourceRole::PixelBits});
+        StateNode ret = StateNode::Object();
+        ret["available"] = true;
+        ret["space"] = space;
+        ret["address"] = Hex(address, 5);
+        ret["feeds_picture"] = !areas.empty();
+        ret["areas"] = AreasNode(areas);
+        return ret;
+    }
     Space where;
     if (space == "sprite_ram")
         where = Space::SpriteRam;
@@ -357,7 +375,7 @@ StateNode VideoAddressIn(EmulatorContext* context, const std::string& space, uns
         where = Space::Palette;
     else
     {
-        const std::string reason = "space '" + space + "': expected ram, sprite_ram or palette";
+        const std::string reason = "space '" + space + "': expected ram, vram, sprite_ram or palette";
         return Unavailable(reason.c_str());
     }
     const VideoMapService service(context);
@@ -393,7 +411,40 @@ StateNode VideoText(EmulatorContext* context, unsigned layer)
     uint16_t columns = 0, rows = 0;
     std::vector<TextCell> cells;
     if (!service.Text(layer, columns, rows, cells))
+    {
+        // The Sprinter: its text squares as an 80 x 32 grid (SprinterText, the renderer's classifier),
+        // while the picture has any - an agent that does not know the machine still reads BIOS / DSS screens
+        const StateNode sprinter = SprinterText(context);
+        const StateNode* squares = sprinter.find("text_squares");
+        const StateNode* spectrum = sprinter.find("spectrum_screen");
+        if (spectrum && spectrum->b)
+            return Unavailable("Sprinter in Spectrum mode: the picture is a ZX screen (use screen_ocr)");
+        if (layer == 0 && squares && squares->i > 0)
+        {
+            StateNode ret = StateNode::Object();
+            ret["available"] = true;
+            ret["layer"] = "sprinter_text";
+            ret["source"] = "the Sprinter mode table's text squares (GET /state/sprinter/text)";
+            ret["columns"] = 80;
+            ret["rows"] = 32;
+            StateNode lines = StateNode::Array();
+            if (const StateNode* from = sprinter.find("lines"))
+            {
+                for (const StateNode& line : from->items)
+                {
+                    StateNode n = StateNode::Object();
+                    const StateNode* text = line.find("text");
+                    const StateNode* codes = line.find("codes");
+                    n["text"] = text ? text->s : std::string();
+                    n["codes"] = codes ? codes->s : std::string();
+                    lines.items.push_back(n);
+                }
+            }
+            ret["lines"] = lines;
+            return ret;
+        }
         return Unavailable("The current video mode has no text layer (bitmap modes: use screen_ocr)");
+    }
 
     const videomap::VideoLayout layout = service.Layout();
     StateNode ret = StateNode::Object();
@@ -426,3 +477,146 @@ StateNode VideoText(EmulatorContext* context, unsigned layer)
     return ret;
 }
 } // namespace DeviceState
+
+namespace
+{
+/// One latch of VideoLatches by name: how the change log shows it
+struct LatchField
+{
+    const char* name;
+    unsigned (*get)(const VideoLatches&);
+    bool sprinter;  ///< the Sprinter family block: shown only where a Sprinter screen fills it
+};
+
+const LatchField kLatchFields[] = {
+    {"mode", [](const VideoLatches& l) { return unsigned(l.mode); }, false},
+    {"port_7ffd", [](const VideoLatches& l) { return unsigned(l.p7FFD); }, false},
+    {"port_eff7", [](const VideoLatches& l) { return unsigned(l.pEFF7); }, false},
+    {"port_ff77", [](const VideoLatches& l) { return unsigned(l.pFF77); }, false},
+    {"port_dffd", [](const VideoLatches& l) { return unsigned(l.pDFFD); }, false},
+    {"atm_fe_address", [](const VideoLatches& l) { return unsigned(l.aFE); }, false},
+    {"port_fe", [](const VideoLatches& l) { return unsigned(l.pFE); }, false},
+    {"border_attr", [](const VideoLatches& l) { return unsigned(l.borderAttr); }, false},
+    {"border", [](const VideoLatches& l) { return unsigned(l.borderIndex); }, false},
+    {"atm_border_bright", [](const VideoLatches& l) { return unsigned(l.atmBorderBright); }, false},
+    {"active_screen", [](const VideoLatches& l) { return unsigned(l.activeScreen); }, false},
+    {"rgmod", [](const VideoLatches& l) { return unsigned(l.rgMod); }, true},
+    {"hold", [](const VideoLatches& l) { return unsigned(l.hold); }, true},
+    {"port_y", [](const VideoLatches& l) { return unsigned(l.portY); }, true},
+    {"all_mode", [](const VideoLatches& l) { return unsigned(l.allMode); }, true},
+    {"frame_lines", [](const VideoLatches& l) { return unsigned(l.frameLines); }, true},
+};
+
+std::string LatchValue(const LatchField& field, unsigned value)
+{
+    if (std::string(field.name) == "mode")
+        return ::Screen::GetVideoModeName(static_cast<VideoModeEnum>(value));
+    if (std::string(field.name) == "frame_lines" || std::string(field.name) == "border" ||
+        std::string(field.name) == "active_screen")
+        return std::to_string(value);
+    return Hex(value, 2);
+}
+
+StateNode LatchesNode(const VideoLatches& l, bool sprinter)
+{
+    StateNode n = StateNode::Object();
+    for (const LatchField& field : kLatchFields)
+        if (!field.sprinter || sprinter)
+            n[field.name] = LatchValue(field, field.get(l));
+    return n;
+}
+
+StateNode TableNode(const VideoTableWrites& w)
+{
+    StateNode n = StateNode::Object();
+    n["count"] = static_cast<uint64_t>(w.count);
+    if (w.count)
+    {
+        n["first_t"] = static_cast<uint64_t>(w.firstT);
+        n["last_t"] = static_cast<uint64_t>(w.lastT);
+        n["first_address"] = Hex(w.firstAddress, 5);
+        n["last_address"] = Hex(w.lastAddress, 5);
+        n["first_pc"] = Hex(w.firstPc, 4);
+        n["last_pc"] = Hex(w.lastPc, 4);
+    }
+    return n;
+}
+
+StateNode FrameNode(::Screen& screen, const VideoFrameLog& log, bool current, bool sprinter)
+{
+    StateNode f = StateNode::Object();
+    f["frame"] = static_cast<uint64_t>(log.frame);
+    f["current"] = current;
+    f["partial"] = log.partial;
+    f["start"] = LatchesNode(log.start, sprinter);
+    StateNode writes = StateNode::Array();
+    VideoLatches before = log.start;
+    for (const VideoWrite& w : log.writes)
+    {
+        StateNode e = StateNode::Object();
+        const BeamPosition beam = screen.DescribeBeam(w.t);
+        e["t"] = static_cast<uint64_t>(w.t);
+        e["line"] = static_cast<uint64_t>(beam.line);
+        e["t_in_line"] = static_cast<uint64_t>(beam.tInLine);
+        e["pc"] = Hex(w.pc, 4);
+        StateNode changes = StateNode::Object();
+        for (const LatchField& field : kLatchFields)
+        {
+            const unsigned from = field.get(before);
+            const unsigned to = field.get(w.latches);
+            if (from != to)
+                changes[field.name] = LatchValue(field, from) + " -> " + LatchValue(field, to);
+        }
+        e["changes"] = changes;
+        writes.push(e);
+        before = w.latches;
+    }
+    f["writes"] = writes;
+    StateNode tables = StateNode::Object();
+    tables["mode_table"] = TableNode(log.tables[static_cast<size_t>(VideoTable::ModeTable)]);
+    tables["palette"] = TableNode(log.tables[static_cast<size_t>(VideoTable::Palette)]);
+    f["tables"] = tables;
+    return f;
+}
+}  // namespace
+
+namespace DeviceState
+{
+StateNode VideoChanges(EmulatorContext* context, unsigned frames)
+{
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+    ::Screen& screen = *context->pScreen;
+    const VideoWriteLog& log = screen.GetVideoWriteLog();
+    // The family block of the latches (RGMOD ...) is shown where the machine's screen fills it
+    const bool sprinter = screen.GetVideoMode() == M_SPRINTER;
+    Emulator* emulator = context->pEmulator;
+    const bool running = emulator && emulator->IsRunning() && !emulator->IsPaused();
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["running"] = running;
+    ret["about"] = "video latch changes at their port write (frame T, beam line / T in line, PC, the latches that "
+                   "changed) and per-frame counts of palette / mode table writes; frames=1 the last completed frame, "
+                   "frames=2 (default) the current one too while the machine is paused";
+    StateNode list = StateNode::Array();
+    if (running)
+    {
+        const VideoFrameLog published = log.Published();
+        if (published.valid)
+            list.push(FrameNode(screen, published, false, sprinter));
+    }
+    else
+    {
+        if (log.Previous().valid)
+            list.push(FrameNode(screen, log.Previous(), false, sprinter));
+        if (frames > 1 && log.Current().valid)
+            list.push(FrameNode(screen, log.Current(), true, sprinter));
+    }
+    ret["frames"] = list;
+    ret["see"] = "port writes themselves: the port trace (Sprinter codes RgMod, Hold, PortY, AllMode, Frame320, Frame312, "
+                 "Border); the state at a T: /video/pixel?t=";
+    return ret;
+}
+} // namespace DeviceState
+

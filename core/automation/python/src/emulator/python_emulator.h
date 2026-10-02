@@ -50,6 +50,10 @@
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/config.h>
+#include <emulator/memory/devicememory.h>
+#include <emulator/sound/audiomixer.h>
+#include <emulator/video/framebufferexport.h>
+#include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
@@ -1885,6 +1889,34 @@ namespace PythonBindings
             }, "Former name of screen_mode, kept for existing scripts")
 
             // Capture operations
+            .def("framebuffer", [](Emulator& self, const std::string& format) -> py::dict {
+                FramebufferExport::Frame frame;
+                std::string error;
+                if (!FramebufferExport::Capture(self.GetContext(), format, frame, error))
+                    throw py::value_error(error);
+                py::dict d;
+                d["width"] = frame.width;
+                d["height"] = frame.height;
+                d["format"] = frame.format;
+                d["encoding"] = frame.encoding;
+                py::bytes data(reinterpret_cast<const char*>(frame.bytes.data()), frame.bytes.size());
+                d["data"] = data;
+                // numpy when it is installed: (height, width, 4) uint8 for rgba, (height, width) uint16 for index
+                try
+                {
+                    py::module_ np = py::module_::import("numpy");
+                    py::object array = np.attr("frombuffer")(data, frame.format == "index" ? "<u2" : "u1");
+                    if (frame.format == "index")
+                        d["array"] = array.attr("reshape")(frame.height, frame.width);
+                    else
+                        d["array"] = array.attr("reshape")(frame.height, frame.width, 4);
+                }
+                catch (const py::error_already_set&)
+                {
+                }
+                return d;
+            }, py::arg("format") = "rgba",
+               "The picture as raw pixels: width, height, format, encoding, data (bytes) and array (numpy, when installed); format 'rgba' (R,G,B,A) or 'index' (the Sprinter's u16 pens)")
             .def("capture_ocr", [](Emulator& self) -> std::string {
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
@@ -1980,6 +2012,100 @@ namespace PythonBindings
             .def("sprinter_text", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
             }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
+            // Device memory regions (emulator/memory/devicememory.h): the Sprinter's video RAM "vram"
+            .def("memory_regions", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::MemoryRegions(self.GetContext()));
+            }, "Device memory regions (memory a device owns outside the CPU's pages): name, description, size, page size, writable, write path")
+            .def("region_read", [](Emulator& self, const std::string& name, uint32_t offset, uint32_t length) -> py::bytes {
+                std::vector<uint8_t> bytes;
+                std::string error;
+                if (!DeviceMemory::Read(self.GetContext(), name, offset, length, bytes, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            }, py::arg("name"), py::arg("offset") = 0, py::arg("length") = 256,
+               "Read bytes [offset, offset + length) of a device memory region ('vram'): bytes")
+            .def("region_write", [](Emulator& self, const std::string& name, uint32_t offset, py::object data) -> int {
+                std::vector<uint8_t> bytes;
+                if (py::isinstance<py::str>(data))
+                {
+                    if (!DeviceMemory::ParseHexBytes(data.cast<std::string>(), bytes))
+                        throw py::value_error("data: bytes, a list of ints or a hex string ('0000A8')");
+                }
+                else if (py::isinstance<py::bytes>(data))
+                {
+                    const std::string raw = data.cast<std::string>();
+                    bytes.assign(raw.begin(), raw.end());
+                }
+                else
+                {
+                    for (const py::handle item : data)
+                        bytes.push_back(static_cast<uint8_t>(item.cast<int>() & 0xFF));
+                }
+                std::string error;
+                if (!DeviceMemory::Write(self.GetContext(), name, offset, bytes, "Python region write", error))
+                    throw py::value_error(error);
+                return static_cast<int>(bytes.size());
+            }, py::arg("name"), py::arg("offset"), py::arg("data"),
+               "Write bytes (bytes, list of ints or a hex string) through the device's own write path; returns the count")
+            .def("region_save", [](Emulator& self, const std::string& name, const std::string& path, uint32_t offset, uint32_t length) {
+                std::string error;
+                if (!DeviceMemory::Save(self.GetContext(), name, path, offset, length, error))
+                    throw py::value_error(error);
+            }, py::arg("name"), py::arg("path"), py::arg("offset") = 0, py::arg("length") = 0,
+               "Save a device memory region (or a part; length 0 = to the end) to a file")
+            .def("region_load", [](Emulator& self, const std::string& name, const std::string& path, uint32_t offset) -> size_t {
+                std::string error;
+                size_t written = 0;
+                if (!DeviceMemory::Load(self.GetContext(), name, path, offset, written, error))
+                    throw py::value_error(error);
+                return written;
+            }, py::arg("name"), py::arg("path"), py::arg("offset") = 0,
+               "Load a file into a device memory region at offset (through the device's write path); returns the byte count")
+            .def("sprinter_video", [](Emulator& self, py::object page, bool all, bool squares) -> py::object {
+                DeviceState::SprinterVideoQuery query;
+                std::string error;
+                const std::string pageText = page.is_none() ? std::string() : std::string(py::str(page));
+                if (!DeviceState::SprinterVideoQueryFromStrings(pageText, all ? "1" : "0", squares ? "1" : "0", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterVideo(self.GetContext(), query));
+            }, py::arg("page") = py::none(), py::arg("all") = false, py::arg("squares") = true,
+               "Sprinter mode table per square: HOLD, frame length, RGMOD, PORT_Y, counts, map (one letter a square: G 320, g 640, T text 40, t text 80, B border, . blank, * INT), palettes used, squares[b][a] decoded; page 0/1 (default RGMOD's), all=True = 56 x 40")
+            .def("sprinter_palette", [](Emulator& self, py::object k) -> py::object {
+                int palette = DeviceState::kSprinterPalettesUsed;
+                std::string error;
+                const std::string text = k.is_none() ? std::string() : std::string(py::str(k));
+                if (!DeviceState::SprinterPaletteFromString(text, palette, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPalette(self.GetContext(), palette));
+            }, py::arg("k") = py::none(),
+               "Sprinter palettes from video RAM: pens (n, rgb '#RRGGBB' = R, G, B as stored, vram address); k 0-7, 'all' or 'used' (default)")
+            .def("sprinter_bios", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterBios(self.GetContext()));
+            }, "Sprinter BIOS images (file, alias, version, CRC-32, present, loaded, selected), reload_pending, start options; available=False on other machines")
+            .def("sprinter_bios_select", [](Emulator& self, py::object bios, py::object fastStart, py::object accelIntSuspend, bool reset) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                SprinterBios::Options options;
+                std::string error;
+                if (!SprinterBios::OptionsFromStrings(text(bios), text(fastStart), text(accelIntSuspend), reset ? "1" : "0",
+                                                      options, error))
+                    throw py::value_error(error);
+                const StateNode report = DeviceState::SprinterBiosSelect(self.GetContext(), options);
+                const StateNode* available = report.find("available");
+                if (available && !available->b)
+                    throw py::value_error(report.find("description") ? report.find("description")->s : std::string("failed"));
+                return StateNodeToPy(report);
+            }, py::arg("bios") = py::none(), py::arg("fast_start") = py::none(), py::arg("accel_int_suspend") = py::none(),
+               py::arg("reset") = true,
+               "Select the Sprinter BIOS (3.04 / 3.06 / 3.07 / a file) and start options; the image loads at the reset (now unless reset=False)")
+            .def("sprinter_sound_ring", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterSoundRing(self.GetContext()));
+            }, "Sprinter Covox-Blaster ring: 256 words, play / write index; available=False on other machines")
             .def("sprinter_ports", [](Emulator& self, py::object map, py::object dos, py::object pn5, const std::string& rw) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
                     if (value.is_none())
@@ -3958,100 +4084,72 @@ namespace PythonBindings
                 return d;
             }
 
-            const CONFIG& config = context->config;
-            EmulatorState& state = context->emulatorState;
-            Memory* memory = context->pMemory;
-
-            const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
-                                 config.mem_model == MM_PLUS2 || config.mem_model == MM_PLUS2A ||
-                                 config.mem_model == MM_PLUS3);
-
-            // mode: "active" hashes the RAM pages the CURRENT video mode actually
-            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
-            // "default" keeps the model-dependent pages 5/7 (P1-3)
-            bool activeMode = false;
+            // One computation for every interface (ScreenDigestCompute): the same pages, surface and change tracking
+            ScreenDigestQuery query;
             if (mode == "active")
-                activeMode = true;
+                query.active = true;
             else if (mode != "default")
                 throw py::value_error("mode must be 'default' or 'active'");
-
-            const uint64_t previousDigest = state.last_screen_digest;
-            uint64_t combined = ScreenDigest::kInitialValue;
-
             if (!startValue.is_none() || !endValue.is_none())
             {
-                const uint16_t start = startValue.is_none() ? 0x4000 : startValue.cast<uint16_t>();
-                const uint16_t end = endValue.is_none() ? 0x7FFF : endValue.cast<uint16_t>();
-                if (start > end)
+                query.range = true;
+                query.start = startValue.is_none() ? 0x4000 : startValue.cast<uint16_t>();
+                query.end = endValue.is_none() ? 0x7FFF : endValue.cast<uint16_t>();
+                if (query.start > query.end)
                 {
                     d["error"] = "start must be <= end";
                     return d;
                 }
-
-                const uint64_t rangeDigest = ScreenDigest::DigestZ80Range(memory, start, end);
-                for (int shift = 0; shift < 64; shift += 8)
-                    combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> shift) & 0xFF));
-
-                d["range_start"] = start;
-                d["range_end"] = end;
-                d["range_digest"] = rangeDigest;
+            }
+            query.includeBorder = includeBorder;
+            const ScreenDigestResult r = ScreenDigestCompute::Compute(context, query);
+            if (!r.ok)
+            {
+                d["error"] = r.error;
+                return d;
+            }
+            if (r.range)
+            {
+                d["range_start"] = r.start;
+                d["range_end"] = r.end;
+                d["range_digest"] = r.rangeDigest;
+            }
+            else if (r.deviceSurface)
+            {
+                // A picture outside the RAM pages (the Sprinter's video RAM)
+                py::dict activeSurface;
+                activeSurface["video_mode"] = r.videoMode;
+                activeSurface["memory"] = r.surface.name;
+                activeSurface["bytes"] = r.surface.bytes;
+                activeSurface["digest"] = r.surface.digest;
+                d["active_surface"] = activeSurface;
             }
             else
             {
-                std::vector<uint16_t> banks;
-                if (activeMode)
+                if (r.activeSurface)
                 {
-                    // Surface actually displayed by the current video mode: ZX modes
-                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
-                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
-                    // flips the digest even with constant underlying pages
-                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
-                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
-
                     py::dict activeSurface;
-                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    activeSurface["video_mode"] = r.videoMode;
                     py::list pages;
-                    for (uint16_t page : banks)
+                    for (uint16_t page : r.activePages)
                         pages.append(page);
                     activeSurface["pages"] = pages;
                     d["active_surface"] = activeSurface;
                 }
-                else
-                {
-                    banks.push_back(ScreenDigest::kScreen0RAMPage);
-                    if (is128K)
-                        banks.push_back(ScreenDigest::kScreen1RAMPage);
-                }
-
                 py::dict perBank;
-                for (uint16_t page : banks)
-                {
-                    const uint64_t digest = ScreenDigest::DigestRAMPage(memory, page);
-                    for (int shift = 0; shift < 64; shift += 8)
-                        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((digest >> shift) & 0xFF));
+                for (const auto& [page, digest] : r.banks)
                     perBank[py::int_(page)] = digest;
-                }
                 d["banks"] = perBank;
             }
-
-            if (includeBorder)
-            {
-                const uint8_t borderColor = context->pScreen->GetBorderColor();
-                combined = ScreenDigest::MixValue(combined, borderColor);
-                d["border_color"] = borderColor;
-            }
-
-            const uint64_t previousFrame = state.last_screen_digest_frame;
-            state.last_screen_digest = combined;
-            state.last_screen_digest_frame = state.frame_counter;
-
-            d["combined"] = combined;
-            d["frame"] = static_cast<uint64_t>(state.frame_counter);
+            if (r.includeBorder)
+                d["border_color"] = r.border;
+            d["combined"] = r.combined;
+            d["frame"] = r.frame;
             d["algorithm"] = "fnv1a-64";
-            d["changed"] = combined != previousDigest;
-            d["previous_digest"] = previousDigest;
-            if (previousFrame != 0)
-                d["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
+            d["changed"] = r.changed;
+            d["previous_digest"] = r.previousDigest;
+            if (r.previousFrame != 0)
+                d["previous_digest_frame"] = r.previousFrame;
             return d;
         }, "Screen-area FNV-1a-64 digest (change detection without pixel transfer)",
            py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true,
@@ -4280,6 +4378,10 @@ namespace PythonBindings
         .def("video_address_z80", [](Emulator& self, unsigned address) -> py::object {
             return StateNodeToPy(DeviceState::VideoAddressZ80(self.GetContext(), address));
         }, "Pixels the byte at a Z80 address feeds (current paging)", py::arg("address"))
+        .def("video_changes", [](Emulator& self, unsigned frames) -> py::object {
+            return StateNodeToPy(DeviceState::VideoChanges(self.GetContext(), frames));
+        }, py::arg("frames") = 2,
+           "Video change log: per frame the latches at its start, every latch change (t, line, t_in_line, pc, changes 'old -> new') and palette / mode table write counts; frames 1 = the last completed frame, 2 = also the current one (paused)")
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
@@ -4475,7 +4577,26 @@ namespace PythonBindings
         }, "Dump AY log records (latest by default)",
            py::arg("count") = 20, py::arg("offset") = py::none())
 
-        .def("audio_capture_start", [](Emulator& self, double seconds) -> py::dict {
+        .def("audio_mixer", [](Emulator& self) -> py::object {
+            return StateNodeToPy(DeviceState::AudioMixer(self.GetContext()));
+        }, "Per-device mixer: master (muted, rate) and devices (source key, name, muted, solo, audible, volume, gain_db, peak, active, capturable)")
+        .def("audio_mixer_set", [](Emulator& self, const std::string& source, py::object muted, py::object solo, py::object volume, py::object gainDb) -> py::object {
+            auto text = [](const py::object& value) -> std::string {
+                if (value.is_none())
+                    return std::string();
+                if (py::isinstance<py::bool_>(value))
+                    return value.cast<bool>() ? "1" : "0";
+                return py::str(value);
+            };
+            AudioMixer::Change change;
+            std::string error;
+            if (!AudioMixer::ChangeFromStrings(text(muted), text(solo), text(volume), text(gainDb), change, error) ||
+                !AudioMixer::Apply(self.GetContext(), source, change, error))
+                throw py::value_error(error);
+            return StateNodeToPy(DeviceState::AudioMixer(self.GetContext()));
+        }, py::arg("source"), py::arg("muted") = py::none(), py::arg("solo") = py::none(), py::arg("volume") = py::none(),
+           py::arg("gain_db") = py::none(), "Set one mixer device (source key from audio_mixer(), or 'master' for muted): returns the mixer")
+        .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();
             if (!context || !context->pDebugManager) { d["error"] = "debug manager not available"; return d; }
@@ -4491,17 +4612,24 @@ namespace PythonBindings
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { d["error"] = "audio capture analyzer not available"; return d; }
 
+            AudioSourceType source = AudioSourceType::MasterMix;
+            std::string sourceError;
+            if (!AudioMixer::Capturable(context, sourceKey, source, sourceError))
+                throw py::value_error(sourceError);
+
             const size_t rate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target);
+            capture->startCapture(target, source);
 
             d["armed"] = capture->isCaptureArmed();
+            d["source"] = AudioMixer::Key(source);
             d["target_samples"] = static_cast<uint64_t>(target);
             d["sample_rate"] = static_cast<uint64_t>(rate);
             return d;
-        }, "Arm a buffered stereo capture", py::arg("seconds") = 1.0)
+        }, "Arm a buffered stereo capture (source: a mixer key - beeper, ay1, covox, gs ... - for one device's own buffer; default the master mix)",
+           py::arg("seconds") = 1.0, py::arg("source") = "")
 
         .def("set_speed", [](Emulator& self, int multiplier) -> bool {
             if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)

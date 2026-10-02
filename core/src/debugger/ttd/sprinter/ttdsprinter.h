@@ -97,8 +97,8 @@ private:
 class TTDSprinterInput : public TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 1;
-    static constexpr size_t kSize = 85;
+    static constexpr uint8_t kVersion = 2;
+    static constexpr size_t kSize = 88;
 
     explicit TTDSprinterInput(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
 

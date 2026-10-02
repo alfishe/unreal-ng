@@ -120,6 +120,9 @@ state screen            Screen state: video mode, active screen + RAM pages, con
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
 state screen flash      FLASH phase and timing
+state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
+memory regions          Device memory regions (the Sprinter's video RAM "vram"); memory region read|write|save|load <name> ...
+mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
 ```
 
 The screen reports ([command-interface.md §6.6](./command-interface.md#66-screen-configuration)) are rendered from the same core reports.
@@ -379,12 +382,15 @@ reference: [command-interface.md](./command-interface.md).
 | `video pixel <x> <y> [layer]` / `video pixel t <tstate>` | Memory, registers and palette cell behind a pixel (or the point under the beam, border included). |
 | `video address <page> <offset>` / `video address z80 <addr>` | Every area of the picture a byte feeds. |
 | `video address palette <offset>` / `video address sprite_ram <offset>` | Every pixel drawn with a palette cell (16-bit cells, cell n at byte 2n) / of the sprite an attribute word describes (TS-Conf SFILE word n at 2n). |
-| `video text [layer]` | Exact text grid of an ATM / ZX-Evo text mode. |
+| `video text [layer]` | Exact text grid of an ATM / ZX-Evo / TS-Conf text mode, or the Sprinter's text squares. |
+| `video address vram <offset>` | Every pixel a byte of the machine's own video RAM feeds (the Sprinter). |
+| `video changes [1\|2]` | Video change log: latch changes (mode, #7FFD, border, the Sprinter's RGMOD / HOLD / PORT_Y / ALL_MODE / frame height) with T, line and PC; palette / mode table writes per frame. |
+| `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
-| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export. |
+| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
 | `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |

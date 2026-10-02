@@ -68,6 +68,9 @@ public:
     ScreenState DescribeScreenState() const override;
     BeamPosition DescribeBeam(uint32_t tInFrame) const override;
     const void* VideoFamilyView() const override;
+    void CaptureFamilyLatches(videomap::VideoLatches& latches) const override;
+    bool DigestSurface(ScreenDigestSurface& out) const override;
+    bool IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, uint16_t& height, std::string& encoding) const override;
     /// endregion </Screen>
 
     /// The frame height the raster runs with now: 320 or 312 lines

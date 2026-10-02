@@ -11,7 +11,13 @@
 /// latches themselves, not the port writes, so no port decode is repeated here.
 ///
 /// Cost: cold code - it runs only where a port handler already changed video
-/// state, and appends only when the latches differ from the last entry.
+/// state, and appends only when the latches differ from the last entry. Table
+/// writes (RecordTable: a palette or the Sprinter's mode table) are counted per
+/// frame with their first and last write, from the device's cold "a table byte
+/// changed" branch, never per memory access.
+///
+/// Automation reads it as DeviceState::VideoChanges (/video/changes on every
+/// interface): the writes with frame, T, line, PC and the latches that changed.
 ///
 /// Threading: the emulator thread writes. At each frame start the finished
 /// frame is published under a mutex (one lock per frame); another thread reads
@@ -44,19 +50,50 @@ struct VideoLatches
     uint8_t activeScreen = 0;   ///< Screen: 0 normal (page 5), 1 shadow (page 7)
     uint8_t reserved = 0;
 
+    /// A machine family's own video latches (Screen::CaptureFamilyLatches; 0 where unused).
+    /// Sprinter: RGMOD (mode table page), HOLD (picture shift), PORT_Y, ALL_MODE (bit 0: Spectrum
+    /// screen shadow off), the frame height the PLD latched (320 / 312, codes #2C / #2D)
+    uint8_t rgMod = 0;
+    uint8_t hold = 0;
+    uint8_t portY = 0;
+    uint8_t allMode = 0;
+    uint16_t frameLines = 0;
+
     bool operator==(const VideoLatches& o) const
     {
         return mode == o.mode && p7FFD == o.p7FFD && pEFF7 == o.pEFF7 && pFF77 == o.pFF77 && pDFFD == o.pDFFD &&
                aFE == o.aFE && pFE == o.pFE && borderAttr == o.borderAttr && borderIndex == o.borderIndex &&
-               atmBorderBright == o.atmBorderBright && activeScreen == o.activeScreen;
+               atmBorderBright == o.atmBorderBright && activeScreen == o.activeScreen && rgMod == o.rgMod &&
+               hold == o.hold && portY == o.portY && allMode == o.allMode && frameLines == o.frameLines;
     }
     bool operator!=(const VideoLatches& o) const { return !(*this == o); }
 };
 
 struct VideoWrite
 {
-    uint32_t t = 0;  ///< frame T of the write (base clock)
+    uint32_t t = 0;   ///< frame T of the write (base clock)
+    uint16_t pc = 0;  ///< the CPU's PC when the write was noted (the instruction after the OUT, or the OUT itself)
     VideoLatches latches;
+};
+
+/// Video tables a machine keeps in memory or behind a port, written byte by byte: noted as a
+/// count with the first and last write of the frame instead of one entry per byte
+enum class VideoTable : uint8_t
+{
+    ModeTable,  ///< Sprinter: the video RAM mode table (columns #300-#39F)
+    Palette,    ///< Sprinter video RAM palettes, ATM / ZX-Evo / Profi palette RAM, TS-Conf CRAM
+    Count
+};
+
+struct VideoTableWrites
+{
+    uint32_t count = 0;         ///< bytes / entries written this frame
+    uint32_t firstT = 0;        ///< frame T of the first and the last
+    uint32_t lastT = 0;
+    uint32_t firstAddress = 0;  ///< the table address (VRAM address, palette cell) of the first and the last
+    uint32_t lastAddress = 0;
+    uint16_t firstPc = 0;
+    uint16_t lastPc = 0;
 };
 
 /// One frame's history
@@ -67,6 +104,7 @@ struct VideoFrameLog
     VideoLatches start;          ///< latches when the frame began
     std::vector<VideoWrite> writes;
     bool partial = false;        ///< the log filled up: later writes are missing
+    VideoTableWrites tables[static_cast<size_t>(VideoTable::Count)];
 
     /// Latches in force at frame T (the last write at or before T, else the start)
     VideoLatches StateAt(uint32_t t) const;
@@ -80,7 +118,9 @@ public:
     /// Emulator thread, frame start: the running frame becomes the previous one (published), a new one begins
     void BeginFrame(uint64_t frame, const VideoLatches& start);
     /// Emulator thread: the latches after a video port write at frame T
-    void Record(uint32_t t, const VideoLatches& now);
+    void Record(uint32_t t, const VideoLatches& now, uint16_t pc = 0);
+    /// Emulator thread: a write into a video table (mode table, palette) at frame T
+    void RecordTable(VideoTable table, uint32_t t, uint32_t address, uint16_t pc);
     /// Emulator thread: would Record log these latches (they differ from the last entry)?
     /// Lets a caller skip computing T for the common unchanged case (OUT #FE with the same border)
     bool Changes(const VideoLatches& now) const

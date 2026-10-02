@@ -389,6 +389,19 @@ sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
 txt = sprinter_text()       -- the screen text of the mode table's text squares (80 x 32: BIOS SETUP, DSS)
+vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
+pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
+ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
+bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
+r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
+regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter
+bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write("vram", 0x17F0, "0000A8") / {0,0,0xA8}
+ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
+ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
+fb, err = framebuffer("index")    -- {width, height, format, encoding, data = string}: "rgba" (R,G,B,A) or "index" (Sprinter pens)
+mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
+mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
+r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)

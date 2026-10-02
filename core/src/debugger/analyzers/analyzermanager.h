@@ -236,6 +236,11 @@ public:
     /// true when at least one analyzer subscribes to audio samples
     bool hasAudioSampleSubscribers() const { return _enabled && !_audioCallbacks.empty(); }
 
+    /// The source the audio tap dispatches (an AudioSourceType value): the master mix unless a capture
+    /// asked for one device (AudioCaptureAnalyzer::startCapture; SoundManager reads deviceBuffer(source))
+    void setAudioTapSource(int source) { _audioTapSource = source; }
+    int audioTapSource() const { return _audioTapSource; }
+
     /// Dispatch memory read event to all subscribers
     /// @param addr Memory address
     /// @param val Value read
@@ -294,6 +299,7 @@ private:
     // Warm path callback storage
     std::vector<std::pair<std::function<void(uint16_t)>, std::string>> _videoLineCallbacks;
     std::vector<std::pair<std::function<void(int16_t, int16_t)>, std::string>> _audioCallbacks;
+    int _audioTapSource = 0;  ///< AudioSourceType::MasterMix
 
     // Breakpoint ownership tracking
     std::unordered_map<BreakpointId, std::string> _breakpointOwners;                  // bpId -> analyzerId

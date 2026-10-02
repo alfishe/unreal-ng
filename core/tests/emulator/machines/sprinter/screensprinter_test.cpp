@@ -10,7 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
+#include "emulator/video/screendigest.h"
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/video/sprinter/sprintervideomapper.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
@@ -435,4 +437,33 @@ TEST_F(ScreenSprinter_Test, ConfigurationModuleRendererOverride)
     Pld().configModule = 0;
     Render();
     EXPECT_NE(Pixel(0, 0), PenColor(0x123));
+}
+
+// The screen digest sees native screens (automation audit G7): the default and the active mode hash the
+// video RAM surface, not RAM pages 5 / 7; explicit pages still hash pages
+TEST_F(ScreenSprinter_Test, DigestHashesTheVideoRam)
+{
+    ScreenDigestQuery query;
+    ScreenDigestResult first = ScreenDigestCompute::Compute(_context, query);
+    ASSERT_TRUE(first.ok) << first.error;
+    EXPECT_TRUE(first.deviceSurface);
+    EXPECT_EQ(first.surface.name, "vram");
+    EXPECT_EQ(first.surface.bytes, SprinterVideoRam::kSize);
+
+    _vram->Write(0x12345, 0x77);  // a byte of a picture: RAM pages 5 / 7 do not change
+    ScreenDigestResult second = ScreenDigestCompute::Compute(_context, query);
+    EXPECT_TRUE(second.changed);
+    EXPECT_NE(second.surface.digest, first.surface.digest);
+
+    query.active = true;
+    EXPECT_TRUE(ScreenDigestCompute::Compute(_context, query).deviceSurface);
+    query.banks = {5};
+    const ScreenDigestResult pages = ScreenDigestCompute::Compute(_context, query);
+    EXPECT_FALSE(pages.deviceSurface);
+    ASSERT_EQ(pages.banks.size(), 1u);
+
+    const StateNode report = DeviceState::ScreenDigestReport(_context, ScreenDigestQuery());
+    const StateNode* surface = report.find("active_surface");
+    ASSERT_NE(surface, nullptr);
+    EXPECT_EQ(surface->find("memory")->s, "vram");
 }

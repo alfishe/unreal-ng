@@ -128,6 +128,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::captureOcr, "/api/v1/emulator/{id}/capture/ocr", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::captureScreen, "/api/v1/emulator/{id}/capture/screen", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::capturePlaneB, "/api/v1/emulator/{id}/capture/planeb", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::captureFramebuffer, "/api/v1/emulator/{id}/capture/framebuffer", drogon::Get);
     // endregion Capture Commands
 
     // region BASIC Control (implementation: api/basic_api.cpp)
@@ -185,6 +186,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::audioCapture, "/api/v1/emulator/{id}/audio/capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureStatus, "/api/v1/emulator/{id}/audio/capture/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureResult, "/api/v1/emulator/{id}/audio/capture/result", drogon::Get);
+    // Per-device mixer (implementation: api/state_audio_api.cpp; core AudioMixer, DeviceState::AudioMixer)
+    ADD_METHOD_TO(EmulatorAPI::getAudioMixer, "/api/v1/emulator/{id}/audio/mixer", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setAudioMixer, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Put, drogon::Post);
     // endregion Analyzer Management
 
     // region Video Recording (implementation: api/recording_api.cpp)
@@ -208,6 +212,11 @@ public:
     // Page-level memory access
     ADD_METHOD_TO(EmulatorAPI::readPage, "/api/v1/emulator/{id}/memory/page/{type}/{page}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::writePage, "/api/v1/emulator/{id}/memory/page/{type}/{page}", drogon::Post);
+
+    // Device memory regions (implementation: api/memory_region_api.cpp; core DeviceMemory): the Sprinter's video RAM
+    ADD_METHOD_TO(EmulatorAPI::getMemoryRegions, "/api/v1/emulator/{id}/memory/regions", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryRegion, "/api/v1/emulator/{id}/memory/region/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postMemoryRegion, "/api/v1/emulator/{id}/memory/region/{name}", drogon::Post);
 
     // ROM protection control
     ADD_METHOD_TO(EmulatorAPI::getROMProtect, "/api/v1/emulator/{id}/memory/rom/protect", drogon::Get);
@@ -234,6 +243,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getVideoPixel, "/api/v1/emulator/{id}/video/pixel", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getVideoAddress, "/api/v1/emulator/{id}/video/address", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getVideoText, "/api/v1/emulator/{id}/video/text", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoChanges, "/api/v1/emulator/{id}/video/changes", drogon::Get);
     // Temporal effects (ZX DLSS de-flicker, api/video_temporal_api.cpp): status, switch algorithm / off
     ADD_METHOD_TO(EmulatorAPI::getVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Put, drogon::Post);
@@ -294,6 +304,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPorts, "/api/v1/emulator/{id}/state/sprinter/ports", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPortLookup, "/api/v1/emulator/{id}/state/sprinter/ports/lookup", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterText, "/api/v1/emulator/{id}/state/sprinter/text", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterVideo, "/api/v1/emulator/{id}/state/sprinter/video", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterPalette, "/api/v1/emulator/{id}/state/sprinter/palette", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterSoundRing, "/api/v1/emulator/{id}/state/sprinter/sound/ring", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterBios, "/api/v1/emulator/{id}/state/sprinter/bios", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
     // Network adapters (implementation: api/state_device_api.cpp, core DeviceState::Network)
@@ -711,6 +726,9 @@ public:
                     const std::string& id) const;
     void captureScreen(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64 — raw pixels
+    void captureFramebuffer(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void capturePlaneB(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Capture Commands Methods
@@ -812,6 +830,10 @@ public:
     void getAYLog(const drogon::HttpRequestPtr& req,
                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
+    void getAudioMixer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void setAudioMixer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& source) const;
     /// @brief POST /api/v1/emulator/{id}/audio/capture — body: {"action":"start|stop|clear", "seconds":1.0}
     void audioCapture(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -864,6 +886,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                     const std::string& id) const;
 
     // Page-level memory access
+    void getMemoryRegions(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getMemoryRegion(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id, const std::string& name) const;
+    void postMemoryRegion(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id, const std::string& name) const;
     void readPage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                   const std::string& id, const std::string& type, const std::string& page) const;
 
@@ -914,6 +942,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/video/text[?layer=] — the text grid of a text mode
     void getVideoText(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/changes?frames=1|2 — the video change log (DeviceState::VideoChanges)
+    void getVideoChanges(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/video/temporal — ZX DLSS de-flicker status (algorithm, delays, timing)
     void getVideoTemporal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
@@ -1035,6 +1066,17 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     const std::string& id) const;
     void getStateSprinterText(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterVideo(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterPalette(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterSoundRing(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    void getStateSprinterBios(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postSprinterBios(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateNetwork(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateNetworkActive(const drogon::HttpRequestPtr& req,

@@ -101,3 +101,78 @@ them); they convert the tested trees and were run against the build as above.
 - **MCP `emulator_manage create`** prints `(model )` with an empty model name (all models).
 - **Build**: the post-build `data/rom` copies of `unreal-qt` and `unreal-videowall` race under
   parallel ninja ("Error copying directory"); a second `ninja` run passes.
+
+## Audit round (2026-10-02, branch `sprinter-automation`)
+
+The P1 and P2 gaps of [automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) (status per gap in its
+§4). Each feature is one core function; the five surfaces only convert it.
+
+| Question | WebAPI | CLI | Lua / Python | MCP |
+|:--|:--|:--|:--|:--|
+| Which mode does each 8 x 8 square show? | `GET /state/sprinter/video` | `state sprinter video` | `sprinter_video{}` / `sprinter_video()` | aspect `sprinter_video` |
+| What colors are the pens? | `GET /state/sprinter/palette?k=` | `state sprinter palette [k]` | `sprinter_palette(k)` | aspect `sprinter_palette` |
+| Read / write / dump the video RAM | `GET/POST /memory/region/vram`, `/memory/page/vram/{n}` | `memory region ...` | `region_read` / `region_write` / `region_save` / `region_load` | aspect `memory_region`; `invoke_api` POST |
+| What changed in the video this frame, when, from where? (every machine) | `GET /video/changes` | `video changes` | `video_changes()` | aspect `video_changes` |
+| Did the picture change? | `GET /state/screen/digest` (video RAM surface) | `digest` | `screen_digest()` | aspect `screen_digest` |
+| The picture as pixels / pens | `GET /capture/framebuffer?format=rgba\|index` | `capture framebuffer` | `framebuffer()` | `capture_media` framebuffer |
+| Read the screen text without knowing the machine | `/video/text`, `/capture/ocr` | `video text`, `capture ocr` | `video_text()`, `capture_ocr()` (Python) | `video_text`, `screen_ocr` |
+| Accelerator, waits, Z84C15 detail | `GET /state/sprinter` (`accelerator`, `clock.waits`, `z84c15.wait_generator` / `daisy_chain`) | `state sprinter` | `sprinter_state()` | aspect `sprinter` |
+| Which BIOS runs; switch it | `GET /state/sprinter/bios`, `POST /sprinter/bios`, create `"sprinter": {...}` | `state sprinter bios [<name>]`, `create SPRINTER --sprinter-bios` | `sprinter_bios()`, `sprinter_bios_select{}` | aspect `sprinter_bios`, `emulator_manage create sprinter_bios` |
+| The Covox-Blaster ring | `GET /state/sprinter/sound/ring` | `state sprinter ring` | `sprinter_sound_ring()` | aspect `sprinter_sound_ring` |
+| Mute / solo / volume one sound device; record only it | `GET /audio/mixer`, `PUT /audio/mixer/{source}`, `/audio/capture {source}` | `mixer`, `audiocapture start <s> <source>` | `audio_mixer[_set]`, `audio_capture_start(s, source)` | aspect `audio_mixer`, `capture_media audio_capture source` |
+
+**Verified against a running unreal-qt** (this branch, `UNREAL_WEBAPI_PORT` / `UNREAL_CLI_PORT` /
+`UNREAL_MCP_PORT` moved; WebAPI, CLI over the socket, MCP over HTTP, Lua through `/lua/exec`):
+
+- create with `"sprinter":{"bios":"3.07"}` (and MCP `sprinter_bios: "3.07"`) → `loaded: sp2k-3.07-beta1.rom`;
+  DSS 1.71.57 boots from the MAME pack's `sp_hdd_sys.chd` to Flex Navigator 1.15; a bad name is a 400 listing
+  the images;
+- FN: map all `g` (1 280 graphics 640 squares), the background pixel = pen 9 = `#000080` from the palette, the
+  video map and the region read alike; `POST /memory/region/vram {"offset":"0x27E0","hex":"800000"}` turned the
+  panels red on the next screenshot, the change log counted 2 palette writes at `0x027E0`, the digest changed;
+  `video_changes` showed FN's PORT_Y steps (`0xC0 -> 0x80` at line 289, PC `0x0B3D`); the accelerator block
+  reported 40 499 operations; `framebuffer?format=index` 736 x 288, pixel (300, 150) = 9;
+- `POST /sprinter/bios {"bios":"3.06","fast_start":false,"reset":true}` on the running machine → 3.06 loaded,
+  full start, WAVPLAY of a 440 Hz WAV from a copy of the system disk: control `#9B`, `/audio/capture
+  {"source":"covox"}` 436.5 Hz (440 x 21 875 / 22 050), `source: ay1` silent, `moonsound_fm` refused (not
+  fitted), the ring with its marks, `PUT /audio/mixer/covox {"gain_db":-6}` → volume 0.501;
+- BIOS 3.04 boot screen without disks: `sprinter_text`, `/video/text` (`layer: sprinter_text`) and
+  `/capture/ocr` print the same lines ("Model name: Sprinter ... Sprinter BIOS: ver 3.04.253");
+- CLI: `state sprinter video / palette 4 / ring / bios`, `memory region read vram`, `mixer`, `video changes`,
+  `digest` ("Mode: Sprinter, surface: vram"); MCP `inspect_state` with every new aspect; Lua every new function.
+  Python is compile-checked (`-DENABLE_PYTHON_AUTOMATION=ON`, `libautomation_python.a`): the default build has
+  no Python interpreter.
+
+**Tests** (core-tests, each well under 50 ms unless noted): `SprinterDeviceState_Test` (video map per kind,
+shared classifier, palette RGB order, accelerator + waits + Z84C15 detail, ring, change log, `video_text` /
+screen mode), `SprinterBios_Test` / `SprinterBiosReport_Test` / `SprinterBiosReload_Test` (a reset loads the
+selection, 9 ms), `DeviceMemory_Test` (regions, write path, save / load, CLI, `vram` space),
+`VideoWriteLog_Test` (family latches, table writes), `ScreenSprinter_Test.DigestHashesTheVideoRam`,
+`ScreenDigestQuery_Test`, `ScreenOCRTextMode_Test.SprinterTextSquaresAreRead`, `FramebufferExport*_Test`,
+`AudioMixer*_Test` (keys, apply, channels, the capture tap), `CliSprinterMachine_Test` (video / palette / ring /
+bios), `McpTools_Test` (Sprinter aspects, region / changes / mixer / bios summaries), `McpDispatcher_Test`
+(the resource text).
+
+**Deviations from the audit's proposals** (why): video RAM by `/memory/region/{name}` rather than
+`/memory/vram/{offset}` (one generic route for every future device memory - the FT812 `RAM_G` next); BIOS
+start options with the BIOS selection, not in `/settings` (Sprinter-only, applied at the reset like the
+image); no machine variants for BIOS versions (firmware, not a board); the text fallback in `VideoText` /
+`ScreenOCR` instead of a mapper text layer (a text layer would mark the mixed graphics layer as text); the
+OCR uses the Sprinter text only while most of the picture is text and never in Spectrum mode (its ZX screen
+is drawn with text squares whose "font" is the bitmap).
+
+**A/B of the video RAM hook** (performance-guidelines.md §4; A = `bba3d545c` with the new benchmark file minus the
+listener, B = this branch; rounds A, B x 3 then B, A x 2; load 80-140 - the shared machine never got quiet, so
+the per-round noise is several percent; `cpu_time` in µs, B vs A per round):
+
+| Benchmark | A min | B min | Rounds | Mean |
+|:--|--:|--:|:--|--:|
+| `BM_SprinterVideoRamWrite_Screen` (64 K changing screen bytes, columns #000-#2FF) | 87.5 | 86.4 | -1.0 -7.5 -12.1 -0.3 -2.5 | -4.7 % |
+| `BM_SprinterVideoRamWrite_Tables` (64 K changing mode-table / palette bytes) | 119.3 | 174.9 | +46.5 +46.6 +49.0 +58.5 +47.4 | +49.6 % |
+| `BM_SprinterFrame_Logo` (BIOS logo frame, CPU + catch-up rendering) | 4054.0 | 4005.3 | -1.3 +3.7 +0.5 +0.9 -0.3 | +0.7 % |
+| `BM_HostFrame_Sprinter_Fast` | 3146.4 | 3133.7 | -0.6 +1.0 -3.0 -2.4 +1.8 | -0.7 % |
+
+The common path (picture bytes) costs nothing: one column compare as before, the table work moved out of line.
+A changed mode-table or palette byte now also calls the change-log listener (a `std::function`, ~0.9 ns a
+byte here): +50 % on a loop of nothing but table bytes, invisible in whole frames (a palette load is 768
+bytes). Other machines: the palette hooks run in port handlers that already changed a palette (cold).

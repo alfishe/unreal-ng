@@ -151,6 +151,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "runs, the machine depends on nothing outside it) or 'random' (noise in the screen pages 5 and 7 like real "
         "DRAM). Default for create: the model's unreal.ini ([MISC] RAMPowerOn, random when unset); for "
         "switch_model: the current machine's mode. A ZX-Poly machine applies it to all four modules";
+    schema["properties"]["sprinter_bios"]["type"] = "string";
+    schema["properties"]["sprinter_bios"]["description"] =
+        "'create' with model SPRINTER: the BIOS image - 3.04 (default), 3.06, 3.07 (DSS 1.71 needs it) or a file in "
+        "rom/sprinter (on a running Sprinter: invoke_api POST /api/v1/emulator/{id}/sprinter/bios {bios, reset})";
+    schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
+    schema["properties"]["sprinter_fast_start"]["description"] =
+        "'create' with model SPRINTER: true skips the PLD loader (~1.7 s emulated); default [SPRINTER] FastStart";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -256,6 +263,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 }
                 if (args.isMember("ram_power_on") && args["ram_power_on"].isString())
                     body["ram_power_on"] = args["ram_power_on"].asString();
+                if (args.isMember("sprinter_bios") && args["sprinter_bios"].isString())
+                    body["sprinter"]["bios"] = args["sprinter_bios"].asString();
+                if (args.isMember("sprinter_fast_start") && args["sprinter_fast_start"].isBool())
+                    body["sprinter"]["fast_start"] = args["sprinter_fast_start"].asBool();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
@@ -1060,7 +1071,9 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text"})
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
+                               "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "memory_region", "video_changes",
+                               "audio_mixer"})
     {
         allowed.append(aspect);
     }
@@ -1103,7 +1116,24 @@ void RegisterInspectState(ToolRegistry& registry)
         "images), 'sprinter_ports' = its decoded port table for the current map / DOS / PN5 (code, name, address "
         "pattern; one port or another map: invoke_api GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC "
         "and /state/sprinter/ports?map=0&dos=1&rw=r), 'sprinter_text' = its screen text (80 x 32 from the mode table's "
-        "text squares: BIOS SETUP, DSS - screen_ocr reads ZX screens only); all three unavailable on other machines.";
+        "text squares: BIOS SETUP, DSS; video_text and screen_ocr fall back to it), 'sprinter_video' = the mode table "
+        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, B border, . blank, * INT) "
+        "with HOLD / frame length / RGMOD / PORT_Y and the palettes in use (every square decoded: invoke_api GET "
+        "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
+        "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "
+        "'sprinter_bios' = the BIOS images, the one loaded (by CRC-32) and the start options (select: invoke_api POST "
+        "/api/v1/emulator/{id}/sprinter/bios {bios: 3.06, reset: true}); "
+        "all unavailable on other machines. 'memory_region' = bytes of a device memory region outside the CPU's pages "
+        "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list: invoke_api "
+        "GET /api/v1/emulator/{id}/memory/regions; write: POST /memory/region/{name} {offset, hex}). 'video_changes' = "
+        "the video change log of every machine: latch changes (mode, #7FFD, border, #FF77, the Sprinter's RGMOD / HOLD / "
+        "PORT_Y / ALL_MODE / frame height) with frame T, beam line, PC, and the palette / mode table writes per frame. "
+        "'audio_mixer' = the per-device mixer (source key, muted, solo, volume, gain_db, peak, active; set: invoke_api "
+        "PUT /api/v1/emulator/{id}/audio/mixer/{source} {muted, solo, volume}; capture one device: capture_media "
+        "audio_capture with source).";
+    schema["properties"]["region"]["type"] = "string";
+    schema["properties"]["region"]["default"] = "vram";
+    schema["properties"]["region"]["description"] = "'memory_region': the region name (GET /memory/regions)";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -1145,7 +1175,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
-        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text). Combine aspects to reduce round-trips.",
+        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring). "
+        "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -1169,11 +1200,13 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text")
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1195,12 +1228,13 @@ void RegisterInspectState(ToolRegistry& registry)
             if (minRun < 1) minRun = 1;
             unsigned maxBlocks = args.isMember("max_blocks") ? args["max_blocks"].asUInt() : 48u;
             if (maxBlocks < 1) maxBlocks = 1;
+            const std::string region = args.isMember("region") && args["region"].isString() ? args["region"].asString() : "vram";
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1356,6 +1390,24 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_mixer")
+                        {
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/audio/mixer"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "video_changes")
+                        {
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/video/changes"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "video_layout" || aspect == "video_text")
                         {
                             // Video debug translation (PLAN #42): the mode's layers / the exact text of a text mode.
@@ -1473,12 +1525,32 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "sprinter" || aspect == "sprinter_ports" || aspect == "sprinter_text")
+                        else if (aspect == "sprinter" || aspect == "sprinter_ports" || aspect == "sprinter_text" ||
+                                 aspect == "sprinter_video" || aspect == "sprinter_palette" || aspect == "sprinter_sound_ring" ||
+                                 aspect == "sprinter_bios")
                         {
-                            // Core DeviceState::Sprinter / SprinterPortTable / SprinterText via the WebAPI; 404 = not a Sprinter
-                            const std::string path = aspect == "sprinter"         ? "/state/sprinter"
-                                                     : aspect == "sprinter_ports" ? "/state/sprinter/ports"
-                                                                                  : "/state/sprinter/text";
+                            // Core DeviceState::Sprinter / SprinterPortTable / SprinterText / SprinterVideo /
+                            // SprinterPalette / SprinterSoundRing via the WebAPI; 404 = not a Sprinter
+                            const std::string path = aspect == "sprinter"            ? "/state/sprinter"
+                                                     : aspect == "sprinter_ports"    ? "/state/sprinter/ports"
+                                                     : aspect == "sprinter_video"    ? "/state/sprinter/video?squares=0"
+                                                     : aspect == "sprinter_palette"  ? "/state/sprinter/palette"
+                                                     : aspect == "sprinter_sound_ring" ? "/state/sprinter/sound/ring"
+                                                     : aspect == "sprinter_bios"     ? "/state/sprinter/bios"
+                                                                                     : "/state/sprinter/text";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "memory_region")
+                        {
+                            // Core DeviceState::MemoryRegionRead via the WebAPI; 404 / 400 = no such region or range
+                            const std::string path = "/memory/region/" + region + "?offset=" + std::to_string(address) +
+                                                     "&length=" + std::to_string(size) + "&format=hex";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -1843,6 +1915,137 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& window : value["windows"])
                                         out << "\n  window " << window["window"].asInt() << ": " << window["kind"].asString() << " "
                                             << window["page_hex"].asString();
+                                    const Json::Value& accel = value["accelerator"];
+                                    if (accel["available"].asBool())
+                                        out << "\n  accelerator " << (accel["enabled"].asBool() ? "enabled" : "disabled") << ", mode "
+                                            << accel["mode_name"].asString() << ", length " << accel["length"].asUInt() << ", "
+                                            << accel["function"].asString() << (accel["blocked"].asBool() ? ", blocked by INT" : "")
+                                            << ", " << accel["operations"].asUInt64() << " operations";
+                                    const Json::Value& cbl = value["sound"]["covox_blaster"];
+                                    if (cbl.isObject())
+                                    {
+                                        out << "\n  sound: " << (cbl["mode"].asString() == "covox-blaster" ? "CBL" : "Covox");
+                                        if (cbl["mode"].asString() == "covox-blaster")
+                                            out << " " << cbl["bits"].asInt() << "-bit " << (cbl["stereo"].asBool() ? "stereo" : "mono") << " "
+                                                << cbl["rate_hz"].asDouble() << " Hz, ring play " << cbl["play_index"].asString() << " / write "
+                                                << cbl["write_index"].asString() << (cbl["int_pending"].asBool() ? ", INT pending" : "");
+                                        out << ", DAC " << cbl["dac_left"].asString() << " / " << cbl["dac_right"].asString() << ", AY "
+                                            << value["sound"]["ay"]["stereo"].asString();
+                                    }
+                                    const Json::Value& waits = value["clock"]["waits"];
+                                    if (waits["active"].asBool())
+                                        out << "\n  21 MHz waits on main RAM windows";
+                                }
+                            }
+                            else if (aspect == "audio_mixer")
+                            {
+                                out << "\n[audio_mixer] master " << (value["master"]["muted"].asBool() ? "muted" : "on");
+                                for (const Json::Value& d : value["devices"])
+                                    out << "\n  " << d["source"].asString() << " (" << d["name"].asString() << "): "
+                                        << (d["muted"].asBool() ? "muted" : "on") << (d["solo"].asBool() ? ", solo" : "") << ", volume "
+                                        << d["volume"].asDouble() << ", peak " << d["peak"].asDouble() << (d["active"].asBool() ? ", active" : "");
+                            }
+                            else if (aspect == "video_changes")
+                            {
+                                out << "\n[video_changes]" << (value["running"].asBool() ? " (running: the last completed frame)" : "");
+                                for (const Json::Value& frame : value["frames"])
+                                {
+                                    const Json::Value& tables = frame["tables"];
+                                    out << "\n  frame " << frame["frame"].asUInt64() << (frame["current"].asBool() ? " (current)" : "") << ": "
+                                        << frame["writes"].size() << " latch changes" << (frame["partial"].asBool() ? " (log full)" : "")
+                                        << ", palette writes " << tables["palette"]["count"].asUInt() << ", mode table writes "
+                                        << tables["mode_table"]["count"].asUInt();
+                                    Json::ArrayIndex shown = 0;
+                                    for (const Json::Value& w : frame["writes"])
+                                    {
+                                        if (++shown > 24)
+                                        {
+                                            out << "\n    ... (" << frame["writes"].size() << " in the JSON)";
+                                            break;
+                                        }
+                                        out << "\n    T " << w["t"].asUInt() << " (line " << w["line"].asUInt() << ", T " << w["t_in_line"].asUInt()
+                                            << ") PC " << w["pc"].asString() << ":";
+                                        for (const std::string& key : w["changes"].getMemberNames())
+                                            out << " " << key << " " << w["changes"][key].asString();
+                                    }
+                                }
+                            }
+                            else if (aspect == "memory_region")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[memory_region] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[memory_region] " << value["region"].asString() << " " << value["offset"].asString() << ", "
+                                        << value["length"].asUInt() << " bytes";
+                                    const std::string hex = value["hex"].asString();
+                                    unsigned base = 0;
+                                    try { base = static_cast<unsigned>(std::stoul(value["offset"].asString(), nullptr, 16)); } catch (...) {}
+                                    for (size_t i = 0; i < hex.size() && i < 512; i += 32)
+                                    {
+                                        char at[16];
+                                        std::snprintf(at, sizeof at, "%05X:", static_cast<unsigned>(base + i / 2));
+                                        out << "\n  " << at;
+                                        for (size_t j = i; j < i + 32 && j + 1 < hex.size(); j += 2)
+                                            out << " " << hex.substr(j, 2);
+                                    }
+                                    if (hex.size() > 512)
+                                        out << "\n  ... (" << hex.size() / 2 << " bytes in the JSON)";
+                                }
+                            }
+                            else if (aspect == "sprinter_video")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_video] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_video] page " << value["mode_page"].asInt() << (value["displayed"].asBool() ? "" : " (not displayed)")
+                                        << ", RGMOD " << value["rgmod"].asString() << ", HOLD " << value["hold"]["value"].asString() << ", "
+                                        << value["frame"]["lines"].asInt() << " lines, PORT_Y " << value["port_y"].asString() << ", palettes";
+                                    for (const Json::Value& k : value["palettes_used"])
+                                        out << " " << k.asInt();
+                                    out << "\n  " << value["legend"].asString();
+                                    for (const Json::Value& line : value["map"])
+                                        out << "\n  " << line.asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_palette")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_palette] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_palette] " << value["selection"].asString() << " (R G B per pen)";
+                                    for (const Json::Value& p : value["palettes"])
+                                        out << "\n  " << p["k"].asInt() << " " << p["role"].asString() << ": "
+                                            << p["rgb_row"].asString().substr(0, 16 * 7 - 1) << " ...";
+                                }
+                            }
+                            else if (aspect == "sprinter_bios")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_bios] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_bios] loaded " << value["loaded"].asString() << ", configured "
+                                        << value["rom_file"].asString() << (value["reload_pending"].asBool() ? " (loads at the next reset)" : "")
+                                        << ", fast_start " << (value["options"]["fast_start"].asBool() ? "on" : "off")
+                                        << ", accel_int_suspend " << (value["options"]["accel_int_suspend"].asBool() ? "on" : "off");
+                                    for (const Json::Value& image : value["images"])
+                                        out << "\n  " << image["alias"].asString() << " " << image["file"].asString()
+                                            << (image["present"].asBool() ? "" : " (not installed)") << (image["loaded"].asBool() ? " [loaded]" : "");
+                                }
+                            }
+                            else if (aspect == "sprinter_sound_ring")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_sound_ring] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_sound_ring] " << value["mode"].asString() << ", play " << value["play_index"].asString()
+                                        << ", write " << value["write_index"].asString();
+                                    for (const Json::Value& row : value["rows"])
+                                        out << "\n  " << row.asString();
                                 }
                             }
                             else if (aspect == "sprinter_text")

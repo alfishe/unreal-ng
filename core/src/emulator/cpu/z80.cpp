@@ -919,6 +919,11 @@ void Z80::SetMachineStepHook(IMachineStepHook* hook)
     _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
 }
 
+void Z80::SetMachineStepWork(bool on)
+{
+    _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, on && _machineStepHook != nullptr);
+}
+
 void Z80::SetEngine(ICpuEngine* engine)
 {
     _engine = engine;
