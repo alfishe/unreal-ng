@@ -86,11 +86,27 @@ void ComPort::Reset()
         _peer->Reset();
 }
 
+INetGuest* ComPort::NetGuestOf(ISerialPeer* peer)
+{
+    if (auto* esp = dynamic_cast<EspModule*>(peer))
+        return &esp->Stack();
+    return dynamic_cast<StreamPeer*>(peer);
+}
+
 INetGuest* ComPort::NetGuest() const
 {
-    if (auto* esp = dynamic_cast<EspModule*>(_peer.get()))
-        return &esp->Stack();
-    return dynamic_cast<StreamPeer*>(_peer.get());
+    return NetGuestOf(_peer.get());
+}
+
+SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
+{
+    SerialGuests guests;
+    if (!context)
+        return guests;
+    if (context->pComPort)
+        guests.com = context->pComPort->NetGuest();
+    guests.machine = NetGuestOf(context->pMachineSerialPeer);
+    return guests;
 }
 
 bool ComPort::SaveState(netstate::Com& out) const
@@ -98,8 +114,21 @@ bool ComPort::SaveState(netstate::Com& out) const
     std::memset(&out, 0, sizeof(out));
     out.present = 1;
     _uart.SaveState(out.uart);
+    return SavePeer(_peer.get(), out);
+}
+
+bool ComPort::LoadState(const netstate::Com& in, const ByteSource& bytes)
+{
+    if (!in.present)
+        return false;
+    _uart.LoadState(in.uart);
+    return LoadPeer(_peer.get(), in, bytes);
+}
+
+bool ComPort::SavePeer(const ISerialPeer* peer, netstate::Com& out)
+{
     bool complete = true;
-    if (const auto* loop = dynamic_cast<const LoopbackPeer*>(_peer.get()))
+    if (const auto* loop = dynamic_cast<const LoopbackPeer*>(peer))
     {
         out.peerKind = 1;
         const auto& q = loop->Queue();
@@ -109,12 +138,12 @@ bool ComPort::SaveState(netstate::Com& out) const
         out.loopbackLength = static_cast<uint32_t>(n);
         complete = n == q.size();
     }
-    else if (const auto* esp = dynamic_cast<const EspModule*>(_peer.get()))
+    else if (const auto* esp = dynamic_cast<const EspModule*>(peer))
     {
         out.peerKind = std::strcmp(esp->Kind(), "espnet") == 0 ? 4 : 5;
         complete = esp->SaveState(out.esp) && complete;
     }
-    else if (const auto* stream = dynamic_cast<const StreamPeer*>(_peer.get()))
+    else if (const auto* stream = dynamic_cast<const StreamPeer*>(peer))
     {
         out.peerKind = std::strcmp(stream->Kind(), "tcp") == 0 ? 2 : 3;
         stream->SaveLink(out.link);
@@ -143,24 +172,21 @@ bool ComPort::SaveState(netstate::Com& out) const
     return complete;
 }
 
-bool ComPort::LoadState(const netstate::Com& in, const ByteSource& bytes)
+bool ComPort::LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSource& bytes)
 {
-    if (!in.present)
-        return false;
-    _uart.LoadState(in.uart);
     bool complete = true;
-    if (auto* loop = dynamic_cast<LoopbackPeer*>(_peer.get()))
+    if (auto* loop = dynamic_cast<LoopbackPeer*>(peer))
     {
         loop->SetQueue(in.loopback, in.loopbackLength < static_cast<uint32_t>(netstate::kMaxComBytes)
                                         ? in.loopbackLength
                                         : static_cast<uint32_t>(netstate::kMaxComBytes));
     }
-    else if (auto* esp = dynamic_cast<EspModule*>(_peer.get()))
+    else if (auto* esp = dynamic_cast<EspModule*>(peer))
     {
         if (in.esp.present)
             complete = esp->LoadState(in.esp, bytes) && complete;
     }
-    else if (auto* stream = dynamic_cast<StreamPeer*>(_peer.get()))
+    else if (auto* stream = dynamic_cast<StreamPeer*>(peer))
     {
         std::deque<StreamPeer::RxByte> rx;
         std::vector<uint8_t> chunk;

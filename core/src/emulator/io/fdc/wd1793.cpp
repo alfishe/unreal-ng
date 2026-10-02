@@ -214,6 +214,14 @@ void WD1793::internalReset()
     {
         stopFDDMotor();
     }
+    // The select latch follows _drive = 0 (drive A)
+    if (_context->coreState.diskDrives[0])
+    {
+        _selectedDrive = _context->coreState.diskDrives[0];
+    }
+
+    _rateRetryState = WDSTATE::S_IDLE;
+    _rateRetryDeadline = 0;
 
     // Clear Force Interrupt condition monitoring
     _interruptConditions = 0;
@@ -338,9 +346,7 @@ void WD1793::enterSleepMode()
 void WD1793::processBeta128(uint8_t value)
 {
     // Set active drive, Bits[0,1] (0..3)
-    _drive = value & 0b0000'0011;
-
-    // TODO: Select different drive if requested
+    selectDrive(value & 0b0000'0011);
 
     // Set side Bit[4] (0..1)
     _sideUp = ~(value >> 4) & 0b0000'0001;
@@ -353,6 +359,9 @@ void WD1793::processBeta128(uint8_t value)
         // Perform full WD1793 chip reset. internalReset() also stops a spinning
         // motor (with notifications) and zeroes the motor timeout and index counters.
         this->reset();
+
+        // The drive select lines are the Beta 128 latch, not the chip: the reset leaves them as written
+        selectDrive(value & 0b0000'0011);
 
         _statusRegister &= ~WDS_NOTRDY;
         raiseIntrq();
@@ -367,6 +376,29 @@ void WD1793::processBeta128(uint8_t value)
     }
 
     notifyFDDStateChanged();
+}
+
+/// Drive select (Beta 128 system register bits 1-0): the chip talks to that drive from now on. The motor line
+/// is shared by the drives, so a spinning motor carries over to the newly selected drive (its timeout runs on)
+void WD1793::selectDrive(uint8_t drive)
+{
+    _drive = drive & 0b0000'0011;
+    FDD* target = _context->coreState.diskDrives[_drive];
+    if (!target || target == _selectedDrive)
+    {
+        return;
+    }
+
+    const bool motorOn = _selectedDrive && _selectedDrive->getMotor();
+    if (motorOn)
+    {
+        _selectedDrive->setMotor(false);
+    }
+    _selectedDrive = target;
+    if (motorOn)
+    {
+        _selectedDrive->setMotor(true);
+    }
 }
 
 void WD1793::RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
@@ -1273,9 +1305,44 @@ bool WD1793::SetLatchedClock(FdcClock clock, FdcDataRate rate)
         return false;
     }
 
+    const bool rateChanged = rate != _dataRate;
     _fdcClock = clock;
     _dataRate = rate;
+    if (rateChanged && _rateRetryState != WDSTATE::S_IDLE)
+    {
+        retrySearchAtNewRate();
+    }
     return true;
+}
+
+void WD1793::retrySearchAtNewRate()
+{
+    // Bring the FSM up to now first (the elapsed time is charged to the pending wait), then look again
+    process();
+    if (_state != WDSTATE::S_WAIT || _rateRetryState == WDSTATE::S_IDLE)
+    {
+        return;
+    }
+
+    MLOGDEBUG("Data rate now %s: the ID search runs again", _dataRate == FdcDataRate::Rate500Kbps ? "500k" : "250k");
+    _record_not_found = false;
+    _seek_error = false;
+    _crc_error = false;
+    _statusRegister &= static_cast<uint8_t>(~(WDS_NOTFOUND | WDS_SEEKERR | WDS_CRCERR));
+    _state = _rateRetryState;
+    FSMHandler handler = _stateHandlers[_state];
+    (this->*handler)();
+}
+
+size_t WD1793::notFoundDelay(WDSTATE search, size_t full)
+{
+    if (_rateRetryState == search && _rateRetryDeadline > _time)
+    {
+        return static_cast<size_t>(_rateRetryDeadline - _time);
+    }
+    _rateRetryState = search;
+    _rateRetryDeadline = _time + full;
+    return full;
 }
 
 FdcClockPolicy WD1793::ResolveClockPolicy(FdcClockPolicy machineDefault, int turboVgOverride)
@@ -1958,6 +2025,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
 /// is reset and the rest of the status bits are updated or cleared. In this case, Status reflects the Type I commands.
 void WD1793::cmdForceInterrupt(uint8_t value)
 {
+    _rateRetryState = WDSTATE::S_IDLE;  // the interrupted search is abandoned
     MLOGINFO("Command Force Interrupt: 0x%02X | %s", value, StringHelper::FormatBinary(value).c_str());
 
     bool noCommandExecuted = _state == S_IDLE;
@@ -2219,6 +2287,7 @@ void WD1793::startType3Command()
 /// Each WD1793 command finishes with resetting BUSY flag
 void WD1793::endCommand()
 {
+    _rateRetryState = WDSTATE::S_IDLE;  // a finished command has no ID search left to repeat
     _statusRegister &= ~WDS_BUSY;  // Reset BUSY flag
     raiseIntrq();                  // INTRQ must be set at a completion of any command
 
@@ -2500,6 +2569,7 @@ void WD1793::processVerify()
         {
             delay = std::min<size_t>(delay, 100);  // rotation teleport, as for the Type II ID search
         }
+        _rateRetryState = WDSTATE::S_IDLE;
         MLOGDEBUG("Verify: ID C=%u found after %zu byte cells", _trackRegister, matchBytes);
         transitionFSMWithDelay(WD1793::S_END_COMMAND, delay);
         return;
@@ -2517,7 +2587,7 @@ void WD1793::processVerify()
     const size_t phase = _time % DISK_ROTATION_PERIOD_TSTATES;
     const size_t untilFifthIndex = (DISK_ROTATION_PERIOD_TSTATES - phase) +
                                    (WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH - 1) * DISK_ROTATION_PERIOD_TSTATES;
-    transitionFSMWithDelay(WD1793::S_END_COMMAND, untilFifthIndex);
+    transitionFSMWithDelay(WD1793::S_END_COMMAND, notFoundDelay(WDSTATE::S_VERIFY, untilFifthIndex));
 }
 
 /// Locate the sector addressed by a Type II command on the given track (see header)
@@ -2622,6 +2692,7 @@ void WD1793::processSearchID()
         const size_t bytesToIDAM = track->bytesUntil(*sector, headPosition);
         _tstatesPerByte = byteCellTStates(*track);
         const size_t delay = bytesToIDAM * _tstatesPerByte;
+        _rateRetryState = WDSTATE::S_IDLE;
 
         MLOGDEBUG("Search ID: head @%zu, IDAM @%u (sector %d), %zu byte cells until ID field",
                   headPosition, sector->idamOffset, sector->number(), bytesToIDAM);
@@ -2646,7 +2717,8 @@ void WD1793::processSearchID()
 
         raiseRecordNotFound();
         _statusRegister |= WDS_NOTFOUND;
-        transitionFSMWithDelay(S_END_COMMAND, WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH * DISK_ROTATION_PERIOD_TSTATES);
+        const size_t limit = WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH * DISK_ROTATION_PERIOD_TSTATES;
+        transitionFSMWithDelay(S_END_COMMAND, notFoundDelay(WDSTATE::S_SEARCH_ID, limit));
     }
 }
 

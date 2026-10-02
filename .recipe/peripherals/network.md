@@ -78,7 +78,17 @@ The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
 since 2010 is a preset: no interrupts, RTS by software, every access holds
 the Z80 ~30-50 us); at runtime `avr_firmware=ts2013` etc. The ZX-WiFi card is a real 16550 (auto flow control with
 MCR bit 5). A ZX-WiFi card on a ZX-Evo or TS-Conf is not fitted (#xxEF is
-taken): `not_fitted` in `inspect_state network` says so. The
+taken): `not_fitted` in `inspect_state network` says so.
+
+On the ATM Turbo 2+ (`ATM710`) the machine's serial port is the keyboard
+controller's RS-232: `ComPort=` plugs into the MCU's own UART (firmware
+`[ATM] Kbc=` V31 and later; the default V41 runs up to 115200 baud). The
+Z80 drives it through `IN #FE` commands (`#55`, `#03 d` send, `#02` receive,
+`#C2` count, `#43 d` DTR / RTS, `#C3 d` baud divisor); the peer only sends
+while RTS is asserted. It is not on #xxEF, so a ZX-WiFi card fits beside it.
+`inspect_state network` shows it as `machine_serial`; at runtime
+`kbc_firmware=v31-11` etc. fits another controller. Details:
+[tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md). The
 bytes that arrive are TTD input like the card's. Details:
 [reference-evo-com-port.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-evo-com-port.md).
 
