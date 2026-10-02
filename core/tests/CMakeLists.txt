@@ -259,6 +259,7 @@ if (NOT TARGET ${PROJECT_NAME})
         $<$<BOOL:${ENABLE_RECORDING}>:recording>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:automation_gdb>
         opl4
+        $<$<BOOL:${ENABLE_VDAC2}>:eve::emu>
     )
 
     # Define ENABLE_GDB_AUTOMATION for compile-time guards

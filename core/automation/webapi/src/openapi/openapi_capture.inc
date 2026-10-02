@@ -132,7 +132,11 @@
         "start/stop/pause/resume a recording of the emulated screen. gif is native "
         "(dependency-free); other codecs map to containers as supported by the build. "
         "start pauses the emulator while applying fps/scale/region configuration, then "
-        "resumes it. The recording feature is auto-enabled if disabled.";
+        "resumes it. The recording feature is auto-enabled if disabled. Audio is optional: "
+        "\"audio\":\"aac\" adds the emulated sound track (default: none = video only). The codec must "
+        "fit the container: mp4 aac/mp3/opus/flac, mov aac/mp3/pcm_s16le, mkv any, webm opus/vorbis, "
+        "avi aac/mp3/pcm_s16le; gif has no audio (400). h264/hevc + aac in mp4/mov uses the native "
+        "macOS encoder, other combinations need ffmpeg.";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/video/record"]["post"]["parameters"][0]["required"] = true;
@@ -159,15 +163,29 @@
          ["properties"]["region"]["enum"].append("main");
     paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["filename"]["type"] = "string";
+    {
+        Json::Value& props = paths["/api/v1/emulator/{id}/video/record"]["post"]["requestBody"]["content"]
+                                  ["application/json"]["schema"]["properties"];
+        props["audio"]["type"] = "string";
+        props["audio"]["description"] =
+            "start: audio codec for the sound track (aac, mp3, opus, vorbis, flac, pcm_s16le; true = aac). "
+            "Omitted or \"none\" = video only";
+        props["video_bitrate"]["type"] = "integer";
+        props["video_bitrate"]["description"] = "start: video bitrate in kbps (0 = encoder default, 100..200000)";
+        props["audio_bitrate"]["type"] = "integer";
+        props["audio_bitrate"]["description"] = "start: audio bitrate in kbps (0 = encoder default, 32..512)";
+    }
     paths["/api/v1/emulator/{id}/video/record"]["post"]["responses"]["200"]["description"] =
-        "Recording session updated (start: output/stats; stop: stats/output file); "
+        "Recording session updated (start: output, audio/audio_codec/audio_sample_rate/audio_channels; "
+        "stop: stats/output file); 400 for an audio codec the container cannot hold (gif + audio); "
         "409 when already recording or nothing to stop";
 
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["summary"] = "Video recording status";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["tags"].append("Capture");
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["description"] =
-        "Recording/paused flags, live RecordingStats (frames/durations/output size), "
-        "feature state and last error.";
+        "Recording/paused flags, live RecordingStats (frames/durations/output size, "
+        "audio_samples_recorded), the session's video_codec/audio/audio_codec/audio_sample_rate/"
+        "audio_channels/audio_duration (emulated seconds of sound), feature state and last error.";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["parameters"][0]["required"] = true;

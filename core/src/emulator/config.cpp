@@ -318,6 +318,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
 	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 1) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
@@ -844,6 +845,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
 	}
+	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
+	// Resolved by the card like the other ROMs (working dir, executable, resources);
+	// a missing file only leaves the ROM fonts blank
+	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
+	                sizeof config.vdac2_rom_path);
+	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
+	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
+	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
+	                sizeof config.vdac2_capture_path);
 
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.
@@ -924,6 +934,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			hook(config);
 
 		result = true;
+#ifndef ENABLE_VDAC2
+		// A build without the FT812 library cannot fit the card: refuse the
+		// machine instead of running it without its video output
+		// (vdac2-integration-design.md §2)
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7)
+		{
+			MLOGERROR("Config: [MISC] TS_VDAC2=1, but this build has no VDAC2 support (CMake ENABLE_VDAC2=OFF)");
+			result = false;
+		}
+#endif
 	}
 	else
 	{

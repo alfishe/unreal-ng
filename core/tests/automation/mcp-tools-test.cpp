@@ -1258,6 +1258,63 @@ TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFrame
     EXPECT_EQ(events.back().first, 1.0); // final report reaches 100%
 }
 
+TEST_F(McpTools_Test, CaptureMedia_RecordStartForwardsAudioAndStaysOpenWithoutFrames)
+{
+    Json::Value started;
+    started["status"] = "success";
+    started["format"] = "h264";
+    started["output"] = "/tmp/rec.mp4";
+    started["audio"] = true;
+    started["audio_codec"] = "aac";
+    started["audio_sample_rate"] = 44100;
+    _caller->routes["POST /api/v1/emulator/emu-1/video/record"] = {200, started};
+
+    Json::Value args;
+    args["action"] = "record_start";
+    args["format"] = "h264";
+    args["filename"] = "/tmp/rec.mp4";
+    args["scale"] = 2;
+    args["audio"] = "aac";
+    args["audio_bitrate"] = 192;
+    args["video_bitrate"] = 8000;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/video/record");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["action"].asString(), "start");
+    EXPECT_EQ(call->body["audio"].asString(), "aac");
+    EXPECT_EQ(call->body["audio_bitrate"].asUInt(), 192u);
+    EXPECT_EQ(call->body["video_bitrate"].asUInt(), 8000u);
+    EXPECT_EQ(call->body["scale"].asUInt(), 2u);
+
+    // No 'frames': the session stays open for record_stop - no frames run, no stop sent
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/run_frames"));
+    size_t recordCalls = 0;
+    for (const auto& c : _caller->calls)
+        recordCalls += c.path == "/api/v1/emulator/emu-1/video/record" ? 1 : 0;
+    EXPECT_EQ(recordCalls, 1u);
+    EXPECT_NE(result.text.find("Recording started"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("aac audio 44100 Hz"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_RecordStartRefusedByServerIsAnError)
+{
+    Json::Value refused;
+    refused["error"] = "Bad Request";
+    refused["message"] = "GIF has no audio track.";
+    _caller->routes["POST /api/v1/emulator/emu-1/video/record"] = {400, refused};
+
+    Json::Value args;
+    args["action"] = "record_start";
+    args["format"] = "gif";
+    args["audio"] = "aac";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("GIF has no audio"), std::string::npos) << result.text;
+}
+
 namespace
 {
 Json::Value TemporalStatusBody(const std::string& algorithm, bool active)

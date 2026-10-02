@@ -34,6 +34,7 @@
 /// "unknown PLD bitstream, full hash ..., head hash 3861CFA4".
 
 class PortDecoder_Sprinter;
+class SprinterAccelerator;
 class SprinterMemory;
 class SprinterVideoRenderer;
 struct SprinterPldState;
@@ -93,6 +94,17 @@ public:
     /// SprinterIntSource until a module needs its own rule (tdd-video §1)
     virtual const SprinterVideoRenderer* VideoRenderer() const { return nullptr; }
     /// endregion </Hook 3>
+
+    /// region <Hook 4: accelerator>
+    /// The accelerator of the module (the CPU's bus agent while it is active); null = Standard's
+    /// (Sprinter tdd-accel-sound-input §1). A module without one (a DooM-like stretch accelerator
+    /// would bring its own) runs the standard accelerator
+    virtual SprinterAccelerator* Accelerator(PortDecoder_Sprinter& decoder)
+    {
+        (void)decoder;
+        return nullptr;
+    }
+    /// endregion </Hook 4>
 
     /// region <Lifecycle and state>
     /// The module became active (after a load, always followed by a CPU reset)

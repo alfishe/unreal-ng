@@ -330,13 +330,33 @@ public:
             b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
         }
         if (const TTDWriteJournal* journal = _ttd->GetWriteJournal())
+        {
             b.writeJournal = journal->Size() * sizeof(TTDWriteRecord);
+            b.journalWritesTotal = journal->SeqHead();
+        }
         b.inputJournal = _ttd->GetInputJournal().Size() * sizeof(TTDInputEvent);
         b.coverage = _ttd->GetCoverageIndex().HeapBytes();
         return b;
     }
 
     uint64_t ResidentBytes() const override { return _ttd ? _ttd->GetSessionInfo().sessionHeapBytes : 0; }
+
+    std::vector<std::pair<std::string, uint64_t>> HeapParts() const override
+    {
+        if (!_ttd)
+            return {};
+        const TTDHeapBreakdown h = _ttd->GetHeapBreakdown();
+        return {
+            {"page_store_table", h.pageStoreTable}, {"ram_payload", h.ramPayload},
+            {"ram_payload_slack", h.ramPayloadSlack}, {"checkpoints", h.checkpoints},
+            {"page_refs", h.pageRefs}, {"device_blobs", h.deviceBlobs},
+            {"input_journals", h.inputJournals}, {"write_journal", h.writeJournal},
+            {"write_journal_slack", h.writeJournalSlack}, {"coverage", h.coverage},
+            {"coverage_slack", h.coverageSlack}, {"port_reads", h.portReads},
+            {"port_writes", h.portWrites}, {"port_journal_slack", h.portJournalSlack},
+            {"frame_cache", h.frameCache},
+        };
+    }
 
     bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
     {
@@ -632,9 +652,15 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm3_input_journal_bpf"] = static_cast<double>(b.inputJournal) / n;
         m["bm3_coverage_bpf"] = static_cast<double>(b.coverage) / n;
         m["bm3_total_bpf"] = static_cast<double>(b.Total()) / n;
+        // Writes per frame over the whole session: the journal's bytes above
+        // stop growing once its ring is full, this count does not
+        m["bm3_journal_writes_opf"] = static_cast<double>(b.journalWritesTotal) / n;
         const double resident = static_cast<double>(engine.ResidentBytes());
         m["bm4_resident_bytes"] = resident;
         m["bm4_resident_bpf"] = resident / n;
+        // BM-4 split: where the session heap goes, per recorded frame
+        for (const auto& [part, bytes] : engine.HeapParts())
+            m["bm4_heap_" + part + "_bpf"] = static_cast<double>(bytes) / n;
         // Proof the configuration ran as named: the hardware turbo in effect at the end
         m["turbo_ratio"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_ratio);
 
@@ -892,6 +918,7 @@ std::vector<Case> Matrix(const std::string& set)
     add(pentagon, GameWithInput(3000));
     add(pentagon, FromSnapshot("demo", "loaders/sna/7threality.sna", 3000));
     add(pentagon, FromSnapshot("demo2", "loaders/sna/across-the-edge-second.sna", 3000));
+    add(pentagon, FromSnapshot("demo-eyeache", "loaders/sna/eyeache1.sna", 3000));
     add(WithPeripherals(pentagon, "tsfm"), FromSnapshot("music-tsfm", "sound/tsfm/tech_support.sna", 3000));
     add(WithPeripherals(pentagon, "covox"), FromSnapshot("music-covox", "sound/covox/scroller_by_demarche.sna", 3000));
     add(WithPeripherals(pentagon, "beta"), FromDisk("disk-loading", "sound/The_Viewer1.0.trd", 0, 3000));

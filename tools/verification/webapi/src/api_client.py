@@ -461,6 +461,17 @@ class UnrealApiClient:
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/state/audio/channels"))
         return self._handle_response(resp)
 
+    # --- Video recording ---
+    def video_record(self, emulator_id, body, expected_status=200):
+        """POST /api/v1/emulator/{id}/video/record"""
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/video/record"), json=body)
+        return self._handle_response(resp, expected_status)
+
+    def video_record_status(self, emulator_id):
+        """GET /api/v1/emulator/{id}/video/record/status"""
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/video/record/status"))
+        return self._handle_response(resp)
+
     # --- Python Interpreter ---
     def exec_python(self, code):
         """POST /api/v1/python/exec"""

@@ -220,6 +220,15 @@ uint32_t SprinterMemory::ZxShadowAddress(uint16_t addr, uint8_t portY, uint8_t p
            (((zxs & 1u) ^ zxA15 ^ a13) << 5) | ((addr >> 8) & 0x1Fu);
 }
 
+void SprinterMemory::AcceleratorWrite(uint16_t addr, uint8_t value)
+{
+    const uint8_t bank = static_cast<uint8_t>(addr >> 14);
+    MemoryWriteFast(addr, value);  // write-protected windows (graphics) store into the trash page
+    if (_bank_ram_page_cache[bank] != ttd::kPhysPageNone)
+        MarkRamPageEdited(static_cast<uint16_t>(_bank_ram_page_cache[bank]));
+    OnWrite(addr, value);
+}
+
 void SprinterMemory::WriteIntercept::onWrite(uint16_t addr, uint8_t value, [[maybe_unused]] bool romPaged)
 {
     _owner.OnWrite(addr, value);

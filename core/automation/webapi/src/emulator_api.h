@@ -400,6 +400,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::readPortTraceFile, "/api/v1/emulator/{id}/profiler/porttrace/readfile",
                   drogon::Post);
 
+    // TS-Conf VDAC2 card: FT812 bus capture to an .evr replay stream (implementation: api/vdac2_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStart, "/api/v1/emulator/{id}/vdac2/capture/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStop, "/api/v1/emulator/{id}/vdac2/capture/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStatus, "/api/v1/emulator/{id}/vdac2/capture/status", drogon::Get);
+
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStop, "/api/v1/emulator/{id}/profiler/stop", drogon::Post);
@@ -1315,6 +1320,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void readPortTraceFile(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
+
+    // TS-Conf VDAC2 card: FT812 bus capture (implementation: api/vdac2_api.cpp)
+    void vdac2CaptureStart(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void vdac2CaptureStop(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void vdac2CaptureStatus(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
 
     // endregion Profiler Commands Methods
 

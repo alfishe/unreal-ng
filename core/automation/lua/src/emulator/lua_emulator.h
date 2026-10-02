@@ -8,6 +8,7 @@
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 #include "../bindings/lua_porttrace.h"
+#include "../bindings/lua_vdac2.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
@@ -53,6 +54,7 @@
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "recordingrequest.h"
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -4891,6 +4893,43 @@ public:
                     filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
                 }
 
+                // Optional sound track: audio = "aac" (or true = aac); none = video only. Same rules as the
+                // WebAPI/CLI (RecordingRequest): the codec must fit the container, gif has no audio
+                std::string audio;
+                {
+                    const sol::object audioObj = opts["audio"];
+                    if (audioObj.valid() && audioObj.get_type() != sol::type::lua_nil)
+                    {
+                        if (audioObj.is<bool>())
+                            audio = audioObj.as<bool>() ? "aac" : "";
+                        else if (audioObj.is<std::string>())
+                            audio = RecordingRequest::NormalizeAudioCodec(audioObj.as<std::string>());
+                        else
+                        {
+                            result["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a boolean";
+                            return result;
+                        }
+                    }
+                }
+                const int videoBitrate = opts.get_or("video_bitrate", 0);
+                const int audioBitrate = opts.get_or("audio_bitrate", 0);
+                if (videoBitrate < 0 || audioBitrate < 0)
+                {
+                    result["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
+                    return result;
+                }
+                {
+                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
+                                                                        static_cast<uint32_t>(audioBitrate), audio);
+                    if (!codecError.empty())
+                    {
+                        result["error"] = codecError;
+                        return result;
+                    }
+                }
+
                 float fps = opts.get_or("fps", 50.0f);
                 if (fps < 1.0f) fps = 1.0f;
                 if (fps > 100.0f) fps = 100.0f;
@@ -4957,7 +4996,8 @@ public:
                 const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
                 if (wasRunning) emulator->Pause();
 
-                const bool started = rm->StartRecording(filename, format, "");
+                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                        static_cast<uint32_t>(audioBitrate));
 
                 if (wasRunning) emulator->Resume();
 
@@ -4976,6 +5016,10 @@ public:
                 result["region"] = region;
                 if (sound)
                     result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+                result["audio"] = rm->HasAudio();
+                result["audio_codec"] = audio;
+                result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+                result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
                 result["feature_auto_enabled"] = featureWasOff;
                 result["output"] = filename;
                 return result;
@@ -5023,6 +5067,13 @@ public:
             result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             result["average_frame_time_ms"] = stats.averageFrameTime;
             result["recent_fps"] = stats.recentFps;
+            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            result["video_codec"] = rm->GetVideoCodec();
+            result["audio"] = rm->HasAudio();
+            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
+            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             result["output"] = rm->GetOutputFilename();
             return result;
         });
@@ -5052,6 +5103,13 @@ public:
             result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             result["average_frame_time_ms"] = stats.averageFrameTime;
             result["recent_fps"] = stats.recentFps;
+            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            result["video_codec"] = rm->GetVideoCodec();
+            result["audio"] = rm->HasAudio();
+            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
+            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
+            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             result["output"] = rm->GetOutputFilename();
             return result;
         });
@@ -5379,6 +5437,9 @@ public:
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         LuaPortTrace::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
     }
 
     void setEmulator(Emulator* emulator) { _emulator = emulator; }

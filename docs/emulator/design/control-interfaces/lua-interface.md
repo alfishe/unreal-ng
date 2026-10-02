@@ -1092,8 +1092,12 @@ emu.video_record("start", {format = "gif", fps = 50, scale = 2})  -- opts table 
 emu.video_record("start", {audio_rate = 48000})  -- pin the core rate first (number or "auto");
                                      -- waits up to 1 s for the rate before recording starts,
                                      -- errors if the emulator is paused
+emu.video_record("start", {format = "h264", filename = "run.mp4", audio = "aac"})  -- with the sound
+                                     -- track (audio = true means aac; video_bitrate / audio_bitrate
+                                     -- in kbps). Omit audio for video only. gif + audio is refused
 emu.video_record("stop")             -- also "pause" / "resume"
-emu.video_record_status()             -- recording state + live stats (frames, duration, fps)
+emu.video_record_status()             -- recording state + live stats (frames, duration, fps,
+                                     -- audio, audio_codec, audio_sample_rate, audio_duration)
 
 -- Assembler
 emu.assemble("ld a,2\nout (254),a", 0x8000)          -- assemble, listing only

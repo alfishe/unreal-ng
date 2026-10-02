@@ -1230,8 +1230,12 @@ emu.get_audio_rate()                 # {'pin': 96000, 'core_rate': 96000, 'targe
 
 # Video recording (requires a build with ENABLE_RECORDING)
 emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict optional
+emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aac"})  # with sound
+                                     # (True = aac; video_bitrate / audio_bitrate in kbps). No
+                                     # "audio" = video only; gif + audio is refused
 emu.video_record("stop")             # also "pause" / "resume"
-emu.video_record_status()             # recording state + live stats (frames, duration, fps)
+emu.video_record_status()             # recording state + live stats (frames, duration, fps,
+                                     # audio, audio_codec, audio_sample_rate, audio_duration)
 # video_record has no audio-rate option - for a fixed-rate recording pin the
 # rate first: emu.set_audio_rate(48000) before video_record("start", ...)
 

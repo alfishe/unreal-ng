@@ -36,6 +36,7 @@
 
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "cli-videorecord-options.h"
 #include "../../../temporalstatus.h"
 #endif
 
@@ -997,93 +998,31 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         }
 
         // videorecord start [format] [filename] [--fps N] [--scale N] [--audio-rate N|auto]
-        std::string format = "gif";
-        std::string filename;
-        float fps = 50.0f;
-        uint32_t scale = 1;
-        bool hasAudioRate = false;
-        uint32_t audioRate = 0;
-
-        for (size_t i = 1; i < args.size(); i++)
+        //                   [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
+        CliVideoRecord::StartOptions options;
+        std::string optionError;
+        if (!CliVideoRecord::ParseStart(args, options, optionError))
         {
-            if (args[i] == "--fps" && i + 1 < args.size())
-            {
-                try
-                {
-                    fps = std::stof(args[++i]);
-                }
-                catch (...)
-                {
-                    session.SendResponse("Invalid fps value.");
-                    return;
-                }
-                if (fps < 1.0f) fps = 1.0f;
-                if (fps > 100.0f) fps = 100.0f;
-            }
-            else if (args[i] == "--scale" && i + 1 < args.size())
-            {
-                try
-                {
-                    scale = std::stoul(args[++i]);
-                }
-                catch (...)
-                {
-                    session.SendResponse("Invalid scale value.");
-                    return;
-                }
-                if (scale < 1) scale = 1;
-                if (scale > 4) scale = 4;
-            }
-            else if (args[i] == "--audio-rate" && i + 1 < args.size())
-            {
-                const std::string rateValue = args[++i];
-                std::string rateLower = rateValue;
-                std::transform(rateLower.begin(), rateLower.end(), rateLower.begin(), ::tolower);
-                if (rateLower == "auto")
-                {
-                    hasAudioRate = true;
-                    audioRate = 0;
-                }
-                else
-                {
-                    try
-                    {
-                        const unsigned long rate = std::stoul(rateValue);
-                        if (!IsSupportedCoreRate(static_cast<uint32_t>(rate)))
-                        {
-                            session.SendResponse("Unsupported audio rate " + rateValue +
-                                                 ". Use 44100, 48000, 88200, 96000, 176400, 192000 or auto.");
-                            return;
-                        }
-                        hasAudioRate = true;
-                        audioRate = static_cast<uint32_t>(rate);
-                    }
-                    catch (...)
-                    {
-                        session.SendResponse("Invalid audio rate value. Use 44100..192000 or auto.");
-                        return;
-                    }
-                }
-            }
-            else if (filename.empty() && format == "gif")
-            {
-                format = args[i];
-            }
-            else if (filename.empty())
-            {
-                filename = args[i];
-            }
+            session.SendResponse(optionError);
+            return;
         }
 
-        // Map codec-style names to container extensions for the default filename
-        std::string extension = format;
-        if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
-            extension = "mkv";
-        else if (format == "rawvideo")
-            extension = "avi";
+        if (options.filename.empty())
+            options.filename = defaultRecordingPath(emulator->GetId(), CliVideoRecord::DefaultExtension(options.format));
 
-        if (filename.empty())
-            filename = defaultRecordingPath(emulator->GetId(), extension);
+        // Audio codec vs container (gif has no audio) and bitrate ranges, before anything changes
+        if (!CliVideoRecord::Validate(options, optionError))
+        {
+            session.SendResponse(optionError);
+            return;
+        }
+
+        const std::string& format = options.format;
+        const std::string& filename = options.filename;
+        const float fps = options.fps;
+        const uint32_t scale = options.scale;
+        const bool hasAudioRate = options.hasAudioRate;
+        const uint32_t audioRate = options.audioRate;
 
         // Configuration setters refuse changes mid-recording — apply while idle
         rm->SetVideoFrameRate(fps);
@@ -1115,7 +1054,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             }
         }
 
-        if (!rm->StartRecording(filename, format, ""))
+        if (!rm->StartRecording(filename, format, options.audio, options.videoBitrate, options.audioBitrate))
         {
             session.SendResponse("Failed to start recording: " + rm->GetLastRecordingError());
             return;
@@ -1123,8 +1062,13 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
 
         std::stringstream ss;
         ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale;
+        if (rm->HasAudio())
+            ss << ", audio " << rm->GetAudioCodec() << " " << rm->GetAudioSampleRate() << " Hz "
+               << rm->GetAudioChannels() << " ch";
+        else
+            ss << ", no audio";
         if (context->pSoundManager)
-            ss << ", " << context->pSoundManager->getCoreRate() << " Hz audio";
+            ss << ", core " << context->pSoundManager->getCoreRate() << " Hz";
         ss << ")";
         session.SendResponse(ss.str());
         return;
@@ -1139,7 +1083,15 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         }
 
         rm->StopRecording();
-        session.SendResponse("Recording stopped: " + rm->GetOutputFilename());
+        const RecordingManager::RecordingStats stats = rm->GetStats();
+        std::stringstream ss;
+        ss << std::dec << "Recording stopped: " << rm->GetOutputFilename() << " (" << stats.framesRecorded
+           << " frames";
+        if (rm->HasAudio())
+            ss << ", " << stats.audioSamplesRecorded << " audio samples, " << std::fixed << std::setprecision(2)
+               << rm->GetAudioDuration() << " s audio";
+        ss << ")";
+        session.SendResponse(ss.str());
         return;
     }
 
@@ -1178,6 +1130,21 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
     const std::string& output = rm->GetOutputFilename();
     if (!output.empty())
         ss << "  Output: " << output << NEWLINE;
+    const RecordingManager::RecordingStats stats = rm->GetStats();
+    ss << "  Frames: " << stats.framesRecorded << NEWLINE;
+    if (!rm->GetVideoCodec().empty())
+        ss << "  Video codec: " << rm->GetVideoCodec() << NEWLINE;
+    if (rm->HasAudio())
+    {
+        ss << "  Audio: " << rm->GetAudioCodec() << ", " << rm->GetAudioSampleRate() << " Hz, "
+           << rm->GetAudioChannels() << " ch" << NEWLINE;
+        ss << "  Audio samples: " << stats.audioSamplesRecorded << " (" << std::fixed << std::setprecision(2)
+           << rm->GetAudioDuration() << " s)" << NEWLINE;
+    }
+    else
+    {
+        ss << "  Audio: none" << NEWLINE;
+    }
 
     session.SendResponse(ss.str());
 #else

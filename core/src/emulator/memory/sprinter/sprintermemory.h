@@ -100,6 +100,21 @@ public:
     static uint32_t ZxShadowAddress(uint16_t addr, uint8_t portY, uint8_t pg3);
     /// endregion </Bank mapping>
 
+    /// region <Accelerator accesses (SprinterAccelerator, tdd-accel-sound-input §1.3)>
+public:
+    /// Whether an accelerator access at `addr` reaches memory: main RAM windows only (not ROM, fast RAM, ISA)
+    bool AcceleratorReaches(uint16_t addr) const
+    {
+        const uint8_t bank = static_cast<uint8_t>(addr >> 14);
+        return _bank_mode[bank] == BANK_RAM && _action[bank] != BankAction::Isa;
+    }
+    /// A read the accelerator repeats: the window's byte with the graphics redirect, no CPU wait
+    uint8_t AcceleratorRead(uint16_t addr) { return MemoryReadFast(addr, false); }
+    /// A store the accelerator repeats: the plain store, TTD dirty page, then the write intercept
+    /// (graphics pages, VRAM shadow, reset page) - what a CPU write does, without its wait
+    void AcceleratorWrite(uint16_t addr, uint8_t value);
+    /// endregion </Accelerator accesses>
+
 protected:
     bool UpdateModelBanks() override;
 

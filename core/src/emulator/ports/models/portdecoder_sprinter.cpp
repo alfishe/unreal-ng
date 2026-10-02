@@ -72,6 +72,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         _sprinterMemory->AttachDecoder(this);
     else
         MLOGWARNING("PortDecoder_Sprinter: the memory subsystem is not SprinterMemory - windows stay at the loader layout");
+    _accelerator.AttachMemory(_sprinterMemory);
 
     if (_context->pCore && _context->pCore->GetZ80())
     {
@@ -206,6 +207,7 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 
     _intSource.Reset();
     _intSource.SetFrameLines(320);
+    _accelerator.Reset();  // the PLD's /RESET (MAME machine_reset: m_acc_dir = 0, m_alt_acc = 0)
 
     ActiveModule().OnReset(kind, _pld);
 }
@@ -231,6 +233,7 @@ void PortDecoder_Sprinter::BeginLoading()
     _pld.turbo = 0;
     ApplyTurbo();
     RefreshStepHook();
+    RefreshAccelerator();
     UpdateBanks();
 }
 
@@ -355,6 +358,7 @@ void PortDecoder_Sprinter::PerformPendingReset()
             UpdateBanks();
             break;
     }
+    RefreshAccelerator();
     RefreshStepHook();
 }
 
@@ -378,8 +382,23 @@ void PortDecoder_Sprinter::InstallHooks()
     z80->machineM1Hook = this;
     if (_sprinterMemory)
         core->AddBusOverlay(&_sprinterMemory->GetWriteIntercept());
+    RefreshAccelerator();
     if (!_waits)
         _waits = std::make_unique<SprinterWaits>(z80);
+}
+
+void PortDecoder_Sprinter::RefreshAccelerator()
+{
+    SprinterAccelerator* accelerator = nullptr;
+    if (_pld.configState == SprinterConfigState::Configured)
+    {
+        accelerator = ActiveModule().Accelerator(*this);
+        if (!accelerator)
+            accelerator = _registry.Standard().Accelerator(*this);
+    }
+    _activeAccelerator = accelerator;
+    if (_cpuEngine)
+        _cpuEngine->SetBusAgent(accelerator);
 }
 
 /// The step hook runs only while a load is in progress (the watchdog) or a CPU
@@ -865,7 +884,9 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::Scale:
         case 0xCF:
-            return;  // accelerator alternate addressing: phase S5
+            if (_activeAccelerator)
+                _activeAccelerator->OnScaleWrite(port, value);  // the alternate buffer addressing
+            return;
         default:
             break;
     }

@@ -172,6 +172,9 @@ public:
 
     /// Heap held by the records (compressed blocks + the raw open block)
     size_t HeapBytes() const;
+    /// Part of HeapBytes() allocated but not holding data: unused capacity of
+    /// the compressed blocks
+    size_t CompressedSlackBytes() const;
     /// Bytes the records take in a .ttd file (the open block compressed)
     size_t SerializedBytes() const;
 
