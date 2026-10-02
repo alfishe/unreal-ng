@@ -66,7 +66,8 @@ bool DecodeV1Ram(const TimeTravelManager& v1, size_t index, std::vector<uint8_t>
     return DecodeChangedSlots(v1, *cp, {}, slots, ram, present, decoded, error);
 }
 
-bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::string& error, FeedStats* stats)
+bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::string& error, FeedStats* stats,
+                   uint32_t blockPieces)
 {
     const size_t count = v1.GetCheckpointCount();
     if (count == 0)
@@ -83,6 +84,7 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
     ram.pieces = pieces;
     ram.bytes = pieces * kTTDPieceSize;
     ram.dirtyGranularity = kTTDPieceSize * kSubPagesPerPage;
+    ram.blockPieces = blockPieces;
     if (!engine.BeginSession({ram}, error))
         return false;
 

@@ -21,7 +21,7 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 
 - [x] Step 1 — Engine skeleton and verification: `TimeTravelEngine`, machine time, frame table, positions with a branch, optional streams; v1 file reader (`bench/ttdv1feeder`); the oracle against v1 (`TTDV1Feeder_Test`: every corpus checkpoint identical); both engines in the benchmark (`UNREAL_TTD_BENCH_ENGINE=all`) — branch `ttd-engine`, 2026-10-02
 - [x] Step 2 — Piece store: change stored once, encoded once (T = 128 B), chain limit per piece (K = 50), arena with exact sizes, dependencies, shareable by sessions — RAM payload already below v1 on every `ci` case (up to −28%)
-- [ ] Step 3 — Regions and the copy-on-write reference table (8-page blocks, two levels, parent link)
+- [x] Step 3 — Regions and the reference table: per-checkpoint change records (8 B per changed piece) + a full copy-on-write table every 64 checkpoints; parent link — references below v1 on every measured case (ZX-Evo 4,103 → 78 B per frame, Pentagon game 128 → 62); copy-on-write blocks alone lost to v1 on small busy machines (TDD §4.4)
 - [ ] Step 4 — Live capture next to v1, delta base for changed pieces only
 - [ ] Step 5 — Restore only the pieces that differ
 - [ ] Step 6 — Device memory as regions, large memories first: NeoGS RAM and flash, MoonSound wave memory, General Sound RAM and upload store, Sprinter video RAM, VDAC2 graphics memory; then the ZX-Evo AVR and Scorpion SMUC EEPROMs

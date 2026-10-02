@@ -39,8 +39,9 @@ bool DecodeV1Ram(const TimeTravelManager& v1, size_t index, std::vector<uint8_t>
                  std::vector<uint8_t>& present, std::string& error);
 
 /// Start a session on @p engine with machine RAM as region 0 and feed it every
-/// checkpoint of the session loaded into @p v1
+/// checkpoint of the session loaded into @p v1. @p blockPieces sets the
+/// reference-table block size (0 = the engine's default for the region size)
 bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::string& error,
-                   FeedStats* stats = nullptr);
+                   FeedStats* stats = nullptr, uint32_t blockPieces = 0);
 
 }  // namespace ttd::bench

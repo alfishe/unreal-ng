@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -124,7 +125,8 @@ TEST(TimeTravelEngine_Test, UnchangedFramesShareTheReferenceTable)
         ASSERT_TRUE(engine.CaptureFrame(Frame(f), err));
     EXPECT_EQ(engine.HeapBreakdown().referenceTables, tablesAfterOne)
         << "frames that change nothing add no reference table";
-    EXPECT_EQ(engine.Checkpoint(49)->regionTables[0].get(), engine.Checkpoint(0)->regionTables[0].get());
+    for (uint64_t f = 1; f < 50; ++f)
+        EXPECT_EQ(engine.Checkpoint(f)->regions[0].changeCount, 0u) << "frame " << f << " records nothing";
 }
 
 TEST(TimeTravelEngine_Test, OptionalStreamsRunAtEveryCapturedFrameWhenOn)
@@ -157,4 +159,116 @@ TEST(TimeTravelEngine_Test, ArbitraryContentRoundTrips_AndBadRequestsAreReported
     EXPECT_TRUE(engine.RestoreRegion(0, 0, out.data()).Ok());
     EXPECT_EQ(out, p);
     EXPECT_EQ(engine.RestoreRegion(1, 0, out.data()).status, TTDRestoreStatus::Damaged) << "no such checkpoint";
+}
+
+TEST(TimeTravelEngine_Test, OneChangedPieceRecordsOneChange_TheRestIsShared)
+{
+    // ZX-Evo-sized RAM: 1,024 pieces = 32 blocks of 8 pages
+    TimeTravelEngine engine;
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({Region(TTDRegionId::MachineRam, "ram", 1024)}, err));
+    std::vector<std::vector<uint8_t>> pieces;
+    TTDFrameInput f0 = Frame(0);
+    for (uint32_t p = 0; p < 1024; ++p)
+    {
+        pieces.push_back(Piece(static_cast<uint8_t>(p | 1)));
+        f0.changed.push_back({0, p, pieces.back().data()});
+    }
+    ASSERT_TRUE(engine.CaptureFrame(f0, err));
+    const size_t blocksAfterFirst = engine.HeapBreakdown().referenceTables;
+
+    const auto changed = Piece(0x77);
+    TTDFrameInput f1 = Frame(1);
+    f1.changed = {{0, 100, changed.data()}};
+    ASSERT_TRUE(engine.CaptureFrame(f1, err));
+    for (uint32_t p = 0; p < 1024; ++p)
+        if (p / 32 != 100 / 32)
+            ASSERT_EQ(engine.VersionAt(0, 0, p), engine.VersionAt(1, 0, p));
+    EXPECT_NE(engine.VersionAt(0, 0, 100), engine.VersionAt(1, 0, 100));
+
+    // One change record, not a copy of the whole map
+    EXPECT_EQ(engine.Checkpoint(1)->regions[0].changeCount, 1u);
+    (void)blocksAfterFirst;
+}
+
+TEST(TimeTravelEngine_Test, ContentRewrittenUnchangedRecordsNothing)
+{
+    // A dirty piece whose content came out the same gets no new version, so no block is cloned
+    TimeTravelEngine engine;
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({Region(TTDRegionId::MachineRam, "ram", 64)}, err));
+    const auto a = Piece(5);
+    TTDFrameInput f0 = Frame(0);
+    f0.changed = {{0, 3, a.data()}};
+    ASSERT_TRUE(engine.CaptureFrame(f0, err));
+    TTDFrameInput f1 = Frame(1);
+    f1.changed = {{0, 3, a.data()}};
+    ASSERT_TRUE(engine.CaptureFrame(f1, err));
+    EXPECT_EQ(engine.Checkpoint(1)->regions[0].changeCount, 0u);
+    EXPECT_EQ(engine.VersionAt(1, 0, 3), engine.VersionAt(0, 0, 3));
+}
+
+TEST(TimeTravelEngine_Test, EndSessionReleasesEveryVersion_SharedStoreKeepsTheOtherSession)
+{
+    auto store = std::make_shared<TTDPieceStore>();
+    TimeTravelEngine a(store);
+    TimeTravelEngine b(store);
+    std::string err;
+    ASSERT_TRUE(a.BeginSession({Region(TTDRegionId::MachineRam, "ram", 8)}, err));
+    ASSERT_TRUE(b.BeginSession({Region(TTDRegionId::MachineRam, "ram", 8)}, err));
+    std::vector<std::vector<uint8_t>> data;
+    for (uint64_t f = 0; f < 20; ++f)
+    {
+        data.push_back(Piece(static_cast<uint8_t>(f + 1)));
+        data.back()[f] ^= 0x33;
+        TTDFrameInput in = Frame(f);
+        in.changed = {{0, static_cast<uint32_t>(f % 8), data.back().data()}};
+        ASSERT_TRUE(a.CaptureFrame(in, err));
+        ASSERT_TRUE(b.CaptureFrame(in, err));
+    }
+    const size_t both = store->LiveVersions();
+    ASSERT_GT(both, 0u);
+
+    a.EndSession();
+    EXPECT_EQ(store->LiveVersions(), both / 2) << "a's versions are gone, b's stay";
+    std::vector<uint8_t> out(8 * kTTDPieceSize);
+    EXPECT_TRUE(b.RestoreRegion(19, 0, out.data()).Ok());
+    EXPECT_EQ(out[size_t(19 % 8) * kTTDPieceSize], static_cast<uint8_t>(20));
+
+    b.EndSession();
+    EXPECT_EQ(store->LiveVersions(), 0u) << "no version leaks";
+    EXPECT_EQ(store->PayloadBytes(), 0u);
+}
+
+TEST(TimeTravelEngine_Test, FullTablesShareUnchangedBlocks_AndRestoresCrossThem)
+{
+    // Full tables every 4 checkpoints; a restore between them starts from the last one
+    TimeTravelEngine engine;
+    engine.SetSnapshotInterval(4);
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({Region(TTDRegionId::MachineRam, "ram", 1024)}, err));
+    std::vector<std::vector<uint8_t>> frames;
+    for (uint64_t f = 0; f < 13; ++f)
+    {
+        frames.push_back(Piece(static_cast<uint8_t>(f + 1)));
+        TTDFrameInput in = Frame(f);
+        in.changed = {{0, static_cast<uint32_t>(f * 37 % 1024), frames.back().data()}};
+        ASSERT_TRUE(engine.CaptureFrame(in, err));
+    }
+    for (uint64_t f = 0; f < 13; ++f)
+        EXPECT_EQ(engine.Checkpoint(f)->regions[0].snapshot != nullptr, f % 4 == 0) << "frame " << f;
+
+    std::vector<uint8_t> out(1024 * kTTDPieceSize);
+    std::vector<uint8_t> present;
+    for (uint64_t f = 0; f < 13; ++f)
+    {
+        ASSERT_TRUE(engine.RestoreRegion(f, 0, out.data(), &present).Ok());
+        for (uint64_t g = 0; g <= f; ++g)
+        {
+            const size_t piece = g * 37 % 1024;
+            ASSERT_EQ(present[piece], 1u);
+            ASSERT_EQ(out[piece * kTTDPieceSize], static_cast<uint8_t>(g + 1)) << "frame " << f << ", change " << g;
+        }
+        EXPECT_EQ(static_cast<size_t>(std::count(present.begin(), present.end(), uint8_t(1))), f + 1);
+    }
 }

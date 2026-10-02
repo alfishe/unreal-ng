@@ -8,12 +8,24 @@
 namespace ttd
 {
 
+namespace
+{
+uint32_t BlockPieces(const TTDRegionDesc& r)
+{
+    return r.blockPieces ? r.blockPieces : TTDRefTables::DefaultBlockPieces(r.pieces);
+}
+}  // namespace
+
 TimeTravelEngine::TimeTravelEngine(std::shared_ptr<TTDPieceStore> store)
-    : _store(store ? std::move(store) : std::make_shared<TTDPieceStore>())
+    : _store(store ? std::move(store) : std::make_shared<TTDPieceStore>()),
+      _tables(std::make_unique<TTDRefTables>(*_store))
 {
 }
 
-TimeTravelEngine::~TimeTravelEngine() = default;
+TimeTravelEngine::~TimeTravelEngine()
+{
+    EndSession();
+}
 
 /// region <Session>
 
@@ -41,30 +53,39 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
     EndSession();
     _regions = regions;
     _deltaBase.assign(_regions.size(), {});
+    _live.resize(_regions.size());
+    _sinceSnapshot.assign(_regions.size(), {});
+    _sinceSnapshotFlag.resize(_regions.size());
+    for (size_t r = 0; r < _regions.size(); ++r)
+    {
+        _live[r].assign(_regions[r].pieces, TTDPieceStore::kNone);
+        _sinceSnapshotFlag[r].assign(_regions[r].pieces, 0);
+    }
+    _lastSnapshot.assign(_regions.size(), nullptr);
     _open = true;
     return true;
 }
 
 void TimeTravelEngine::EndSession()
 {
-    // Every distinct table holds one reference per version it lists. A store
-    // of its own is simply cleared; a shared one keeps other sessions' versions
-    if (_store.use_count() == 1)
-        _store->Clear();
-    else
-    {
-        std::unordered_set<const std::vector<uint32_t>*> seen;
-        for (const TTDEngineCheckpoint& cp : _checkpoints)
-            for (const auto& table : cp.regionTables)
-                if (table && seen.insert(table.get()).second)
-                    for (const uint32_t id : *table)
-                        if (id != kAbsent)
-                            _store->Release(id);
-    }
+    // Change records and full tables each hold their references; releasing
+    // them frees what no other session sharing the store needs
+    for (const PieceChange& c : _changes)
+        _store->Release(c.id);
+    for (TTDEngineCheckpoint& cp : _checkpoints)
+        for (const TTDEngineCheckpoint::RegionRefs& r : cp.regions)
+            if (r.snapshot)
+                _tables->Release(r.snapshot);
 
     _open = false;
     _regions.clear();
     _deltaBase.clear();
+    _changes.clear();
+    _changes.shrink_to_fit();
+    _live.clear();
+    _sinceSnapshot.clear();
+    _sinceSnapshotFlag.clear();
+    _lastSnapshot.clear();
     _frames.Clear();
     _checkpoints.clear();
     _checkpoints.shrink_to_fit();
@@ -106,47 +127,59 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.chipset = input.chipset;
     if (input.deviceBlobs)
         cp.deviceBlobs = *input.deviceBlobs;
+    const size_t index = _checkpoints.size();
+    cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
+    cp.regions.resize(_regions.size());
+    const bool snapshot = index % _snapshotInterval == 0;
 
-    // Reference tables: start from the parent's; a region with a changed piece
-    // gets its own copy (Step 3 replaces this with copy-on-write blocks)
-    std::vector<std::shared_ptr<std::vector<uint32_t>>> changedTables(_regions.size());
-    if (_checkpoints.empty())
+    for (uint32_t r = 0; r < _regions.size(); ++r)
     {
-        cp.parent = TTDEngineCheckpoint::kNoParent;
-        cp.regionTables.resize(_regions.size());
-        for (size_t r = 0; r < _regions.size(); ++r)
+        TTDEngineCheckpoint::RegionRefs& refs = cp.regions[r];
+        refs.firstChange = static_cast<uint32_t>(_changes.size());
+        for (const TTDChangedPiece& c : input.changed)
         {
-            changedTables[r] = std::make_shared<std::vector<uint32_t>>(_regions[r].pieces, kAbsent);
-            cp.regionTables[r] = changedTables[r];
+            if (c.region != r)
+                continue;
+            std::vector<uint8_t>& base = _deltaBase[r];
+            if (base.empty())
+                base.assign(size_t(_regions[r].pieces) * kTTDPieceSize, 0);
+            uint8_t* previousBytes = base.data() + size_t(c.piece) * kTTDPieceSize;
+            const TTDPieceId previous = _live[r][c.piece];
+            const TTDPieceId next = previous == TTDPieceStore::kNone ? _store->InternFirst(c.bytes)
+                                                                     : _store->Intern(previous, previousBytes, c.bytes);
+            std::memcpy(previousBytes, c.bytes, kTTDPieceSize);
+            if (next == previous)
+            {
+                _store->Release(next);   // unchanged content: no record
+                continue;
+            }
+            _changes.push_back({c.piece, next});   // the record takes the reference
+            _live[r][c.piece] = next;
+            if (!_sinceSnapshotFlag[r][c.piece])
+            {
+                _sinceSnapshotFlag[r][c.piece] = 1;
+                _sinceSnapshot[r].push_back(c.piece);
+            }
         }
-    }
-    else
-    {
-        cp.parent = static_cast<uint32_t>(_checkpoints.size() - 1);
-        cp.regionTables = _checkpoints.back().regionTables;
-    }
+        refs.changeCount = static_cast<uint32_t>(_changes.size()) - refs.firstChange;
 
-    for (const TTDChangedPiece& c : input.changed)
-    {
-        if (!changedTables[c.region])
+        if (snapshot)
         {
-            changedTables[c.region] = std::make_shared<std::vector<uint32_t>>(*cp.regionTables[c.region]);
-            // The copy holds its own reference to every version it lists
-            for (const uint32_t id : *changedTables[c.region])
-                if (id != kAbsent)
-                    _store->AddRef(id);
-            cp.regionTables[c.region] = changedTables[c.region];
+            // A full table: the previous one, with the pieces changed since
+            // then set; unchanged blocks stay shared
+            TTDRefTables::Table* table = _lastSnapshot[r] ? _tables->Derive(_lastSnapshot[r])
+                                                          : _tables->Create(_regions[r].pieces, BlockPieces(_regions[r]));
+            for (const uint32_t piece : _sinceSnapshot[r])
+            {
+                const TTDPieceId id = _live[r][piece];
+                _store->AddRef(id);
+                _tables->Set(table, piece, id);
+                _sinceSnapshotFlag[r][piece] = 0;
+            }
+            _sinceSnapshot[r].clear();
+            refs.snapshot = table;
+            _lastSnapshot[r] = table;
         }
-        std::vector<uint8_t>& base = _deltaBase[c.region];
-        if (base.empty())
-            base.assign(size_t(_regions[c.region].pieces) * kTTDPieceSize, 0);
-        uint8_t* previousBytes = base.data() + size_t(c.piece) * kTTDPieceSize;
-        uint32_t& slot = (*changedTables[c.region])[c.piece];
-        const uint32_t previous = slot;
-        slot = previous == kAbsent ? _store->InternFirst(c.bytes) : _store->Intern(previous, previousBytes, c.bytes);
-        if (previous != kAbsent)
-            _store->Release(previous);   // the table's reference moves to the new version
-        std::memcpy(previousBytes, c.bytes, kTTDPieceSize);
     }
 
     _checkpoints.push_back(std::move(cp));
@@ -171,6 +204,27 @@ int64_t TimeTravelEngine::CheckpointIndexOf(const TTDPosition& position) const
     return _frames.IndexOf(position.frame);
 }
 
+void TimeTravelEngine::BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const
+{
+    // The nearest full table at or before the checkpoint, then the changes after it
+    size_t s = index;
+    while (!_checkpoints[s].regions[region].snapshot)
+        --s;
+    const TTDRefTables::Table* table = _checkpoints[s].regions[region].snapshot;
+    map.resize(table->pieces);
+    for (uint32_t p = 0; p < table->pieces; ++p)
+        map[p] = _tables->Get(table, p);
+    for (size_t i = s + 1; i <= index; ++i)
+    {
+        const TTDEngineCheckpoint::RegionRefs& refs = _checkpoints[i].regions[region];
+        for (uint32_t k = 0; k < refs.changeCount; ++k)
+        {
+            const PieceChange& c = _changes[refs.firstChange + k];
+            map[c.piece] = c.id;
+        }
+    }
+}
+
 TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, uint8_t* out,
                                                  std::vector<uint8_t>* present) const
 {
@@ -181,14 +235,15 @@ TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, 
         result.message = "no such checkpoint or region";
         return result;
     }
-    const std::vector<uint32_t>& table = *_checkpoints[index].regionTables[region];
+    std::vector<TTDPieceId> map;
+    BuildMap(index, region, map);
     if (present)
-        present->assign(table.size(), 0);
-    for (size_t p = 0; p < table.size(); ++p)
+        present->assign(map.size(), 0);
+    for (uint32_t p = 0; p < map.size(); ++p)
     {
-        if (table[p] == kAbsent)
+        if (map[p] == TTDPieceStore::kNone)
             continue;
-        if (!_store->Decode(table[p], out + p * kTTDPieceSize))
+        if (!_store->Decode(map[p], out + size_t(p) * kTTDPieceSize))
         {
             result.status = TTDRestoreStatus::Damaged;
             result.message = "piece " + std::to_string(p) + " of region '" + _regions[region].name +
@@ -201,7 +256,31 @@ TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, 
     return result;
 }
 
+uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t piece) const
+{
+    if (index >= _checkpoints.size() || region >= _regions.size() || piece >= _regions[region].pieces)
+        return kAbsent;
+    // The newest record of the piece up to the checkpoint, else the nearest full table's entry
+    for (size_t i = index;; --i)
+    {
+        const TTDEngineCheckpoint::RegionRefs& refs = _checkpoints[i].regions[region];
+        for (uint32_t k = refs.changeCount; k-- > 0;)
+            if (_changes[refs.firstChange + k].piece == piece)
+                return _changes[refs.firstChange + k].id;
+        if (refs.snapshot)
+            return _tables->Get(refs.snapshot, piece);
+    }
+}
+
 /// endregion </Restore>
+
+size_t TimeTravelEngine::ReferenceBytes() const
+{
+    size_t perCheckpoint = 0;
+    for (const TTDEngineCheckpoint& cp : _checkpoints)
+        perCheckpoint += cp.regions.size() * sizeof(TTDEngineCheckpoint::RegionRefs);
+    return _changes.size() * sizeof(PieceChange) + _tables->HeapBytes() + perCheckpoint;
+}
 
 TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
 {
@@ -211,15 +290,14 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.arenaSlack = _store->ArenaBytes() - _store->PayloadBytes();
     for (const auto& base : _deltaBase)
         h.deltaBase += base.capacity();
-
-    std::unordered_set<const void*> tables;
+    h.referenceTables = _tables->HeapBytes() + _changes.capacity() * sizeof(PieceChange);
+    for (size_t r = 0; r < _live.size(); ++r)
+        h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
+                             _sinceSnapshotFlag[r].capacity();
     h.checkpoints = _checkpoints.capacity() * sizeof(TTDEngineCheckpoint);
     for (const TTDEngineCheckpoint& cp : _checkpoints)
     {
-        h.checkpoints += cp.regionTables.capacity() * sizeof(cp.regionTables[0]);
-        for (const auto& t : cp.regionTables)
-            if (t && tables.insert(t.get()).second)
-                h.referenceTables += sizeof(*t) + t->capacity() * sizeof(uint32_t);
+        h.checkpoints += cp.regions.capacity() * sizeof(cp.regions[0]);
         for (const auto& [id, blob] : cp.deviceBlobs)
             h.deviceBlobs += blob.capacity();
     }

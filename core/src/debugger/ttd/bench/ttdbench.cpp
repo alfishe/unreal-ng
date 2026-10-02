@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -424,6 +425,14 @@ private:
 /// case; capture, seek and file metrics come as the engine gains them
 class EngineTimeTravel final : public Engine
 {
+    /// UNREAL_TTD_ENGINE_BLOCK_PIECES: reference-table block size, to measure
+    /// alternatives (0 or unset = the engine's default)
+    static uint32_t BlockPiecesOverride()
+    {
+        const char* v = std::getenv("UNREAL_TTD_ENGINE_BLOCK_PIECES");
+        return v && *v ? static_cast<uint32_t>(std::strtoul(v, nullptr, 10)) : 0;
+    }
+
 public:
     std::string Name() const override { return "engine"; }
 
@@ -439,6 +448,9 @@ public:
     bool Start(Emulator& emulator, Mode mode, std::string& error) override
     {
         _engine.EndSession();
+        // UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL: full reference table every N checkpoints, to measure alternatives
+        if (const char* v = std::getenv("UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL"); v && *v)
+            _engine.SetSnapshotInterval(static_cast<uint32_t>(std::strtoul(v, nullptr, 10)));
         return _recorder.Start(emulator, mode, error);
     }
 
@@ -449,7 +461,7 @@ public:
         const TimeTravelManager* v1 = _recorder.Manager();
         if (!v1)
             _feedError = "no v1 session to feed";
-        else if (!FeedV1Session(*v1, _engine, _feedError) && _feedError.empty())
+        else if (!FeedV1Session(*v1, _engine, _feedError, nullptr, BlockPiecesOverride()) && _feedError.empty())
             _feedError = "feeding the engine failed";
     }
 
@@ -465,7 +477,7 @@ public:
         StreamBytes b;
         const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
         b.ramPayload = h.piecePayload;
-        b.pageRefs = h.referenceTables;
+        b.pageRefs = _engine.ReferenceBytes();
         for (size_t i = 0; i < _engine.CheckpointCount(); i++)
         {
             const TTDEngineCheckpoint* cp = _engine.Checkpoint(i);

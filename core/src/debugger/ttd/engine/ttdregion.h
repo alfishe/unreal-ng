@@ -53,6 +53,7 @@ struct TTDRegionDesc
     uint32_t pieces = 0;                    ///< capacity in 4 KB pieces
     uint32_t bytes = 0;                     ///< real size; the last piece may be partial
     uint32_t dirtyGranularity = kTTDPieceSize;  ///< bytes per dirty bit: 16 KB for machine RAM, 4 KB for devices
+    uint32_t blockPieces = 0;               ///< reference-table block size in pieces; 0 = by region size
     TTDPieceRestoreFn restorePiece;         ///< optional: restore through the device
     TTDRegionRestoredFn onRestored;         ///< optional: after-restore call
 

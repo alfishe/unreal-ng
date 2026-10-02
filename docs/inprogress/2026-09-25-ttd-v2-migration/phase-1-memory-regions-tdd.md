@@ -210,7 +210,27 @@ struct TTDRegionDesc
 
 The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed in Phase 1; Phase 2 makes device-set changes timeline events (D26).
 
-**The reference table, two levels** (E3: 8-page blocks, 0.21 of v1's table bytes over all inputs; ZX-Evo 4,096 → 520 B per frame):
+**The reference table: change records and periodic full tables** (as built, 2026-10-02; replaces the copy-on-write-only design below, see the measurement).
+
+- Each checkpoint records, per region, only the pieces that got a **new version**: `{piece, version}`, 8 bytes each. A dirty piece whose content came out unchanged records nothing. A frame in which nothing changed records nothing (PR-10).
+- Every **S-th** checkpoint (S = 64 by default) also holds a **full table** of the region, as copy-on-write blocks (§ below) derived from the previous full table: only the blocks with a piece changed since then are new.
+- A restore takes the nearest full table at or before the target and applies at most S − 1 checkpoints' change records forward.
+- A change record holds one reference to its version; a full table's blocks hold theirs.
+
+Measured (`TTDMatrix`, 600 frames, `UNREAL_TTD_BENCH_ENGINE=all`), reference bytes per frame:
+
+| Case | v1 | Copy-on-write blocks only (8-page blocks) | Change records + full table every 64 |
+|---|---|---|---|
+| 48K, BASIC | 96 | 160 | **34** |
+| Pentagon 128, BASIC | 128 | 160 | **26** |
+| Pentagon 1024, BASIC | 1,026 | 218 | **33** |
+| ZX-Evo, BASIC | 4,103 | 552 | **78** |
+| Pentagon 128, game | 128 | 159 | **62** |
+| Across the Edge | 128 | 160 | **69** |
+
+Copy-on-write blocks alone lose to v1 on small busy machines at any block size (4–32 pieces measured): when most frames change several blocks of a 128 KB machine, copying blocks costs more than v1's dense 4 bytes per piece. Change records cost 8 bytes per changed piece, and full tables every 64 frames add a few bytes per frame. S = 32 and S = 128 differ from 64 by a few bytes per frame.
+
+**The full tables, two levels** (E3: 8-page blocks for large regions, smaller blocks for small ones - `TTDRefTables::DefaultBlockPieces`):
 
 ```cpp
 struct TTDRefBlock                         // 32 piece ids = 8 pages; shared, reference-counted

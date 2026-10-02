@@ -8,11 +8,13 @@
 /// engine is fed one frame input per frame boundary (live capture, or the v1
 /// file feeder in verification) and restores any recorded position.
 ///
-/// Phase 1, Steps 1-2 (this version): time, positions, regions, checkpoints
-/// with their parent, optional streams, memory accounting, and the piece
-/// store (each change stored once, chain limit per piece, encode once). The
-/// reference table is still copied whole when a region changes; Step 3
-/// replaces it with copy-on-write blocks without changing this interface.
+/// Phase 1, Steps 1-3 (this version): time, positions, regions, checkpoints
+/// with their parent, optional streams, memory accounting, the piece store
+/// (each change stored once, chain limit per piece, encode once) and the
+/// reference tables: each checkpoint records only the pieces that got a new
+/// version (8 bytes each), and every S-th checkpoint also holds a full table
+/// as copy-on-write blocks shared with the previous one. A restore starts
+/// from the nearest full table and applies the recorded changes forward.
 
 #include <cstdint>
 #include <memory>
@@ -22,6 +24,7 @@
 
 #include "debugger/ttd/engine/ttdframeinput.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
+#include "debugger/ttd/engine/ttdreftable.h"
 #include "debugger/ttd/engine/ttdregion.h"
 #include "debugger/ttd/engine/ttdstreamregistry.h"
 #include "debugger/ttd/engine/ttdtime.h"
@@ -57,9 +60,16 @@ struct TTDEngineCheckpoint
     TTDCpuState cpu;
     TTDChipsetState chipset;
     std::unordered_map<uint8_t, std::vector<uint8_t>> deviceBlobs;
-    /// Per region: piece index -> stored version, or kAbsent for a piece the
-    /// session has not seen (Step 1: a whole table, shared until it changes)
-    std::vector<std::shared_ptr<const std::vector<uint32_t>>> regionTables;
+    /// Per region: the pieces that got a new version at this checkpoint (a
+    /// range of the engine's change records) and, on every S-th checkpoint, a
+    /// full reference table (shared blocks; one reference, held here)
+    struct RegionRefs
+    {
+        TTDRefTables::Table* snapshot = nullptr;
+        uint32_t firstChange = 0;
+        uint32_t changeCount = 0;
+    };
+    std::vector<RegionRefs> regions;
 };
 
 /// Where the engine's memory goes (FR-16; mirrors the benchmark's bm4_heap split)
@@ -87,9 +97,15 @@ public:
     /// A piece the session has not seen yet
     static constexpr uint32_t kAbsent = 0xFFFFFFFFu;
 
+    /// Full reference table every this many checkpoints (default; the rest record changes only)
+    static constexpr uint32_t kDefaultSnapshotInterval = 64;
+
     /// @p store: the piece store, shareable by several sessions (D22); a store
     /// of its own when null
     explicit TimeTravelEngine(std::shared_ptr<TTDPieceStore> store = nullptr);
+
+    /// Full reference table every @p interval checkpoints; set before BeginSession
+    void SetSnapshotInterval(uint32_t interval) { _snapshotInterval = interval ? interval : 1; }
     ~TimeTravelEngine();
     TimeTravelEngine(const TimeTravelEngine&) = delete;
     TimeTravelEngine& operator=(const TimeTravelEngine&) = delete;
@@ -130,15 +146,40 @@ public:
     TTDRestoreResult RestoreRegion(size_t index, uint32_t region, uint8_t* out,
                                    std::vector<uint8_t>* present = nullptr) const;
 
+    /// The stored version of @p piece of @p region at checkpoint @p index, or kAbsent
+    uint32_t VersionAt(size_t index, uint32_t region, uint32_t piece) const;
+
     /// endregion </Restore>
 
     TTDEngineHeapBreakdown HeapBreakdown() const;
+
+    /// Bytes the reference tables store: change records plus full tables
+    /// (what a file would hold; HeapBreakdown counts the allocations)
+    size_t ReferenceBytes() const;
 
     const TTDPieceStore& PieceStore() const { return *_store; }
 
 private:
     bool _open = false;
+    struct PieceChange
+    {
+        uint32_t piece;
+        TTDPieceId id;   ///< the record holds one reference to it
+    };
+
+    /// The version of every piece of @p region at checkpoint @p index
+    void BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const;
+
     std::shared_ptr<TTDPieceStore> _store;
+    std::unique_ptr<TTDRefTables> _tables;
+    uint32_t _snapshotInterval = kDefaultSnapshotInterval;
+    std::vector<PieceChange> _changes;
+    /// Per region: the current version of every piece, and the pieces changed
+    /// since the last full table
+    std::vector<std::vector<TTDPieceId>> _live;
+    std::vector<std::vector<uint32_t>> _sinceSnapshot;
+    std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
+    std::vector<TTDRefTables::Table*> _lastSnapshot;
     std::vector<TTDRegionDesc> _regions;
     /// Per region: its latest contents (allocated when the region's first
     /// piece arrives), the base each new difference is computed against
