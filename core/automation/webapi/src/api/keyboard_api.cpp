@@ -592,6 +592,13 @@ void EmulatorAPI::keyStatus(const HttpRequestPtr& req, std::function<void(const 
     ret["emulator_id"] = id;
     ret["sequence_running"] = context->pDebugManager->GetKeyboardManager()->IsSequenceRunning();
     ret["available"] = true;
+    if (Keyboard* keyboard = context->pKeyboard)
+    {
+        // Where the host keyboard goes: the ZX matrix, the PS/2 controller, both
+        ret["host_route"] = Keyboard::HostRouteName(keyboard->GetHostRoute());
+        ret["host_route_effective"] = Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
+        ret["ps2_controller"] = keyboard->HasPs2Sink();
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -638,3 +645,42 @@ void EmulatorAPI::keyList(const HttpRequestPtr& req, std::function<void(const Ht
 
 } // namespace v1
 } // namespace api
+
+/// @brief POST /api/v1/emulator/{id}/keyboard/route {"route": "auto|matrix|ps2|both"}
+/// @brief Where the host keyboard goes: the ZX matrix, the PS/2 controller (ZX-Evo AVR, ATM Turbo 2+), both
+void EmulatorAPI::keyRoute(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    auto reply = [&](HttpStatusCode code, const Json::Value& body) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pKeyboard)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        reply(HttpStatusCode::k404NotFound, error);
+        return;
+    }
+    auto json = req->getJsonObject();
+    const std::string route = (json && json->isMember("route")) ? (*json)["route"].asString() : std::string();
+    Keyboard* keyboard = emulator->GetContext()->pKeyboard;
+    std::string error;
+    if (!keyboard->RequestHostRoute(route, error))
+    {
+        Json::Value body;
+        body["error"] = error.find("TTD") != std::string::npos ? "Conflict" : "Bad Request";
+        body["message"] = error;
+        reply(error.find("TTD") != std::string::npos ? HttpStatusCode::k409Conflict : HttpStatusCode::k400BadRequest, body);
+        return;
+    }
+    Json::Value ret;
+    ret["host_route"] = Keyboard::HostRouteName(keyboard->GetHostRoute());
+    ret["host_route_effective"] = Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
+    ret["ps2_controller"] = keyboard->HasPs2Sink();
+    reply(HttpStatusCode::k200OK, ret);
+}

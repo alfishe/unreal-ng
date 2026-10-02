@@ -6,10 +6,11 @@ as a raw binary file, then:
 
     python3 turbotest-compare.py dump.bin [turbotest.sym]
 
-It prints every body's count at 3.5 MHz and in turbo next to what the SC15.1 and SC15.3 firmwares give in
-unreal-ng's model, and the difference in percent from the closer one. Exit code: 0 the counts match a firmware's
-table, 1 they match neither or turbo makes no difference, 3 the machine is not a Scorpion (turbo not tried),
-2 the dump is unusable.
+A count matches within one body (the loop's start moves by up to 3 T with the code before its HALT).
+It prints every body's count at 3.5 MHz and in turbo next to unreal-ng's: the Scorpion's SC15.1 and SC15.3
+firmwares, or the ZX-Evo, and the difference in percent from the closest. Exit code: 0 the counts match a table,
+1 they match none or turbo makes no difference, 3 neither a Scorpion nor a ZX-Evo (turbo not tried), 2 the dump
+is unusable.
 """
 import os
 import re
@@ -45,32 +46,35 @@ def main():
     if peek(sym['DONE']) != 1:
         print('turbotest did not finish (DONE is not 1)')
         return 2
-    got, sc151, sc153 = table('COUNTS'), table('EXP151'), table('EXP153')
-    print(f'{"":10}  {"3.5 MHz":>23}  {"turbo":>23}')
-    print(f'{"":10}  {"got":>7}{"SC15.1":>8}{"SC15.3":>8}  {"got":>7}{"SC15.1":>8}{"SC15.3":>8}')
+    got = table('COUNTS')
+    evo = peek(sym['EVO']) == 1
+    tables = [('ZX-Evo', table('EXPEVO'))] if evo else [('SC15.1', table('EXP151')), ('SC15.3', table('EXP153'))]
+    width = 7 + 8 * len(tables)
+    print(f'{"":10}  {"3.5 MHz":>{width}}  {"14 MHz" if evo else "turbo":>{width}}')
+    print(f'{"":10}  ' + '  '.join([f'{"got":>7}' + ''.join(f'{n:>8}' for n, _ in tables)] * 2))
     for b, name in enumerate(BODIES):
         cells = []
         for k in (2 * b, 2 * b + 1):
-            cells.append(f'{got[k]:7}{sc151[k]:8}{sc153[k]:8}')
+            cells.append(f'{got[k]:7}' + ''.join(f'{t[k]:8}' for _, t in tables))
         print(f'{name:10}  ' + '  '.join(cells))
 
     match = peek(sym['MATCH'])
     fails = peek(sym['FAILS']) | peek(sym['FAILS'] + 1) << 8
     if match == 0xFE:
-        print('not a Scorpion: the first NOP count is not a Scorpion\'s, turbo not tried')
+        print('neither a Scorpion nor a ZX-Evo: turbo not tried')
         return 3
     if match == 0xFF:
         print('turbo makes no difference: the NOP body ran as often in turbo as at 3.5 MHz')
         return 1
-    if match in (1, 2):
-        print(f'all counts as the SC15.{1 if match == 1 else 3} firmware gives')
+    if match in (1, 2, 3):
+        print('all counts as unreal-ng\'s ZX-Evo' if match == 3 else
+              f'all counts as the SC15.{1 if match == 1 else 3} firmware gives')
         return 0
-    closer = sc151 if sum(abs(g - e) for g, e in zip(got, sc151)) <= sum(abs(g - e) for g, e in zip(got, sc153)) \
-        else sc153
+    name, closer = min(tables, key=lambda nt: sum(abs(g - e) for g, e in zip(got, nt[1])))
     worst = max(range(10), key=lambda k: abs(got[k] - closer[k]) / max(closer[k], 1))
     pct = 100.0 * (got[worst] - closer[worst]) / max(closer[worst], 1)
-    print(f'matches neither firmware: {fails} counts differ from SC15.{1 if closer is sc151 else 3}, the most '
-          f'{BODIES[worst // 2]} {"turbo" if worst & 1 else "3.5 MHz"} {pct:+.1f} %')
+    print(f'{"differs from the ZX-Evo model" if evo else "matches neither firmware"}: {fails} counts differ from '
+          f'{name}, the most {BODIES[worst // 2]} {"turbo" if worst & 1 else "3.5 MHz"} {pct:+.1f} %')
     return 1
 
 

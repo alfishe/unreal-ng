@@ -1,4 +1,9 @@
-#include "z84sio.h"
+// z84sio.cpp - the Z84C15's SIO, asynchronous mode (z84c15.h; Zilog Z80 SIO data sheet).
+
+#include "z84c15.h"
+
+namespace Z84Lib
+{
 
 void Z84Sio::Reset()
 {
@@ -23,12 +28,18 @@ bool Z84Sio::Receive(uint8_t ch, uint8_t value)
         return false;
     }
     c.fifo[c.fifoCount++] = value;
+    if (c.rxFirstArmed && ((c.wr[1] >> 3) & 3) == 1)
+    {
+        c.rxFirstArmed = 0;
+        c.rxFirstIp = 1;
+    }
     return true;
 }
 
 uint8_t Z84Sio::ReadData(uint8_t ch)
 {
     Channel& c = _ch[ch & 1];
+    c.rxFirstIp = 0;
     if (c.fifoCount == 0)
         return c.lastData;
     c.lastData = c.fifo[0];
@@ -57,7 +68,16 @@ uint8_t Z84Sio::ReadControl(uint8_t ch)
         case 1:
             return static_cast<uint8_t>(0x01 | (c.overrun ? 0x20 : 0x00));  // all sent; overrun
         case 2:
-            return _ch[1].wr[2];  // the vector (both channels read channel B's WR2 here)
+            // The vector (both channels read channel B's WR2 here), status-modified when WR1B bit 2 is set
+            if (_ch[1].wr[1] & 0x04)
+            {
+                for (uint8_t i = 0; i < 2; i++)
+                {
+                    if (RxIp(i))
+                        return RxVector(i);
+                }
+            }
+            return _ch[1].wr[2];
         default:
             return 0x00;
     }
@@ -69,6 +89,8 @@ void Z84Sio::WriteControl(uint8_t ch, uint8_t value)
     if (c.pointer != 0)
     {
         c.wr[c.pointer & 7] = value;
+        if ((c.pointer & 7) == 1 && ((value >> 3) & 3) == 1)
+            c.rxFirstArmed = 1;  // mode 01: the first character from now on interrupts
         c.pointer = 0;
         return;
     }
@@ -81,8 +103,15 @@ void Z84Sio::WriteControl(uint8_t ch, uint8_t value)
         case 3:  // channel reset
             ResetChannel(ch);
             break;
+        case 4:  // enable INT on next Rx character
+            c.rxFirstArmed = 1;
+            break;
         case 6:  // error reset
             c.overrun = 0;
+            break;
+        case 7:  // return from INT (channel A only): the SIO's RETI
+            if ((ch & 1) == 0 && onReturnFromInt)
+                onReturnFromInt();
             break;
         default:
             break;
@@ -103,3 +132,27 @@ void Z84Sio::Write(uint8_t port, uint8_t value)
     else
         WriteData(ch, value);
 }
+
+bool Z84Sio::RxIp(uint8_t ch) const
+{
+    const Channel& c = _ch[ch & 1];
+    switch ((c.wr[1] >> 3) & 3)
+    {
+        case 1: return c.rxFirstIp != 0;
+        case 2:
+        case 3: return c.fifoCount != 0;
+        default: return false;
+    }
+}
+
+uint8_t Z84Sio::RxVector(uint8_t ch) const
+{
+    const uint8_t base = _ch[1].wr[2];
+    if (!(_ch[1].wr[1] & 0x04))
+        return base;
+    // Status affects vector, bits 3-1: channel B receive 010, channel A receive 110
+    const uint8_t code = (ch & 1) ? 0x02 : 0x06;
+    return static_cast<uint8_t>((base & 0xF1) | (code << 1));
+}
+
+}  // namespace Z84Lib

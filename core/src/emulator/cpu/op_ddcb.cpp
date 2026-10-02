@@ -205,6 +205,7 @@ LOGICFUNC const logic_ix_opcode[0x100] =
 
 // Direct pointers to registers in Z80 State for: b,c,d,e,h,l,<unused>,a
 // Filled in Z80::Z80(EmulatorContext* context)
+// CPU-LIBRARY-MIGRATION(ddcb-registers): engine internal (unreal-z80 keeps them per CPU context)
 uint8_t* direct_registers[8];
 
 // offsets to b,c,d,e,h,l,<unused>,a  from cpu.c

@@ -55,7 +55,7 @@ medium (source, format, access, dirty, dirty units, and `changes`: the unsaved c
 | alias | `B`, `b:`, `sd` | the slot with that alias (case does not matter; a trailing `:` is ignored) |
 | kind:index | `floppy:1` | the second floppy slot |
 | tag query | `tag:sd+neogs` | the one slot with all these tags |
-| `auto` | (insert only) | the slot the file's content calls for: the first entry `targets` lists (an empty slot first, the main one first); with several, the reply's `report` names the others |
+| `auto` | (insert only) | the slot the file's content calls for, when one takes it (`targets` lists them); with several it answers `ambiguous-slot` and names them - except floppy drives, where the first empty drive is used (drive A first) |
 
 A selector that matches nothing answers `unknown-slot` and lists the machine's slots; one that
 matches several answers `ambiguous-slot` and lists them. A letter the machine does not have (`C`

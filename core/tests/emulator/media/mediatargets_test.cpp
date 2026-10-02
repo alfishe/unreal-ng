@@ -143,7 +143,7 @@ TEST_F(MediaTargets_Test, ClassifyByContentThenExtension)
         {File("labels.map", "x"), {FileKind::Symbols}, "map"},
         {File("group.zxp", "x"), {FileKind::ZxPoly}, "zxp"},
         {File("notes.txt", "not a medium"), {}, ""},
-        {Utf8(_folder.Path()), {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd}, "folder"},
+        {Utf8(_folder.Path()), {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd, FileKind::Tape}, "folder"},
     };
     for (const Case& c : cases)
     {

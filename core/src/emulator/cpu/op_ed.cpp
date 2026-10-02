@@ -251,6 +251,7 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
     retxRestoreIff1(cpu);
 
     // Z80-family peripherals decode RETI on the bus (IInterruptSource::OnReti)
+    // CPU-LIBRARY-MIGRATION(reti-hook): the engine's RETI callback
     if (IInterruptSource* source = cpu->GetInterruptSource()) [[unlikely]]
         source->OnReti();
 

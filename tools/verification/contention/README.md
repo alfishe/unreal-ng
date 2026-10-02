@@ -7,13 +7,13 @@ and a fourth one, FUSE's own timing test, is built here from its source:
 |:--|:--|:--|
 | [ctprobe](ctprobe/README.md) | contention (how long the CPU waits for the screen), the floating bus, the Scorpion's "Even M1" | `ctprobe/ctprobe.tap`, `ctprobe/ctprobe.trd` |
 | [snowtest](snowtest/README.md) | ULA snow (a picture corrupted by the CPU's memory refresh) | `snowtest/snowtest.tap`, `snowtest/snowtest.trd` |
-| [turbotest](turbotest/README.md) | the Scorpion Turbo+'s memory waits at 7 MHz, and which logic firmware (SC15.1 / SC15.3) it has | `turbotest/turbotest.trd`, `turbotest/turbotest.tap` |
+| [turbotest](turbotest/README.md) | the memory waits in turbo: the Scorpion Turbo+ at 7 MHz (and which logic firmware, SC15.1 / SC15.3, it has), the ZX-Evo at 14 MHz | `turbotest/turbotest.trd`, `turbotest/turbotest.tap` |
 | [fusetest](fusetest/README.md) (Philip Kendall, GPL) | contention, contended `IN`, high-port contention, the floating bus, reads of the paging and AY ports | `fusetest/fusetest.tap` (48K, 128K, +3; its Pentagon detection is broken) |
 
 They load like any program (`LOAD ""`, or `RUN` in TR-DOS) and print their result on the screen; ctprobe and
 snowtest run at 3.5 MHz, turbotest at 3.5 and 7 MHz. unreal-ng passes ctprobe on every machine it has, snowtest
-on the 48K, 128K, +3 and Pentagon, and turbotest on the Scorpion with either logic firmware (its test suite
-checks them); the emulators disagree on a few points that no emulator can settle. **Those points need a real machine.** This page lists them, with what to run and what to send back.
+on the 48K, 128K, +3 and Pentagon, and turbotest on the Scorpion with either logic firmware and on the ZX-Evo (its
+test suite checks them); the emulators disagree on a few points that no emulator can settle. **Those points need a real machine.** This page lists them, with what to run and what to send back.
 
 ## What to send back
 
@@ -83,7 +83,7 @@ from a 48K confirms it with this program.
 **Run** snowtest on a +2A / +3 (`LOAD "t:"`, `LOAD ""` from +3 BASIC) or a Pentagon / Scorpion / other clone
 (TR-DOS `RUN`). **Expected:** LIVE stays plain. A photo of anything else is news.
 
-### 6. How fast is a Scorpion's turbo, and which logic firmware does it have? (turbotest)
+### 6. How fast is a Scorpion's or a ZX-Evo's turbo, and which logic firmware does a Scorpion have? (turbotest)
 
 **Run** turbotest on a Scorpion ZS-256 Turbo+ (`RUN` in TR-DOS). In turbo the logic chip makes RAM accesses
 wait for a memory slot; its two firmwares, SC15.1 and SC15.3, do it differently. The program counts how often
@@ -92,6 +92,9 @@ five small pieces of code run in one frame at 3.5 MHz and in turbo, and compares
 **Send** the photo of the final screen, the board revision, and the marking on the logic chip (DD30) if it is
 readable. Expected: `Turbo+ logic: SC15.1` or `SC15.3`. `Matches neither firmware` is the most interesting
 answer: the counts then show which accesses wait differently.
+
+On a **ZX-Evo**, run it the same way (reset with SPACE held for TR-DOS). It measures 3.5 and 14 MHz; send the
+photo and the FPGA firmware version. Expected: `ZX-Evo 14 MHz: as modeled`.
 
 ## What these programs cannot answer
 
