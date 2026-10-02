@@ -23,7 +23,7 @@ and what the tests built on them prove: `docs/inprogress/2026-10-01-tsconf-vdac2
 
 Each program also carries the SDK's ZX warning screen, shown when no VDAC2 is found.
 `test9` draws ROM-font glyphs: tests that compare its picture need the FT81x ROM image
-(`tools/vdac2/extract-ft81x-rom.py`, never committed).
+(`tools/machines/tsconf/vdac2/extract-ft81x-rom.py`, never committed).
 
 SHA-1 (first 12 digits): test1 c80760e52c30, test2 0a4a7a808b2c, test3 85195e06e034,
 test4 5d27c78cfd1c, test5 c4e1daa2d012, test6 301fb6563646, test9 d810cab90038,
