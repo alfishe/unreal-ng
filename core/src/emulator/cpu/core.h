@@ -9,6 +9,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
@@ -64,6 +65,7 @@ protected:
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
     Mouse* _mouse = nullptr;
+    MouseManager* _mouseManager = nullptr;
     Joystick* _joystick = nullptr;
     Tape* _tape = nullptr;
     TapeFastLoad* _tapeFastLoad = nullptr;

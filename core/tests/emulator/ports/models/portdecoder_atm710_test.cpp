@@ -7,6 +7,8 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/io/mouse/mouse.h"
 
 /// region <SetUp / TearDown>
 
@@ -826,4 +828,40 @@ TEST(PortDecoder_ATM710_Machine_Test, BetaPortsOnlyWithTheShadowPorts)
     EXPECT_TRUE(decoder->WasLastPortDecoded()) << "~CPM: continuous access";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// ATM Turbo 2 / 2+ have no mouse of their own: [INPUT] Mouse=KEMPSTON fits an external ZX-bus
+/// Kempston mouse card. UnrealSpeccy's rule (low byte #DF, A8 / A10 select), not gated by the
+/// shadow ports; nothing answers with Mouse=NONE (mouse-manager design M4)
+TEST(PortDecoder_ATM2Mouse_Test, ExternalKempstonCardOnBothBoards)
+{
+    EmulatorManager* emulators = EmulatorManager::GetInstance();
+    for (const char* model : {"ATM710", "ATM450"})
+    {
+        SCOPED_TRACE(model);
+        auto emulator = emulators->CreateEmulatorWithModel("atm2-mouse", model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        PortDecoder* decoder = context->pPortDecoder;
+        ASSERT_TRUE(context->pMouse && context->pMouse->IsPresent()) << "shipped config: Mouse=KEMPSTON";
+
+        context->pMouse->SetCounters(0x40, 0x6A);
+        context->pMouse->SetButtons(0xFE);
+        EXPECT_EQ(decoder->DecodePortIn(0xFBDF, 0), 0x40);
+        EXPECT_EQ(decoder->DecodePortIn(0xFFDF, 0), 0x6A);
+        EXPECT_EQ(decoder->DecodePortIn(0xFADF, 0) & 0x07, 0x06) << "left pressed (active low)";
+        EXPECT_EQ(decoder->DecodePortIn(0x00DF, 0) & 0x07, 0x06) << "only the low byte, A8 and A10 decode";
+
+        context->emulatorState.flags |= CF_DOSPORTS | CF_TRDOS;  // the shadow ports open: still the card
+        EXPECT_EQ(decoder->DecodePortIn(0xFBDF, 0), 0x40);
+        context->emulatorState.flags &= ~(CF_DOSPORTS | CF_TRDOS);
+
+        uint8_t reg = 0;
+        EXPECT_FALSE(decoder->IsPort_KempstonMouse(0xFEDF, reg)) << "A8 = 0 with A10 = 1 is no register";
+
+        context->pMouse->SetPresent(false);
+        EXPECT_FALSE(decoder->IsPort_KempstonMouse(0xFBDF, reg)) << "Mouse=NONE: no card";
+
+        emulators->RemoveEmulator(emulator->GetId());
+    }
 }

@@ -3,6 +3,7 @@
 
 #include "portdecoder_atm3_test.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -1208,22 +1209,27 @@ TEST_F(PortDecoder_ATM3_Machine_Test, BorderPortsF6AndFC)
     EXPECT_EQ(state.pFE & 0x18, 0x10) << "#FC does not drive the beeper";
 }
 
-/// Kempston mouse on #xxDF with the BaseConf sub-decode, not gated by TR-DOS
-/// (zports.v:446-447, zkbdmus.v:118-120)
+/// The mouse on #xxDF with the BaseConf sub-decode, not gated by TR-DOS
+/// (zports.v:446-447, zkbdmus.v:118-120): the registers the AVR keeps for its
+/// PS/2 mouse (evoavrmouse.h), fed by the emulator's mouse manager
 TEST_F(PortDecoder_ATM3_Machine_Test, KempstonMouse_Decoded)
 {
-    Mouse* mouse = _context->pMouse;
-    ASSERT_NE(mouse, nullptr);
-    mouse->SetPresent(true);
-    mouse->SetCounters(0x40, 0x6A);
+    EvoAvrMouse& mouse = _decoder->GetEvoAvr().Ps2Mouse();
+    ASSERT_TRUE(mouse.IsConnected()) << "[INPUT] Mouse=KEMPSTON: a mouse on the PS/2 port";
+    ASSERT_NE(_context->pMouseManager, nullptr);
 
     _context->emulatorState.flags |= CF_TRDOS;  // TR-DOS active: still the mouse on this board
+    _context->pMouseManager->ApplyCounters(0x40, 0x6A);
     EXPECT_EQ(_decoder->DecodePortIn(0xFBDF, 0x0000), 0x40);
     EXPECT_EQ(_decoder->DecodePortIn(0xFFDF, 0x0000), 0x6A);
-    EXPECT_EQ(_decoder->DecodePortIn(0xFADF, 0x0000) & 0x07, 0x07) << "no buttons pressed (active low)";
+    EXPECT_EQ(_decoder->DecodePortIn(0xFADF, 0x0000) & 0x0F, 0x0F) << "no buttons pressed (active low), bit 3 set";
 
-    mouse->SetPresent(false);
+    _context->pMouseManager->ApplyButtons(0xFE);  // left
+    EXPECT_EQ(_decoder->DecodePortIn(0xFADF, 0x0000) & 0x0F, 0x0E);
+
+    mouse.SetConnected(false);
     EXPECT_EQ(_decoder->DecodePortIn(0xFBDF, 0x0000), 0xFF) << "no mouse: the AVR answers #FF";
+    EXPECT_EQ(_decoder->DecodePortIn(0xFFDF, 0x0000), 0xFF);
 }
 
 /// JOY-8: a host key bound to a joystick button still reaches the AVR's PS/2 log (NedoOS reads the keypad

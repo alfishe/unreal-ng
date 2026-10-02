@@ -5,10 +5,8 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/debugmanager.h"
-#include "debugger/mouse/debugmousemanager.h"
-#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "stdafx.h"
 
 const char* const MC_MOUSE_MOVE = "MC_MOUSE_MOVE";
@@ -26,20 +24,15 @@ Mouse::Mouse(EmulatorContext* context)
     Reset();
     ApplyConfiguration();
 
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observer = static_cast<Observer*>(this);
-    messageCenter.AddObserver(MC_MOUSE_MOVE, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseMove));
-    messageCenter.AddObserver(MC_MOUSE_BUTTON, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseButton));
-    messageCenter.AddObserver(MC_MOUSE_WHEEL, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseWheel));
+    // Input comes from the emulator's mouse manager
+    if (_context && _context->pMouseManager)
+        _context->pMouseManager->AddSink(this);
 }
 
 Mouse::~Mouse()
 {
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observer = static_cast<Observer*>(this);
-    messageCenter.RemoveObserver(MC_MOUSE_MOVE, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseMove));
-    messageCenter.RemoveObserver(MC_MOUSE_BUTTON, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseButton));
-    messageCenter.RemoveObserver(MC_MOUSE_WHEEL, observer, static_cast<ObserverCallbackMethod>(&Mouse::OnMouseWheel));
+    if (_context && _context->pMouseManager)
+        _context->pMouseManager->RemoveSink(this);
 }
 
 void Mouse::Reset()
@@ -131,68 +124,6 @@ void Mouse::SetCounters(uint8_t x, uint8_t y)
 {
     _x.store(x, std::memory_order_relaxed);
     _y.store(y, std::memory_order_relaxed);
-}
-
-/// Event for this instance of the given kind, or nullptr (wrong payload, wrong
-/// kind for the topic, or tagged for another emulator instance)
-MouseEvent* Mouse::AcceptEvent(Message* message, MouseEventKind kind) const
-{
-    if (!message || !message->obj || _hostInputGated.load(std::memory_order_relaxed))
-        return nullptr;
-
-    auto* event = dynamic_cast<MouseEvent*>(message->obj);
-    if (!event || event->kind != kind)
-        return nullptr;
-
-    if (!event->targetId.empty() && _context && _context->pEmulator && event->targetId != _context->pEmulator->GetId())
-        return nullptr;
-
-    return event;
-}
-
-/// Host input goes through the debug mouse manager when there is one (replay guard +
-/// TTD journal); bare contexts (unit tests without a DebugManager) apply directly
-static DebugMouseManager* HostInputFunnel(EmulatorContext* context)
-{
-    if (context && context->pDebugManager)
-        return context->pDebugManager->GetMouseManager();
-    return nullptr;
-}
-
-void Mouse::OnMouseMove([[maybe_unused]] int id, Message* message)
-{
-    MouseEvent* event = AcceptEvent(message, MouseEventKind::Move);
-    if (!event)
-        return;
-
-    if (DebugMouseManager* funnel = HostInputFunnel(_context))
-        funnel->ApplyHostMove(event->dx, event->dy);
-    else
-        Move(event->dx, event->dy);
-}
-
-void Mouse::OnMouseButton([[maybe_unused]] int id, Message* message)
-{
-    MouseEvent* event = AcceptEvent(message, MouseEventKind::Buttons);
-    if (!event)
-        return;
-
-    if (DebugMouseManager* funnel = HostInputFunnel(_context))
-        funnel->ApplyHostButtons(event->buttonMask);
-    else
-        SetButtons(event->buttonMask);
-}
-
-void Mouse::OnMouseWheel([[maybe_unused]] int id, Message* message)
-{
-    MouseEvent* event = AcceptEvent(message, MouseEventKind::Wheel);
-    if (!event)
-        return;
-
-    if (DebugMouseManager* funnel = HostInputFunnel(_context))
-        funnel->ApplyHostWheel(event->wheelSteps);
-    else
-        SetWheel(event->wheelSteps);
 }
 
 /// region <TTD>

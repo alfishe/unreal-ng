@@ -165,6 +165,10 @@ bool Core::Init()
     {
         result = false;
 
+        // The manager first: the Kempston device and the decoder's mouse devices register with it
+        _mouseManager = new MouseManager(_context);
+        _context->pMouseManager = _mouseManager;
+
         _mouse = new Mouse(_context);
         if (_mouse)
         {
@@ -630,6 +634,11 @@ void Core::Release()
         delete _portDecoder;
         _portDecoder = nullptr;
     }
+
+    // The mouse manager after the PortDecoder: a decoder's mouse devices unregister from it
+    _context->pMouseManager = nullptr;
+    delete _mouseManager;
+    _mouseManager = nullptr;
 
     // The Z80 goes after the PortDecoder: a decoder may own a CPU engine (the
     // Sprinter's Z84C15Engine) that detaches itself from the Z80 in its destructor.

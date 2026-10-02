@@ -3,6 +3,7 @@
 #include "_helpers/testwaithelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 
 class Mouse_Test : public ::testing::Test
 {
@@ -10,6 +11,8 @@ protected:
     void SetUp() override
     {
         _context = new EmulatorContext();
+        _manager = new MouseManager(_context);  // host input reaches the device through its manager
+        _context->pMouseManager = _manager;
         _mouse = new Mouse(_context);
         _context->pMouse = _mouse;
     }
@@ -17,8 +20,11 @@ protected:
     void TearDown() override
     {
         delete _mouse;
+        delete _manager;
         delete _context;
     }
+
+    MouseManager* _manager = nullptr;
 
     EmulatorContext* _context = nullptr;
     Mouse* _mouse = nullptr;

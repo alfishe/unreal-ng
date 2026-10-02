@@ -117,6 +117,9 @@ public:
     void SyncTurboRamWaits();
     bool AreTurboRamWaitsInstalled() const { return _turboRamWaitsInstalled; }
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
+    /// An external ZX-bus Kempston mouse card ([INPUT] Mouse=KEMPSTON): the board has no mouse
+    /// of its own. Low byte #DF, A8 / A10 select the register, not gated by the shadow ports
+    bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
     void SetRAMPage(uint8_t page) override;

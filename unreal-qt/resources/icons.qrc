@@ -12,6 +12,8 @@
         <file>icons/hdd.svg</file>
         <file>icons/sound.svg</file>
         <file>icons/joystick.svg</file>
+        <file>icons/mouse.svg</file>
+        <file>icons/mouse-off.svg</file>
         <file>icons/timetravel.svg</file>
         <file>icons/close.svg</file>
         <file>icons/media/floppy.svg</file>

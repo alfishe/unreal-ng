@@ -353,6 +353,8 @@ add_subdirectory("3rdparty/QHexView-5.0")
 # C++20 mode has the correct behavior, so override QHexView to match the project standard.
 set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
 
+# unreal-qt-tests (defined below) joins the full test run: core/tests' test-parallel runs it
+set(UNREAL_QT_FRONTEND_TESTS ON)
 if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
@@ -728,6 +730,39 @@ if (TESTS)
         unrealng::core
         gtest_main
     )
+
+    # unreal-qt-tests: front-end classes that need Qt (offscreen platform, real Qt events).
+    # First: the host mouse capture's release key and gate (mouse-manager design §3.3)
+    set(UNREAL_QT_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
+    )
+    if (APPLE)
+        list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
+    endif()
+    add_executable(unreal-qt-tests ${UNREAL_QT_TEST_SOURCES})
+    set_target_properties(unreal-qt-tests PROPERTIES
+        AUTOMOC ON
+        AUTOUIC OFF
+        AUTORCC OFF
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    target_include_directories(unreal-qt-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${ROOT_DIR}/core/src"
+        "${ROOT_DIR}/core/src/common"
+        "${ROOT_DIR}/core/src/emulator"
+    )
+    target_link_libraries(unreal-qt-tests PRIVATE
+        unrealng::core
+        Qt6::Widgets
+        gtest
+    )
+    if (APPLE)
+        target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
+    endif()
 endif()
 
 # <Diagnostics>
