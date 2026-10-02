@@ -3,10 +3,13 @@
 --   SPC_MODE    boot    port trace from power-on, snapshots, page #40 dump (default)
 --               loader  counts the CPU memory writes of the PLD configuration loader (runtime Q4 check)
 --               sync    calls BIOS function #F2 (FN_SYNC) for each INT mode and records the INT positions
+--               palette per-frame sum of the palette bytes in video RAM (the logo fade, no renderer needed)
 --   SPC_OUT     output folder (must exist)
 --   SPC_END     frame to exit at (default 600)
 --   boot:   SPC_PORTS (accesses to record, default 10000), SPC_SNAP_EVERY (0 = off), SPC_SNAP_AT,
---           SPC_DUMP_AT (frame of the page #40 dump and the final snapshot)
+--           SPC_DUMP_AT (frame of the page #40 dump and the final snapshot),
+--           SPC_CODES ("lo-hi" in hex: record only port-table accesses with a code in that range, e.g.
+--           "20-29" for the IDE), SPC_PORTS_FILE (output name, default ports.csv)
 --   sync:   SPC_SYNC_AT (frame of the first FN_SYNC call), SPC_SYNC_FRAMES (frames measured per mode)
 --   loader: SPC_ROM (the 256 KB BIOS image, to check the reassembled bitstream)
 --
@@ -118,6 +121,10 @@ if mode == "boot" then
 		snap_at[tonumber(f)] = name
 	end
 	local dump_at = tonumber(os.getenv("SPC_DUMP_AT") or "-1")
+	local ports_file = os.getenv("SPC_PORTS_FILE") or "ports.csv"
+	local code_lo, code_hi = string.match(os.getenv("SPC_CODES") or "", "^(%x+)-(%x+)$")
+	code_lo = code_lo and tonumber(code_lo, 16)
+	code_hi = code_hi and tonumber(code_hi, 16)
 	local rows = { "n,frame,time_us,dir,port,value,pc,phase,index,code" }
 	local nports = 0
 	local opened = false
@@ -136,15 +143,18 @@ if mode == "boot" then
 			phase = opened and "open" or "closed"
 			local idx = dcp_index(port, dir == "R")
 			index = string.format("%04X", idx)
-			code = string.format("%02X", ram:read(DCP_BASE + idx))
+			local c = ram:read(DCP_BASE + idx)
+			if code_lo ~= nil and (c < code_lo or c > code_hi) then return end
+			code = string.format("%02X", c)
 		end
+		if code_lo ~= nil and code == "" then return end
 		local pc = cpu.state["CURPC"].value
 		nports = nports + 1
 		rows[#rows + 1] = string.format("%d,%d,%.3f,%s,%04X,%02X,%04X,%s,%s,%s", nports, frame, emu.time() * 1e6,
 			dir, port, data, pc, phase, index, code)
 		if nports == max_ports then
 			event("port trace complete (%d accesses)", nports)
-			write_file("ports.csv", table.concat(rows, "\n") .. "\n")
+			write_file(ports_file, table.concat(rows, "\n") .. "\n")
 		end
 	end
 
@@ -184,7 +194,7 @@ if mode == "boot" then
 		end
 		if frame >= end_frame then
 			if nports < max_ports then
-				write_file("ports.csv", table.concat(rows, "\n") .. "\n")
+				write_file(ports_file, table.concat(rows, "\n") .. "\n")
 				event("port trace ended early (%d accesses)", nports)
 			end
 			write_file("events.txt", table.concat(events, "\n") .. "\n")
@@ -444,6 +454,29 @@ elseif mode == "sync" then
 			record_model(plan[step].name)
 			state = "measuring"
 			measure_from = frame
+		end
+	end)
+elseif mode == "palette" then
+	-- The palette lives in the last 32 bytes of every 1 KB video RAM line (sprinter.cpp vram_w: laddr >= #3E0).
+	-- One row per frame whose sum changed: the BIOS logo's palette set-up and fade, comparable without a renderer
+	local rows = { "frame,palette_sum" }
+	local prev = -1
+	subs.frame = emu.add_machine_frame_notifier(function()
+		if finished then return end
+		frame = frame + 1
+		local sum = 0
+		for line = 0, 255 do
+			for o = 0x3e0, 0x3ff do
+				sum = sum + vram:read_u8(line * 1024 + o)
+			end
+		end
+		if sum ~= prev then
+			rows[#rows + 1] = string.format("%d,%d", frame, sum)
+		end
+		prev = sum
+		if frame >= end_frame then
+			write_file("palette.csv", table.concat(rows, "\n") .. "\n")
+			finish("palette done")
 		end
 	end)
 else

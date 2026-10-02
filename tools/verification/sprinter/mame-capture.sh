@@ -2,13 +2,13 @@
 # Sprinter Sp2000 reference captures on MAME's `sprinter` driver, headless
 # (see testdata/machines/sprinter/reference/README.md).
 #   MAME_BIN=<mame binary with the sprinter driver> ./mame-capture.sh <mode> [VAR=value ...]
-# mode: boot | loader | sync (see mame-capture.lua). Extra VAR=value pairs go to the Lua script's environment
+# mode: boot | loader | sync | palette (see mame-capture.lua). Extra VAR=value pairs go to the Lua script's environment
 # (SPC_END, SPC_DUMP_AT, ...). Output: $SPC_OUT (default build/<mode>/ here).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
-MODE=${1:?usage: mame-capture.sh boot|loader|sync [VAR=value ...]}
+MODE=${1:?usage: mame-capture.sh boot|loader|sync|palette [VAR=value ...]}
 shift
 
 MAME=${MAME_BIN:-mame}

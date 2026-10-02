@@ -323,7 +323,13 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
 - **INT** is not at a fixed position: it fires on the 8th line of a square whose mode byte says
   "blank + interrupt" (`Mode0` = `%1111 11x1`). The BIOS moves INT to the Pentagon, Scorpion or
   Spectrum position by rewriting those bytes (MAN §4.6; BIOS-TT `doc/changes.txt`, FN_SINC `#F2`;
-  MAME `sprinter.cpp:1278-1313`). Pulse length: 32 clocks of 3.5 MHz (MAME `:1736`).
+  MAME `sprinter.cpp:1278-1313`). **End of the pulse** (PLD `SP2_1K30.TDF:744`, `INT_X`): the INT
+  flip-flop is preset (INT off) by the **acknowledge** (`/IO` and `/M1` low together) or two rising
+  edges of `CTH2` after it went on. `CTH` counts the 56 squares of a line, one per 4 T, so `CTH2`
+  rises every 32 T and an unacknowledged pulse lasts 32-64 T depending on where it starts. MAME
+  keeps a fixed 32 T and ignores the acknowledge (`:1736`); unreal-ng ends the pulse at the
+  acknowledge (as the PLD) and keeps MAME's 32 T otherwise (which `CTH` value a MAME pixel x is
+  has not been tied down, so the 32-64 T rule is not modeled yet).
 - **Measured on MAME** (BIOS 3.04, `FN_SYNC` called at the boot screen, `int.csv` in
   [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md)): one INT per
   320-line frame, at the same horizontal position (pixel 768 of 896, T 192 of the line) and on MAME
@@ -413,7 +419,15 @@ register loaded from the CPU on writes and from the drive's high byte on reads (
 `SP2_1K30.TDF:181`, `:360-373`); MAME agrees (one `m_ata_data_latch`), ZXMAK2 keeps two bytes. On a
 write the latch holds the **low** byte (the reverse of the Nemo order). Reads of
 registers 1-7 with A8 = 1 and writes with A8 = 0 do nothing (MAME). The interrupt line is not
-connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). The channel select is a latch that
+connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). **With no drive** the status reads `#FF` (BSY
+set): the IDE data lines reach the CPU side through two K555AP6 (74LS245) transceivers (U6, U9 on
+the Sp2000 schematic, `zxgit/2000` `pcad_import/PAGE1.pdf`) with no pull-down on DD7 at the
+connectors X6/X9, and LS-TTL inputs that nothing drives read high. SETUP's auto-detect then waits
+1 550 frames (#060E HALTs, ~31.7 s) per unit for BSY to clear, unless F4 is pressed (SETUP
+`#9663`-`#967E`). MAME does not show this: its default slots hold an IDE hard disk without an image
+(primary master: status `#52`, IDENTIFY aborted with `#51`, "None" at once) and an ATAPI CD
+(primary slave: status `#10`/`#11`, polled for 280 frames), so MAME reaches the no-media boot screen
+at frame 507 (10.38 s) and unreal-ng with no drives at frame 3 291 (67.4 s). The channel select is a latch that
 survives until changed; reset selects primary (MAME `:1582`).
 
 ### 9.2 Units and BIOS numbering

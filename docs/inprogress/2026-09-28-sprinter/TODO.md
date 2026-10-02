@@ -56,6 +56,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   fast start, `SprinterVideoRam` + `SprinterIntSource`, the Z84C15 package, the CMOS, the turbo
   waits, the TR-DOS M1 signal; BIOS 3.04 reaches its boot prompt with the fast and the full start
   (ACC-1a); page `#40` at the prompt equals the static 3.04 table
+- [x] S1 checked against the MAME references (2026-10-01, roadmap §6.1): the first 10 000 port
+  accesses identical (order, values, PCs, codes) and timed to the T-state at 3.5 MHz; the turbo
+  port wait fixed (2 clocks early; 21-MHz drift over the trace 1 245 µs → 5.7 µs); logo palette,
+  INT positions per FN_SYNC mode, INT acknowledge, loader count equal; `SprinterReference_Test`
 
 ## Remaining
 
@@ -80,10 +84,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
 - Unverified items: palette byte order (S2). Settled in S1: BIOS 3.04 never programs the Z84C15
   watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no
-  Z84C15 interrupts, the keys are polled in the frame INT). Still open: whether the board pulls IDE
-  DD7 low with no drive (S1 reads `#FF`, SETUP waits ~31 s per unit unless F4); whether the PLD
-  ends the INT at the acknowledge (S1) or after 32 T (MAME); the runtime CONF_DONE timing (S1's
-  full start resets after write 473 720 and boots, consistent with the static count).
+  Z84C15 interrupts, the keys are polled in the frame INT). Settled against MAME and the board files
+  (2026-10-01, [roadmap-and-plan.md](roadmap-and-plan.md) §6.1): IDE with no drive reads `#FF`
+  (no DD7 pull-down, LS245 inputs float high), the PLD ends the INT at the acknowledge. Still open:
+  the runtime CONF_DONE timing (S1's full start resets after write 473 720 and boots, consistent with
+  the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
+  Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
+  MAME 32 T).
 - S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
   then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams

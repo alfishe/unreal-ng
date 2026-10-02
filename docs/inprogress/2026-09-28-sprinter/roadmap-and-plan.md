@@ -167,12 +167,15 @@ Findings and deviations from the design (applied in the documents named):
 - **IDE without a drive**: until the IDE adapter (S3b) the IDE codes read `#FF` (BSY set), as an
   empty bus does on the shared IDE core; SETUP then waits ~31 s per unit ("Detecting IDE ...
   [Press F4 to skip]"). The boot test presses F4 through the SIO (scan code `#0C`), which also
-  proves the keyboard path SETUP polls. Whether the board pulls DD7 low is open (MAME capture).
+  proves the keyboard path SETUP polls. **Settled (2026-10-01): `#FF` is the board's answer** - no
+  pull-down on DD7, LS-TTL transceivers read an undriven bus high (hardware-reference §9.1). MAME
+  differs because its default slots hold drives (see §6.1 (b)).
 - **TTD**: `PeripheralId::SprinterPld = 25` is declared without a serializer, so TTD refuses to
   record the Sprinter until S7 instead of recording a state it cannot restore; the CMOS uses the
   shared id 18. The ids of tdd-integration §2.1 are therefore 25 (PLD) and up.
 - **INT acknowledge**: one INT per pulse (the acknowledge ends it); MAME keeps the line for the
-  full 32 T. Unverified (PLD source to check); matters only for handlers shorter than 32 T.
+  full 32 T. **Settled (2026-10-01): the PLD ends it at the acknowledge** (`SP2_1K30.TDF:744`,
+  hardware-reference §6.1); MAME is the simplification.
 - **Z84C15 system registers survive the PLD's CPU reset** (MAME sets them at device start only);
   they matter only while the PLD loads (the chip selects).
 - **Frame length**: codes `#2C/#2D` are stored and feed the INT list; the frame itself stays
@@ -181,3 +184,50 @@ Findings and deviations from the design (applied in the documents named):
   scan-code encoder and keyboard INT, accelerator, Covox-Blaster, CTC/SIO interrupts.
 - `[SPRINTER] CmosFile` ships commented out (as `[PROFI] NvramFile`), so a fresh machine shows
   "CMOS CHECKSUM ERROR, INSTALL DEFAULT VALUES" like a real board with a flat battery.
+
+### 6.1 S1 against the MAME references (2026-10-01)
+
+References: [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md)
+(new: `palette.csv`, mode `palette` of `tools/verification/sprinter/mame-capture.lua`; the boot mode
+takes `SPC_CODES` / `SPC_PORTS_FILE` to trace one code range over the whole boot). Tests:
+`core/tests/emulator/machines/sprinter/sprinterreference_test.cpp`. Time base: MAME starts the BIOS
+58 225 T after power-on (after its 4 096-write shortcut), the fast start at T 0; times below are
+from the BIOS start, frames are MAME's.
+
+| Check | MAME | unreal-ng | Result |
+|---|---|---|---|
+| (d) first 10 000 port accesses (direction, port, value, PC, code) | `ports.csv` | 9 989 BIOS accesses (the loader's 11 are FastStart's) | **identical**, in order |
+| (d) timing at 3.5 MHz (to the turbo switch, access 798) | | | **identical to the T-state** |
+| (c) "DCP opened" (IN at page 8 `#0CD8`) | 0.677 332 s from power-on = 2 312 334 T after the BIOS's first access | the same | **equal** |
+| (d) timing at 21 MHz (access 799 to 9 989, 61.4 ms) | | S1: +1 245 µs; **fixed: +5.7 µs** | port wait clock fixed (technical-design §4) |
+| (c) logo palette in video RAM | full at frame 58 (302 720), fade one step per frame to frame 186; `logo.png` = frame 60 (302 548) | the same sums, frame by frame, 58-186 | **equal**; build-up 55-57 moves by up to a frame with the start offset (also between MAME runs) |
+| (c) loader | 473 720 writes, last at 6 691 665 T (1.912 s) | 473 720, last at 6 691 671 T (+6 T: the shared Z80 reset charges 3 T before the first fetch, and the probe read the clock after the 3-T write cycle where MAME stamps its start), 113 T per byte | **equal** (the CPU reset after it is not in MAME) |
+| (a) INT positions, FN_SYNC A = 1/2/3/0 | 60 896 / 64 480 / 66 272 / 66 272 T | the same | **equal** |
+| (a) INT acknowledge | routine's first fetch 6.5-10.5 T after the edge | 7-8 T | **equal**; the acknowledge ends the pulse (PLD) |
+| (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` is the board) |
+| (e) page `#40` | CRC `b7f09600` | equal (`SprinterBoot_Test`) | **equal** |
+
+Fix: the turbo port wait was taken 2 clocks early (`AccessStartClock()` is the start of a 3-T memory
+cycle; the decoder runs 1 T into the 4-T I/O cycle). `SprinterWaits::IoCycleStart` gives the cycle
+start, Sprinter-local; no shared Z80 code changed.
+
+Open (recorded, not changed in S1):
+- **CPU emulation approach: pending the CPU research (`research-cpu-z84c15.md`)**. The Sprinter
+  CPU is a Z84C15 (CMOS Z84C00 core + SIO/CTC/PIO/WDT/chip selects); the CPU variant settings
+  (`OUT (C),0` value, CMOS undocumented flags, the NMOS LD A,I / LD A,R parity quirk the shared core
+  always applies) are left as they are until that research decides; a CPU-specific part, if any,
+  goes into a separate vendored CPU library later. Sprinter timing code stays in Sprinter classes.
+- **Origin of the wait rule** (MAME's "align to 6, then 6 − taken" vs the PLD's `/IO` wait
+  counter with per-code lengths and its memory-cycle wait, and the Z84C15's own wait generator):
+  pending the same research; numbers in technical-design §4.
+- **PLD wait on Z84C15 port writes**: unreal-ng adds it (the PLD sees every IORQ write), MAME adds
+  none (16 writes in the first 10 000 accesses, 6 clocks each). Pending the CPU research (whether
+  the Z84C15 shows its internal I/O cycles on the external bus).
+- **SIO A status (RR0)** read by the frame INT: MAME `#7C` (DCD, CTS, sync/hunt, Tx underrun
+  reflect its RS-232 / keyboard slot lines), unreal-ng `#04` (Tx empty only). The BIOS tests only
+  bit 0, so the flow is the same; the line states belong to S4 (keyboard / mouse).
+- **INT pulse without acknowledge**: the PLD's 32-64 T (two `CTH2` edges) vs MAME's 32 T, which
+  unreal-ng keeps (hardware-reference §6.1).
+- MAME's timestamps are not usable around a turbo switch (they jump back 4.77 ms at the
+  `set_clock_scale` call), so 21-MHz comparisons use durations from the access after the switch.
+

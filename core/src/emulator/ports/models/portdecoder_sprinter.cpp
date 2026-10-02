@@ -418,7 +418,7 @@ void PortDecoder_Sprinter::AddPortWait()
         return;
     Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (z80)
-        z80->AddWaitStates(SprinterWaits::Rule(z80->AccessStartClock(), SprinterWaits::kPortTaken));
+        z80->AddWaitStates(SprinterWaits::Rule(SprinterWaits::IoCycleStart(z80->AccessStartClock()), SprinterWaits::kPortTaken));
 }
 
 void PortDecoder_Sprinter::OnBanksChanged()

@@ -23,7 +23,13 @@ export MAME_BIN=<path to the zxsp binary> SPC_OUT=../../../testdata/machines/spr
 ./mame-capture.sh boot SPC_END=520 SPC_SNAP_AT=60:logo,507:boot-screen SPC_DUMP_AT=507
 ./mame-capture.sh loader SPC_END=600
 ./mame-capture.sh sync SPC_END=600 SPC_SYNC_AT=520
+./mame-capture.sh palette SPC_END=200
 ```
+
+The boot mode can also trace one range of internal codes over the whole boot instead of the first
+10 000 accesses, e.g. the IDE (Z84C15 ports are always included):
+`./mame-capture.sh boot SPC_END=520 SPC_PORTS=200000 SPC_CODES=20-29 SPC_PORTS_FILE=ide.csv`
+(not checked in; the result is summarized in hardware-reference §9.1).
 
 The script builds a rompath under `tools/verification/sprinter/build/` (git-ignored) with the coemu
 `romset.py`, and runs
@@ -57,6 +63,7 @@ configuration shortcut ends; the script only works in its first run (power-on, t
 | `loader.txt` | the runtime count of the PLD loader's memory writes |
 | `int.csv` | INT positions for the BIOS `FN_SYNC` (`#F2`) modes |
 | `events.txt`, `events-sync.txt` | the milestones of the `boot` and `sync` runs |
+| `palette.csv` | the sum of the palette bytes in video RAM, per frame (rows where it changed) |
 
 ### `page40.bin`: the port table after POST
 
@@ -149,3 +156,12 @@ So BIOS 3.04 cold-starts with the Scorpion position (the "Pentagon at cold start
 `changes.txt` is a later change). Pentagon is 16 lines (3 584 T) after Scorpion, Spectrum 8 lines
 (1 792 T) after Pentagon; all three at the same horizontal position. Only the 320-line frame was
 measured (BIOS 3.04's `FN_SYNC` has no frame-height option; the 312-line frame is code `#2D`).
+
+### `palette.csv`: the logo palette, frame by frame
+
+Columns: `frame, palette_sum`; a row only when the sum changed. The sum is over the palette bytes of
+video RAM: the last 32 bytes (`#3E0-#3FF`) of each of the 256 lines of 1 KB (MAME `vram_w`). It shows
+the logo without a renderer: the palette is written in frames 55-57 (the exact frames move by one
+between runs, with the CMOS clock MAME takes from the host), is full at **frame 58** (302 720), and
+fades one step per frame from frame 59 to frame 186 (297 696). `logo.png` (frame 60) is sum 302 548.
+unreal-ng gives the same sums from frame 58 on (`SprinterReference_Test`).
