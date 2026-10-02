@@ -99,12 +99,20 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.1): `CovoxBlaster` (Covox, ring, 16 rates, mono / stereo,
   8 / 16 bit, half-ring INT through the PLD INT source, `#FE` bits 7 / 5, the accelerator's page-`#FD` path) in the
   COVOX mixer slot; one AY (`TurboSound=Single`, 1.75 MHz); TTD id 32 and the Sprinter fixture re-recorded;
-  `state/sprinter` `sound` and the shared Covox report; `AccelIntSuspend` default 0 (WAVPLAY refills in its INT
-  handler); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
+  `state/sprinter` `sound` and the shared Covox report; `AccelIntSuspend` default 0 (owner decision 2026-10-02, reversing 2026-10-01: WAVPLAY refills the ring
+  from its INT handler and goes silent with the block on; the literal PLD `ACC_BLK` reading and MAME agree); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
   `.recipe/machines/sprinter-sound.md`
 
 ## Remaining
 
+- **Next (owner order, 2026-10-02):**
+  1. Automation audit P1 + P2 ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md)): VRAM / palette /
+     per-square mode map, a video-change log for all machines, accelerator and wait-state state, runtime BIOS
+     selection, `video_text` / OCR fallback to the Sprinter text, outdated MCP resource / recipe / OpenAPI text.
+  2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
+     picture, no sound - find and fix each cause with MAME's code as the reference.
+  3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
+     (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
