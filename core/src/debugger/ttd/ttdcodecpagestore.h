@@ -191,6 +191,10 @@ public:
     /// (live or on the free list), free list and decode scratch
     size_t HeapBytes() const;
 
+    /// Allocated payload bytes of every slot (live or on the free list); with
+    /// GetLivePayloadBytes() it splits the payload heap into content and slack
+    size_t PayloadCapacityBytes() const;
+
     /// Compression ratio: averageRawBytes / averageCompressedBytes.
     /// Returns 1.0 if no live slots; otherwise kPageSize / mean(payload).
     double GetCompressionRatio() const;
