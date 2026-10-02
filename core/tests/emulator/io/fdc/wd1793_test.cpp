@@ -4742,7 +4742,7 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
     EXPECT_EQ(g_fddStates.back().drive, 1) << "Drive B selected";
     EXPECT_EQ(g_fddStates.back().side, 1);
     EXPECT_FALSE(g_fddStates.back().motorOn);
-    EXPECT_TRUE(g_fddStates.back().diskInserted);
+    EXPECT_FALSE(g_fddStates.back().diskInserted) << "the disk is in drive A; drive B is empty";
 
     // Same value again: nothing changed -> no new notification
     fdc.processBeta128(0b0000'0101);

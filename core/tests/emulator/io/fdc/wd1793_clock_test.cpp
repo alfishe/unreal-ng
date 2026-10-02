@@ -870,8 +870,200 @@ TEST_F(WD1793Clock_Test, Machines_ZxEvoHasTurboVg_OthersFixed1MHz)
         EXPECT_EQ(fdc->GetClockPolicy(), c.policy) << c.model;
         EXPECT_EQ(fdc->GetClock(), FdcClock::Clock1MHz) << c.model;
         EXPECT_EQ(fdc->GetDataRate(), FdcDataRate::Rate250Kbps) << c.model;
+        EXPECT_FALSE(fdc->IsBaseClockTimeBase()) << c.model << ": the CPU-clock time base (TTD captures unchanged)";
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }
 
 /// endregion </Machine wiring>
+
+/// region <Separator rate changed during a command (Sprinter #BD latch)>
+
+// The Sprinter BIOS density probe (ROM page 0 #0669) issues READ ADDRESS at the current rate and, when its own
+// poll loop times out (~146 ms at 21 MHz, before the chip's 5-revolution Record Not Found), flips the #BD latch
+// and polls again. The data separator is outside the chip, so the running command sees the address marks at
+// the new rate at once: the ID of a 1.44 MB disk comes within one revolution of the flip
+TEST_F(WD1793Clock_Test, Latched_RateChangeDuringReadAddress_FindsTheId)
+{
+    WD1793CUT fdc(_context);
+    DiskImage image(1, 1);
+    FormatHD(image.getTrack(0), 0);
+    Prepare(fdc, image, 0);
+    fdc.SetClockPolicy(FdcClockPolicy::Latched);
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock1MHz, FdcDataRate::Rate250Kbps));
+
+    Issue(fdc, 0xC0);
+    // 150 ms at 250 kbit/s: nothing found, the command is still searching
+    for (size_t clk = fdc._time + 5000; clk <= 1000 + 150 * TSTATES_PER_MS; clk += 5000)
+    {
+        fdc._time = clk;
+        fdc.process();
+    }
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+    ASSERT_TRUE(fdc._statusRegister & WD1793::WDS_BUSY);
+
+    const size_t flip = fdc._time;
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps));
+    size_t idBytes = 0;
+    size_t end = 0;
+    for (size_t clk = flip + 8; clk <= flip + ROTATION * 2; clk += 8)
+    {
+        fdc._time = clk;
+        fdc.process();
+        if (fdc._drq_out)
+        {
+            fdc.readDataRegister();
+            idBytes++;
+        }
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            end = clk;
+            break;
+        }
+    }
+    ASSERT_NE(end, 0u);
+    EXPECT_LT(end - flip, ROTATION) << "the next ID field passes within one revolution";
+    EXPECT_EQ(idBytes, 6u) << "C H R N CRC CRC";
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR));
+    fdc.getDrive()->ejectDisk();
+}
+
+// A rate change that still finds nothing keeps the first deadline: Record Not Found 5 revolutions after the
+// command started, not 5 revolutions after the change
+TEST_F(WD1793Clock_Test, Latched_RateChangeOnAnUnformattedTrack_KeepsTheDeadline)
+{
+    WD1793CUT fdc(_context);
+    DiskImage image(1, 1);
+    Prepare(fdc, image, 1);  // cylinder 1 of a one-cylinder image: nothing under the head
+    fdc.SetClockPolicy(FdcClockPolicy::Latched);
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock1MHz, FdcDataRate::Rate250Kbps));
+
+    Issue(fdc, 0xC0);
+    const size_t start = fdc._time;
+    for (size_t clk = start + 5000; clk <= start + 2 * ROTATION; clk += 5000)
+    {
+        fdc._time = clk;
+        fdc.process();
+    }
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps));
+    const size_t end = RunUntilIdle(fdc, ROTATION * 6, 5000);
+    ASSERT_NE(end, 0u);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+    EXPECT_GE(end - start, 5 * ROTATION);
+    EXPECT_LT(end - start, 5 * ROTATION + 25000) << "not 5 more revolutions from the change (that would be 7)";
+    fdc.getDrive()->ejectDisk();
+}
+
+// Type I verify on an HD track at 250 kbit/s, the latch flipped while the chip looks for the ID: no Seek Error
+TEST_F(WD1793Clock_Test, Latched_RateChangeDuringVerify_Verifies)
+{
+    WD1793CUT fdc(_context);
+    DiskImage image(1, 1);
+    FormatHD(image.getTrack(0), 0);
+    Prepare(fdc, image, 0);
+    fdc.SetClockPolicy(FdcClockPolicy::Latched);
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock1MHz, FdcDataRate::Rate250Kbps));
+
+    fdc._dataRegister = 0;
+    Issue(fdc, 0x14);  // SEEK to the current track with verify
+    const size_t start = fdc._time;
+    for (size_t clk = start + 5000; clk <= start + 400 * TSTATES_PER_MS; clk += 5000)
+    {
+        fdc._time = clk;
+        fdc.process();
+    }
+    ASSERT_NE(fdc._state, WD1793::S_IDLE) << "the verify is still looking at 250 kbit/s";
+    const size_t flip = fdc._time;
+    ASSERT_TRUE(fdc.SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps));
+    const size_t end = RunUntilIdle(fdc, ROTATION * 6, 1000);
+    ASSERT_NE(end, 0u);
+    EXPECT_FALSE(fdc.getStatusRegister() & WD1793::WDS_SEEKERR);
+    EXPECT_LT(end - flip, ROTATION + 1000);
+    fdc.getDrive()->ejectDisk();
+}
+
+/// endregion </Separator rate changed during a command>
+
+/// region <Time base and drive select>
+
+namespace
+{
+/// The production time source (WD1793CUT stubs it)
+class WD1793TimeBaseCUT : public WD1793CUT
+{
+public:
+    explicit WD1793TimeBaseCUT(EmulatorContext* context) : WD1793CUT(context) {}
+    uint64_t Now()
+    {
+        WD1793::updateTimeFromEmulatorState();
+        return _time;
+    }
+};
+}  // namespace
+
+// The chip counts 3.5 MHz T-states whatever the CPU runs at: under a hardware turbo (ratio N) the frame's Z80::t
+// holds N CPU clocks per base T-state and is scaled back, so the disk keeps 300 rpm (fdc-clock-and-data-rate
+// research question 7, checked with the Sprinter at 21 MHz). Opt-in per machine: the Sprinter sets it
+TEST_F(WD1793Clock_Test, TimeBase_FollowsTheBaseClockUnderHardwareTurbo)
+{
+    WD1793TimeBaseCUT fdc(_context);
+    EmulatorState& state = _context->emulatorState;
+    state.t_states = 10 * 71680;
+
+    // Off (every machine but the Sprinter for now): the frame's CPU clocks as they are
+    state.hw_turbo_ratio_applied = 2;
+    _z80->t = 2 * 35000;
+    EXPECT_FALSE(fdc.IsBaseClockTimeBase());
+    EXPECT_EQ(fdc.Now(), 10u * 71680 + 2 * 35000);
+
+    fdc.SetBaseClockTimeBase(true);
+    state.hw_turbo_ratio_applied = 1;
+    _z80->t = 35000;
+    EXPECT_EQ(fdc.Now(), 10u * 71680 + 35000) << "ratio 1: the plain sum";
+
+    state.hw_turbo_ratio_applied = 6;  // Sprinter 21 MHz
+    _z80->t = 6 * 35000;
+    EXPECT_EQ(fdc.Now(), 10u * 71680 + 35000);
+    _z80->t = 6 * 71680 - 1;  // the last CPU clock of the frame
+    EXPECT_LT(fdc.Now(), 11u * 71680) << "monotonic across the frame boundary";
+
+    state.hw_turbo_ratio_applied = 1;
+    state.t_states = 0;
+    _z80->t = 0;
+}
+
+// Beta 128 system register bits 1-0 pick the drive the chip talks to; the reset bit leaves the selection (it is
+// the interface's latch), a spinning motor carries over, a chip reset goes back to drive A
+TEST_F(WD1793Clock_Test, DriveSelect_BetaRegisterPicksTheDrive)
+{
+    WD1793CUT fdc(_context);
+    FDD* driveA = _context->coreState.diskDrives[0];
+    FDD* driveB = _context->coreState.diskDrives[1];
+    ASSERT_NE(driveA, nullptr);
+    ASSERT_NE(driveB, nullptr);
+    ASSERT_EQ(fdc._selectedDrive, driveA);
+
+    fdc.processBeta128(0x3D);  // drive B, side 0, MFM, not in reset
+    EXPECT_EQ(fdc._selectedDrive, driveB);
+    EXPECT_EQ(fdc.getSelectedDriveIndex(), 1);
+
+    fdc.prolongFDDMotorRotation();  // motor on (drive B)
+    ASSERT_TRUE(driveB->getMotor());
+    fdc.processBeta128(0x3E);  // drive C
+    EXPECT_EQ(fdc._selectedDrive, _context->coreState.diskDrives[2]);
+    EXPECT_TRUE(_context->coreState.diskDrives[2]->getMotor()) << "the shared motor line follows the selection";
+    EXPECT_FALSE(driveB->getMotor());
+
+    fdc.processBeta128(0x01);  // reset bit active, drive B
+    EXPECT_EQ(fdc._selectedDrive, driveB) << "the reset does not touch the select latch";
+    EXPECT_EQ(fdc.getSelectedDriveIndex(), 1);
+
+    fdc.reset();
+    EXPECT_EQ(fdc._selectedDrive, driveA);
+    EXPECT_EQ(fdc.getSelectedDriveIndex(), 0);
+
+    fdc.processBeta128(0x3C);  // drive A: what every TR-DOS machine selects
+    EXPECT_EQ(fdc._selectedDrive, driveA);
+}
+
+/// endregion </Time base and drive select>
