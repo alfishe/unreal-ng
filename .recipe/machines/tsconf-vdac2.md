@@ -22,27 +22,31 @@ surface calls), design in
 
 ## Setup
 
-The card needs three things, all fixed when the machine is created:
+- **The machine:** `TSL-VDAC2` (alias `TSCONF-VDAC2`), a machine variant: TS-Conf in the
+  firmware's VDAC2 build (STATUS VDAC_VER = 7, BLT2) with the card fitted and no IDE (the
+  card takes the connector). unreal-qt: Machine menu -> **TS-Conf + VDAC2 (FT812)**. Every
+  automation surface creates it by name and lists it with the models (`variant: true`);
+  an instance reports `variant: "TSL-VDAC2"`.
+- **The build:** the FT812 library (`eve-emu`) is vendored at `core/src/3rdparty/eve-emu`
+  and built by default (`ENABLE_VDAC2=ON`). `-DEVE_EMU_DIR=` points at another `eve-emu`
+  checkout; with `ENABLE_VDAC2=OFF` the variant is not offered and a VDAC2 configuration
+  refuses to load ("this build has no VDAC2 support").
+- **The same board from an ini** (any TS-Conf config, `configs/ts-conf/unreal.ini`):
 
-1. **A build with the FT812 library.** CMake `-DENABLE_VDAC2=ON`. The default is
-   OFF until the library is a submodule; point `-DEVE_EMU_DIR=` at an `eve-emu`
-   checkout. Without it, a VDAC2 configuration refuses to load ("this build has no
-   VDAC2 support").
-2. **The VDAC2 firmware build in the TS-Conf config** (`configs/ts-conf/unreal.ini`):
+  ```ini
+  [MISC]
+  TS_VDAC2=1            ; the VDAC2 build: the card fitted, no IDE
 
-   ```ini
-   [MISC]
-   TS_VDAC2=1            ; STATUS VDAC_VER = 7, BLT2, no IDE (the card takes the connector)
+  [VDAC2]
+  RomImage=rom/ft81x.rom    ; the FT812's ROM fonts (optional: without it ROM text is blank)
+  CaptureFile=              ; optional: capture the bus from the machine's creation
+  ```
 
-   [VDAC2]
-   RomImage=rom/ft81x.rom    ; the FT812's ROM fonts (optional: without it ROM text is blank)
-   CaptureFile=              ; optional: capture the bus from the machine's creation
-   ```
-
-3. **The ROM image** (optional, for `CMD_TEXT` and the ROM fonts): extract it from a
-   Bridgetek EVE emulator DLL with
-   [tools/machines/tsconf/vdac2/extract-ft81x-rom.py](../../tools/machines/tsconf/vdac2/README.md).
-   It is never committed.
+- **The ROM image** (optional, for `CMD_TEXT` and the ROM fonts): extract it from a
+  Bridgetek EVE emulator DLL with
+  [tools/machines/tsconf/vdac2/extract-ft81x-rom.py](../../tools/machines/tsconf/vdac2/README.md)
+  and put it next to the other ROMs as `rom/ft81x.rom`. It is never committed; the games
+  run without it (R-Type, Heroes II and Zuma draw their own text).
 
 Games read their data files from the SD card: insert the game's folder into slot
 `sd.zc`, then open its `.spg`. Zuma expects to be started from Wild Commander (it
@@ -51,7 +55,7 @@ takes its path from WC's panel page): put it on a WC SD image instead.
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"create","model":"TSL"}
+emulator_manage {"action":"create","model":"TSL-VDAC2"}
 invoke_api      {"method":"POST","path":"/api/v1/emulator/{id}/media/sd.zc/insert",
                  "body":{"path":"/path/to/R-Type VDAC2"}}
 load_software   {"path":"/path/to/R-Type VDAC2/rtype_vdac2.spg"}
@@ -66,7 +70,7 @@ capture_media   {"action":"vdac2_capture_stop"}
 ## WebAPI
 
 ```bash
-EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"TSL"}' | jq -r .id)
+EMU=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"TSL-VDAC2"}' | jq -r .id)
 curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: application/json' \
      -d '{"path":"/path/to/R-Type VDAC2"}'
 curl -s -X POST "$BASE/emulator/$EMU/snapshot/load" -H 'Content-Type: application/json' \

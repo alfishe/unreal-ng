@@ -42,6 +42,7 @@ const std::vector<std::string> kModelIdFiles = {
     "emulator/memory/rom.cpp",             // per-model ROM path / set / size rows
     "emulator/ports/portdecoder.cpp",      // the port decoder factory + IsModelSupported
     "emulator/cpu/core.cpp",               // the memory factory (TsConfMemory)
+    "emulator/machinevariants.cpp",        // the TSL-VDAC2 machine variant (TS-Conf with the VDAC2 card)
 };
 
 /// Tokens of the former half-port; none may appear outside the TSConf directories

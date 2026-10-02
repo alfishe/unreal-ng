@@ -1,4 +1,6 @@
 #include "emulatormanager.h"
+
+#include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
 #include "common/filehelper.h"
@@ -203,12 +205,42 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
     return nullptr;
 }
 
+namespace
+{
+
+/// The config override of a machine variant: its board configuration, then the
+/// caller's override
+std::function<void(CONFIG&)> VariantOverride(const MachineVariant& variant, std::function<void(CONFIG&)> caller)
+{
+    return [apply = variant.apply, caller = std::move(caller)](CONFIG& config) {
+        apply(config);
+        if (caller)
+            caller(config);
+    };
+}
+
+} // namespace
+
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
     // A ZX-Poly configuration name creates the whole group; checked before the
     // lock, since the group creates its members through this method
     if (ZXPolyGroup::FindConfiguration(modelName))
         return CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
+
+    // A machine variant: its base model with the variant's board configuration
+    // (the caller's override, if any, applies after it)
+    if (const MachineVariant* variant = MachineVariants::Find(modelName))
+    {
+        std::string reason;
+        if (!variant->supported(&reason))
+        {
+            SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
+            return nullptr;
+        }
+        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, variant->ramKb, level, outError,
+                                             VariantOverride(*variant, std::move(configOverride)));
+    }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
@@ -305,6 +337,25 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
     {
         SetCreateError(outError, "'" + modelName + "' is a ZX-Poly configuration: its RAM size is fixed, omit ram_size");
         return nullptr;
+    }
+
+    // A machine variant runs with its base model's fixed RAM size
+    if (const MachineVariant* variant = MachineVariants::Find(modelName))
+    {
+        if (ramSize != variant->ramKb)
+        {
+            SetCreateError(outError, "'" + std::string(variant->name) + "' runs with " + std::to_string(variant->ramKb) +
+                                         "KB RAM: omit ram_size or pass " + std::to_string(variant->ramKb));
+            return nullptr;
+        }
+        std::string reason;
+        if (!variant->supported(&reason))
+        {
+            SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
+            return nullptr;
+        }
+        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, ramSize, level, outError,
+                                             VariantOverride(*variant, std::move(configOverride)));
     }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -428,6 +479,11 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
     identity.Valid = true;
 
     const CONFIG& config = context->config;
+    if (const MachineVariant* variant = MachineVariants::Of(config))
+    {
+        identity.Variant = variant->name;
+        identity.VariantTitle = variant->title;
+    }
 
     // Use direct model lookup instead of iterating a temporary vector
     // (the vector copies struct with pointers, which should be safe, but

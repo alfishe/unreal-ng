@@ -13,6 +13,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/machinevariants.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
@@ -780,6 +781,33 @@ void MenuManager::createMachineMenu()
         });
     }
 
+    // Machine variants: a base model with a fixed board (TS-Conf + VDAC2), switched
+    // to like any model; only the ones this build can create
+    bool variantSeparator = false;
+    for (const MachineVariant& variant : MachineVariants::All())
+    {
+        const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base) || !variant.supported(nullptr))
+            continue;
+        if (!variantSeparator)
+        {
+            _machineMenu->addSeparator();
+            variantSeparator = true;
+        }
+        const QString key = QString("%1:%2").arg(QString::fromUtf8(variant.name)).arg(variant.ramKb);
+        QAction* action = _machineMenu->addAction(QString::fromUtf8(variant.title));
+        action->setCheckable(true);
+        action->setData(key);
+        action->setStatusTip(QString::fromUtf8(variant.description));
+        _machineModelGroup->addAction(action);
+        _machineVariantActions.push_back(action);
+
+        connect(action, &QAction::triggered, this, [this, key]() {
+            if (key != _currentModelShortName)
+                emit machineModelChangeRequested(key);
+        });
+    }
+
     // Set default selection (first entry)
     if (!_machineModelActions.empty())
     {
@@ -913,8 +941,23 @@ void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEm
     MEM_MODEL currentModel = ctx->config.mem_model;
     uint32_t currentRam = ctx->config.ramsize;
 
+    // A machine variant (TS-Conf + VDAC2): its own entry, not the base model's
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*activeEmulator);
+    if (!identity.Variant.empty())
+    {
+        for (QAction* action : _machineVariantActions)
+        {
+            if (action->data().toString().section(':', 0, 0) == QString::fromStdString(identity.Variant))
+            {
+                action->setChecked(true);
+                _currentModelShortName = action->data().toString();
+                return;
+            }
+        }
+    }
+
     // A ZX-Poly master: the configuration of its base model
-    if (EmulatorManager::GetMachineIdentity(*activeEmulator).ZXPoly)
+    if (identity.ZXPoly)
     {
         for (QAction* action : _zxpolyConfigurationActions)
         {
