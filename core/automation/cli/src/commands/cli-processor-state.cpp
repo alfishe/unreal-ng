@@ -61,10 +61,14 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
-        ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock, video, Z84C15, floppy, BIOS" << NEWLINE;
+        ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;
         ss << "  sprinter ports [map=0-3] [dos=0|1] [pn5=0|1] [rw=r|w|rw] - the decoded port table (page #40)" << NEWLINE;
         ss << "  sprinter port <hex> [rw=r|w] [map=..] [dos=..] [pn5=..]  - one port: index, code, name" << NEWLINE;
         ss << "  sprinter text  - the screen text of the mode table's text squares (BIOS, DSS)" << NEWLINE;
+        ss << "  sprinter video [page=0|1] [all=1] [squares=1] - the mode table per square (map: one letter a square)" << NEWLINE;
+        ss << "  sprinter palette [0-7|all|used] - the palettes, R G B per pen as video RAM holds them" << NEWLINE;
+        ss << "  sprinter ring  - the Covox-Blaster sample ring (play / write index marked)" << NEWLINE;
+        ss << "  sprinter bios [<3.04|3.06|3.07|file|-> [fast_start=0|1] [accel_int_suspend=0|1] [reset=0|1]] - BIOS images; select" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
@@ -1165,76 +1169,11 @@ void CLIProcessor::HandleStateAudioCovox(const ClientSession& session, EmulatorC
 
 void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context)
 {
+    // One report for every interface (DeviceState::AudioChannels: the mixer devices included)
     std::stringstream ss;
     ss << "Audio Channels Mixer State" << NEWLINE;
     ss << "==========================" << NEWLINE;
-    ss << NEWLINE;
-
-    SoundManager* soundManager = context->pSoundManager;
-    if (!soundManager)
-    {
-        ss << "Error: Sound manager not available" << NEWLINE;
-        session.SendResponse(ss.str());
-        return;
-    }
-
-    // Beeper state
-    ss << "Beeper:" << NEWLINE;
-    ss << "  Status: Available" << NEWLINE;
-    ss << "  Current Level: Unknown" << NEWLINE;
-    ss << "  Active: Unknown" << NEWLINE;
-    ss << NEWLINE;
-
-    // AY channels
-    bool hasAY = soundManager->hasTurboSound();
-    ss << "AY Channels:" << NEWLINE;
-    if (hasAY)
-    {
-        int ayCount = soundManager->getAYChipCount();
-        for (int chipIdx = 0; chipIdx < ayCount; chipIdx++)
-        {
-            SoundChip_AY8910* chip = soundManager->getAYChip(chipIdx);
-            if (!chip)
-                continue;
-
-            ss << "  Chip " << chipIdx << " (AY-3-8912):" << NEWLINE;
-            const auto* toneGens = chip->getToneGenerators();
-            const char* channelNames[] = {"A", "B", "C"};
-            for (int ch = 0; ch < 3; ch++)
-            {
-                const auto& toneGen = toneGens[ch];
-                ss << "    Channel " << channelNames[ch] << ": "
-                   << (toneGen.toneEnabled() || toneGen.noiseEnabled() ? "ON" : "OFF");
-                ss << " (Vol: " << (int)toneGen.volume() << "/15";
-                if (toneGen.envelopeEnabled())
-                    ss << ", Envelope";
-                ss << ")" << NEWLINE;
-            }
-        }
-    }
-    else
-    {
-        ss << "  No AY chips available" << NEWLINE;
-    }
-    ss << NEWLINE;
-
-    // General Sound (implementation: cli-processor-gs.cpp)
-    ss << "General Sound:" << NEWLINE;
-    ss << "  Status: " << (soundManager->hasGeneralSound() ? "Available (see 'state audio gs')" : "Not fitted") << NEWLINE;
-    ss << NEWLINE;
-
-    // Covox (not implemented)
-    ss << "Covox DAC:" << NEWLINE;
-    ss << "  Status: Not available" << NEWLINE;
-    ss << NEWLINE;
-
-    // Master state
-    ss << "Master Audio:" << NEWLINE;
-    ss << "  Muted: " << (soundManager->isMuted() ? "Yes" : "No") << NEWLINE;
-    ss << "  Sample Rate: " << soundManager->getCoreRate() << " Hz" << NEWLINE;
-    ss << "  Channels: Stereo" << NEWLINE;
-    ss << "  Bit Depth: 16-bit" << NEWLINE;
-
+    ss << DeviceState::ToText(DeviceState::AudioChannels(context));
     session.SendResponse(ss.str());
 }
 

@@ -5,6 +5,8 @@
 #include "pch.h"
 
 #include "debugger/analyzers/rom-print/screenocr.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/video/sprinter/sprintervideoram.h"
 #include "debugger/analyzers/rom-print/zxspectrumfont.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -325,6 +327,38 @@ TEST(ScreenOCRTextMode_Test, AtmTextModeIsReadFromTheCharacterCodes)
     EXPECT_EQ(text.find('\n'), 80u) << "80 columns";
     EXPECT_TRUE(ScreenOCR::containsText(emulator->GetId(), "HI"));
     EXPECT_FALSE(ScreenOCR::containsText(emulator->GetId(), "HIX"));
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The Sprinter (automation audit G8): a text picture's squares are read like a text layer (DeviceState::SprinterText),
+// so an agent that does not know the machine reads BIOS / DSS screens with the OCR (Spectrum mode stays a ZX screen,
+// SprinterBoot_Test.Dss162_SpectrumModeTrDosReadsATrd). A machine build: ~20-100 ms
+TEST(ScreenOCRTextMode_Test, SprinterTextSquaresAreRead)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    if (!emulator)
+        GTEST_SKIP() << "no Sprinter (data/rom/sprinter/sp2k-3.04.rom?)";
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    SprinterVideoRam& vram = decoder->GetVideoRam();
+    const uint8_t page = decoder->GetPldState().rgMod & 1;
+    decoder->GetPldState().allMode = 0x01;  // Sprinter mode (not the Spectrum screen)
+    for (uint8_t b = 0; b < 32; b++)
+    {
+        for (uint8_t a = 0; a < 40; a++)
+        {
+            const uint32_t square = SprinterVideoRam::ModeAddress(a, b, page);
+            vram.Write(square, 0x30);  // text 40: the whole picture is text
+            vram.Write(square + 1, ' ');
+        }
+    }
+    vram.Write(SprinterVideoRam::ModeAddress(0, 0, page) + 1, 'B');
+
+    const std::string text = ScreenOCR::ocrScreen(emulator->GetId());
+    EXPECT_EQ(text.substr(0, 1), "B") << text.substr(0, 200);
+    EXPECT_TRUE(ScreenOCR::containsText(emulator->GetId(), "B"));
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

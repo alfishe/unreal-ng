@@ -1,5 +1,9 @@
 #pragma once
 
+#include "emulator/memory/devicememory.h"
+#include "emulator/sound/audiomixer.h"
+#include "emulator/video/framebufferexport.h"
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include <sol/sol.hpp>
@@ -851,6 +855,100 @@ public:
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
             });
+        });
+
+        // Device memory regions (emulator/memory/devicememory.h): the Sprinter's video RAM "vram".
+        // memory_regions() -> {available, regions = {...}}; region_read(name, offset, len) -> table of bytes
+        // (nil, error on a bad range); region_write(name, offset, {bytes} | "hex") -> true | nil, error;
+        // region_save(name, path [, offset, len]) / region_load(name, path [, offset]) -> true | nil, error
+        // framebuffer([format]): the picture as raw pixels (FramebufferExport): {width, height, format, encoding,
+        // data = a string of bytes}; "rgba" (default) or "index" (the Sprinter's pens); nil, error otherwise
+        lua.set_function("framebuffer", [this](sol::this_state s, sol::optional<std::string> format) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            FramebufferExport::Frame frame;
+            std::string error;
+            if (!FramebufferExport::Capture(emulator->GetContext(), format.value_or("rgba"), frame, error))
+                return mouseError(s, error);
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["width"] = frame.width;
+            t["height"] = frame.height;
+            t["format"] = frame.format;
+            t["encoding"] = frame.encoding;
+            t["data"] = std::string(frame.bytes.begin(), frame.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        lua.set_function("memory_regions", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::MemoryRegions(emulator->GetContext()));
+        });
+        lua.set_function("region_read", [this](sol::this_state s, const std::string& name, uint32_t offset,
+                                                sol::optional<uint32_t> length) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            std::string error;
+            if (!DeviceMemory::Read(emulator->GetContext(), name, offset, length.value_or(256), bytes, error))
+                return mouseError(s, error);
+            sol::state_view view(s);
+            sol::table data = view.create_table(static_cast<int>(bytes.size()), 0);
+            for (size_t i = 0; i < bytes.size(); i++)
+                data[i + 1] = bytes[i];
+            sol::variadic_results out;
+            out.push_back(data);
+            return out;
+        });
+        lua.set_function("region_write", [this](sol::this_state s, const std::string& name, uint32_t offset,
+                                                 sol::object data) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            if (data.get_type() == sol::type::string)
+            {
+                if (!DeviceMemory::ParseHexBytes(data.as<std::string>(), bytes))
+                    return mouseError(s, "data: a table of bytes or a hex string (\"0000A8\")");
+            }
+            else if (data.get_type() == sol::type::table)
+            {
+                sol::table t = data.as<sol::table>();
+                for (size_t i = 1; i <= t.size(); i++)
+                    bytes.push_back(static_cast<uint8_t>(t.get<int>(i) & 0xFF));
+            }
+            else
+                return mouseError(s, "data: a table of bytes or a hex string");
+            std::string error;
+            if (!DeviceMemory::Write(emulator->GetContext(), name, offset, bytes, "Lua region write", error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(sol::make_object(s, true));
+            return out;
+        });
+        lua.set_function("region_save", [this](sol::this_state s, const std::string& name, const std::string& path,
+                                                sol::optional<uint32_t> offset, sol::optional<uint32_t> length) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!DeviceMemory::Save(emulator->GetContext(), name, path, offset.value_or(0), length.value_or(0), error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(sol::make_object(s, true));
+            return out;
+        });
+        lua.set_function("region_load", [this](sol::this_state s, const std::string& name, const std::string& path,
+                                                sol::optional<uint32_t> offset) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            size_t written = 0;
+            if (!DeviceMemory::Load(emulator->GetContext(), name, path, offset.value_or(0), written, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(sol::make_object(s, static_cast<double>(written)));
+            return out;
         });
 
         lua.set_function("memory_info", [this]() -> sol::table {
@@ -2475,6 +2573,85 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::SprinterText(emulator->GetContext()));
         });
+        // sprinter_video{page=0|1, all=true, squares=false}: the mode table per square (DeviceState::SprinterVideo)
+        lua.set_function("sprinter_video", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::boolean)
+                    return value.as<bool>() ? "1" : "0";
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            DeviceState::SprinterVideoQuery query;
+            std::string error;
+            if (!DeviceState::SprinterVideoQueryFromStrings(text("page"), text("all"), text("squares"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterVideo(emulator->GetContext(), query)));
+            return out;
+        });
+        // sprinter_palette([k]): k = 0-7, "all" or "used" (default) (DeviceState::SprinterPalette)
+        lua.set_function("sprinter_palette", [this](sol::this_state s, sol::object k) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string text;
+            if (k.get_type() == sol::type::number)
+                text = std::to_string(k.as<long long>());
+            else if (k.get_type() == sol::type::string)
+                text = k.as<std::string>();
+            int palette = DeviceState::kSprinterPalettesUsed;
+            std::string error;
+            if (!DeviceState::SprinterPaletteFromString(text, palette, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterPalette(emulator->GetContext(), palette)));
+            return out;
+        });
+        lua.set_function("sprinter_bios", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterBios(emulator->GetContext()));
+        });
+        // sprinter_bios_select{bios="3.06", fast_start=false, accel_int_suspend=false, reset=true}: the image loads at
+        // the reset (now unless reset=false) -> the BIOS report, or nil, error (SprinterBios, DeviceState::SprinterBiosSelect)
+        lua.set_function("sprinter_bios_select", [this](sol::this_state s, sol::table options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                sol::object value = options[key];
+                if (value.get_type() == sol::type::boolean)
+                    return value.as<bool>() ? "1" : "0";
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            SprinterBios::Options parsed;
+            std::string error;
+            if (!SprinterBios::OptionsFromStrings(text("bios"), text("fast_start"), text("accel_int_suspend"), text("reset"),
+                                                  parsed, error))
+                return mouseError(s, error);
+            const StateNode report = DeviceState::SprinterBiosSelect(emulator->GetContext(), parsed);
+            const StateNode* available = report.find("available");
+            if (available && !available->b)
+                return mouseError(s, report.find("description") ? report.find("description")->s : std::string("failed"));
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, report));
+            return out;
+        });
+        lua.set_function("sprinter_sound_ring", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterSoundRing(emulator->GetContext()));
+        });
         lua.set_function("sprinter_ports", [this, sprinterQuery](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");
@@ -4053,108 +4230,78 @@ public:
                 return result;
             }
 
-            const CONFIG& config = context->config;
-            EmulatorState& state = context->emulatorState;
-            Memory* memory = context->pMemory;
-
-            const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
-                                 config.mem_model == MM_PLUS2 || config.mem_model == MM_PLUS2A ||
-                                 config.mem_model == MM_PLUS3);
-
-            // mode: "active" hashes the RAM pages the CURRENT video mode actually
-            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
-            // "default" / omitted keeps the model-dependent pages 5/7
-            bool activeMode = false;
+            // One computation for every interface (ScreenDigestCompute): the same pages, surface and change tracking
+            ScreenDigestQuery query;
             if (modeOpt.has_value())
             {
                 if (*modeOpt == "active")
-                    activeMode = true;
+                    query.active = true;
                 else if (*modeOpt != "default")
                 {
                     result["error"] = "mode must be 'default' or 'active'";
                     return result;
                 }
             }
-
-            const uint64_t previousDigest = state.last_screen_digest;
-            const uint64_t previousFrame = state.last_screen_digest_frame;
-
-            uint64_t combined = ScreenDigest::kInitialValue;
-
             if (startOpt.has_value() || endOpt.has_value())
             {
-                const uint16_t start = static_cast<uint16_t>(startOpt.value_or(0x4000));
-                const uint16_t end = static_cast<uint16_t>(endOpt.value_or(0x7FFF));
-                if (start > end)
+                query.range = true;
+                query.start = static_cast<uint16_t>(startOpt.value_or(0x4000));
+                query.end = static_cast<uint16_t>(endOpt.value_or(0x7FFF));
+                if (query.start > query.end)
                 {
                     result["error"] = "start must be <= end";
                     return result;
                 }
-
-                const uint64_t rangeDigest = ScreenDigest::DigestZ80Range(memory, start, end);
-                for (int shift = 0; shift < 64; shift += 8)
-                    combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> shift) & 0xFF));
-
-                result["range_start"] = start;
-                result["range_end"] = end;
-                result["range_digest"] = rangeDigest;
+            }
+            query.includeBorder = includeBorderOpt.value_or(true);
+            const ScreenDigestResult r = ScreenDigestCompute::Compute(context, query);
+            if (!r.ok)
+            {
+                result["error"] = r.error;
+                return result;
+            }
+            if (r.range)
+            {
+                result["range_start"] = r.start;
+                result["range_end"] = r.end;
+                result["range_digest"] = r.rangeDigest;
+            }
+            else if (r.deviceSurface)
+            {
+                // A picture outside the RAM pages (the Sprinter's video RAM)
+                sol::table activeSurface = lua_view.create_table();
+                activeSurface["video_mode"] = r.videoMode;
+                activeSurface["memory"] = r.surface.name;
+                activeSurface["bytes"] = r.surface.bytes;
+                activeSurface["digest"] = r.surface.digest;
+                result["active_surface"] = activeSurface;
             }
             else
             {
-                std::vector<uint16_t> banks;
-                if (activeMode)
+                if (r.activeSurface)
                 {
-                    // Surface actually displayed by the current video mode: ZX modes
-                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
-                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
-                    // flips the digest even with constant underlying pages
-                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
-                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
-
                     sol::table pages = lua_view.create_table();
-                    for (uint16_t page : banks)
+                    for (uint16_t page : r.activePages)
                         pages.add(page);
                     sol::table activeSurface = lua_view.create_table();
-                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    activeSurface["video_mode"] = r.videoMode;
                     activeSurface["pages"] = pages;
                     result["active_surface"] = activeSurface;
                 }
-                else
-                {
-                    banks.push_back(ScreenDigest::kScreen0RAMPage);
-                    if (is128K)
-                        banks.push_back(ScreenDigest::kScreen1RAMPage);
-                }
-
                 sol::table perBank = lua_view.create_table();
-                for (uint16_t page : banks)
-                {
-                    const uint64_t digest = ScreenDigest::DigestRAMPage(memory, page);
-                    for (int shift = 0; shift < 64; shift += 8)
-                        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((digest >> shift) & 0xFF));
+                for (const auto& [page, digest] : r.banks)
                     perBank[page] = digest;
-                }
                 result["banks"] = perBank;
             }
-
-            const bool includeBorder = includeBorderOpt.value_or(true);
-            if (includeBorder)
-            {
-                const uint8_t borderColor = context->pScreen->GetBorderColor();
-                combined = ScreenDigest::MixValue(combined, borderColor);
-                result["border_color"] = borderColor;
-            }
-
-            state.last_screen_digest = combined;
-            state.last_screen_digest_frame = state.frame_counter;
-
-            result["combined"] = combined;
-            result["frame"] = static_cast<uint64_t>(state.frame_counter);
+            if (r.includeBorder)
+                result["border_color"] = r.border;
+            result["combined"] = r.combined;
+            result["frame"] = r.frame;
             result["algorithm"] = "fnv1a-64";
-            result["changed"] = combined != previousDigest;
-            result["previous_digest"] = previousDigest;
-            if (previousFrame != 0)
-                result["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
+            result["changed"] = r.changed;
+            result["previous_digest"] = r.previousDigest;
+            if (r.previousFrame != 0)
+                result["previous_digest_frame"] = r.previousFrame;
             return result;
         });
 
@@ -4404,6 +4551,13 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoAddressZ80(ctx, address));
         });
+        // video_changes([frames]): the video change log (DeviceState::VideoChanges): 1 = the last completed frame,
+        // 2 (default) = the current one too while paused
+        lua.set_function("video_changes", [this](sol::this_state s, sol::optional<unsigned> frames) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::VideoChanges(emulator->GetContext(), frames.value_or(2)));
+        });
         lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
@@ -4644,7 +4798,39 @@ public:
         });
 
         // Buffered stereo audio capture (records into analyzer RAM, then export)
-        lua.set_function("audio_capture_start", [this](double seconds) -> sol::table {
+        // audio_mixer(): the per-device mixer (DeviceState::AudioMixer); audio_mixer_set(source, {muted=, solo=,
+        // volume=, gain_db=}) -> the mixer, or nil, error (AudioMixer::Apply; source "master" takes muted only)
+        lua.set_function("audio_mixer", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::AudioMixer(emulator->GetContext()));
+        });
+        lua.set_function("audio_mixer_set", [this](sol::this_state s, const std::string& source, sol::table options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                sol::object value = options[key];
+                if (value.get_type() == sol::type::boolean)
+                    return value.as<bool>() ? "1" : "0";
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<double>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            AudioMixer::Change change;
+            std::string error;
+            if (!AudioMixer::ChangeFromStrings(text("muted"), text("solo"), text("volume"), text("gain_db"), change, error) ||
+                !AudioMixer::Apply(emulator->GetContext(), source, change, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::AudioMixer(emulator->GetContext())));
+            return out;
+        });
+
+        // audio_capture_start(seconds [, source]): source = a mixer key (beeper, ay1, covox, gs ...) records that
+        // device's own buffer; default the master mix
+        lua.set_function("audio_capture_start", [this](double seconds, sol::optional<std::string> sourceKey) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -4663,13 +4849,22 @@ public:
                 manager ? manager->getAnalyzer<AudioCaptureAnalyzer>("audiocapture") : nullptr;
             if (!capture || !manager) { result["error"] = "audio capture analyzer not available"; return result; }
 
+            AudioSourceType source = AudioSourceType::MasterMix;
+            std::string sourceError;
+            if (!AudioMixer::Capturable(context, sourceKey.value_or(""), source, sourceError))
+            {
+                result["error"] = sourceError;
+                return result;
+            }
+
             const size_t rate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
             const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;
 
             manager->activate("audiocapture");
-            capture->startCapture(target);
+            capture->startCapture(target, source);
 
             result["armed"] = capture->isCaptureArmed();
+            result["source"] = AudioMixer::Key(source);
             result["target_samples"] = static_cast<uint64_t>(target);
             result["sample_rate"] = static_cast<uint64_t>(rate);
             return result;

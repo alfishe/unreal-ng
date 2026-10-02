@@ -17,6 +17,7 @@
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
+#include "emulator/video/sprinter/sprintervramregion.h"
 
 class SprinterMemory;
 class SprinterVideoRenderer;
@@ -118,6 +119,10 @@ public:
     SprinterPldState& GetPldState() { return _pld; }
     const SprinterPldState& GetPldState() const { return _pld; }
     SprinterVideoRam& GetVideoRam() { return _vram; }
+    /// The PC the decoder got with the I/O in progress (the Z84C15 library keeps no m1_pc)
+    uint16_t IoPc() const override { return _pc; }
+    /// The video RAM by name on every automation interface (devicememory.h)
+    void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) override { out.push_back(&_vramRegion); }
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
     SprinterInput& GetInput() { return _input; }
@@ -169,6 +174,9 @@ public:
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
     /// Code #89 (Covox-Blaster control): the last value written
     uint8_t CblControl() const { return _cbl.State().control; }
+    /// The turbo wait overlay (SprinterWaits; null until the CPU exists): the windows it marks
+    /// (SlotWaits) are the ones whose accesses wait at 21 MHz - automation reports it
+    const SprinterWaits* GetWaits() const { return _waits.get(); }
     /// The Covox / Covox-Blaster DAC (S6, tdd-accel-sound-input §2)
     CovoxBlaster& GetCovoxBlaster() { return _cbl; }
     const CovoxBlaster& GetCovoxBlaster() const { return _cbl; }
@@ -214,6 +222,8 @@ private:
     void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
+    /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
+    void NoteVideoLatches();
     void LoadFastRamImage();
 
     uint8_t FdcRead(uint8_t code);
@@ -227,6 +237,7 @@ private:
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
+    SprinterVramRegion _vramRegion{_vram};
     SprinterIntSource _intSource{_context, _vram};
     /// The standard accelerator and the one in use (hook 4)
     SprinterAccelerator _accelerator{_context, _pld};

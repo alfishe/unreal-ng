@@ -59,10 +59,9 @@ public:
         if (_beforeChange)
             _beforeChange();
         _data[addr] = value;
-        if (IsIntModeByte(addr) && (((old & 0xFC) == 0xFC) || ((value & 0xFC) == 0xFC)) && _onIntModeChange)
-            _onIntModeChange();
-        if ((addr & (kRowBytes - 1)) >= kPaletteColumn)
-            UpdatePen(addr);
+        // Columns #000-#2FF (screens, fonts: almost every write) need nothing more: one test
+        if ((addr & (kRowBytes - 1)) >= kModeTableColumn) [[unlikely]]
+            TableWrite(addr, old, value);
     }
 
     uint8_t Read(uint32_t addr) const { return _data[addr & (kSize - 1)]; }
@@ -115,8 +114,24 @@ public:
     void SetIntModeListener(std::function<void()> listener) { _onIntModeChange = std::move(listener); }
     /// Called before a write changes any byte (the renderer catches up with the beam)
     void SetBeforeChangeListener(std::function<void()> listener) { _beforeChange = std::move(listener); }
+    /// Called after a write changed a mode table byte (#300-#39F) or a palette byte (#3E0-#3FF):
+    /// (address, isPalette) - the video change log counts them (videowritelog.h)
+    void SetTableWriteListener(std::function<void(uint32_t, bool)> listener) { _onTableWrite = std::move(listener); }
 
 private:
+    /// A changed byte in columns #300-#3FF: the frame INT, the pen, the change log
+    void TableWrite(uint32_t addr, uint8_t old, uint8_t value)
+    {
+        const uint32_t column = addr & (kRowBytes - 1);
+        if (IsIntModeByte(addr) && (((old & 0xFC) == 0xFC) || ((value & 0xFC) == 0xFC)) && _onIntModeChange)
+            _onIntModeChange();
+        const bool palette = column >= kPaletteColumn;
+        if (palette)
+            UpdatePen(addr);
+        if (_onTableWrite && (palette || column < kModeTableEnd))
+            _onTableWrite(addr, palette);
+    }
+
     void ResetPalette()
     {
         for (uint32_t pen = 0; pen < kPens; pen++)
@@ -134,4 +149,5 @@ private:
     std::unique_ptr<uint32_t[]> _palette;
     std::function<void()> _onIntModeChange;
     std::function<void()> _beforeChange;
+    std::function<void(uint32_t, bool)> _onTableWrite;
 };

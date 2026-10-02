@@ -312,14 +312,16 @@ const char* const kMachineSprinter = R"md(# Peters Plus Sprinter Sp2000 (model S
 
 A PC-like Spectrum clone: Z84C15 CPU (3.5 or 21 MHz), 4 MB RAM, a PLD (ACEX EP1K30) that the BIOS loads at power-on,
 256 KB flash BIOS, its own video modes (text 40 / 80 columns, 320 x 256 x 256 colors, 640 x 256 x 16 colors, chosen
-per 8 x 8 square from the mode table in video RAM), WD1793 floppy (720 KB and 1.44 MB), DS12887A CMOS, AT keyboard on
-the Z84C15 SIO. Create with `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
+per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY and the Covox-Blaster DAC, WD1793 floppy
+(720 KB and 1.44 MB), two IDE channels, DS12887A CMOS, AT keyboard and serial mouse on the Z84C15 SIO. Create with
+`emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
 
 ## BIOS and start
-`[ROM] SPRINTER=` picks the image: `rom/sprinter/sp2k-3.04.rom` (default), `sp2k-3.06-hf2.rom`, `sp2k-3.07-beta1.rom`.
-`[SPRINTER] FastStart=0` (default) runs the PLD loader (~1.7 s emulated), `1` starts configured. The BIOS waits ~31 s
-per empty IDE unit: press F4 (`type_input action=key key=f4`) at "[Press F4". `inspect_state aspects:["sprinter"]`
-lists the images and which one runs (`bios`).
+Images: 3.04 (default), 3.06 (`sp2k-3.06-hf2.rom`), 3.07 (`sp2k-3.07-beta1.rom`, DSS 1.71 needs it). At create:
+`emulator_manage action=create model=SPRINTER sprinter_bios=3.07 sprinter_fast_start=false`; on a running machine:
+`invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
+`inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32). FastStart off (the
+default) runs the PLD loader (~1.9 s emulated). With no hard disk SETUP reports "None" for both IDE units at once.
 
 ## Ports
 Every port goes through the port table the BIOS writes to RAM page #40: index = map << 12 | PN5 << 11 | /DOS << 10 |
@@ -330,17 +332,28 @@ IDE, #40 keyboard, #C0 #1FFD, #C1 #7FFD, #C3 ALL_MODE, #C4 PORT_Y, #C5 RGMOD, #C
 #EE/#EF, #F0/#F1, #F4 itself. Port trace events carry the code (`code`, `code_name`); Z84C15 ports as #100 + low byte.
 
 ## Memory
-Four windows, each a physical page with a kind: ROM (system ROM), fast RAM (IN #FB), vROM (Spectrum ROM image in RAM),
-RAM, graphics (pages #50-#5F, PORT_Y row), ISA. `inspect_state aspects:["sprinter"]` (windows) or `["paging"]`.
+Four windows, each a physical page with a kind: ROM (system ROM), fast RAM (IN #FB; page type `cache`), vROM (Spectrum
+ROM image in RAM), RAM, graphics (pages #50-#5F, PORT_Y row), ISA. `inspect_state aspects:["sprinter"]` (windows) or
+`["paging"]`. The 256 KB video RAM is the memory region `vram` (`inspect_state aspects:["memory_region"]` with
+`address` / `size`; write: `invoke_api POST /api/v1/emulator/{id}/memory/region/vram {"offset":"0x17F0","hex":"0000A8"}`).
 
-## Software
-DSS (Estex DSS, the Sprinter's DOS) boots from a 1.44 MB FAT12 floppy in drive B (SETUP's default alternative start):
-`load_software path=testdata/machines/sprinter/dss_1_62_92.img drive=B` before the boot, then F4 at both IDE waits.
+## Video
+`sprinter_video` = the mode table as a map (one letter a square: G 320, g 640, T text 40, t text 80, B border,
+. blank, * INT) with HOLD, frame length, RGMOD, PORT_Y; `sprinter_palette` = the pens (R, G, B as video RAM holds
+them); `video_changes` = mode / palette / frame-length / border writes with frame T, line and PC. Text screens:
+`sprinter_text`, and `video_text` / `screen_ocr` read a text picture too (Spectrum mode stays a ZX screen).
+`screen_digest` hashes the video RAM.
+
+## Software and state
+DSS boots from a 1.44 MB floppy in drive B (`load_software path=testdata/machines/sprinter/dss_1_62_92.img drive=B`)
+or from a hard disk / CHD on `ide0.master` (recipe media/sprinter-hdd.md); Flex Navigator draws with the accelerator
+(`inspect_state aspects:["sprinter"]` accelerator: mode, length, operations). Sound: AY + Covox-Blaster (`sprinter`
+sound block, `sprinter_sound_ring`, `audio_covox`). TTD records and replays the machine (recipe analysis/sprinter-ttd.md).
 Spectrum mode: DSS `SPECTRUM.EXE PENT128.ZX` (A:\ZX), then TR-DOS from drive A.
 
 ## Known limitations
-No IDE adapter yet (phase S3b); Flex Navigator (DSS shell) crashes; accelerator and Covox-Blaster pending; TTD refuses
-to record this machine (phase S7). In the GUI F4 is bound to a speed shortcut.
+No ISA cards; the 21 MHz wait rule is MAME's (per-frame wait totals not reported); in the GUI F4 is bound to a speed
+shortcut.
 )md";
 
 struct StaticResource
@@ -360,7 +373,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
     {"unreal://machine/profi", "machine-profi", "Profi 1024 machine: ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res mode, timing, limitations", "text/markdown", kMachineProfi},
     {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
-    {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS images and start, the PLD port table and codes, windows, DSS from a floppy, Spectrum mode, limitations", "text/markdown", kMachineSprinter},
+    {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS selection and start, the PLD port table and codes, windows and video RAM, video modes, DSS from floppy / HDD, accelerator, sound, TTD, limitations", "text/markdown", kMachineSprinter},
 };
 
 constexpr size_t kStaticResourceCount = sizeof(kStaticResources) / sizeof(kStaticResources[0]);

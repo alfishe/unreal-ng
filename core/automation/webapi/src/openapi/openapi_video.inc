@@ -65,12 +65,14 @@
             "feeds_picture. Either a physical RAM byte (page + offset 0..0x3FFF) or a Z80 address resolved through "
             "the current paging (ROM and non-screen memory feed nothing), or with space=sprite_ram / palette a "
             "sprite attribute word (TS-Conf SFILE, word n at byte offset 2n) or a palette cell (16-bit, cell n at "
-            "2n) - every pixel drawn with it. Numbers are decimal or 0x-hex.";
+            "2n), or with space=vram a byte of a device's own video RAM (the Sprinter's: offset = row x 1024 + "
+            "column, 0..0x3FFFF; mode bytes, font, attribute, pixel and palette bytes) - every pixel drawn with "
+            "it. Numbers are decimal or 0x-hex.";
         idParam(address);
         queryParam(address, "page", "integer", "RAM page (with offset)");
         queryParam(address, "offset", "integer", "Offset in the page, 0..0x3FFF (with page)");
         queryParam(address, "z80", "integer", "Z80 address instead of page / offset");
-        queryParam(address, "space", "string", "ram (default), sprite_ram or palette (with offset)");
+        queryParam(address, "space", "string", "ram (default), vram, sprite_ram or palette (with offset)");
         address["responses"]["200"]["description"] = "Areas the byte feeds";
         address["responses"]["400"]["description"] = "Neither page and offset nor z80 given";
         address["responses"]["404"]["description"] = "Emulator not found";
@@ -79,11 +81,31 @@
         text["summary"] = "Text grid of a text mode";
         text["tags"].append("Screen State");
         text["description"] =
-            "Exact text of a text layer (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL): layer, columns, rows and lines[] with "
-            "text (printable characters, '.' for other codes), codes and attrs (hex, two digits per cell). "
-            "available: false in bitmap modes - read those with the screen OCR (/capture/ocr).";
+            "Exact text of a text layer (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL, TS-Conf text, the Sprinter's text squares "
+            "as an 80 x 32 grid while the picture has any): layer, columns, rows and lines[] with text (printable "
+            "characters, '.' for other codes), codes and attrs (hex, two digits per cell). available: false in "
+            "bitmap modes - read those with the screen OCR (/capture/ocr), which reads text layers the same way.";
         idParam(text);
         queryParam(text, "layer", "integer", "Layer index, default 0");
         text["responses"]["200"]["description"] = "Text grid";
         text["responses"]["404"]["description"] = "Emulator not found";
+    
+        Json::Value& changes = paths["/api/v1/emulator/{id}/video/changes"]["get"];
+        changes["summary"] = "Video change log (mode, palette, border, latches)";
+        changes["tags"].append("Screen State");
+        changes["description"] =
+            "Every change of a video latch with its moment, on every machine (core DeviceState::VideoChanges; CLI "
+            "`video changes`, Lua / Python video_changes(), MCP aspect video_changes): frames[] of frame, current, "
+            "partial (the log of 4096 writes a frame filled up), start (the latches at the frame start by name: "
+            "mode, port_7ffd, port_eff7, port_ff77, port_dffd, atm_fe_address, port_fe, border_attr, border, "
+            "atm_border_bright, active_screen; on the Sprinter also rgmod, hold, port_y, all_mode, frame_lines), "
+            "writes[] (t = frame T, line, t_in_line, pc, changes = {latch: 'old -> new'}) and tables (mode_table and "
+            "palette: count, first / last T, address and PC of the writes this frame - palette RAM on ATM / ZX-Evo / "
+            "Profi, TS-Conf CRAM through the FM window, the Sprinter's video RAM palettes and mode table). frames=1: "
+            "the last completed frame; 2 (default): the current one too while paused. Costs nothing on the hot "
+            "paths: only where a handler already changed video state.";
+        idParam(changes);
+        queryParam(changes, "frames", "integer", "1 = the last completed frame, 2 = also the current one (paused)");
+        changes["responses"]["200"]["description"] = "Video change log";
+        changes["responses"]["404"]["description"] = "Emulator not found";
     }

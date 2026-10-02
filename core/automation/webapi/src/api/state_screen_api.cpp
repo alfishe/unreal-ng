@@ -119,28 +119,9 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
         return;
     }
 
-    // One report for every automation module (DeviceState::ScreenMode)
+    // One report for every automation module (DeviceState::ScreenMode, the per-mode flags included)
     Json::Value ret = StateNodeToJson(DeviceState::ScreenMode(context));
 
-    // Legacy per-mode flags kept for existing clients (the mode name says the same)
-    switch (context->pScreen->GetVideoMode())
-    {
-        case M_P16:  ret["eff7_16col"] = true; break;
-        case M_PMC:  ret["eff7_hwmc"] = true; break;
-        case M_PHR:  ret["eff7_512"] = true; break;
-        case M_P384: ret["overscan"] = true; break;
-        case M_PROFIHR:
-            ret["profi_hires"] = true;
-            ret["framebuffer"] = "608x288";
-            ret["raster"] = "312 lines x 224 T (69888 T frame)";
-            break;
-        case M_SPRINTER:
-            ret["framebuffer"] = "736x288";
-            ret["raster"] = "320 or 312 lines x 224 T (71680 / 69888 T frame), 4 pixels per T";
-            ret["sprinter_modes"] = "per 8x8 square from the video RAM mode table: GET /state/sprinter (video)";
-            break;
-        default: break;
-    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -344,211 +325,27 @@ void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
         return;
     }
 
-    const CONFIG& config = context->config;
-    EmulatorState& state = context->emulatorState;
-    Memory* memory = context->pMemory;
-
-    const bool is128K = Screen::HasShadowScreen(config.mem_model);
-
-    // Parse query parameters
-    auto params = req->getParameters();
-
-    auto parseAddressValue = [](const std::string& value, uint16_t& out) -> bool
+    // One computation for every interface (ScreenDigestCompute; DeviceState::ScreenDigestReport)
+    auto param = [&](const char* name) { return req->getParameter(name); };
+    ScreenDigestQuery query;
+    std::string error;
+    if (!ScreenDigestCompute::QueryFromStrings(param("mode"), param("banks"), param("start"), param("end"),
+                                               param("include_border"), query, error))
     {
-        uint32_t parsed = 0;
-        if (!ParseJsonUInt(Json::Value(value), 0xFFFF, parsed))
-            return false;
-        out = static_cast<uint16_t>(parsed);
-        return true;
-    };
-
+        Json::Value err;
+        err["error"] = "Bad Request";
+        err["message"] = error;
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
     Json::Value ret;
     ret["emulator_id"] = id;
-    ret["frame"] = static_cast<Json::UInt64>(state.frame_counter);
-    ret["algorithm"] = "fnv1a-64";
-
-    // mode=active: derive the bank list from the video mode the machine is
-    // actually displaying instead of the fixed model-dependent pages (P1-3).
-    // Explicit banks=/start,end overrides still win.
-    bool activeMode = false;
-    auto modeIt = params.find("mode");
-    if (modeIt != params.end())
-    {
-        const std::string& modeValue = modeIt->second;
-        if (modeValue == "active")
-        {
-            activeMode = true;
-        }
-        else if (modeValue != "default")
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "Invalid 'mode' parameter (expected 'default' or 'active')";
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-    }
-
-    const uint64_t previousDigest = state.last_screen_digest;
-    const uint64_t previousFrame = state.last_screen_digest_frame;
-
-    uint64_t combined = ScreenDigest::kInitialValue;
-
-    // Explicit Z80 range mode: ?start=&end= override the bank list
-    auto startIt = params.find("start");
-    auto endIt = params.find("end");
-    if (startIt != params.end() || endIt != params.end())
-    {
-        uint16_t start = 0x4000;
-        uint16_t end = 0x7FFF;
-
-        if ((startIt != params.end() && !parseAddressValue(startIt->second, start)) ||
-            (endIt != params.end() && !parseAddressValue(endIt->second, end)) || start > end)
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "Invalid 'start'/'end' parameters (expected hex or decimal, start <= end)";
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-
-        uint64_t rangeDigest = ScreenDigest::DigestZ80Range(memory, start, end);
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>(rangeDigest & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 8) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 16) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 24) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 32) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 40) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 48) & 0xFF));
-        combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> 56) & 0xFF));
-
-        Json::Value range;
-        range["start"] = StringHelper::Format("0x%04X", start);
-        range["end"] = StringHelper::Format("0x%04X", end);
-        range["digest"] = StringHelper::Format("0x%016llX", rangeDigest);
-        ret["z80_range"] = range;
-    }
-    else
-    {
-        // Bank mode: default is both screen pages on 128K-class models, page 5 only otherwise
-        std::vector<uint16_t> banks;
-        auto banksIt = params.find("banks");
-        if (banksIt != params.end())
-        {
-            std::string token;
-            std::istringstream stream(banksIt->second);
-            while (std::getline(stream, token, ','))
-            {
-                try
-                {
-                    unsigned long page = std::stoul(token);
-                    if (page <= 255)
-                        banks.push_back(static_cast<uint16_t>(page));
-                }
-                catch (...)
-                {
-                }
-            }
-
-            if (banks.empty())
-            {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "Invalid 'banks' parameter (expected comma-separated page numbers)";
-
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
-        }
-        else
-        {
-            if (activeMode)
-            {
-                // Surface actually displayed by the current video mode: ZX modes
-                // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
-                // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
-                // flips the digest even with constant underlying pages
-                const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
-                banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
-
-                Json::Value activeSurface;
-                activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
-                Json::Value pagesJson(Json::arrayValue);
-                for (uint16_t page : banks)
-                    pagesJson.append(page);
-                activeSurface["pages"] = pagesJson;
-                ret["active_surface"] = activeSurface;
-            }
-            else
-            {
-                banks.push_back(ScreenDigest::kScreen0RAMPage);
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
-            }
-        }
-
-        Json::Value banksJson(Json::arrayValue);
-        for (uint16_t page : banks)
-        {
-            uint64_t digest = ScreenDigest::DigestRAMPage(memory, page);
-
-            Json::Value item;
-            item["page"] = page;
-            item["digest"] = StringHelper::Format("0x%016llX", digest);
-            item["size"] = static_cast<Json::UInt64>(ScreenDigest::kRAMPageSize);
-            banksJson.append(item);
-
-            for (int shift = 0; shift < 64; shift += 8)
-            {
-                combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((digest >> shift) & 0xFF));
-            }
-        }
-        ret["banks"] = banksJson;
-    }
-
-    // Border color fold-in (visible output includes the border)
-    bool includeBorder = true;
-    auto borderIt = params.find("include_border");
-    if (borderIt != params.end())
-    {
-        includeBorder = borderIt->second == "true" || borderIt->second == "1" || borderIt->second == "yes";
-    }
-
-    uint8_t borderColor = 0;
-    if (includeBorder)
-    {
-        borderColor = context->pScreen->GetBorderColor();
-        combined = ScreenDigest::MixValue(combined, borderColor);
-    }
-
-    // Change tracking against the previous poll
-    const bool changed = combined != previousDigest;
-
-    ret["combined"] = StringHelper::Format("0x%016llX", combined);
-    ret["include_border"] = includeBorder;
-    if (includeBorder)
-        ret["border_color"] = borderColor;
-    ret["changed"] = changed;
-    ret["previous_digest"] = StringHelper::Format("0x%016llX", previousDigest);
-    if (previousFrame != 0)
-    {
-        ret["previous_digest_frame"] = static_cast<Json::UInt64>(previousFrame);
-        ret["frames_since_previous"] = static_cast<Json::UInt64>(state.frame_counter - previousFrame);
-    }
-
-    state.last_screen_digest = combined;
-    state.last_screen_digest_frame = state.frame_counter;
+    const Json::Value report = StateNodeToJson(DeviceState::ScreenDigestReport(context, query));
+    for (const std::string& key : report.getMemberNames())
+        ret[key] = report[key];
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

@@ -5,6 +5,11 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+struct ScreenDigestQuery;
+namespace SprinterBios
+{
+struct Options;
+}
 
 /// @file devicestate.h
 /// @brief Device state reports for analysis, built once in the core and
@@ -96,14 +101,48 @@ StateNode TsConf(EmulatorContext* context);
 /// raw words) and the 256 CRAM cells (value, rgb). Unavailable on other machines
 StateNode TsConfTsu(EmulatorContext* context);
 
+/// The screen digest (screendigest.h; /state/screen/digest on every interface): FNV-1a 64 over
+/// the screen memory - RAM pages 5 / 7 by default, the pages the video mode displays (active),
+/// given pages or a Z80 range, or, on a machine whose picture lives outside the RAM pages (the
+/// Sprinter's video RAM), that surface in the default and active modes - with the border folded
+/// in and the change against the previous poll (which this call records)
+StateNode ScreenDigestReport(EmulatorContext* context, const ScreenDigestQuery& query);
+
+/// The per-device mixer (audiomixer.h; /audio/mixer): master (muted, rate) and every device of
+/// SoundManager's registry by source key (beeper, ay1, covox, gs, ...): name, muted, solo, audible,
+/// volume and gain_db, the last frame's peak and activity, capturable (/audio/capture {source}).
+/// `AudioChannels()` is /state/audio/channels: beeper (peak, active from the mixer), the AY tone
+/// generators, GS and Covox subsets, master, and the mixer devices
+StateNode AudioMixer(EmulatorContext* context);
+StateNode AudioChannels(EmulatorContext* context);
+
+/// The video change log (videowritelog.h; /video/changes): per frame the latches at its start,
+/// every change of a video latch with its frame T, beam line / T in line, PC and the latches that
+/// changed by name ("rgmod": "0x00 -> 0x01"), and the palette / mode table writes counted with
+/// their first and last write. Every machine (the Sprinter adds RGMOD, HOLD, PORT_Y, ALL_MODE and
+/// the frame height). `frames` 1 = the last completed frame, 2 = also the current one (paused)
+StateNode VideoChanges(EmulatorContext* context, unsigned frames);
+
+/// Device memory regions (emulator/memory/devicememory.h): memory a device owns outside the
+/// CPU's pages, by name. `MemoryRegions()` lists them (name, description, size, page size,
+/// writable, how a write reaches the device); `MemoryRegionRead()` reads [offset, offset +
+/// length) as `format` "hex" (default: one string), "data" (an array) or "sparse" (fill runs
+/// folded, as the page reads do). Unavailable (with the reason) for an unknown name or a range
+/// outside the region; writes: DeviceMemory::Write
+StateNode MemoryRegions(EmulatorContext* context);
+StateNode MemoryRegionRead(EmulatorContext* context, const std::string& name, uint32_t offset, uint32_t length,
+                           const std::string& format);
+
 /// Peters Plus Sprinter Sp2000 (Sprinter tdd-integration §3; built beside the Sprinter code,
 /// ports/models/sprinter/sprinterdevicestate.cpp):
 /// - `Sprinter()`: the PLD configuration (state, active module, bitstream hashes, port decoder
 ///   opened), the decoder (CNF map, DOS, PN5, #7FFD / #1FFD after the clean rules), the four
 ///   windows (physical page and kind: ROM / fast RAM / vROM / RAM / graphics / ISA / port table),
 ///   registers (ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, SCALE) and the cells #C0-#FF, the clock
-///   (turbo x6), the frame (320 / 312 lines), a video summary of the mode table (square kinds,
-///   INT positions), the Z84C15 (system registers, watchdog, CTC, SIO with the keyboard FIFO,
+///   (turbo x6, the 21 MHz wait rule and the windows it applies to), the frame (320 / 312 lines),
+///   a video summary of the mode table (square kinds, INT positions), the block accelerator
+///   (mode, length, function, blocked, counters, buffer CRC), the sound devices, the Z84C15
+///   (system registers, wait generator, daisy chain, watchdog, CTC, SIO with the keyboard FIFO,
 ///   PIO), the WD1793 density latch, links to the CMOS (`Rtc()`) and IDE, and the BIOS images.
 /// - `SprinterPaging()`: the windows and the paging latches alone (the /state/paging view).
 /// - `SprinterText()`: the screen text of the mode table's text squares (80 x 32).
@@ -124,6 +163,37 @@ StateNode SprinterPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces
 StateNode SprinterText(EmulatorContext* context);
+/// The mode table per square (`SprinterVideo()`, /state/sprinter/video): HOLD, frame length, RGMOD,
+/// PORT_Y, ALL_MODE, counts per kind, a one-letter map per row (G 320, g 640, T text 40, t text 80,
+/// B border, . blank, * blank + INT), the palettes the picture uses and (squares) every square
+/// decoded: kind, mode bytes, palette / source column / row / low-res quarter, or the characters
+struct SprinterVideoQuery
+{
+    int page = -1;         ///< mode table page 0 / 1, -1 = RGMOD's (the one displayed)
+    bool all = false;      ///< the whole table (56 x 40) instead of the picture (40 x 32)
+    bool squares = true;   ///< the per-square objects (false: the map and the counts only)
+};
+StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& query);
+/// page "0" / "1" (empty = RGMOD's), all / squares "0" / "1"; false with `error` on a bad value
+bool SprinterVideoQueryFromStrings(const std::string& page, const std::string& all, const std::string& squares,
+                                   SprinterVideoQuery& query, std::string& error);
+/// The 8 palettes of 256 pens (`SprinterPalette()`, /state/sprinter/palette): R, G, B as video RAM
+/// holds them, the pen's VRAM address, which palettes the picture uses. `palette` 0-7, or:
+constexpr int kSprinterPalettesUsed = -1;  ///< the palettes the picture's squares use (the default)
+constexpr int kSprinterPalettesAll = -2;   ///< all eight
+StateNode SprinterPalette(EmulatorContext* context, int palette);
+/// "0"-"7", "all", "used" / empty
+bool SprinterPaletteFromString(const std::string& text, int& palette, std::string& error);
+/// The BIOS images and start options (`SprinterBios()`, /state/sprinter/bios): the shipped images
+/// (file, alias, version, CRC-32, present, loaded = the flash's CRC matches, selected = the config
+/// names it), reload_pending, options fast_start / accel_int_suspend. `SprinterBiosSelect()` writes
+/// the selection into this instance's configuration, the new image loads at the next reset, which
+/// `options.reset` makes now (sprinterbios.h); unavailable with the reason on a bad name
+StateNode SprinterBios(EmulatorContext* context);
+StateNode SprinterBiosSelect(EmulatorContext* context, const SprinterBios::Options& options);
+/// The Covox-Blaster ring (`SprinterSoundRing()`, /state/sprinter/sound/ring): 256 words with the
+/// play and write index marked
+StateNode SprinterSoundRing(EmulatorContext* context);
 StateNode SprinterPortTable(EmulatorContext* context, const SprinterPortQuery& query);
 StateNode SprinterPortLookup(EmulatorContext* context, uint16_t port, const SprinterPortQuery& query);
 /// The query from text parameters, the same on every interface: map "0"-"3", dos / pn5 "0" / "1"

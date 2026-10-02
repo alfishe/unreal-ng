@@ -213,15 +213,19 @@
             "#7FFD / #1FFD after the clean rules), windows[] (per 16K window: kind ROM / loader ROM / fast RAM / vROM "
             "/ RAM / graphics / ISA / port table, the physical page, writable, the cell that names it), registers "
             "(ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD, HOLD, SCALE, CBL control), cells (#C0-#FF as hex "
-            "rows), clock (turbo requested, front-panel switch, ratio 1 or 6, MHz), frame (320 / 312 lines, base "
+            "rows), clock (turbo requested, front-panel switch, ratio 1 or 6, MHz, waits: the 21 MHz rule and the windows "
+            "it applies to), frame (320 / 312 lines, base "
             "T-states 71680 / 69888), video (mode page, the picture's dominant square kind, square counts by kind, "
-            "HOLD offsets, frame INT positions from the mode table), sound (the AY: 1.75 MHz, one chip, ABC; the "
+            "HOLD offsets, frame INT positions from the mode table), sound (the AY: 1.75 MHz, chips, stereo from the AY config; the "
             "Covox / Covox-Blaster: control decoded - mode, stereo, 8 / 16 bit, INT, rate and divider, play and write "
-            "index, INT request, the half that needs data, the DAC words, counters), z84c15 (WCR / MWBR / CSBR / MCR, watchdog, CTC "
-            "channels, SIO A / B with the keyboard FIFO, PIO), fdc (the #BD density latch, the WD1793 clock and data "
-            "rate, drive), cmos (DS12887A; the full report is /state/rtc), ide (a placeholder until the IDE adapter of "
-            "phase S3b) and bios (the ROM file, the pages identified by signature, the shipped images and how to pick "
-            "one: [ROM] SPRINTER=). 404 on other machines.";
+            "index, INT request, the half that needs data, the DAC words, counters; the ring itself: "
+            "/state/sprinter/sound/ring), z84c15 (WCR / MWBR / CSBR / MCR, wait_generator decoded, daisy_chain in "
+            "priority order with IP / IUS per source, watchdog with its deadline, CTC channels, SIO A / B with the "
+            "keyboard FIFO, PIO), fdc (the #BD density latch, the WD1793 clock and data "
+            "rate, drive), cmos (DS12887A; the full report is /state/rtc), ide (the adapter's channel latch; drives in /state/ide), accelerator (enabled = ALL_MODE bit 0, mode / "
+            "mode_name, armed, length, function, blocked by an INT, int_suspend, alt / xcnt / aagr, operations, "
+            "last_extra_clocks, buffer_crc32 / buffer_head; available=false while the PLD loads) and bios (the configured ROM file, the image loaded by CRC-32, the pages identified by signature, the "
+            "shipped images, the start options and how to select one: POST /sprinter/bios). 404 on other machines.";
         paths[kState]["get"]["parameters"][0]["name"] = "id";
         paths[kState]["get"]["parameters"][0]["in"] = "path";
         paths[kState]["get"]["parameters"][0]["required"] = true;
@@ -305,6 +309,101 @@
         paths[kText]["get"]["parameters"][0]["schema"]["type"] = "string";
         paths[kText]["get"]["responses"]["200"]["description"] = "Screen text";
         paths[kText]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kVideo = "/api/v1/emulator/{id}/state/sprinter/video";
+        paths[kVideo]["get"]["summary"] = "Get the Sprinter mode table per square";
+        paths[kVideo]["get"]["tags"].append("Machine State");
+        paths[kVideo]["get"]["description"] =
+            "The video RAM mode table decoded per 8 x 8 square (core DeviceState::SprinterVideo; CLI `state sprinter "
+            "video`, Lua / Python sprinter_video(), MCP aspect sprinter_video): mode_page (RGMOD bit 0 unless page= "
+            "is given; displayed tells whether it is the one on screen), rgmod, text_page (#7FFD bit 3), hold (value "
+            "and the x / y shift), frame (lines requested / in force, T-states), port_y, border, all_mode; counts per "
+            "kind; map[] = one string per square row, one letter per square (G graphics 320, g graphics 640, T text "
+            "40, t text 80, B border, . blank, * blank with the frame INT); palettes_used (0-3 graphics, 4-7 text "
+            "paper / ink / flash phase); squares[b][a] = {a, b, kind, m0, m1, m2, and per kind: palette, "
+            "source_column, source_row, low_res, quarter (graphics), chars (text, hex), line2_m0 (80 columns), int "
+            "(blank + INT)}. The picture is 40 x 32 squares; all=1 gives the whole 56 x 40 table. 404 on other "
+            "machines.";
+        paths[kVideo]["get"]["parameters"][0]["name"] = "id";
+        paths[kVideo]["get"]["parameters"][0]["in"] = "path";
+        paths[kVideo]["get"]["parameters"][0]["required"] = true;
+        paths[kVideo]["get"]["parameters"][0]["schema"]["type"] = "string";
+        addQuery(kVideo, 1, "page", "Mode table page 0 / 1; default: RGMOD's (the displayed one)");
+        addQuery(kVideo, 2, "all", "1 = the whole 56 x 40 table; default 0 = the 40 x 32 picture");
+        addQuery(kVideo, 3, "squares", "0 = the map and counts only (no per-square objects); default 1");
+        paths[kVideo]["get"]["responses"]["200"]["description"] = "Mode table per square";
+        paths[kVideo]["get"]["responses"]["400"]["description"] = "Bad page / all / squares";
+        paths[kVideo]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kPalette = "/api/v1/emulator/{id}/state/sprinter/palette";
+        paths[kPalette]["get"]["summary"] = "Get the Sprinter palettes";
+        paths[kPalette]["get"]["tags"].append("Machine State");
+        paths[kPalette]["get"]["description"] =
+            "The palettes from video RAM (core DeviceState::SprinterPalette; CLI `state sprinter palette [k]`, Lua / "
+            "Python sprinter_palette(k), MCP aspect sprinter_palette): palettes[] of k (0-7), role (graphics 0-3, text "
+            "paper / ink / their flash phase), used_by_picture, vram_column and pens[256] = {n, rgb '#RRGGBB', vram = "
+            "the address of the red byte}; rgb_row = the 256 colors as one string. The bytes are R, G, B in this order "
+            "at video RAM row n, column #3E0 + 4k. Default: the palettes the picture's squares use.";
+        paths[kPalette]["get"]["parameters"][0]["name"] = "id";
+        paths[kPalette]["get"]["parameters"][0]["in"] = "path";
+        paths[kPalette]["get"]["parameters"][0]["required"] = true;
+        paths[kPalette]["get"]["parameters"][0]["schema"]["type"] = "string";
+        addQuery(kPalette, 1, "k", "0-7 (one palette), all, or used (the default)");
+        paths[kPalette]["get"]["responses"]["200"]["description"] = "Palettes";
+        paths[kPalette]["get"]["responses"]["400"]["description"] = "Bad k";
+        paths[kPalette]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kRing = "/api/v1/emulator/{id}/state/sprinter/sound/ring";
+        paths[kRing]["get"]["summary"] = "Get the Sprinter Covox-Blaster ring";
+        paths[kRing]["get"]["tags"].append("Machine State");
+        paths[kRing]["get"]["description"] =
+            "The Covox-Blaster's 256-entry sample ring (core DeviceState::SprinterSoundRing; CLI `state sprinter "
+            "ring`, Lua / Python sprinter_sound_ring(), MCP aspect sprinter_sound_ring): control, mode, stereo, "
+            "play_index, write_index, playing_half, rows[16] (16 hex words a row, [ ] = playing, < > = next write) "
+            "and words[256] (unsigned, #8000 = silence; stereo: even entries left, odd right). The counters and "
+            "the rate are in /state/sprinter (sound.covox_blaster). 404 on other machines.";
+        paths[kRing]["get"]["parameters"][0]["name"] = "id";
+        paths[kRing]["get"]["parameters"][0]["in"] = "path";
+        paths[kRing]["get"]["parameters"][0]["required"] = true;
+        paths[kRing]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kRing]["get"]["responses"]["200"]["description"] = "The ring";
+        paths[kRing]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kBios = "/api/v1/emulator/{id}/state/sprinter/bios";
+        paths[kBios]["get"]["summary"] = "Get the Sprinter BIOS images and start options";
+        paths[kBios]["get"]["tags"].append("Machine State");
+        paths[kBios]["get"]["description"] =
+            "The firmware (core DeviceState::SprinterBios; CLI `state sprinter bios`, Lua / Python sprinter_bios(), MCP "
+            "aspect sprinter_bios): rom_file (the configured image), loaded (the shipped image whose CRC-32 the flash "
+            "has), loaded_crc32, identified (pages 8 / 0 / 12 by signature), images[] (file, alias, version, crc32, "
+            "present, loaded, selected), reload_pending (a selection waits for the next reset), options (fast_start, "
+            "accel_int_suspend) and how to select. 404 on other machines.";
+        paths[kBios]["get"]["parameters"][0]["name"] = "id";
+        paths[kBios]["get"]["parameters"][0]["in"] = "path";
+        paths[kBios]["get"]["parameters"][0]["required"] = true;
+        paths[kBios]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kBios]["get"]["responses"]["200"]["description"] = "BIOS images and options";
+        paths[kBios]["get"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+
+        const char* kSelect = "/api/v1/emulator/{id}/sprinter/bios";
+        paths[kSelect]["post"]["summary"] = "Select the Sprinter BIOS and start options";
+        paths[kSelect]["post"]["tags"].append("Machine State");
+        paths[kSelect]["post"]["description"] =
+            "Body {\"bios\": \"3.06\", \"fast_start\": false, \"accel_int_suspend\": false, \"reset\": true}, every "
+            "field optional: bios = 3.04 | 3.06 | 3.07, a file in rom/sprinter or a path; the selection goes into this "
+            "instance's configuration, a new image is read at the next reset, reset (default true) resets now. "
+            "fast_start takes effect at the reset, accel_int_suspend at once. A reset stops TTD recording; a new "
+            "image invalidates the TTD session. Answers the /state/sprinter/bios report plus previous_rom_file and "
+            "reset_done. At create: {\"model\": \"SPRINTER\", \"sprinter\": {...}} (POST /emulator/create, "
+            "/emulator/start).";
+        paths[kSelect]["post"]["parameters"][0]["name"] = "id";
+        paths[kSelect]["post"]["parameters"][0]["in"] = "path";
+        paths[kSelect]["post"]["parameters"][0]["required"] = true;
+        paths[kSelect]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kSelect]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kSelect]["post"]["responses"]["200"]["description"] = "Selected (the BIOS report)";
+        paths[kSelect]["post"]["responses"]["400"]["description"] = "Unknown image, bad flag";
+        paths[kSelect]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
@@ -478,6 +577,10 @@
 
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["summary"] = "Get audio channels overview";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["description"] =
+        "Every sound source at a glance (core DeviceState::AudioChannels; CLI `state audio channels`): beeper (peak, "
+        "active, muted from the mixer), ay_channels (tone generators per chip), general_sound and covox (subsets of "
+        "/state/audio/gs and /covox), master, and mixer[] = the per-device mixer (GET /audio/mixer).";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["required"] = true;
@@ -615,7 +718,8 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["summary"] = "Read physical memory page";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["description"] =
-        "Read an entire 16KB physical memory page by type (ram/rom) and page number.";
+        "Read an entire 16KB physical memory page by type (ram/rom) and page number. The type may also name a "
+        "device memory region (GET /memory/regions): /memory/page/vram/{0-15} reads the Sprinter's video RAM.";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][0]["required"] = true;
@@ -624,7 +728,7 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["description"] = "Memory type: 'ram' or 'rom'";
+    paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][1]["description"] = "Memory type: 'ram', 'rom' or a device memory region ('vram')";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["name"] = "page";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["get"]["parameters"][2]["required"] = true;
@@ -642,7 +746,8 @@
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["summary"] = "Write physical memory page";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["description"] =
-        "Write an entire 16KB physical memory page by type and page number.";
+        "Write an entire 16KB physical memory page by type and page number. A device memory region as the type "
+        "('vram') writes through the device's own path (DeviceMemory::Write).";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/page/{type}/{page}"]["post"]["parameters"][0]["required"] = true;

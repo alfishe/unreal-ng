@@ -1,6 +1,7 @@
 #pragma once
 
 #include "debugger/analyzers/ianalyzer.h"
+#include "emulator/sound/audiodeviceinfo.h"
 
 #include <atomic>
 #include <cstdint>
@@ -43,7 +44,10 @@ public:
 
     /// Arm a capture for targetSamples interleaved samples (rounded down to a
     /// stereo pair; clamped to MAX_CAPTURE_SAMPLES). Resets any previous data.
-    void startCapture(size_t targetSamples);
+    /// `source`: the master mix (default) or one mixer device's own buffer (beeper, an AY, the Covox / the
+    /// Sprinter's DAC, GS, MoonSound ...) - before its mute / solo / volume (AudioMixer, /audio/mixer)
+    void startCapture(size_t targetSamples, AudioSourceType source = AudioSourceType::MasterMix);
+    AudioSourceType getSource() const { return _source; }
 
     /// Stop appending (freezes the buffer even if the target was not reached)
     void stopCapture();
@@ -71,4 +75,5 @@ private:
     std::atomic<size_t> _received{0};
     size_t _target = 0;                  // Interleaved samples to capture (even)
     std::vector<int16_t> _buffer;        // Interleaved L/R; written only while armed
+    AudioSourceType _source = AudioSourceType::MasterMix;
 };

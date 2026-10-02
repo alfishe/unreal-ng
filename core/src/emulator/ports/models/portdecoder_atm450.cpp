@@ -342,6 +342,8 @@ void PortDecoder_ATM450::Port_7DFD_PaletteOut(uint8_t value)
                                (static_cast<uint32_t>(green * 0x11) << 8) | static_cast<uint32_t>(red * 0x11);
 
     MLOGDEBUG("Port_7DFD_PaletteOut: value=0x%02X cell=%d -> 0x%08X", value, cell, _state->atmPalette[cell]);
+    if (_context->pScreen)
+        _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, cell);  // the video change log
 }
 
 void PortDecoder_ATM450::updateMemoryBanks()

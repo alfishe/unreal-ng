@@ -131,6 +131,16 @@
             "RAM contents at creation: random (noise in RAM pages 5 and 7, the screen and the shadow screen, the way real DRAM powers up; every other page zero) or zero (every RAM page of the configuration reads 0 - reproducible runs for tests, benchmarks and scripted analysis). Default: [MISC] RAMPowerOn of the model's unreal.ini (RANDOM when unset)"
             ". A ZX-Poly machine applies it to all four modules";
     }
+    {
+        Json::Value& sprinter = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
+                                     ["schema"]["properties"]["sprinter"];
+        sprinter["type"] = "object";
+        sprinter["properties"]["bios"]["type"] = "string";
+        sprinter["properties"]["fast_start"]["type"] = "boolean";
+        sprinter["properties"]["accel_int_suspend"]["type"] = "boolean";
+        sprinter["description"] =
+            "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini. 400 on an unknown image";
+    }
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["select"]["type"] = "boolean";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]

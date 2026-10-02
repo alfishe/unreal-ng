@@ -1,6 +1,7 @@
 // WebAPI Analyzer Management Implementation
 // Implements /analyzers endpoints - 2026-01-21
 
+#include <emulator/sound/audiomixer.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -1747,13 +1748,29 @@ void EmulatorAPI::audioCapture(const HttpRequestPtr& req, std::function<void(con
             return;
         }
 
+        // One mixer device instead of the master mix: its own buffer (core AudioMixer::Capturable)
+        AudioSourceType source = AudioSourceType::MasterMix;
+        std::string sourceError;
+        if (!AudioMixer::Capturable(emulator->GetContext(), json ? (*json)["source"].asString() : std::string(), source,
+                                    sourceError))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = sourceError;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
         const size_t rate = audioCoreRate(emulator.get());
         const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;  // interleaved stereo
 
         // Mutate analyzer subscriptions only while the emulation thread is parked
         ScopedPause pause(emulator.get());
         analyzerManager->activate("audiocapture");
-        capture->startCapture(target);
+        capture->startCapture(target, source);
 
         Json::Value ret;
         ret["emulator_id"] = id;
@@ -1763,6 +1780,7 @@ void EmulatorAPI::audioCapture(const HttpRequestPtr& req, std::function<void(con
         ret["seconds"] = seconds;
         ret["sample_rate"] = static_cast<Json::UInt64>(rate);
         ret["channels"] = 2;
+        ret["source"] = AudioMixer::Key(source);
         ret["message"] = "Audio capture armed — the emulator must run to collect samples";
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
