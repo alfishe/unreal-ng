@@ -22,6 +22,7 @@ const char* MediaErrorCode(MediaError error)
         case MediaError::IoError: return "io-error";
         case MediaError::AmbiguousSlot: return "ambiguous-slot";
         case MediaError::BadRequest: return "bad-request";
+        case MediaError::Cancelled: return "cancelled";
     }
     return "unknown";
 }
@@ -43,6 +44,7 @@ int MediaErrorHttpStatus(MediaError error)
         case MediaError::DoesNotFit:
         case MediaError::AmbiguousSlot:
         case MediaError::BadRequest: return 400;
+        case MediaError::Cancelled: return 499;  // nginx's "client closed request", the closest fit
     }
     return 500;
 }

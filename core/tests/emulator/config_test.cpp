@@ -467,6 +467,32 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
     }
 }
 
+/// TS-Conf VDAC2 build (vdac2-integration-design.md §3): the card occupies the
+/// IDE connector, so TS_VDAC2=1 leaves the machine without IDE whatever
+/// [HDD] Scheme says; other machines and the other TS-Conf builds keep theirs
+TEST_F(Config_Test, Vdac2TakesTheIdeConnector)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2_ide_config_test.ini");
+    auto load = [&](const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << text;
+        file.close();
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\nTS_VDAC2=1\n[HDD]\nScheme=nemo-divide\n"));
+    EXPECT_EQ(_context->config.ts_vdac, 7);
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NONE) << "VDAC2: no IDE";
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\n[HDD]\nScheme=nemo-divide\n"));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NEMO_DIVIDE) << "standard TS-Conf build keeps the IDE";
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=PROFI\nRamSize=1024\nTS_VDAC2=1\n[HDD]\nScheme=profi\n"));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_PROFI) << "TS_VDAC2 means nothing outside TS-Conf";
+    std::remove(path.c_str());
+}
+
 /// endregion </[HDD] (IDE board)>
 
 /// TSConf model names (PLAN #41 INF-8, technical-design D3): the canonical

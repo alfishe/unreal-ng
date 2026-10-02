@@ -20,6 +20,56 @@ namespace v1
 // Helper function defined in emulator_api.cpp
 void addCorsHeaders(drogon::HttpResponsePtr& resp);
 
+namespace
+{
+
+void buildPaths(Json::Value& paths)
+{
+#include "openapi/openapi_interpreter.inc"
+#include "openapi/openapi_lifecycle.inc"
+#include "openapi/openapi_tape_disk.inc"
+#include "openapi/openapi_media.inc"
+#include "openapi/openapi_snapshot.inc"
+#include "openapi/openapi_rzx.inc"
+#include "openapi/openapi_capture.inc"
+#include "openapi/openapi_basic.inc"
+#include "openapi/openapi_keyboard.inc"
+#include "openapi/openapi_mouse.inc"
+#include "openapi/openapi_joystick.inc"
+#include "openapi/openapi_settings.inc"
+#include "openapi/openapi_features.inc"
+#include "openapi/openapi_state.inc"
+#include "openapi/openapi_moonsound.inc"
+#include "openapi/openapi_rtc.inc"
+#include "openapi/openapi_network.inc"
+#include "openapi/openapi_gsporttrace.inc"
+#include "openapi/openapi_ports.inc"
+#include "openapi/openapi_analyzers.inc"
+#include "openapi/openapi_analysis.inc"
+#include "openapi/openapi_video.inc"
+#include "openapi/openapi_temporal.inc"
+#include "openapi/openapi_stepping.inc"
+#include "openapi/openapi_breakpoints.inc"
+#include "openapi/openapi_debug.inc"
+#include "openapi/openapi_labels.inc"
+#include "openapi/openapi_assembly.inc"
+#include "openapi/openapi_profiler.inc"
+#include "openapi/openapi_porttrace.inc"
+#include "openapi/openapi_ttd.inc"
+#include "openapi/openapi_ttdfile.inc"
+}
+
+void buildSchemas(Json::Value& schemas)
+{
+#include "openapi/openapi_schemas.inc"
+#include "openapi/openapi_media_schemas.inc"
+#include "openapi/openapi_joystick_schemas.inc"
+#include "openapi/openapi_ttdfile_schemas.inc"
+#include "openapi/openapi_temporal_schemas.inc"
+}
+
+}  // namespace
+
 /// @brief GET /api/v1/openapi.json
 /// @brief OpenAPI 3.0 specification
 ///
@@ -159,51 +209,12 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
     // Paths - split into domain-specific includes
     Json::Value paths;
-
-#include "openapi/openapi_interpreter.inc"
-#include "openapi/openapi_lifecycle.inc"
-#include "openapi/openapi_tape_disk.inc"
-#include "openapi/openapi_media.inc"
-#include "openapi/openapi_snapshot.inc"
-#include "openapi/openapi_rzx.inc"
-#include "openapi/openapi_capture.inc"
-#include "openapi/openapi_basic.inc"
-#include "openapi/openapi_keyboard.inc"
-#include "openapi/openapi_mouse.inc"
-#include "openapi/openapi_joystick.inc"
-#include "openapi/openapi_settings.inc"
-#include "openapi/openapi_features.inc"
-#include "openapi/openapi_state.inc"
-#include "openapi/openapi_moonsound.inc"
-#include "openapi/openapi_rtc.inc"
-#include "openapi/openapi_network.inc"
-#include "openapi/openapi_gsporttrace.inc"
-#include "openapi/openapi_ports.inc"
-#include "openapi/openapi_analyzers.inc"
-#include "openapi/openapi_analysis.inc"
-#include "openapi/openapi_video.inc"
-#include "openapi/openapi_temporal.inc"
-#include "openapi/openapi_stepping.inc"
-#include "openapi/openapi_breakpoints.inc"
-#include "openapi/openapi_debug.inc"
-#include "openapi/openapi_labels.inc"
-#include "openapi/openapi_assembly.inc"
-#include "openapi/openapi_profiler.inc"
-#include "openapi/openapi_porttrace.inc"
-#include "openapi/openapi_ttd.inc"
-#include "openapi/openapi_ttdfile.inc"
-
+    buildPaths(paths);
     spec["paths"] = paths;
 
     // Components/Schemas
     Json::Value schemas;
-
-#include "openapi/openapi_schemas.inc"
-#include "openapi/openapi_media_schemas.inc"
-#include "openapi/openapi_joystick_schemas.inc"
-#include "openapi/openapi_ttdfile_schemas.inc"
-#include "openapi/openapi_temporal_schemas.inc"
-
+    buildSchemas(schemas);
     spec["components"]["schemas"] = schemas;
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);

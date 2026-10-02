@@ -1460,6 +1460,7 @@ ScreenState Screen::DescribeScreenState() const
     s.pEFF7 = state.pEFF7;
     s.pDFFD = state.pDFFD;
     s.pFF77 = state.pFF77;
+    s.aFE = state.aFE;
     s.shadowScreenCapable = HasShadowScreen(s.model);
     s.activeRamPage = GetVideoRAMPage(s.model, s.p7FFD);
     s.activeScreen = s.activeRamPage == 7 ? 1 : 0;

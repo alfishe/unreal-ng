@@ -89,10 +89,10 @@ The machine appears to jump to a turbo frequency of ~28 MHz, the number keeps ch
 
 ---
 
-## 🟣 [Fix Proposed] #6: Native macOS MP4 Recording - Frame 2x Too Wide on TSConf
+## 🟢 [Fixed] #6: Native macOS MP4 Recording - Frame 2x Too Wide on TSConf
 * **Date Opened:** 2026-09-30
-* **Date Fixed:** *Pending*
-* **Commit ID:** *None*
+* **Date Fixed:** 2026-10-01
+* **Commit ID:** `6c14bb57`
 
 ### Description
 TS-Conf with the module player running, video recording started - native (macOS VideoToolbox), MP4, fullscreen. The video records fine **with sound**, but the file is **1440x576** where the natural frame is **720x288**: the horizontal resolution is doubled and the picture is stretched 2x horizontally. Recorded sample: `/Users/dev/Movies/unreal_20260930_205229.mp4` (emulator left paused for triage, file no longer present).
@@ -129,20 +129,37 @@ Checked that no backend double-applies or skips the fix:
 
 ---
 
-## 🔴 [Open] #3: Host Folder Insert Freezes the UI Thread
+## 🟢 [Fixed] #3: Host Folder Insert Freezes the UI Thread
 * **Date Opened:** 2026-09-30
-* **Date Fixed:** *Pending*
-* **Commit ID:** *None*
+* **Date Fixed:** 2026-10-01
+* **Commit ID:** `47078607`
 
 ### Description
 Inserting a host folder into an HDD / SD slot runs the folder scan and the volume build **on the Qt UI thread**. `MediaPanelWindow::run` (unreal-qt/src/media/mediapanelwindow.cpp:251) executes `MediaControl::Execute` synchronously, and `MediaManager::Insert` does its file I/O and `FolderSnapshot::Scan` "on the caller's thread" by design (core/src/emulator/media/mediamanager.cpp:149). A large folder (or a slow / network disk behind it) freezes the whole UI for the duration of the scan - no repaints, no input, no cancel.
 
+### Root cause
+Confirmed by trace: `MediaPanelWindow::insertInto` → `run()` → `MediaControl::Execute` → `MediaManager::Insert` → `MediaFormatRegistry::Open` → `FolderSnapshot::Scan` (recursive `std::filesystem::directory_iterator`, one syscall round-trip per entry, no batching) is a single synchronous call chain with no thread boundary and no cancellation hook anywhere in it. The existing `"async": "true"` option on insert is a red herring for this bug - it only skips `MediaControl::Finish`'s post-insert swap-delay wait (`WaitApplied`), never the scan/build itself, which runs unconditionally before `Finish` is even reached.
+
+### Fix
+Kept `core/` fully synchronous (every automation surface - WebAPI, CLI, MCP, Lua, Python - is unaffected and keeps blocking its own request thread, which has no UI to freeze). Added the async wrapper only where there is a UI to protect:
+
+- **Core**: `cancelRequested`/`onProgress(entriesScanned, bytesScanned)` threaded end to end as optional `std::function` fields (`MediaRequest` → `InsertOptions` → `OpenRequest` → `FolderScanOptions` / `FolderDiskBuilder::BuildTrd`'s new parameters) - never serialized, so the wire protocols have no way to set them. `FolderSnapshot::Scan`'s walk checks `cancelRequested` once per entry and calls `onProgress` after every entry visited (bytes = total size of files accepted so far); cancelling unwinds every recursion level, not just the innermost one. New `MediaError::Cancelled` (HTTP 499).
+- **GUI**: `MediaPanelWindow` gained the `std::thread` + `QMetaObject::invokeMethod(Qt::QueuedConnection)` worker idiom already used by `TapeExportAudioDialog`/`TapeImportAudioDialog` - no new threading pattern invented. An indeterminate `QProgressBar` + a status label show which slot and path are being scanned (slot name in bold), the entry count and a human-readable size (`QLocale::formattedDataSize`, KB/MB/GB). The scanning row in the slot table is tinted with `QPalette::Accent` (the system accent color - not `QPalette::Highlight`, which fades to gray whenever the window loses focus) so it is unambiguous which mount point a running scan belongs to. A toolbar button (reusing the existing Tools-menu "Media" `QAction`) opens the panel directly. A 1s watchdog timer compares the progress count across ticks and only cancels after `_insertStallTimeoutSeconds` (30, configurable) ticks with **zero** advancement - a slow-but-moving large folder is never aborted, only a genuinely stuck one. The worker takes its own `shared_ptr<Emulator>` (a fresh `EmulatorManager::GetEmulator(id)` lookup, not the GUI binding's raw pointer) so the emulator/context stays alive for the scan's duration regardless of concurrent unbind/rebind; the destructor cancels and joins unconditionally so the worker's completion lambda can never fire on a half-destroyed window.
+
+Design: `docs/inprogress/2026-09-29-media-drop-targets/design.md` §11.
+
+### Verification
+- `core/tests/emulator/io/storage/hostfolder/foldersnapshot_test.cpp`: progress counting (entries and bytes), cancellation (exact call-count math verified), nested-recursion unwind (cancelling inside one subfolder never visits a sibling).
+- `core/tests/emulator/io/storage/hostfolder/folderdiskbuilder_test.cpp`: cancellation during the scan vs. during the TR-DOS file-read loop, distinguished by call count.
+- Full rebuild (`ninja`, zero warnings) + `test-parallel`, both green.
+- **Interactively verified** (built and run in an isolated git worktree, since the shared working tree had unrelated concurrent breakage at the time): inserting a real folder through the Media panel keeps the window responsive, shows the scanning row highlighted and the slot/path/entry-count/size in the status label, and completes correctly. Developer-confirmed live, including follow-up tweaks (byte/size display, row highlight color, bold slot name, the toolbar button, the 30s watchdog).
+
 ### Requirements / Acceptance Criteria
-- [ ] The folder scan and volume build for a GUI insert (Media Panel "Insert Folder..." and drag'n'drop) run on a **worker thread**: the Qt main thread stays responsive (event loop keeps running, window repaints, the user can keep working).
-- [ ] The UI is **notified on completion**: success -> the slot shows the medium; failure -> a readable error, surfaced like every other insert error.
-- [ ] **Mid-scan source loss** (the host disk unmounted, the folder deleted, permission gone): the insert fails cleanly with a clear error - no crash, no half-inserted slot state, no leaked background work, later inserts into the same slot work.
-- [ ] **Stall watchdog**: when the scan makes no progress for 60 s (configurable), it is aborted with an error to the UI instead of hanging forever ("everything froze and there is no progress at all").
-- [ ] The synchronous `Insert` semantics of the automation surfaces (WebAPI / MCP, their own HTTP threads) are preserved - the async path is the GUI's, or `Insert` grows an async entry point (decide in the design).
-- [ ] Design note added to `docs/inprogress/2026-09-29-media-drop-targets/design.md` and `docs/inprogress/PLAN.md` (registry rule 3).
+- [x] The folder scan and volume build for a GUI insert (Media Panel "Insert Folder..." and drag'n'drop) run on a **worker thread**: the Qt main thread stays responsive (event loop keeps running, window repaints, the user can keep working).
+- [x] The UI is **notified on completion**: success -> the slot shows the medium; failure -> a readable error, surfaced like every other insert error (the same `report()`/`QMessageBox::warning` path every other verb already uses).
+- [ ] **Mid-scan source loss** (the host disk unmounted, the folder deleted, permission gone): no crash, no leaked background work, later inserts into the same slot work (all true - verified by the lifetime design and thread join discipline). **Not fully closed**: an I/O error mid-walk (`directory_iterator::increment` failing) is still reported as a `Skip(...)` and the walk continues, same as before this fix - a disk that disappears mid-scan can silently produce a truncated-but-"successful" volume instead of failing cleanly. Pre-existing behavior, not introduced by this change, but still open against this criterion.
+- [x] **Stall watchdog**: when the scan makes no progress for 30 s (configurable), it is aborted with an error to the UI instead of hanging forever.
+- [x] The synchronous `Insert` semantics of the automation surfaces (WebAPI / MCP, their own HTTP threads) are preserved - `core/` is untouched for every caller that does not explicitly set the new callback fields.
+- [x] Design note added to `docs/inprogress/2026-09-29-media-drop-targets/design.md` and `docs/inprogress/PLAN.md` (registry rule 3).
 
 ---

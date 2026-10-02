@@ -29,6 +29,7 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     blob.pBF = state.pBF;
     blob.aFE = state.aFE;
     blob.aFB = state.aFB;
+    blob.pFDFD = state.pFDFD;
     blob.atmMemSwapped = state.atmMemSwapped ? 1 : 0;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->GetEvoAvr().GetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
@@ -79,6 +80,7 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     state.pBF = blob.pBF;
     state.aFE = blob.aFE;
     state.aFB = blob.aFB;
+    state.pFDFD = blob.pFDFD;
     state.atmMemSwapped = blob.atmMemSwapped != 0;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->GetEvoAvr().SetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);

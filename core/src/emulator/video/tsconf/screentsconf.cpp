@@ -35,6 +35,25 @@ ScreenTSConf::ScreenTSConf(EmulatorContext* context) : ScreenZX(context)
 {
 }
 
+uint32_t ScreenTSConf::Vdac2Level(uint32_t level, bool direct)
+{
+    // The VDAC2 card is the machine's video output: the FPGA sends the Evo
+    // picture as 5-bit channels over the IDE connector, and the card's CPLD
+    // turns each channel into 8 bits for its ADV7125 DAC (tslabs/zx-evo,
+    // pentevo/vdac/vdac2/cpld/top.v, module lut). PAL_SEL - CRAM bit 15 of the
+    // pixel - selects the conversion:
+    //   PAL_SEL = 1: {in, 3'b0}, so the top level is 248, not 255 (the other
+    //                VDAC builds scale their 3/4/5 DAC bits to full scale)
+    //   PAL_SEL = 0: a table of the PWM-compatible levels 0..24, 255 above;
+    //                it is round(v * 255 / 24), one more than the truncating
+    //                formula of the other builds at 11, 14, 17, 19, 20, 22, 23
+    // vdac2-tdd.md §2.1 / §12 D6
+    static constexpr uint8_t kLinear[32] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106,
+                                            117, 127, 138, 149, 159, 170, 181, 191, 202, 213, 223,
+                                            234, 245, 255, 255, 255, 255, 255, 255, 255, 255};
+    return direct ? (level << 3) : kLinear[level & 0x1F];
+}
+
 uint32_t ScreenTSConf::CramToRgba(uint16_t cram, uint8_t vdac)
 {
     uint32_t level[3] = {static_cast<uint32_t>((cram >> 10) & 0x1F), static_cast<uint32_t>((cram >> 5) & 0x1F),
@@ -43,6 +62,8 @@ uint32_t ScreenTSConf::CramToRgba(uint16_t cram, uint8_t vdac)
     {
         if (vdac == 0)
             v = kPwm.level[v];                  // no VDAC: 2-bit DAC + PWM, time-averaged
+        else if (vdac == 7)
+            v = Vdac2Level(v, (cram & 0x8000) != 0);
         else if (!(cram & 0x8000))
             v = v >= 24 ? 255 : v * 255 / 24;   // PWM-compatible linear curve (hs §4.3)
         else

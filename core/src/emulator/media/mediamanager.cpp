@@ -195,6 +195,8 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     request.allowedFs = descriptor.fsCompatibility;
     request.codePage = options.codePage;
     request.freeBytes = options.freeBytes;
+    request.cancelRequested = options.cancelRequested;
+    request.onProgress = options.onProgress;
 
     // The slot's FAT compatibility matrix (BUGS.md #1): a folder volume is
     // built in a flavour the controller reads. The default is clamped into

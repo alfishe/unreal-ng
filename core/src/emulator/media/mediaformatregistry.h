@@ -9,6 +9,7 @@
 /// into a TR-DOS disk (M2). Tapes: every TapeLoaderRegistry format, and host
 /// folders built into a TZX (M3).
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,6 +35,13 @@ struct OpenRequest
     std::vector<FatType> allowedFs;
     std::optional<CodePage> codePage;  ///< folder volumes: explicit > the folder's manifest > CP866
     std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
+
+    /// Folder volumes only (BUGS.md #3): forwarded to FolderScanOptions /
+    /// FolderDiskBuilder::BuildTrd so a caller scanning off the UI thread can
+    /// abort a large or slow/network folder and report progress. Empty: no
+    /// cancellation, no progress (a plain image source never looks at these)
+    std::function<bool()> cancelRequested;
+    std::function<void(uint64_t entriesScanned, uint64_t bytesScanned)> onProgress;
 };
 
 class MediaFormatRegistry

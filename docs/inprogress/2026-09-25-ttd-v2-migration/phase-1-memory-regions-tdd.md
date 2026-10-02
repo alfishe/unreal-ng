@@ -1,6 +1,6 @@
 # Phase 1 — Memory that costs only what changes: technical design
 
-Status: **design, not implemented** (2026-10-01). Roadmap and checks: [README.md](README.md#phase-1--memory-that-costs-only-what-changes). Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)).
+Status: **design, not implemented** (2026-10-01). Parameters measured on real recordings: [Phase 1 experiments](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md) (E1–E4). Roadmap and checks: [README.md](README.md#phase-1--memory-that-costs-only-what-changes). Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)).
 
 Code references are to master at `99467101`. `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `PS` = `core/src/debugger/ttd/ttdcodecpagestore.{h,cpp}`.
 
@@ -28,7 +28,7 @@ ZX-Evo (4 MB RAM, 256 pages of 16 KB) at the BASIC prompt, one frame in which th
 | Store the changed pieces | 8 pieces, each compressed **twice** (as XOR and as a full copy, the smaller kept) | 8 pieces compressed once as XOR; the full copy only when the XOR is large |
 | Every 50th frame | **all ~1,000 non-zero pieces stored again in full** (the key frame) | nothing; a piece is stored Full only when its own chain reaches the limit |
 | Keep the delta base | **copy all 4 MB** | copy the 8 changed pieces (32 KB) |
-| Reference table | **write 256 × 16 B = 4 KB** | copy the 2 blocks that changed (2 × 256 B) and share the other 14 |
+| Reference table | **write 256 × 16 B = 4 KB** | copy the blocks that changed (2–3 × 128 B) and share the other ~30; measured 520 B per frame in memory, 280 B in the file (E3) |
 | Device memory (with a GS card) | **copy 128–512 KB into the GS blob** | the GS RAM is a region: only its changed pieces are stored |
 | Seek one frame back | **decode all ~1,000 pieces** into RAM (765–785 µs) | decode the 8 pieces that differ |
 
@@ -177,11 +177,11 @@ After its region is restored, a device with derived caches gets an `OnRegionRest
 ### 4.3 Step 2 — Chain length limit per piece
 
 - Each slot records its **depth**: 0 for Full and Zero, the base's depth + 1 for XorPrev (PS.h slot gains `uint16_t depth`).
-- `InternXor` stores the piece Full instead of XorPrev when the new depth would reach **K**, so a chain has at most K − 1 XorPrev links. K starts at 50: the deepest chain is 49 links, exactly today's maximum (a key frame every 50 frames), so the worst-case seek decode does not change. The final value comes from BM-5 (seek) against BM-8 (capture).
+- `InternXor` stores the piece Full instead of XorPrev when the new depth would reach **K**, so a chain has at most K − 1 XorPrev links. K = 50 (confirmed by [E1](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e1-chain-limit/README.md) and [E4](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e4-restore-differences/README.md)): the deepest chain is 49 links, exactly today's maximum (a key frame every 50 frames), so the worst-case seek decode does not change. The final value comes from BM-5 (seek) against BM-8 (capture).
 - What a link costs, measured: decoding an XOR piece takes about 1 µs and a Full one about 2 µs on real data (phase-5 results, `2026-07-19-time-travel/phase-5-codec-poc-results.md:1389`); with today's 50-frame bound a seek walks 24 links on average and 47 at p95 (same document, :107-117).
 - The global key frame goes away: `kKeyFrameInterval`, `_lastKeyFrameIdx` and the key-frame branch of `UpdateRamPages` (TTM:1146-1167).
 - `_forceNextKeyFrame` keeps one meaning only: the next capture is a **baseline** (all pieces Full), after `StartRecording`, a load or `InvalidateSession`.
-- **No synchronized spike.** If every piece starts its chain at the same baseline and changes every frame (a demo churning all memory), all chains reach K on the same frame: the old key-frame spike again. Fix: the baseline gives each piece a start depth spread over `[0, K)` (by piece index), so the Full re-stores of busy pieces are spread across K frames. A test pins it: on an all-pages-every-frame workload, no frame stores more than ~1/K of the pieces Full beyond the changed ones.
+- **No synchronized spike, without staggering.** The concern: every piece starts its chain at the same baseline and changes every frame, so all chains reach K on the same frame, which is the old key-frame spike again. Measured on 17 real recordings ([E1](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e1-chain-limit/README.md)): pieces change at different moments, so with K = 50 at most 4 pieces per frame are forced to Full (v1's key frame: up to 30), and stored bytes are 0.51 of v1. Staggered per-piece limits brought that to 2–3 but cost 5–9% more bytes, so they are **not** part of the design. A test pins the spike bound on the benchmark workloads.
 
 ### 4.4 Step 3 — Delta base for changed pieces only
 
@@ -193,8 +193,8 @@ After its region is restored, a device with derived caches gets an `OnRegionRest
 
 ### 4.5 Step 4 — Copy-on-write reference table
 
-- A region's reference table is cut into **blocks of 16 pages** (machine RAM: 16 × 4 slot ids = 256 B; device regions: 64 pieces per block).
-- **Two levels, both shared.** A region's block table (one pointer per block) is itself copy-on-write: a checkpoint holds one pointer per region to its block table. A frame in which nothing changed costs one pointer per region in memory, independent of installed memory. A one-level design (one pointer per block in every checkpoint) would still grow with installed memory: 16 entries for ZX-Evo RAM, 8-16 more for NeoGS, and in the file it alone would exceed the PR-10 limit of 64 B per unchanged frame.
+- A region's reference table is cut into **blocks of 8 pages**: 32 pieces, 8 × 4 slot ids = 128 B. Measured ([E3](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e3-reference-blocks/README.md)): table bytes 0.21 of v1 over all inputs, and on ZX-Evo 4,096 → 520 B per frame in memory and 280 B in the file. 16-page blocks give 0.26, 4-page blocks 0.22.
+- **Two levels, both shared.** A region's block table (one pointer per block) is itself copy-on-write: a checkpoint holds one pointer per region to its block table. A frame in which nothing changed costs one pointer per region in memory, independent of installed memory. A one-level design (one pointer per block in every checkpoint) would still grow with installed memory: 32 entries for ZX-Evo RAM at 8-page blocks, 16-32 more for NeoGS, and in the file it alone would exceed the PR-10 limit of 64 B per unchanged frame.
 - Capture clones a block only when one of its pieces got a **new slot id**, not merely a dirty bit: a dirty 16 KB page whose 4 KB pieces came out unchanged (the all-zero XOR fast path) clones nothing. Measured: 92.9% of dirty 16 KB pages have only one changed 4 KB piece (phase-5 results :73-80).
 - The block size is tuned with BM-3; the estimate in [target-architecture §3](target-architecture.md) is 8–16× less table memory at 1–2 dirty pages per frame.
 - Reference counting of slots does not change: a block holds one reference per slot id it contains, taken when the block is created and released when the block is freed. Sharing a block costs nothing.
@@ -217,7 +217,9 @@ Not regions:
 
 ### 4.7 Step 6 — Restore only the pieces that differ
 
-Today a seek decodes every piece of memory into live RAM (TTM:1532-1574). On ZX-Evo memory restore takes 765-785 µs at p50, the largest part of a seek (Phase 0, Step 2, BM-6), although two nearby positions differ in a handful of pieces.
+Today a seek writes every piece of memory into live RAM (TTM:1532-1574). On ZX-Evo memory restore takes 765-785 µs at p50, the largest part of a seek (Phase 0, Step 2, BM-6), although two nearby positions differ in a handful of pieces. Measured ([E4](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e4-restore-differences/README.md)):
+- **about 550 of those 760 µs is writing zeros**: v1's baseline stores every piece, all-zero ones as Zero slots, and ZX-Evo at the BASIC prompt has 1,003 all-zero pieces out of 1,024;
+- restoring only differing pieces: an estimated **~145 µs** on ZX-Evo (5×) and 34 µs on Pentagon 1024. A fully used 128K machine saves about a third, because the pieces that differ are the busy ones with the longest chains.
 
 - Each region keeps a **live slot map**: for every piece, the slot id whose content is in live memory now. It is set by a capture (the piece's new slot) and by a restore (the target's slot).
 - A write after that point makes the piece's map entry unknown. The region's dirty bits already say which pieces were written, so no new tracking is needed.
@@ -229,7 +231,7 @@ Today a seek decodes every piece of memory into live RAM (TTM:1532-1574). On ZX-
 
 `InternXor` compresses both the XOR difference and the full piece and keeps the smaller (PS.cpp:73-181). The full compression costs 8.6 µs against 0.96 µs for the XOR on real data and almost never wins: mean stored XOR piece 39-93 B, full about 1.4 KB (phase-5 results :1387-1392; `ttd-v1-architecture-and-format.md:958-981`).
 
-- Compress the XOR first. Compress the full piece only when the XOR result is larger than a threshold (start: 1 KB, tuned with BM-8), and keep the smaller.
+- Compress the XOR first. Compress the full piece only when the XOR result is larger than **128 bytes**, and keep the smaller. Measured on 70,283 real changes ([E2](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e2-encode-once/README.md)): the full piece wins in 5% of changes; at T = 128 the full compression is skipped for 83% of changes, encoding takes 0.28 of the v1 time, and stored bytes grow by 0.07%. 1 KB would cost 3.7% bytes for little more speed.
 - A piece the chain limit forces to Full is compressed once, as Full.
 - Expected effect: the cost per changed piece drops several-fold, which sets the slope of BM-8 (PR-4).
 - Bytes: identical whenever the XOR is below the threshold; the matrix comparison shows the rest.
@@ -261,7 +263,7 @@ Every new test is checked by mutation: it must fail when the mechanism it guards
 | 1 | State-completeness test extended to regions | every registered region is restored on every creatable model |
 | 1 | Session file round trip with regions | save / load restores every region byte for byte |
 | 2 | A piece changed every frame is stored Full exactly when its chain reaches K | the limit works per piece |
-| 2 | All pages changed every frame: Full re-stores spread over K frames | no synchronized spike |
+| 2 | Benchmark workloads: forced Full stores per frame stay at the E1 bound (≤ 4) | no synchronized spike |
 | 2 | Pieces that never change stay at depth 0 and are never re-stored | cost follows change |
 | 3 | Delta base equals live memory after capture, seek, resume and load | the delta base invariant |
 | 3 | Mutation: skip the dirty-piece refresh → the test fails | the guard is real |
@@ -303,10 +305,10 @@ The order 3 → 7 → 2 → 6 → 4 → 1 → 5 keeps every intermediate state a
 | A write path that bypasses the dirty bit (a new device, a tool edit) leaves the delta base stale | Debug-build comparison (§4.4); the state-completeness test covers every region |
 | GS / NeoGS write hooks cost time on the card CPU's hot path | One gated bit-set; A/B benchmark required before landing (performance guidelines) |
 | Region ids collide with another branch | Fixed table, first to master takes the number (same rule as `PeripheralId`) |
-| Block size 16 pages is wrong for device regions | Per-region block size, tuned with BM-3 |
+| 8-page blocks are wrong for some device region | Per-region block size; E3 found idle device memory cheap at any size thanks to the second level |
 | The file grows a block section that older readers cannot read | Amended in place: old files are re-recorded, as with every amendment so far; versioning comes in Phase 5 |
 | Without key frames a damaged Full piece spoils every checkpoint until that piece changes again; key frames used to bound the damage to 50 frames (phase-5 results :358-367) | Recorded as an input for the integrity decision (Phase 4, Step 1); CRC32C per piece still detects it |
-| No measurement exists of chain depths with per-piece limits and staggered starts, or of block sizes | Measured in the phase: the matrix records depth p50/p99 and table bytes per frame (BM-3, BM-5) |
+| Experiment figures are simulations on recordings, not the implemented engine | The benchmark matrix checks them after implementation: BM-6 memory restore on ZX-Evo expected ~150 µs (E4), table and payload bytes per frame (E1, E3), capture cost per changed piece (E2) |
 
 ## 8. Sources and what was not carried over
 
