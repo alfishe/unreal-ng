@@ -265,6 +265,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
 
 
+# TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The
+# gate is PUBLIC for the same reason as UNREALNG_HAVE_OPL4: core-tests compiles core
+# sources itself and must see the same class layouts
+if (ENABLE_VDAC2)
+    target_link_libraries(${PROJECT_NAME} PRIVATE eve::emu)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_VDAC2)
+endif()
+
+
 # Platform-specific framework and library linkage
 # Note: Recording-specific frameworks (VideoToolbox, AVFoundation, CoreMedia, CoreVideo, AudioToolbox)
 # are now linked via the recording library (core/recording/CMakeLists.txt)

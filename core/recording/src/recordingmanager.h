@@ -391,6 +391,12 @@ protected:
     uint32_t _scaleFactor = 1;
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
     std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
+    // Size of the first encoded frame: the encoders take one size per file, so a
+    // picture of another size (an external picture source switched on or off,
+    // a new mode of it) is not encoded into the same file
+    uint16_t _encodedWidth = 0;
+    uint16_t _encodedHeight = 0;
+    bool _sizeChangeLogged = false;
 
     // Viewport crop offsets (captured at recording start for Viewport mode)
     uint16_t _viewportCropLeft = 0;

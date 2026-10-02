@@ -594,6 +594,15 @@ size_t TTDCoverageIndex::RawEncodedBytes(TTDCoverageKind kind) const
     return _rawBytes[kindIdx] + _openBlock[kindIdx].size();
 }
 
+size_t TTDCoverageIndex::CompressedSlackBytes() const
+{
+    size_t total = 0;
+    for (size_t k = 0; k < kKindCount; ++k)
+        for (const Block& b : _blocks[k])
+            total += b.compressed.capacity() - b.compressed.size();
+    return total;
+}
+
 size_t TTDCoverageIndex::HeapBytes() const
 {
     size_t total = 0;

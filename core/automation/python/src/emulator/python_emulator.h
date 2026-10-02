@@ -74,6 +74,7 @@
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
+#include "../bindings/python_vdac2.h"
 
 namespace py = pybind11;
 
@@ -5146,5 +5147,8 @@ namespace PythonBindings
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         registerPortTraceBindings(emulatorClass);
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        registerVdac2Bindings(emulatorClass);
     }
 }

@@ -892,6 +892,24 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
         toEncode = &stretched;
     }
 
+    // One picture size per file
+    if (_stats.framesRecorded == 0)
+    {
+        _encodedWidth = toEncode->width;
+        _encodedHeight = toEncode->height;
+        _sizeChangeLogged = false;
+    }
+    else if (toEncode->width != _encodedWidth || toEncode->height != _encodedHeight)
+    {
+        if (!_sizeChangeLogged)
+        {
+            _sizeChangeLogged = true;
+            MLOGWARNING("Recording: the picture changed from %ux%u to %ux%u - frames of the new size are not "
+                        "recorded into this file", _encodedWidth, _encodedHeight, toEncode->width, toEncode->height);
+        }
+        return;
+    }
+
     // Encode video frame
     EncodeVideoFrame(*toEncode, timestamp);
 
