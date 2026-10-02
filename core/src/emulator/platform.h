@@ -844,6 +844,9 @@ struct CONFIG
 	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
 	uint8_t profi_rom_wait;               // [PROFI] RomWait: v5 ROM one-shot gives 1 wait at 3.5 MHz too
 	uint8_t profi_turbo;                  // [PROFI] Turbo: the front-panel turbo switch at power-on
+	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
+	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
+	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)
 	char kay_rom_path[FILENAME_MAX];
 	char quorum_rom_path[FILENAME_MAX];
 	char tsl_rom_path[FILENAME_MAX];
@@ -1093,6 +1096,8 @@ struct EmulatorState
                                                 // multiplier at the frame boundary - see Z80::Z80FrameCycle()
     uint8_t profi_turbo_switch;                 // Profi front-panel TURBO switch: 1 = pressed. The clock is 7 MHz while it is
                                                 // pressed and (v3) the VG93's HLD is low (PortDecoder_Profi::SyncTurbo)
+    uint8_t profi_cpm_switch;                   // Profi v5 front-panel CP/M switch: 1 = pressed. Holds #DFFD at #00 (the
+                                                // latches' clear input) and every #DFFD write is lost while pressed
     uint8_t hw_turbo_ratio;                     // Model-neutral HARDWARE turbo: the guest-visible CPU clock multiplier,
                                                 // 1..8 (1 = base clock, 2 = e.g. Scorpion / ATM 7 MHz, 4 = 14 MHz clones,
                                                 // 6 = Sprinter 21 MHz). Maintained by the model's port decoder from its

@@ -115,6 +115,9 @@ resolution.
 
 ## CPU clock, wait states, floating bus
 
+The v5 CP/M switch holds `#DFFD` at `#00` while it is on (`[PROFI] CpmSwitch=`, CLI `switch cpm on`), and
+`[PROFI] DffdDecode=emulators|v50|v506` picks the board's `#DFFD` decode (the 5.0x boards decode A13 and A1 only).
+
 The TURBO switch on the front panel runs the CPU at 7 MHz (`[PROFI] Turbo=`, CLI `switch turbo on`, WebAPI
 `/switches`, Qt Machine > TURBO Switch; TTD records it). On v3 a loaded floppy head (the WD1793's HLD) holds 3.5 MHz.
 

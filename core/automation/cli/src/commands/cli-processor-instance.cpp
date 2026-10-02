@@ -483,7 +483,7 @@ void CLIProcessor::HandleSwitch(const ClientSession& session, const std::vector<
         return;
     }
 
-    const FrontPanelSwitch all[] = {FrontPanelSwitch::Turbo};
+    const FrontPanelSwitch all[] = {FrontPanelSwitch::Turbo, FrontPanelSwitch::Cpm};
     if (args.empty())
     {
         std::ostringstream oss;
@@ -503,7 +503,7 @@ void CLIProcessor::HandleSwitch(const ClientSession& session, const std::vector<
     FrontPanelSwitch sw;
     if (!ParseFrontPanelSwitch(args[0], sw))
     {
-        session.SendResponse("Unknown switch '" + args[0] + "'. Known: turbo\n");
+        session.SendResponse("Unknown switch '" + args[0] + "'. Known: turbo, cpm\n");
         return;
     }
     if (emulator->GetFrontPanelSwitch(sw) < 0)

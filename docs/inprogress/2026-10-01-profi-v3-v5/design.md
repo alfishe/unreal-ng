@@ -120,6 +120,19 @@ schematic ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbu
   tick). The screen page is 5 or 7 per `#7FFD` bit 3.
 - Hi-res (DS80) reads `#FF` (its fetch is not modeled). The v5 board has no such path: it reads `#FF`.
 
+### 4.5 The #DFFD decode and the CP/M switch (v5, phase 7)
+
+From the 5.06 netlist and the 5.0 album ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)):
+
+| Item | Board | Emulator |
+|:--|:--|:--|
+| Palette write | any `OUT` with A7=0, A0=0 while DS80 = 1; neither CP/M nor BLOCK gates it (the manual's sentence contradicts its own schematic and the BIOS) | unchanged |
+| #DFFD decode | 5.0x: A13=0, A1=0 (A15 not decoded, so a 128K `OUT` to `#1FFD` writes #DFFD too); 5.06: high byte #DF, A1=0, and never from `OUT (n),A` (DD75 `/BLOCK`) | `[PROFI] DffdDecode=emulators` (A15=1, A13=0, A1=0, the default), `v50`, `v506` |
+| CP/M switch | holds #DFFD (and the 5.06 `/BLOCK` flip-flop) cleared through the latches' clear input while pressed; #7FFD and the ROM lines untouched; the front-panel RST clears only #7FFD | `FrontPanelSwitch::Cpm` on v5 (`[PROFI] CpmSwitch`), on every surface next to TURBO; TTD records it, ProfiPaging byte 33 bit 1 |
+
+Whether the CP/M switch also selects the start ROM page, as the manual says, is open: nothing on the processor
+board connects it there.
+
 ## 5. Video timing
 
 ### 5.1 The sync PROM is a board option
@@ -231,8 +244,12 @@ XP+'s own model ("2 waits on a slot edge, 3 between, VG93 HLD drops turbo") agre
 ### 6.3 v5 turbo
 
 The v5 turbo arbitration depends on the history of the slot ring (E4 section 3), so the overlay uses the
-approximation in the table above. The third crystal of the v5.0 manual (16-24 MHz divided down, "до 15 МГц") is
-not modeled: there is no source for how the board switches to it (phase 7).
+approximation in the table above. TEST 4.30 on a real 5.06 shows 1.68x in turbo, the emulator 1.64x
+([test-programs.md](test-programs.md)).
+
+The third crystal ZQ3 (16-24 MHz) is settled (phase 7): DS80 selects it, no jumper or switch, and the CPU runs at
+ZQ3 / 4, or ZQ3 / 2 in turbo, only in hi-res (4-6 MHz, 8-12 MHz); the 12 MHz crystal is the hi-res pixel clock
+only. It is not modeled: the hi-res frame timing is open (5.3).
 
 ### 6.4 v5 video WAIT at 3.5 MHz
 

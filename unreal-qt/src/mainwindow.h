@@ -147,6 +147,7 @@ private slots:
     void handleAutostartDisksToggled(bool enabled);
     void handleContentionToggled(bool enabled);
     void handleFrontPanelTurboToggled(bool on);
+    void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
     void handleToolBarToggled(bool visible);

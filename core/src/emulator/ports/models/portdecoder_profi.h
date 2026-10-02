@@ -78,7 +78,13 @@ public:
 
     /// The front-panel TURBO switch (both boards): 7 MHz while it is pressed and, on v3, while the VG93's HLD is low
     /// (the HLD pin drives the board's /TURBO; research-profi-v3-turbo-floatbus.md A2)
-    bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override { return sw == FrontPanelSwitch::Turbo; }
+    /// TURBO on both boards; the CP/M switch on v5 (the v3 drawings have none)
+    bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override
+    {
+        return sw == FrontPanelSwitch::Turbo || (sw == FrontPanelSwitch::Cpm && _board.palette);
+    }
+    /// Whether an OUT to `port` writes #DFFD under [PROFI] DffdDecode
+    bool DffdAnswers(uint16_t port) const;
     bool GetFrontPanelSwitch(FrontPanelSwitch sw) const override;
     bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on) override;
 
@@ -106,6 +112,8 @@ protected:
     void Port_7FFD(uint8_t value, uint16_t pc);
 
     void Port_DFFD(uint8_t value, uint16_t pc);
+    /// Set the #DFFD latch and follow its paging and video mode (the CP/M switch clears it through here)
+    void ApplyDffd(uint8_t value);
     void ResetPalette();
 
     /// RTC, EXT mode only. Address: #BF/#FF, data: #9F/#DF (UnrealSpeccy io.cpp:

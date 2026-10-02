@@ -37,6 +37,7 @@ const char* FrontPanelSwitchName(FrontPanelSwitch sw)
     switch (sw)
     {
         case FrontPanelSwitch::Turbo: return "turbo";
+        case FrontPanelSwitch::Cpm: return "cpm";
     }
     return nullptr;
 }
@@ -46,6 +47,11 @@ bool ParseFrontPanelSwitch(const std::string& name, FrontPanelSwitch& out)
     if (name == "turbo")
     {
         out = FrontPanelSwitch::Turbo;
+        return true;
+    }
+    if (name == "cpm")
+    {
+        out = FrontPanelSwitch::Cpm;
         return true;
     }
     return false;

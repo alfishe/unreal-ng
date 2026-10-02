@@ -86,7 +86,8 @@ curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json
 ```
 
 CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
-Switch; `[PROFI] Turbo=1` turns it on at power-on. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+Switch; `[PROFI] Turbo=1` turns it on at power-on. The v5 CP/M switch works the same way (`"cpm"`, Machine > CP/M
+Switch, `[PROFI] CpmSwitch=1`): while it is on, `#DFFD` stays `#00`. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
 its DRAM slot), code in ROM 2x.
 
 ## WebAPI

@@ -802,6 +802,11 @@ void MenuManager::createMachineMenu()
     _frontPanelTurboAction->setCheckable(true);
     _frontPanelTurboAction->setEnabled(false);
     connect(_frontPanelTurboAction, &QAction::triggered, this, &MenuManager::frontPanelTurboToggled);
+    _frontPanelCpmAction = _machineMenu->addAction(tr("C&P/M Switch"));
+    _frontPanelCpmAction->setStatusTip(tr("The Profi v5 front-panel CP/M switch: holds port #DFFD at #00 while on"));
+    _frontPanelCpmAction->setCheckable(true);
+    _frontPanelCpmAction->setEnabled(false);
+    connect(_frontPanelCpmAction, &QAction::triggered, this, &MenuManager::frontPanelCpmToggled);
     connect(_machineMenu, &QMenu::aboutToShow, this, [this]() { updateFrontPanelSwitches(_activeEmulator.lock()); });
 
     _machineMenu->addSeparator();
@@ -1423,6 +1428,9 @@ void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& acti
     const int turbo = activeEmulator ? activeEmulator->GetFrontPanelSwitch(FrontPanelSwitch::Turbo) : -1;
     _frontPanelTurboAction->setEnabled(turbo >= 0);
     _frontPanelTurboAction->setChecked(turbo > 0);
+    const int cpm = activeEmulator ? activeEmulator->GetFrontPanelSwitch(FrontPanelSwitch::Cpm) : -1;
+    _frontPanelCpmAction->setEnabled(cpm >= 0);
+    _frontPanelCpmAction->setChecked(cpm > 0);
 }
 
 void MenuManager::resetViewportSelection()

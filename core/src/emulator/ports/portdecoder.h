@@ -69,6 +69,7 @@ constexpr uint8_t PORT_7FFD_RAM_BANK_7          = 0b0000'0111;
 enum class FrontPanelSwitch : uint8_t
 {
     Turbo = 0,   ///< the CPU clock's TURBO switch (Profi v3 / v5)
+    Cpm = 1,     ///< the Profi v5 CP/M switch: holds #DFFD at #00 while pressed
 };
 
 /// The switch's name on every automation surface ("turbo"); nullptr for an unknown id

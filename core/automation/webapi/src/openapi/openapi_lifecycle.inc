@@ -226,7 +226,8 @@
         get["summary"] = "Front-panel switches";
         get["description"] =
             "The machine's front-panel switches and their positions: the Profi boards' TURBO switch (7 MHz; on the "
-            "v3 a loaded floppy head holds 3.5 MHz). Empty for a machine without switches";
+            "v3 a loaded floppy head holds 3.5 MHz) and the v5 CP/M switch (holds #DFFD at #00 while on). Empty for "
+            "a machine without switches";
         get["parameters"][0]["name"] = "id";
         get["parameters"][0]["in"] = "path";
         get["parameters"][0]["required"] = true;
@@ -248,6 +249,7 @@
         schema["required"].append("on");
         schema["properties"]["name"]["type"] = "string";
         schema["properties"]["name"]["enum"].append("turbo");
+        schema["properties"]["name"]["enum"].append("cpm");
         schema["properties"]["on"]["type"] = "boolean";
         post["responses"]["200"]["description"] = "The switches after the flip";
         post["responses"]["400"]["description"] = "Bad body, unknown switch or none on this machine";

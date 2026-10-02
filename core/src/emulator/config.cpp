@@ -332,6 +332,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.profi_rom_wait = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "RomWait", 0) ? 1 : 0);
 	config.profi_turbo = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "Turbo", 0) ? 1 : 0);
+	config.profi_cpm = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "CpmSwitch", 0) ? 1 : 0);
+	{
+		const char* decode = inimanager.GetValue("PROFI", "DffdDecode", "emulators");
+		config.profi_dffd_decode = 0;
+		if (decode && StringHelper::CompareCaseInsensitive(decode, "v50", 3) == 0 && decode[3] == '\0')
+			config.profi_dffd_decode = 1;
+		else if (decode && StringHelper::CompareCaseInsensitive(decode, "v506", 4) == 0)
+			config.profi_dffd_decode = 2;
+		else if (decode && StringHelper::CompareCaseInsensitive(decode, "emulators", 9) != 0)
+			MLOGWARNING("Config: unknown [PROFI] DffdDecode=%s, emulators (A15=1, A13=0, A1=0) used", decode);
+	}
 
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);

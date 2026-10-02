@@ -275,7 +275,10 @@ is off. v5 only: the RTC (MC146818 / DS12887, 256 cells; inspect_state aspect rt
 A front-panel switch, not a port: `invoke_api GET /api/v1/emulator/{id}/switches`, `POST .../switches`
 `{"name":"turbo","on":true}` (CLI `switch turbo on`, Lua/Python `set_switch("turbo", true)`; `[PROFI] Turbo=1` sets
 it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a loaded floppy head (WD1793 HLD) holds
-3.5 MHz. The status line shows the clock.
+3.5 MHz. The status line shows the clock. The v5 also has the CP/M switch (`"name":"cpm"`, CLI `switch cpm on`,
+`[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
+the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
+`OUT (n),A`).
 
 ## Wait states and the floating bus (feature `contention`)
 | Board, clock | Waits |

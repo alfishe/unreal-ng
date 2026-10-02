@@ -1,6 +1,6 @@
 # Status: TODO
 
-Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-6 implemented on branch `profi-v3-v5`
+Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 implemented on branch `profi-v3-v5`
 (worktree `scratch/wt-profi`); it goes to master after all phases and tests. Plan: [design.md](design.md) section 8.
 
 ## Done
@@ -27,8 +27,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-6 impleme
   (`profi3_boot_test.cpp`). Not done: launching the BIOS menu entries (also open on v5)
 - [x] Phase 2 (branch): v3 port set through `ProfiBoard` (no extended map, palette, GX0, RTC, IDE; TTD = paging only);
   AY decodes A13 on both boards; the joystick at `#1F` was already on master. Tests in
-  `portdecoder_profi_test.cpp` (`ProfiV3PortDecoder_Test`, `AyDecodesA13`) and `profiboard_test.cpp`. Not done: the
-  PROM-table test over all 256 ports x modes (tdd-plan section 2) - the Python check covers v5 today
+  `portdecoder_profi_test.cpp` (`ProfiV3PortDecoder_Test`, `AyDecodesA13`, `DecodeMatchesThePortDecoderProm` on
+  both boards: every port low byte x mode against the PROM dumps) and `profiboard_test.cpp`
 - [x] Phase 3 (branch): `[PROFI] SyncProm=` (`0a1d`, `samx6`, `fb0579b6`, `v503`; empty = the board's own), v3
   69888 T / INT 12580 T, v5 69888 T / INT 14368 T (was 12580); the INI's `intstart` / `intlen` removed so they no
   longer override it. No Profi TTD fixtures exist, so none were re-recorded. Tests in `int_timing_test.cpp`
@@ -41,5 +41,13 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-6 impleme
   `set_switch`, Qt Machine > TURBO Switch; TTD records the switch (`TTDInputKind::FrontPanelSwitch`, ProfiPaging
   byte 33); the Qt status line now shows the clock of a machine that never changes it. No v3 TTD fixture: no Profi
   fixtures exist
-- [ ] Emulated test programs for the waits (floatspy, TEST 4.30, the demos Gromov names) - need the programs
-- [ ] Phase 7: v5 open items (palette gate, 15 MHz, CP/M boot switch)
+- [ ] The border demos Gromov names (QARX, ACADEMY, SHOCK MEGADEMO) and floatspy: run, not yet judged against his
+  descriptions ([test-programs.md](test-programs.md))
+- [x] Phase 7 (branch): the v5 open items, from the 5.06 netlist and the 5.0 album
+  ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)): the palette rule stays (DS80, A7=0, A0=0; the
+  manual's "CP/M + BLOCK" sentence contradicts its own schematic); the CP/M switch holds #DFFD at #00
+  (`FrontPanelSwitch::Cpm`, `[PROFI] CpmSwitch`); `[PROFI] DffdDecode=emulators|v50|v506`
+- [ ] The third crystal (ZQ3, 16-24 MHz) clocks the CPU only in DS80 (4-6 MHz, 8-12 in turbo): settled, not
+  modeled - the hi-res frame timing is open (design 5.3)
+- [x] Emulated test programs ([test-programs.md](test-programs.md)): Tact Meter reproduces the v3.2 turbo
+  measurement to four digits; TEST 4.30 reads the expected ports, frame and memory class

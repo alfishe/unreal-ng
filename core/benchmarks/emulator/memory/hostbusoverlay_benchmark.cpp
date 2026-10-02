@@ -80,6 +80,11 @@ static void BM_HostFrame_Scorpion_Debug(benchmark::State& s) { RunHostFrame(s, "
 // keyboard controller each IN #FE runs its firmware: the worst case for it)
 static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
 static void BM_HostFrame_ATM710_Debug(benchmark::State& s) { RunHostFrame(s, "ATM710", true); }
+// Profi: the BIOS menu. The v5 runs its video WAIT (ProfiWaitOverlay) at 3.5 MHz, the v3 has no overlay
+static void BM_HostFrame_Profi_Fast(benchmark::State& s) { RunHostFrame(s, "PROFI", false); }
+static void BM_HostFrame_Profi_Debug(benchmark::State& s) { RunHostFrame(s, "PROFI", true); }
+static void BM_HostFrame_Profi3_Fast(benchmark::State& s) { RunHostFrame(s, "PROFI3", false); }
+static void BM_HostFrame_Profi3_Debug(benchmark::State& s) { RunHostFrame(s, "PROFI3", true); }
 static void BM_HostFrame_Pentagon_Overlay_Fast(benchmark::State& s) { RunHostFrame(s, "PENTAGON", false, true); }
 static void BM_HostFrame_Pentagon_Overlay_Debug(benchmark::State& s) { RunHostFrame(s, "PENTAGON", true, true); }
 
@@ -91,6 +96,10 @@ BENCHMARK(BM_HostFrame_Scorpion_Fast)->Iterations(1000)->Unit(benchmark::kMicros
 BENCHMARK(BM_HostFrame_Scorpion_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Profi_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Profi_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Profi3_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Profi3_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 

@@ -100,6 +100,7 @@ void PortDecoder_Profi::reset()
     {
         _switchFromConfig = true;
         state.profi_turbo_switch = _context->config.profi_turbo ? 1 : 0;
+        state.profi_cpm_switch = (_board.palette && _context->config.profi_cpm) ? 1 : 0;
     }
     SyncTurbo();
     SyncWaits();
@@ -107,11 +108,21 @@ void PortDecoder_Profi::reset()
 
 bool PortDecoder_Profi::GetFrontPanelSwitch(FrontPanelSwitch sw) const
 {
+    if (sw == FrontPanelSwitch::Cpm)
+        return _board.palette && _state->profi_cpm_switch != 0;
     return sw == FrontPanelSwitch::Turbo && _state->profi_turbo_switch != 0;
 }
 
 bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
 {
+    if (sw == FrontPanelSwitch::Cpm && _board.palette)
+    {
+        // research-profi-v5-open-items.md Q6: the switch drives the clear input of the #DFFD latches (/ONOFF)
+        _state->profi_cpm_switch = on ? 1 : 0;
+        if (on && _state->pDFFD != 0)
+            ApplyDffd(0);
+        return true;
+    }
     if (sw != FrontPanelSwitch::Turbo)
         return false;
     _state->profi_turbo_switch = on ? 1 : 0;
@@ -394,14 +405,18 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         disp.wasHandledInline = true;
     }
 
+    const bool dffd = DffdAnswers(port);
     if (IsPort_7FFD(port))
     {
         Port_7FFD(value, pc);
         disp.decodedPort = 0x7FFD;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
+        // DffdDecode=v50: the 5.0 board decodes #DFFD from A13 and A1 alone, so #1FFD-style ports write both
+        if (dffd)
+            Port_DFFD(value, pc);
     }
-    else if (IsPort_DFFD(port))
+    else if (dffd)
     {
         Port_DFFD(value, pc);
         disp.decodedPort = 0xDFFD;
@@ -721,7 +736,34 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value, [[maybe_unused]] uint16_t pc)
 }
 
 /// Port #DFFD (Profi extended paging / mode) handler
+bool PortDecoder_Profi::DffdAnswers(uint16_t port) const
+{
+    // research-profi-v5-open-items.md, "Emulator rule (palette)": the boards differ from the emulators' decode
+    switch (_context->config.profi_dffd_decode)
+    {
+        case 1:   // v5.0: A13=0, A1=0; A15 is not decoded
+            return (port & 0x2002) == 0;
+        case 2:   // v5.06: high byte #DF, A1=0, and an OUT (n),A never writes it (DD75 /BLOCK)
+        {
+            if ((port & 0xFF02) != 0xDF00)
+                return false;
+            const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+            return !z80 || z80->opcode != 0xD3;
+        }
+        default:
+            return IsPort_DFFD(port);
+    }
+}
+
 void PortDecoder_Profi::Port_DFFD(uint8_t value, [[maybe_unused]] uint16_t pc)
+{
+    // The CP/M switch holds the latches cleared: the write is lost
+    if (_state->profi_cpm_switch)
+        return;
+    ApplyDffd(value);
+}
+
+void PortDecoder_Profi::ApplyDffd(uint8_t value)
 {
     const uint8_t changed = _state->pDFFD ^ value;
     _state->pDFFD = value;

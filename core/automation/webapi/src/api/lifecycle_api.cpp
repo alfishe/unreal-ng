@@ -1018,7 +1018,7 @@ Json::Value SwitchesJson(Emulator& emulator, const std::string& id)
     Json::Value ret;
     ret["emulator_id"] = id;
     ret["switches"] = Json::Value(Json::arrayValue);
-    for (FrontPanelSwitch sw : {FrontPanelSwitch::Turbo})
+    for (FrontPanelSwitch sw : {FrontPanelSwitch::Turbo, FrontPanelSwitch::Cpm})
     {
         const int value = emulator.GetFrontPanelSwitch(sw);
         if (value < 0)
@@ -1075,7 +1075,7 @@ void EmulatorAPI::setSwitch(const HttpRequestPtr& req, std::function<void(const 
     if (!json || !(*json)["name"].isString() || !(*json)["on"].isBool())
     {
         SendSwitchError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
-                        "Body must be {\"name\": \"turbo\", \"on\": true|false}");
+                        "Body must be {\"name\": \"turbo\" | \"cpm\", \"on\": true|false}");
         return;
     }
     FrontPanelSwitch sw;

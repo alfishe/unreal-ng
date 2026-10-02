@@ -752,3 +752,60 @@ TEST_F(ProfiPortDecoder_Test, V5HasNoFloatingBus)
 }
 
 /// endregion </The v3 floating bus>
+
+/// region <Phase 7: the #DFFD decode variants and the v5 CP/M switch>
+
+/// research-profi-v5-open-items.md: DffdDecode picks the board's #DFFD decode
+TEST_F(ProfiPortDecoder_Test, DffdDecodeVariants)
+{
+    auto writes = [&](uint16_t port) {
+        State().pDFFD = 0;
+        WritePort(port, 0x01);
+        return State().pDFFD == 0x01;
+    };
+    _context->config.profi_dffd_decode = 0;   // emulators: A15=1, A13=0, A1=0
+    EXPECT_TRUE(writes(0xDFFD));
+    EXPECT_TRUE(writes(0x9FFD));
+    EXPECT_FALSE(writes(0x1FFD));
+
+    _context->config.profi_dffd_decode = 1;   // v5.0: A13=0, A1=0 only
+    EXPECT_TRUE(writes(0x9FFD));
+    EXPECT_TRUE(writes(0x1FFD)) << "the 5.0 board's bug: a 128K #1FFD write lands in #DFFD too";
+
+    _context->config.profi_dffd_decode = 2;   // v5.06: high byte #DF, A1=0, not from OUT (n),A
+    EXPECT_TRUE(writes(0xDFFD));
+    EXPECT_FALSE(writes(0x9FFD));
+    _core->GetZ80()->opcode = 0xD3;
+    EXPECT_FALSE(writes(0xDFFD)) << "OUT (n),A: DD75 /BLOCK";
+    _core->GetZ80()->opcode = 0x79;
+    EXPECT_TRUE(writes(0xDFFD)) << "OUT (C),A";
+    _context->config.profi_dffd_decode = 0;
+}
+
+TEST_F(ProfiPortDecoder_Test, CpmSwitchHoldsDffdCleared)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    ASSERT_TRUE(decoder->HasFrontPanelSwitch(FrontPanelSwitch::Cpm));
+    ASSERT_FALSE(decoder->GetFrontPanelSwitch(FrontPanelSwitch::Cpm));
+    WritePort(0xDFFD, 0x20);
+    EXPECT_EQ(State().pDFFD, 0x20);
+
+    ASSERT_TRUE(decoder->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, true));
+    EXPECT_EQ(State().pDFFD, 0x00) << "pressing clears the latch";
+    WritePort(0xDFFD, 0x20);
+    EXPECT_EQ(State().pDFFD, 0x00) << "writes are lost while pressed";
+    WritePort(0x7FFD, 0x07);
+    EXPECT_EQ(State().p7FFD & 0x07, 0x07) << "#7FFD is not touched";
+
+    ASSERT_TRUE(decoder->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, false));
+    WritePort(0xDFFD, 0x20);
+    EXPECT_EQ(State().pDFFD, 0x20);
+}
+
+TEST_F(ProfiV3PortDecoder_Test, NoCpmSwitchOnV3)
+{
+    EXPECT_FALSE(_context->pPortDecoder->HasFrontPanelSwitch(FrontPanelSwitch::Cpm));
+    EXPECT_FALSE(_context->pPortDecoder->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, true));
+}
+
+/// endregion </Phase 7>
