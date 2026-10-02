@@ -90,10 +90,8 @@ uint8_t PortDecoder_ATM450::DecodePortIn(uint16_t port, uint16_t pc)
     // `val = (val & 0x7F) | atm450_z(cpu.t)`)
     if (IsPort_FE(port))
     {
-        const uint32_t frameT = (_context->pCore && _context->config.frame)
-                                    ? _context->pCore->GetZ80()->t % _context->config.frame
-                                    : 0;
-        result = static_cast<uint8_t>((Default_Port_FE_In(port, pc) & 0x7F) | PalMarker(frameT));
+        const uint32_t sinceInt = _context->pCore ? TStatesSinceInt(_context->pCore->GetZ80()->t) : 0;
+        result = static_cast<uint8_t>((Default_Port_FE_In(port, pc) & 0x7F) | PalMarker(sinceInt));
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
@@ -246,13 +244,28 @@ void PortDecoder_ATM450::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
 
 /// region <Port detection>
 
-uint8_t PortDecoder_ATM450::PalMarker(uint32_t frameT)
+uint32_t PortDecoder_ATM450::TStatesSinceInt(uint32_t z80T) const
+{
+    // UnrealSpeccy counts cpu.t from the INT edge (INT is active while
+    // t < intlen); this core counts from the frame start and raises INT at
+    // intstart + 1 (Z80::_intStart, config.cpp ATM timing). The PAL windows are
+    // INT-relative: the system ROM samples Z at a fixed delay after HALT and
+    // turns the 16 samples into the key that decrypts its CP/M loader
+    const CONFIG& config = _context->config;
+    const uint32_t frame = config.frame ? config.frame : 1;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+    const uint32_t t = (z80T / multiplier) % frame;
+    const uint32_t intT = (config.intstart + 1) % frame;
+    return (t + frame - intT) % frame;
+}
+
+uint8_t PortDecoder_ATM450::PalMarker(uint32_t sinceInt)
 {
     // UnrealSpeccy atm450_z(): "PAL hardware gives 3 zeros in secret short
     // time intervals" - normal-speed branch only (the 4.50 has no turbo)
     for (uint32_t start : ATM450_PALZ_WINDOW_STARTS)
     {
-        if (frameT - start < ATM450_PALZ_WINDOW_LENGTH)
+        if (sinceInt - start < ATM450_PALZ_WINDOW_LENGTH)
             return 0x00;
     }
 
