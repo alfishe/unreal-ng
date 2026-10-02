@@ -119,6 +119,21 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
      decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
      confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+- **ZX mode, phase S8 (design 2026-10-02: [research-zx-mode.md](research-zx-mode.md),
+  [tdd-zx-mode.md](tdd-zx-mode.md); roadmap §1 row S8).** The real machine loads TRD / SCL into a BIOS RAM disk
+  that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
+  tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
+  SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
+  - [ ] Z1 (S) faithful path on unreal-ng against the MAME captures (launcher v2.03 + TRD / SCL, `/ret-fn`,
+    the Peters Plus launcher with a TRD on the floppy)
+  - [ ] Z2 (S-M) tape: the I5 test, the base-clock tape time base under turbo (today the tape speeds up with
+    the 21 MHz CPU), a real-time TAP load in `ORIGIN.ZX`
+  - [ ] Z3 (M) "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`), A/B benchmark
+  - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
+  - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
+    write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51)
+  - [ ] Z6 (M) `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, TTD replay test
+  - Open questions Q1-Q7 for the owner: [tdd-zx-mode.md](tdd-zx-mode.md) §10
 - **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items
   only):**
   - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
@@ -200,7 +215,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - teardown use-after-free of the same class in `~PortDecoder_ATM710` (keyboard) and `~PortDecoder_TSConf`
     (memory), found with ASan in S3b, not fixed there (shared code, other machines).
 - ACC-6 as written ("ESC at the boot menu → Spectrum mode") does not hold for BIOS 3.04: the Spectrum
-  ROMs come from DSS `ZX\SPECTRUM.EXE` (or a later BIOS). Whether 3.06 carries them is open.
+  ROMs come from DSS `ZX\SPECTRUM.EXE`. BIOS 3.06 and later carry them (ESC works; research-zx-mode §5.1).
 - Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank
   square = pen `#400`; HOLD power-on `#77` (hardware-reference §4.5, §6.3). Settled in S1: BIOS 3.04 never programs the Z84C15
   watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no

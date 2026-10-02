@@ -137,7 +137,7 @@ Columns: **Common today** = how often a real Sprinter has it now (mass / some / 
 | Sega pad on the Kempston port | select by SIO B DTR | `TESTS/JOY/kmst_*19.exe`, `joytst11.exe` | some | yes (pad 1) | queued (I10) |
 | Sega pad on the LPT port | data on PIO A, select by PIO B bit 7 | `TESTS/JOY/lpt_*19.exe` | rare | yes (pad 2) | queued (I10) |
 | SprinterJoy ISA card (two Sega pads) | ISA I/O `#250` | its test program | prototype ("in development") | no | ISA design I7 (deferred) |
-| Tape input / output | `KMPS` connector, `#FE` bit 6 / bit 3 | Spectrum loaders | rare | input yes | input test queued (I5); output follows the shared tape path |
+| Tape input / output | `KMPS` connector, `#FE` bit 6 / bit 3 | Spectrum loaders | rare | input yes | input test and the base-clock time base under turbo in S8 Z2 ([tdd-zx-mode.md](tdd-zx-mode.md)); output follows the shared tape path |
 | Light gun | - | - | none found | no | not needed |
 | USB adapter | idea only (FORUM 7428, 2004) | - | none | no | not needed |
 
@@ -207,7 +207,7 @@ Columns: **Common today** = how often a real Sprinter has it now (mass / some / 
 | Mouse variants (Logitech, wheel) | yes | queued (I7) |
 | Centronics printer | **no** | **no** |
 | ATAPI CD + CD audio | yes | queued (CD wiring; PLAN #83) |
-| Tape | input from the Spectrum parent | input untested on the Sprinter (I5 queued) |
+| Tape | input from the Spectrum parent, but stuck: bit 6 never follows the tape (research-zx-mode §9.6) | input untested on the Sprinter (S8 Z2) |
 | ISA slots | any `pc_isa8_cards` card, I/O only, no interrupts or DMA, no ISA memory | ISA design I0-I8 |
 | ZX-bus adapter + NeoGS | yes | ISA design I2 |
 | Wild Sound, SprinterJoy, Sprinter-FT, SprinterESP, ESS688 | no | Wild Sound not planned; the others in the ISA design |

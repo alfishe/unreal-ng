@@ -41,7 +41,7 @@ including the port addresses, can change at run time (MAN §1.2-1.4).
 | Turbo | ×6 = 21 MHz; switched by the CNF/SYS port (§5) when bit 1 = 1: bit 0 = turbo on/off; a keyboard "turbo" key (F12 in MAME) can force it off | INC `SP2000.inc:226-300`; MAME `sprinter.cpp:864-871`, `:1767-1771`; PLD `KBD.TDF` output `KB_F12` |
 | Memory waits in turbo | main RAM is not fast enough for 21 MHz: every RAM access is stretched to the next 6-clock slot (MAME models "align to a multiple of 6 clocks, then +6 − cycle length"). Fast RAM has no waits | MAN §1 ("КЭШ … без тактов ожидания"); MAME `sprinter.cpp:1720-1731` |
 | Port waits in turbo | the DCP lookup costs a RAM access; in turbo the PLD holds WAIT "depending on the needed cycle length" | MAN §13.1; MAME `sprinter.cpp:581`, `:704` (`do_mem_wait(4)`) |
-| "Original ZX waits" | ALL_MODE bit 2 selects Spectrum-style memory waits | INC `SP2000.inc:550-560`; BIOS-TT `doc/changes.txt` (FN_SINC bit 3). Not modeled by MAME; exact contention pattern **unverified** |
+| "Original ZX waits" | ALL_MODE bit 2 = 0 (and no turbo): accesses to `#4000-#7FFF`, or to window 3 holding a Spectrum screen page, wait while the 42 MHz counter bit `CT5` = 0: a fixed 5.33 T cycle (2.67 T wait window), the same on every line, not the ULA pattern. Set by the launcher's `/origin` (ALL_MODE `#FA`) | PLD `SP2_ACEX.TDF:558-559` (`WAIT_ORIG`, the `UPDATE` build; that the release was built from it is unverified); INC `SP2000.inc:550-560`; [research-zx-mode.md](research-zx-mode.md) §7.3. Not modeled by MAME or unreal-ng (S8 Z3) |
 | Interrupt vector | the INT acknowledge reads `#FF` (IM 2 tables must cover it) | MAME `sprinter.cpp:1961` |
 
 ## 3. Memory
@@ -86,7 +86,10 @@ into cell `#F3` (not `#F0`), so the Spectrum page 3 is from now on backed by pag
 The "vROM" scheme is the key to Spectrum mode: the BIOS copies BASIC 128, BASIC 48, TR-DOS and
 the extension ROM into RAM pages and points cells `#E0-#E7` at them; the PLD then picks the cell by
 `#7FFD` bit 4, `#1FFD` bit 1 and the DOS signal (INC `SP2000.inc:268-290`). Those RAM pages are
-write-protected while mapped as ROM (MAME `sprinter.cpp:355-357`).
+write-protected while mapped as ROM (MAME `sprinter.cpp:355-357`). Pages `#42-#47` and "Spectrum page n =
+physical page n" are the Peters Plus launcher's layout; the community BIOS (3.06+, `ZX_MEMORY_MANAGER`) allocates
+both the vROM and the Spectrum RAM pages from free memory, so only the cells say where they are
+([research-zx-mode.md](research-zx-mode.md) §5.3).
 
 ### 3.4 Special physical pages
 
@@ -472,7 +475,8 @@ survives until changed; reset selects primary (MAME `:1582`).
 | Formats | PC FAT12 720 KB (80×2×9×512) and 1.44 MB (80×2×18×512); TR-DOS TRD (80×2×16×256) with TR-DOS 5.04Em; 5.25" drives | MAN §1.1, §23; BIOS-TT `rom/SETUP/MAIN.asm:1206-1225` (drive tables); MAME `beta_m.cpp:26-39` |
 | DSS floppies | FAT12, BPB media `#F0`/`#F9`; the boot loader needs 3 reserved sectors after the boot sector, so `BOOT.EXE` removes one FAT copy and enlarges the reserved area | DSS `SYS.ASM:97-128`; DSS-162 floppy: 10 reserved sectors, 1 FAT |
 | Default boot drive | a blank CMOS (SETUP defaults) boots the IDE master, then **floppy B** (CMOS `#10` = `#12`); the Beta drive bits select drive B (`OUT (#FF),#3D`) | BIOS 3.04 SETUP `DEFVAL` (`#9C00`), `S_FDD` (ROM page 0 `#07ED`) |
-| Spectrum mode ROMs | BIOS 3.04 holds none: ESC at SETUP prints "Spectrum ROM not installed. Use spectrum.exe". DSS `ZX\SPECTRUM.EXE <mode>.ZX` loads BASIC 128 / 48, Sprinter TR-DOS 7.01 and the expansion ROMs from `ZX\ROMS\` and starts the 128 menu; it sets the latch to 720 KB | DSS 1.62 floppy `DOCS\SPECTRUM\README.ENG`, `ZX\*.ZX`; S3a test `Dss162_SpectrumModeTrDosReadsATrd` |
+| Spectrum mode ROMs | BIOS 3.04 holds none: ESC at SETUP prints "Spectrum ROM not installed. Use spectrum.exe". DSS `ZX\SPECTRUM.EXE <mode>.ZX [image.TRD]` loads BASIC 128 / 48, Sprinter TR-DOS 7.0x and the expansion ROMs and starts the 128 menu; it sets the latch to 720 KB. BIOS 3.06+ carries the ROMs (ESC works) | DSS 1.62 floppy `DOCS\SPECTRUM\README.ENG`, `ZX\*.ZX`; S3a test `Dss162_SpectrumModeTrDosReadsATrd`; [research-zx-mode.md](research-zx-mode.md) |
+| TR-DOS drives in the Spectrum mode | TR-DOS 7.0x reads a BIOS drive table per drive: floppy 0-3 (the WD1793), RAM disk (4-19: a TRD / SCL the launcher or `/LOAD` put into RAM pages; TR-DOS asks the BIOS through `#3FF0` / `#3FF8`), hard-disk partition (`#40`+n). No PLD trap: programs that drive the WD1793 themselves read the real floppy | [research-zx-mode.md](research-zx-mode.md) §5.4 |
 
 ## 11. ISA
 
