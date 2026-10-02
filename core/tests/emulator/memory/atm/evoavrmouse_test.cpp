@@ -21,6 +21,33 @@ protected:
     EvoAvrMouse& Mouse() { return _avr.Ps2Mouse(); }
 };
 
+/// The host mouse is worth capturing only while a program reads the AVR mouse: TS-BIOS never does
+TEST_F(EvoAvrMouse_Test, InUseOnlyWhileAProgramReadsIt)
+{
+    uint64_t frame = 1000;
+    Mouse().SetFrameSource([&frame] { return frame; });
+    EXPECT_FALSE(Mouse().IsMouseInUse()) << "not connected";
+
+    Mouse().SetConnected(true);
+    EXPECT_TRUE(Mouse().IsMouseFitted());
+    EXPECT_FALSE(Mouse().IsMouseInUse()) << "connected, nobody reads it";
+    Mouse().PeekRegister(1);
+    EXPECT_FALSE(Mouse().IsMouseInUse()) << "a debug read is not a program";
+
+    Mouse().ReadRegister(1);
+    EXPECT_TRUE(Mouse().IsMouseInUse());
+    frame += EvoAvrMouse::kPolledWithinFrames;
+    EXPECT_TRUE(Mouse().IsMouseInUse());
+    frame += 1;
+    EXPECT_FALSE(Mouse().IsMouseInUse()) << "not read for a second";
+
+    Mouse().ReadRegister(0);
+    EXPECT_TRUE(Mouse().IsMouseInUse());
+    Mouse().SetConnected(false);
+    Mouse().SetConnected(true);
+    EXPECT_FALSE(Mouse().IsMouseInUse()) << "a plugged-in mouse starts unread";
+}
+
 /// zx_mouse_reset: a found mouse reads X = 0, Y = 1; none reads #FF everywhere
 TEST_F(EvoAvrMouse_Test, ResetValuesTellDetectionWhetherAMouseIsThere)
 {

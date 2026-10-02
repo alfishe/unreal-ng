@@ -84,6 +84,22 @@
 
 namespace
 {
+/// Where a quick drop goes when the plan has no default and nobody can be asked: a folder goes to a
+/// card, hard disk or CD (a TS-Conf game folder is an SD card, not a TR-DOS disk) when the machine
+/// has one; anything else to the first target of the plan's order (the boot slot first)
+int QuickDropTarget(const MediaPlan& plan)
+{
+    if (plan.file.folder)
+    {
+        for (size_t i = 0; i < plan.targets.size(); i++)
+        {
+            if (plan.targets[i].as != FileKind::Floppy && plan.targets[i].as != FileKind::Tape)
+                return static_cast<int>(i);
+        }
+    }
+    return 0;
+}
+
 // B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
 bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
 {
@@ -2394,12 +2410,20 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
                 << "): no one to ask, the first one -" << QString::fromStdString(plan.targets.front().slotId);
         index = 0;
     }
+    else if (origin == LoadOrigin::Drop)
+    {
+        // A quick drop: no one to ask and a chooser would hang about until clicked. It goes to the
+        // slot a folder or image most likely belongs in, and the overlay shows where, then fades
+        index = QuickDropTarget(plan);
+    }
     else
     {
         _pendingPlacement = {filePath, mountOnly, origin, true};
         _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
         return;
     }
+    if (origin == LoadOrigin::Drop && slot.empty() && plan.targets.size() > 1)
+        _dropOverlay->showConfirm(dropArea(), QFileInfo(filePath).fileName(), plan, index);
     const MediaTarget& target = plan.targets[static_cast<size_t>(index)];
 
     switch (target.as)

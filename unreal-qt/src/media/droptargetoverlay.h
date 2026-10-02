@@ -9,12 +9,16 @@
 /// - Chooser: after a quick drop (or File > Insert Medium...) with several
 ///   targets: click a tile, press its number or Enter; Esc cancels
 /// - Refusal: a file no slot takes, red with the reason, at once
+/// - Confirm: a quick drop that was placed without asking (the default slot): the tiles,
+///   the slot it went to glowing, input-transparent; gone, fading, well under a second
+///   after the drop whatever happens
 ///
 /// A frameless translucent window of its own over the screen area, not a child
 /// widget: the GPU screen is a native OpenGL window that a child widget would
 /// not show over, and a window of its own takes the drag directly.
 
 #include <QPixmap>
+#include <QPropertyAnimation>
 #include <QRect>
 #include <QString>
 #include <QTimer>
@@ -35,6 +39,7 @@ public:
         Zones,
         Chooser,
         Refusal,
+        Confirm,
     };
 
     /// @param owner the main window: the overlay stays above it
@@ -47,7 +52,13 @@ public:
     /// Over `globalArea`: red, the file's name and `reason`. autoHideMs > 0:
     /// gone after that long (a refusal after a drop); 0: until dismissed
     void showRefusal(const QRect& globalArea, const QString& fileName, const QString& reason, int autoHideMs = 0);
+    /// Over `globalArea`: the tiles of `plan` with tile `index` glowing (where the drop went), then
+    /// fading out; hidden kConfirmHoldMs + kConfirmFadeMs after the call. Takes no input
+    void showConfirm(const QRect& globalArea, const QString& fileName, const MediaPlan& plan, int index);
     void dismiss();
+
+    static constexpr int kConfirmHoldMs = 450;
+    static constexpr int kConfirmFadeMs = 400;
 
     Mode mode() const { return _mode; }
     const MediaPlan& plan() const { return _plan; }
@@ -89,5 +100,7 @@ private:
     std::vector<QRect> _tiles;
     int _hovered = -1;
     QTimer _autoHide;
+    QTimer _confirmHold;        ///< Confirm: the glow stays this long, then the fade starts
+    QPropertyAnimation _fade;   ///< Confirm: window opacity 1 -> 0
     std::map<std::pair<int, int>, QPixmap> _icons;  ///< (kind, size) -> rendered icon
 };

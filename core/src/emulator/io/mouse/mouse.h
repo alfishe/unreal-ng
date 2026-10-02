@@ -131,7 +131,6 @@ public:
     /// Fitted, the port decoder answers the Kempston addresses now (not while TR-DOS is active)
     /// and a program read a mouse register within the last kPolledWithinFrames frames
     bool IsMouseInUse() const override;
-    static constexpr uint64_t kPolledWithinFrames = 50;
     void OnMouseMotion(int dx, int dy) override { Move(dx, dy); }
     void OnMouseButtons(uint8_t activeLowMask) override { SetButtons(activeLowMask); }
     void OnMouseWheel(int steps) override { SetWheel(steps); }
