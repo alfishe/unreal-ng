@@ -8,7 +8,7 @@
 /// board's RS-232 port.
 ///
 /// The board around the MCU (v7.10 schematic cp7_2): the Z80 read latches
-/// A15..A8 (D23) and sets the WAIT flip-flop (D71, unless W_ON = P1.7 is 1),
+/// A15..A8 (through the buffer D108) and sets the WAIT flip-flop (D71, unless W_ON = P1.7 is 1),
 /// and pulses INT1. The MCU reads the latch with MOVX (P2.0 = 0), the native
 /// keyboard / tape port D45 with MOVX (P2.0 = 1), and answers with a MOVX
 /// write (P2.0 = 1, /VWR) that drives the Z80 data bus and ends the wait.
@@ -117,7 +117,7 @@ public:
     /// Board latches, for the state report and TTD
     struct Board
     {
-        uint8_t latchedHigh = 0xFF;   ///< D23: A15..A8 of the last read
+        uint8_t latchedHigh = 0xFF;   ///< A15..A8 of the last read (on D108 while the Z80 waits)
         uint8_t dataOut = 0xFF;       ///< D102: the byte for the Z80
         bool waitSet = false;         ///< D71: the Z80 waits
         bool ve1 = false;

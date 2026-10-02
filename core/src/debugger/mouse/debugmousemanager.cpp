@@ -7,6 +7,8 @@
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
+#include "emulator/ports/portdecoder.h"
 
 namespace
 {
@@ -74,7 +76,29 @@ bool DebugMouseManager::Submit(const ttd::TTDInputEvent& ev, Mouse& mouse)
         return _context->pTimeTravelManager->SubmitLiveInput(ev);
     ttd::TTDInputDevices devices;
     devices.mouse = &mouse;
+    devices.mouseManager = _context ? _context->pMouseManager : nullptr;
     return ttd::ApplyInputEvent(ev, devices);
+}
+
+// Automation's held buttons live in the mouse manager next to the host's, so
+// one source never overwrites the other (mousemanager.h). A bare context
+// (unit tests without a manager) reads them back from the device
+
+uint8_t DebugMouseManager::AutomationPressed() const
+{
+    if (_context && _context->pMouseManager)
+        return _context->pMouseManager->PressedBits(MouseManager::ButtonSource::Automation);
+    const Mouse* mouse = Device();
+    return mouse ? static_cast<uint8_t>(~mouse->GetButtons() & kAllButtons) : 0;
+}
+
+void DebugMouseManager::SubmitAutomationButtons(Mouse& mouse, uint8_t pressedBits)
+{
+    pressedBits &= kAllButtons;
+    const uint8_t mask = _context && _context->pMouseManager
+                             ? _context->pMouseManager->ComposeButtons(MouseManager::ButtonSource::Automation, pressedBits)
+                             : static_cast<uint8_t>((mouse.GetButtons() | kAllButtons) & ~pressedBits);
+    ApplyButtons(mouse, mask);
 }
 
 void DebugMouseManager::ApplyMove(Mouse& mouse, int dx, int dy)
@@ -174,7 +198,7 @@ MouseInjectResult DebugMouseManager::PressButton(MouseButton button)
         std::lock_guard<std::mutex> lock(_mutex);
         if (_pendingButton == button)
             CancelPendingLocked();  // the explicit call wins over a pending click release
-        ApplyButtons(mouse, static_cast<uint8_t>(mouse.GetButtons() & ~static_cast<uint8_t>(button)));
+        SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() | static_cast<uint8_t>(button)));
     }
     return Success("Mouse button pressed: " + GetButtonName(button));
 }
@@ -189,7 +213,7 @@ MouseInjectResult DebugMouseManager::ReleaseButton(MouseButton button)
         std::lock_guard<std::mutex> lock(_mutex);
         if (_pendingButton == button)
             CancelPendingLocked();
-        ApplyButtons(mouse, static_cast<uint8_t>(mouse.GetButtons() | static_cast<uint8_t>(button)));
+        SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(button)));
     }
     return Success("Mouse button released: " + GetButtonName(button));
 }
@@ -211,8 +235,7 @@ MouseInjectResult DebugMouseManager::SetPressedButtons(uint8_t pressedBits)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         CancelPendingLocked();
-        const uint8_t mask = static_cast<uint8_t>((mouse.GetButtons() | kAllButtons) & ~pressedBits);
-        ApplyButtons(mouse, mask);
+        SubmitAutomationButtons(mouse, pressedBits);
     }
 
     std::string names;
@@ -281,11 +304,11 @@ MouseInjectResult DebugMouseManager::Click(MouseButton button, uint32_t holdFram
         // A new click replaces a pending one: release the old button first
         if (_pendingButton.has_value())
         {
-            ApplyButtons(mouse, static_cast<uint8_t>(mouse.GetButtons() | static_cast<uint8_t>(*_pendingButton)));
+            SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(*_pendingButton)));
             CancelPendingLocked();
         }
 
-        ApplyButtons(mouse, static_cast<uint8_t>(mouse.GetButtons() & ~static_cast<uint8_t>(button)));
+        SubmitAutomationButtons(mouse, static_cast<uint8_t>(AutomationPressed() | static_cast<uint8_t>(button)));
         _pendingButton = button;
         _pendingFrames = static_cast<uint16_t>(holdFrames);
     }
@@ -305,7 +328,7 @@ void DebugMouseManager::AbortClick()
     if (!_pendingButton.has_value())
         return;
     if (mouse && !IsReplaying())
-        ApplyButtons(*mouse, static_cast<uint8_t>(mouse->GetButtons() | static_cast<uint8_t>(*_pendingButton)));
+        SubmitAutomationButtons(*mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(*_pendingButton)));
     CancelPendingLocked();
 }
 
@@ -323,7 +346,7 @@ void DebugMouseManager::OnFrame()
     {
         // Release through the journalled path (keyboard timed ops skipped the journal)
         if (mouse && !IsReplaying())
-            ApplyButtons(*mouse, static_cast<uint8_t>(mouse->GetButtons() | static_cast<uint8_t>(*_pendingButton)));
+            SubmitAutomationButtons(*mouse, static_cast<uint8_t>(AutomationPressed() & ~static_cast<uint8_t>(*_pendingButton)));
         CancelPendingLocked();
     }
 }
@@ -345,6 +368,10 @@ void DebugMouseManager::ApplyHostButtons(uint8_t activeLowMask)
     Mouse* mouse = Device();
     if (!mouse || IsReplaying())
         return;
+    // The host's buttons joined with automation's (mousemanager.h)
+    if (_context && _context->pMouseManager)
+        activeLowMask = _context->pMouseManager->ComposeButtons(MouseManager::ButtonSource::Host,
+                                                                static_cast<uint8_t>(~activeLowMask & kAllButtons));
     ApplyButtons(*mouse, activeLowMask);
 }
 
@@ -372,9 +399,13 @@ MouseStateSnapshot DebugMouseManager::GetState() const
     state.y = mouse->GetY();
     state.buttonMask = mouse->GetButtons();
     state.wheel = mouse->GetWheel();
-    state.portButtons = mouse->ReadRegister(0);
-    state.portX = mouse->ReadRegister(1);
-    state.portY = mouse->ReadRegister(2);
+    // What the machine's ports return: the Kempston device, or the machine's own
+    // mouse (ZX-Evo AVR PS/2 mouse, Sprinter board mouse)
+    const PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    uint8_t* ports[3] = {&state.portButtons, &state.portX, &state.portY};
+    for (uint8_t reg = 0; reg < 3; reg++)
+        if (!decoder || !decoder->PeekMouseRegister(reg, *ports[reg]))
+            *ports[reg] = mouse->ReadRegister(reg);
 
     std::lock_guard<std::mutex> lock(_mutex);
     state.pendingClickButton = _pendingButton;

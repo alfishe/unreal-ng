@@ -14,7 +14,7 @@ Slot 1 holds the ZX-bus adapter with the NeoGS (ISA Q2). Slot 2 is free.
 | Option | Effect |
 |---|---|
 | **A (recommended)** | `Slot2=NONE` in the shipped config, as a stock Sp2000; one INI line (`Slot2=NE2000`) or one network window click fits the Ethernet card. The Sprinter TTD boot fixture does not change |
-| B | `Slot2=NE2000` (RTL8019AS at `#300`) by default: the kits work out of the box; costs nothing while idle (the chip runs lazily), but the boot fixture gains blob 38 and every Sprinter user has a network card |
+| B | `Slot2=NE2000` (RTL8019AS at `#300`) by default: the kits work out of the box; costs nothing while idle (the chip runs lazily), but the boot fixture gains blob 39 and every Sprinter user has a network card |
 
 **Recommendation: A**, plus a ready-made recipe line. B is a one-line change later if the owner prefers it.
 

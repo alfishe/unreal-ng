@@ -289,7 +289,8 @@ in RAM.
   schematic `cp7_1` and the Russian assembly manual's timing diagram 1b): the arbiter D68 gives the CPU every
   other RAM slot (one slot = 2 T at 7 MHz), D69.1 holds /WAIT from the RAM select until RAS falls in the
   CPU's slot, so a fetch, read or write to RAM waits 2 T from an even clock and 3 from an odd one; ROM and
-  I/O run at full speed; the same in every video mode and in the border. The manual's "140-160%, not 200%
+  I/O run at full speed, except the WD1793's ports: one wait state from /VGCS through R1C9 (1 kOhm, 220 pF);
+  the same in every video mode and in the border. The manual's "140-160%, not 200%
   due to memory WAIT states". Details:
   [reference-atm710-turbo-waits.md](../2026-10-02-atm710-turbo-waits/reference-atm710-turbo-waits.md).
 - ATM Turbo 1: nothing specific found; no emulator models a delay.

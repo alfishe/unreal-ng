@@ -373,6 +373,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Create the transport toolbar (reuses menu actions where they exist)
     _toolBarManager = new ToolBarManager(this, _menuManager, this);
+    _toolBarManager->setMouseCapture(_screenWrapper ? _screenWrapper->mouseCapture() : nullptr);
     connect(_menuManager, &MenuManager::toolBarToggled, this, &MainWindow::handleToolBarToggled);
     connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
     connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
@@ -3791,6 +3792,8 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    if (_toolBarManager)
+        _toolBarManager->setMouseCapture(_screenWrapper->mouseCapture());  // the gate carries over
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
 

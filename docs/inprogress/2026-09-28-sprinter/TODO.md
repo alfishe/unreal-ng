@@ -111,8 +111,41 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
      selection, `video_text` / OCR fallback to the Sprinter text, outdated MCP resource / recipe / OpenAPI text.
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
+     Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
+     GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
+     Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
+  4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
+     decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
+     confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+- **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items
+  only):**
+  - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
+    pad 2 read on PIO A with PIO B bit 7, the select counters reset at each frame INT (gap I10, C13) - S-M; host
+    gamepads through the shared input path, journaled for TTD, all five automation surfaces.
+  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
+    counter-mode inputs and ZC outputs (gap I7, C11) - S.
+  - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
+    as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
+  - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
+  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+- **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02; priority order,
+  functional items only):**
+  - P2 research: the community logic firmware of 2026 (`k30.acx` / `k50.acx` of 2026-09-24): accelerator control
+    codes `#80` / `#81`, 1 KB buffer, rectangle mode, X / Y clipping (Tolik-Trek's MAME fork), the `ACEX.SCALE` port;
+    if present, an option of the Standard configuration module - S research, M build (survey Q2).
+  - P2: correct the ISA research §7.1 row "Wild Sound XM player": the card is the ISA Wild Sound (Robus, STM32F405,
+    AYX-32 compatible) - S, with the next ISA design edit.
+  - P3: Centronics printer port with a print-to-file printer: PIO A data and RDY strobe, PIO B bits 6 / 7, the SIO A /
+    B status lines (BUSY, ACK, SELECT, PAPER END); one connector slot shared with the LPT Sega pad (PLAN #82); DSS
+    `#5F PRINT` end to end, journaled for TTD, all five automation surfaces - S-M (survey Q1).
+  - P3: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT `AUTOIDE`) - S.
+  - P3 research, P4 build: ISA Wild Sound card (protocol from its author first; one known program, `prosiak.exe`) - L
+    (survey Q3).
+  - P4 on demand: SIO B as a COM port (the `MOUSE` connector holds the mouse or a `ComPort` peer) - S (survey Q4).
+  - P4 on demand: sp2000-light board profile (no ISA slots, one IDE channel) - S (survey Q6).
+  - P4 on evidence: 512 KB video RAM / 512 KB ROM of the sp2022d board - S-M (survey Q5).
 - Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
   roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
   SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),

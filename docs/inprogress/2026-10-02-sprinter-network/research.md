@@ -314,7 +314,7 @@ under a Z80 + RTL8019AS / 3C509B model). BC-Term and the ESP card hardware are f
 | Sprinter network today | no `DescribeNetwork()` override: it inherits `zxBus = true`, so a ZXNETUSB could be "fitted" although nothing reaches it; legacy unused `[MISC] Modem=NONE` / `ZiFi=NONE` lines in `data/configs/sprinter/unreal.ini` | ISA open questions Q7 |
 | Automation | `GET .../state/network`, `POST .../network/config` (+ OpenAPI `openapi_network.inc`), MCP `inspect_state` aspect `network`, CLI `network`, Lua / Python `network_state()` / `network_configure{}`; one report `DeviceState::Network` | `core/automation/`, `core/src/emulator/state/devicestate.cpp` |
 | Qt | Network window with hand-built group boxes per card; a Qt-free `NetworkPanelModel` | `unreal-qt/src/network/` |
-| TTD | `PeripheralId` 0-37 used, **38** next free; `SprinterIsa = 33` reserved; `TTDSerialPort` reusable for any 16550 + peer | `core/src/debugger/ttd/ttdserializable.h:44-89` |
+| TTD | `PeripheralId` 0-38 used (38 = ZX-Evo mouse, landed on master the same day), **39** next free; `SprinterIsa = 33` reserved; `TTDSerialPort` reusable for any 16550 + peer | `core/src/debugger/ttd/ttdserializable.h:44-89` |
 | Recipes | `.recipe/peripherals/network.md` | - |
 
 ## 10. Corrections to earlier documents

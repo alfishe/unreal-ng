@@ -63,6 +63,14 @@ public slots:
 
 public:
     void setEmulator(std::shared_ptr<Emulator> emulator) { _emulator = emulator; }
+
+    /// Host mouse capture (owned by the screen wrapper): mouse, wheel, focus and
+    /// the release key go there first
+    void setMouseCapture(class MouseCaptureController* capture) { _mouseCapture = capture; }
+    /// Framebuffer area currently drawn (viewport-cropped), in emulated pixels
+    QRectF displaySourceRect() const;
+    /// Size of the drawn picture inside the window (the quad paintGL letterboxes), logical pixels
+    QSize drawnPictureSize() const;
     void setDisplayViewport(const DisplayViewport& viewport);
     void clearDisplayViewport();
     QImage grabFramebuffer();
@@ -93,6 +101,10 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     bool event(QEvent* event) override;
 
 private:
@@ -121,6 +133,7 @@ private:
     static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
 
     std::shared_ptr<Emulator> _emulator = nullptr;
+    class MouseCaptureController* _mouseCapture = nullptr;  // owned by DeviceScreenWrapper
     bool _isShuttingDown = false;
 
     DisplayViewport _displayViewport;

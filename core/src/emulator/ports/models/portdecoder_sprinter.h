@@ -94,6 +94,13 @@ public:
     bool HasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView)
+    bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
+    {
+        static constexpr uint16_t kPorts[3] = {0xFADF, 0xFBDF, 0xFFDF};
+        value = reg < 3 ? _input.ReadMouseView(kPorts[reg]) : 0xFF;
+        return true;
+    }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
     RtcBinding GetRtcBinding() override;

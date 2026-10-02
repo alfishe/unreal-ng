@@ -888,7 +888,8 @@ recording is refused (`tm.cpp:1349-1366`).
 |---|---|---|
 | Scorpion, ProfROM Scorpion | ScorpionProfROM (6), Ds12887 (18, the SMUC clock) | `core/src/emulator/ports/portdecoder_scorpion256.cpp` `CreateTTDSerializers` |
 | Profi | ProfiPaging (9), Ds12887 (18) | `portdecoder_profi.cpp` `CreateTTDSerializers` |
-| ATM 7.10 | AtmPaging (8) | `portdecoder_atm710.cpp:859-868` |
+| ATM 7.10 | AtmPaging (8), Atm2Kbc (26, the keyboard controller, when fitted), AtmIoBus (36, the INTERNAL I/O latch); MachineSerialPeer (27) and Atm2IoEsp (37) through the network peripherals when a peer / the card is fitted | `portdecoder_atm710.cpp` `CreateTTDSerializers`, `ttdmachineperipherals.cpp` |
+| ATM 4.50 | AtmPaging (8) | inherits the ATM 7.10 decoder without the v7.10 board logic |
 | ATM3 / ZX-Evo | AtmPaging (8), EvoSdCard (15), Ds12887 (18) | `portdecoder_atm3.cpp` `CreateTTDSerializers` |
 | +2A, +3 | Plus3Paging (13); Upd765 (14) only when the uPD765 exists (+3) | `portdecoder_spectrum3.cpp:445-460` |
 | 48K, 128K, +2, Pentagon 128/512/1024 | none | — |
@@ -917,6 +918,11 @@ contributes to the peripheral hash. Paths are under `core/src/`.
 | 15 | ZX-Evo SD card interface | `TTDEvoSdCard`, `debugger/ttd/atm/ttdevosdcard.cpp:20` | 2692 (Z-Controller latch + SPI protocol state) | u8 version 1 (checked) | no: card sectors excluded by design | yes |
 | 17 | IDE board (ATA channel) | `TTDAtaChannel`, `debugger/ttd/ide/ttdatachannel.cpp` | 4 + adapter latches + 2 units (task file, transfer, ATAPI sense); registered on any machine with an `[HDD] Scheme` | none | no: the media are not captured | yes |
 | 18 | MC146818 / DS12887 clock | `TTDDs12887` → `Ds12887`, `debugger/ttd/ttdds12887.cpp` | 336 (80 + 256 cells: cells, address latch, time base) | none | no | yes |
+
+Ids from 19 on are listed in `core/src/debugger/ttd/ttd.ksy` (the authoritative list). The ATM ones:
+26 `Atm2Kbc` (the MCS-51, board latches, PS/2 keyboard, RS-232 line), 27 `MachineSerialPeer` (the peer on
+the keyboard controller's RS-232), 36 `AtmIoBus` (the #FB latch of the INTERNAL I/O connector, 4 bytes),
+37 `Atm2IoEsp` (the ATM2IOESP card's 16550 and peer, netstate::SerialPort as id 24).
 
 The AY chip (73 bytes), the floppy drive (27 bytes) and the uPD765 implement
 `TTDSerializable` too, but they travel inside the blobs above instead of being

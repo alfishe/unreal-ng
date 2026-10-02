@@ -9,6 +9,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
@@ -22,6 +23,7 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
         return devices;
     devices.keyboard = context->pKeyboard;
     devices.mouse = context->pMouse;
+    devices.mouseManager = context->pMouseManager;
     devices.joystick = context->pJoystick;
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
@@ -66,28 +68,41 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             keyboard->ApplyPcKey(static_cast<PcKey>(ev.key), ev.pressed);
             break;
 
+        // Mouse input reaches every mouse device of the machine through its manager
         case TTDInputKind::MouseMove:
-            if (!mouse)
+            if (devices.mouseManager)
+                devices.mouseManager->ApplyMotion(ev.dx, ev.dy);
+            else if (mouse)
+                mouse->Move(ev.dx, ev.dy);
+            else
                 return false;
-            mouse->Move(ev.dx, ev.dy);
             break;
 
         case TTDInputKind::MouseButtons:
-            if (!mouse)
+            if (devices.mouseManager)
+                devices.mouseManager->ApplyButtons(ev.buttonMask);
+            else if (mouse)
+                mouse->SetButtons(ev.buttonMask);
+            else
                 return false;
-            mouse->SetButtons(ev.buttonMask);
             break;
 
         case TTDInputKind::MouseWheel:
-            if (!mouse)
+            if (devices.mouseManager)
+                devices.mouseManager->ApplyWheel(ev.wheelSteps);
+            else if (mouse)
+                mouse->SetWheel(ev.wheelSteps);
+            else
                 return false;
-            mouse->SetWheel(ev.wheelSteps);
             break;
 
         case TTDInputKind::MouseCounters:
-            if (!mouse)
+            if (devices.mouseManager)
+                devices.mouseManager->ApplyCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
+            else if (mouse)
+                mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
+            else
                 return false;
-            mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
             break;
 
         case TTDInputKind::Joystick:

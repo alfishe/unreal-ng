@@ -19,10 +19,10 @@ network stack, no Sprinter-only parallel paths.
 
 - [ ] Owner review; Q9 (gateway implementation) before SN2, Q7 (order) and Q1 (default card) before SN1
 - [ ] SN0 fixtures (kit releases), MAME-fork reference captures, scripted host test server (S)
-- [ ] SN1 `IIoBusDevice`, slots in `DescribeNetwork()`, guest registry, `Dp8390` + `Ne2000Board`, TTD blob 38 (M) -
+- [ ] SN1 `IIoBusDevice`, slots in `DescribeNetwork()`, guest registry, `Dp8390` + `Ne2000Board`, TTD blob 39 (M) -
   after ISA I1
 - [ ] SN2 Ethernet gateway, RTL kit end to end, frame capture, recipe (M-L)
-- [ ] SN3 `PcSerialCard` + SprinterESP, ESP reset pins, ESP8266 AT 2.2.1 / 2.2.2 presets, TTD ids 39-42; the Sprinter
+- [ ] SN3 `PcSerialCard` + SprinterESP, ESP reset pins, ESP8266 AT 2.2.1 / 2.2.2 presets, TTD ids 40-43; the Sprinter
   ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi), `UNETESP.DLL`) end to end (M)
 - [ ] SN4 Hayes modem peer, SprinterSerial, BC-Term with interrupts (S-M) - after ISA I4
 - [ ] SN5 3Com 3C509B (M)

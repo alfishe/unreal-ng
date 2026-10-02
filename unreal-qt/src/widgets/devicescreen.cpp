@@ -13,7 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/keyboardmanager.h"
-#include "emulator/mousemanager.h"
+#include "emulator/mousecapturecontroller.h"
 #include "ui_devicescreen.h"
 static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
@@ -29,21 +29,6 @@ DeviceScreen::DeviceScreen(QWidget* parent) : QWidget(parent), ui(new Ui::Device
 {
     ui->setupUi(this);
 
-    // Host mouse capture and mapping; the manager asks for the emulated-pixel size
-    // of whatever is drawn right now (framebuffer or cropped overscan viewport)
-    _mouseManager = new MouseManager(this, [this] { return displaySourceRect().size(); }, this);
-    _mouseManager->setHostSettingsProvider([this] {
-        MouseManager::HostSettings settings;
-        EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
-        if (context)
-        {
-            settings.mouseFitted = context->pMouse && context->pMouse->IsPresent();
-            settings.swapButtons = context->config.input.mouseswap != 0;
-            // CONFIG::input.mousescale is a plain char - unsigned on ARM, so cast before use
-            settings.scaleLog2 = static_cast<signed char>(context->config.input.mousescale);
-        }
-        return settings;
-    });
 }
 
 DeviceScreen::~DeviceScreen()
@@ -97,7 +82,6 @@ void DeviceScreen::detach()
     // ~MainWindow (it was the last shared_ptr holder and destroyed the instance long after
     // EmulatorManager::RemoveEmulator - crash on shutdown)
     _emulator.reset();
-    _mouseManager->setTargetEmulatorId("");
 
     // Trigger immediate repaint to show default background when detached
     update();
@@ -361,20 +345,6 @@ QImage DeviceScreen::grabFramebuffer()
 void DeviceScreen::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
-    _mouseManager->setTargetEmulatorId(_emulator ? _emulator->GetId() : std::string());
-}
-
-void DeviceScreen::setMouseCaptured(bool captured)
-{
-    if (captured)
-        _mouseManager->capture();
-    else
-        _mouseManager->release();
-}
-
-bool DeviceScreen::isMouseCaptured() const
-{
-    return _mouseManager->isCaptured();
 }
 
 bool DeviceScreen::event(QEvent* event)
@@ -401,7 +371,7 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
     event->accept();
 
     // Mouse capture release key never reaches the ZX keyboard
-    if (_mouseManager->handleKeyPress(event))
+    if (_mouseCapture && _mouseCapture->handleKeyPress(event))
         return;
 
     // Don't react on auto-repeat
@@ -423,7 +393,7 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 
     event->accept();
 
-    if (_mouseManager->handleKeyRelease(event))
+    if (_mouseCapture && _mouseCapture->handleKeyRelease(event))
         return;
 
     // Don't react on auto-repeat
@@ -437,7 +407,7 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 
 void DeviceScreen::mousePressEvent(QMouseEvent* event)
 {
-    if (_mouseManager->handleMousePress(event))
+    if (_mouseCapture && _mouseCapture->handleMousePress(event))
         event->accept();
     else
         QWidget::mousePressEvent(event);
@@ -445,7 +415,7 @@ void DeviceScreen::mousePressEvent(QMouseEvent* event)
 
 void DeviceScreen::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (_mouseManager->handleMouseRelease(event))
+    if (_mouseCapture && _mouseCapture->handleMouseRelease(event))
         event->accept();
     else
         QWidget::mouseReleaseEvent(event);
@@ -453,7 +423,7 @@ void DeviceScreen::mouseReleaseEvent(QMouseEvent* event)
 
 void DeviceScreen::mouseMoveEvent(QMouseEvent* event)
 {
-    if (_mouseManager->handleMouseMove(event))
+    if (_mouseCapture && _mouseCapture->handleMouseMove(event))
         event->accept();
     else
         QWidget::mouseMoveEvent(event);
@@ -461,7 +431,7 @@ void DeviceScreen::mouseMoveEvent(QMouseEvent* event)
 
 void DeviceScreen::wheelEvent(QWheelEvent* event)
 {
-    if (_mouseManager->handleWheel(event))
+    if (_mouseCapture && _mouseCapture->handleWheel(event))
         event->accept();
     else
         QWidget::wheelEvent(event);
@@ -469,7 +439,8 @@ void DeviceScreen::wheelEvent(QWheelEvent* event)
 
 void DeviceScreen::focusOutEvent(QFocusEvent* event)
 {
-    _mouseManager->handleFocusOut(event);
+    if (_mouseCapture)
+        _mouseCapture->handleFocusOut();
 
     // Keys held while the focus left never send their release here: let a PS/2
     // machine see them go up
