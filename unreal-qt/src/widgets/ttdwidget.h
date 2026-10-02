@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -68,6 +69,8 @@ public slots:
 
 private:
     void updateTelemetry();
+    /// The history combo's limit onto the active emulator's TTD (a new one, or a change)
+    void applyHistoryLimit();
     void performSeekToFrame(uint64_t targetFrame);
 
     MainWindow* _mainWindow = nullptr;
@@ -84,6 +87,7 @@ private:
     QPushButton* _loadBtn = nullptr;
     QPushButton* _exportBtn = nullptr;
     QPushButton* _clearBtn = nullptr;
+    QComboBox* _historyCombo = nullptr;  // history limit (bytes, 0 = all); saved in the settings
     QLabel* _statusLabel = nullptr;
     QToolButton* _closeBtn = nullptr;
 

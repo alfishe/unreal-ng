@@ -376,6 +376,8 @@ private:
     void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
                          const std::vector<std::string>& args);
     void HandleTTDStop(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDHistoryLimit(const ClientSession& session, EmulatorContext* context,
+                               const std::vector<std::string>& args);
     void HandleTTDInvalidate(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDSeek(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDStepBack(const ClientSession& session, EmulatorContext* context);

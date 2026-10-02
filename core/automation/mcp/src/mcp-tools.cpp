@@ -1023,6 +1023,16 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         out << " (loaded file predates saved input: in-frame replay may differ from the recording)";
     }
+    if (status["history_limit_frames"].asUInt64() != 0 || status["history_limit_bytes"].asUInt64() != 0)
+    {
+        out << ", history limit";
+        if (status["history_limit_frames"].asUInt64() != 0)
+            out << " " << status["history_limit_frames"].asUInt64() << " frames";
+        if (status["history_limit_bytes"].asUInt64() != 0)
+            out << " " << status["history_limit_bytes"].asUInt64() / (1024 * 1024) << " MB";
+        out << " (" << status["history_bytes"].asUInt64() / (1024 * 1024) << " MB held, "
+            << status["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released)";
+    }
     if (status["port_journal_active"].asBool())
     {
         out << ", port journals: " << status["port_read_count"].asUInt64() << " IN, "
@@ -3012,7 +3022,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary"})
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
+                               "history_limit"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -3036,6 +3047,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
         "fit before 'load'). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
+        "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
+        "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
+        "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
+        "takes the same two fields. "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
         "'coverage_summary' (bucketed activity heatmap).";
     schema["properties"]["target"]["type"] = "string";
@@ -3048,6 +3063,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["mode"]["description"] =
         "start: 'development' (default; keeps the write journal, so find_last is fast) or 'gaming' (no write journal, "
         "less memory; find_last falls back to replay)";
+    schema["properties"]["history_frames"]["type"] = "integer";
+    schema["properties"]["history_frames"]["minimum"] = 0;
+    schema["properties"]["history_frames"]["description"] =
+        "start / history_limit: keep at most this many frames of history (one checkpoint each); 0 = no limit";
+    schema["properties"]["history_bytes"]["type"] = "integer";
+    schema["properties"]["history_bytes"]["minimum"] = 0;
+    schema["properties"]["history_bytes"]["description"] =
+        "start / history_limit: keep the history's checkpoint data under this many bytes; 0 = no limit";
     schema["properties"]["enable_write_journal"]["type"] = "boolean";
     schema["properties"]["enable_write_journal"]["description"] = "start: explicit write-journal switch, overrides mode";
     schema["properties"]["reason"]["type"] = "string";
@@ -3205,6 +3228,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     (*body)["enable_write_journal"] = args["enable_write_journal"].asBool();
                 }
+                if (args.isMember("history_frames"))
+                    (*body)["history_limit_frames"] = args["history_frames"];
+                if (args.isMember("history_bytes"))
+                    (*body)["history_limit_bytes"] = args["history_bytes"];
+            }
+            else if (action == "history_limit")
+            {
+                if (args.isMember("history_frames"))
+                    (*body)["frames"] = args["history_frames"];
+                if (args.isMember("history_bytes"))
+                    (*body)["bytes"] = args["history_bytes"];
             }
             else if (action == "invalidate")
             {
@@ -3341,6 +3375,26 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
                                 "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
+                    }, done);
+                }
+                else if (action == "history_limit")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/history-limit"), body.get(), caller, [id](const Json::Value& b) {
+                        std::ostringstream text;
+                        text << "TTD history limit on " << id << ": ";
+                        const uint64_t frames = b["history_limit_frames"].asUInt64();
+                        const uint64_t bytes = b["history_limit_bytes"].asUInt64();
+                        if (frames == 0 && bytes == 0)
+                            text << "none";
+                        if (frames != 0)
+                            text << frames << " frames ";
+                        if (bytes != 0)
+                            text << bytes << " bytes ";
+                        text << "- history frames " << b["session_start_frame"].asUInt64() << ".."
+                             << b["current_end_frame"].asUInt64() << ", " << b["history_bytes"].asUInt64() << " bytes held, "
+                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released (state "
+                             << b["state"].asString() << ")";
+                        return text.str();
                     }, done);
                 }
                 else if (action == "stop")

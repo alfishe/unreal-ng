@@ -21,6 +21,8 @@
 
 #include "cli-processor.h"
 
+#include <cctype>
+
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
@@ -173,6 +175,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDStop(session, context);
     }
+    else if (subcommand == "limit" || subcommand == "history-limit")
+    {
+        HandleTTDHistoryLimit(session, context, args);
+    }
     else if (subcommand == "invalidate" || subcommand == "clear" || subcommand == "reset")
     {
         HandleTTDInvalidate(session, context, args);
@@ -264,6 +270,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd start [--no-journal]         Begin recording (captures baseline checkpoint)" << NEWLINE;
     ss << "                                     --no-journal: gaming mode, smaller memory footprint" << NEWLINE;
     ss << "  ttd stop                         Stop recording (history retained, browsable)" << NEWLINE;
+    ss << "  ttd limit [frames <n>] [bytes <n>[K|M|G]]" << NEWLINE;
+    ss << "                                   Bound the history: while recording, the oldest frames are" << NEWLINE;
+    ss << "                                     released beyond it (0 = no limit; 'ttd limit off' clears both;" << NEWLINE;
+    ss << "                                     no arguments: show the limit and what it holds)" << NEWLINE;
     ss << "  ttd invalidate [reason]          Drop all history, return to Idle" << NEWLINE;
     ss << "  ttd seek <frame> [tinframe]      Seek to a point in the timeline" << NEWLINE;
     ss << "  ttd step-back                    Step back one frame (preserve intra-frame pos)" << NEWLINE;
@@ -340,6 +350,14 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     ss << "  Page store used:        " << info.pageStoreUsedBytes << " bytes" << NEWLINE;
     ss << "  Baseline frames cap'd:  " << info.baselineFramesCaptured << NEWLINE;
     ss << "  Session heap total:     " << info.sessionHeapBytes << " bytes" << NEWLINE;
+    ss << "  History limit:          ";
+    if (info.historyLimitFrames == 0 && info.historyLimitBytes == 0)
+        ss << "none";
+    if (info.historyLimitFrames != 0)
+        ss << info.historyLimitFrames << " frames ";
+    if (info.historyLimitBytes != 0)
+        ss << info.historyLimitBytes << " bytes";
+    ss << " (" << info.historyBytes << " bytes held, " << info.evictedCheckpoints << " oldest released)" << NEWLINE;
     ss << NEWLINE;
     ss << "  Write journal:          "
        << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
@@ -430,6 +448,79 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
         session.SendResponse(std::string("TTD: Failed to start recording") + (reason.empty() ? "" : ": " + reason) +
                              NEWLINE);
     }
+}
+
+namespace
+{
+/// "1234", "512K", "64M", "4G" -> bytes; false when it is not a number
+bool ParseTTDByteCount(const std::string& text, uint64_t& out)
+{
+    if (text.empty())
+        return false;
+    uint64_t multiplier = 1;
+    std::string digits = text;
+    const char suffix = static_cast<char>(std::toupper(static_cast<unsigned char>(text.back())));
+    if (suffix == 'K' || suffix == 'M' || suffix == 'G')
+    {
+        multiplier = suffix == 'K' ? 1024ull : suffix == 'M' ? 1024ull * 1024 : 1024ull * 1024 * 1024;
+        digits.pop_back();
+    }
+    if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos || digits.size() > 15)
+        return false;
+    out = std::stoull(digits) * multiplier;
+    return true;
+}
+}  // namespace
+
+void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorContext* context,
+                                         const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    uint64_t frames = info.historyLimitFrames;
+    uint64_t bytes = info.historyLimitBytes;
+    bool change = false;
+    if (args.size() == 2 && args[1] == "off")
+    {
+        frames = bytes = 0;
+        change = true;
+    }
+    else
+    {
+        for (size_t i = 1; i < args.size(); i += 2)
+        {
+            uint64_t value = 0;
+            if (i + 1 >= args.size() || !ParseTTDByteCount(args[i + 1], value) ||
+                (args[i] != "frames" && args[i] != "bytes") ||
+                (args[i] == "frames" && args[i + 1].find_first_not_of("0123456789") != std::string::npos))
+            {
+                session.SendResponse(std::string("Usage: ttd limit [frames <n>] [bytes <n>[K|M|G]] | ttd limit off") +
+                                     NEWLINE);
+                return;
+            }
+            (args[i] == "frames" ? frames : bytes) = value;
+            change = true;
+        }
+    }
+    if (change)
+    {
+        mgr->SetHistoryLimit(frames, bytes);
+        info = mgr->GetSessionInfo();
+    }
+
+    std::stringstream ss;
+    ss << "TTD history limit: ";
+    if (info.historyLimitFrames == 0 && info.historyLimitBytes == 0)
+        ss << "none";
+    if (info.historyLimitFrames != 0)
+        ss << info.historyLimitFrames << " frames ";
+    if (info.historyLimitBytes != 0)
+        ss << info.historyLimitBytes << " bytes (" << info.historyLimitBytes / (1024 * 1024) << " MB)";
+    ss << NEWLINE;
+    ss << "  History: frames " << info.sessionStartFrame << " .. " << info.currentEndFrame << ", "
+       << info.checkpointCount << " checkpoints, " << info.historyBytes << " bytes held, " << info.evictedCheckpoints
+       << " oldest released" << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDStop(const ClientSession& session, EmulatorContext* context)

@@ -795,6 +795,8 @@ ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled cho
 ttd_start("development")     --> bool   -- write journal on
 ttd_start("gaming")          --> bool   -- no write journal (smaller)
 ttd_set_journal_enabled(b)             -- choose journal mode for the next start
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")

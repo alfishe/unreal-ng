@@ -420,6 +420,19 @@
     schemas["TTDStatusResponse"]["properties"]["session_start_frame"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
+    for (const char* name : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints"})
+    {
+        schemas["TTDStatusResponse"]["properties"][name]["type"] = "integer";
+        schemas["TTDStatusResponse"]["properties"][name]["format"] = "uint64";
+    }
+    schemas["TTDStatusResponse"]["properties"]["history_limit_frames"]["description"] =
+        "History limit in checkpoints (frames); 0 = none (POST /ttd/history-limit)";
+    schemas["TTDStatusResponse"]["properties"]["history_limit_bytes"]["description"] =
+        "History limit in bytes of checkpoint data; 0 = none";
+    schemas["TTDStatusResponse"]["properties"]["history_bytes"]["description"] =
+        "Checkpoint data held now: page-store slots plus device blobs (what the byte limit bounds)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_checkpoints"]["description"] =
+        "Oldest checkpoints released by the history limit in this session";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";
@@ -613,6 +626,11 @@
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDStartResponse"]["properties"]["history_limit_frames"]["type"] = "integer";
+    schemas["TTDStartResponse"]["properties"]["history_limit_bytes"]["type"] = "integer";
+    schemas["TTDStartResponse"]["properties"]["history_limit_frames"]["description"] =
+        "History limit in force (frames, 0 = none); see POST /ttd/history-limit";
+    schemas["TTDStartResponse"]["properties"]["history_limit_bytes"]["description"] = "History limit in force (bytes, 0 = none)";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["write_journal_enabled"]["description"] =
         "Whether write journal capture is enabled. false = gaming mode (smaller files), "

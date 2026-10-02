@@ -113,6 +113,28 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _clearBtn->setToolTip(tr("Clear current timeline history and reset session"));
     connect(_clearBtn, &QPushButton::clicked, this, &TtdWidget::onClearSession);
 
+    // History limit: the oldest frames are released beyond it while recording, so
+    // a long session stays within memory. Applied to the active emulator (an
+    // automation call may set another one afterwards); remembered across runs
+    _historyCombo = new QComboBox(this);
+    _historyCombo->addItem(tr("Keep all"), QVariant::fromValue<qulonglong>(0));
+    for (int gb : {1, 2, 4, 8, 16})
+        _historyCombo->addItem(tr("Keep %1 GB").arg(gb), QVariant::fromValue<qulonglong>(qulonglong(gb) << 30));
+    _historyCombo->setToolTip(tr("History limit: while recording, the oldest frames are released once the history "
+                                 "holds more than this; a session saved afterwards replays its remaining frames"));
+    {
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        const qulonglong saved = settings.value(QStringLiteral("ttd/historyLimitBytes"), 0).toULongLong();
+        const int index = _historyCombo->findData(QVariant::fromValue<qulonglong>(saved));
+        _historyCombo->setCurrentIndex(index >= 0 ? index : 0);
+    }
+    connect(_historyCombo, &QComboBox::currentIndexChanged, this, [this]() {
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue(QStringLiteral("ttd/historyLimitBytes"), _historyCombo->currentData().toULongLong());
+        applyHistoryLimit();
+        updateTelemetry();
+    });
+
     const int iconMetric = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QSize toolbarIconSize(iconMetric, iconMetric);
 
@@ -148,6 +170,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     _loadBtn->setFixedHeight(row1Height);
     _exportBtn->setFixedHeight(row1Height);
     _clearBtn->setFixedHeight(row1Height);
+    _historyCombo->setFixedHeight(row1Height);
 
     auto* statusLabel = new TtdStatusLabel(tr("TTD: Idle"), _loadBtn, this);
     statusLabel->setFont(_recordBtn->font());
@@ -162,6 +185,7 @@ TtdWidget::TtdWidget(MainWindow* mainWindow, QWidget* parent)
     controlLayout->addWidget(_loadBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_exportBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_clearBtn, 0, Qt::AlignVCenter);
+    controlLayout->addWidget(_historyCombo, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_statusLabel, 1, Qt::AlignVCenter);
     controlLayout->addWidget(_closeBtn, 0, Qt::AlignVCenter);
 
@@ -281,9 +305,22 @@ QSize TtdWidget::minimumSizeHint() const
     return QSize(0, desiredHeight());
 }
 
+void TtdWidget::applyHistoryLimit()
+{
+    if (!_activeEmulator || !_historyCombo)
+        return;
+    EmulatorContext* context = _activeEmulator->GetContext();
+    if (!context || !context->pTimeTravelManager)
+        return;
+    context->pTimeTravelManager->SetHistoryLimit(0, _historyCombo->currentData().toULongLong());
+}
+
 void TtdWidget::updateState(std::shared_ptr<Emulator> activeEmulator)
 {
+    const bool changed = _activeEmulator != activeEmulator;
     _activeEmulator = activeEmulator;
+    if (changed)
+        applyHistoryLimit();
 
     if (_activeEmulator && isVisible())
     {
@@ -430,10 +467,14 @@ void TtdWidget::updateTelemetry()
         _scrubberContainer->setVisible(false);
         const uint64_t startFrame = info.sessionStartFrame;
         const uint64_t curFrame = info.currentEndFrame;
-        _statusLabel->setText(tr("Rec | Frames: %1 - %2 | Memory: %3 MB%4")
+        const QString released = info.evictedCheckpoints != 0
+                                     ? tr(" | %1 oldest frames released").arg(info.evictedCheckpoints)
+                                     : QString();
+        _statusLabel->setText(tr("Rec | Frames: %1 - %2 | Memory: %3 MB%4%5")
                                   .arg(startFrame)
                                   .arg(curFrame)
                                   .arg(memMb, 0, 'f', 1)
+                                  .arg(released)
                                   .arg(provenanceStr));
     }
     else

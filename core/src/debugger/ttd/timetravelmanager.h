@@ -195,6 +195,7 @@ struct TTDSessionInfo
     uint64_t historyLimitFrames = 0;  ///< Oldest frames released beyond this many checkpoints (0 = no limit)
     uint64_t historyLimitBytes  = 0;  ///< ... or beyond this many bytes of checkpoint data (0 = no limit)
     uint64_t evictedCheckpoints = 0;  ///< Checkpoints the history limit released since the session started
+    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelManager::HistoryBytes)
     uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
 
     /// @brief Total heap footprint of the recorded session, in bytes.
@@ -1913,6 +1914,8 @@ private:
     uint64_t _historyLimitFrames = 0;   ///< SetHistoryLimit (0 = no limit)
     uint64_t _historyLimitBytes = 0;
     uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
+    uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _timeline (kept with it)
+    static uint64_t BlobBytes(const TTDCheckpoint& cp);
 
     /// Force the next OnFrameBoundary capture to be an I-frame regardless
     /// of the periodic interval. Set when the session is replaced
