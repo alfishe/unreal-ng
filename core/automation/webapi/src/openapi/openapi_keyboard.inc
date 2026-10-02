@@ -58,7 +58,23 @@
     // GET /api/v1/emulator/{id}/keyboard/status
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/status", "get");
     paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["summary"] = "Get keyboard status";
-    paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["responses"]["200"]["description"] = "Keyboard status";
+    paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["responses"]["200"]["description"] =
+        "Keyboard status: sequence_running, host_route (as set) and host_route_effective (AUTO resolved), ps2_controller";
+
+    // POST /api/v1/emulator/{id}/keyboard/route
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/route", "post");
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["summary"] = "Route the host keyboard";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["tags"].append("Keyboard Injection");
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["description"] =
+        "Where host and injected keys go: \"matrix\" (the ZX keyboard matrix), \"ps2\" (the PS/2 keyboard "
+        "controller: ZX-Evo AVR, ATM Turbo 2+ keyboard controller), \"both\", or \"auto\" (both where a PS/2 "
+        "controller exists, the matrix elsewhere; [INPUT] HostKeyboard= in the machine INI). Injected ZX keys reach "
+        "the PS/2 side as the PC keys they stand for. Refused (409) while a TTD recording runs.";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["route"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["responses"]["200"]["description"] = "The route in force";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["responses"]["400"]["description"] = "Unknown route";
+    paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["responses"]["409"]["description"] = "A TTD recording runs";
 
     // GET /api/v1/emulator/{id}/keyboard/keys
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/keys", "get");

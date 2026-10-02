@@ -1,3 +1,4 @@
+#include "emulator/io/joystick/joystick.h"
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
@@ -168,6 +169,15 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
             result = static_cast<uint8_t>((result & 0x7F) | Port_FE_In_GX0());
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
+    }
+    else if (!dosPorts && (port & 0x00FF) == 0x001F && IsKempstonJoystickFitted())
+    {
+        // Kempston joystick: #1F in the NORMAL port set (no DOS latch, no CP/M), as the Karabas Pro board decodes
+        // it (dos_act = 0, cpm = 0); ahead of the mouse, whose standard decode also matches #xx1F with A9 set
+        result = Default_Port_KempstonJoystick_In();
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;
     }
     else if (uint8_t mouseReg = 0; !dosPorts && Default_IsPort_KempstonMouse(port, mouseReg))

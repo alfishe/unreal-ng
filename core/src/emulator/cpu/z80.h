@@ -797,6 +797,7 @@ public:
     enum DeviceIntLine : uint32_t
     {
         kDeviceIntZxNetUsb = 1u << 0,   ///< ZXNETUSB card (W5300), ZX-Bus /INT
+        kDeviceIntAtm2Kbc = 1u << 1,    ///< ATM Turbo 2+ keyboard controller (INT_T, P1.5)
     };
 
     /// A device drives its /INT output: asserted = the line held low. A level,

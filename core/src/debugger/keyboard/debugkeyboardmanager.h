@@ -4,6 +4,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
 
+#include <deque>
 #include <vector>
 #include <queue>
 #include <string>
@@ -111,6 +112,14 @@ private:
     /// Keys currently held by pending tap operations (sequence based)
     std::vector<ZXKeysEnum> _tapHeldKeys;
     std::vector<PcKey> _tapHeldPcKeys;  ///< explicit PC keys of the tap in progress
+
+    /// PC key changes go out one per frame, as fingers do: a PS/2 controller
+    /// keeps one scan code at a time (the ATM Turbo 2+ firmware's INT0 handler
+    /// stores into one register), so a modifier and its key sent in the same
+    /// instant lose the modifier. Presses in order, releases in reverse
+    std::deque<std::pair<PcKey, bool>> _pcSchedule;
+    uint64_t _pcAppliedFrame = UINT64_MAX;
+    void SchedulePcKey(PcKey key, bool pressed);
     bool _tapDerivesPcKeys = true;      ///< the tap's ZX keys stand for their PC keys
     
     /// Keys directly pressed via PressKey (not via sequences)

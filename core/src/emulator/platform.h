@@ -736,6 +736,8 @@ struct CONFIG
 		bool joystickConfigured;
 		bool joystickKeysConfigured;
 		char joystickKeys[160];
+		/// [INPUT] HostKeyboard= AUTO | MATRIX | PS2 | BOTH (Keyboard::ParseHostRoute)
+		char hostKeyboard[16];
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -770,6 +772,10 @@ struct CONFIG
 		// ZX-Evo AVR firmware ([EVO] Avr=): Uart16550::AvrFirmware - the COM
 		// port's emulation differs between NedoPC and TS-Labs releases
 		uint8_t evo_avr;
+		// ATM Turbo 2+ keyboard controller ([ATM] Kbc=): Atm2Kbc::Firmware
+		uint8_t kbc_firmware;
+		// Its image instead of the preset's ([ROM] ATM2KBC=); empty = the preset's
+		char kbc_rom_path[FILENAME_MAX];
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];

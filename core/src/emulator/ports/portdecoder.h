@@ -505,6 +505,10 @@ public:
     /// A board NMI queued for the frame INT is due (Z80::ProcessInterrupts).
     /// Return false to drop it (ZX-Evo: its NMI page is still mapped in)
     virtual bool OnFrameIntStartNmi() { return true; }
+
+    /// The frame ended (main loop, after the network pump): board devices that
+    /// run on their own clock catch up (ATM Turbo 2+ keyboard controller)
+    virtual void OnFrameEnd() {}
     /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
     /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
     virtual bool OnNmiAccepted() { return false; }
@@ -542,6 +546,14 @@ public:
     /// one, not Default_ directly, or model deviations go unreported
     virtual bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const;
     uint8_t Default_Port_KempstonMouse_In(uint16_t port, uint16_t pc);
+
+    /// Kempston joystick, the part every decoder with a #1F arm shares. The arm decides WHETHER #1F is the stick on
+    /// this machine right now (shadow, TR-DOS, CP/M, ahead of the mouse); these answer it. It cannot be a
+    /// registered handler like the other devices: the exact key #1F belongs to the WD1793, and the two are told
+    /// apart by that very gating
+    bool IsKempstonJoystickFitted() const;
+    /// The stick's port value; 0x00 (nothing pressed) with no device or one that is not fitted
+    uint8_t Default_Port_KempstonJoystick_In() const;
 
     /// Whether a decoded port value belongs to the Beta-128 FDC register set
     /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system). The port

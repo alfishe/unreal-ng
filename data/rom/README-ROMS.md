@@ -13,7 +13,7 @@ that the emulator works out of the box, on the following basis:
 * **TR-DOS** (`trdos.rom`, `trdos503.rom`, `trdos504t.rom`, `trd504tm.rom`, `dos.rom`, `dos6_10e.rom`, `128tr!.rom`):
   Technology Research Ltd (no longer trading). Distributed with emulators by long-standing custom; no formal permission exists.
 * **Pentagon, Scorpion, KAY, ATM, Profi, ZX Evolution / TS-Conf, General Sound and other clone firmware**
-  (`pentagon*.rom`, `glukpen*.rom`, `scorp*.rom`, `kay1024*.rom`, `atm*.rom`, `glukatm.rom`, `profi.rom`,
+  (`pentagon*.rom`, `glukpen*.rom`, `scorp*.rom`, `kay1024*.rom`, `atm*.rom`, `glukatm.rom`, `profi.rom`, `profi/*.rom`,
   `zxevo.rom`, `zxevo-fe.rom`, `ts-bios*.rom`, `gs*.rom`, `bootGS.rom`, `lsy256.rom`, `qu7v42.rom`, `qc_3_05.rom`, `madrom.rom`,
   `zxi1.rom`, `2006.rom`, `xbios135.rom`, `sgen.rom`, `gd.rom`, `gmx.rom`, `1993.rom`, `ZXM-Phoenix_bios.bin`,
   `tk90.rom`, `tk95.rom`): property of the respective clone manufacturers and authors, distributed freely in the
@@ -37,6 +37,22 @@ that the emulator works out of the box, on the following basis:
   The community BIOS 3.06 (`sp2k-3.06.rom`, CRC32 `187f4382` in MAME) is not included: no copy was found in the
   public repositories (Tolik-Trek `Sprinter-BIOS` publishes sources only, no releases); take it from the MAME
   `sprinter` ROM set or build it from https://zxgit.org/Tolik-Trek/Sprinter-BIOS.
+* **ZX Profi factory firmware** (`profi/*.rom`): the stock 64K images of the two board families, each four 16K
+  pages in the order SYS (BIOS), TR-DOS, 128 BASIC, 48 BASIC. Downloaded unchanged from
+  [speccy4ever](https://speccy4ever.speccy.org/_PR.htm), which names each file by its CRC32; every CRC32 below
+  matches its name there. `profi.rom` one level up is not a factory image (BIOS 2.0 with TR-DOS 6.08 and the
+  STS 3.2 monitor, speccy4ever `PB20POS-A932676F`) and stays the default.
+
+  | File | Board | Contents | CRC32 | MD5 | Also shipped by |
+  |:--|:--|:--|:--|:--|:--|
+  | `kramis-v02.rom` | v3 | JV "KRAMIS" BIOS V0.2 (10.1990), TR-DOS 5.03 | `77327F52` | `720f23bec22581f37fb55bd7a928fde2` | xpeccy-plus `profi-kramis02.rom` |
+  | `kramis-v03.rom` | v3 | "Computer Profi" BIOS V0.3, TR-DOS 5.04T | `D7023609` | `dba4ef54a1588daa68290950be2ebf52` | ZXMAK2 `PROFI_v03.ROM` |
+  | `bios10-930505.rom` | v5 | Micco Software ROM Bios 1.0 of 05.05.93, TR-DOS 5.04T | `FA9F090A` | `56ae7befeff52eba82dadef305adc912` | - |
+  | `bios10.rom` | v5 | ROM Bios 1.0 of 21.09.93, TR-DOS 5.04T | `E95F7AA0` | `1dfad1fb6303d0db01fd87c1cff05039` | ZXMAK2 `profi_v10.rom` |
+  | `bios10-kondor504.rom` | v5 | as `bios10.rom`, read off a Kondor 5.04 board; the 48K page's NMI test at `#006D` is `JR Z` (`#28`), not `JR NZ` | `10DA289A` | `f4ab0dd91cd7d207879767d4fe5bf30e` | xpeccy-plus `profi-bios10.rom` |
+  | `bios20.rom` | v5 | ROM Bios 2.0 of 17.04.94, TR-DOS 5.04T | `36F5F7BD` | `02877e403f22d10d12ef0296ccb96f60` | xpeccy-plus `profi-bios20.rom`, ZXMAK2 `PROF-M.ROM` |
+  | `bios20-font.rom` | v5 | as `bios20.rom` with one glyph of the 48K font changed (`#3D99`-`#3D9A`) | `DA81DED7` | `2f7549cd9fff863f68867f7d944de2a1` | - |
+
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

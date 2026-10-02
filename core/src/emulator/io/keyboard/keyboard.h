@@ -19,6 +19,10 @@ enum KeyEventEnum : uint8_t
 
 extern const char* const MC_KEY_PRESSED;
 extern const char* const MC_KEY_RELEASED;
+/// A physical PC key (PcKeyEvent): its own topic, so the matrix and the PS/2
+/// side are separate handlers, each with its own gate (HostKeyboardRoute)
+extern const char* const MC_PCKEY_PRESSED;
+extern const char* const MC_PCKEY_RELEASED;
 
 // 40 Buttons for original ZX-Spectrum
 enum ZXKeysEnum : uint8_t
@@ -133,10 +137,6 @@ public:
     std::string targetEmulatorId;  // Specific emulator target (empty = broadcast to all)
     uint8_t zxKeyCode = 0x00;
     KeyEventEnum eventType;
-    /// The physical PC key behind the event (PcKey, 0 = none), for machines with
-    /// a PS/2 keyboard controller. A key with no ZX equivalent (F1, Home, ...)
-    /// arrives with zxKeyCode = ZXKEY_NONE and only this code
-    uint8_t pcKeyCode = 0x00;
 
 public:
     // Existing constructor (backward compatible - broadcasts to all instances)
@@ -154,16 +154,38 @@ public:
         this->targetEmulatorId = targetId;
     }
 
-    /// Both codes of one host key (the front end fills them from the same key event)
-    KeyboardEvent(uint8_t zxKey, uint8_t pcKey, KeyEventEnum type, const std::string& targetId) : MessagePayload()
+    virtual ~KeyboardEvent() {};
+};
+
+/// A physical PC key from the host (MC_PCKEY_PRESSED / MC_PCKEY_RELEASED): the
+/// front end posts it beside the ZX key event of the same host key. Machines
+/// with a PS/2 keyboard (ZX-Evo AVR, ATM Turbo 2+ controller) and joystick key
+/// bindings take it; a key with no ZX equivalent (F1, Home) has only this event
+class PcKeyEvent : public MessagePayload
+{
+public:
+    std::string targetEmulatorId;  // Specific emulator target (empty = broadcast to all)
+    uint8_t pcKeyCode = 0x00;      // PcKey
+    KeyEventEnum eventType;
+
+    PcKeyEvent(uint8_t pcKey, KeyEventEnum type, const std::string& targetId) : MessagePayload()
     {
-        this->zxKeyCode = zxKey;
         this->pcKeyCode = pcKey;
         this->eventType = type;
         this->targetEmulatorId = targetId;
     }
-    
-    virtual ~KeyboardEvent() {};
+    virtual ~PcKeyEvent() {};
+};
+
+/// Which side of the machine's keyboard the host keyboard reaches ([INPUT]
+/// HostKeyboard=): the ZX matrix, the PS/2 controller, or both. Auto = both
+/// where a PS/2 controller exists, the matrix elsewhere
+enum class HostKeyboardRoute : uint8_t
+{
+    Auto = 0,
+    Matrix = 1,
+    Ps2 = 2,
+    Both = 3,
 };
 
 /// endregion </Structs and Enums>
@@ -318,6 +340,9 @@ protected:
     /// without one: physical key events are neither journaled nor applied there
     IPs2KeySink* _ps2Sink = nullptr;
 
+    /// The host keyboard's route (config [INPUT] HostKeyboard=, runtime SetHostRoute)
+    HostKeyboardRoute _hostRoute = HostKeyboardRoute::Auto;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -366,6 +391,20 @@ public:
     /// Release every physical key the controller holds and every joystick button bound to a key
     /// (automation "release all")
     void ReleaseAllPcKeys();
+
+    /// The host keyboard's route: as set, and as in force (Auto resolved).
+    /// Gates host and automation input; the TTD journal records what passed
+    void SetHostRoute(HostKeyboardRoute route) { _hostRoute = route; }
+    HostKeyboardRoute GetHostRoute() const { return _hostRoute; }
+    HostKeyboardRoute EffectiveHostRoute() const;
+    bool RoutesToMatrix() const { return (static_cast<uint8_t>(EffectiveHostRoute()) & 1) != 0; }
+    bool RoutesToPs2() const { return _ps2Sink && (static_cast<uint8_t>(EffectiveHostRoute()) & 2) != 0; }
+    static bool ParseHostRoute(const char* text, HostKeyboardRoute& out);
+    /// The one entry every interface uses: a route by name (auto | matrix |
+    /// ps2 | both). Refused while TTD records: the route decides what enters
+    /// the journal, a change mid-recording would replay differently
+    bool RequestHostRoute(const std::string& name, std::string& error);
+    static const char* HostRouteName(HostKeyboardRoute route);
     /// endregion </PS/2 (physical keys)>
 
     /// region <Helper methods>
@@ -395,6 +434,8 @@ public:
     /// region <Handle MessageCenter keyboard events>
 public:
     void OnKeyPressed(int id, Message* message);
+    void OnPcKeyPressed(int id, Message* message);
+    void OnPcKeyReleased(int id, Message* message);
     void OnKeyReleased(int id, Message* message);
 
     /// Ignore host key events (see _hostInputGated). PressKey/ReleaseKey still work

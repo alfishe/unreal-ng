@@ -37,6 +37,9 @@ public:
     /// Latch-to-bank translation (called from Memory::UpdateZ80Banks after the ROM slot is chosen)
     void UpdateModelMemoryBanks() override;
 
+    /// #1F in the NORMAL port set reads Joystick::Read() while a joystick is fitted
+    bool HasKempstonJoystick() const override { return true; }
+
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 

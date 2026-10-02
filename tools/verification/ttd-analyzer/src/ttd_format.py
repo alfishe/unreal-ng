@@ -222,6 +222,9 @@ PERIPHERAL_ID_NAMES = {
     18: "Ds12887",
     19: "EvoPs2",
     20: "ZxNetUsb",
+    21: "EvoTurboCache",
+    22: "EvoFontRam",
+    23: "KempstonJoystick",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

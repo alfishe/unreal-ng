@@ -337,7 +337,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         // In the Service Monitor, sub_0260h reads port #FF1F (LD BC,#FF1F; IN C,(C)).
         // Idle 0x00 keeps Fire released (D4=0), eliminating phantom autorepeat
         // clicks (0x80) that cause the active menu item highlight to continuously blink/redraw.
-        result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
+        result = Default_Port_KempstonJoystick_In();
         _lastPortDecoded = true;
         disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;

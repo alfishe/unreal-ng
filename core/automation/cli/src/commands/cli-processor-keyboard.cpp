@@ -66,6 +66,28 @@ void CLIProcessor::HandleKey(const ClientSession& session, const std::vector<std
     {
         HandleKeyList(session);
     }
+    else if (subcommand == "route")
+    {
+        // key route [auto|matrix|ps2|both]: where the host keyboard goes
+        Keyboard* keyboard = context->pKeyboard;
+        if (!keyboard)
+        {
+            session.SendResponse(std::string("Error: no keyboard.") + NEWLINE);
+            return;
+        }
+        if (args.size() > 1)
+        {
+            std::string error;
+            if (!keyboard->RequestHostRoute(args[1], error))
+            {
+                session.SendResponse("Error: " + error + NEWLINE);
+                return;
+            }
+        }
+        session.SendResponse(std::string("Keyboard route: ") + Keyboard::HostRouteName(keyboard->GetHostRoute()) +
+                             " (in force: " + Keyboard::HostRouteName(keyboard->EffectiveHostRoute()) +
+                             (keyboard->HasPs2Sink() ? ", PS/2 controller fitted)" : ", no PS/2 controller)") + NEWLINE);
+    }
     else if (subcommand == "clear" || subcommand == "reset")
     {
         HandleKeyClear(session, context);
@@ -95,6 +117,7 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "  type <text>           - Type text with auto modifier handling" << NEWLINE;
     ss << "  list                  - List all recognized key names" << NEWLINE;
     ss << "  clear                 - Release all keys and reset keyboard state" << NEWLINE;
+    ss << "  route [auto|matrix|ps2|both] - Where keys go: the ZX matrix, the PS/2 controller (ZX-Evo, ATM Turbo 2+), both" << NEWLINE;
     ss << NEWLINE;
     ss << "Key names: a-z, 0-9, enter, space, caps, symbol, up, down, left, right," << NEWLINE;
     ss << "           delete, break, edit, dot, comma, plus, minus, quote, etc." << NEWLINE;
