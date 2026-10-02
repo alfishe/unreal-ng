@@ -99,6 +99,34 @@ TEST_F(SprinterDeviceState_Test, ReportFollowsThePld)
     EXPECT_EQ(Member(Member(report, "bios"), "images").items.size(), 3u);
 }
 
+// The ZX mode's original waits (ALL_MODE bit 2 = 0 at 3.5 MHz) and the tape's real-time clock (tdd-zx-mode.md §3.3, §3.4):
+// one source for every automation surface (WebAPI /state/sprinter, MCP inspect_state, CLI, Lua, Python)
+TEST_F(SprinterDeviceState_Test, OriginalWaitsAndTapeAreReported)
+{
+    OpenDcp();
+    Pld().allMode = 0xFA;  // ORIGIN.ZX
+    Pld().pn = 0x05;       // #7FFD: page 5 at #C000
+    _decoder->ApplyOrigWaits();
+    StateNode report = DeviceState::Sprinter(_context);
+    StateNode waits = Member(Member(report, "clock"), "original_waits");
+    EXPECT_TRUE(Bool(waits, "active")) << DeviceState::ToText(report);
+    EXPECT_FALSE(Bool(waits, "all_mode_bit2"));
+    EXPECT_EQ(Int(waits, "period_t"), 4);
+    EXPECT_EQ(Int(waits, "phase_t"), 0);
+    ASSERT_EQ(Member(waits, "windows_waiting").items.size(), 4u);
+    EXPECT_FALSE(Member(waits, "windows_waiting").items[0].b);
+    EXPECT_TRUE(Member(waits, "windows_waiting").items[1].b);
+    EXPECT_FALSE(Member(waits, "windows_waiting").items[2].b);
+    EXPECT_TRUE(Member(waits, "windows_waiting").items[3].b) << "#7FFD bit 2";
+    EXPECT_EQ(Str(Member(report, "tape"), "time_base"), "base_clock");
+
+    Pld().allMode = 0xFE;  // the default ZX mode
+    _decoder->ApplyOrigWaits();
+    waits = Member(Member(DeviceState::Sprinter(_context), "clock"), "original_waits");
+    EXPECT_FALSE(Bool(waits, "active"));
+    EXPECT_FALSE(Member(waits, "windows_waiting").items[1].b);
+}
+
 // Turbo: the clock block follows hw_turbo_ratio (CNF bit 0 with bit 1, the front-panel switch)
 TEST_F(SprinterDeviceState_Test, ClockShowsTheTurbo)
 {

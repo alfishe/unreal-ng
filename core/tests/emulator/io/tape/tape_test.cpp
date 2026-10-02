@@ -541,3 +541,46 @@ TEST_F(TapeLoaderFollow_Test, UnclassifiedReadsStartOnlyAsCountingLoop)
 }
 
 /// endregion </Loader-follow>
+
+/// region <Time base (tdd-zx-mode.md §3.4, T-ZX-8)>
+
+// The tape's clock: t_states + the in-frame position. With the default (CPU clocks) a hardware turbo of 6 counts
+// six times the base T-states inside the frame; with the base-clock time base (the Sprinter) the in-frame part is
+// scaled back, so a pulse lasts its base T-states whatever the CPU runs at, and the clock never steps back at a
+// frame boundary
+TEST_F(Tape_Test, BaseClockTimeBase_ScalesTheInFrameClock)
+{
+    EmulatorState& state = _context->emulatorState;
+    Z80* z80 = _context->pCore->GetZ80();
+    const uint64_t savedStates = state.t_states;
+    const uint8_t savedRatio = state.hw_turbo_ratio_applied;
+    const uint32_t savedT = z80->t;
+
+    state.t_states = 10 * 71680ull;
+    state.hw_turbo_ratio_applied = 6;
+    z80->t = 6 * 2168;  // one pilot pulse into the frame, in 21 MHz clocks
+
+    EXPECT_FALSE(_tape->IsBaseClockTimeBase()) << "off by default: every machine but the Sprinter";
+    EXPECT_EQ(_tape->ClockCount(), 10 * 71680ull + 6 * 2168) << "CPU clocks";
+    _tape->SetBaseClockTimeBase(true);
+    EXPECT_EQ(_tape->ClockCount(), 10 * 71680ull + 2168) << "base T-states: the pulse lasts 2 168 T";
+
+    // The last clock of a frame and the first of the next: monotonic in the base time base
+    z80->t = 6 * 71680 - 1;
+    const uint64_t endOfFrame = _tape->ClockCount();
+    state.t_states += 71680;
+    z80->t = 0;
+    EXPECT_GT(_tape->ClockCount(), endOfFrame);
+
+    // At the base clock the two agree
+    state.hw_turbo_ratio_applied = 1;
+    z80->t = 1234;
+    EXPECT_EQ(_tape->ClockCount(), state.t_states + 1234);
+
+    _tape->SetBaseClockTimeBase(false);
+    state.t_states = savedStates;
+    state.hw_turbo_ratio_applied = savedRatio;
+    z80->t = savedT;
+}
+
+/// endregion </Time base>

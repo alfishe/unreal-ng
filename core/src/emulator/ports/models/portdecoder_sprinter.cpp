@@ -13,6 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
@@ -89,16 +90,24 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     if (_context->pCore && _context->pCore->GetZ80())
     {
         _waits = std::make_unique<SprinterWaits>(_context->pCore->GetZ80());
+        _origWaits = std::make_unique<SprinterOrigWaits>(_context->pCore->GetZ80());
         _cpuEngine = std::make_unique<Z84C15Engine>(_context, _context->pCore->GetZ80(), _z84);
     }
 
     // The WD1793 has its own clock: the disk keeps 300 rpm when the CPU runs at 21 MHz
     if (_context->pBetaDisk)
         _context->pBetaDisk->SetBaseClockTimeBase(true);
+    // A tape plays in real time: at 21 MHz the ROM loader times its pulses six times too long and fails, as on
+    // the board (tdd-zx-mode.md §3.4; the Sprinter only for now, Q2)
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(true);
 }
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(false);  // the next model's decoder decides again
+
     if (_context->pSoundManager)
         _context->pSoundManager->detachModelAudioSource(&_cbl);
 
@@ -116,6 +125,8 @@ PortDecoder_Sprinter::~PortDecoder_Sprinter()
             core->RemoveBusOverlay(&memory->GetWriteIntercept());
         if (_waits)
             core->RemoveBusOverlay(_waits.get());
+        if (_origWaits)
+            core->RemoveBusOverlay(_origWaits.get());
         Z80* z80 = core->GetZ80();
         _cpuEngine.reset();  // gives the CPU back to the native interpreter
         if (z80 && z80->GetInterruptSource() == &_intSource)
@@ -210,8 +221,11 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     GetIdeAdapter().SprinterReset();  // the primary channel (MAME machine_reset :1582)
     _pld.frameLines = 0;
     _pld.turboHard = _context->config.sprinter.turbo_allowed ? 1 : 0;
-    if (kind != SprinterResetKind::SoftReset)
-        _pld.turbo = 0;  // a new configuration starts at 3.5 MHz
+    // The turbo bit is preset by the board's /RESET (DCP.TDF:663, TB_SW.prn = /RESET): a CPU reset of the
+    // running configuration (Ctrl+Alt+Del, a write to page #A0) brings the CPU back at 21 MHz when the
+    // front-panel switch allows it, whatever mode it ran in (a ZX mode at 3.5 MHz returns to DSS in turbo).
+    // A new configuration starts at 3.5 MHz (the register's power-up value; MAME, the boot timing)
+    _pld.turbo = kind == SprinterResetKind::SoftReset ? 1 : 0;
     _pld.resetPending = 0;
     // The density latch starts at 720 KB, the FDC codes on (ZXMAK2 SprinterFdd.cs:318; MAME enables the Beta interface)
     _pld.fdcHd = 0;
@@ -400,6 +414,8 @@ void PortDecoder_Sprinter::InstallHooks()
     RefreshAccelerator();
     if (!_waits)
         _waits = std::make_unique<SprinterWaits>(z80);
+    if (!_origWaits)
+        _origWaits = std::make_unique<SprinterOrigWaits>(z80);
 }
 
 void PortDecoder_Sprinter::RefreshAccelerator()
@@ -495,6 +511,34 @@ void PortDecoder_Sprinter::ApplyTurbo()
             core->RemoveBusOverlay(_waits.get());
         }
     }
+    ApplyOrigWaits();
+}
+
+void PortDecoder_Sprinter::ApplyOrigWaits()
+{
+    Core* core = _context->pCore;
+    if (!core || !_origWaits)
+        return;
+
+    // WAIT_ORIG: ALL_MODE bit 2 = 0 and TURBO = 0, on the configured PLD (the loader has no such logic)
+    const bool on = _pld.configState == SprinterConfigState::Configured && (_pld.allMode & 0x04) == 0 &&
+                    _state->hw_turbo_ratio <= 1;
+    if (on)
+    {
+        for (uint8_t window = 0; window < 4; window++)
+            _origWaits->SetSlotWaits(window, SprinterOrigWaits::WindowWaits(window, _pld.pn));
+        core->AddBusOverlay(_origWaits.get());  // no-op when installed already
+    }
+    else
+    {
+        core->RemoveBusOverlay(_origWaits.get());  // no-op when not installed
+    }
+}
+
+bool PortDecoder_Sprinter::OrigWaitsActive() const
+{
+    const Core* core = _context->pCore;
+    return core && _origWaits && core->IsBusOverlayInstalled(_origWaits.get());
 }
 
 void PortDecoder_Sprinter::AddPortWait()
@@ -508,6 +552,9 @@ void PortDecoder_Sprinter::AddPortWait()
 
 void PortDecoder_Sprinter::OnBanksChanged()
 {
+    // Window 3 waits in the original mode while #7FFD bit 2 is set
+    if (_origWaits)
+        _origWaits->SetSlotWaits(3, SprinterOrigWaits::WindowWaits(3, _pld.pn));
     if (!_waits)
         return;
     // Main RAM waits; ROM and fast RAM do not (MAME: only ram_r / ram_w / isa_r / isa_w call do_mem_wait)
@@ -911,6 +958,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::AllMode:
             _input.BeforeAllModeWrite();
             _pld.allMode = value;
+            ApplyOrigWaits();   // bit 2: the original waits
             RefreshStepHook();  // the keyboard INT on or off
             NoteVideoLatches();
             return;
