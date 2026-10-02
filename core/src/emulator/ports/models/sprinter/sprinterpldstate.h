@@ -101,7 +101,9 @@ struct SprinterPldState
     uint8_t ideLatch;     ///< IDE data latch (phase S3b)
 
     uint8_t resetPending; ///< a PLD-driven CPU reset waits for the instruction boundary
-    uint8_t reserved[7];
+    uint8_t fdcHd;        ///< density latch (codes #16 / #17): 0 = 720 KB (1 MHz, 250 kbit/s), 1 = 1.44 MB (2 MHz, 500)
+    uint8_t fdcOff;       ///< 1 = the WD1793 codes #10-#15 are off (bit 1 of the last density write; MAME, unverified)
+    uint8_t reserved[5];
 
     uint32_t bitstreamCount;     ///< configuration writes seen by the sink
     uint32_t bitstreamHashHead;  ///< MAME-compatible hash of the first 4 096 writes

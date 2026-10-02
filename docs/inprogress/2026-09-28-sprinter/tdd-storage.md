@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4) |
+| **Status** | Review round 1 done (2026-09-28): `ide0.slave` empty by default (Q5, §1); `Ds12887` is the shared CMOS core (§4). **§2 floppy built in S3a** (2026-10-01, branch `sprinter-s3a`; as-built notes in §2.6, outcome in [roadmap-and-plan.md](roadmap-and-plan.md) §8) |
 | **Hardware** | [hardware-reference.md](hardware-reference.md) §9, §10, §12, §14 |
 | **Plugs into** | media manager [technical-design.md](../2026-09-28-storage-manager/technical-design.md) (PLAN #58), [integration-ide-cd.md](../2026-09-28-storage-manager/integration-ide-cd.md), [integration-floppy.md](../2026-09-28-storage-manager/integration-floppy.md); shared IDE core [2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) (PLAN #13a) |
 
@@ -111,6 +111,19 @@ Profi raw formats (review round 2, G9 of the storage manager) share this loader.
 [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §5.3 (it lives in the M1 hook with the
 accelerator opcode snooping). Consequence here: TR-DOS 5.04Em and Spectrum programs use `#0F`
 (or have `#1F` rewritten), and the table pattern `000x x111` routes both to code `#10`.
+
+### 2.6 As built (S3a, 2026-10-01)
+
+| Item | As built |
+|---|---|
+| Ports | as §2.1: codes `#10-#13` / `#14` / `#15` through `PeripheralPortIn/Out` with the canonical Beta ports (the WD1793 still registers them; the table decides when they are reached). Code `#15` = WD1793 `#FF` bits 7-6 or'ed with the Kempston bits 5-0 (`HasKempstonJoystick() = true`) |
+| Drive select | the WD1793 now follows Beta `#FF` bits 1-0 (it used drive A for every value before: a shared fix). A blank CMOS boots floppy **B** (SETUP default CMOS `#10` = `#12`) |
+| DOS signal | built in S1 (the decoder's `BeforeMachineM1`), test T-FDD-7 added in S3a |
+| Density | as §2.3. Every PLD reset = 720 KB, FDC on. The latch writes `SetLatchedClock` whatever the off bit |
+| Rate change mid-command | the probe flips the latch while its READ ADDRESS still runs (the chip ignores the new command while busy). The WD1793 re-runs a pending READ ADDRESS / Type I verify search at the new rate, keeping the first deadline (`WD1793::retrySearchAtNewRate`) |
+| Time base at 21 MHz | research question 7 answered: it was **not** real time (Z80::t counts 6 CPU clocks per base T-state inside the frame, and `t_states` adds the base frame). `WD1793::SetBaseClockTimeBase(true)` (set by the Sprinter decoder) scales the frame part back; opt-in so the other turbo machines' TTD captures stay as they are |
+| `#1F` rewrite | at the I/O cycle: when the port's low byte is `#1F`, the instruction at `m1_pc` is an unprefixed `#D3` / `#DB` with operand `#1F` and the operand's window holds RAM, the port becomes `#xx0F` (MAME `check_accel`). MEMPTR's visible high byte is A either way |
+| Media | slots `fdd.a`-`fdd.d` from the generic `FloppyDriveSlots`; `.img` 1.44 MB / 720 KB through `LoaderRawPcFloppy`, TRD as usual |
 
 ## 3. IDE adapter
 
