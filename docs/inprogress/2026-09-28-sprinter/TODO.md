@@ -106,16 +106,50 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**
-  1. Automation audit P1 + P2 ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md)): VRAM / palette /
-     per-square mode map, a video-change log for all machines, accelerator and wait-state state, runtime BIOS
-     selection, `video_text` / OCR fallback to the Sprinter text, outdated MCP resource / recipe / OpenAPI text.
+  1. ~~Automation audit P1 + P2~~ **done** (2026-10-02, branch `sprinter-automation`; status per gap in
+     [automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4, outcome in
+     [automation-outcome.md](automation-outcome.md) "Audit round"). Follow-ups from it:
+     - G16 / G17 remainder (P3): per-frame wait totals by kind (counters on the wait path: needs an A/B), the
+       Z84C15 power-on M1 counter and after-ED flag (a library accessor in `core/src/3rdparty/z84c15/`, carried
+       into unreal-z80);
+     - the video change log counts TS-Conf CRAM writes from the CPU's FM window only, not the DMA's (DMA time
+       base differs); a per-T table-write history (not only first / last) if a tool needs it;
+     - a Qt view of the mode map / palettes / video RAM (the debugger-model work; the data is all in the reports);
+     - G18-G21 (P3) unchanged.
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
+     Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
+     GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
+     Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
-     decisions Q1-Q3 recorded), network adapters (NE2000 ISA Ethernet confirmed; maximum reuse of the shared network
-     stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+     decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
+     confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+  5. **Owner decision 2026-10-02** (the developer-interest ranking, [peripherals-survey.md](peripherals-survey.md)
+     §10, accepted; "the network definitely first"). After the demo pass:
+     - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
+       and are the only new programs that need a card.
+     - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
+       the BIOS / DSS developer's main work since 2024-10.
+     - The Centronics printer drops to P4.
+- **ZX mode, phase S8 (design 2026-10-02: [research-zx-mode.md](research-zx-mode.md),
+  [tdd-zx-mode.md](tdd-zx-mode.md); roadmap §1 row S8).** The real machine loads TRD / SCL into a BIOS RAM disk
+  that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
+  tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
+  SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
+  - [ ] Z1 (S) faithful path on unreal-ng against the MAME captures (launcher v2.03 + TRD / SCL, `/ret-fn`,
+    the Peters Plus launcher with a TRD on the floppy)
+  - [ ] Z2 (S-M) tape: the I5 test, the base-clock tape time base under turbo (today the tape speeds up with
+    the 21 MHz CPU), a real-time TAP load in `ORIGIN.ZX`
+  - [ ] Z3 (M) "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`), A/B benchmark
+  - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
+  - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
+    write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
+    2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline
+    ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84, T3) - its P0-P3 first, the Sprinter commit policy is its P4
+  - [ ] Z6 (M) `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, TTD replay test
+  - Open questions Q1-Q7 for the owner: [tdd-zx-mode.md](tdd-zx-mode.md) §10
 - **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items
   only):**
   - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
@@ -124,9 +158,35 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
     counter-mode inputs and ZC outputs (gap I7, C11) - S.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
-    as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
+    as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
+    media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+- **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
+  developer interest in §10; priority order, functional items only):**
+  - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT
+    `AUTOIDE`) - S. Raised from P3 (§10: CF fixes in BIOS-TT 2024-12 / 2025-05; CF is the usual disk).
+  - P2 research, changed focus (§10): first a runtime configuration reload, that is LDConf with the MAME-pack
+    `DEMOS/LDCONF` streams `STREAM.300-305` and back to Standard, plus the `ALL MODE` port restore (LDConf
+    2026-09-27). Then the community logic firmware of 2026 (`k30.acx` / `k50.acx` of 2026-09-24): accelerator
+    control codes `#80` / `#81`, 1 KB buffer, rectangle mode, X / Y clipping ("tmkonf", written by Andrei Holub in
+    MAME, carried by Tolik-Trek's fork), the `ACEX.SCALE` port (removed from the BIOS start-up 2026-08-26). Build
+    tmkonf only when a released bitstream and a program use it - S research, M build (survey Q2).
+  - P2: correct the ISA research §7.1 row "Wild Sound XM player": the card is the ISA Wild Sound (Robus, STM32F405,
+    AYX-32 compatible) - S, with the next ISA design edit.
+  - P3 research, P4 build: ISA Wild Sound card (protocol from its author first; one known program, `prosiak.exe`) - L
+    (survey Q3).
+  - P4 (lowered from P3 by survey §10: no developer activity): Centronics printer port with a print-to-file
+    printer: PIO A data and RDY strobe, PIO B bits 6 / 7, the SIO A / B status lines (BUSY, ACK, SELECT, PAPER END); one connector slot shared with the LPT Sega pad (PLAN #82); DSS
+    `#5F PRINT` end to end, journaled for TTD, all five automation surfaces - S-M (survey Q1).
+  - P4 on demand: SIO B as a COM port (the `MOUSE` connector holds the mouse or a `ComPort` peer) - S (survey Q4).
+  - P4 on demand: sp2000-light board profile (no ISA slots, one IDE channel) - S (survey Q6).
+  - P4 on evidence: 512 KB video RAM / 512 KB ROM of the sp2022d board - S-M (survey Q5).
+- Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
+  roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
+  SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
+  `UNETESP.DLL`, owner: must be supported) (M), SN4 modem / SprinterSerial (S-M, needs I4), SN5 3C509B (M), SN6
+  host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
@@ -176,7 +236,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - teardown use-after-free of the same class in `~PortDecoder_ATM710` (keyboard) and `~PortDecoder_TSConf`
     (memory), found with ASan in S3b, not fixed there (shared code, other machines).
 - ACC-6 as written ("ESC at the boot menu → Spectrum mode") does not hold for BIOS 3.04: the Spectrum
-  ROMs come from DSS `ZX\SPECTRUM.EXE` (or a later BIOS). Whether 3.06 carries them is open.
+  ROMs come from DSS `ZX\SPECTRUM.EXE`. BIOS 3.06 and later carry them (ESC works; research-zx-mode §5.1).
 - Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank
   square = pen `#400`; HOLD power-on `#77` (hardware-reference §4.5, §6.3). Settled in S1: BIOS 3.04 never programs the Z84C15
   watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no

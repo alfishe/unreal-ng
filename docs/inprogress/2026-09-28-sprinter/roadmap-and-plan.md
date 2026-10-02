@@ -29,6 +29,9 @@ flowchart LR
     S5 --> S7
     S6 --> S7
     V1["TTD Phase 1 regions<br/>(PLAN #40)"] -.-> S7
+    S4 --> S8["S8 ZX mode<br/>(Z1-Z6)"]
+    S3a --> S8
+    AU["automation audit P1<br/>(sprinter-automation)"] -.-> S8
 ```
 
 Dashed arrows are work owned by other PLAN rows. The Sprinter is the **last** machine program
@@ -46,7 +49,10 @@ earlier.
 | **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, **default on** because the PLD has it (Q3, decided 2026-10-01) | T-ACC-*; part of **ACC-9** | M | S2 |
 | **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub. **Status 2026-10-02: done** (branch `sprinter-s6`, [s6-sound-outcome.md](s6-sound-outcome.md)): `CovoxBlaster` in the COVOX mixer slot, one AY at 1.75 MHz, TTD id 32, PT3PLAY / WAVPLAY against MAME; the accelerator INT suspend default is off since (WAVPLAY) | T-CBL-*; **ACC-9** | S-M | S2 |
+| **S6b** | ISA slots: bus core, ZX-bus adapter + GS / NeoGS (ProPlay), ISA RAM, PIO interrupt lines - design [2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md) phases I0-I8 (owner decisions Q1-Q3 taken 2026-10-02). **Status 2026-10-02: designed, not built** | T-ISA-*; ProPlay plays a MOD | M + M (I1 + I2) | S6 merged |
+| **S6c** | Network cards in the ISA slots: NE2000-class Ethernet first (owner decision 2026-10-02), SprinterESP Wi-Fi, 3C509B, ISA modem, SprinterSerial; shared chips and the Ethernet gateway on the virtual network, one thin Sprinter wrapper - design [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md) phases SN0-SN6. **Status 2026-10-02: designed, not built** | T-NET-*; the RTL8019AS kit's `IFUP` + `WGET` reach a host server; the Wi-Fi kit the same over ESP | M-L for Ethernet (SN0-SN2), M for Wi-Fi (SN3) | S6b I1 (SN1, SN3), I4 (SN4) |
 | **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD Phase 1 (PLAN #40) |
+| **S8** | ZX (Spectrum-compatible) mode end to end ([research-zx-mode.md](research-zx-mode.md), [tdd-zx-mode.md](tdd-zx-mode.md) §9): **Z1** faithful path checked against the MAME captures (DSS launcher v2.03 + TRD / SCL into the BIOS RAM disk, TR-DOS 7.03, Ctrl+Alt+Del back to DSS, the Peters Plus launcher with a TRD) (S); **Z2** tape: I5 test and the base-clock tape time base under turbo (S-M); **Z3** "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`) with A/B (M); **Z4** `SprinterZxMode` state on the five surfaces (S-M); **Z5** snapshots into the ZX mode through the cell table + the refusal outside it (M), on the shared snapshot pipeline ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84 P0-P4; owner decision 2026-10-02, lower priority); **Z6** `zx run` macro, recipe, TTD replay (M) | T-ZX-1..14; ACC-6 extended (RAM disk, SCL, tape) | M-L | S3a, S3b, S4 (done); Z4 after the automation audit P1 branch; Z6 after Z1 and Z4; **not** on S6b (General Sound from Spectrum programs is S6b's matter) |
 
 Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work).
 
@@ -95,6 +101,20 @@ Owner decision (review round 1): **the Sprinter is the last machine program.** T
 S0 (provisioning, disassembly, reference captures) is the only Sprinter-specific work that may run
 earlier. Inside #59 the phases stay ordered so that the floppy DSS boot (ACC-3) and the Spectrum
 mode (ACC-6) come before anything that needs the IDE core or the media manager.
+
+**Developer-interest ranking (2026-10-02, recommendation for the owner;
+[peripherals-survey.md](peripherals-survey.md) §10).** We measured what today's Sprinter developers work on:
+commits 2024-2026, new programs, forum dates. The result suggests this order for the work after S6:
+
+1. The demo pass. The programs people release use only the board: accelerator, Covox-Blaster, disk streaming.
+2. ISA I1, then network SN1-SN3 (NE2000-class RTL8019AS, SprinterESP, then 3C509B). About 340 commits in 2026
+   and the only new programs that need a card.
+3. The ATAPI CD on `IDE_SPRINTER` (media change, eject, ATAPI boot) and the CompactFlash identity check. These
+   are the BIOS / DSS developer's main work since 2024-10.
+4. The NeoGS (S6b). No new software since 2020, but the existing players need it.
+
+Lowered: the Centronics printer (P4). The logic-firmware research checks the runtime configuration reload
+(LDConf) before the tmkonf accelerator extension.
 
 ## 5. Review round 1 decisions
 
@@ -483,3 +503,14 @@ the freed memory) decoders: not fixed here (TODO).
 - Code `#29` (drive address) reads `#FF`.
 - ACC-4's "a file written by the guest is in the image after Save": the guest's MKDIR goes to the image with the
   default WriteThrough access; Session + commit is the media manager's (tested there).
+
+## 10. Automation audit round (2026-10-02)
+
+Branch `sprinter-automation` (part of S7's "automation" column): every P1 / P2 gap of
+[automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) on all five surfaces - the mode table per
+square, palettes, the video RAM as a device memory region, the video change log (all machines), the digest and
+the OCR / `video_text` seeing native screens, raw framebuffer, accelerator / waits / Z84C15 detail, runtime BIOS
+selection, the Covox-Blaster ring, the per-device mixer and per-source capture, the stale texts. Outcome, live
+verification and deviations: [automation-outcome.md](automation-outcome.md) "Audit round"; follow-ups in
+[TODO.md](TODO.md). No TTD format change (the change log and the reports are read-only views; the BIOS reload
+happens inside `Emulator::Reset`, after TTD recording stopped, and invalidates the session like `LoadROM`).

@@ -60,6 +60,39 @@ TEST_F(CliSprinterMachine_Test, SubcommandsRenderTheReports)
     EXPECT_NE(Run({"sprinter", "bogus"}).find("Error: unknown subcommand"), std::string::npos);
 }
 
+// video / palette / ring (automation audit G3, G4, G10): the map, 16 pens a line, the ring rows
+TEST_F(CliSprinterMachine_Test, VideoPaletteAndRingRenderAsText)
+{
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    Pld().rgMod = 0x00;
+    vram.Write(SprinterVideoRam::ModeAddress(0, 0, 0), 0x10);  // text 80
+    vram.Write(SprinterVideoRam::ModeAddress(1, 0, 0), 0xF0);  // border
+    const std::string video = Run({"sprinter", "video"});
+    EXPECT_NE(video.find("Sprinter mode table: page 0 (displayed)"), std::string::npos) << video;
+    EXPECT_NE(video.find("\ntB"), std::string::npos) << video;
+    EXPECT_NE(Run({"sprinter", "video", "squares=1"}).find("kind: text_80"), std::string::npos);
+    EXPECT_NE(Run({"sprinter", "video", "page=3"}).find("Error: page must be 0 or 1"), std::string::npos);
+
+    const std::string palette = Run({"sprinter", "palette", "4"});
+    EXPECT_NE(palette.find("Palette 4 (text paper, column 0x3F0, used)"), std::string::npos) << palette;
+    EXPECT_NE(palette.find("  F0: "), std::string::npos) << palette;
+    EXPECT_NE(Run({"sprinter", "palette", "9"}).find("Error: k must be"), std::string::npos);
+
+    const std::string ring = Run({"sprinter", "ring"});
+    EXPECT_NE(ring.find("Covox-Blaster ring: covox, play 0x00"), std::string::npos) << ring;
+    EXPECT_NE(ring.find("F0:"), std::string::npos) << ring;
+}
+
+// bios (automation audit G11): the report and a selection without a reset
+TEST_F(CliSprinterMachine_Test, BiosReportsAndSelects)
+{
+    EXPECT_NE(Run({"sprinter", "bios"}).find("sp2k-3.06-hf2.rom"), std::string::npos);
+    const std::string selected = Run({"sprinter", "bios", "-", "accel_int_suspend=1", "reset=0"});
+    EXPECT_NE(selected.find("loads at the next reset"), std::string::npos) << selected;
+    EXPECT_EQ(_context->config.sprinter.accel_int_suspend, 1);
+    EXPECT_NE(Run({"sprinter", "bios", "9.9", "reset=0"}).find("Error: unknown BIOS"), std::string::npos);
+}
+
 TEST(CliSprinterOther_Test, OtherMachinesSayNotASprinter)
 {
     EmulatorContext context(LoggerLevel::LogError);

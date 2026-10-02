@@ -696,6 +696,7 @@ videomap::VideoLatches Screen::CaptureVideoLatches() const
         l.borderAttr = _state->border_attr;
         l.atmBorderBright = _state->atmBorderBright;
     }
+    CaptureFamilyLatches(l);
     return l;
 }
 
@@ -707,7 +708,15 @@ void Screen::NoteVideoWrite()
     // Beeper sound writes #FE thousands of times a frame with the same border: compare first, T only on a change
     const videomap::VideoLatches latches = CaptureVideoLatches();
     if (_videoWriteLog.Changes(latches))
-        _videoWriteLog.Record(GetCurrentTstate(), latches);
+        _videoWriteLog.Record(GetCurrentTstate(), latches, _context->pPortDecoder ? _context->pPortDecoder->IoPc() : 0);
+}
+
+void Screen::NoteVideoTableWrite(videomap::VideoTable table, uint32_t address)
+{
+    if (!_context || !_state || !_context->pCore || !_context->pCore->GetZ80())
+        return;
+    _videoWriteLog.RecordTable(table, GetCurrentTstate(), address,
+                               _context->pPortDecoder ? _context->pPortDecoder->IoPc() : 0);
 }
 
 VideoModeEnum Screen::GetVideoMode()

@@ -20,9 +20,12 @@
 #include "emulator/media/mediamanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/state/devicestate.h"
 
@@ -193,13 +196,14 @@ TEST_F(SprinterInput_Test, F12TogglesTheTurboSwitch)
     EXPECT_EQ(Pld().turboHard, before ^ 1) << "Shift + F12 does not switch";
 }
 
-// The serial mouse: a move of the host mouse arrives at SIO B as a Microsoft packet
+// The serial mouse: a move from the mouse manager (host, automation, TTD replay) arrives at SIO B as a
+// Microsoft packet
 TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
 {
-    ASSERT_NE(_context->pMouse, nullptr);
+    ASSERT_NE(_context->pMouseManager, nullptr);
     while (In(0x001B) & 0x01)
         In(0x001A);
-    _context->pMouse->Move(5, 3);  // 5 right, 3 up
+    _context->pMouseManager->ApplyMotion(5, 3);  // 5 right, 3 up
     EXPECT_EQ(In(0x001B) & 0x01, 0) << "the poll starts the packet";
     Wait(3 * 26250);
     std::vector<uint8_t> got;
@@ -208,26 +212,28 @@ TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
     EXPECT_EQ(got, (std::vector<uint8_t>{0x4C, 0x05, 0x3D}));
 }
 
-// The board's mouse is always fitted: with no Kempston interface configured ([INPUT] Mouse=NONE) the host
-// counters still reach the guest, as SIO B packets (DSS 1.71) and through the PLD's Kempston view, code #58
-// (DSS 1.62.9x reads #FADF / #FBDF / #FFDF). Before the fix the view read the interface: #FF without it
+// The board's mouse is always fitted: with no Kempston interface configured ([INPUT] Mouse=NONE) the manager's
+// input still reaches the guest, as SIO B packets (DSS 1.71) and through the PLD's Kempston view, code #58
+// (DSS 1.62.9x reads #FADF / #FBDF / #FFDF). The view once read the interface: #FF without it
 TEST_F(SprinterInput_Test, MouseWithoutAKempstonInterface)
 {
     ASSERT_NE(_context->pMouse, nullptr);
+    MouseManager& manager = *_context->pMouseManager;
     _context->pMouse->SetPresent(false);
+    EXPECT_TRUE(manager.HasMouseDevice()) << "the board mouse wants the host mouse";
     SetCodeAll(0xFADF, true, 0x58);
     OpenDcp();
 
     while (In(0x001B) & 0x01)
         In(0x001A);
-    _context->pMouse->SetCounters(40, 90);
-    _context->pMouse->SetButtons(0xFE);  // left held
+    manager.ApplyCounters(40, 90);
+    manager.ApplyButtons(0xFE);  // left held
     EXPECT_EQ(In(0xFADF), 0xFE) << "buttons: D0 left (active low), D7-D3 = 1";
     EXPECT_EQ(In(0xFBDF), 40) << "X";
     EXPECT_EQ(In(0xFFDF), 90) << "Y";
 
     In(0x001B);  // the poll that starts the packet
-    _context->pMouse->Move(5, 3);
+    manager.ApplyMotion(5, 3);
     In(0x001B);
     Wait(3 * 26250);
     std::vector<uint8_t> got;
@@ -236,6 +242,120 @@ TEST_F(SprinterInput_Test, MouseWithoutAKempstonInterface)
     ASSERT_FALSE(got.empty()) << "no packet on SIO B";
     EXPECT_EQ(got.front() & 0x60, 0x60) << "a packet with the left button";
     _context->pMouse->SetPresent(true);
+}
+
+// The board mouse keeps its own counters: the Kempston interface's counters (another sink of the same manager)
+// move with it, but a write to them alone does not reach the Sprinter, and the wheel reaches neither view
+TEST_F(SprinterInput_Test, BoardMouseHasItsOwnCounters)
+{
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+    const uint8_t x = In(0xFBDF);
+    const uint8_t y = In(0xFFDF);
+    EXPECT_EQ(x, 31) << "power-on X: two different non-zero values, as the Kempston interface's";
+    EXPECT_EQ(y, 85);
+
+    _context->pMouse->SetCounters(1, 2);
+    _context->pMouse->SetButtons(0xFC);
+    EXPECT_EQ(In(0xFBDF), x) << "the Kempston interface's counters are not the board's";
+    EXPECT_EQ(In(0xFADF), 0xFF);
+
+    _context->pMouseManager->ApplyMotion(-3, 7);
+    EXPECT_EQ(In(0xFBDF), static_cast<uint8_t>(x - 3));
+    EXPECT_EQ(In(0xFFDF), static_cast<uint8_t>(y + 7));
+    EXPECT_EQ(_context->pMouse->GetX(), static_cast<uint8_t>(1 - 3)) << "one mouse, every sink";
+    _context->pMouseManager->ApplyWheel(2);
+    EXPECT_EQ(In(0xFADF), 0xFF) << "no wheel nibble in the PLD's view";
+}
+
+// Buttons: D0 left, D1 right, D2 middle (active low) in the Kempston view; the Microsoft packet carries left (bit 5)
+// and right (bit 4) only, a two-button mouse
+TEST_F(SprinterInput_Test, MouseButtonsMapping)
+{
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+    MouseManager& manager = *_context->pMouseManager;
+
+    const auto packet = [&]() {
+        In(0x001B);  // the poll that starts the packet
+        Wait(3 * 26250);
+        std::vector<uint8_t> got;
+        while (In(0x001B) & 0x01)
+            got.push_back(In(0x001A));
+        return got;
+    };
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the first sample is the reference
+
+    struct Case
+    {
+        uint8_t mask;
+        uint8_t view;
+        uint8_t serialBits;
+        const char* what;
+    };
+    for (const Case& c : {Case{0xFE, 0xFE, 0x20, "left"}, Case{0xFD, 0xFD, 0x10, "right"},
+                          Case{0xFC, 0xFC, 0x30, "left + right"}, Case{0xFF, 0xFF, 0x00, "none"}})
+    {
+        manager.ApplyButtons(c.mask);
+        EXPECT_EQ(In(0xFADF), c.view) << c.what;
+        const std::vector<uint8_t> got = packet();
+        ASSERT_EQ(got.size(), 3u) << c.what;
+        EXPECT_EQ(got[0], 0x40 | c.serialBits) << c.what << ": no move, the buttons";
+    }
+
+    manager.ApplyButtons(0xFB);
+    EXPECT_EQ(In(0xFADF), 0xFB) << "middle: D2 in the Kempston view";
+    EXPECT_TRUE(packet().empty()) << "middle: no packet, the serial mouse has two buttons";
+    manager.ApplyButtons(0xFF);
+}
+
+// Every source reaches the board mouse through the emulator's MouseManager with [INPUT] Mouse=NONE: automation
+// (DebugMouseManager: WebAPI, MCP, CLI, Lua, Python), the host window's MC_MOUSE_* events (the GUI) and the host
+// buttons composed with automation's. No "mouse not present" warning: the board mouse reads the input
+TEST(SprinterMouseMachine_Test, EverySourceReachesTheBoardMouseWithMouseNone)
+{
+    EmulatorManager* emulators = EmulatorManager::GetInstance();
+    auto noMouse = [](CONFIG& config) {
+        config.input.mouse = MOUSE_TYPE_NONE;
+        config.input.mouseConfigured = true;
+    };
+    auto emulator = emulators->CreateEmulatorWithModel("sprinter-mouse-none", "SPRINTER", LoggerLevel::LogError, nullptr, noMouse);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    SprinterInput& input = decoder->GetInput();
+    ASSERT_FALSE(context->pMouse->IsPresent()) << "no Kempston interface";
+    EXPECT_TRUE(context->pMouseManager->HasMouseDevice()) << "the front end captures the host mouse for the board mouse";
+
+    DebugMouseManager* automation = context->pDebugManager->GetMouseManager();
+    const SprinterInput::BoardMouse start = input.GetBoardMouse();
+    const MouseInjectResult moved = automation->Move(10, -4);
+    ASSERT_TRUE(moved.ok()) << moved.message;
+    EXPECT_TRUE(moved.warning.empty()) << moved.warning;
+    EXPECT_EQ(input.GetBoardMouse().x, static_cast<uint8_t>(start.x + 10));
+    EXPECT_EQ(input.GetBoardMouse().y, static_cast<uint8_t>(start.y - 4));
+
+    ASSERT_TRUE(automation->PressButton(MouseButton::Left).ok());
+    EXPECT_EQ(input.GetBoardMouse().buttons, 0xFE);
+    automation->ApplyHostButtons(0xFD);  // the host holds right: both
+    EXPECT_EQ(input.GetBoardMouse().buttons, 0xFC);
+    automation->ApplyHostButtons(0xFF);
+    ASSERT_TRUE(automation->ReleaseButton(MouseButton::Left).ok());
+    EXPECT_EQ(input.GetBoardMouse().buttons, 0xFF);
+
+    ASSERT_TRUE(automation->SetCounters(100, 120).ok());
+    EXPECT_EQ(input.GetBoardMouse().x, 100);
+    EXPECT_EQ(input.GetBoardMouse().y, 120);
+
+    // The GUI's path: an event tagged with this emulator's id, through the message center's worker thread
+    MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_MOVE, MouseEvent::Move(3, 2, emulator->GetId()));
+    EXPECT_TRUE(TestWait::For([&] { return input.GetBoardMouse().x == 103; })) << int(input.GetBoardMouse().x);
+    EXPECT_EQ(input.GetBoardMouse().y, 122);
+
+    emulators->RemoveEmulator(emulator->GetId());
 }
 
 /// region <BIOS 3.04 with the host keyboard>

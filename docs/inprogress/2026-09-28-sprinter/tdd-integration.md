@@ -72,7 +72,7 @@ As built in phase S7 (2026-10-02, branch `sprinter-ttd`; outcome and tests:
 | 28 | `SprinterVideoRam` | the 256 KB video RAM; on load the pen cache and the INT list are rebuilt | 1 + 262 144 |
 | 29 | `Z84C15` | `Z84C15::SaveState`: system registers, the wait generator with its power-on M1 counter and the RETI rule's after-ED flag, the watchdog, CTC, SIO (receive FIFOs), PIO, IP / IUS of every daisy-chain source | 1 + 171 |
 | 30 | `SprinterFastRam` | the 64 KB fast RAM (Memory's cache pages are not RAM pages) | 1 + 65 536 |
-| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter | 85 |
+| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter, the board mouse counters (v2) | 88 |
 | 35 | `Wd1793Context` | the WD1793 command in flight beyond the 254-byte BetaDisk blob: queued steps as tags, transfer pointers as (drive, track, offset), byte cell, rotational delay, rate-retry search | 1 + 112 |
 | 32 | `SprinterCovoxBlaster` | the Covox / Covox-Blaster (S6, 2026-10-02): `CovoxBlasterState`, v1, 545 bytes | |
 | 33-34 | `SprinterIsa`, `SprinterPads` | **reserved** for S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |
@@ -148,6 +148,19 @@ core source (`DeviceState::Sprinter` / `SprinterPaging` / `SprinterPortTable` / 
   `Screen`), `ports_api.cpp`, `cli-processor-state.cpp` (`state memory` / `ram` / `rom`), the Lua and
   Python `paging_state` / `ports_map`, `ROM::GetROMPageRole` and `PortDecoder::getPortMapEntries`.
 - **Media:** the existing `disk` / `media` verbs serve the floppies; IDE slots come with S3b.
+
+**Audit round (2026-10-02, branch `sprinter-automation`)**, as built
+([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4 status column): the state block gained
+`accelerator`, `clock.waits`, `z84c15.wait_generator` / `daisy_chain`, `sound.ay.stereo` from the AY config and a
+BIOS block naming the loaded image by CRC-32; new reports `SprinterVideo` (`/state/sprinter/video`, the mode table
+per square), `SprinterPalette` (`/palette`), `SprinterSoundRing` (`/sound/ring`), `SprinterBios` /
+`SprinterBiosSelect` (`/state/sprinter/bios`, `POST /sprinter/bios`, the create option `"sprinter": {...}`;
+`sprinterbios.{h,cpp}`); the video RAM is the device memory region `vram` (`emulator/memory/devicememory.h`,
+`PortDecoder::CollectMemoryRegions`, `sprintervramregion.h`). Generic pieces it brought: the video change log
+(`/video/changes`, `VideoLatches` family block, `Screen::CaptureFamilyLatches`, `NoteVideoTableWrite`), the
+screen digest in the core with `Screen::DigestSurface`, `Screen::IndexedFrame` + `/capture/framebuffer`, the
+per-device mixer (`audiomixer.h`) and the per-source audio capture, `DeviceState::AudioChannels`, the per-mode
+screen notes in `DeviceState::ScreenMode`, the GUI status-bar mode label.
 
 ## 4. Debugger (Qt)
 

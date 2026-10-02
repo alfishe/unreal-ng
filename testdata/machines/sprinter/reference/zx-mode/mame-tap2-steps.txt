@@ -1,0 +1,16 @@
+zxsteps: frame 5 kbdonly ms_naturl | m_all_mode=00 m_cnf=00 m_ram_sys=00 m_turbo=00 m_pg3=30 m_pn=00 m_sc=00 m_dos=01 m_rom_rg=00 PC=019C SP=FEFF
+zxsteps: keyboard : enabled=false
+zxsteps: keyboard :kbd:ms_naturl enabled=true
+zxsteps: frame 1100 keys cd \zx{ENTER} | m_all_mode=FF m_cnf=04 m_ram_sys=01 m_turbo=01 m_pg3=30 m_pn=10 m_sc=01 m_dos=01 m_rom_rg=00 PC=00B8 SP=BFED
+zxsteps: frame 1200 keys spectrum origin.zx{ENTER} | m_all_mode=FF m_cnf=04 m_ram_sys=01 m_turbo=01 m_pg3=30 m_pn=10 m_sc=01 m_dos=01 m_rom_rg=00 PC=00B8 SP=BFEC
+zxsteps: frame 1420 kbdonly =: | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=37 m_pn=07 m_sc=00 m_dos=01 m_rom_rg=00 PC=3685 SP=5BFB
+zxsteps: keyboard : enabled=true
+zxsteps: keyboard :kbd:ms_naturl enabled=false
+zxsteps: frame 1440 snap menu | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=37 m_pn=07 m_sc=00 m_dos=01 m_rom_rg=00 PC=3685 SP=5BFB
+zxsteps: frame 1450 keys {ENTER} | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=37 m_pn=07 m_sc=00 m_dos=01 m_rom_rg=00 PC=3687 SP=5BFB
+zxsteps: frame 1560 snap after-enter | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=30 m_pn=10 m_sc=00 m_dos=01 m_rom_rg=00 PC=05EB SP=FF44
+zxsteps: frame 1570 play  | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=30 m_pn=10 m_sc=00 m_dos=01 m_rom_rg=00 PC=05F5 SP=FF44
+zxsteps: play :cassette
+zxsteps: frame 1700 state  | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=30 m_pn=10 m_sc=00 m_dos=01 m_rom_rg=00 PC=05FA SP=FF44
+zxsteps: frame 14000 snap final | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=30 m_pn=10 m_sc=00 m_dos=01 m_rom_rg=00 PC=05EC SP=FF44
+zxsteps: frame 14010 end  | m_all_mode=FA m_cnf=4E m_ram_sys=01 m_turbo=00 m_pg3=30 m_pn=10 m_sc=00 m_dos=01 m_rom_rg=00 PC=05F5 SP=FF44

@@ -2,6 +2,7 @@
 // Extracted from cli-processor.cpp - 2026-01-08
 
 #include "cli-processor.h"
+#include "cli-memory-region.h"
 
 #include <common/dumphelper.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
@@ -49,6 +50,13 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     }
 
     const std::string& subcommand = args[0];
+
+    if (subcommand == "region" || subcommand == "regions")
+    {
+        // Device memory regions (the Sprinter's video RAM): core DeviceMemory, cli-memory-region.h
+        session.SendResponse(CliMemoryRegion::Text(emulator->GetContext(), args, NEWLINE));
+        return;
+    }
 
     if (subcommand == "read")
     {
@@ -135,7 +143,13 @@ void CLIProcessor::ShowMemoryHelp(const ClientSession& session)
     oss << "  memory read <addr> [len]          - Read from Z80 address space" << NEWLINE;
     oss << "  memory write <addr> <bytes...>    - Write to Z80 address space" << NEWLINE;
     oss << NEWLINE;
-    oss << "Physical Pages (ram|rom|cache|misc):" << NEWLINE;
+    oss << "Device memory regions (the Sprinter's video RAM 'vram'):" << NEWLINE;
+    oss << "  memory regions                                    - List the regions" << NEWLINE;
+    oss << "  memory region read <name> <offset> [len]          - Hex dump" << NEWLINE;
+    oss << "  memory region write <name> <offset> <hex bytes>   - Write through the device's path" << NEWLINE;
+    oss << "  memory region save|load <name> <file> [offset] [len] - To / from a file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Physical Pages (ram|rom|cache|misc; cache = the Sprinter's fast RAM):" << NEWLINE;
     oss << "  memory read <type> <page> <offset> [len]   - Read from physical page" << NEWLINE;
     oss << "  memory write <type> <page> <offset> <bytes...> [--force]  - Write to page" << NEWLINE;
     oss << "  memory dump <type> <page>                  - Dump entire 16KB page" << NEWLINE;

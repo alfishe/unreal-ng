@@ -6,6 +6,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/video/framebufferexport.h>
+#include <drogon/utils/Utilities.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/video/screen.h>
 #include <emulator/video/screencapture.h>
@@ -99,6 +101,58 @@ void EmulatorAPI::captureOcr(const HttpRequestPtr& req, std::function<void(const
     ret["text"] = screenText;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/capture/framebuffer?format=rgba|index&encoding=binary|base64
+/// @brief The picture as raw pixels (FramebufferExport, automation audit G14): binary (default,
+/// application/octet-stream with X-Width / X-Height / X-Format / X-Encoding) or JSON with base64 data
+void EmulatorAPI::captureFramebuffer(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    auto fail = [&callback](HttpStatusCode code, const std::string& error, const std::string& message) {
+        Json::Value body;
+        body["error"] = error;
+        body["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!emulator)
+        return fail(HttpStatusCode::k404NotFound, "Not Found", "Emulator not found");
+    const std::string format = req->getParameter("format").empty() ? std::string("rgba") : req->getParameter("format");
+    const std::string encoding = req->getParameter("encoding").empty() ? std::string("binary") : req->getParameter("encoding");
+    if (encoding != "binary" && encoding != "base64")
+        return fail(HttpStatusCode::k400BadRequest, "Bad Request", "encoding must be binary or base64");
+    FramebufferExport::Frame frame;
+    std::string error;
+    if (!FramebufferExport::Capture(emulator->GetContext(), format, frame, error))
+        return fail(format == "rgba" || format == "index" ? HttpStatusCode::k409Conflict : HttpStatusCode::k400BadRequest,
+                    format == "rgba" || format == "index" ? "Conflict" : "Bad Request", error);
+    if (encoding == "base64")
+    {
+        Json::Value body;
+        body["width"] = frame.width;
+        body["height"] = frame.height;
+        body["format"] = frame.format;
+        body["encoding"] = frame.encoding;
+        body["bytes"] = static_cast<Json::UInt64>(frame.bytes.size());
+        body["data"] = drogon::utils::base64Encode(frame.bytes.data(), frame.bytes.size());
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+    resp->setBody(std::string(frame.bytes.begin(), frame.bytes.end()));
+    resp->addHeader("X-Width", std::to_string(frame.width));
+    resp->addHeader("X-Height", std::to_string(frame.height));
+    resp->addHeader("X-Format", frame.format);
+    resp->addHeader("X-Encoding", frame.encoding);
     addCorsHeaders(resp);
     callback(resp);
 }

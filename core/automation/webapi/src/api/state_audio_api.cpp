@@ -13,6 +13,7 @@
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
 #include <emulator/state/devicestate.h>
+#include <emulator/sound/audiomixer.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
@@ -1129,100 +1130,8 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
         return;
     }
 
-    SoundManager* soundManager = context->pSoundManager;
-    Json::Value ret;
-
-    // Beeper channel
-    Json::Value beeper;
-    beeper["available"] = true;
-    beeper["current_level"] = "unknown";
-    beeper["active"] = "unknown";
-    ret["beeper"] = beeper;
-
-    // AY channels
-    Json::Value ayChannels;
-    bool hasAY = (soundManager && soundManager->hasTurboSound());
-    ayChannels["available"] = hasAY;
-
-    if (hasAY)
-    {
-        Json::Value chips(Json::arrayValue);
-        int ayCount = soundManager->getAYChipCount();
-
-        for (int chipIdx = 0; chipIdx < ayCount; chipIdx++)
-        {
-            SoundChip_AY8910* chip = soundManager->getAYChip(chipIdx);
-            if (!chip)
-                continue;
-
-            Json::Value chipChannels(Json::arrayValue);
-            const char* channelNames[] = {"A", "B", "C"};
-            const auto* toneGens = chip->getToneGenerators();
-
-            for (int ch = 0; ch < 3; ch++)
-            {
-                Json::Value channel;
-                const auto& toneGen = toneGens[ch];
-                channel["name"] = std::string("AY") + std::to_string(chipIdx) + channelNames[ch];
-                channel["active"] = (toneGen.toneEnabled() || toneGen.noiseEnabled());
-                channel["volume"] = (int)toneGen.volume();
-                channel["envelope_enabled"] = toneGen.envelopeEnabled();
-                chipChannels.append(channel);
-            }
-
-            Json::Value chipInfo;
-            chipInfo["chip_index"] = chipIdx;
-            chipInfo["channels"] = chipChannels;
-            chips.append(chipInfo);
-        }
-        ayChannels["chips"] = chips;
-    }
-    ret["ay_channels"] = ayChannels;
-
-    // General Sound and Covox: subsets of the same reports /state/audio/gs and
-    // /state/audio/covox serve (DeviceState), so the overview never disagrees
-    Json::Value gs;
-    {
-        const Json::Value full = StateNodeToJson(DeviceState::Gs(context));
-        gs["available"] = full["available"];
-        if (full["available"].asBool())
-        {
-            gs["rom_loaded"] = full["rom_loaded"];
-            gs["ram_kb"] = full["ram_kb"];
-            gs["cpu_halted"] = full["cpu"].get("halted", false);
-            gs["command_pending"] = full["command_pending"];
-            gs["data_pending"] = full["data_pending"];
-            Json::Value gsChannels(Json::arrayValue);
-            for (Json::ArrayIndex i = 0; i < full["channels"].size(); i++)
-            {
-                Json::Value channel = full["channels"][i];
-                channel["name"] = std::string("GS") + std::to_string(i + 1);
-                gsChannels.append(channel);
-            }
-            gs["channels"] = gsChannels;
-        }
-    }
-    ret["general_sound"] = gs;
-
-    Json::Value covox;
-    {
-        const Json::Value full = StateNodeToJson(DeviceState::Covox(context));
-        covox["available"] = full["available"];
-        if (full["available"].asBool())
-        {
-            covox["fitment"] = full["fitment"];
-            covox["channels"] = full["channels"];
-        }
-    }
-    ret["covox"] = covox;
-
-    // Master audio state
-    Json::Value master;
-    master["muted"] = (soundManager ? soundManager->isMuted() : false);
-    master["sample_rate_hz"] = static_cast<unsigned>(soundManager ? soundManager->getCoreRate() : 44100u);
-    master["channels"] = "stereo";
-    master["bit_depth"] = 16;
-    ret["master"] = master;
+    // One report for every interface (DeviceState::AudioChannels: the mixer devices included)
+    Json::Value ret = StateNodeToJson(DeviceState::AudioChannels(context));
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1427,6 +1336,70 @@ void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
     }
 
     getStateAudioChannels(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/audio/mixer - the per-device mixer (DeviceState::AudioMixer)
+void EmulatorAPI::getAudioMixer(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (!emulator)
+    {
+        body["error"] = "Not Found";
+        body["message"] = "Emulator not found with ID: " + id;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else
+        body = StateNodeToJson(DeviceState::AudioMixer(emulator->GetContext()));
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT / POST /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume", "gain_db"} - one device
+void EmulatorAPI::setAudioMixer(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& source) const
+{
+    auto reply = [&](const Json::Value& body, HttpStatusCode code) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        return reply(error, HttpStatusCode::k404NotFound);
+    }
+    auto json = req->getJsonObject();
+    auto text = [&](const char* key) -> std::string {
+        if (!json || !json->isMember(key))
+            return std::string();
+        const Json::Value& v = (*json)[key];
+        if (v.isBool())
+            return v.asBool() ? "1" : "0";
+        if (v.isNumeric())
+            return std::to_string(v.asDouble());
+        return v.asString();
+    };
+    AudioMixer::Change change;
+    std::string error;
+    if (!AudioMixer::ChangeFromStrings(text("muted"), text("solo"), text("volume"), text("gain_db"), change, error) ||
+        !AudioMixer::Apply(emulator->GetContext(), source, change, error))
+    {
+        Json::Value err;
+        err["error"] = "Bad Request";
+        err["message"] = error;
+        return reply(err, HttpStatusCode::k400BadRequest);
+    }
+    reply(StateNodeToJson(DeviceState::AudioMixer(emulator->GetContext())), HttpStatusCode::k200OK);
 }
 
 }  // namespace v1

@@ -160,6 +160,18 @@ compares with MAME and with the Pentagon's own `intstart` (`core/src/emulator/co
 - `GET /state/screen/mode` (S2): mode `Sprinter`, the text "Sprinter 320 lines, mode page 0: text n,
   graphics 320 n, graphics 640 n, border n squares" (the 40 × 32 picture squares); the beam zones
   from `ScreenSprinter::DescribeBeam` (visible-first raster).
+- **As built after the automation audit (2026-10-02):** one classifier, `SprinterSquare`
+  (`sprintervideorenderer.h`: kind, palette, source column / row, low-res quarter, INT mark, the text code of
+  each half with the right half of an 80-column square taken from Line2 as the renderer draws it), used by the
+  state summary, `DescribeScreenState` (now "text 40 n, text 80 n, graphics 320 n, graphics 640 n, border n,
+  blank n squares" plus `videoModeBrief` for the GUI status bar), the per-square map `/state/sprinter/video`,
+  the screen text, `/video/text` and the OCR. Palettes: `/state/sprinter/palette`. The video RAM is the
+  device memory region `vram` (writes through `SprinterVideoRam::Write`). The video change log notes RGMOD,
+  HOLD, PORT_Y, ALL_MODE and the frame height at their port write and counts mode-table / palette writes from
+  the new cold `TableWrite` branch of `SprinterVideoRam::Write` (columns #300-#3FF only; the screen columns
+  cost one compare, as before). The screen digest hashes the video RAM (`DigestSurface`); `/capture/framebuffer
+  ?format=index` gives the pen of every pixel (`IndexedFrame`, `SprinterVideoRenderer::PenAt`). The Qt views
+  of the first bullet are still open.
 
 ## 8. Tests
 

@@ -5,7 +5,6 @@
 #include "3rdparty/z84c15/z84c15.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
@@ -42,18 +41,47 @@ SprinterInput::~SprinterInput()
 
 void SprinterInput::SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const
 {
-    // The counters are the host mouse's (Mouse): read whether or not a Kempston interface is configured
-    // ([INPUT] Mouse=), because the board's mouse is not that interface
-    const ::Mouse* mouse = _context ? _context->pMouse : nullptr;
-    if (!mouse)
+    x = _mouseX.load(std::memory_order_relaxed);
+    y = _mouseY.load(std::memory_order_relaxed);
+    buttons = _mouseButtons.load(std::memory_order_relaxed);
+}
+
+void SprinterInput::OnMouseMotion(int dx, int dy)
+{
+    // Compare-and-swap: a host move and an automation move must both land
+    uint8_t old = _mouseX.load(std::memory_order_relaxed);
+    while (!_mouseX.compare_exchange_weak(old, static_cast<uint8_t>(old + dx), std::memory_order_relaxed))
     {
-        x = y = 0;
-        buttons = 0xFF;
-        return;
     }
-    x = mouse->GetX();
-    y = mouse->GetY();
-    buttons = mouse->GetButtons();
+    old = _mouseY.load(std::memory_order_relaxed);
+    while (!_mouseY.compare_exchange_weak(old, static_cast<uint8_t>(old + dy), std::memory_order_relaxed))
+    {
+    }
+}
+
+void SprinterInput::OnMouseButtons(uint8_t activeLowMask)
+{
+    _mouseButtons.store(activeLowMask, std::memory_order_relaxed);
+}
+
+void SprinterInput::OnMouseCounters(uint8_t x, uint8_t y)
+{
+    _mouseX.store(x, std::memory_order_relaxed);
+    _mouseY.store(y, std::memory_order_relaxed);
+}
+
+SprinterInput::BoardMouse SprinterInput::GetBoardMouse() const
+{
+    BoardMouse mouse{};
+    SampleMouse(mouse.x, mouse.y, mouse.buttons);
+    return mouse;
+}
+
+void SprinterInput::SetBoardMouse(const BoardMouse& mouse)
+{
+    _mouseX.store(mouse.x, std::memory_order_relaxed);
+    _mouseY.store(mouse.y, std::memory_order_relaxed);
+    _mouseButtons.store(mouse.buttons, std::memory_order_relaxed);
 }
 
 uint8_t SprinterInput::ReadMouseView(uint16_t port) const

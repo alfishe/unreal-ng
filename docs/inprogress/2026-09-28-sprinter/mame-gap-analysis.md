@@ -172,7 +172,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | I2 | Commands to the keyboard (LEDs, reset, typematic rate) | not wired (only keyboard to CPU) | not modeled | **both missing** | - |
 | I3 | ZX matrix on code `#40` with PC key combinations (arrows = CS+5..8, Backspace = CS+0) | `kbd_fe_r`, `:1669-1704`; map `:1773-1891` | shared key event, `portdecoder_sprinter.cpp:701-702` | **equal** | done |
 | I4 | Ctrl+Alt+Del | left to the software | PLD reset from the stream, `sprinterinput.cpp:62` | **ours better** | done (S4) |
-| I5 | Tape input, `#FE` bit 6 | `:1692-1694` | the shared `#FE` path (not yet tested on the Sprinter) | **equal** | Audit (a test) |
+| I5 | Tape input, `#FE` bit 6 | `:1689-1694`: `data |= 0xe0; data ^= 0x40` leaves bit 6 at 0 and the cassette test can only clear it, so the bit never follows the tape; a TAP in the 128 Tape Loader never loads (2026-10-02, [research-zx-mode.md](research-zx-mode.md) §9.6) | the shared `#FE` path, untested on the Sprinter; the tape counts CPU clocks, so at 21 MHz it plays six times faster with the CPU (the board plays in real time) | **MAME wrong**, ours unfaithful in turbo | S8 Z2 |
 | I6 | `#FE` bits 5 (beam below the picture) and 7 (Covox-Blaster half) in CBL mode | `:1696-1701` | `CovoxBlaster::ApplyFeBits` | **equal** | done (S6) |
 | I7 | Serial mouse on SIO B | HLE Microsoft (default), Logitech 3-button, wheel, Mouse Systems (`:2000-2005`); baud from CTC ZC0 | Microsoft 2-button at a fixed 1 200 baud (`core/src/emulator/io/mouse/msserialmouse.h`) | **partial** | new (input extras) |
 | I8 | Kempston mouse view, code `#58` (`#FADF` / `#FBDF` / `#FFDF`) | its own inputs (`:644-659`, `:1894-1904`) | the same journaled counters as the serial mouse (`portdecoder_sprinter.cpp:707-708`) | **equal** | done |
@@ -238,7 +238,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B2 | PLD configuration load | 4 096 writes, then a reset (`:1157-1163`) | the whole stream, 473 720 writes, or the fast start (`portdecoder_sprinter.cpp:223-313`) | **ours better** | done |
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
 | B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
-| B5 | BIOS choice at run time | `-bios v3.06` | `[ROM] SPRINTER=` in the config (`core/src/emulator/config.cpp:337`) | **partial** | Audit |
+| B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
 
 ### 2.14 State, media, debugging
@@ -246,10 +246,10 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | # | Feature | MAME | unreal-ng | Status | Phase |
 |---|---|---|---|---|---|
 | D1 | Save states | `MACHINE_SUPPORTS_SAVE`, `:1468-1520`, `:2059` | TTD refuses to record (`portdecoder_sprinter.cpp:897-902`) | **missing** | S7-TTD |
-| D2 | Spectrum media: snapshots (`.sna`, `.z80`, ...), quickload `.scr`, cassette | inherited from `spec128` (`-listmedia`); whether a snapshot loads correctly on the Sprinter is untested | tape through the shared path; the snapshot loaders know nothing of the PLD | **partial** | new (low; capture 5.10) |
+| D2 | Spectrum media: snapshots (`.sna`, `.z80`, ...), quickload `.scr`, cassette | inherited from `spec128` (`-listmedia`); a 128K SNA loads and runs **in ZX mode** (2026-10-02, `P128.ZX`, `action.sna`: the writes go through the program space and `OUT (#7FFD)`, which the PLD routes); outside ZX mode nothing stops it; the cassette never reaches `#FE` (I5) | tape through the shared path; the snapshot loaders write physical pages 0-7 (Sprinter system pages) and nothing refuses | **partial** (ours wrong for snapshots) | S8 Z5 |
 | D3 | Z84C15 system registers in the debugger | WCR, MWBR, CSBR, MCR (`z84c015.cpp:106-109`) | `state/sprinter` on WebAPI, MCP, CLI, Lua, Python ([automation-outcome.md](automation-outcome.md)) | **ours better** | done |
 | D4 | Port trace | `LOGIO` lines only (`:679`, `:912`) | trace with internal codes and names (`portdecoder_sprinter.cpp:911-954`), port table decode and lookup | **ours better** | done |
-| D5 | Video RAM viewer | graphics / tilemap viewer fed by `gfxdecode` and the tilemap (`:1609-1647`; the tilemap is not used for drawing) | `SprinterVideoMapper` (the sources of a pixel), screen text; no GUI viewer | **partial** | S7 |
+| D5 | Video RAM viewer | graphics / tilemap viewer fed by `gfxdecode` and the tilemap (`:1609-1647`; the tilemap is not used for drawing) | `SprinterVideoMapper` (the sources of a pixel), screen text; on every automation surface the mode table per square, the 8 palettes, the video RAM as region `vram` (read / write / dump), the video change log, raw pens (audit G3-G6, G14); no GUI viewer yet | **partial** (GUI) | S7 |
 | D6 | Front-panel LEDs (turbo, drive A / B, NeoGS) | `layout/sprinter.lay`, `m_turbo_led` (`:386`) | the status bar shows the CPU frequency | **partial** | S7 |
 
 ## 3. Where MAME is wrong or simplified
@@ -298,6 +298,8 @@ Each item names what unreal-ng does instead and the evidence.
 11. **Smaller ones.** RAM 64 MB by default, of which 4 MB can be addressed (`:1953`); RTC chip DS12885 instead
     of DS12887A on host time (`:1966`); ISA buses without interrupts or DMA (`:1973-1979`), so a Sound Blaster
     card could play FM but no samples; all four floppy drives are 5.25" QD by default (`beta_m.cpp:320`).
+12. **Tape input stuck at 0** (I5): `kbd_fe_r` flips bit 6 after setting it, so the tape never reaches the ROM
+    loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either.
 
 ## 4. Missing in unreal-ng, by priority
 

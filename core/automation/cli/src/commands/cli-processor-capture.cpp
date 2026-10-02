@@ -2,6 +2,8 @@
 /// @date 22.01.2026
 /// @brief CLI Capture commands handler (OCR, screen capture, ROM text capture)
 
+#include <common/filehelper.h>
+#include <emulator/video/framebufferexport.h>
 #include "cli-processor.h"
 
 #include <emulator/emulator.h>
@@ -41,6 +43,30 @@ void CLIProcessor::HandleCapture(const ClientSession& session, const std::vector
     else if (subcommand == "screen")
     {
         HandleCaptureScreen(session, emulator, args);
+    }
+    else if (subcommand == "framebuffer")
+    {
+        // capture framebuffer <file> [rgba|index]: raw pixels (core FramebufferExport, as GET /capture/framebuffer)
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Usage: capture framebuffer <file> [rgba|index]") + NEWLINE);
+            return;
+        }
+        FramebufferExport::Frame frame;
+        std::string error;
+        if (!FramebufferExport::Capture(emulator->GetContext(), args.size() > 2 ? args[2] : "rgba", frame, error))
+        {
+            session.SendResponse("Error: " + error + NEWLINE);
+            return;
+        }
+        if (!FileHelper::SaveBufferToFile(args[1], frame.bytes.data(), frame.bytes.size()))
+        {
+            session.SendResponse("Error: cannot write '" + args[1] + "'" + NEWLINE);
+            return;
+        }
+        session.SendResponse("Saved " + std::to_string(frame.width) + " x " + std::to_string(frame.height) + " " +
+                             frame.format + " (" + frame.encoding + "), " + std::to_string(frame.bytes.size()) +
+                             " bytes to " + args[1] + NEWLINE);
     }
     else
     {
@@ -146,6 +172,7 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "  capture ocr                     OCR text from screen (ROM font)" << NEWLINE;
     ss << "  capture screen [--format=gif|png]  Capture screen bitmap" << NEWLINE;
     ss << "  capture romtext                 Capture ROM print output (TODO)" << NEWLINE;
+    ss << "  capture framebuffer <file> [rgba|index]  Raw pixels (RGBA, or u16 pens on the Sprinter)" << NEWLINE;
     ss << NEWLINE;
     ss << "Examples:" << NEWLINE;
     ss << "  capture ocr                     Extract text from screen" << NEWLINE;

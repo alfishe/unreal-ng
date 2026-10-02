@@ -200,6 +200,12 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 
 /// endregion </Static methods>
 
+uint16_t PortDecoder::IoPc() const
+{
+    Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    return z80 ? z80->m1_pc : 0;
+}
+
 uint64_t PortDecoder::EmulatedMicroseconds() const
 {
     if (!_context)

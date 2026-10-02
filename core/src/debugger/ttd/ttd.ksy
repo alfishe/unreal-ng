@@ -667,7 +667,8 @@ types:
 
   sprinter_input_blob:
     doc: |
-      Payload of peripheral 31 SprinterInput (85 bytes). Times are base (3.5 MHz) T-states of the
+      Payload of peripheral 31 SprinterInput (88 bytes, version 2; version 1 was 85 bytes, without
+      the board mouse counters). Times are base (3.5 MHz) T-states of the
       machine's cumulative clock.
     seq:
       - id: version
@@ -706,6 +707,14 @@ types:
         type: u8
       - id: kbd_overruns
         type: u8
+      - id: board_mouse_x
+        type: u1
+        doc: The board mouse counters both mouse views read (serial packets, the PLD's Kempston view).
+      - id: board_mouse_y
+        type: u1
+      - id: board_mouse_buttons
+        type: u1
+        doc: Active low, D0 left, D1 right, D2 middle.
 
   peripheral_blob:
     doc: |

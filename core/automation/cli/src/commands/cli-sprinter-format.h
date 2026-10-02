@@ -10,6 +10,12 @@
 ///   state sprinter ports [map=0-3] [dos=0|1] [pn5=0|1] [rw=r|w|rw]
 ///   state sprinter port <hex> [rw=r|w|rw] [map=..] [dos=..] [pn5=..]
 ///   state sprinter text                              the screen text (80 x 32)
+///   state sprinter video [page=0|1] [all=1] [squares=1]  the mode table: one letter per square
+///   state sprinter palette [0-7|all|used]            the palettes (R, G, B per pen)
+///   state sprinter ring                              the Covox-Blaster sample ring
+///   state sprinter bios                              the BIOS images, which one runs, the start options
+///   state sprinter bios <3.04|3.06|3.07|file|-> [fast_start=0|1] [accel_int_suspend=0|1] [reset=0|1]
+///                                                    select (the image loads at the reset; reset=1 default)
 ///
 /// Worked example: `state sprinter port 21BC rw=w` on BIOS 3.04 after boot prints the index
 /// #003C and code #2B, IdePrimary.
@@ -21,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/state/devicestate.h"
 
 namespace CliSprinter
@@ -105,6 +112,71 @@ inline std::string PortTableText(const StateNode& table, const char* newline)
     return out;
 }
 
+/// A scalar member as text ("" when absent; bools as on / off)
+inline std::string Field(const StateNode& node, const char* key)
+{
+    const StateNode* member = node.find(key);
+    if (!member)
+        return std::string();
+    if (member->kind == StateNode::Kind::String)
+        return member->s;
+    if (member->kind == StateNode::Kind::Bool)
+        return member->b ? "on" : "off";
+    return std::to_string(member->i);
+}
+
+/// `state sprinter video`: the registers on two lines, the counts, then the map (one letter a square)
+inline std::string VideoMapText(const StateNode& report, const char* newline)
+{
+    const StateNode* map = report.find("map");
+    if (!map)
+        return "Error: " + Field(report, "description") + newline;
+    std::string out = "Sprinter mode table: page " + Field(report, "mode_page") +
+                      (Field(report, "displayed") == "on" ? " (displayed)" : " (not displayed)") + ", RGMOD " +
+                      Field(report, "rgmod") + ", PORT_Y " + Field(report, "port_y") + ", border " +
+                      Field(report, "border") + newline;
+    if (const StateNode* hold = report.find("hold"))
+        out += "HOLD " + Field(*hold, "value") + " (x " + Field(*hold, "x_pixels") + ", y " + Field(*hold, "y_lines") + ")";
+    if (const StateNode* frame = report.find("frame"))
+        out += ", frame " + Field(*frame, "lines") + " lines (" + Field(*frame, "lines_requested") + " requested)";
+    out += newline;
+    if (const StateNode* counts = report.find("counts"))
+    {
+        out += "Squares:";
+        for (const auto& [key, value] : counts->members)
+            out += " " + key + " " + std::to_string(value.i);
+        out += newline;
+    }
+    out += Field(report, "legend") + newline;
+    for (const StateNode& row : map->items)
+        out += row.s + newline;
+    return out;
+}
+
+/// `state sprinter palette`: one block per palette, 16 pens a line as RRGGBB
+inline std::string PaletteText(const StateNode& report, const char* newline)
+{
+    const StateNode* palettes = report.find("palettes");
+    if (!palettes)
+        return "Error: " + Field(report, "description") + newline;
+    std::string out = "Sprinter palettes (" + Field(report, "selection") + "): R, G, B per pen as video RAM holds them" +
+                      newline;
+    for (const StateNode& p : palettes->items)
+    {
+        out += "Palette " + Field(p, "k") + " (" + Field(p, "role") + ", column " + Field(p, "vram_column") +
+               (Field(p, "used_by_picture") == "on" ? ", used" : "") + ")" + newline;
+        const std::string row = Field(p, "rgb_row");
+        for (size_t pen = 0; pen < 256; pen += 16)
+        {
+            char head[8];
+            std::snprintf(head, sizeof head, "  %02X:", static_cast<unsigned>(pen));
+            out += head;
+            out += " " + row.substr(pen * 7, 16 * 7 - 1) + newline;
+        }
+    }
+    return out;
+}
+
 /// The response text for `state sprinter ...`; args[0] is the subsystem word ("sprinter" / "sp")
 inline std::string StateText(EmulatorContext* context, const std::vector<std::string>& args, const char* newline = "\n")
 {
@@ -128,8 +200,88 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         }
         return out;
     }
+    if (sub == "video" || sub == "modes")
+    {
+        std::string page, all, squares;
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            const std::string key = eq == std::string::npos ? args[i] : args[i].substr(0, eq);
+            const std::string value = eq == std::string::npos ? std::string("1") : args[i].substr(eq + 1);
+            if (key == "page")
+                page = value;
+            else if (key == "all")
+                all = value;
+            else if (key == "squares" || key == "detail")
+                squares = value;
+            else
+                return "Error: unknown option '" + key + "' (page, all, squares)" + newline;
+        }
+        DeviceState::SprinterVideoQuery query;
+        std::string error;
+        if (!DeviceState::SprinterVideoQueryFromStrings(page, all, squares.empty() ? "0" : squares, query, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::SprinterVideo(context, query);
+        if (query.squares)
+            return std::string("Sprinter video") + newline + "==============" + newline + DeviceState::ToText(report);
+        return VideoMapText(report, newline);
+    }
+    if (sub == "palette" || sub == "palettes")
+    {
+        int palette = DeviceState::kSprinterPalettesUsed;
+        std::string error;
+        if (!DeviceState::SprinterPaletteFromString(args.size() > 2 ? args[2] : std::string(), palette, error))
+            return "Error: " + error + newline;
+        return PaletteText(DeviceState::SprinterPalette(context, palette), newline);
+    }
+    if (sub == "bios")
+    {
+        if (args.size() <= 2)
+            return std::string("Sprinter BIOS") + newline + "=============" + newline +
+                   DeviceState::ToText(DeviceState::SprinterBios(context));
+        std::string bios = args[2] == "-" ? std::string() : args[2];
+        std::string fastStart, intSuspend, reset;
+        for (size_t i = 3; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            const std::string key = eq == std::string::npos ? args[i] : args[i].substr(0, eq);
+            const std::string value = eq == std::string::npos ? std::string("1") : args[i].substr(eq + 1);
+            if (key == "fast_start")
+                fastStart = value;
+            else if (key == "accel_int_suspend" || key == "int_suspend")
+                intSuspend = value;
+            else if (key == "reset")
+                reset = value;
+            else
+                return "Error: unknown option '" + key + "' (fast_start, accel_int_suspend, reset)" + newline;
+        }
+        SprinterBios::Options options;
+        std::string error;
+        if (!SprinterBios::OptionsFromStrings(bios, fastStart, intSuspend, reset, options, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::SprinterBiosSelect(context, options);
+        const StateNode* available = report.find("available");
+        if (available && !available->b)
+            return "Error: " + Field(report, "description") + newline;
+        return std::string("Selected: ") + Field(report, "rom_file") +
+               (Field(report, "reset_done") == "on" ? " (reset done)" : " (loads at the next reset)") + newline +
+               "Loaded: " + Field(report, "loaded") + newline;
+    }
+    if (sub == "ring" || sub == "cbl")
+    {
+        const StateNode report = DeviceState::SprinterSoundRing(context);
+        const StateNode* rows = report.find("rows");
+        if (!rows)
+            return std::string("Error: not a Sprinter machine") + newline;
+        std::string out = "Covox-Blaster ring: " + Field(report, "mode") + ", play " + Field(report, "play_index") +
+                          ", write " + Field(report, "write_index") + " ([ ] playing, < > next write)" + newline;
+        for (const StateNode& row : rows->items)
+            out += row.s + newline;
+        return out;
+    }
     if (sub != "ports" && sub != "port" && sub != "lookup")
-        return "Error: unknown subcommand '" + args[1] + "'. Available: ports, port <hex>, text" + newline;
+        return "Error: unknown subcommand '" + args[1] + "'. Available: ports, port <hex>, text, video, palette, ring, bios" +
+               newline;
 
     std::string map, dos, pn5, rw, positional, error;
     DeviceState::SprinterPortQuery query;

@@ -11,6 +11,7 @@
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/network/networkmanager.h>
 #include <emulator/cpu/core.h>
+#include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/state/devicestate.h>
 #include <json/json.h>
 
@@ -370,6 +371,92 @@ void EmulatorAPI::getStateSprinterText(const HttpRequestPtr& req, std::function<
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
     ReplyState(DeviceState::SprinterText(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/video?page=0|1&all=0|1&squares=0|1 - the mode table per square
+/// (DeviceState::SprinterVideo)
+void EmulatorAPI::getStateSprinterVideo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    DeviceState::SprinterVideoQuery query;
+    std::string error;
+    if (!DeviceState::SprinterVideoQueryFromStrings(req->getParameter("page"), req->getParameter("all"),
+                                                    req->getParameter("squares"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::SprinterVideo(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/palette?k=0-7|all|used - the palettes (DeviceState::SprinterPalette)
+void EmulatorAPI::getStateSprinterPalette(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    int palette = DeviceState::kSprinterPalettesUsed;
+    std::string error;
+    if (!DeviceState::SprinterPaletteFromString(req->getParameter("k"), palette, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::SprinterPalette(emulator->GetContext(), palette), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/sound/ring - the Covox-Blaster ring (DeviceState::SprinterSoundRing)
+void EmulatorAPI::getStateSprinterSoundRing(const HttpRequestPtr& req,
+                                            std::function<void(const HttpResponsePtr&)>&& callback,
+                                            const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::SprinterSoundRing(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/sprinter/bios - the BIOS images and start options (DeviceState::SprinterBios)
+void EmulatorAPI::getStateSprinterBios(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::SprinterBios(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/sprinter/bios {"bios", "fast_start", "accel_int_suspend", "reset"} - select the
+/// BIOS image and the start options; the image loads at the next reset, `reset` (default true) makes it now
+void EmulatorAPI::postSprinterBios(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    auto text = [&](const char* key) -> std::string {
+        if (!body || !body->isMember(key))
+            return std::string();
+        const Json::Value& v = (*body)[key];
+        return v.isBool() ? (v.asBool() ? "1" : "0") : v.asString();
+    };
+    SprinterBios::Options options;
+    std::string error;
+    if (!SprinterBios::OptionsFromStrings(text("bios"), text("fast_start"), text("accel_int_suspend"), text("reset"),
+                                          options, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    const StateNode report = DeviceState::SprinterBiosSelect(emulator->GetContext(), options);
+    const StateNode* available = report.find("available");
+    if (available && !available->b)
+    {
+        const StateNode* description = report.find("description");
+        const bool notSprinter = description && description->s == "Not a Sprinter machine";
+        return ReplyNotFound(description ? description->s : "not available", callback,
+                             notSprinter ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    ReplyState(report, callback);
 }
 
 /// endregion </Sprinter>

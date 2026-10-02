@@ -32,6 +32,7 @@ class Keyboard;
 class Mouse;
 class PortDevice;
 class Ds12887;
+class IDeviceMemoryRegion;
 
 /// region <Constants>
 
@@ -697,6 +698,14 @@ public:
         std::string absentReason;
     };
     virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
+
+    /// The PC of the instruction doing the I/O in progress (the video change log notes it): the
+    /// main CPU's M1 address; a machine whose CPU is a library (the Sprinter's Z84C15) overrides it
+    virtual uint16_t IoPc() const;
+
+    /// Memory the machine's devices own outside the CPU's RAM / ROM pages (devicememory.h:
+    /// the Sprinter's video RAM), reached by name from every automation interface
+    virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { (void)out; }
 
     /// Emulated machine time in microseconds: whole frames at the model's
     /// frame duration plus the position in the current frame (TTD time units,

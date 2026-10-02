@@ -53,6 +53,31 @@
          ["properties"]["data"]["type"] = "string";
 
     // ZX DLSS plane B (binary)
+    {
+        Json::Value& fb = paths["/api/v1/emulator/{id}/capture/framebuffer"]["get"];
+        fb["summary"] = "Capture the picture as raw pixels";
+        fb["tags"].append("Capture");
+        fb["description"] =
+            "The picture without image encoding (core FramebufferExport; CLI `framebuffer save`, Lua / Python "
+            "framebuffer(), MCP capture_media framebuffer): format=rgba (default) - the presented frame, width x height "
+            "x 4 bytes R, G, B, A, border included (the screenshot's pixels); format=index - the pen of every pixel as "
+            "little-endian uint16 where the machine names its palette (the Sprinter: 2 048 pens, 736 x 288, the state "
+            "now; colors in /state/sprinter/palette), else 409. encoding=binary (default): application/octet-stream "
+            "with X-Width, X-Height, X-Format, X-Encoding; encoding=base64: JSON {width, height, format, encoding, "
+            "bytes, data}.";
+        for (const char* name : {"id", "format", "encoding"})
+        {
+            Json::Value p;
+            p["name"] = name;
+            p["in"] = std::string(name) == "id" ? "path" : "query";
+            p["required"] = std::string(name) == "id";
+            p["schema"]["type"] = "string";
+            fb["parameters"].append(p);
+        }
+        fb["responses"]["200"]["description"] = "Raw pixels";
+        fb["responses"]["409"]["description"] = "No frame yet, or no indexed form on this machine";
+    }
+
     paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["summary"] = "Capture ZX DLSS plane B (binary)";
     paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["tags"].append("Capture");
     paths["/api/v1/emulator/{id}/capture/planeb"]["get"]["description"] =
@@ -79,7 +104,10 @@
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["tags"].append("Capture");
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["description"] =
         "Arm/stop/clear a stereo sample capture from the sound core. start arms a target of "
-        "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples.";
+        "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples. `source` records "
+        "one mixer device instead of the master mix (its own buffer, before mute / solo / volume): beeper, ay1, "
+        "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm "
+        "(GET /audio/mixer lists the fitted ones); 400 for a device the machine does not have.";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["required"] = true;
@@ -92,6 +120,43 @@
          ["properties"]["action"]["enum"].append("clear");
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["seconds"]["type"] = "number";
+    paths["/api/v1/emulator/{id}/audio/capture"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["source"]["type"] = "string";
+
+    // Per-device mixer (core AudioMixer; DeviceState::AudioMixer: CLI `audio mixer`, Lua / Python audio_mixer() /
+    // audio_mixer_set(), MCP aspect audio_mixer)
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["summary"] = "Per-device audio mixer";
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["description"] =
+        "master (muted, sample_rate_hz) and devices[] of the machine's mixer: source (the key for PUT and for "
+        "/audio/capture), name, muted, solo, audible, volume (0..1), gain_db, peak and active (the last frame), "
+        "capturable; capture_source = what an armed capture records.";
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["responses"]["200"]["description"] = "The mixer";
+    for (const char* method : {"put", "post"})
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/audio/mixer/{source}"][method];
+        op["summary"] = "Set one mixer device (mute, solo, volume)";
+        op["tags"].append("Capture");
+        op["description"] =
+            "Body {\"muted\": true, \"solo\": false, \"volume\": 0.5} or {\"gain_db\": -6}; every field optional. "
+            "source = a key from GET /audio/mixer, or master (muted only). Answers the mixer. A monitor setting of "
+            "this instance (not saved).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "source";
+        op["parameters"][1]["in"] = "path";
+        op["parameters"][1]["required"] = true;
+        op["parameters"][1]["schema"]["type"] = "string";
+        op["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        op["responses"]["200"]["description"] = "The mixer after the change";
+        op["responses"]["400"]["description"] = "Unknown or absent source, bad value";
+    }
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["responses"]["200"]["description"] =
         "Capture session updated (armed/target_samples/sample_rate/channels)";
 

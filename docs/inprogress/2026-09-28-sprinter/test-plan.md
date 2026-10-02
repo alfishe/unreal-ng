@@ -178,6 +178,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 | R-5 | ACC-4 | same from `ide0.master` built image |
 | R-6 | ACC-5 | same from a folder; folder tree hash unchanged |
 | R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM). As built: through DSS `SPECTRUM.EXE` (BIOS 3.04 has no Spectrum ROMs); `LOAD "smReadMe" CODE` compared with the file's bytes |
+| R-7b | ACC-6 extended (S8) | the ZX mode beyond the floppy: launcher v2.03 + TRD / SCL into the RAM disk, Ctrl+Alt+Del back to DSS, a TAP through the tape input, snapshots in ZX mode: T-ZX-1..14 in [tdd-zx-mode.md](tdd-zx-mode.md) §8 |
 | R-8 | ACC-7/8 | native program frames equal MAME captures |
 | R-9 | ACC-10 | TTD record 5 s of R-4, seek, replay: equal frame hashes |
 

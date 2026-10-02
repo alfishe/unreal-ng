@@ -1,6 +1,7 @@
 #include "screenocr.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
 
 // Static member definitions
@@ -18,7 +19,23 @@ bool ScreenOCR::textLayerScreen(Emulator* emulator, std::string& out)
     uint16_t columns = 0, rows = 0;
     std::vector<videomap::TextCell> cells;
     if (!videomap::VideoMapService(context).Text(0, columns, rows, cells))
-        return false;
+    {
+        // The Sprinter's text squares (DeviceState::SprinterText: the same cells /video/text shows) while
+        // most of the picture is text (BIOS, DSS); 80 columns, one line per square row. Spectrum mode's
+        // graphics picture stays with the ZX OCR below
+        const StateNode sprinter = DeviceState::SprinterText(context);
+        const StateNode* pictureIsText = sprinter.find("picture_is_text");
+        const StateNode* lines = sprinter.find("lines");
+        if (!pictureIsText || !pictureIsText->b || !lines)
+            return false;
+        out.clear();
+        for (const StateNode& line : lines->items)
+        {
+            const StateNode* text = line.find("text");
+            out += (text ? text->s : std::string()) + '\n';
+        }
+        return true;
+    }
     out.clear();
     out.reserve(static_cast<size_t>(rows) * (columns + 1));
     for (uint16_t r = 0; r < rows; ++r)

@@ -65,6 +65,82 @@ struct SprinterVideoInputs
     }
 };
 
+/// One square of the mode table, decoded by the renderer's rules (the classifier every report
+/// shares: DeviceState::Sprinter's video summary, the per-square map, the screen text,
+/// ScreenSprinter::DescribeScreenState and the video mapper's text layer).
+///
+///   m0 bit 4 = 0: graphics, bit 5 = 1: 320 (a byte per 2 pixels), 0: 640 (a nibble per pixel)
+///   m0 bit 4 = 1: %1111 11xx blank (%1111 11x1: blank + frame INT), %1111 xxxx border,
+///                 otherwise text, bit 5 = 1: 40 columns, 0: 80 columns (two characters)
+///
+/// Worked example: m0 = #A2, m1 = #19, m2 = #00 is graphics 320 with palette 2, source
+/// column #080 + 8 = #088, source row 24; m0 = #FD is blank with the frame INT.
+struct SprinterSquare
+{
+    enum class Kind : uint8_t
+    {
+        Graphics320,
+        Graphics640,
+        Text40,
+        Text80,
+        Border,
+        Blank,
+        Count
+    };
+
+    Kind kind = Kind::Blank;
+    uint8_t m0 = 0;
+    uint8_t m1 = 0;
+    uint8_t m2 = 0;
+
+    static Kind Classify(uint8_t m0)
+    {
+        if (!(m0 & 0x10))
+            return (m0 & 0x20) ? Kind::Graphics320 : Kind::Graphics640;
+        if ((m0 & 0xFC) == 0xFC)
+            return Kind::Blank;
+        if ((m0 >> 5) == 7)
+            return Kind::Border;
+        return (m0 & 0x20) ? Kind::Text40 : Kind::Text80;
+    }
+    /// The square at Line1 bytes `mode` (Mode0..Mode2 at mode[0..2])
+    static SprinterSquare Decode(const uint8_t* mode)
+    {
+        SprinterSquare s;
+        s.m0 = mode[0];
+        s.m1 = mode[1];
+        s.m2 = mode[2];
+        s.kind = Classify(s.m0);
+        return s;
+    }
+
+    bool IsGraphics() const { return kind == Kind::Graphics320 || kind == Kind::Graphics640; }
+    bool IsText() const { return kind == Kind::Text40 || kind == Kind::Text80; }
+    /// Blank with the frame INT mark (%1111 11x1, SprinterIntSource)
+    bool IntArmed() const { return (m0 & 0xFD) == 0xFD; }
+    /// Graphics: palette 0-3 (pens palette x 256 + value)
+    uint8_t Palette() const { return static_cast<uint8_t>(m0 >> 6); }
+    /// Graphics: the source byte column and pixel row of the square's first byte (video RAM row x 1024 + column)
+    uint16_t SourceColumn() const { return static_cast<uint16_t>(((m0 & 0x0F) << 6) | ((m1 & 0x07) << 3)); }
+    uint16_t SourceRow() const { return static_cast<uint16_t>((m1 >> 3) << 3); }
+    /// Graphics: 2x2 pixels from one quarter (m2 bit 2), the quarter (m2 bits 1-0: bit 0 right, bit 1 lower)
+    bool LowRes() const { return IsGraphics() && (m2 & 0x04) != 0; }
+    uint8_t Quarter() const { return static_cast<uint8_t>(m2 & 0x03); }
+
+    /// The character of text cell `half` (0 left, 1 right) of the square whose Line1 bytes are `line1`
+    /// (Line2 = line1 + 1024): an 80-column square shows Line1's Mode1, then Line2's (the renderer takes
+    /// every byte of the right half from Line2, its Mode0 too); a 40-column square one character and a
+    /// space. False (code = #20) when that half is not a text character
+    static bool TextCode(const uint8_t* line1, unsigned half, uint8_t& code);
+
+    /// One letter per kind for compact maps: G 320, g 640, T text 40, t text 80, B border, . blank, * blank + INT
+    char Letter() const;
+    /// "graphics_320" ... (JSON keys)
+    static const char* Key(Kind kind);
+    /// "graphics 320 x 256, 256 colors" ... (people)
+    static const char* Name(Kind kind);
+};
+
 /// The standard configuration's picture. A configuration module with its own
 /// renderer (a later Game module: per-square scroll, MAME sprinter.cpp:499-545)
 /// derives from it and overrides DrawSpan; ScreenSprinter asks the active module

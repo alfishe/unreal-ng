@@ -890,6 +890,8 @@ void PortDecoder_ATM710::Port_ATM_Palette_Out(uint16_t port, uint8_t value)
 
     MLOGDEBUG("Port_ATM_Palette_Out: port=0x%04X value=0x%02X cell=%d -> 0x%08X",
               port, value, cell, _state->atmPalette[cell]);
+    if (_context->pScreen)
+        _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, cell);  // the video change log
 }
 
 // Route a RAM page mapping to the bank-specific Memory API (helper for the

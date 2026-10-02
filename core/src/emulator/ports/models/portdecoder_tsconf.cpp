@@ -1027,6 +1027,8 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
         {
             ts.cram[index] = word;
             _owner._cramVersion++;
+            if (_owner._context->pScreen)  // the video change log (DMA CRAM writes count in /state/tsconf dma)
+                _owner._context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);
         }
         else
             ts.sfile[index] = word;

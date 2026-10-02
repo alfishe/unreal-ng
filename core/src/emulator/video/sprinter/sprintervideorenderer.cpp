@@ -21,6 +21,66 @@ inline const uint8_t* ModeBytes(const SprinterVideoInputs& in, uint32_t a16, uin
 }
 }  // namespace
 
+bool SprinterSquare::TextCode(const uint8_t* line1, unsigned half, uint8_t& code)
+{
+    code = 0x20;
+    const Kind kind = Classify(line1[0]);
+    if (kind != Kind::Text40 && kind != Kind::Text80)
+        return false;
+    if (half == 0)
+    {
+        code = line1[1];
+        return true;
+    }
+    if (kind == Kind::Text40)
+        return false;  // a 40-column character is 16 pixels wide: the right half is its own
+    const uint8_t* line2 = line1 + SprinterVideoRam::kRowBytes;
+    const Kind right = Classify(line2[0]);
+    if (right != Kind::Text40 && right != Kind::Text80)
+        return false;
+    code = line2[1];
+    return true;
+}
+
+char SprinterSquare::Letter() const
+{
+    switch (kind)
+    {
+        case Kind::Graphics320: return 'G';
+        case Kind::Graphics640: return 'g';
+        case Kind::Text40: return 'T';
+        case Kind::Text80: return 't';
+        case Kind::Border: return 'B';
+        default: return IntArmed() ? '*' : '.';
+    }
+}
+
+const char* SprinterSquare::Key(Kind kind)
+{
+    switch (kind)
+    {
+        case Kind::Graphics320: return "graphics_320";
+        case Kind::Graphics640: return "graphics_640";
+        case Kind::Text40: return "text_40";
+        case Kind::Text80: return "text_80";
+        case Kind::Border: return "border";
+        default: return "blank";
+    }
+}
+
+const char* SprinterSquare::Name(Kind kind)
+{
+    switch (kind)
+    {
+        case Kind::Graphics320: return "graphics 320 x 256, 256 colors";
+        case Kind::Graphics640: return "graphics 640 x 256, 16 colors";
+        case Kind::Text40: return "text, 40 columns";
+        case Kind::Text80: return "text, 80 columns";
+        case Kind::Border: return "border";
+        default: return "blank";
+    }
+}
+
 const SprinterVideoRenderer& SprinterVideoRenderer::Standard()
 {
     static const SprinterVideoRenderer standard;

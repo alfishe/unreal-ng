@@ -1,6 +1,7 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/machinevariants.h"
@@ -51,6 +52,53 @@ bool TakeRamPowerOnOption(std::vector<std::string>& args, std::optional<RamPower
 std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>& mode)
 {
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
+}
+
+/// --sprinter-bios <3.04|3.06|3.07|file>, --fast-start 0|1, --accel-int-suspend 0|1 (a new SPRINTER's firmware
+/// and start options, core SprinterBios - the WebAPI's "sprinter": {...}); removed from args
+bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& out, std::string& error)
+{
+    std::string bios, fastStart, intSuspend;
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        std::string* target = args[i] == "--sprinter-bios"        ? &bios
+                              : args[i] == "--fast-start"          ? &fastStart
+                              : args[i] == "--accel-int-suspend"   ? &intSuspend
+                                                                   : nullptr;
+        if (!target)
+            continue;
+        if (i + 1 >= args.size())
+        {
+            error = args[i] + " expects a value";
+            return false;
+        }
+        *target = args[i + 1];
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        i--;
+    }
+    if (bios.empty() && fastStart.empty() && intSuspend.empty())
+        return true;
+    SprinterBios::Options options;
+    std::string path;
+    if (!SprinterBios::OptionsFromStrings(bios, fastStart, intSuspend, "", options, error) ||
+        (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
+        return false;
+    out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+/// Both create-time overrides (either may be empty)
+std::function<void(CONFIG&)> CreateOverride(const std::optional<RamPowerOn>& mode, const std::function<void(CONFIG&)>& sprinter)
+{
+    std::function<void(CONFIG&)> ram = RamPowerOnOverride(mode);
+    if (!sprinter)
+        return ram;
+    if (!ram)
+        return sprinter;
+    return [ram, sprinter](CONFIG& config) {
+        ram(config);
+        sprinter(config);
+    };
 }
 }  // namespace
 
@@ -564,7 +612,8 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     std::vector<std::string> args = rawArgs;
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError))
+    std::function<void(CONFIG&)> sprinterOptions;
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;
@@ -576,7 +625,7 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
         std::string modelName = args[0];
         std::string createError;
         auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError,
-                                                                 RamPowerOnOverride(ramPowerOn));
+                                                                 CreateOverride(ramPowerOn, sprinterOptions));
 
         if (emulator)
         {
@@ -636,7 +685,7 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     else
     {
         // create - create default emulator
-        auto emulator = emulatorManager->CreateEmulator("", LoggerLevel::LogInfo, RamPowerOnOverride(ramPowerOn));
+        auto emulator = emulatorManager->CreateEmulator("", LoggerLevel::LogInfo, CreateOverride(ramPowerOn, sprinterOptions));
 
         if (emulator)
         {
@@ -668,7 +717,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
     std::vector<std::string> args = rawArgs;
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError))
+    std::function<void(CONFIG&)> sprinterOptions;
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;
@@ -751,7 +801,7 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
         std::string modelName = arg;
         std::string createError;
         auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError,
-                                                                 RamPowerOnOverride(ramPowerOn));
+                                                                 CreateOverride(ramPowerOn, sprinterOptions));
 
         if (emulator)
         {
@@ -821,7 +871,7 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
     {
         // start - create default emulator
         auto emulator = EmulatorManager::GetInstance()->CreateEmulator("", LoggerLevel::LogInfo,
-                                                                       RamPowerOnOverride(ramPowerOn));
+                                                                       CreateOverride(ramPowerOn, sprinterOptions));
 
         if (emulator)
         {
