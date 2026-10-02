@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,7 +73,14 @@ public:
 
     /// Build a TR-DOS disk from `folder`. `context` provides the machine's
     /// TR-DOS format settings (sector interleave). The result's report lists
-    /// every file left out and why
+    /// every file left out and why.
+    ///
+    /// BUGS.md #3: cancelRequested/onProgress are forwarded to the folder scan
+    /// and polled once per file read, so a caller off the UI thread can abort
+    /// a slow/network folder. Empty: never cancels, no progress - the prior
+    /// behavior, unchanged
     static MediaResult BuildTrd(EmulatorContext* context, const std::filesystem::path& folder,
-                                std::unique_ptr<DiskImage>& disk);
+                                std::unique_ptr<DiskImage>& disk,
+                                std::function<bool()> cancelRequested = {},
+                                std::function<void(uint64_t entriesScanned, uint64_t bytesScanned)> onProgress = {});
 };

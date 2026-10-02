@@ -1,0 +1,7 @@
+{
+ "compress_xor_us": 2.064,
+ "compress_full_us": 8.749,
+ "decompress_xor_us": 1.199,
+ "decompress_full_us": 3.939,
+ "samples": 3628
+}

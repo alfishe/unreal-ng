@@ -161,3 +161,94 @@ TEST(FolderSnapshot_Test, IdentityFollowsNamesSizesAndTimes)
     EXPECT_FALSE(FolderSnapshot::Scan(folder.Path() / "nope", {}, missing, &error));
     EXPECT_FALSE(error.empty());
 }
+
+/// BUGS.md #3: a caller scanning off the UI thread needs to abort a large or
+/// slow/network folder and show progress while it runs
+TEST(FolderSnapshot_Test, OnProgressCountsEveryEntryVisited)
+{
+    ScratchFolder folder("snapshot-progress");
+    folder.File("a.bin", "a");
+    folder.File("b.bin", "b");
+    folder.File("sub/c.bin", "c");
+
+    std::vector<uint64_t> seen;
+    std::vector<uint64_t> bytesSeen;
+    FolderScanOptions options;
+    options.onProgress = [&](uint64_t count, uint64_t bytes) {
+        seen.push_back(count);
+        bytesSeen.push_back(bytes);
+    };
+
+    FolderSnapshot snapshot;
+    ASSERT_TRUE(FolderSnapshot::Scan(folder.Path(), options, snapshot));
+
+    // a.bin, b.bin, sub (top level) + c.bin (inside sub) = 4 entries visited
+    ASSERT_EQ(seen.size(), 4u);
+    EXPECT_TRUE(std::is_sorted(seen.begin(), seen.end())) << "a strictly increasing running count";
+    EXPECT_EQ(seen.back(), 4u);
+
+    // bytesSeen lags by one file (reported before the current entry is added
+    // to the running total - see foldersnapshot.h's onProgress comment):
+    // a.bin and b.bin are 1 byte each, sub is a directory (0 bytes), c.bin 1
+    // byte - so the running byte total only reaches 2 once c.bin itself is
+    // being visited, never 3 (c.bin's own byte is never reflected back to it)
+    EXPECT_EQ(bytesSeen.back(), 2u);
+    EXPECT_TRUE(std::is_sorted(bytesSeen.begin(), bytesSeen.end()));
+}
+
+TEST(FolderSnapshot_Test, CancelRequestedStopsTheWalkAndFailsWithCancelled)
+{
+    ScratchFolder folder("snapshot-cancel");
+    folder.File("a.bin", "a");
+    folder.File("b.bin", "b");
+    folder.File("c.bin", "c");
+
+    int visited = 0;
+    FolderScanOptions options;
+    // Checked at the top of every iteration, before that entry's onProgress:
+    // becoming true after the first visited entry stops the walk at the
+    // second one, one onProgress call short of all three files
+    options.cancelRequested = [&visited]() { return visited >= 1; };
+    options.onProgress = [&visited](uint64_t, uint64_t) { ++visited; };
+
+    FolderSnapshot snapshot;
+    std::string error;
+    EXPECT_FALSE(FolderSnapshot::Scan(folder.Path(), options, snapshot, &error));
+    EXPECT_EQ(error, FolderSnapshot::kCancelledError);
+    EXPECT_EQ(visited, 1) << "cancelled before the second entry's onProgress";
+    // Scan() never populates `snapshot` on a cancelled walk - the caller has
+    // no half-built tree to accidentally treat as a result
+    EXPECT_EQ(snapshot.EntryCount(), 0u);
+}
+
+/// Cancelling while scanning a subfolder must unwind every recursion level,
+/// not just the innermost one - a sibling top-level folder scanned after the
+/// cancelled one would otherwise make the abort pointless under a real stall
+TEST(FolderSnapshot_Test, CancelRequestedUnwindsNestedRecursion)
+{
+    ScratchFolder folder("snapshot-cancel-nested");
+    folder.File("sub1/a.bin", "a");
+    folder.File("sub1/b.bin", "b");
+    folder.File("sub2/c.bin", "c");  // must never be visited if cancelled inside sub1
+
+    bool cancelFromNow = false;
+    std::vector<uint64_t> seen;
+    FolderScanOptions options;
+    options.onProgress = [&](uint64_t count, uint64_t) {
+        seen.push_back(count);
+        if (count == 2)        // right after entering sub1, before its first file
+            cancelFromNow = true;
+    };
+    options.cancelRequested = [&cancelFromNow]() { return cancelFromNow; };
+
+    FolderSnapshot snapshot;
+    std::string error;
+    EXPECT_FALSE(FolderSnapshot::Scan(folder.Path(), options, snapshot, &error));
+    EXPECT_EQ(error, FolderSnapshot::kCancelledError);
+    // Whichever of sub1/sub2 directory_iterator visits first (unspecified
+    // order): its own entry (count 1) + its first file (count 2, where the
+    // test's cancel flag is armed) is as far as the walk gets either way -
+    // the second subfolder is never entered, matching the recursion-unwind
+    // contract (every level's `if (_cancelled) break;`)
+    EXPECT_EQ(seen.size(), 2u);
+}

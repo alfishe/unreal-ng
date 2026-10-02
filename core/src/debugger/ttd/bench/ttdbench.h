@@ -215,6 +215,10 @@ struct Options
     bool saveLoad = true;            ///< BM-7
     bool dirtySweep = false;         ///< BM-8: 0 / 1 / 4 / 16 / 64 dirty 4 KB pieces
     std::string scratchDir;          ///< where BM-7 writes its session file
+    /// Non-empty: BM-7's session file is kept here as <engine>-<case>.ttd
+    /// instead of deleted - the recorded matrix workloads as input data for
+    /// offline experiments (tools/poc/011-ttd-v2-capture-analysis/experiments)
+    std::string keepSessionDir;
     /// testdata-relative path -> absolute path (the caller knows the tree)
     std::function<std::string(const std::string&)> resolveTestData;
 };

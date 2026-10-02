@@ -56,6 +56,7 @@ The following environment variables control a run:
 | `UNREAL_TTD_BENCH_SEEKS` | the number of random seek positions (BM-5) | 40 for `ci`, 200 otherwise |
 | `UNREAL_TTD_BENCH_OVERHEAD` | `0` skips BM-1 (BM-1 costs four extra runs per case) | on |
 | `UNREAL_TTD_BENCH_DIRTY` | `1` adds BM-8 | off |
+| `UNREAL_TTD_BENCH_KEEP_SESSIONS` | a folder: keep each case's saved `.ttd` session there instead of deleting it (input data for the [TTD v2 experiments](../../poc/011-ttd-v2-capture-analysis/experiments/README.md)) | off |
 
 Other sessions running on the same machine inflate timings. Check `uptime` before running, and compare only runs made at a similar load.
 
