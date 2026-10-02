@@ -463,6 +463,10 @@ public:
     //    uint16_t hBlankPixels;
     //    uint16_t vSyncLines;
     //    uint16_t vBlankLines;
+    /// GetTimingDescriptor's ATM450 variant (a copy of the mode's descriptor with the shorter
+    /// vertical blank), rebuilt on every call
+    mutable RasterDescriptor _atm450Timing{};
+
     const RasterDescriptor rasterDescriptors[M_MAX] = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                  // M_NUL
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_ZX48k
@@ -988,7 +992,8 @@ public:
     static LineGeometry GetLineGeometry(VideoModeEnum mode, const RasterDescriptor& timing);
 
     /// Descriptor the mode's timing comes from (P384 uses Pentagon timing,
-    /// ATM3 AlCo modes keep the ATM 312-line raster)
+    /// ATM3 AlCo modes keep the ATM 312-line raster, ATM450 has 4 vertical-blank
+    /// lines fewer - docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
     const RasterDescriptor& GetTimingDescriptor(VideoModeEnum mode) const;
 
     /// Beam position, zones and the mode pixel under the beam for a frame T
