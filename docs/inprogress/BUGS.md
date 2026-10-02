@@ -129,10 +129,10 @@ Checked that no backend double-applies or skips the fix:
 
 ---
 
-## 🟣 [Fix Proposed] #3: Host Folder Insert Freezes the UI Thread
+## 🟢 [Fixed] #3: Host Folder Insert Freezes the UI Thread
 * **Date Opened:** 2026-09-30
-* **Date Fixed:** *Pending*
-* **Commit ID:** *None*
+* **Date Fixed:** 2026-10-01
+* **Commit ID:** `47078607`
 
 ### Description
 Inserting a host folder into an HDD / SD slot runs the folder scan and the volume build **on the Qt UI thread**. `MediaPanelWindow::run` (unreal-qt/src/media/mediapanelwindow.cpp:251) executes `MediaControl::Execute` synchronously, and `MediaManager::Insert` does its file I/O and `FolderSnapshot::Scan` "on the caller's thread" by design (core/src/emulator/media/mediamanager.cpp:149). A large folder (or a slow / network disk behind it) freezes the whole UI for the duration of the scan - no repaints, no input, no cancel.
