@@ -113,6 +113,20 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
      picture, no sound - find and fix each cause with MAME's code as the reference.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
+  4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
+     decisions Q1-Q3 recorded), network adapters (NE2000 ISA Ethernet confirmed; maximum reuse of the shared network
+     stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+- **Input and device extras (from [mame-gap-analysis.md](mame-gap-analysis.md), owner 2026-10-02: functional items
+  only):**
+  - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
+    pad 2 read on PIO A with PIO B bit 7, the select counters reset at each frame INT (gap I10, C13) - S-M; host
+    gamepads through the shared input path, journaled for TTD, all five automation surfaces.
+  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
+    counter-mode inputs and ZC outputs (gap I7, C11) - S.
+  - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
+    as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
+  - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
+  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
