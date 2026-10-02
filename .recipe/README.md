@@ -132,6 +132,7 @@ call.
 | [machines/tsconf.md](machines/tsconf.md) | TS-Conf (`TSL`): TS-BIOS, the `#xxAF` registers and memory map, TS video modes and TSU, DMA, SD slot `sd.zc`, `.spg` programs, `state tsconf` |
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | TS-Conf VDAC2 card (FT812): setup (`ENABLE_VDAC2`, `TS_VDAC2=1`, ROM image), games from an SD folder, the FT812 bus capture (`vdac2 capture`, `/vdac2/capture/*`, `capture_media vdac2_capture_*`) |
 | [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes, hard disk and CD slots |
+| [machines/sprinter-sound.md](machines/sprinter-sound.md) | Sprinter Sp2000 sound: one AY at 1.75 MHz, Covox / Covox-Blaster; play a WAV with DSS's `WAVPLAY.EXE` from a hard disk, `state/sprinter` `sound`, capture and AAC recording, the MAME comparison |
 | [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |

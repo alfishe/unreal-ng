@@ -2,7 +2,7 @@
 
 **Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
 (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
-(2026-10-01, branch `sprinter-s1`); CPU library (2026-10-01, branch `sprinter-cpu`); **S2 done** (2026-10-01, branch `sprinter-s2`); **S3a done** (2026-10-01, branch `sprinter-s3a`); **S3b done** (2026-10-02, branch `sprinter-s3b`); S4-S7 not started. PLAN.md row **#59** (T4): the owner started
+(2026-10-01, branch `sprinter-s1`); CPU library (2026-10-01, branch `sprinter-cpu`); **S2 done** (2026-10-01, branch `sprinter-s2`); **S3a done** (2026-10-01, branch `sprinter-s3a`); **S3b done** (2026-10-02, branch `sprinter-s3b`); **S6 done** (2026-10-02, branch `sprinter-s6`, [s6-sound-outcome.md](s6-sound-outcome.md)); S4, S5 and S7-TTD have their own outcome files. PLAN.md row **#59** (T4): the owner started
 the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
 this design introduced are PLAN row **#60** (shared infrastructure, done).
 
@@ -95,6 +95,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   (ZXMAK2 VHD) on BIOS 3.04; MAME HDD captures; the GUI lets PC-keyboard machines have bare F1-F12 (F4 at the
   IDE wait); a Sprinter teardown use-after-free fixed
 
+- [x] S6 (2026-10-02, branch `sprinter-s6`; outcome [s6-sound-outcome.md](s6-sound-outcome.md), as built in
+  [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.1): `CovoxBlaster` (Covox, ring, 16 rates, mono / stereo,
+  8 / 16 bit, half-ring INT through the PLD INT source, `#FE` bits 7 / 5, the accelerator's page-`#FD` path) in the
+  COVOX mixer slot; one AY (`TurboSound=Single`, 1.75 MHz); TTD id 32 and the Sprinter fixture re-recorded;
+  `state/sprinter` `sound` and the shared Covox report; `AccelIntSuspend` default 0 (WAVPLAY refills in its INT
+  handler); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
+  `.recipe/machines/sprinter-sound.md`
+
 ## Remaining
 
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
@@ -134,6 +142,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   the GUI, an optional persistent flash file like `CmosFile=`; flash contents in the TTD state. End-to-end
   test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
   identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
+- Sound follow-ups after S6 ([s6-sound-outcome.md](s6-sound-outcome.md) §7): the stereo order on a real board
+  (MAME swaps 16-bit stereo), the PLD's AY + CBL mix levels in one DAC word, MOD playback through the General
+  Sound on the ISA ZX-bus adapter (S6b), a real-board check of the accelerator INT suspend (default now off).
 - IDE follow-ups after S3b ([roadmap-and-plan.md](roadmap-and-plan.md) §9):
   - DSS 1.71 needs a BIOS newer than 3.04 (bios-versions.md §5.1): which BIOS function, and whether 3.05 does;
   - code `#29` (drive address) reads `#FF` (the shared core has no drive-address register);

@@ -339,7 +339,9 @@ print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    #
 | Flex Navigator (DSS's `fn`) | **hangs** after its logo - boot a floppy without it |
 | DSS 1.71 (`dss171u.img`) | **stops** with "Fatal error! Press RESET to restart." after the BIOS loaded it |
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
-| Accelerator, Covox-Blaster, ISA cards | not yet (phases S5, S6); CBL control is only stored |
+| Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
+| Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
+| ISA cards (General Sound on the ZX-bus adapter, `PROPLAY.EXE` MODs) | not yet (S6b); the ISA view reads `#FF` |
 | TTD (time travel) | refuses to record this machine until phase S7 |
 
 ## Pitfalls
