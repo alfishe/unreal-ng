@@ -27,6 +27,7 @@
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdfileinfo.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -135,7 +136,27 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
             EXPECT_EQ(std::memcmp(&got->cpu, &want->cpu, sizeof(want->cpu)), 0) << "CPU at checkpoint " << i;
             EXPECT_EQ(std::memcmp(&got->chipset, &want->chipset, sizeof(want->chipset)), 0)
                 << "chipset at checkpoint " << i;
-            EXPECT_EQ(got->deviceBlobs, want->peripheralBlobs) << "device state at checkpoint " << i;
+            // Device state: identical blobs, except General Sound, whose RAM the
+            // engine keeps as a region (its blob holds the registers only)
+            constexpr uint8_t gsId = static_cast<uint8_t>(ttd::PeripheralId::GeneralSound);
+            ASSERT_EQ(got->deviceBlobs.size(), want->peripheralBlobs.size()) << "checkpoint " << i;
+            for (const auto& [id, blob] : want->peripheralBlobs)
+            {
+                ASSERT_TRUE(got->deviceBlobs.count(id)) << "device " << int(id) << " at checkpoint " << i;
+                if (id != gsId)
+                {
+                    EXPECT_EQ(got->deviceBlobs.at(id), blob) << "device " << int(id) << " at checkpoint " << i;
+                    continue;
+                }
+                std::vector<uint8_t> fixed, gsRam, engineGsRam, present;
+                ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(blob, fixed, gsRam));
+                EXPECT_EQ(ttd::TTDPeripheralRegistry::DecodeBlob(gsId, got->deviceBlobs.at(id)), fixed)
+                    << "General Sound registers at checkpoint " << i;
+                ASSERT_EQ(engine.Regions().size(), 2u);
+                engineGsRam.assign(gsRam.size(), 0);
+                ASSERT_TRUE(engine.RestoreRegion(i, 1, engineGsRam.data(), &present).Ok());
+                ASSERT_TRUE(engineGsRam == gsRam) << "General Sound RAM at checkpoint " << i;
+            }
 
             // Memory, byte for byte, and the same set of pieces the session knows
             ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, i, v1Ram, v1Present, err)) << err;
@@ -186,5 +207,5 @@ TEST_F(TTDV1Feeder_Test, FeedsOnlyRealChanges)
             }
     }
     ASSERT_GE(_v1->GetCheckpointCount(), 100u) << "the session must span key frames";
-    EXPECT_LT(stats.changedPieces, newSlots) << "the key frames' re-stores must not be fed as changes";
+    EXPECT_LT(stats.changedRamPieces, newSlots) << "the key frames' re-stores must not be fed as changes";
 }

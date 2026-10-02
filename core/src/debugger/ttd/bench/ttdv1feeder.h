@@ -31,6 +31,7 @@ struct FeedStats
 {
     size_t checkpoints = 0;
     size_t changedPieces = 0;   ///< pieces handed to the engine, the first frame's included
+    size_t changedRamPieces = 0;   ///< of which machine RAM (region 0)
 };
 
 /// Machine RAM of v1 checkpoint @p index, decoded: @p ram gets pieces × 4 KB,
@@ -38,7 +39,13 @@ struct FeedStats
 bool DecodeV1Ram(const TimeTravelManager& v1, size_t index, std::vector<uint8_t>& ram,
                  std::vector<uint8_t>& present, std::string& error);
 
-/// Start a session on @p engine with machine RAM as region 0 and feed it every
+/// Split a v1 General Sound blob (registers + RAM) as the engine stores it:
+/// @p fixedState gets the registers, @p ram the card RAM. False when the
+/// checkpoint has no General Sound blob
+bool SplitV1GeneralSound(const std::vector<uint8_t>& blob, std::vector<uint8_t>& fixedState, std::vector<uint8_t>& ram);
+
+/// Start a session on @p engine with machine RAM as region 0 (and the General
+/// Sound RAM as region 1 when the session has that card) and feed it every
 /// checkpoint of the session loaded into @p v1. @p blockPieces sets the
 /// reference-table block size (0 = the engine's default for the region size)
 bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::string& error,

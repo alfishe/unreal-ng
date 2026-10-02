@@ -19,7 +19,9 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/engine/ttdregiontracker.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
@@ -226,6 +228,52 @@ TEST(TimeTravelManagerMoonSound_ShadowRegions_Test, WaveRamIsRecordedAndRestored
     for (size_t i = 1; i < engine.CheckpointCount(); ++i)
         quiet += engine.Checkpoint(i)->regions[static_cast<size_t>(region)].changeCount == 0 ? 1 : 0;
     EXPECT_GE(quiet, engine.CheckpointCount() - 3);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(TimeTravelManagerGeneralSound_ShadowRegions_Test, CardRamIsARegion_RegistersStayInTheBlob)
+{
+    SoundCardScope cards{TestSound::GeneralSound};
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* v1 = context->pTimeTravelManager;
+
+    ttd::TimeTravelEngine engine;
+    v1->SetShadowEngine(&engine);
+    ASSERT_TRUE(v1->StartRecording());
+    emulator->RunNFrames(80, /*skipBreakpoints=*/true);
+    v1->StopRecording();
+    v1->SetShadowEngine(nullptr);
+
+    int region = -1;
+    for (size_t i = 0; i < engine.Regions().size(); ++i)
+        if (engine.Regions()[i].name == "gs.ram")
+            region = static_cast<int>(i);
+    ASSERT_GT(region, 0);
+    ASSERT_EQ(engine.CheckpointCount(), v1->GetCheckpointCount());
+
+    constexpr uint8_t gsId = static_cast<uint8_t>(ttd::PeripheralId::GeneralSound);
+    std::vector<uint8_t> fixed, ram, engineRam;
+    size_t engineBlobBytes = 0, v1BlobBytes = 0;
+    for (size_t i = 0; i < engine.CheckpointCount(); ++i)
+    {
+        const ttd::TTDCheckpoint* want = v1->GetCheckpoint(i);
+        const ttd::TTDEngineCheckpoint* got = engine.Checkpoint(i);
+        ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(want->peripheralBlobs.at(gsId), fixed, ram));
+        EXPECT_EQ(ttd::TTDPeripheralRegistry::DecodeBlob(gsId, got->deviceBlobs.at(gsId)), fixed) << "registers, checkpoint " << i;
+        engineRam.assign(ram.size(), 0);
+        ASSERT_TRUE(engine.RestoreRegion(i, static_cast<uint32_t>(region), engineRam.data()).Ok());
+        ASSERT_TRUE(engineRam == ram) << "card RAM, checkpoint " << i;
+        engineBlobBytes += got->deviceBlobs.at(gsId).size();
+        v1BlobBytes += want->peripheralBlobs.at(gsId).size();
+    }
+    EXPECT_LT(engineBlobBytes * 4, v1BlobBytes) << "the engine's blob carries the registers, not the RAM";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

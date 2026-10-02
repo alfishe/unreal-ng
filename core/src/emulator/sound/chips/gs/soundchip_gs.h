@@ -16,6 +16,7 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
@@ -48,7 +49,7 @@ class EmulatorContext;
 /// (Covox pattern). Channel mixing follows Unreal Speccy: channels 1,2 -> L,
 /// 3,4 -> R with 50% cross-feed and the gs_vfx volume curve rebuilt from
 /// config gs_vol.
-class SoundChip_GeneralSound : public GeneralSoundCard
+class SoundChip_GeneralSound : public GeneralSoundCard, public ttd::ITTDRegionSource
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -234,6 +235,12 @@ public:
     /// Fixed part of the TTD blob (everything except the RAM image)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
 
+    /// Time-travel engine region (Phase 1, Step 6): the card RAM (128-512 KB);
+    /// the engine's blob is the fixed state only
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override { _ramTrackerArmed = on ? &_ramTracker : nullptr; }
+    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+
 private:
     // Shared catch-up loop and module replay drive the card through the
     // private hooks below (gscardrunner.h, gsmodulereplay.h)
@@ -306,6 +313,8 @@ private:
     Z80CPU* _cpu = nullptr;
     std::vector<uint8_t> _rom;   // 32 KB firmware
     std::vector<uint8_t> _ram;   // 128-512 KB (stock 128 KB unless expanded via ctor)
+    ttd::TTDRegionTracker _ramTracker;
+    ttd::TTDRegionTracker* _ramTrackerArmed = nullptr;   // set while the engine records
     bool _romLoaded = false;
 
     // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1))

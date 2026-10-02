@@ -1,9 +1,12 @@
 #include "ttdv1feeder.h"
 
 #include <cstring>
+#include <unordered_map>
 
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
 
 namespace ttd::bench
 {
@@ -49,6 +52,18 @@ bool DecodeChangedSlots(const TimeTravelManager& v1, const TTDCheckpoint& cp, co
 
 }  // namespace
 
+bool SplitV1GeneralSound(const std::vector<uint8_t>& blob, std::vector<uint8_t>& fixedState, std::vector<uint8_t>& ram)
+{
+    constexpr uint8_t id = static_cast<uint8_t>(PeripheralId::GeneralSound);
+    const std::vector<uint8_t> state = TTDPeripheralRegistry::DecodeBlob(id, blob);
+    constexpr size_t fixed = SoundChip_GeneralSound::TTD_FIXED_STATE_SIZE;
+    if (state.size() <= fixed)
+        return false;
+    fixedState.assign(state.begin(), state.begin() + fixed);
+    ram.assign(state.begin() + fixed, state.end());
+    return true;
+}
+
 bool DecodeV1Ram(const TimeTravelManager& v1, size_t index, std::vector<uint8_t>& ram, std::vector<uint8_t>& present,
                  std::string& error)
 {
@@ -85,7 +100,27 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
     ram.bytes = pieces * kTTDPieceSize;
     ram.dirtyGranularity = kTTDPieceSize * kSubPagesPerPage;
     ram.blockPieces = blockPieces;
-    if (!engine.BeginSession({ram}, error))
+    std::vector<TTDRegionDesc> regions = {ram};
+
+    // The General Sound RAM, which v1 keeps inside the card's blob, is region 1
+    constexpr uint8_t gsId = static_cast<uint8_t>(PeripheralId::GeneralSound);
+    std::vector<uint8_t> gsFixed;
+    std::vector<uint8_t> gsRam;
+    std::vector<uint8_t> gsPrev;
+    const auto gsBlob0 = first->peripheralBlobs.find(gsId);
+    const bool hasGs = gsBlob0 != first->peripheralBlobs.end() && SplitV1GeneralSound(gsBlob0->second, gsFixed, gsRam) &&
+                       gsRam.size() % kTTDPieceSize == 0;
+    if (hasGs)
+    {
+        TTDRegionDesc gs;
+        gs.id = TTDRegionId::GeneralSoundRam;
+        gs.name = "gs.ram";
+        gs.ownerType = gsId;
+        gs.pieces = static_cast<uint32_t>(gsRam.size() / kTTDPieceSize);
+        gs.bytes = static_cast<uint32_t>(gsRam.size());
+        regions.push_back(gs);
+    }
+    if (!engine.BeginSession(regions, error))
         return false;
 
     std::vector<uint8_t> image(size_t(pieces) * kTTDPieceSize, 0);
@@ -119,6 +154,26 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
         in.cpu = cp->cpu;
         in.chipset = cp->chipset;
         in.deviceBlobs = &cp->peripheralBlobs;
+
+        // General Sound: the blob without its RAM, the RAM as changed pieces of region 1
+        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        if (hasGs)
+        {
+            const auto it = cp->peripheralBlobs.find(gsId);
+            if (it == cp->peripheralBlobs.end() || !SplitV1GeneralSound(it->second, gsFixed, gsRam) ||
+                gsRam.size() != size_t(regions[1].pieces) * kTTDPieceSize)
+            {
+                error = "v1 checkpoint " + std::to_string(i) + " has no usable General Sound blob";
+                return false;
+            }
+            blobs = cp->peripheralBlobs;
+            blobs[gsId] = TTDPeripheralRegistry::EncodeBlob(gsId, gsFixed.data(), gsFixed.size());
+            in.deviceBlobs = &blobs;
+            for (uint32_t p = 0; p < regions[1].pieces; ++p)
+                if (gsPrev.empty() || std::memcmp(gsRam.data() + size_t(p) * kTTDPieceSize,
+                                                  gsPrev.data() + size_t(p) * kTTDPieceSize, kTTDPieceSize) != 0)
+                    in.changed.push_back({1, p, gsRam.data() + size_t(p) * kTTDPieceSize});
+        }
         for (const uint32_t p : decoded)
         {
             const uint8_t* now = image.data() + size_t(p) * kTTDPieceSize;
@@ -128,9 +183,13 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
             in.changed.push_back({0, p, now});
         }
         local.changedPieces += in.changed.size();
+        for (const TTDChangedPiece& c : in.changed)
+            local.changedRamPieces += c.region == 0 ? 1 : 0;
 
         if (!engine.CaptureFrame(in, error))
             return false;
+        if (hasGs)
+            gsPrev = gsRam;
         prevSlots.swap(slots);
         local.checkpoints++;
     }

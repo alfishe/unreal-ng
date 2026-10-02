@@ -3252,6 +3252,23 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     in.cpu = out.cpu;
     in.chipset = out.chipset;
     in.deviceBlobs = &out.peripheralBlobs;
+
+    // A device whose blob also carries its region memory (General Sound)
+    // gives the engine its state without that memory
+    std::unordered_map<uint8_t, std::vector<uint8_t>> engineBlobs;
+    std::vector<uint8_t> stripped;
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+    {
+        uint8_t id = 0;
+        if (!source->TTDStateWithoutRegions(id, stripped) || !out.peripheralBlobs.count(id))
+            continue;
+        if (in.deviceBlobs != &engineBlobs)
+        {
+            engineBlobs = out.peripheralBlobs;
+            in.deviceBlobs = &engineBlobs;
+        }
+        engineBlobs[id] = TTDPeripheralRegistry::EncodeBlob(id, stripped.data(), stripped.size());
+    }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);
         if (!bytes)

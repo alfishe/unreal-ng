@@ -27,7 +27,8 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 - [ ] Step 6 — Device memory as regions, large memories first (`ITTDRegionSource`, `TTDRegionTracker`; registered next to the device's serializer, fed by shadow mode):
   - [x] NeoGS RAM (2–4 MB) and flash (512 KB): marks in `NeoGSMemory::write` / `poke` / `powerOn` and in the flash chip's program / erase / load; A/B `BM_HostFrame_NeoGS_*` within noise (−0.6…+0.7%)
   - [x] MoonSound wave RAM (up to 1 MiB): taken from the wave memory's own dirty bitmap before each capture, no new hook
-  - [ ] General Sound RAM and the lightweight player's upload store (the engine's GS blob without the RAM)
+  - [x] General Sound RAM (128–512 KB): marks in `writeMem` and on a state load; the engine's GS blob holds the 95-byte registers only (`TTDStateWithoutRegions`), the v1 feeder splits v1's GS blob the same way. GS 512 upload, bytes per frame (memory pieces + device state): v1 2,304 → engine 1,624; capture p50 293 → 20 µs
+  - [ ] The lightweight GS player's upload store
   - [ ] Sprinter video RAM and fast RAM, VDAC2 graphics memory (restored through the device)
   - [ ] ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model

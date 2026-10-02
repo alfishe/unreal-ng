@@ -124,6 +124,11 @@ public:
     /// tests and offline tools need to read one without a live registry.
     static std::vector<uint8_t> DecodeBlob(uint8_t expectedId, const std::vector<uint8_t>& blob);
 
+    /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
+    /// payload when that actually makes it smaller (also used by the
+    /// time-travel engine for a device state without its region memory)
+    static std::vector<uint8_t> EncodeBlob(uint8_t id, const uint8_t* state, size_t size);
+
     /// Compute combined hash contribution from all registered peripherals.
     /// The framework mixes this with the common chipset hash for divergence
     /// detection, so model-specific state participates without the framework
@@ -138,9 +143,6 @@ private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
     std::vector<ITTDRegionSource*> _regionSources;
 
-    /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
-    /// payload when that actually makes it smaller.
-    static std::vector<uint8_t> EncodeBlob(uint8_t id, const uint8_t* state, size_t size);
 
 
 };

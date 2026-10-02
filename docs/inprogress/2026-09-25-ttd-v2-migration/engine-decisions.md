@@ -105,6 +105,8 @@ Fixed as part of this change, without further discussion:
 
 **Fixed ratios by design are not regressions.** Where the ratio between v1 and the engine is fixed by how the two are built, not by a phase's work, the rule does not apply to it. Each such case is listed here with the stream, the ratio and the reason, and every other difference falls under the rule. Known so far:
 - the engine's fixed header (region table, session metadata) on very short recordings: compared in bytes per minute of recording, the header allowed once;
+- memory v1 does not record at all (MoonSound wave RAM, NeoGS RAM and flash, the EEPROMs): the engine stores more history there, so the stream is compared only where v1 has it (measured: MoonSound upload, memory pieces +8% with the wave RAM included);
+- device memory moves between streams: v1 keeps the General Sound RAM inside the device blob, the engine as region pieces, so the two streams are compared as their sum (GS 512 upload: 2,304 → 1,624 bytes per frame); the memory-restore time likewise includes card RAM for the engine and not for v1, so seek time is compared on whole seeks;
 - before Phase 1, Step 5 (restore only the pieces that differ), seeks decode chains of up to K links where v1 decodes up to 49 from a key frame: only the PR-5 limit applies to seek time until then.
 
 Sizes and counted work run in the CI gate; times in a manual run of the matrix, as the benchmark rules already require.
