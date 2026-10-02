@@ -38,7 +38,7 @@ that the emulator works out of the box, on the following basis:
   (Tolik-Trek `Sprinter-BIOS` publishes sources only, no releases); take them from the MAME `sprinter` ROM set.
 * **Community Sprinter BIOS builds** (`sprinter/sp2k-3.06-hf2.rom`, `sprinter/sp2k-3.07-beta1.rom`): built here from
   the sources of Anatoly Belyansky (Tolik-Trek), https://zxgit.org/Tolik-Trek/Sprinter-BIOS (no license file;
-  treated as MIT per the project rule for unlicensed sources), with `tools/sprinter/make-bios.py` and sjasmplus
+  treated as MIT per the project rule for unlicensed sources), with `tools/machines/sprinter/bios-build/make-bios.py` and sjasmplus
   1.21.1. 262 144 bytes each, the 1K30 board image. Pages: 0 ROM + SETUP, 1 logo, 2-4 the ZX ROMs (128, 48,
   TR-DOS), 5-7 and 9-11 the recovery ROM disk (DSS), 8 the BIOS, `#C`-`#F` loader + bitstream.
   * `sp2k-3.06-hf2.rom`: "Firmware v3.06 Hotfix 2", Release 19.01.2026, branch `master` commit `c14a8c5`, build

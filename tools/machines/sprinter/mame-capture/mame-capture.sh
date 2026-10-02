@@ -9,7 +9,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-ROOT=$(cd "$HERE/../../.." && pwd)
+ROOT=$(cd "$HERE/../../../.." && pwd)
 MODE=${1:?usage: mame-capture.sh boot|loader|sync|palette [VAR=value ...]}
 shift
 

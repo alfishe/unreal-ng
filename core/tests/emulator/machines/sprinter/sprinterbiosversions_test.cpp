@@ -172,7 +172,7 @@ struct SprinterBiosImage
 
 // The kept community builds (data/rom/README-ROMS.md). The bitstream hashes are new to the
 // configuration registry: the machine runs them on Standard (bios-versions.md §4). The page #40
-// CRCs equal tools/sprinter/dcp-table.py --records over each build's own bios/exp/DCP.ASM
+// CRCs equal tools/machines/sprinter/dcp-table/dcp-table.py --records over each build's own bios/exp/DCP.ASM
 static const SprinterBiosImage kBiosImages[] = {
     { "Bios306Hotfix2", "sp2k-3.06-hf2.rom", "Firmware v3.06 Hotfix 2", 0xF9F42E59, 0xB77BDEA9 },
     { "Bios307Beta1", "sp2k-3.07-beta1.rom", "Firmware v3.07 BETA 1", 0x29641AB3, 0x8E1916C5 },

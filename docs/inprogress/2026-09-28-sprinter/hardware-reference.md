@@ -246,7 +246,7 @@ the WD1793 without DOS_ON", INC `SP2000.inc:239`, `:1315`).
 a packed copy from ROM page 8 `#1400` (writer `DcpInit` at page 8 `#0CA1`, see
 [docs/disasm/rom/sprinter/exp/README.md](../../disasm/rom/sprinter/exp/README.md)), then makes map 3
 four copies of map 0's first KB (the "DOS on, PN5 = 0" quarter). The tool
-[`tools/sprinter/dcp-table.py`](../../../tools/sprinter/dcp-table.py) unpacks it the same way and
+[`tools/machines/sprinter/dcp-table/dcp-table.py`](../../../tools/machines/sprinter/dcp-table/dcp-table.py) unpacks it the same way and
 prints or compares tables (`--rom`, `--page`, `--records`). Results:
 
 - The 3.04 table equals **byte for byte** `src/bios/old_files/DCP_PAGE.bin` of BIOS-TT `0271ac3`

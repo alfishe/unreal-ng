@@ -90,7 +90,7 @@ matching code at `#3FD0-#3FFF`. Worked example, a call to function `#55`: page 8
 ## The port table
 
 The BIOS writes the 16 KB port table (hardware-reference §4) from a packed copy at page 8 `#1400`.
-[`tools/sprinter/dcp-table.py`](../../../../tools/sprinter/dcp-table.py) unpacks it the same way and
+[`tools/machines/sprinter/dcp-table/dcp-table.py`](../../../../tools/machines/sprinter/dcp-table/dcp-table.py) unpacks it the same way and
 prints it; the comparison with the design's table is in
 [hardware-reference.md §4.4](../../../inprogress/2026-09-28-sprinter/hardware-reference.md).
 

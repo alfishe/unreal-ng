@@ -62,7 +62,7 @@ ROM::ROM(EmulatorContext* context)
     _signatures.insert({ "829b2439ae2245abdfa2ccf8acdd10b834e5592918fab34416f7fe0f91498caa", "Sprinter BIOS 3.04 page 8 (ZXMAK2 variant)" });          // 16Kb
     _signatures.insert({ "bad3cfd31990ad8d55cda29d6b2ff0a32185832ec5042043fcf15d83127796c4", "Sprinter BIOS 3.04 page 12 (PLD loader, bitstream)" });  // 16Kb
 
-    // Community Sprinter BIOS builds (Tolik-Trek Sprinter-BIOS sources, built with tools/sprinter/make-bios.py):
+    // Community Sprinter BIOS builds (Tolik-Trek Sprinter-BIOS sources, built with tools/machines/sprinter/bios-build/make-bios.py):
     // 3.06 Hotfix 2 (data/rom/sprinter/sp2k-3.06-hf2.rom, commit c14a8c5) and 3.07 BETA 1
     // (sp2k-3.07-beta1.rom, commit f546c4e). Pages 2-4 hold the ZX ROMs, 5-7 and 9-11 the recovery ROM
     // disk. See docs/inprogress/2026-09-28-sprinter/bios-versions.md

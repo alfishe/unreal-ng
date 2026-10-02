@@ -11,14 +11,14 @@ Made 2026-10-01.
 - **Machine:** stock settings, no media, no PC keyboard (`-kbd ""`: MAME's default Microsoft Natural
   keyboard needs `natural.bin`, which unreal-ng does not have), a fresh CMOS each run (MAME's default
   contents, so the BIOS reports "CMOS checksum error, install default values").
-- **Scripts:** [tools/verification/sprinter/mame-capture.sh](../../../../tools/verification/sprinter/mame-capture.sh)
+- **Scripts:** [tools/machines/sprinter/mame-capture/mame-capture.sh](../../../../tools/machines/sprinter/mame-capture/mame-capture.sh)
   runs MAME headless with
-  [mame-capture.lua](../../../../tools/verification/sprinter/mame-capture.lua) as `-autoboot_script`.
+  [mame-capture.lua](../../../../tools/machines/sprinter/mame-capture/mame-capture.lua) as `-autoboot_script`.
 
 ## How to make them again
 
 ```
-cd tools/verification/sprinter
+cd tools/machines/sprinter/mame-capture
 export MAME_BIN=<path to the zxsp binary> SPC_OUT=../../../testdata/machines/sprinter/reference
 ./mame-capture.sh boot SPC_END=520 SPC_SNAP_AT=60:logo,507:boot-screen SPC_DUMP_AT=507
 ./mame-capture.sh loader SPC_END=600
@@ -27,7 +27,7 @@ export MAME_BIN=<path to the zxsp binary> SPC_OUT=../../../testdata/machines/spr
 ```
 
 The floppy run (S3a, 2026-10-01; `SPC_FLOP2` puts the image into drive B, a 3.5" HD drive):
-`./mame-capture.sh boot SPC_FLOP2=../../../testdata/machines/sprinter/dss_1_62_92.img SPC_CODES=10-17 SPC_PORTS=3000000 SPC_END=2500`,
+`./mame-capture.sh boot SPC_FLOP2=../../../../testdata/machines/sprinter/dss_1_62_92.img SPC_CODES=10-17 SPC_PORTS=3000000 SPC_END=2500`,
 then the rows with code `#15` removed (245 765 polls of port `#FF`) give `fdc-probe.csv`.
 
 The boot mode can also trace one range of internal codes over the whole boot instead of the first
@@ -35,7 +35,7 @@ The boot mode can also trace one range of internal codes over the whole boot ins
 `./mame-capture.sh boot SPC_END=520 SPC_PORTS=200000 SPC_CODES=20-29 SPC_PORTS_FILE=ide.csv`
 (not checked in; the result is summarized in hardware-reference §9.1).
 
-The script builds a rompath under `tools/verification/sprinter/build/` (git-ignored) with the coemu
+The script builds a rompath under `tools/machines/sprinter/mame-capture/build/` (git-ignored) with the coemu
 `romset.py`, and runs
 
 ```
@@ -72,7 +72,7 @@ configuration shortcut ends; the script only works in its first run (power-on, t
 
 ### `page40.bin`: the port table after POST
 
-CRC32 `b7f09600`: **byte for byte the table `tools/sprinter/dcp-table.py --rom` unpacks statically
+CRC32 `b7f09600`: **byte for byte the table `tools/machines/sprinter/dcp-table/dcp-table.py --rom` unpacks statically
 from the ROM** (`--compare-page`: 0 bytes differ). The table is the same at the first port read that
 opens the decoder (0.677 s) and at the boot screen (10.383 s): with no media and no SETUP, nothing
 calls `DCP_CONFIG` (`#F4`) or patches the table (SETUP's `ApplyScreenPosition`). CNF = `#05` (map 0),

@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-02 |
 | **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested |
-| **Related** | [materials.md](materials.md) §5 (ROM provisioning), [tdd-integration.md](tdd-integration.md) §1.1 (`[ROM] SPRINTER=`), `tools/sprinter/make-bios.py`, `tools/sprinter/dcp-table.py` |
+| **Related** | [materials.md](materials.md) §5 (ROM provisioning), [tdd-integration.md](tdd-integration.md) §1.1 (`[ROM] SPRINTER=`), `tools/machines/sprinter/bios-build/make-bios.py`, `tools/machines/sprinter/dcp-table/dcp-table.py` |
 
 **In short.** Peters Plus stopped at BIOS 3.04 (2003). The BIOS is alive again as a community
 project by Anatoly Belyansky (Tolik-Trek): 3.05 (2022), 3.06 (25.06.2025), 3.06 Hotfix 1 and
@@ -12,7 +12,7 @@ Hotfix 2 (19.01.2026, on `master` since 2026-05-01) and the 3.07 beta (last comm
 **No binary of 3.05 or later is published anywhere** (no releases, no tags, no forum posts, no
 mirrors); the project publishes sources only. MAME lists 3.05 and 3.06 by CRC but does not say
 where the images came from. So the community versions are **built here from source**
-(`tools/sprinter/make-bios.py`). Every image tried boots on unreal-ng to the BIOS boot prompt,
+(`tools/machines/sprinter/bios-build/make-bios.py`). Every image tried boots on unreal-ng to the BIOS boot prompt,
 with the fast start and with the full start through the image's own PLD loader.
 
 ## 1. The table
@@ -49,7 +49,7 @@ SHA-256 of the kept images:
 The per-page SHA-256 of pages 0, 8 and 12 are in the ROM signature catalog
 (`core/src/emulator/memory/rom.cpp`).
 
-The port-table CRCs of the community builds are not only measured: `tools/sprinter/dcp-table.py
+The port-table CRCs of the community builds are not only measured: `tools/machines/sprinter/dcp-table/dcp-table.py
 --records <commit>:bios/exp/DCP.ASM --constants <Shared_Includes>:constants/SP2000.inc` expands
 each build's own record list to the same CRC, so the BIOS builds its table on unreal-ng exactly as
 its source says.
@@ -86,7 +86,7 @@ built and kept here; the emulator models the 1K30 board.
 ### 3.2 Community builds (3.06 and later): build from source
 
 ```bash
-python3 tools/sprinter/make-bios.py \
+python3 tools/machines/sprinter/bios-build/make-bios.py \
     --repo <clone of https://zxgit.org/Tolik-Trek/Sprinter-BIOS> \
     --includes <clone of https://zxgit.org/Tolik-Trek/Shared_Includes> \
     --commit c14a8c5 --sjasmplus <sjasmplus 1.21.1> \
