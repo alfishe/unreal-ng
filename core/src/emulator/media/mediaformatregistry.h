@@ -4,7 +4,9 @@
 /// @brief The one place that knows formats (technical design §4): probes a
 /// source for a slot kind and builds the medium, access layer included.
 /// Block media: raw images, HDF / HDI / fixed VHD / CHD (IDE, SD), and host folders as
-/// FAT16 / FAT32 volumes (M1). Optical media: ISO 9660 images (CD drives).
+/// FAT16 / FAT32 volumes (M1). Optical media (CD drives): ISO 9660, CUE/BIN, raw BIN and
+/// CD CHD images (CdImageFormats), and host folders of MP3 / FLAC / WAV files built into
+/// an audio CD (AudioFolderDisc, format "audio-cd").
 /// Floppies: every disk image format (FloppyFormats), and host folders built
 /// into a TR-DOS disk (M2). Tapes: every TapeLoaderRegistry format, and host
 /// folders built into a TZX (M3).

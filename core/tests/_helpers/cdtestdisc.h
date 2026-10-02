@@ -12,6 +12,7 @@
 ///   ramp B: left = 1000 + n * 32, right = n * 48
 
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -147,28 +148,133 @@ namespace cdtest
         return Utf8(folder / "disc.cue");
     }
 
-    /// A data track and `tracks` audio tracks of `seconds` each (tones of rising pitch,
-    /// a 2-second pregap stored before every audio track), one BIN. For the playback
-    /// and real-software tests. Returns the CUE sheet's path
-    inline std::string WriteMusicDisc(const std::filesystem::path& folder, int tracks, uint32_t seconds, uint32_t dataFrames = 300)
+    /// `frames` mode 2 form 1 frames from LBA `first` (whole frames, XA subheader "data")
+    inline std::string Mode2Frames(uint32_t first, uint32_t frames)
     {
-        std::string bin = DataFrames(0, dataFrames, true);
-        std::string cue = "FILE \"music.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n";
-        uint32_t frame = dataFrames;
-        for (int t = 0; t < tracks; t++)
+        std::string out;
+        for (uint32_t i = 0; i < frames; i++)
         {
-            char line[128];
-            const auto msf = [](uint32_t f) {
-                char text[16];
-                std::snprintf(text, sizeof(text), "%02u:%02u:%02u", f / 4500, (f / 75) % 60, f % 75);
-                return std::string(text);
-            };
-            std::snprintf(line, sizeof(line), "  TRACK %02d AUDIO\n    INDEX 00 %s\n    INDEX 01 %s\n", t + 2, msf(frame).c_str(),
-                          msf(frame + 150).c_str());
+            const std::vector<uint8_t> user = UserData(first + i);
+            uint8_t frame[kFrame];
+            cd::BuildMode2Form1Frame(frame, first + i, user.data());
+            out.append(reinterpret_cast<const char*>(frame), kFrame);
+        }
+        return out;
+    }
+
+    enum class MusicLayout
+    {
+        /// Enhanced CD / CD-Extra (Blue Book): session 1 audio tracks 1..N, session 2 one mode 2
+        /// data track N+1 (REM SESSION; the 11250-frame lead-out + lead-in is not in the BIN)
+        Enhanced,
+        /// Mixed mode: data track 1 (mode 1), audio tracks 2..N+1, one session
+        Mixed,
+    };
+
+    /// Where a music disc's tracks land (LBAs), for the tests' expectations
+    struct MusicDiscLayout
+    {
+        std::vector<uint32_t> audioStart;  ///< INDEX 01 of each audio track
+        uint32_t audioLeadOut = 0;         ///< the end of the last audio track (session 1's lead-out on an Enhanced CD)
+        uint32_t dataPregap = 0;
+        uint32_t dataStart = 0;
+        uint32_t leadOut = 0;
+        uint8_t firstAudioTrack = 1;
+        uint8_t dataTrack = 0;
+    };
+
+    inline MusicDiscLayout MusicLayoutOf(int tracks, uint32_t seconds, uint32_t dataFrames, MusicLayout layout)
+    {
+        MusicDiscLayout l;
+        const uint32_t audio = seconds * 75;
+        if (layout == MusicLayout::Enhanced)
+        {
+            uint32_t lba = 0;
+            for (int t = 0; t < tracks; t++)
+            {
+                lba += t ? 150 : 0;
+                l.audioStart.push_back(lba);
+                lba += audio;
+            }
+            l.audioLeadOut = lba;
+            l.dataPregap = lba + cd::kFirstLeadOutFrames + cd::kLeadInAreaFrames;
+            l.dataStart = l.dataPregap + 150;
+            l.leadOut = l.dataStart + dataFrames;
+            l.firstAudioTrack = 1;
+            l.dataTrack = static_cast<uint8_t>(tracks + 1);
+        }
+        else
+        {
+            uint32_t lba = dataFrames;
+            for (int t = 0; t < tracks; t++)
+            {
+                l.audioStart.push_back(lba + 150);
+                lba += 150 + audio;
+            }
+            l.audioLeadOut = l.leadOut = lba;
+            l.dataStart = l.dataPregap = 0;
+            l.firstAudioTrack = 2;
+            l.dataTrack = 1;
+        }
+        return l;
+    }
+
+    /// `tracks` audio tracks of `seconds` each (tones of rising pitch: track k plays 330 * k Hz,
+    /// a 2-second pregap stored before every audio track but the disc's first) and a data track
+    /// of `dataFrames` frames, one BIN, in `layout` (the same as tools/cd/make-audio-disc.py).
+    /// For the playback and real-software tests. Returns the CUE sheet's path
+    inline std::string WriteMusicDisc(const std::filesystem::path& folder, int tracks, uint32_t seconds, uint32_t dataFrames = 300,
+                                      MusicLayout layout = MusicLayout::Enhanced)
+    {
+        const auto msf = [](uint32_t f) {
+            char text[16];
+            std::snprintf(text, sizeof(text), "%02u:%02u:%02u", f / 4500, (f / 75) % 60, f % 75);
+            return std::string(text);
+        };
+        std::string bin;
+        std::string cue;
+        char line[160];
+        if (layout == MusicLayout::Enhanced)
+        {
+            const MusicDiscLayout l = MusicLayoutOf(tracks, seconds, dataFrames, layout);
+            cue = "REM SESSION 01\nFILE \"music.bin\" BINARY\n";
+            uint32_t frame = 0;
+            for (int t = 0; t < tracks; t++)
+            {
+                if (t)
+                {
+                    std::snprintf(line, sizeof(line), "  TRACK %02d AUDIO\n    INDEX 00 %s\n    INDEX 01 %s\n", t + 1, msf(frame).c_str(),
+                                  msf(frame + 150).c_str());
+                    bin += std::string(150 * kFrame, '\0');
+                    frame += 150;
+                }
+                else
+                {
+                    std::snprintf(line, sizeof(line), "  TRACK %02d AUDIO\n    INDEX 01 %s\n", t + 1, msf(frame).c_str());
+                }
+                cue += line;
+                bin += TonePcm(seconds * 75, 330.0 * (t + 1));
+                frame += seconds * 75;
+            }
+            std::snprintf(line, sizeof(line), "REM SESSION 02\n  TRACK %02d MODE2/2352\n    INDEX 00 %s\n    INDEX 01 %s\n", tracks + 1,
+                          msf(frame).c_str(), msf(frame + 150).c_str());
             cue += line;
-            bin += std::string(150 * kFrame, '\0');
-            bin += TonePcm(seconds * 75, 330.0 * (t + 1));
-            frame += 150 + seconds * 75;
+            bin += Mode2Frames(l.dataPregap, 150 + dataFrames);
+        }
+        else
+        {
+            bin = DataFrames(0, dataFrames, true);
+            cue = "FILE \"music.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n";
+            uint32_t frame = dataFrames;
+            for (int t = 0; t < tracks; t++)
+            {
+                std::snprintf(line, sizeof(line), "  TRACK %02d AUDIO\n    INDEX 00 %s\n    INDEX 01 %s\n", t + 2, msf(frame).c_str(),
+                              msf(frame + 150).c_str());
+                cue += line;
+                bin += std::string(150 * kFrame, '\0');
+                bin += TonePcm(seconds * 75, 330.0 * (t + 1));
+                frame += 150 + seconds * 75;
+            }
         }
         WriteFile(folder / "music.bin", bin);
         WriteFile(folder / "music.cue", cue);

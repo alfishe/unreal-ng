@@ -3,10 +3,12 @@
 #include "mediacontrol.h"
 
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/hddimageformats.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <limits>
 #include <set>
 
@@ -429,6 +431,37 @@ StateNode MediaControl::SlotValue(const SlotInfo& info)
     return slot;
 }
 
+/// A CD's sessions and tracks (an audio CD built from a folder: the file of each track)
+static StateNode DiscValue(const CdImage& disc)
+{
+    auto msf = [](cd::Msf m) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "%02u:%02u:%02u", static_cast<unsigned>(m.m), static_cast<unsigned>(m.s), static_cast<unsigned>(m.f));
+        return std::string(text);
+    };
+    StateNode d = StateNode::Object();
+    d["format"] = disc.Format();
+    d["sessions"] = int(disc.SessionCount());
+    d["lead_out_lba"] = static_cast<unsigned>(disc.LeadOutLba());
+    StateNode tracks = StateNode::Array();
+    for (size_t i = 0; i < disc.TrackCount(); i++)
+    {
+        const cd::Track& t = disc.TrackAt(i);
+        StateNode track = StateNode::Object();
+        track["number"] = int(t.number);
+        track["session"] = int(t.session);
+        track["type"] = cd::TrackModeName(t.mode);
+        track["start_lba"] = static_cast<unsigned>(t.startLba);
+        track["start_msf"] = msf(cd::LbaToMsf(t.startLba));
+        track["length_msf"] = msf(cd::FramesToMsf(t.Frames()));
+        if (!disc.TrackTitle(i).empty())
+            track["title"] = disc.TrackTitle(i);
+        tracks.push(track);
+    }
+    d["tracks"] = tracks;
+    return d;
+}
+
 /// region <Verbs>
 
 MediaReply MediaControl::List()
@@ -457,7 +490,11 @@ MediaReply MediaControl::Info(const MediaRequest& request)
         reply.body["info"] = SlotValue(*info);
         reply.pending = info->pending;
         if (Medium* medium = _manager->GetMedium(reply.slot))
+        {
             reply.result.report = medium->Report();  // skipped folder entries, format notes
+            if (const CdImage* disc = medium->Cd(); disc && reply.body["info"]["medium"].isObject())
+                reply.body["info"]["medium"]["disc"] = DiscValue(*disc);
+        }
         return reply;
     }
     for (const SlotInfo& info : _manager->Detached())

@@ -592,7 +592,7 @@ types:
     seq:
       - id: version
         type: u1
-        doc: 1
+        doc: 2 (v1, without disc_identity, is not restored)
       - id: cd_units
         type: u1
         doc: bit n set - unit n is a CD drive
@@ -638,6 +638,11 @@ types:
       - id: stage
         size: 2816
         doc: the READ CD sector (with C2 and subchannel fields) still going to the 2048-byte data buffer
+      - id: disc_identity
+        type: u8
+        doc: |
+          v2: the inserted disc's ContentId (0 without a disc). A restore onto a disc with
+          another identity is reported (warning), not refused
 
   sprinter_pld_blob:
     doc: |

@@ -9,6 +9,7 @@
 #include "emulator/media/floppyformats.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/cd/audiofolderdisc.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
@@ -209,6 +210,31 @@ static MediaResult OpenTape(const OpenRequest& request, std::unique_ptr<Medium>&
     return result;
 }
 
+/// A folder of MP3 / FLAC / WAV files as an audio CD (AudioFolderDisc): decoded at mount,
+/// read-only. The insert's report lists the tracks and every file not taken, with the reason
+static MediaResult OpenAudioFolder(const OpenRequest& request, std::unique_ptr<Medium>& medium)
+{
+    const MediaSource& source = request.source;
+    if (!source.formatHint.empty() && source.formatHint != "audio-cd")
+        return MediaResult::Fail(MediaError::BadRequest,
+                                 "a folder goes into a CD drive as format audio-cd (a folder of MP3 / FLAC / WAV files), not '" + source.formatHint + "'");
+    AudioFolderDisc::Options options;
+    options.cancelRequested = request.cancelRequested;
+    options.onProgress = request.onProgress;
+    AudioFolderDisc::Result built;
+    std::string error;
+    std::unique_ptr<CdImage> disc = AudioFolderDisc::Build(source.path, built, &error, options);
+    if (!disc)
+        return MediaResult::Fail(error == "cancelled" ? MediaError::Cancelled : MediaError::UnknownFormat, error);
+    MediaSource resolved = source;
+    resolved.type = MediaSourceType::Folder;
+    CdImage* cd = disc.get();
+    medium = MediaFormatRegistry::WrapBlock(resolved, AccessMode::ReadOnly, "audio-cd", std::move(disc), MediaKind::Optical);
+    medium->SetCd(cd);
+    medium->Report() = built.Lines();  // the manager copies it into the insert's report
+    return MediaResult::Success();
+}
+
 /// A CD: an ISO 9660 image, a CUE sheet (BIN / WAVE files), a raw BIN or a
 /// CD-ROM CHD; always read-only. The disc (CdImage) is the base of the block
 /// stack and is also handed to the drive for its tracks and audio
@@ -216,7 +242,9 @@ static MediaResult OpenOptical(const OpenRequest& request, std::unique_ptr<Mediu
 {
     const MediaSource& source = request.source;
     if (source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path))
-        return MediaResult::Fail(MediaError::NotSupported, "a folder cannot be a CD yet: make an ISO of it");
+        return OpenAudioFolder(request, medium);
+    if (source.formatHint == "audio-cd")
+        return MediaResult::Fail(MediaError::BadRequest, "format audio-cd takes a folder of MP3 / FLAC / WAV files, not '" + source.path + "'");
     if (source.type == MediaSourceType::Blank)
         return MediaResult::Fail(MediaError::NotSupported, "there is no blank CD: the drive only reads");
     if (!FileHelper::FileExists(source.path))

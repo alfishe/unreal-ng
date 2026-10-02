@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +37,7 @@ namespace
         for (const StoredTrack& t : tracks)
         {
             const uint32_t values[] = {t.track.number, static_cast<uint32_t>(t.track.mode), t.track.pregapLba, t.track.startLba,
-                                       t.track.endLba, static_cast<uint32_t>(t.format), t.stride};
+                                       t.track.endLba, static_cast<uint32_t>(t.format), t.stride, t.track.session};
             h = Fnv(h, values, sizeof(values));
         }
         return h;
@@ -191,8 +192,11 @@ namespace
         int file = -1;
         int64_t index0 = -1;  ///< frames into the file
         int64_t index1 = -1;
-        uint32_t pregap = 0;  ///< PREGAP: silence not in the file
+        uint32_t pregap = 0;  ///< PREGAP (and a session's REM PREGAP): silence not in the file
         uint32_t postgap = 0;
+        uint8_t session = 1;  ///< REM SESSION
+        int64_t leadOut = -1; ///< REM LEAD-OUT after this track: its start in the file (one file) or its length (Redump, a file per track)
+        int64_t leadIn = -1;  ///< REM LEAD-IN before this track: its length
     };
 
     struct CueFile
@@ -302,6 +306,7 @@ namespace
         uint32_t pregap = 0;
         std::string pgtype;
         uint32_t postgap = 0;
+        uint8_t session = 1;  ///< from the CHSE entry before the track's (MAME writes one per session when there are several)
     };
 
     /// "TRACK:1 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:1000 PREGAP:0 PGTYPE:MODE1 PGSUB:RW POSTGAP:0"
@@ -487,6 +492,9 @@ namespace CdImageFormats
         std::istringstream in(text);
         std::string line;
         int lineNumber = 0;
+        uint8_t session = 1;
+        int64_t pendingLeadIn = -1;
+        uint32_t pendingSessionPregap = 0;
         while (std::getline(in, line))
         {
             lineNumber++;
@@ -542,6 +550,11 @@ namespace CdImageFormats
                 if (!TrackType(w[2], track))
                     return fail(lineNumber, "track type " + w[2] + " is not supported");
                 track.file = static_cast<int>(files.size()) - 1;
+                track.session = session;
+                track.leadIn = pendingLeadIn;
+                track.pregap = pendingSessionPregap;
+                pendingLeadIn = -1;
+                pendingSessionPregap = 0;
                 if (track.mode != TrackMode::Audio && files.back().type == CueFile::Type::Wave)
                     return fail(lineNumber, "a data track cannot be in a WAVE file");
                 tracks.push_back(track);
@@ -567,9 +580,49 @@ namespace CdImageFormats
                 uint32_t frames = 0;
                 if (!ParseTime(w[1], frames))
                     return fail(lineNumber, "bad time " + w[1]);
-                (key == "PREGAP" ? tracks.back().pregap : tracks.back().postgap) = frames;
+                if (key == "PREGAP")
+                    tracks.back().pregap += frames;
+                else
+                    tracks.back().postgap = frames;
             }
-            // CATALOG, CDTEXTFILE, FLAGS, ISRC, PERFORMER, REM, SONGWRITER, TITLE: nothing to lay out
+            else if (key == "REM" && w.size() >= 3)
+            {
+                // Multisession (IsoBuster / Redump / MAME): REM SESSION nn before a session's first track;
+                // REM LEAD-OUT, REM LEAD-IN and REM PREGAP describe the gap between two sessions
+                const std::string what = StringHelper::ToUpper(w[1]);
+                if (what == "SESSION")
+                {
+                    const int number = std::atoi(w[2].c_str());
+                    if (number < 1 || number > 99)
+                        return fail(lineNumber, "session number " + w[2] + " is out of range (1-99)");
+                    if (number != session && number != session + 1)
+                        return fail(lineNumber, "sessions must follow each other (session " + w[2] + " after " + std::to_string(session) + ")");
+                    if (number == session + 1 && (tracks.empty() || tracks.back().session != session))
+                        return fail(lineNumber, "session " + std::to_string(session) + " has no track");
+                    session = static_cast<uint8_t>(number);
+                }
+                else if (what == "LEAD-OUT" || what == "LEAD-IN" || what == "PREGAP")
+                {
+                    uint32_t frames = 0;
+                    if (!ParseTime(w[2], frames))
+                        return fail(lineNumber, "bad time " + w[2]);
+                    if (what == "LEAD-OUT")
+                    {
+                        if (tracks.empty())
+                            return fail(lineNumber, "REM LEAD-OUT before any track");
+                        tracks.back().leadOut = frames;
+                    }
+                    else if (what == "LEAD-IN")
+                    {
+                        pendingLeadIn = frames;
+                    }
+                    else
+                    {
+                        pendingSessionPregap = frames;
+                    }
+                }
+            }
+            // CATALOG, CDTEXTFILE, FLAGS, ISRC, PERFORMER, other REMs, SONGWRITER, TITLE: nothing to lay out
         }
 
         if (tracks.empty())
@@ -581,6 +634,8 @@ namespace CdImageFormats
             if (t.index0 > t.index1)
                 return fail(0, "track " + std::to_string(t.number) + ": INDEX 00 after INDEX 01");
         }
+        if (tracks.back().session != session)
+            return fail(0, "session " + std::to_string(session) + " has no track");
 
         // Lay the tracks out on the disc: positions in frames, LBA 0 = track 1's INDEX 01
         std::vector<StoredTrack> stored;
@@ -607,6 +662,29 @@ namespace CdImageFormats
             }
             if (first < fileFrame)
                 return fail(0, "track " + std::to_string(t.number) + " starts before the previous track in its file");
+
+            // A new session: the previous session's lead-out and this one's lead-in lie between
+            // the two tracks. With one file and REM LEAD-OUT (ImgBurn, IsoBuster) the file holds
+            // filler there: the gap is as long as the filler. Otherwise (a file per track as
+            // Redump writes, or one file without the filler) nothing of it is stored: the
+            // standard lengths unless REM LEAD-OUT / LEAD-IN give them
+            if (i > 0 && t.session != tracks[i - 1].session)
+            {
+                const CueTrack& previous = tracks[i - 1];
+                const int64_t previousFirst = previous.index0 >= 0 ? previous.index0 : previous.index1;
+                if (previous.file == t.file && previous.leadOut >= 0)
+                {
+                    if (previous.leadOut < previousFirst || previous.leadOut > first)
+                        return fail(0, "REM LEAD-OUT of track " + std::to_string(previous.number) + " is outside the track");
+                    disc += first - previous.leadOut;
+                }
+                else
+                {
+                    disc += previous.leadOut >= 0 ? previous.leadOut
+                                                  : (previous.session == 1 ? kFirstLeadOutFrames : kLaterLeadOutFrames);
+                    disc += t.leadIn >= 0 ? t.leadIn : kLeadInAreaFrames;
+                }
+            }
             // Bytes into the file of this track's first stored frame (the previous track's frames have its stride)
             const uint64_t byte = fileByte + static_cast<uint64_t>(first - fileFrame) * previousStride;
             fileByte = byte;
@@ -619,6 +697,8 @@ namespace CdImageFormats
             {
                 const CueTrack& next = tracks[i + 1];
                 storedFrames = (next.index0 >= 0 ? next.index0 : next.index1) - first;
+                if (next.session != t.session && t.leadOut >= 0)
+                    storedFrames = t.leadOut - first;  // the filler after the lead-out start is no track's
             }
             else
             {
@@ -636,6 +716,7 @@ namespace CdImageFormats
 
             StoredTrack s;
             s.track.number = t.number;
+            s.track.session = t.session;
             s.track.mode = t.mode;
             s.source = t.file;
             s.format = t.format;
@@ -693,30 +774,56 @@ namespace CdImageFormats
             return nullptr;
 
         std::vector<ChdTrackInfo> infos;
+        uint8_t session = 1;
         for (const chd::MetadataEntry& entry : file->Metadata())
         {
-            if (entry.tag != chd::MakeTag('C', 'H', 'T', '2') && entry.tag != chd::MakeTag('C', 'H', 'T', 'R'))
-                continue;
             std::string text(entry.data.begin(), entry.data.end());
             while (!text.empty() && text.back() == '\0')
                 text.pop_back();
+            if (entry.tag == chd::MakeTag('C', 'H', 'S', 'E'))
+            {
+                // "SESSION:2": the tracks after it belong to that session
+                unsigned number = 0;
+                if (std::sscanf(text.c_str(), "SESSION:%u", &number) != 1 || number < 1 || number > 99 || number < session)
+                {
+                    Fail(error, path + ": a broken session entry '" + text + "'");
+                    return nullptr;
+                }
+                session = static_cast<uint8_t>(number);
+                continue;
+            }
+            if (entry.tag != chd::MakeTag('C', 'H', 'T', '2') && entry.tag != chd::MakeTag('C', 'H', 'T', 'R'))
+                continue;
             infos.push_back(ParseChdTrack(text));
+            infos.back().session = session;
         }
         if (infos.empty())
         {
             Fail(error, path + ": no CD track metadata (CHT2 / CHTR)");
             return nullptr;
         }
-        std::sort(infos.begin(), infos.end(), [](const ChdTrackInfo& a, const ChdTrackInfo& b) { return a.number < b.number; });
+        std::stable_sort(infos.begin(), infos.end(), [](const ChdTrackInfo& a, const ChdTrackInfo& b) { return a.number < b.number; });
 
         // MAME's layout (cdrom.cpp): tracks padded to 4 frames in the CHD; a
         // pregap stored in the CHD (PGTYPE V...) is inside FRAMES
+        // A multisession CHD stores no lead-out / lead-in between its sessions (chdman keeps the
+        // tracks' frames only): the standard lengths are put back, as on the disc
         std::vector<StoredTrack> tracks;
         uint64_t chdFrame = 0;
         uint32_t lba = 0;
         for (const ChdTrackInfo& info : infos)
         {
+            if (!tracks.empty() && info.session != tracks.back().track.session)
+            {
+                if (info.session < tracks.back().track.session)
+                {
+                    Fail(error, path + ": track " + std::to_string(info.number) + " is in an earlier session than the track before");
+                    return nullptr;
+                }
+                lba += (tracks.back().track.session == 1 ? kFirstLeadOutFrames : kLaterLeadOutFrames) + kLeadInAreaFrames;
+            }
             StoredTrack s;
+            s.track.session = info.session;
             if (info.number < 1 || info.number > 99 || !ChdTrackType(info.type, s.track.mode, s.format))
             {
                 Fail(error, path + ": track " + std::to_string(info.number) + " type '" + info.type + "' is not supported");

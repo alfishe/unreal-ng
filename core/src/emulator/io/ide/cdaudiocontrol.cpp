@@ -2,6 +2,7 @@
 
 #include "cdaudiocontrol.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -175,13 +176,17 @@ StateNode CdAudioControl::DriveState(EmulatorContext* context, int unit)
         d["lead_out_lba"] = static_cast<unsigned>(disc->LeadOutLba());
         d["lead_out_msf"] = MsfText(cd::LbaToMsf(disc->LeadOutLba()));
         d["audio_tracks"] = disc->HasAudio();
+        d["sessions"] = int(disc->SessionCount());
         StateNode tracks = StateNode::Array();
         for (size_t i = 0; i < disc->TrackCount(); i++)
         {
             const cd::Track& t = disc->TrackAt(i);
             StateNode track = StateNode::Object();
             track["number"] = int(t.number);
+            track["session"] = int(t.session);
             track["type"] = cd::TrackModeName(t.mode);
+            if (!disc->TrackTitle(i).empty())
+                track["title"] = disc->TrackTitle(i);  // an audio CD built from a folder: the file it came from
             track["start_lba"] = static_cast<unsigned>(t.startLba);
             track["start_msf"] = MsfText(cd::LbaToMsf(t.startLba));
             track["pregap_lba"] = static_cast<unsigned>(t.pregapLba);
@@ -373,13 +378,17 @@ CdAudioReply CdAudioControl::Play(int unit, const std::map<std::string, std::str
             return Fail("bad-request", "track '" + *track + "' is not on the disc (tracks " + std::to_string(disc.FirstTrackNumber()) +
                                            "-" + std::to_string(disc.LastTrackNumber()) + ")");
         start = disc.TrackAt(static_cast<size_t>(disc.TrackIndexForNumber(static_cast<uint8_t>(number)))).startLba;
-        long to = disc.LastTrackNumber();
+        // Without to=: through the last audio track of the run (same session, no data track between)
+        size_t lastIndex = static_cast<size_t>(disc.TrackIndexForNumber(static_cast<uint8_t>(number)));
+        const uint8_t session = disc.TrackAt(lastIndex).session;
+        while (lastIndex + 1 < disc.TrackCount() && disc.TrackAt(lastIndex + 1).IsAudio() && disc.TrackAt(lastIndex + 1).session == session)
+            lastIndex++;
+        long to = disc.TrackAt(lastIndex).number;
         if (const std::string* last = option("to"))
         {
             if (!ParseNumber(*last, to) || disc.TrackIndexForNumber(static_cast<uint8_t>(to)) < 0 || to < number)
                 return Fail("bad-request", "to='" + *last + "': no such track after track " + std::to_string(number));
         }
-        // To the end of track `to`, or of the last audio track before a data track
         end = disc.TrackAt(static_cast<size_t>(disc.TrackIndexForNumber(static_cast<uint8_t>(to)))).endLba;
     }
     else if (const std::string* lba = option("lba"))
@@ -410,6 +419,15 @@ CdAudioReply CdAudioControl::Play(int unit, const std::map<std::string, std::str
     const int index = disc.TrackIndexAt(static_cast<uint32_t>(start));
     if (index < 0 || !disc.TrackAt(static_cast<size_t>(index)).IsAudio())
         return Fail("bad-request", "LBA " + std::to_string(start) + " is no audio frame");
+    // The drive's rules (PLAY AUDIO): the play ends at the session's lead-out; a range that runs
+    // into a data track is refused
+    end = std::min<int64_t>(end, disc.SessionLeadOutLba(disc.TrackAt(static_cast<size_t>(index)).session));
+    for (size_t i = static_cast<size_t>(index); i < disc.TrackCount() && disc.TrackAt(i).pregapLba < end; i++)
+    {
+        if (!disc.TrackAt(i).IsAudio())
+            return Fail("bad-request", "the range runs into data track " + std::to_string(disc.TrackAt(i).number) +
+                                           " (a drive refuses it: END OF USER AREA ENCOUNTERED ON THIS TRACK)");
+    }
     Parked(_context, [&] { cd->Audio().Play(static_cast<uint32_t>(start), static_cast<uint32_t>(end)); });
     CdAudioReply reply;
     reply.body["drive"] = DriveState(_context, unit);

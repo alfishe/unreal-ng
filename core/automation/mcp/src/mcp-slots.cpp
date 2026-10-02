@@ -182,6 +182,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "save / export of a hard disk or SD card to a .chd: none, default (lzma,zlib,huff,flac) or up to four of zlib, lzma, "
         "huff, flac, zstd";
     schema["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD";
+    schema["properties"]["format"]["description"] =
+        "insert / swap: 'audio-cd' - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a "
+        "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
+        "unformatted or plus3 (floppies)";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk or cdrom - swap the unit's drive first (the unit must be empty)";
@@ -189,7 +193,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
 
     registry.Register(
         "media",
-        "The machine's media slots (floppy drives, tape, IDE hard disks and CD-ROM, SD cards). Actions: list, info, "
+        "The machine's media slots (floppy drives, tape, IDE hard disks and CD-ROM, SD cards). A CD-ROM drive takes "
+        "ISO / CUE / raw BIN / CD CHD images (multisession too) and folders of MP3 / FLAC / WAV files (an audio CD; "
+        "info shows the disc's tracks). Actions: list, info, "
         "formats, targets (where a file can go: what it is, the slots that take it in order, the default, or why "
         "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect. Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "

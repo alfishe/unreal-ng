@@ -6,6 +6,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/storage/cd/audiofolderdisc.h"
 #include "emulator/io/storage/cd/cdimageformats.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include "emulator/media/blockadvisory.h"
@@ -154,13 +155,20 @@ FileClass MediaTargets::Classify(const std::string& path)
     file.path = path;
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
 
-    // A folder becomes a TR-DOS disk, a FAT volume or a tape: whichever slot takes one
+    // A folder becomes a TR-DOS disk, a FAT volume or a tape: whichever slot takes one. A folder
+    // with MP3 / FLAC / WAV files is offered to a CD drive first, as an audio CD
     if (FileHelper::IsFolder(path))
     {
         file.folder = true;
         file.kinds = {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd, FileKind::Tape};
         file.format = "folder";
         file.evidence.push_back("a folder");
+        if (AudioFolderDisc::HasAudioFiles(path))
+        {
+            file.kinds.insert(file.kinds.begin(), FileKind::Optical);
+            file.format = "audio-folder";
+            file.evidence.push_back("MP3 / FLAC / WAV files in it (an audio CD for a CD drive)");
+        }
         return file;
     }
     if (!FileHelper::FileExists(path))

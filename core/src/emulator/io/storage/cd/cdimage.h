@@ -80,10 +80,19 @@ public:
     const cd::StoredTrack& StoredAt(size_t index) const { return _tracks[index]; }
     uint8_t FirstTrackNumber() const { return _tracks.empty() ? 1 : _tracks.front().track.number; }
     uint8_t LastTrackNumber() const { return _tracks.empty() ? 1 : _tracks.back().track.number; }
-    /// The first LBA after the last track (the TOC's lead-out)
+    /// The first LBA after the last track (the TOC's lead-out: the last session's)
     uint32_t LeadOutLba() const { return _tracks.empty() ? 0 : _tracks.back().track.endLba; }
-    /// The track an LBA belongs to (its pregap included); -1 past the lead-out
+    /// The track an LBA belongs to (its pregap included); -1 past the lead-out and in the
+    /// lead-out / lead-in between two sessions (nothing there is readable)
     int TrackIndexAt(uint32_t lba) const;
+
+    /// Sessions (1 for every single-session disc): tracks carry ascending session numbers
+    uint8_t SessionCount() const { return _tracks.empty() ? 1 : _tracks.back().track.session; }
+    /// The first / last track index of a session; -1 when there is none
+    int FirstTrackIndexOfSession(uint8_t session) const;
+    int LastTrackIndexOfSession(uint8_t session) const;
+    /// A session's lead-out: the first LBA after its last track
+    uint32_t SessionLeadOutLba(uint8_t session) const;
     /// The index number at an LBA: 0 in a pregap, 1 after INDEX 01
     uint8_t IndexAt(uint32_t lba) const;
     /// -1 when there is no track with that number
@@ -109,7 +118,12 @@ public:
     uint64_t ContentId() const override { return _contentId; }
     /// endregion </IBlockDevice>
 
-    /// One line per track for people: "1 mode1 0-1234, 2 audio 1235-..."
+    /// A name per track (an audio CD built from a folder: the file each track came from); "" without one
+    const std::string& TrackTitle(size_t index) const;
+    void SetTrackTitles(std::vector<std::string> titles) { _titles = std::move(titles); }
+
+    /// One line per track for people: "1 mode1 0-1234, 2 audio 1235-..." (with "session 2:"
+    /// before the first track of every later session of a multisession disc)
     std::string DescribeTracks() const;
 
 private:
@@ -119,6 +133,7 @@ private:
     std::vector<cd::StoredTrack> _tracks;
     std::string _format;
     std::string _description;
+    std::vector<std::string> _titles;
     uint64_t _contentId = 0;
     mutable int _lastTrack = 0;
     // ReadSector reads a block as four sectors: the block it decoded last

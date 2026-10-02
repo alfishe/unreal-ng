@@ -164,7 +164,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     a CD drive with `CDn=1` or `device=cdrom` and plays audio on its own mixer row (`IdeControllerCd_Test`, the
     secondary slave). Left for S7: whether the shipped config puts the CD on `ide0.slave` (the BIOS detection
     screens change), and the real-software check with `CD_PLAY.TRD` (Peters Plus 2001, TR-DOS in Spectrum mode)
-    and `CDPLAYER.FLX` ([2026-10-02-cd-audio](../2026-10-02-cd-audio/TODO.md)).
+    and `CDPLAYER.FLX` ([2026-10-02-cd-audio](../2026-10-02-cd-audio/TODO.md)). Since branch `cd-folder-audio`
+    (2026-10-02) the test disc `testdata/machines/sprinter/cd/music.cue` (untracked) is an Enhanced CD: audio
+    tracks 1-3 first, the data track 4 in session 2 (what `CD_PLAY.TRD` should list as tracks 1-3); a folder of
+    MP3 / FLAC / WAV files in the CD slot is an audio CD too.
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by

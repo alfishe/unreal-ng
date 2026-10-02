@@ -33,6 +33,14 @@ namespace cd
     constexpr uint32_t kSampleRate = 44100;
     constexpr uint32_t kLeadInFrames = 150;      ///< LBA 0 = MSF 00:02:00
     constexpr uint8_t kLeadOutTrack = 0xAA;
+    constexpr uint8_t kMaxTracks = 99;
+    /// Multisession (Orange / Blue Book, cdrecord README.multi): between two sessions lie the
+    /// lead-out of the first (1:30 after session 1, 0:30 after later ones) and the lead-in of the
+    /// next (1:00); the next session's first track then has its 2-second pregap
+    constexpr uint32_t kFirstLeadOutFrames = 6750;
+    constexpr uint32_t kLaterLeadOutFrames = 2250;
+    constexpr uint32_t kLeadInAreaFrames = 4500;
+    constexpr uint32_t kPregapFrames = 150;
 
     /// The 12-byte sync pattern every data frame starts with
     constexpr uint8_t kSync[12] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
@@ -91,10 +99,11 @@ namespace cd
     struct Track
     {
         uint8_t number = 1;
+        uint8_t session = 1;     ///< 1-based; an Enhanced CD has its audio in session 1, its data in session 2
         TrackMode mode = TrackMode::Mode1;
         uint32_t pregapLba = 0;  ///< INDEX 00 (== startLba without a pregap)
         uint32_t startLba = 0;   ///< INDEX 01: the TOC address
-        uint32_t endLba = 0;     ///< first LBA after the track (the next track's INDEX 00, or the lead-out)
+        uint32_t endLba = 0;     ///< first LBA after the track (the next track's INDEX 00, or its session's lead-out)
 
         bool IsAudio() const { return mode == TrackMode::Audio; }
         /// Q-channel CONTROL nibble: 0 (2-channel audio, no pre-emphasis) or 4 (data)

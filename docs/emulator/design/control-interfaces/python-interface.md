@@ -384,6 +384,7 @@ slot names, options and errors as the WebAPI, CLI, MCP and Lua. Full reference:
 emu.media_list()                                         # slots + detached media
 emu.media_insert("A", "/games/elite-1.trd")              # slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
 emu.media_insert("sd", "/home/me/zx/sdcard", fs="fat32")
+emu.media_insert("cd", "/home/me/music/album", format="audio-cd")  # MP3 / FLAC / WAV files as an audio CD
 emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs save / export / discard
 emu.media_eject("B", export="/tmp/b.trd")
 emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword

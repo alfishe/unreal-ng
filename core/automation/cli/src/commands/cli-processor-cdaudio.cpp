@@ -48,14 +48,23 @@ namespace
         else
         {
             out << "  disc: " << Text(disc->find("format")) << "  " << Text(disc->find("source")) << NEWLINE;
-            out << "  tracks " << Text(disc->find("first_track")) << "-" << Text(disc->find("last_track")) << ", lead-out "
-                << Text(disc->find("lead_out_msf")) << " (LBA " << Text(disc->find("lead_out_lba")) << ")" << NEWLINE;
+            out << "  tracks " << Text(disc->find("first_track")) << "-" << Text(disc->find("last_track"));
+            if (const StateNode* sessions = disc->find("sessions"); sessions && sessions->i > 1)
+                out << " in " << sessions->i << " sessions";
+            out << ", lead-out " << Text(disc->find("lead_out_msf")) << " (LBA " << Text(disc->find("lead_out_lba")) << ")" << NEWLINE;
             if (const StateNode* tracks = disc->find("tracks"))
             {
                 for (const StateNode& t : tracks->items)
+                {
                     out << "    " << std::setw(2) << Text(t.find("number")) << "  " << std::left << std::setw(6) << Text(t.find("type"))
                         << std::right << " " << Text(t.find("start_msf")) << "  LBA " << std::setw(6) << Text(t.find("start_lba"))
-                        << "  length " << Text(t.find("length_msf")) << NEWLINE;
+                        << "  length " << Text(t.find("length_msf"));
+                    if (const StateNode* session = t.find("session"); session && session->i > 1)
+                        out << "  session " << session->i;
+                    if (const StateNode* title = t.find("title"))
+                        out << "  " << title->s;
+                    out << NEWLINE;
+                }
             }
         }
         if (const StateNode* a = drive.find("audio"))

@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -391,6 +392,20 @@ namespace
         {
             return Command({0x42, static_cast<uint8_t>(msf ? 0x02 : 0x00), 0x40, 0x01, 0, 0, 0, 0, 16});
         }
+
+        /// Another disc in the drive (the unit attention cleared)
+        void UseDisc(std::unique_ptr<CdImage> disc)
+        {
+            ASSERT_NE(disc, nullptr);
+            _cd->DetachMedium();
+            _disc = std::move(disc);
+            _cd->SetDisc(_disc.get());
+            _cd->AttachMedium(*_disc, {});
+            ClearUnitAttention();
+        }
+
+        /// The whole sense data of the last command
+        std::vector<uint8_t> Sense() { return Command({0x03, 0, 0, 0, 18}); }
     };
 
     uint32_t Be32(const std::vector<uint8_t>& b, size_t at)
@@ -705,3 +720,171 @@ TEST_F(AtapiCdromAudio_Test, SeekStopsAndMovesTheHead)
 }
 
 /// endregion </CD audio>
+
+/// region <Data tracks, multisession, the activity LED>
+
+TEST_F(AtapiCdromAudio_Test, PlayStartingInADataTrackFailsAtOnce)
+{
+    // PLAY AUDIO MSF 00:02:01 - 00:02:20 (the data track 1): CHECK CONDITION, ILLEGAL REQUEST,
+    // ILLEGAL MODE FOR THIS TRACK (MMC-3 PLAY AUDIO); the head stays, the audio status stays
+    const uint32_t head = _cd->Audio().HeadLba();
+    SendPacket({0x47, 0, 0, 0, 2, 1, 0, 2, 20});
+    EXPECT_EQ(Status() & Status::ERR, Status::ERR) << "fails at once, no play started";
+    EXPECT_EQ(_channel.ReadRegister(ErrorFeatures) >> 4, 0x05);
+    const std::vector<uint8_t> sense = Sense();
+    ASSERT_EQ(sense.size(), 18u);
+    EXPECT_EQ(sense[0], 0x70);
+    EXPECT_EQ(sense[2], 0x05) << "ILLEGAL REQUEST";
+    EXPECT_EQ(sense[7], 10);
+    EXPECT_EQ(sense[12], 0x64) << "ILLEGAL MODE FOR THIS TRACK";
+    EXPECT_EQ(sense[13], 0x00);
+    EXPECT_EQ(_cd->Audio().HeadLba(), head);
+    EXPECT_EQ(Position(true)[1], 0x15) << "no current audio status, as before";
+    // PLAY AUDIO (10) and (12) the same
+    for (const std::vector<uint8_t>& play : {std::vector<uint8_t>{0x45, 0, 0, 0, 0, 0, 0, 0, 4},
+                                             std::vector<uint8_t>{0xA5, 0, 0, 0, 0, 2, 0, 0, 0, 2}})
+    {
+        SendPacket(play);
+        ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+    }
+
+    // During a play a refused PLAY leaves it playing where it was
+    SendPacket({0x47, 0, 0, 0, 2, 8, 0, 2, 22});
+    ASSERT_TRUE(Completed());
+    Frames(1);
+    const uint64_t playing = _cd->Audio().HeadSample();
+    SendPacket({0x47, 0, 0, 0, 2, 0, 0, 2, 3});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Playing);
+    EXPECT_EQ(_cd->Audio().HeadSample(), playing);
+    EXPECT_EQ(_cd->Audio().State().endLba, 22u) << "the earlier play's range";
+}
+
+TEST_F(AtapiCdromAudio_Test, PlayRunningIntoADataTrackIsRefused)
+{
+    // One session, audio first and a data track after it: a range from the audio into the data
+    // track ends with END OF USER AREA ENCOUNTERED ON THIS TRACK (MMC-3: the sub-channel mode
+    // changes within the transfer length); up to the data track it plays
+    std::string error;
+    cdtest::WriteFile(_folder->Path() / "a-then-d.bin", cdtest::RampPcm(cdtest::kRampA, 10) + cdtest::DataFrames(10, 10, true));
+    UseDisc(CdImageFormats::ParseCue("FILE \"a-then-d.bin\" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n"
+                                     "  TRACK 02 MODE1/2352\n    INDEX 01 00:00:10\n",
+                                     cdtest::Utf8(_folder->Path()), "a-then-d.cue", &error));
+    SendPacket({0x45, 0, 0, 0, 0, 2, 0, 0, 10});  // LBA 2-11: crosses into track 2 at LBA 10
+    EXPECT_EQ(Status() & Status::ERR, Status::ERR);
+    const std::vector<uint8_t> sense = Sense();
+    EXPECT_EQ(sense[2], 0x05);
+    EXPECT_EQ(sense[12], 0x63) << "END OF USER AREA ENCOUNTERED ON THIS TRACK";
+    EXPECT_EQ(sense[13], 0x00);
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+    SendPacket({0x45, 0, 0, 0, 0, 2, 0, 0, 8});  // LBA 2-9: audio only
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, 10u);
+    Frames(20);
+    EXPECT_EQ(Position(false)[1], 0x13) << "completed";
+}
+
+TEST_F(AtapiCdromAudio_Test, EnhancedCdTocSessionsAndPlay)
+{
+    // Session 1: audio 1-2 (4 s each), session 2: data track 3 (300 frames) after the 11400-frame gap
+    std::string error;
+    UseDisc(CdImageFormats::Open(cdtest::WriteMusicDisc(_folder->Path(), 2, 4, 300), &error));
+    const cdtest::MusicDiscLayout l = cdtest::MusicLayoutOf(2, 4, 300, cdtest::MusicLayout::Enhanced);
+
+    // Format 0: every track of every session, the last session's lead-out (LBA)
+    std::vector<uint8_t> toc = Command({0x43, 0, 0, 0, 0, 0, 0, 0x03, 0x24});
+    ASSERT_EQ(toc.size(), 4u + 4 * 8);
+    EXPECT_EQ(toc[2], 1);
+    EXPECT_EQ(toc[3], 3);
+    EXPECT_EQ(toc[5], 0x10) << "track 1 audio";
+    EXPECT_EQ(Be32(toc, 8), 0u);
+    EXPECT_EQ(Be32(toc, 16), l.audioStart[1]);
+    EXPECT_EQ(toc[21], 0x14) << "track 3 data";
+    EXPECT_EQ(Be32(toc, 24), l.dataStart);
+    EXPECT_EQ(toc[30], 0xAA);
+    EXPECT_EQ(Be32(toc, 32), l.leadOut);
+
+    // Format 1: first and last complete session, the last session's first track
+    toc = Command({0x43, 0, 0x01, 0, 0, 0, 0, 0, 12});
+    ASSERT_EQ(toc.size(), 12u);
+    EXPECT_EQ(toc[1], 10);
+    EXPECT_EQ(toc[2], 1);
+    EXPECT_EQ(toc[3], 2);
+    EXPECT_EQ(toc[5], 0x14);
+    EXPECT_EQ(toc[6], 3);
+    EXPECT_EQ(Be32(toc, 8), l.dataStart);
+
+    // Format 2: per session A0 / A1 / A2 and the tracks; B0 and C0 (ADR 5) after session 1
+    toc = Command({0x43, 0x02, 0x02, 0, 0, 0, 0, 0x04, 0});
+    const size_t entries = (toc.size() - 4) / 11;
+    ASSERT_EQ(entries, 11u);
+    EXPECT_EQ(toc[2], 1);
+    EXPECT_EQ(toc[3], 2);
+    auto entry = [&toc](size_t i) { return std::vector<uint8_t>(toc.begin() + 4 + 11 * i, toc.begin() + 4 + 11 * (i + 1)); };
+    auto msf = [](uint32_t lba) { const cd::Msf m = cd::LbaToMsf(lba); return std::vector<uint8_t>{m.m, m.s, m.f}; };
+    auto p = [](const std::vector<uint8_t>& e) { return std::vector<uint8_t>{e[8], e[9], e[10]}; };
+    EXPECT_EQ(entry(0), (std::vector<uint8_t>{1, 0x10, 0, 0xA0, 0, 0, 0, 0, 1, 0x00, 0})) << "session 1: CD-DA";
+    EXPECT_EQ(entry(1), (std::vector<uint8_t>{1, 0x10, 0, 0xA1, 0, 0, 0, 0, 2, 0, 0}));
+    EXPECT_EQ(entry(2)[3], 0xA2);
+    EXPECT_EQ(p(entry(2)), msf(l.audioLeadOut)) << "session 1's lead-out";
+    EXPECT_EQ(entry(3)[3], 1);
+    EXPECT_EQ(p(entry(3)), msf(0));
+    EXPECT_EQ(entry(4)[3], 2);
+    EXPECT_EQ(p(entry(4)), msf(l.audioStart[1]));
+    EXPECT_EQ(entry(5)[1], 0x50) << "B0: ADR 5";
+    EXPECT_EQ(entry(5)[3], 0xB0);
+    const std::vector<uint8_t> b0 = entry(5);
+    EXPECT_EQ(std::vector<uint8_t>(b0.begin() + 4, b0.begin() + 7), msf(l.dataPregap)) << "the next program area";
+    EXPECT_EQ(entry(5)[7], 2);
+    EXPECT_EQ(p(entry(5)), (std::vector<uint8_t>{79, 59, 74}));
+    EXPECT_EQ(entry(6)[3], 0xC0);
+    EXPECT_EQ(entry(7), (std::vector<uint8_t>{2, 0x14, 0, 0xA0, 0, 0, 0, 0, 3, 0x20, 0})) << "session 2: CD-ROM XA";
+    EXPECT_EQ(entry(8)[8], 3);
+    EXPECT_EQ(p(entry(9)), msf(l.leadOut));
+    EXPECT_EQ(entry(10)[0], 2);
+    EXPECT_EQ(entry(10)[3], 3);
+    EXPECT_EQ(p(entry(10)), msf(l.dataStart));
+
+    // A player's "track 2 to the next track's start": plays to session 1's lead-out, then 13h
+    const cd::Msf from = cd::LbaToMsf(l.audioStart[1]);
+    const cd::Msf to = cd::LbaToMsf(l.dataStart);
+    SendPacket({0x47, 0, 0, from.m, from.s, from.f, to.m, to.s, to.f});
+    ASSERT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().State().endLba, l.audioLeadOut);
+    Frames(250);
+    EXPECT_EQ(Position(false)[1], 0x13);
+    // Track 3 (data) is refused; the gap between the sessions reads nothing
+    SendPacket({0x47, 0, 0, to.m, to.s, to.f, to.m, static_cast<uint8_t>(to.s + 1), to.f});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
+    SendPacket({0x28, 0, 0, 0, 0x03, 0x20, 0, 0, 1});  // READ (10) LBA 800: the lead-out of session 1
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscLbaOutOfRange);
+    SendPacket({0x2B, 0, 0, 0, 0x03, 0x20});  // SEEK there
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscLbaOutOfRange);
+    const std::vector<uint8_t> block = Command({0x28, 0, static_cast<uint8_t>(l.dataStart >> 24), static_cast<uint8_t>(l.dataStart >> 16),
+                                                static_cast<uint8_t>(l.dataStart >> 8), static_cast<uint8_t>(l.dataStart), 0, 0, 1});
+    EXPECT_EQ(block, cdtest::UserData(l.dataStart)) << "the data session reads as on a computer drive";
+}
+
+TEST_F(AtapiCdromAudio_Test, ActivityLedLightsOnlyOnDataTransfers)
+{
+    std::atomic<uint64_t> activity{0};
+    _cd->SetActivityCounter(&activity);
+    // A player's polls and audio commands: no LED
+    Position(true);
+    SendPacket({0x00});
+    Command({0x43, 0, 0, 0, 0, 0, 0, 0x03, 0x24});
+    Command({0x12, 0, 0, 0, 36});
+    SendPacket({0x47, 0, 0, 0, 2, 8, 0, 2, 16});
+    Frames(5);
+    Position(true);
+    Sense();
+    EXPECT_EQ(activity.load(), 0u) << "status polls and audio play leave the LED dark";
+    // Reading the disc: one count per block through the data register
+    EXPECT_EQ(Command({0x28, 0, 0, 0, 0, 1, 0, 0, 2}).size(), 4096u);
+    EXPECT_EQ(activity.load(), 2u);
+    EXPECT_EQ(Command({0xBE, 0x04, 0, 0, 0, 8, 0, 0, 1, 0x10, 0}).size(), 2352u);  // READ CD of audio: data for the host
+    EXPECT_EQ(activity.load(), 4u) << "2352 bytes: two pieces (2048 + 304)";
+    _cd->SetActivityCounter(nullptr);
+}
+
+/// endregion </Data tracks, multisession, the activity LED>

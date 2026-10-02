@@ -91,6 +91,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `free` | bytes | 256 MiB | insert, swap (folder volumes: room for guest writes) |
 | `kind` | `floppy`, `tape`, `block` | floppy when the machine has drives | insert `auto` of a folder; `formats` filter |
 | `format` | `auto`, `unformatted`, `plus3` | `auto` | create (floppies) |
+| `format` | `audio-cd` | a folder in a CD slot is one anyway | insert, swap: a folder of MP3 / FLAC / WAV files into a CD-ROM drive as an audio CD |
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
 | `size` | bytes, a multiple of 512 | — | create (cards) |
 | `wp` | bool | false | insert, swap |
@@ -166,7 +167,8 @@ the machine's config, `[HDD] Scheme`:
 
 Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `CD0=1` / `CD1=1`,
 or an `.iso` or `.cue` configured as the unit's image. An empty unit changes its drive with the insert
-option `device=cdrom` / `device=disk` (the Qt media panel asks when you drop an ISO on a disk unit);
+option `device=cdrom` / `device=disk` (the Qt media panel asks when you insert a CD image or a folder of
+music files into a disk unit, or a disk image into a CD drive);
 the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
 from the config file). ZX-Evo ships with a CD drive in the slave position
 (`CD1=1`), where the ERS "D. CD boot" looks for it; the other machines ship without one, because
@@ -175,7 +177,7 @@ an empty drive changes what some firmware does at boot.
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
 | hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
-| CD-ROM drive | `optical` | `.iso` (ISO 9660), `.cue` (a CUE sheet with its BINARY / MOTOROLA / WAVE files: data and audio tracks, INDEX 00 pregaps, PREGAP / POSTGAP, several files), a lone raw `.bin` of 2352-byte frames, MAME's CD-ROM `.chd` (cdlz / cdzl / cdzs / cdfl, v5); read-only | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
+| CD-ROM drive | `optical` | `.iso` (ISO 9660), `.cue` (a CUE sheet with its BINARY / MOTOROLA / WAVE files: data and audio tracks, INDEX 00 pregaps, PREGAP / POSTGAP, several files, several sessions with `REM SESSION`), a lone raw `.bin` of 2352-byte frames, MAME's CD-ROM `.chd` (cdlz / cdzl / cdzs / cdfl, v5, multisession too), or a folder of MP3 / FLAC / WAV files (an audio CD, below); read-only | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
 
 The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard
 one for the size (16 heads, 63 sectors). On the Profi board a disk's own ProfiHiDD header decides
@@ -199,6 +201,44 @@ row of its own (`CD ide0.slave`: volume, mute, solo, recording source, HUD "CD")
 stops from outside the guest (not while TTD records). Recipe:
 [cd-audio.md](../../.recipe/media/cd-audio.md); design and tests:
 [2026-10-02-cd-audio](../inprogress/2026-10-02-cd-audio/README.md).
+
+The drive's rules for audio, as MMC-3 sets them: a PLAY whose start is not in an audio track fails at
+once (ILLEGAL REQUEST, ILLEGAL MODE FOR THIS TRACK, sense 05h / 64h / 00h), a range that runs into a
+data track fails too (END OF USER AREA ENCOUNTERED ON THIS TRACK, 05h / 63h / 00h); neither moves the
+head nor changes the audio status. A play ends at its session's lead-out. The IDE activity LED lights
+only while the drive moves data from the disc to the host (READ (10) / (12), READ CD); status polls
+and audio play leave it dark - playing audio shows on the HUD's "CD" indicator (the drive's mixer row).
+
+**Enhanced CD (CD-Extra, multisession).** A disc with its audio tracks in session 1 and a data track in
+session 2 plays in an audio player and reads in a computer drive. Between the two sessions lie the
+first session's lead-out (1:30) and the second's lead-in (1:00): 11 250 frames nothing reads, then
+the data track's 2-second pregap. A CUE sheet marks the sessions with `REM SESSION nn` (one BIN for the
+whole disc, or one per track as Redump writes them; `REM LEAD-OUT` / `REM LEAD-IN` / `REM PREGAP` give
+other lengths), a CHD with MAME's `CHSE` entries. READ TOC lists every track (format 0), the sessions
+(format 1) and the full TOC with each session's A0 / A1 / A2 and the B0 / C0 pointers (format 2).
+`tools/cd/make-audio-disc.py` writes one (`--layout mixed` for the older data-track-first disc).
+
+**Audio CD from a folder.** A folder of MP3, FLAC and WAV files in a CD slot is an audio CD: insert
+it like an image (`media insert cd ~/music/album`, or with the option `format=audio-cd`). The files are
+read once, at insert, and the disc is held in memory (10 MiB per minute of music); changing the
+folder afterwards changes nothing. The rules are a CD burner's:
+
+| Rule | What happens |
+|---|---|
+| Which files | the folder's own `*.mp3`, `*.flac`, `*.wav`; subfolders, hidden files and other files are left out (the report counts them) |
+| Order | natural: by name ignoring case, a run of digits as one number - `2 Intro.mp3` before `10 Outro.mp3` |
+| Tracks | one per file, at most 99; each at least 4 seconds (shorter files are padded with silence) |
+| Sound | 44 100 Hz, 16-bit stereo: other rates resampled, mono on both sides, surround mixed down |
+| Gaps | 2 seconds of silence before every track after the first |
+| Length | 80 minutes (an 80-minute CD-R): the files are taken in order while they fit; the first that does not fit ends the disc (no reordering to fill it) |
+| A file that does not decode | skipped, with the reason; the next one is tried |
+
+Example: a folder with `1 intro.mp3` (30 s), `2 song.flac` (3:00), `10 outro.wav` (2 s) and
+`cover.jpg` gives three tracks at 00:02:00, 00:34:00 and 03:36:00 (the outro padded to 4 s); the
+insert's report says `track 01: 1 intro.mp3 (mp3, 0:30)` ... and `ignored: 1 folder entries`. `media info cd`
+lists the tracks with their files (`info.medium.disc.tracks[].title`). An 80-minute folder of MP3s takes
+about 5 s to insert. Recipe: [cd-audio.md](../../.recipe/media/cd-audio.md#audio-cd-from-a-folder).
+
 Time travel records through disk activity: a write is a replay barrier, and the board's state is in
 every checkpoint.
 
@@ -255,7 +295,8 @@ Every surface returns the same fields:
 ### Where a file can go: `targets`
 
 `targets <path>` answers before anything is inserted. The file is recognized by its content
-first and its extension second: a CD image by the ISO 9660 mark, a hard-disk image by its HDF or
+first and its extension second: a CD image by the ISO 9660 mark, a folder with MP3 / FLAC / WAV files
+as an audio CD (format `audio-folder`, a CD-ROM drive first), a hard-disk image by its HDF or
 VHD header, a MAME CHD by `MComprHD` (a hard disk first, an SD card too), a card or hard-disk image by a FAT boot sector or a partition table, a floppy image by
 the floppy formats' rules, a tape by its extension. Then the machine's slots that take it are
 listed in the order a chooser shows them: an empty slot before an occupied one, the main (boot)
@@ -295,6 +336,8 @@ curl -s -X POST $BASE/emulator/$ID/media/A/insert -H 'Content-Type: application/
 curl -s -X POST $BASE/emulator/$ID/media/A/swap -H 'Content-Type: application/json' \
      -d '{"path":"/games/elite-2.trd","save":true}'
 curl -s -X POST $BASE/emulator/$ID/media/C/insert -F "file=@game.trd"   # upload (up to 1 MB)
+curl -s -X POST $BASE/emulator/$ID/media/cd/insert -H 'Content-Type: application/json' \
+     -d '{"path":"/home/me/music/album","format":"audio-cd"}'          # report: the tracks; info: medium.disc
 ```
 
 `POST /media/{slot}/{verb}` takes the options in the JSON body or the query string; the HTTP
@@ -306,6 +349,7 @@ status follows the error table. OpenAPI: tag **Media**.
 media list
 media insert A /games/elite-1.trd
 media insert sd ~/zx/sdcard/ --fs fat32
+media insert cd ~/music/album --format audio-cd
 media swap A /games/elite-2.trd --save
 media eject B --export /tmp/b-saved.trd
 media info sd --json
@@ -322,6 +366,7 @@ One tool, `media`, with `action` and the same argument names:
 {"action": "swap", "slot": "A", "path": "/games/elite-2.trd", "save": true}
 {"action": "list"}
 {"action": "targets", "path": "/cards/nedoos.img"}
+{"action": "insert", "slot": "cd", "path": "/home/me/music/album", "format": "audio-cd"}
 ```
 
 ### Lua
@@ -354,11 +399,16 @@ Each method returns the result as a dict.
 **Tools → Media** (Ctrl+4) shows the slots in a table. Insert a file or a folder into the
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
 medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
-cannot take the dropped file says why and inserts nothing.
+cannot take the dropped file says why and inserts nothing. **Insert Folder** into a CD-ROM drive
+builds an audio CD of the folder's MP3 / FLAC / WAV files (off the UI thread, with progress); into an
+empty IDE unit of the other kind the panel asks to swap the unit's drive first (a CD image or a
+music folder into a hard-disk unit, a disk image into a CD drive).
 
 **Drag and drop on the main window** uses the same analysis as `targets`:
 
-- a file only one slot takes goes there at once (a CD image on a ZX-Evo: its CD-ROM drive);
+- a file only one slot takes goes there at once (a CD image on a ZX-Evo: its CD-ROM drive); a
+  folder with MP3 / FLAC / WAV files is offered to the CD-ROM drive first (an audio CD), then to the
+  slots that take a folder;
 - a floppy image goes to drive A and boots (Shift: mount only); several floppy images go to A, B,
   C, D in order;
 - a file several slots take (a card image on a ZX-Evo with NeoGS) opens the **slot chooser** over

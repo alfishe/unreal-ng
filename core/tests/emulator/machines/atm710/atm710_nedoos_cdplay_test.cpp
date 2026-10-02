@@ -96,7 +96,7 @@ TEST(ATM710NedoOsCdplay_Test, PlaysPausesAndStopsATrack)
     EmulatorContext* context = emulator->GetContext();
     emulator->EnableTurboMode();
 
-    // The ATM board's slave becomes a CD drive with a disc of a data track and two audio tracks
+    // The ATM board's slave becomes a CD drive with an Enhanced CD: audio tracks 1-2 (session 1), data track 3
     ASSERT_TRUE(context->pIdeController->SetUnitKind(1, true));
     ScratchFolder discFolder("atm710-cdplay-disc");
     MediaSource source;
@@ -134,7 +134,8 @@ TEST(ATM710NedoOsCdplay_Test, PlaysPausesAndStopsATrack)
     auto shows = [&](const std::string& needle) { return ScreenText(context).find(needle) != std::string::npos; };
     EmulatorTestHelper::RunUntil(emulator.get(), [&] { return shows("Track 03 [AUDIO]"); }, 3000, 25);
     ASSERT_TRUE(shows("Audio CD Player")) << ScreenText(context);
-    ASSERT_TRUE(shows("Track 02 [AUDIO]  Start 00:05:00")) << ScreenText(context);
+    ASSERT_TRUE(shows("Track 01 [AUDIO]  Start 00:02:00  Dur 00:08")) << ScreenText(context);
+    ASSERT_TRUE(shows("Track 02 [AUDIO]  Start 00:10:00")) << ScreenText(context);
 
     AtapiCdrom* cd = static_cast<AtapiCdrom*>(context->pIdeController->Channel().Unit(1));
     DebugKeyboardManager* keys = emulator->GetDebugManager()->GetKeyboardManager();
@@ -142,10 +143,11 @@ TEST(ATM710NedoOsCdplay_Test, PlaysPausesAndStopsATrack)
     keys->TypeText("2");
     EmulatorTestHelper::RunUntil(emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Playing; }, 300, 5);
     ASSERT_EQ(cd->Audio().PeekStatus(), CdAudioStatus::Playing) << ScreenText(context);
-    EXPECT_EQ(cd->Audio().State().playStartLba, 225u);
+    EXPECT_EQ(cd->Audio().State().playStartLba, 600u);
+    EXPECT_EQ(cd->Audio().State().endLba, 1050u) << "to session 1's lead-out (cdplay asks for the data track's start)";
     emulator->RunNFrames(75, true);
     EXPECT_TRUE(shows("[PLAYING] Track: 02 / 03")) << ScreenText(context);
-    EXPECT_TRUE(shows("Time:   00:01 / 00:08")) << ScreenText(context);
+    EXPECT_TRUE(shows("Time:   00:01 / 02:38")) << "cdplay counts the session gap into the length\n" << ScreenText(context);
 
     keys->TypeText(" ");
     EmulatorTestHelper::RunUntil(emulator.get(), [&] { return cd->Audio().PeekStatus() == CdAudioStatus::Paused; }, 300, 5);

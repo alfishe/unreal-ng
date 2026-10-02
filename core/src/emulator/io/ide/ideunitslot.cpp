@@ -20,7 +20,7 @@ IdeUnitSlot::IdeUnitSlot(EmulatorContext* context, std::string id, AtaDevice& de
     _descriptor.kind = cd ? MediaKind::Optical : MediaKind::Block;
     _descriptor.removable = cd;
     _descriptor.swapDelayMs = cd ? kCdSwapDelayMs : 0;
-    _descriptor.acceptsFolder = !cd;
+    _descriptor.acceptsFolder = true;  // a disk: a FAT volume; a CD drive: an audio CD of MP3 / FLAC / WAV files
     _descriptor.defaultAccess = cd ? AccessMode::ReadOnly : AccessMode::WriteThrough;
     _descriptor.defaultFs = FatType::Fat16;
     _descriptor.hasWriteProtectSwitch = !cd;
