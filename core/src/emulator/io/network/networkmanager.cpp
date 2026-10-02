@@ -73,9 +73,10 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         // The card's 16550 sits on #F8EF..#FFEF: a clash with the machine's own #xxEF device disables the card
         if (plan.serial != Plan::Serial::None || caps.serialPort != SerialPort::None ||
             (decoder && decoder->ReservesLowByte(ComPort::kPortLowByte)))
-            plan.notes.push_back(caps.serialPort == SerialPort::EvoAvr
-                                     ? "ZXWIFI: not fitted - ports #F8EF..#FFEF are the ZX-Evo AVR's COM port"
-                                     : "ZXWIFI: not fitted - the machine owns ports #xxEF");
+            const char* note = caps.serialPort == SerialPort::EvoAvr
+                                   ? "ZXWIFI: not fitted - ports #F8EF..#FFEF are the ZX-Evo AVR's COM port"
+                                   : "ZXWIFI: not fitted - the machine owns ports #xxEF";
+            plan.notes.push_back(note);
         else
         {
             plan.serial = Plan::Serial::ZxWifi;
