@@ -23,6 +23,9 @@
 ///   - Z80State::isDebugMode, trace_curs/top/mode, mem_curs/top/second,
 ///     pc_trflags, prev_pc, m1_pc, last_branch, nextpc
 ///   - Z80State::rate, vm1, outc0, tpi, trpc[] (CPU config, not state)
+///   CPU-LIBRARY-MIGRATION(ttd-cpu-state): an engine keeps state outside the register file (its
+///   boundary word, the halted phase); the capture takes it through the engine (the Z84C15 engine
+///   mirrors its boundary into Z80State::boundary after every step)
 ///   - Z80State::cycles_to_capture (debugger trigger state)
 ///   - EmulatorState::video_memory_changed (debug-only flag)
 ///   - EmulatorState::tape (pointer-bearing; handled via TTDSerializable)

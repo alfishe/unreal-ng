@@ -7,7 +7,7 @@
 
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
-#include "emulator/io/z84c15/z84c15.h"
+#include "emulator/io/z84c15/z84c15engine.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
@@ -16,6 +16,7 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterMemory;
+class SprinterVideoRenderer;
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -39,7 +40,11 @@ class SprinterMemory;
 ///     ([SPRINTER] FastStart=1, the test default) - tdd-ports-memory §6;
 ///   - the configuration modules (SprinterPldConfiguration): the active module
 ///     is asked first for every code and for the bank mapping, Standard after;
-///   - the Z84C15 package, the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
+///   - the CPU: the Z84C15 on its own library (core/src/3rdparty/z84c15) - the
+///     chip's on-chip ports and registers, and the engine adapter that runs the
+///     CPU on it (Z84C15Engine, installed with the INT source behind the chip's
+///     daisy chain);
+///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
 class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook
@@ -97,10 +102,13 @@ public:
     const SprinterPldState& GetPldState() const { return _pld; }
     SprinterVideoRam& GetVideoRam() { return _vram; }
     SprinterIntSource& GetIntSource() { return _intSource; }
-    Z84C15& GetZ84() { return _z84; }
+    Z84Lib::Z84C15& GetZ84() { return _z84; }
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The picture of the active module (hook 3), Standard's when it brings none
+    const SprinterVideoRenderer& VideoRenderer() const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -147,6 +155,8 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// The renderer draws the beam up to now before a change to the picture
+    void CatchUpScreen();
     void LoadFastRamImage();
 
     uint8_t FdcRead(uint8_t code);
@@ -156,7 +166,9 @@ private:
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
-    Z84C15 _z84;
+    Z84Lib::Z84C15 _z84;
+    /// The Z84C15 as the CPU's engine (created once the Z80 exists, installed by InstallHooks)
+    std::unique_ptr<Z84C15Engine> _cpuEngine;
     SprinterMemory* _sprinterMemory = nullptr;
     std::unique_ptr<SprinterWaits> _waits;
 

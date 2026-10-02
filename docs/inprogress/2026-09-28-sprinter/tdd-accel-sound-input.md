@@ -135,6 +135,11 @@ things per opcode fetch: DOS in/out ([tdd-storage.md](tdd-storage.md) §2.2), ac
 
 ## 5. Z84C15 on-chip devices (`core/src/emulator/io/z84c15/`)
 
+> **Moved (2026-10-01):** the CTC, SIO, PIO, system registers, watchdog and the daisy chain now
+> live in the Sprinter's CPU library, `core/src/3rdparty/z84c15/` (`Z84Lib::Z84C15`), with the CPU
+> core; `core/src/emulator/io/z84c15/` keeps the engine adapter (`Z84C15Engine`). Design:
+> [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/design.md).
+
 Reusable package; the Sprinter is its first user.
 
 | Class | Ports | v1 scope | Source |

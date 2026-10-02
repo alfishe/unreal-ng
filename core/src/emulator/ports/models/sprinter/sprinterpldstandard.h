@@ -24,6 +24,8 @@ public:
     bool ReadCode(PortDecoder_Sprinter& decoder, uint8_t code, uint16_t port, uint8_t& value) override;
     bool WriteCode(PortDecoder_Sprinter& decoder, uint8_t code, uint16_t port, uint8_t value) override;
     bool UpdateBanks(SprinterMemory& memory, const SprinterPldState& pld) override;
+    /// The standard picture (Sprinter tdd-video §3)
+    const SprinterVideoRenderer* VideoRenderer() const override;
 
 private:
     SprinterPldModuleDescriptor _descriptor;

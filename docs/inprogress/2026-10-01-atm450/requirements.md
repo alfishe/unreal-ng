@@ -113,7 +113,15 @@ Port arms (UnrealSpeccy `memory.cpp:134-162`, `io.cpp:533-537,577-582`):
    A3 (`(port & 8) ^ 8`, `io.cpp:461-463`) into `atmBorderBright`.
 6. **`#FE` read**: bit 7 = `atm450_z(t)` — 0x80 normally, three short zero
    windows in a normal-speed frame: t in [7200,7240), [7284,7324),
-   [7326,7366) (t = T-state within the frame; ZXMAK2 `Tact % FrameTactCount`).
+   [7326,7366), where **t counts from the INT edge** (UnrealSpeccy `cpu.t`
+   starts at INT, `while (cpu.t < conf.intlen)`). This core counts frame
+   T-states from the frame start and raises INT at `intstart + 1`, so the
+   decoder converts: `t = (frameT - (intstart + 1)) mod frame`.
+   **This is the system ROM's copy-protection key:** before CP/M starts, the
+   ROM halts, waits a fixed delay, samples Z 16 times (~42 T apart, `2027`-
+   `2031` in `atm1.rom`) and XOR-decrypts its CP/M loader (`22B3` → `#D400`)
+   with the result. Frame-relative windows gave a wrong key and the CP/M menu
+   entry silently fell back to the menu.
    Bits 6-0 come from the normal keyboard/tape read. Implement faithfully with
    unit tests pinning the windows; the copy-protection games that read it are
    the point of having the machine at all.
@@ -244,7 +252,9 @@ mechanism our `Z80Step` already implements — nothing model-specific to port.
 | OQ-6 | `aFB` latch: fall-through + `#FF` (UnrealSpeccy) or side effect on every A2=0 read (ZXMAK2) | Open. The manual: the A2=0, A0=1 read is the **printer port** read (CPSYS from A7, BUSY on D7, ULINE on D6), so the board drives the bus. Shipped: UnrealSpeccy (fall-through, `#FF`, GS claimed first). On the real board a GS `#BB` read would also flip CPSYS - not emulated |
 | OQ-7 | FDC ports while the system ROM is mapped outside a TR-DOS session (ZXMAK2 SYSEN: open; UnrealSpeccy: closed) | Open; ship UnrealSpeccy. The boot menu's TR-DOS / 128 / 48 entries work with it; CP/M needs a CP/M disk to tell |
 | OQ-8 | Palette intensity order (`bgrBGR` in the manual) | **Resolved empirically**: the system ROM's Sinclair palette is right with the emulators' `--grbGRB` layout (R4) |
-| OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | Open; the UnrealSpeccy windows ship. The PLM has no public dump |
+| OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | **Resolved by the ROM**: the UnrealSpeccy windows, measured from INT, produce the key that decrypts the system ROM's CP/M loader (boot test `MenuCpmLoaderReachesTheDisk`). The PLM has no public dump |
+| OQ-10 | CP/M system disk for the 4.50 | **Resolved**: none needed - CCP and BDOS are in the ROM; the loader reads the CP/M directory (cylinder 1). `testdata/machines/atm450/cpm/sys.trd` (NedoPC "SYSTEM" disk for ATM1/2/2+) boots to `A>` and `DIR B:` lists it (boot test `CpmBootsFromSystemDiskAndListsIt`). B: is the floppy, A: the electronic disk |
+| OQ-11 | Keys typed in CP/M sometimes arrive as scan code + 1 (next matrix row: `DIR` → `DKR`, `R` → `4`) | Open. Probed: each row read returns the current matrix, the keyboard interrupt runs once per frame - the slip happens in the ROM's shift-state machine (`#5F40`, `l141d`..`l14c3` in the BIOS 1.03 disassembly). Unknown whether the real board shows it with the same key timing; the test types like a user (erase + retype) |
 
 ## Definition of done
 
