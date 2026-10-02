@@ -138,11 +138,24 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
   tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
   SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
-  - [ ] Z1 (S) faithful path on unreal-ng against the MAME captures (launcher v2.03 + TRD / SCL, `/ret-fn`,
-    the Peters Plus launcher with a TRD on the floppy)
-  - [ ] Z2 (S-M) tape: the I5 test, the base-clock tape time base under turbo (today the tape speeds up with
-    the 21 MHz CPU), a real-time TAP load in `ORIGIN.ZX`
-  - [ ] Z3 (M) "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`), A/B benchmark
+  - [x] Z1 (S) faithful path on unreal-ng against MAME (2026-10-02, branch `sprinter-zx-timing`, tdd-zx-mode §4.1, §11):
+    every launcher mode (SP, P128, P512, SC256, ORIGIN) runs the zxtime program; frame, clock, INT position (identical
+    mode tables), INT count / repeat, 21 MHz loop counts and the picture equal MAME's; launcher + TRD / SCL RAM disk,
+    Flex Navigator Enter, `/ret-fn` three times. Still open: the Peters Plus launcher with a TRD on the floppy is ACC-6
+    (unchanged)
+  - [x] Z2 (S-M) tape (2026-10-02): `Tape::ClockCount` / `SetBaseClockTimeBase` (Sprinter only, Q2), a TAP through 48
+    BASIC's `LOAD ""` loads at 3.5 MHz and fails at 21 MHz (T-ZX-7, T-ZX-8)
+  - [x] Z3 (M) "original waits" (2026-10-02): `SprinterOrigWaits`, the PLD's 4-T CT5 period (not 5.33 T), windows 1 and
+    3 with `#7FFD` bit 2; A/B in tdd-zx-mode §11.1
+  - [ ] Z3 follow-up (Q1): the CT phase from a real board - zxtime (testdata/machines/sprinter/zx-timing) reports the
+    average; an INT-relative 1-T probe is needed for the phase once a board confirms the waits
+  - [ ] BIOS 3.06 Hotfix 2: DSS text does not scroll at the bottom line (MAME too; BIOS 3.06 of 2025 scrolls): find
+    out whether HF2 needs a newer PLD bitstream or has a bug; ask the BIOS author
+  - [ ] Owner's report (a), `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del: not reproduced (tdd-zx-mode §11
+    finding 3); the turbo-after-reset fix may be it. Ask for the exact steps (BIOS, mode, what ran, which keys; a held
+    SPACE / ESC right after the reset swaps `/ret-fn` and `/ret-zx` by design)
+  - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
+    the image. The "comdos" catalog was TWIX's disk (finding 4)
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided

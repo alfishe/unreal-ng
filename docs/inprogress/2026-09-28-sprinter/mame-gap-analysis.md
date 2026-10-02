@@ -102,6 +102,8 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | T5 | Length of an INT nobody acknowledges | 32 T; frame and keyboard share one timer (`:1715`, `:1736`, `:1742-1746`) | 32 T frame pulse; PLD: 32-64 T | **open** | Audit |
 | T6 | An acknowledged on-chip interrupt (CTC / SIO / PIO) | also clears the PLD's frame, keyboard and Covox-Blaster requests (§3 item 3) | the PLD INT sits behind the chip's daisy chain (`portdecoder_sprinter.cpp:368-373`) | **MAME wrong** | done |
 | T7 | Keyboard INT (ALL_MODE `& #09 == #09`) | per 11 keyboard clock edges, 32 T pulse (`:1706-1718`) | per received byte, latched until the acknowledge (`sprinterintsource.h:42-46`; PLD `KBD.TDF`) | **ours better** | done (S4) |
+| T9 | ZX-mode timing per launcher mode (frame, clock, INT position, INT count, 21 MHz loop speed) | zxtime, `-bios v3.06`, 2026-10-02 ([tdd-zx-mode.md](tdd-zx-mode.md) §4.1) | the same run: every number equal, the mode tables byte-identical, the 128 menu picture pixel-identical | **equal** | done (S8 Z1) |
+| T10 | "Original waits" (ALL_MODE bit 2 = 0, PLD `WAIT_ORIG`, ORIGIN.ZX) | none (zxtime: 0 extra T per screen read) | `SprinterOrigWaits`: 4-T CT5 period, windows 1 and 3 with `#7FFD` bit 2, phase placeholder (zxtime: 1.000 T per read every 13 T) | **MAME missing** | done (S8 Z3); phase: Q1 |
 | T8 | Covox-Blaster INT every 128 samples | `:1760-1764`, request 2 | `CovoxBlaster` (CNT bit 6 falling, PLD `CBL_INT`) through `SprinterIntSource`, vector `#FF` | **equal** | done (S6) |
 
 ### 2.3 PLD port table and codes
@@ -172,7 +174,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | I2 | Commands to the keyboard (LEDs, reset, typematic rate) | not wired (only keyboard to CPU) | not modeled | **both missing** | - |
 | I3 | ZX matrix on code `#40` with PC key combinations (arrows = CS+5..8, Backspace = CS+0) | `kbd_fe_r`, `:1669-1704`; map `:1773-1891` | shared key event, `portdecoder_sprinter.cpp:701-702` | **equal** | done |
 | I4 | Ctrl+Alt+Del | left to the software | PLD reset from the stream, `sprinterinput.cpp:62` | **ours better** | done (S4) |
-| I5 | Tape input, `#FE` bit 6 | `:1689-1694`: `data |= 0xe0; data ^= 0x40` leaves bit 6 at 0 and the cassette test can only clear it, so the bit never follows the tape; a TAP in the 128 Tape Loader never loads (2026-10-02, [research-zx-mode.md](research-zx-mode.md) §9.6) | the shared `#FE` path, untested on the Sprinter; the tape counts CPU clocks, so at 21 MHz it plays six times faster with the CPU (the board plays in real time) | **MAME wrong**, ours unfaithful in turbo | S8 Z2 |
+| I5 | Tape input, `#FE` bit 6 | `:1689-1694`: `data |= 0xe0; data ^= 0x40` leaves bit 6 at 0 and the cassette test can only clear it, so the bit never follows the tape; a TAP in the 128 Tape Loader never loads (2026-10-02, [research-zx-mode.md](research-zx-mode.md) §9.6) | the shared `#FE` path: a TAP loads through 48 BASIC at 3.5 MHz; the tape counts real time (`Tape::SetBaseClockTimeBase`, 2026-10-02), so at 21 MHz the ROM loader fails as on the board | **MAME wrong** | done (S8 Z2) |
 | I6 | `#FE` bits 5 (beam below the picture) and 7 (Covox-Blaster half) in CBL mode | `:1696-1701` | `CovoxBlaster::ApplyFeBits` | **equal** | done (S6) |
 | I7 | Serial mouse on SIO B | HLE Microsoft (default), Logitech 3-button, wheel, Mouse Systems (`:2000-2005`); baud from CTC ZC0 | Microsoft 2-button at a fixed 1 200 baud (`core/src/emulator/io/mouse/msserialmouse.h`) | **partial** | new (input extras) |
 | I8 | Kempston mouse view, code `#58` (`#FADF` / `#FBDF` / `#FFDF`) | its own inputs (`:644-659`, `:1894-1904`) | the same journaled counters as the serial mouse (`portdecoder_sprinter.cpp:707-708`) | **equal** | done |
@@ -237,6 +239,8 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B1 | Cells after power-on | `port_default`, `:1533-1539` | `portdecoder_sprinter.cpp:24-29` | **equal** | done |
 | B2 | PLD configuration load | 4 096 writes, then a reset (`:1157-1163`) | the whole stream, 473 720 writes, or the fast start (`portdecoder_sprinter.cpp:223-313`) | **ours better** | done |
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
+| B6 | Turbo after a CPU reset (Ctrl+Alt+Del, page `#A0`) | `m_turbo` kept across every reset | preset to 21 MHz (PLD `DCP.TDF:663`, `TB_SW.prn = /RESET`; 2026-10-02): a 3.5 MHz ZX mode returns to DSS in turbo | **MAME wrong** | done (S8) |
+| B7 | BIOS 3.06 Hotfix 2: DSS text at the bottom line | does not scroll (HF2 in MAME's v3.06 slot) | does not scroll either; MAME's own 3.06 (2025) scrolls in both | **equal** (open BIOS question) | TODO |
 | B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
 | B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
@@ -299,7 +303,9 @@ Each item names what unreal-ng does instead and the evidence.
     of DS12887A on host time (`:1966`); ISA buses without interrupts or DMA (`:1973-1979`), so a Sound Blaster
     card could play FM but no samples; all four floppy drives are 5.25" QD by default (`beta_m.cpp:320`).
 12. **Tape input stuck at 0** (I5): `kbd_fe_r` flips bit 6 after setting it, so the tape never reaches the ROM
-    loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either.
+    loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either (T10).
+13. **Turbo kept across a reset** (B6): the PLD presets its turbo bit on `/RESET`; MAME keeps `m_turbo`, so after a
+    soft reset from a 3.5 MHz Spectrum mode the BIOS and DSS run at 3.5 MHz.
 
 ## 4. Missing in unreal-ng, by priority
 
