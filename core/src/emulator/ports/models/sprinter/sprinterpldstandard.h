@@ -26,6 +26,8 @@ public:
     bool UpdateBanks(SprinterMemory& memory, const SprinterPldState& pld) override;
     /// The standard picture (Sprinter tdd-video §3)
     const SprinterVideoRenderer* VideoRenderer() const override;
+    /// The standard accelerator (Sprinter tdd-accel-sound-input §1): the decoder's instance
+    SprinterAccelerator* Accelerator(PortDecoder_Sprinter& decoder) override;
 
 private:
     SprinterPldModuleDescriptor _descriptor;

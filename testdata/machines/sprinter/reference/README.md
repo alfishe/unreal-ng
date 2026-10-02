@@ -78,6 +78,8 @@ configuration shortcut ends; the script only works in its first run (power-on, t
 | `fdc-probe.csv` | the floppy controller accesses (codes `#10-#17`) of a boot with the DSS 1.62 floppy in drive B, without the `#15` status polls |
 | `hdd-boot-306.txt` | BIOS 3.06 with the DSS 1.71.57 hard disk on the primary master: events, the screen at the DSS banner (frame 385, 7.885 s), the ATA commands of the boot |
 | `hdd-boot-304.txt` | the same disk on BIOS 3.04: the DSS loader reads SYSTEM.DOS, then DSS 1.71 stops with "Fatal error" (frame 475, 9.728 s) |
+| `mame-acctest-306.png` | the accelerator test `TESTS\ACCTEST.EXE` after it drew its 64 x 64 picture, frame 1500 (S5) |
+| `mame-fn115-hdd-306.png` | Flex Navigator 1.15 from the HDD system disk, frame 1500 (S5) |
 
 ### `page40.bin`: the port table after POST
 
@@ -213,3 +215,19 @@ the BIOS waits for BSY (hardware-reference §9.1, tdd-storage §3.4).
 - **BIOS 3.04**: the same loader reads up to SYSTEM.DOS (frames 472-474), then SYSTEM.DOS's start-up fails and
   the loader prints "Fatal error! Press RESET to restart." (frame 475). The DSS 1.71 floppy stops the same
   way on BIOS 3.04: DSS 1.71 needs a newer BIOS (bios-versions.md). unreal-ng shows the same screen.
+### `mame-acctest-306.png`, `mame-fn115-hdd-306.png`: the accelerator (S5)
+
+MAME cannot boot the HD floppy (above), so these two run from the owner's MAME pack: BIOS 3.06
+(`-bios v3.06`, ROMs from the pack's `roms/` folder) and the HDD system disk `sp-hdd-sys.chd` on
+`-hard1`, through `mame-capture.lua` (mode `boot`, `SPC_SNAP_EVERY=100`, `SPC_END=1500`):
+
+- `mame-fn115-hdd-306.png`: the disk as it is; its `SYSTEM.BAT` ends with `fn`.
+- `mame-acctest-306.png`: a copy of the raw image (`sp_hdd_sys.img`) whose `SYSTEM.BAT` is
+  `@echo off`, `set PATH=...`, `ver`, `cd tests`, `acctest` (mtools at offset 32 256), converted with
+  `chdman createhd`.
+
+unreal-ng's tests run the same programs from the DSS 1.62 floppy with BIOS 3.04
+(`SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator`,
+`..._FlexNavigatorDrawsWithTheAccelerator`). The ACCTEST picture (display pixels x 48-175, y 16-79) is
+identical; the Flex Navigator F-key bar has the same pixels with one color mapped (light gray 170 here,
+192 in FN 1.15). See `docs/inprogress/2026-09-28-sprinter/s5-accelerator-outcome.md`.

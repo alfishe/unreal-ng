@@ -8,6 +8,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
@@ -120,6 +121,12 @@ public:
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
     const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The standard configuration's accelerator (owned here, supplied by SprinterPldStandard, hook 4)
+    SprinterAccelerator& StandardAccelerator() { return _accelerator; }
+    /// The accelerator in use: the active module's, Standard's when it brings none; null while the
+    /// PLD is not configured. Its state (mode, length, function, buffer, INT block) is what the
+    /// debugger and automation show (SprinterAccelerator::State, ModeName, FunctionName)
+    SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
 
@@ -190,6 +197,8 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// Ask the active module for its accelerator (hook 4) and make it the CPU's bus agent
+    void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
     void LoadFastRamImage();
@@ -206,6 +215,9 @@ private:
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
+    /// The standard accelerator and the one in use (hook 4)
+    SprinterAccelerator _accelerator{_context, _pld};
+    SprinterAccelerator* _activeAccelerator = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};
