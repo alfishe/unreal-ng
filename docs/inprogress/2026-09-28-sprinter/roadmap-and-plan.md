@@ -100,6 +100,20 @@ S0 (provisioning, disassembly, reference captures) is the only Sprinter-specific
 earlier. Inside #59 the phases stay ordered so that the floppy DSS boot (ACC-3) and the Spectrum
 mode (ACC-6) come before anything that needs the IDE core or the media manager.
 
+**Developer-interest ranking (2026-10-02, recommendation for the owner;
+[peripherals-survey.md](peripherals-survey.md) §10).** We measured what today's Sprinter developers work on:
+commits 2024-2026, new programs, forum dates. The result suggests this order for the work after S6:
+
+1. The demo pass. The programs people release use only the board: accelerator, Covox-Blaster, disk streaming.
+2. ISA I1, then network SN1-SN3 (NE2000-class RTL8019AS, SprinterESP, then 3C509B). About 340 commits in 2026
+   and the only new programs that need a card.
+3. The ATAPI CD on `IDE_SPRINTER` (media change, eject, ATAPI boot) and the CompactFlash identity check. These
+   are the BIOS / DSS developer's main work since 2024-10.
+4. The NeoGS (S6b). No new software since 2020, but the existing players need it.
+
+Lowered: the Centronics printer (P4). The logic-firmware research checks the runtime configuration reload
+(LDConf) before the tmkonf accelerator extension.
+
 ## 5. Review round 1 decisions
 
 Round 1 (2026-09-28) answered the six open questions and added one requirement. Each decision is
