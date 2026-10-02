@@ -9,6 +9,7 @@
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
+#include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -44,6 +45,8 @@ class SprinterVideoRenderer;
 ///     chip's on-chip ports and registers, and the engine adapter that runs the
 ///     CPU on it (Z84C15Engine, installed with the INT source behind the chip's
 ///     daisy chain);
+///   - the keyboard and the serial mouse on the chip's SIO (SprinterInput: the
+///     host's PS/2 sink, the keyboard INT, Ctrl+Alt+Del, the F12 turbo switch);
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
@@ -103,6 +106,7 @@ public:
     SprinterVideoRam& GetVideoRam() { return _vram; }
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
+    SprinterInput& GetInput() { return _input; }
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
@@ -167,6 +171,8 @@ private:
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
     Z84Lib::Z84C15 _z84;
+    /// The keyboard (SIO A) and the serial mouse (SIO B)
+    SprinterInput _input{_context, _z84, _intSource, _pld};
     /// The Z84C15 as the CPU's engine (created once the Z80 exists, installed by InstallHooks)
     std::unique_ptr<Z84C15Engine> _cpuEngine;
     SprinterMemory* _sprinterMemory = nullptr;

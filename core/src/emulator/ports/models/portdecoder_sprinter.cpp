@@ -9,6 +9,7 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/video/screen.h"
@@ -53,6 +54,16 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         return _state->t_states * multiplier + (z80 ? z80->t : 0);
     });
 
+    // The AT keyboard: the host's physical keys reach SIO A (and the PLD's reset and turbo keys)
+    _input.SetResetHandler([this]() { RequestCpuReset(SprinterResetKind::SoftReset); });
+    _input.SetTurboSwitchHandler([this]() {
+        _pld.turboHard ^= 1;
+        ApplyTurbo();
+    });
+    _input.SetStepHookListener([this]() { RefreshStepHook(); });
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_input);
+
     // Core creates SprinterMemory for this model; the windows are mapped from our state
     _sprinterMemory = dynamic_cast<SprinterMemory*>(_memory);
     if (_sprinterMemory)
@@ -69,6 +80,9 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_input)
+        _context->pKeyboard->SetPs2Sink(nullptr);
+
     Core* core = _context->pCore;
     if (core)
     {
@@ -110,6 +124,7 @@ void PortDecoder_Sprinter::PowerOn()
     _pld.configModule = 0;
     _pld.configState = SprinterConfigState::Unconfigured;
     _z84.PowerOn();
+    _input.Clear();
     _vram.Clear();
     _intSource.SetModePage(0);
 
@@ -131,7 +146,9 @@ void PortDecoder_Sprinter::reset()
     if (powerOn)
         PowerOn();
 
-    // Core::Reset has reset the Z80 already; the RESET button reloads the PLD
+    // Core::Reset has reset the Z80 already; the RESET button reloads the PLD.
+    // The keyboard is not reset; the machine's clock restarted under it
+    _input.Rebase();
     _z84.Reset();
     ResetPld(powerOn ? SprinterResetKind::PowerOn : SprinterResetKind::Button);
     InstallHooks();
@@ -361,7 +378,8 @@ void PortDecoder_Sprinter::RefreshStepHook()
         return;
 
     Z80* z80 = core->GetZ80();
-    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading;
+    // ... or while a keyboard byte is on its way that raises the keyboard INT
+    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading || _input.NeedsStepHook();
     if (needed)
         z80->SetMachineStepHook(this);
     else if (z80->GetMachineStepHook() == this)
@@ -372,6 +390,12 @@ void PortDecoder_Sprinter::OnMachineStep([[maybe_unused]] uint32_t t)
 {
     if (_pld.resetPending)
         PerformPendingReset();
+    if (_input.NeedsStepHook())
+    {
+        _input.Advance();
+        if (!_input.NeedsStepHook())
+            RefreshStepHook();
+    }
 }
 
 void PortDecoder_Sprinter::BeforeMachineM1(uint16_t address)
@@ -513,6 +537,7 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
     if (Z84Lib::Z84C15::Owns(low))
     {
         // The Z84C15 decodes its own ports; the PLD does not see the read (MAME internal map)
+        _input.BeforeChipAccess(low);
         value = _z84.Read(low);
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
     }
@@ -558,6 +583,7 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
     const bool z84Port = Z84Lib::Z84C15::Owns(low);
     if (z84Port)
     {
+        _input.BeforeChipAccess(low);
         _z84.Write(low, value);
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
         // A layout change of the loader's chip selects moves its fast RAM window
@@ -735,7 +761,9 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             Default_Port_FE_Out(port, value, _pc);
             return;
         case SprinterCode::AllMode:
+            _input.BeforeAllModeWrite();
             _pld.allMode = value;
+            RefreshStepHook();  // the keyboard INT on or off
             return;
         case SprinterCode::Hold:
             CatchUpScreen();
