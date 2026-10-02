@@ -4,8 +4,11 @@
 
 #include "portdecoder_tsconf.h"
 
+#include "emulator/io/mouse/mousemanager.h"
+
 #include <cstring>
 
+#include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/tsconf/ttdtsconfstate.h"
@@ -72,6 +75,12 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_evoAvr);
 
+    // The AVR's PS/2 mouse is the board's mouse: the host mouse reaches it through the
+    // emulator's mouse manager, and the Kempston-address ports read its registers
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
+    if (_context->pMouseManager)
+        _context->pMouseManager->AddSink(&_evoAvr.Ps2Mouse());
+
     // The AVR owns the board's resets: F12 released after a short hold = the
     // reset button, a key pressed with Ctrl+Alt held = the power cycle. The
     // sink is resolved when a reset fires: the decoder is built before
@@ -97,6 +106,8 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
 
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_evoAvr)
         _context->pKeyboard->SetPs2Sink(nullptr);
+    if (_context->pMouseManager)
+        _context->pMouseManager->RemoveSink(&_evoAvr.Ps2Mouse());
 
     Core* core = _context->pCore;
     if (core)
@@ -191,6 +202,10 @@ void PortDecoder_TSConf::reset()
 {
     if (!_poweredOn)
         PowerOn();
+
+    // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
+    // registers themselves outlive a Z80 reset (the AVR keeps running)
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
 
     uint8_t* r = _ts.regs;
     r[TsConfReg::VConfig] = 0x00;
@@ -491,7 +506,7 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
         {
             // #xxDF: A8 = 0 buttons + wheel, A8 = 1: A10 ? Y : X ([V] zkbdmus.v:107)
             const uint8_t reg = (port & 0x0100) ? ((port & 0x0400) ? 2 : 1) : 0;
-            result = (_mouse && _mouse->IsPresent()) ? _mouse->ReadRegister(reg) : 0xFF;
+            result = _evoAvr.Ps2Mouse().ReadRegister(reg);  // the AVR's PS/2 mouse registers; #FF with no mouse
             break;
         }
         case PortArm::SdConfig:
@@ -1080,7 +1095,7 @@ void PortDecoder_TSConf::ApplyVideoPage()
 std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
     return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887,
-            ttd::PeripheralId::EvoPs2};
+            ttd::PeripheralId::EvoPs2, ttd::PeripheralId::EvoMouse};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTDSerializers() const
@@ -1091,6 +1106,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(self->_evoAvr));
+    serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
     return serializers;
 }
 

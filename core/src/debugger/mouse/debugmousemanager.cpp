@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
+#include "emulator/ports/portdecoder.h"
 
 namespace
 {
@@ -398,9 +399,13 @@ MouseStateSnapshot DebugMouseManager::GetState() const
     state.y = mouse->GetY();
     state.buttonMask = mouse->GetButtons();
     state.wheel = mouse->GetWheel();
-    state.portButtons = mouse->ReadRegister(0);
-    state.portX = mouse->ReadRegister(1);
-    state.portY = mouse->ReadRegister(2);
+    // What the machine's ports return: the Kempston device, or the machine's own
+    // mouse (ZX-Evo AVR PS/2 mouse, Sprinter board mouse)
+    const PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    uint8_t* ports[3] = {&state.portButtons, &state.portX, &state.portY};
+    for (uint8_t reg = 0; reg < 3; reg++)
+        if (!decoder || !decoder->PeekMouseRegister(reg, *ports[reg]))
+            *ports[reg] = mouse->ReadRegister(reg);
 
     std::lock_guard<std::mutex> lock(_mutex);
     state.pendingClickButton = _pendingButton;

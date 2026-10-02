@@ -84,6 +84,7 @@ enum class PeripheralId : uint8_t
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
     Atm2IoEsp = 37,       // the ATM2IOESP card on it: the 16550 and its peer (netstate::SerialPort)
+    EvoMouse = 38,        // ZX-Evo AVR PS/2 mouse: the Kempston-address registers, plugged in (ATM3, TSConf)
     // Future: SAA1099, GS512, etc.
     Count
 };

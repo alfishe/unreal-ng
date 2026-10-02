@@ -739,7 +739,8 @@ struct CONFIG
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
 		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
 		/// [INPUT] MouseReleaseKey=: the key that releases a captured host mouse, as
-		/// key-sequence text ("Ctrl+Esc"; Ctrl is Cmd on macOS). Empty = the front end's default
+		/// key-sequence text naming physical keys ("Ctrl+Esc": the Control key, macOS
+		/// included). Empty = the front end's default, Ctrl+Esc
 		char mouseReleaseKey[32];
 		/// Kempston joystick: [INPUT] Joystick=KEMPSTON|NONE (1 = fitted) and JoystickKeys= (button:key list).
 		/// joystickConfigured / joystickKeysConfigured are false without an ini: the device stays fitted and

@@ -128,8 +128,12 @@ Source for the AVR behavior:
   Python) and TTD replay still reach the machine: the gate is about the host
   mouse only. The gate is remembered per window across emulator switches. View →
   Mouse gate is the same toggle as a menu item.
-- **When it releases:** Ctrl+Esc (configurable; plain Esc reaches the machine), focus
-  loss, switching or closing the emulator, opening a menu.
+- **When it releases:** Ctrl+Esc (the physical Control key on every platform, macOS
+  included; `[INPUT] MouseReleaseKey=` names physical keys; a plain Esc reaches the
+  machine), focus loss, leaving the application, switching or closing the emulator.
+  While captured, an application-wide event filter catches the release key in any
+  window, before shortcuts and the machine see it (unreal-qt-tests checks it with
+  real Qt key events).
 - **No `grabMouse()`.** Motion comes from the platform backend: macOS
   `CGAssociateMouseAndMouseCursorPosition(false)` + an NSEvent monitor (as now);
   elsewhere warp-to-center. The macOS dissociation is undone on every release

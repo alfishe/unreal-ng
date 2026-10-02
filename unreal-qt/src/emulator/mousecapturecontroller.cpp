@@ -39,6 +39,8 @@ MouseCaptureController::MouseCaptureController(QObject* parent) : QObject(parent
 MouseCaptureController::~MouseCaptureController()
 {
     release();
+    if (_filterInstalled)
+        qApp->removeEventFilter(this);
 }
 
 void MouseCaptureController::setTargetEmulatorId(const std::string& emulatorId)
@@ -76,10 +78,50 @@ MouseCaptureController::State MouseCaptureController::state() const
 QKeySequence MouseCaptureController::releaseKey() const
 {
     const std::string text = settings().releaseKey;
-    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text));
-    if (sequence.isEmpty())
-        sequence = QKeySequence::fromString(kDefaultReleaseKey);
+    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text),
+                                                     QKeySequence::PortableText);
+    // One key combination with a key Qt knows, else the default
+    if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown || sequence[0].key() == 0)
+        sequence = QKeySequence::fromString(kDefaultReleaseKey, QKeySequence::PortableText);
+#ifdef Q_OS_MACOS
+    // The config names physical keys: "Ctrl" is the Control key. Qt on macOS reports
+    // Control as Meta and Command as Ctrl, so swap them in the parsed combination
+    const QKeyCombination combination = sequence[0];
+    Qt::KeyboardModifiers modifiers = combination.keyboardModifiers();
+    const bool control = modifiers.testFlag(Qt::ControlModifier);
+    const bool meta = modifiers.testFlag(Qt::MetaModifier);
+    modifiers.setFlag(Qt::ControlModifier, meta);
+    modifiers.setFlag(Qt::MetaModifier, control);
+    sequence = QKeySequence(QKeyCombination(modifiers, combination.key()));
+#endif
     return sequence;
+}
+
+bool MouseCaptureController::eventFilter(QObject* watched, QEvent* event)
+{
+    // The release key reaches whichever window or widget Qt delivers it to (the
+    // GL window, the main window's key forwarding, a dock): release on the first
+    // sight of it, before shortcuts or the machine see it, and swallow the rest
+    const QEvent::Type type = event->type();
+    if (type == QEvent::ShortcutOverride || type == QEvent::KeyPress || type == QEvent::KeyRelease)
+    {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (type != QEvent::KeyRelease && _captured && isReleaseKey(key))
+        {
+            _swallowKey = key->key();
+            release();
+            event->accept();
+            return true;
+        }
+        if (_swallowKey != 0 && key->key() == _swallowKey)
+        {
+            if (type == QEvent::KeyRelease && !key->isAutoRepeat())
+                _swallowKey = 0;
+            event->accept();
+            return true;
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 /// endregion </Gate and state>
@@ -107,6 +149,12 @@ void MouseCaptureController::capture()
     _buttonMask = 0xFF;
     _swallowKey = 0;
 
+    if (!_filterInstalled)
+    {
+        qApp->installEventFilter(this);
+        _filterInstalled = true;
+    }
+
     if (_surface.takeFocus)
         _surface.takeFocus();
     if (_surface.setCursorHidden)
@@ -116,8 +164,10 @@ void MouseCaptureController::capture()
         _surface.setMouseTracking(true);
 
     const QPoint centerGlobal = _surface.centerGlobal();
-    _nativeCapture = MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
-                                              [this](double dx, double dy) { applyHostMotion(dx, dy); });
+    _nativeCapture = _surface.allowNativeCapture
+                         ? MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
+                                                    [this](double dx, double dy) { applyHostMotion(dx, dy); })
+                         : nullptr;
     if (!_nativeCapture)
     {
         _warpCenterGlobal = centerGlobal;
@@ -164,7 +214,10 @@ void MouseCaptureController::release()
 
 void MouseCaptureController::recenterCursor()
 {
-    QCursor::setPos(_warpCenterGlobal);
+    if (_surface.warpCursor)
+        _surface.warpCursor(_warpCenterGlobal);
+    else
+        QCursor::setPos(_warpCenterGlobal);
     // setPos generates a move event back to the center - it is not user travel
     _ignoreNextMove = true;
 }
@@ -255,8 +308,10 @@ bool MouseCaptureController::isReleaseKey(const QKeyEvent* event) const
 {
     if (_releaseKey.isEmpty())
         return false;
+    // The key and exactly its modifiers (keypad flag aside)
+    const QKeyCombination wanted = _releaseKey[0];
     const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
-    return _releaseKey[0] == QKeyCombination(modifiers, static_cast<Qt::Key>(event->key()));
+    return event->key() == wanted.key() && modifiers == wanted.keyboardModifiers();
 }
 
 bool MouseCaptureController::handleKeyPress(QKeyEvent* event)

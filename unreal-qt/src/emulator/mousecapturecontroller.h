@@ -29,8 +29,10 @@ class QWheelEvent;
 /// Policy:
 ///   - a click on the screen captures when the machine has a mouse device and
 ///     the gate is open; that click is not passed to the machine;
-///   - the release key (default Ctrl+Esc; Cmd+Esc on macOS) and focus loss release;
-///     a plain Esc reaches the machine;
+///   - the release key (default Ctrl+Esc: the physical Control key on every
+///     platform, macOS included) and focus loss release; a plain Esc reaches the
+///     machine. While captured an application-wide event filter catches the
+///     release key in any window, whatever has the focus or a shortcut claims;
 ///   - the gate (toolbar button) closed: never captures, posts nothing.
 ///     Automation and TTD replay do not come through here and are not gated.
 /// No grabMouse(): the menus stay usable while the mouse is captured.
@@ -60,6 +62,9 @@ public:
         std::function<void(bool hidden)> setCursorHidden;
         std::function<void()> takeFocus;
         std::function<void(bool on)> setMouseTracking; ///< QWidget only; a QWindow always gets moves
+        /// Tests: no native relative mode, and the cursor warp replaced (the real cursor stays put)
+        bool allowNativeCapture = true;
+        std::function<void(QPoint global)> warpCursor;  ///< empty = QCursor::setPos
     };
 
     /// Machine-side settings read at capture time
@@ -107,8 +112,12 @@ public:
     /// Called by the capture backend: Qt warp deltas or native macOS deltas.
     void applyHostMotion(double dxLogical, double dyLogical);
 
-    /// The release key of the shown machine's config
+    /// The release key of the shown machine's config, as Qt sees the physical keys
+    /// (on macOS "Ctrl" in the config is the Control key, Qt's Meta modifier)
     QKeySequence releaseKey() const;
+
+    /// While captured: the release key anywhere in the application releases
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 signals:
     /// Captured, gate or target changed: the toolbar button refreshes from state()
@@ -131,6 +140,7 @@ private:
     QKeySequence _releaseKey;    // latched at capture
 
     bool _captured = false;
+    bool _filterInstalled = false;
     uint8_t _buttonMask = 0xFF;  // Active-low: D0 = Left, D1 = Right, D2 = Middle
     MouseDeltaAccumulator _motion;
     MouseWheelAccumulator _wheel;

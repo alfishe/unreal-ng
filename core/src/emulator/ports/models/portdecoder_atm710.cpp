@@ -287,6 +287,13 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(gsPort);
         disp.decodedPort = gsPort;
     }
+    // An external ZX-bus Kempston mouse card (IsPort_KempstonMouse)
+    else if (uint8_t mouseRegister = 0; IsPort_KempstonMouse(port, mouseRegister))
+    {
+        result = _mouse->ReadRegister(mouseRegister);
+        _lastPortDecoded = true;
+        disp.decodedPort = mouseRegister == 0 ? 0xFADF : (mouseRegister == 1 ? 0xFBDF : 0xFFDF);
+    }
     // Beta128 FDC ports: on the bus only while the shadow ports are (DOSEN || ~CPM, IsDosPortsEnabled), for
     // reads as for writes - ATM2 docs, UnrealSpeccy CF_DOSPORTS, ZXMAK2 DOSEN||SYSEN, Xpeccy/MAME/ZX-Evo RTL
     // agree. Outside it the port stays undecoded: the floating bus (or #FF), never the VG93's registers
@@ -300,6 +307,27 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     disp.wasDecoded = _lastPortDecoded;
     OnPortInComplete(port, result, pc, disp);
     return result;
+}
+
+/// The ATM Turbo 2 / 2+ boards have no mouse ("Kempston joystick and mouse - Not supported",
+/// TURBO 2+ Assembly and Configuration Manual; the keyboard controller firmware has none). The
+/// mouse ATM2 software uses (NedoOS) is an external Kempston mouse card on the ZX-bus, fitted with
+/// [INPUT] Mouse=KEMPSTON. UnrealSpeccy's address rule (io.cpp): low byte #DF, A8 = 0 buttons
+/// (#FADF), A8 = 1: A10 = 0 X (#FBDF), A10 = 1 Y (#FFDF); A8 = 0 with A10 = 1 is no register. A
+/// card that decodes address lines only does not see the shadow ports, so neither does this
+bool PortDecoder_ATM710::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
+{
+    if (!_mouse || !_mouse->IsPresent() || (port & 0x00FF) != 0x00DF)
+        return false;
+    if ((port & 0x0100) == 0)
+    {
+        if (port & 0x0400)
+            return false;
+        outRegister = 0;
+        return true;
+    }
+    outRegister = (port & 0x0400) ? 2 : 1;
+    return true;
 }
 
 void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
