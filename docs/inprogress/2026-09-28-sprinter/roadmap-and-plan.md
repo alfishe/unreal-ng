@@ -212,7 +212,9 @@ cycle; the decoder runs 1 T into the 4-T I/O cycle). `SprinterWaits::IoCycleStar
 start, Sprinter-local; no shared Z80 code changed.
 
 Open (recorded, not changed in S1):
-- **CPU emulation approach: pending the CPU research (`research-cpu-z84c15.md`)**. The Sprinter
+- **CPU emulation approach: decided (owner, 2026-10-01): its own CPU library**,
+  `core/src/3rdparty/z84c15/` (CMOS core + the on-chip block), the Sprinter only; design and status in
+  [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md). Earlier note: the Sprinter
   CPU is a Z84C15 (CMOS Z84C00 core + SIO/CTC/PIO/WDT/chip selects); the CPU variant settings
   (`OUT (C),0` value, CMOS undocumented flags, the NMOS LD A,I / LD A,R parity quirk the shared core
   always applies) are left as they are until that research decides; a CPU-specific part, if any,

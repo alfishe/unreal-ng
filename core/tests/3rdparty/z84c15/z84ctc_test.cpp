@@ -1,11 +1,13 @@
-// Z84Ctc: control words, time constants, the timer down-counter, the vector (Sprinter test-plan §2.10 T-Z84).
+// Z84Ctc: control words, time constants, the timer down-counter, the vector (Sprinter test-plan §2.10 T-Z84; moved with the model into the z84c15 library).
 
 #include "stdafx.h"
 #include "pch.h"
 
 #include <gtest/gtest.h>
 
-#include "emulator/io/z84c15/z84ctc.h"
+#include <3rdparty/z84c15/z84c15.h>
+
+using Z84Lib::Z84Ctc;
 
 TEST(Z84Ctc_Test, Timer_CountsThroughThePrescaler)
 {

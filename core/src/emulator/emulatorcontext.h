@@ -246,7 +246,8 @@ public:
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
-        // Next free: 1u << 5
+        kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
+        // Next free: 1u << 6
     };
     std::atomic<uint32_t> stepWork{0};
 

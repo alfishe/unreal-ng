@@ -513,3 +513,132 @@ TEST_F(Z80ClockRatio_Test, ImmediateApplyRescalesTheInFramePosition)
 }
 
 /// endregion </Hardware clock ratio>
+
+/// region <Instruction engine seam (Z80::SetEngine, ICpuEngine)>
+
+/// A machine can run on its own instruction engine (the Sprinter's Z84C15
+/// library). The engine replaces only the instruction: the instruction-start
+/// work stays the Z80's, the INT / NMI acknowledge goes to the engine, and a
+/// machine without an engine keeps the plain step (no work bit)
+namespace
+{
+struct StubEngine : ICpuEngine
+{
+    Z80* cpu = nullptr;
+    std::vector<uint16_t> stepPcs;    ///< PC at each ExecuteStep
+    std::vector<uint16_t> stepM1Pcs;  ///< m1_pc at each ExecuteStep (set by EngineStep before the call)
+    std::vector<uint8_t> intVectors;
+    int nmis = 0;
+
+    void ExecuteStep() override
+    {
+        stepPcs.push_back(cpu->pc);
+        stepM1Pcs.push_back(cpu->m1_pc);
+        cpu->pc++;
+        cpu->tt += 4u * cpu->rate;  // a NOP's time, whatever the byte at PC is
+    }
+    void AcknowledgeInterrupt(uint8_t vector) override { intVectors.push_back(vector); }
+    void AcknowledgeNmi() override { nmis++; }
+};
+} // namespace
+
+class EngineSeam_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+    StubEngine _engine;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+        _engine.cpu = _z80;
+
+        // INC A x 4 at #8000: the native core would change A, the stub never does
+        for (uint16_t i = 0; i < 4; i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), 0x3C);
+        _z80->pc = 0x8000;
+        _z80->a = 0x10;
+        _z80->iff1 = 0;
+        _z80->t = 100;  // away from the frame INT
+    }
+
+    void TearDown() override
+    {
+        if (_z80)
+        {
+            _z80->SetEngine(nullptr);
+            _z80->m1TraceHook = nullptr;
+        }
+        if (_emulator)
+        {
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+};
+
+TEST_F(EngineSeam_Test, SetEngineOwnsItsBitAndRemovalRestoresTheNativeStep)
+{
+    EXPECT_EQ(_context->stepWork.load(), 0u) << "a classic machine runs the plain step";
+    _z80->SetEngine(&_engine);
+    EXPECT_EQ(_z80->GetEngine(), &_engine);
+    EXPECT_EQ(_context->stepWork.load(), EmulatorContext::kStepWorkEngine);
+
+    _z80->StepInstruction(true);
+    EXPECT_EQ(_engine.stepPcs.size(), 1u);
+    EXPECT_EQ(_z80->a, 0x10) << "the native core did not run";
+
+    _z80->SetEngine(nullptr);
+    EXPECT_EQ(_context->stepWork.load(), 0u);
+    _z80->StepInstruction(true);
+    EXPECT_EQ(_engine.stepPcs.size(), 1u) << "no engine call after the removal";
+    EXPECT_EQ(_z80->a, 0x11) << "the native INC A ran";
+}
+
+TEST_F(EngineSeam_Test, StepRoutesToTheEngineAfterTheInstructionStartWork)
+{
+    std::vector<uint16_t> starts;
+    _z80->m1TraceHook = [&](uint16_t pc) { starts.push_back(pc); };
+    _z80->SetEngine(&_engine);
+
+    const uint32_t t0 = _z80->t;
+    for (int i = 0; i < 3; i++)
+        _z80->StepInstruction(true);
+
+    ASSERT_EQ(_engine.stepPcs.size(), 3u);
+    for (uint16_t i = 0; i < 3; i++)
+    {
+        EXPECT_EQ(_engine.stepPcs[i], 0x8000 + i);
+        EXPECT_EQ(_engine.stepM1Pcs[i], 0x8000 + i) << "m1_pc is the instruction start before the engine runs";
+    }
+    EXPECT_EQ(starts, (std::vector<uint16_t>{0x8000, 0x8001, 0x8002})) << "the start observers ran once each";
+    EXPECT_EQ(_z80->t, t0 + 12) << "the engine's time is the CPU's";
+    EXPECT_EQ(_z80->a, 0x10);
+}
+
+TEST_F(EngineSeam_Test, InterruptAndNmiAcknowledgesGoToTheEngine)
+{
+    _z80->SetEngine(&_engine);
+
+    // INT accepted by ProcessInterrupts: the acknowledge is the engine's, the host keeps PC
+    _z80->int_pending = true;
+    _z80->HandleINT(0x42);
+    ASSERT_EQ(_engine.intVectors, (std::vector<uint8_t>{0x42}));
+    EXPECT_FALSE(_z80->int_pending);
+    EXPECT_EQ(_z80->pc, 0x8000) << "no native push / jump";
+
+    // NMI at the next boundary: the step is the engine's acknowledge, no instruction runs
+    _z80->RequestNonMaskedInterrupt();
+    const Z80::StepResult result = _z80->StepInstruction(true);
+    EXPECT_TRUE(result.nmiAccepted);
+    EXPECT_EQ(_engine.nmis, 1);
+    EXPECT_TRUE(_engine.stepPcs.empty());
+    EXPECT_EQ(_z80->pc, 0x8000);
+}
+
+/// endregion </Instruction engine seam>

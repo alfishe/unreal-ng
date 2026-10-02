@@ -54,6 +54,15 @@ run).
    that would benefit from SIMD with `// SIMD-CANDIDATE(<id>): ...`.
 6. **Every change to a hot path gets an A/B measurement** (section 4) in the
    commit or the design document, including when the result is "no change".
+7. **Mark what a later CPU move touches.** The main CPU will move from the
+   native interpreter (`core/src/emulator/cpu/`) to a vendored CPU library, as
+   the Sprinter's Z84C15 already has. Every place in or next to the native CPU
+   that such a move changes carries
+   `// CPU-LIBRARY-MIGRATION(<id>): <what changes for the main CPU>`, the same
+   style as `SIMD-CANDIDATE`. One id may mark several places; the ids and what
+   each means are listed in
+   [the Z84C15 library design](../inprogress/2026-10-01-z84c15-cpu-library/design.md#7-cpu-library-migration-tags).
+   A tag is a comment only: it never changes behavior.
 
 ## 3. Patterns in this code base
 
