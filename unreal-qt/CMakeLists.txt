@@ -136,116 +136,158 @@ endif ()
 # Default Qt paths (can be overridden via command line)
 set(QT_FOUND_PATH "")
 
+# Every component this app needs. Used to make sure "standard discovery" below
+# never settles for a partial Qt6 install (e.g. a Homebrew Qt6 with no Multimedia
+# module): checking file existence only, like the whitelist below always did,
+# so this never calls find_package() speculatively - a speculative, only-partly-
+# successful find_package(Qt6 COMPONENTS ...) call permanently registers IMPORTED
+# targets for whichever components it did resolve, and nothing can undo that
+# later in the same configure, even for the components that get re-resolved
+# correctly afterwards.
+set(_UNREALNG_QT_REQUIRED_COMPONENTS Core Gui Widgets Multimedia Svg OpenGL OpenGLWidgets)
+function(_unrealng_qt6_prefix_is_complete prefix out_var)
+    set(${out_var} FALSE PARENT_SCOPE)
+    if (prefix STREQUAL "" OR NOT EXISTS "${prefix}/lib/cmake/Qt6/Qt6Config.cmake")
+        return()
+    endif()
+    foreach(_component ${_UNREALNG_QT_REQUIRED_COMPONENTS})
+        if (NOT EXISTS "${prefix}/lib/cmake/Qt6${_component}/Qt6${_component}Config.cmake")
+            return()
+        endif()
+    endforeach()
+    set(${out_var} TRUE PARENT_SCOPE)
+endfunction()
+
+# Try the standard CMake/Qt6 discovery locations first: CMAKE_PREFIX_PATH (set via
+# -DCMAKE_PREFIX_PATH=... or a toolchain file, or already extended by the root
+# CMakeLists.txt when this is a subdirectory build), its environment-variable form
+# (common in Docker/CI), and Qt6_DIR if the caller already pointed at one. Only
+# fall back to our hardcoded whitelist of known install paths below if none of
+# these resolve to a complete Qt6.
+set(_UNREALNG_QT_STANDARD_CANDIDATES "")
+if (DEFINED Qt6_DIR AND NOT Qt6_DIR STREQUAL "")
+    get_filename_component(_qt6_dir_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+    list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES "${_qt6_dir_prefix}")
+endif()
+foreach(_prefix ${CMAKE_PREFIX_PATH})
+    list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES "${_prefix}")
+endforeach()
+if (DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
+    string(REPLACE ":" ";" _qt_env_prefix_paths "$ENV{CMAKE_PREFIX_PATH}")
+    list(APPEND _UNREALNG_QT_STANDARD_CANDIDATES ${_qt_env_prefix_paths})
+endif()
+
+foreach(_candidate ${_UNREALNG_QT_STANDARD_CANDIDATES})
+    if (NOT _candidate STREQUAL "" AND NOT QT_FOUND_PATH)
+        _unrealng_qt6_prefix_is_complete("${_candidate}" _qt_candidate_complete)
+        if (_qt_candidate_complete)
+            set(QT_FOUND_PATH "${_candidate}")
+            message(STATUS "Found Qt6 via standard CMake discovery: ${QT_FOUND_PATH}")
+        endif()
+    endif()
+endforeach()
+unset(_UNREALNG_QT_STANDARD_CANDIDATES)
+
 # Check if QT_INSTALL_PATH is defined and not empty
 if (NOT DEFINED QT_INSTALL_PATH)
     set(QT_INSTALL_PATH "")
 endif()
 
-if (QT_INSTALL_PATH STREQUAL "")
-    # First, check if CMAKE_PREFIX_PATH environment variable points to Qt
-    # This is commonly set in Docker containers and CI environments
-    if (DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
-        string(REPLACE ":" ";" PREFIX_PATHS "$ENV{CMAKE_PREFIX_PATH}")
-        foreach(PREFIX_PATH ${PREFIX_PATHS})
-            if(EXISTS "${PREFIX_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-                set(QT_FOUND_PATH "${PREFIX_PATH}")
-                message(STATUS "Found Qt6 via CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
-                break()
-            endif()
-        endforeach()
-    endif()
-    
-    # If not found via CMAKE_PREFIX_PATH, check standard platform paths
-    if(NOT QT_FOUND_PATH)
-        if (APPLE)  # macOS
-            # Check common Qt6 versions in ~/Qt (most recent first)
-            set(QT_POSSIBLE_PATHS
-                "$ENV{HOME}/Qt/6.9.3/macos"
-                "$ENV{HOME}/Qt/6.5.3/macos"
-                "$ENV{HOME}/Qt/6.5.0/macos"
-                "$ENV{QTDIR}"
-            )
-        elseif (UNIX AND NOT APPLE)  # Linux
-            set(QT_POSSIBLE_PATHS
-                "$ENV{HOME}/Qt/6.9.3/gcc_64"
-                "$ENV{HOME}/Qt/6.5.3/gcc_64"
-                "$ENV{HOME}/Qt/6.5.0/gcc_64"
-                "$ENV{QTDIR}"
-            )
-        elseif (WIN32)  # Windows
-            # Auto-detect Qt path based on compiler
-            if(MINGW)
-                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+if (NOT QT_FOUND_PATH)
+    if (QT_INSTALL_PATH STREQUAL "")
+        # If not found via standard discovery, check standard platform paths
+        if(NOT QT_FOUND_PATH)
+            if (APPLE)  # macOS
+                # Check common Qt6 versions in ~/Qt (most recent first)
                 set(QT_POSSIBLE_PATHS
-                    "C:/Qt/6.9.3/mingw_64"
-                    "C:/Qt/6.5.3/mingw_64"
-                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{HOME}/Qt/6.9.3/macos"
+                    "$ENV{HOME}/Qt/6.5.3/macos"
+                    "$ENV{HOME}/Qt/6.5.0/macos"
                     "$ENV{QTDIR}"
                 )
-            elseif(MSVC)
-                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+            elseif (UNIX AND NOT APPLE)  # Linux
                 set(QT_POSSIBLE_PATHS
-                    "C:/Qt/6.9.3/msvc2022_64"
-                    "C:/Qt/6.9.3/msvc2019_64"
-                    "C:/Qt/6.5.3/msvc2019_64"
-                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{HOME}/Qt/6.9.3/gcc_64"
+                    "$ENV{HOME}/Qt/6.5.3/gcc_64"
+                    "$ENV{HOME}/Qt/6.5.0/gcc_64"
                     "$ENV{QTDIR}"
                 )
-            else()
-                message(STATUS "Unknown Windows compiler - searching for any Qt build")
-                set(QT_POSSIBLE_PATHS
-                    "C:/Qt/6.9.3/msvc2022_64"
-                    "C:/Qt/6.9.3/mingw_64"
-                    "C:/Qt/6.5.3/msvc2019_64"
-                    "C:/Qt/6.5.3/mingw_64"
-                    "$ENV{QTDIR}"
-                )
-            endif()
-        endif ()
-    endif()
-    
-    # Try to find Qt6Config.cmake in possible paths (only if not already found via CMAKE_PREFIX_PATH)
-    if (NOT QT_FOUND_PATH AND DEFINED QT_POSSIBLE_PATHS)
-        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            elseif (WIN32)  # Windows
+                # Auto-detect Qt path based on compiler
+                if(MINGW)
+                    message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                    set(QT_POSSIBLE_PATHS
+                        "C:/Qt/6.9.3/mingw_64"
+                        "C:/Qt/6.5.3/mingw_64"
+                        "C:/Qt/6.5.0/mingw_64"
+                        "$ENV{QTDIR}"
+                    )
+                elseif(MSVC)
+                    message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                    set(QT_POSSIBLE_PATHS
+                        "C:/Qt/6.9.3/msvc2022_64"
+                        "C:/Qt/6.9.3/msvc2019_64"
+                        "C:/Qt/6.5.3/msvc2019_64"
+                        "C:/Qt/6.5.0/msvc2019_64"
+                        "$ENV{QTDIR}"
+                    )
+                else()
+                    message(STATUS "Unknown Windows compiler - searching for any Qt build")
+                    set(QT_POSSIBLE_PATHS
+                        "C:/Qt/6.9.3/msvc2022_64"
+                        "C:/Qt/6.9.3/mingw_64"
+                        "C:/Qt/6.5.3/msvc2019_64"
+                        "C:/Qt/6.5.3/mingw_64"
+                        "$ENV{QTDIR}"
+                    )
+                endif()
+            endif ()
+        endif()
+
+        # Try to find a complete Qt6 in the whitelisted paths (only if not already found via standard discovery)
+        if (NOT QT_FOUND_PATH AND DEFINED QT_POSSIBLE_PATHS)
+            foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+                _unrealng_qt6_prefix_is_complete("${POSSIBLE_PATH}" _qt_candidate_complete)
+                if (_qt_candidate_complete)
+                    set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+                    message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+                    break()
+                endif()
+            endforeach()
+        endif()
+    else ()
+        # User specified a path (could be a list or single path)
+        # In CMake, lists are semicolon-separated, so we can iterate directly
+        # Check each path in the list (works for both single path and list)
+        foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+            # Remove any whitespace
+            string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
             if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
                 set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-                message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+                message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
                 break()
+            else()
+                message(STATUS "Checking Qt path: ${POSSIBLE_PATH} (Qt6Config.cmake not found)")
             endif()
         endforeach()
-    endif()
-else ()
-    # User specified a path (could be a list or single path)
-    # In CMake, lists are semicolon-separated, so we can iterate directly
-    # Check each path in the list (works for both single path and list)
-    foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
-        # Remove any whitespace
-        string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
-        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-            message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
-            break()
-        else()
-            message(STATUS "Checking Qt path: ${POSSIBLE_PATH} (Qt6Config.cmake not found)")
-        endif()
-    endforeach()
-endif ()
+    endif ()
 
-# If still not found, provide helpful error message
-if(NOT QT_FOUND_PATH)
-    message(WARNING "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
-    if(DEFINED QT_INSTALL_PATH AND NOT QT_INSTALL_PATH STREQUAL "")
-        message(WARNING "Checked user-specified paths:")
-        foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
-            message(WARNING "  - ${POSSIBLE_PATH}")
-        endforeach()
-    else()
-        message(WARNING "Checked standard paths:")
-        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
-            message(WARNING "  - ${POSSIBLE_PATH}")
-        endforeach()
+    # If still not found, provide helpful error message
+    if(NOT QT_FOUND_PATH)
+        message(WARNING "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
+        if(DEFINED QT_INSTALL_PATH AND NOT QT_INSTALL_PATH STREQUAL "")
+            message(WARNING "Checked user-specified paths:")
+            foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+                message(WARNING "  - ${POSSIBLE_PATH}")
+            endforeach()
+        else()
+            message(WARNING "Checked standard paths:")
+            foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+                message(WARNING "  - ${POSSIBLE_PATH}")
+            endforeach()
+        endif()
     endif()
-endif()
+endif ()
 
 # Allow overriding via -DQT_INSTALL_PATH=...
 set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
