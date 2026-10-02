@@ -379,6 +379,8 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 }
 
 /// Single CPU command cycle (non-interruptable)
+// CPU-LIBRARY-MIGRATION(native-step): the fetch / execute / Q block below moves into the engine; the work around
+// it is EngineStep's
 void Z80::Z80Step(bool skipBreakpoints)
 {
     [[maybe_unused]] Z80& cpu = *this;
@@ -451,6 +453,7 @@ void Z80::Z80Step(bool skipBreakpoints)
             // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
             // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
             // contention-by-machine.md section 6
+            // CPU-LIBRARY-MIGRATION(even-m1): a contention-hook rule on the engine's M1 access kind
             if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
                 (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
                 cpu.tt += cpu.rate;
@@ -482,12 +485,14 @@ void Z80::Z80Step(bool skipBreakpoints)
         (normal_opcode[opcode])(&cpu);
 
         // 2a. Opcode profiling hook (after opcode execution)
+        // CPU-LIBRARY-MIGRATION(opcode-profiler): prefix / opcode come from the engine's decoded opcode word
         if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         {
             _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
         }
 
         // 3. Update Q register based on whether flags were modified
+        // CPU-LIBRARY-MIGRATION(q-register): the engine keeps Q per instruction class
         // Q captures YF/XF from flag-modifying instructions only
         // SCF/CCF update Q internally even if F doesn't numerically change
         if (cpu.f != prev_f)
@@ -515,6 +520,44 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
 
     /// endregion </Debug trace capture>
+}
+
+/// Z80Step for a machine with an instruction engine (ICpuEngine): the same
+/// work around the instruction, in the same order, the instruction from the
+/// engine. The engine owns the boundary state, HALT and the prefixes; a step
+/// behind a pending prefix continues an instruction whose start already ran
+/// the instruction-start work. Its start observers run here, one step later
+/// than the native core runs them for a redundant prefix (inside ddfd_prefixes)
+void Z80::EngineStep(bool skipBreakpoints)
+{
+    const bool prefixPending = boundary == Z80_BOUNDARY_PREFIX_DD || boundary == Z80_BOUNDARY_PREFIX_FD;
+    if (!prefixPending && RunInstructionStartHooks(skipBreakpoints))
+        return;
+
+    // m1_pc and the start observers at the instruction's first M1, as m1_cycle does it (prefix == 0)
+    if (!prefixPending)
+        prev_pc = m1_pc;
+    RecordInstructionStart(prefixPending ? static_cast<uint16_t>(pc - 1) : pc);
+
+    // Call trace (pre-execution): decodes the instruction at m1_pc with the registers it acts on
+    if (_feature_calltrace_enabled && _memory != nullptr)
+    {
+        MemoryAccessTracker& tracker = _memory->GetAccessTracker();
+        if (tracker.IsCalltraceCapturing())
+            tracker.GetCallTraceBuffer()->LogIfControlFlow(_context, _memory, m1_pc, _context->emulatorState.frame_counter);
+    }
+
+    _engine->ExecuteStep();
+
+    if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
+
+    if (cycles_to_capture > 0)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof(buffer) / sizeof(buffer[0]));
+        LOGINFO(buffer);
+    }
 }
 
 /// @brief Apply the queued frequency multiplier change, if any.
@@ -678,6 +721,7 @@ void Z80::BeginFrame()
         int_pending = true;
 }
 
+// CPU-LIBRARY-MIGRATION(step-routing): the plain step calls the engine; the kStepWorkEngine bit goes
 Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
 {
     // A CPU never put through a frame start (bare Core fixtures driving the
@@ -764,6 +808,11 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
             else
                 result.intAccepted = true;
         }
+        else if ((work & EmulatorContext::kStepWorkEngine) && _engine)
+        {
+            // CPU-LIBRARY-MIGRATION(step-routing): the machine runs on its own engine (Z80::SetEngine)
+            EngineStep(skipBreakpoints);
+        }
         else
         {
             Z80Step(skipBreakpoints);
@@ -833,6 +882,7 @@ Z80::RzxBoundary Z80::RzxFrameEnd(rzx::RzxPlayer& player)
         return RzxBoundary::None;
 
     // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
+    // CPU-LIBRARY-MIGRATION(rzx-boundary): reads / writes the engine's boundary register
     if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
         boundary = Z80_BOUNDARY_NONE;
     HandleINT(0xFF);
@@ -858,6 +908,12 @@ void Z80::SetMachineStepHook(IMachineStepHook* hook)
 {
     _machineStepHook = hook;
     _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
+}
+
+void Z80::SetEngine(ICpuEngine* engine)
+{
+    _engine = engine;
+    _context->SetStepWork(EmulatorContext::kStepWorkEngine, engine != nullptr);
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -946,6 +1002,7 @@ void Z80::NotifyMachineM1(uint16_t address)
     machineM1Hook->OnMachineM1(address);
 }
 
+// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)
 uint8_t Z80::m1_cycle()
 {
     /// region <Overriding submodule for module logger>
@@ -1054,6 +1111,7 @@ void Z80::NotifyInstructionStart()
 /// Read access to memory takes 3 clock cycles
 /// \param addr
 /// \return
+// CPU-LIBRARY-MIGRATION(memory-bus): a memory read callback; the 3 T and contention come from the engine
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
     // Video memory contention, where the machine has it, is part of the selected interface
@@ -1070,6 +1128,7 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 
 /// The opcode fetch: rd through MemoryReadM1, which on the contended interfaces also notes the refresh that
 /// follows (ULA snow); on every other interface it is the plain read, so nothing is added there
+// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 read (kind M1) through MemoryReadM1
 uint8_t Z80::rdM1(uint16_t addr)
 {
     IncrementCPUCyclesCounter(3);
@@ -1086,6 +1145,7 @@ uint8_t Z80::rdM1(uint16_t addr)
 /// Write access to memory takes 3 clock cycles
 /// \param addr
 /// \param val
+// CPU-LIBRARY-MIGRATION(memory-bus): a memory write callback; the 3 T and contention come from the engine
 void Z80::wd(uint16_t addr, uint8_t val)
 {
     // Video memory contention: see rd (Memory::MemoryWriteContended)
@@ -1097,6 +1157,7 @@ void Z80::wd(uint16_t addr, uint8_t val)
         busTraceHook('W', addr, val);
 }
 
+// CPU-LIBRARY-MIGRATION(io-bus): the engine's port-in callback (the Z84C15 engine already calls this)
 uint8_t Z80::in(uint16_t port)
 {
     // TTD port journal: while a session records, every IN result is appended
@@ -1126,6 +1187,7 @@ uint8_t Z80::in(uint16_t port)
 
 /// The read as the bus answers it: interceptor, model decoder, observer cards,
 /// floating bus, I/O contention
+// CPU-LIBRARY-MIGRATION(io-bus): ULA I/O contention moves to the engine's pre / post IORQ hook kinds
 uint8_t Z80::inFromBus(uint16_t port)
 {
     // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
@@ -1231,6 +1293,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     return result;
 }
 
+// CPU-LIBRARY-MIGRATION(io-bus): the engine's port-out callback; ULA I/O contention via the hook kinds
 void Z80::out(uint16_t port, uint8_t val)
 {
     // TTD port journal: every OUT is logged as a fact of the machine's output
@@ -1297,6 +1360,7 @@ uint8_t Z80::FloatingBusAfterLateWaits(uint16_t port, uint8_t ioWait)
 
 /// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.
 /// Each T-state is its own check, like FUSE's contend_read_no_mreq(addr, 1)
+// CPU-LIBRARY-MIGRATION(idle-cycles): the engine's Internal access kind on the contention hook
 void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
 {
     const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
@@ -1452,6 +1516,15 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
     if (_nmi_pending_count > 0 && !prefixPending && cpu.boundary != Z80_BOUNDARY_NMI_ACK)
     {
         _nmi_pending_count = 0;
+
+        // CPU-LIBRARY-MIGRATION(nmi-ack): the engine's NMI acknowledge. A machine on its own engine
+        // (ICpuEngine) already takes it there: the restart fetch, the pushes, PC = #0066, IFF1 = 0
+        if (_engine) [[unlikely]]
+        {
+            _engine->AcknowledgeNmi();
+            cpu.int_pending = false;
+            return true;
+        }
         cpu.nmi_in_progress = true;
 
         // If CPU halted - unblock it by moving PC forward (return lands past
@@ -1598,9 +1671,23 @@ bool Z80::IntClearedByAcknowledge() const
     return _context->config.mem_model == MM_ATM3;
 }
 
+// CPU-LIBRARY-MIGRATION(int-ack): the engine's INT acknowledge, its bus cycles through the callbacks
 void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
+
+    // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
+    // (ICpuEngine); one test per accepted INT, not per instruction
+    if (_engine) [[unlikely]]
+    {
+        if (HostBusOverlay* overlay = _memory->GetBusOverlay())
+            overlay->onInterruptAcknowledge();
+        _engine->AcknowledgeInterrupt(vector);
+        cpu.int_pending = false;
+        if (IntClearedByAcknowledge())
+            cpu.int_acked_in_pulse = 1;
+        return;
+    }
 
     /// region <CPU is stopped on HALT (opcode 0x76) command>
 
@@ -1612,6 +1699,7 @@ void Z80::HandleINT(uint8_t vector)
 
     /// endregion </CPU is stopped on HALT (opcode 0x76) command>
 
+    // CPU-LIBRARY-MIGRATION(cmos-variant): the quirk becomes an engine variant setting (the Z84C15 has none)
     // NMOS quirk: LD A,I / LD A,R copy IFF2 into P/V late in the instruction,
     // and an INT accepted at the very next boundary clears IFF2 before that
     // copy settles - P/V reads 0 (Zilog Z80 Family Q&A, Data Book 1989
@@ -1713,6 +1801,7 @@ void Z80::OnCPUStep()
 // Required to keep exact timings for Z80 commands
 // Note: same as '#define cputact(a) cpu->tt += ((a) * cpu->rate)' macro defined in cpulogic.h
 //
+// CPU-LIBRARY-MIGRATION(t-model): the engine counts plain T; the host maps frame T to it (Z84C15Engine)
 void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 {
     tt += cycles * rate;
