@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -12,9 +13,14 @@
 #include "_helpers/romeditortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/zxprogramfiles.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/commandtyper.h"
+#include "debugger/assembler/z80textassembler.h"
 #include "debugger/debugmanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 
@@ -26,14 +32,76 @@
 /// the screen and compares every line with what the real machine prints (FUSE 1.6.0 prints the same).
 ///
 /// Each case boots a ROM, loads the tape and runs the program for a few hundred frames: 0.1-0.3 s.
+///
+/// fusetest-coemu (the same folder) wraps it for the co-emulation harness: a copy of everything it prints goes to
+/// a buffer in memory and a DONE byte is set when it returns. FuseTestCoemu_Test checks that buffer against the
+/// screen, and the files built from the wrapper and fusetest's own code.
 
 namespace
 {
-std::string FuseTestPath()
+std::string FuseTestPath(const std::string& file = "fusetest.tap")
 {
-    return (TestPathHelper::FindProjectRoot() / "tools" / "verification" / "contention" / "fusetest" / "fusetest.tap")
+    return (TestPathHelper::FindProjectRoot() / "tools" / "verification" / "contention" / "fusetest" / file)
         .make_preferred()
         .string();
+}
+
+constexpr uint16_t kCoemuOrg = 0x9000;
+constexpr uint16_t kFuseOrg = 0xA000;
+
+/// fusetest's code block (loaded at #A000) from its tape: the second data block, without its flag and checksum
+std::vector<uint8_t> FuseTestCode()
+{
+    const std::vector<uint8_t> tap = ZxProgramFiles::ReadBinary(FuseTestPath());
+    std::vector<std::vector<uint8_t>> blocks;
+    for (size_t i = 0; i + 2 <= tap.size();)
+    {
+        const size_t n = tap[i] | (tap[i + 1] << 8);
+        if (n < 2 || i + 2 + n > tap.size())
+            break;
+        blocks.emplace_back(tap.begin() + static_cast<std::ptrdiff_t>(i + 2), tap.begin() + static_cast<std::ptrdiff_t>(i + 2 + n));
+        i += 2 + n;
+    }
+    // header, BASIC, header (type 3, start #A000), code
+    if (blocks.size() != 4 || blocks[2].size() < 16 || blocks[2][1] != 3 || (blocks[2][14] | (blocks[2][15] << 8)) != kFuseOrg)
+        return {};
+    return std::vector<uint8_t>(blocks[3].begin() + 1, blocks[3].end() - 1);
+}
+
+/// The wrapper, padded to #A000, then fusetest's code
+struct CoemuProgram
+{
+    AsmResult asmResult;
+    std::vector<uint8_t> bytes;
+
+    uint16_t Sym(const char* name) const
+    {
+        auto it = asmResult.symbols.find(name);
+        EXPECT_NE(it, asmResult.symbols.end()) << name;
+        return it == asmResult.symbols.end() ? 0 : static_cast<uint16_t>(it->second);
+    }
+};
+
+CoemuProgram BuildCoemu()
+{
+    CoemuProgram p;
+    Z80TextAssembler assembler;
+    p.asmResult = assembler.Assemble(ZxProgramFiles::ReadText(FuseTestPath("fusetest-coemu.asm")), kCoemuOrg);
+    if (!p.asmResult.ok)
+    {
+        ADD_FAILURE() << p.asmResult.error.line << ": " << p.asmResult.error.message << " | " << p.asmResult.error.sourceLine;
+        return p;
+    }
+    const std::vector<uint8_t> code = FuseTestCode();
+    if (code.empty() || p.asmResult.bytes.size() > kFuseOrg - kCoemuOrg)
+    {
+        ADD_FAILURE() << "fusetest.tap has no code block at #A000, or the wrapper runs into it";
+        return p;
+    }
+    p.bytes = p.asmResult.bytes;
+    p.bytes.resize(kFuseOrg - kCoemuOrg, 0);
+    p.bytes.insert(p.bytes.end(), code.begin(), code.end());
+    return p;
 }
 
 /// The twelve tests, in the order the program runs them (fusetest.asm, _testdata)
@@ -208,3 +276,83 @@ TEST_P(FuseTest_Test, EveryTestPrintsWhatTheHardwarePrints)
 }
 
 INSTANTIATE_TEST_SUITE_P(Machines, FuseTest_Test, ::testing::ValuesIn(Machines()), MachineName);
+
+/// The wrapper's buffer holds the report the screen shows, on the 48K
+class FuseTestCoemu_Test : public FuseTest_Test
+{
+};
+
+TEST_F(FuseTestCoemu_Test, BufferHoldsTheReport)
+{
+    const CoemuProgram p = BuildCoemu();
+    ASSERT_FALSE(p.bytes.empty());
+    BootEditor("48K");
+    ASSERT_FALSE(HasFatalFailure());
+    for (size_t i = 0; i < p.bytes.size(); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kCoemuOrg + i), p.bytes[i]);
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->pc = p.Sym("HOSTENTRY");
+    z80->sp = static_cast<uint16_t>(kCoemuOrg - 2);  // as CLEAR 36863 leaves it
+    ASSERT_TRUE(RunUntil([&] { return _context->pMemory->DirectReadFromZ80Memory(p.Sym("DONE")) == 1; }, 6000))
+        << "fusetest never returned:\n" << Screen();
+
+    std::string buffer;
+    for (uint16_t a = p.Sym("BUFFER"); a < p.Sym("BUFEND"); a++)
+    {
+        const uint8_t c = _context->pMemory->DirectReadFromZ80Memory(a);
+        if (c == 0)
+            break;
+        buffer += c == 13 ? '\n' : static_cast<char>(c);
+    }
+    std::string joined;  // as Printed(): the lines run together
+    for (char c : buffer)
+        if (c != '\n')
+            joined += c;
+    const std::string printed = Printed();
+    EXPECT_NE(buffer.find("Machine type: 48K"), std::string::npos) << buffer;
+    const std::vector<Machine> machines = Machines();
+    const Machine& m = machines.front();
+    for (const std::string& name : TestNames())
+    {
+        EXPECT_EQ(Verdict(joined, name), m.expected.at(name)) << name << "\n" << buffer;
+        EXPECT_EQ(Verdict(joined, name), Verdict(printed, name)) << name << ": the buffer and the screen differ";
+    }
+}
+
+/// The committed harness files are what the wrapper and fusetest.tap build (no drift)
+TEST(FuseTestCoemuFiles_Test, CommittedFilesMatchTheSource)
+{
+    const CoemuProgram p = BuildCoemu();
+    ASSERT_FALSE(p.bytes.empty());
+    const std::string heading = "; fusetest-coemu symbols (generated by fusetest_test.cpp)";
+    EXPECT_TRUE(ZxProgramFiles::ReadBinary(FuseTestPath("fusetest-coemu.tap")) ==
+                ZxProgramFiles::BuildTap("fusetest", kCoemuOrg, p.bytes))
+        << "rebuild with UNREAL_FUSETEST_EXPORT=1";
+    EXPECT_TRUE(ZxProgramFiles::ReadBinary(FuseTestPath("fusetest-coemu.trd")) ==
+                ZxProgramFiles::BuildTrd("fusetest", kCoemuOrg, p.bytes))
+        << "rebuild with UNREAL_FUSETEST_EXPORT=1";
+    EXPECT_TRUE(ZxProgramFiles::ReadBinary(FuseTestPath("fusetest-coemu.sym")) ==
+                ZxProgramFiles::BuildSym(heading, p.asmResult.symbols))
+        << "rebuild with UNREAL_FUSETEST_EXPORT=1";
+}
+
+/// UNREAL_FUSETEST_EXPORT=1 writes them
+TEST(FuseTestCoemuFiles_Test, Export)
+{
+    if (!std::getenv("UNREAL_FUSETEST_EXPORT"))
+        GTEST_SKIP() << "set UNREAL_FUSETEST_EXPORT=1 to write fusetest-coemu.tap / .trd / .sym";
+    const CoemuProgram p = BuildCoemu();
+    ASSERT_FALSE(p.bytes.empty());
+    const std::string heading = "; fusetest-coemu symbols (generated by fusetest_test.cpp)";
+    const std::vector<std::pair<std::string, std::vector<uint8_t>>> files = {
+        { "fusetest-coemu.tap", ZxProgramFiles::BuildTap("fusetest", kCoemuOrg, p.bytes) },
+        { "fusetest-coemu.trd", ZxProgramFiles::BuildTrd("fusetest", kCoemuOrg, p.bytes) },
+        { "fusetest-coemu.sym", ZxProgramFiles::BuildSym(heading, p.asmResult.symbols) }
+    };
+    for (const auto& [file, data] : files)
+    {
+        std::ofstream out(FuseTestPath(file), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        ASSERT_TRUE(out.good()) << file;
+    }
+}

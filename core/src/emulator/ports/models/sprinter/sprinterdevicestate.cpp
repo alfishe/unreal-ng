@@ -1,0 +1,1012 @@
+// DeviceState::Sprinter and its port-table / paging views - the Sprinter reports every
+// automation interface renders (declared in emulator/state/devicestate.h; built here, beside
+// the Sprinter code, so the shared state code names no Sprinter type). Design:
+// docs/inprogress/2026-09-28-sprinter/tdd-integration.md §3, as built:
+// docs/inprogress/2026-09-28-sprinter/automation-outcome.md
+
+#include "stdafx.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
+#include <map>
+#include <set>
+
+#include "emulator/state/devicestate.h"
+
+#include "common/filehelper.h"
+#include "common/stringhelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/memory/memory.h"
+#include "emulator/memory/rom.h"
+#include "emulator/memory/sprinter/sprintermemory.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/video/sprinter/screensprinter.h"
+#include "emulator/video/sprinter/sprinterintsource.h"
+#include "emulator/video/sprinter/sprintervideoram.h"
+
+namespace
+{
+StateNode Unavailable(const char* description)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = false;
+    n["description"] = description;
+    return n;
+}
+
+PortDecoder_Sprinter* SprinterDecoder(EmulatorContext* context)
+{
+    return context ? dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder) : nullptr;
+}
+
+std::string Hex8(unsigned value) { return StringHelper::Format("0x%02X", value & 0xFFu); }
+std::string Hex16(unsigned value) { return StringHelper::Format("0x%04X", value & 0xFFFFu); }
+std::string Hex32(uint32_t value) { return StringHelper::Format("0x%08X", value); }
+
+/// Space-separated hex bytes ("00 05 02 ...")
+std::string HexRow(const uint8_t* data, size_t count)
+{
+    std::string out;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (i)
+            out += ' ';
+        out += StringHelper::Format("%02X", data[i]);
+    }
+    return out;
+}
+
+const char* ConfigStateName(uint8_t state)
+{
+    switch (state)
+    {
+        case SprinterConfigState::Unconfigured: return "unconfigured";
+        case SprinterConfigState::Loading: return "loading";
+        case SprinterConfigState::Configured: return "configured";
+        default: return "unknown";
+    }
+}
+
+/// The decoder's code names (GetPortTraceCodeTable: the port trace and these views share them)
+std::map<uint16_t, std::string> CodeNames(const PortDecoder_Sprinter& decoder)
+{
+    std::map<uint16_t, std::string> names;
+    for (const PortTraceCodeName& entry : decoder.GetPortTraceCodeTable())
+        names.emplace(entry.code, entry.name);
+    return names;
+}
+
+std::string CodeName(const std::map<uint16_t, std::string>& names, uint16_t code)
+{
+    auto it = names.find(code);
+    return it != names.end() ? it->second : StringHelper::Format("Code%02X", code & 0xFFu);
+}
+
+/// The BIOS images the project ships (docs/inprogress/2026-09-28-sprinter/bios-versions.md)
+struct KnownBios
+{
+    const char* file;
+    const char* version;
+    const char* crc32;
+};
+constexpr KnownBios kKnownBios[] = {
+    {"sp2k-3.04.rom", "Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; the default)", "1729cb5c"},
+    {"sp2k-3.06-hf2.rom", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026)", "9aa7bb29"},
+    {"sp2k-3.07-beta1.rom", "Firmware v3.07 BETA 1 (community build, 24.09.2026)", "a06a1a02"},
+};
+
+/// One window of the CPU's address space as the PLD maps it
+StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_t window)
+{
+    static const char* const kRanges[4] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+    Memory& memory = *context->pMemory;
+    const SprinterPldState& pld = decoder.GetPldState();
+    auto* sprinterMemory = dynamic_cast<SprinterMemory*>(context->pMemory);
+
+    StateNode w = StateNode::Object();
+    w["window"] = int(window);
+    w["address_range"] = kRanges[window];
+
+    const MemoryBankModeEnum mode = memory.GetMemoryBankMode(window);
+    const bool configured = pld.configState == SprinterConfigState::Configured;
+    const SprinterMemory::ReadRedirect redirect =
+        sprinterMemory ? sprinterMemory->GetReadRedirect(window) : SprinterMemory::ReadRedirect::None;
+    const SprinterMemory::BankAction action =
+        sprinterMemory ? sprinterMemory->GetBankAction(window) : SprinterMemory::BankAction::Plain;
+
+    std::string kind;
+    int page = -1;
+    bool writable = false;
+    std::string note;
+    if (mode == BANK_ROM)
+    {
+        page = memory.GetROMPageForBank(window);
+        kind = configured ? "ROM" : "loader ROM";
+        if (!configured)
+            note = redirect == SprinterMemory::ReadRedirect::LoadingCs ? "the PLD loads: writes are configuration bits; reads above the Z84C15 CS0 come from fast RAM"
+                                                                       : "the PLD loads: writes are configuration bits";
+        else
+            note = "system ROM: ROM_RG (code #8F / port #5C) and SYS_PG";
+    }
+    else if (mode == BANK_CACHE)
+    {
+        page = static_cast<int>(memory.GetPageForBank(window)) - static_cast<int>(MAX_RAM_PAGES);
+        kind = "fast RAM";
+        writable = true;
+        note = "IN #FB on, IN #7B off; page = ROM_RG bits 1-0";
+    }
+    else
+    {
+        page = memory.GetRAMPageForBank(window);
+        writable = true;
+        if (redirect == SprinterMemory::ReadRedirect::Graphics)
+        {
+            kind = "graphics";
+            writable = action == SprinterMemory::BankAction::Graphics;
+            note = "pages #50-#5F: reads and writes go to video address PORT_Y x 1024 + A9-A0";
+        }
+        else if (redirect == SprinterMemory::ReadRedirect::Isa)
+        {
+            kind = "ISA";
+            writable = false;
+            note = "ISA view (#1FFD bit 4, pages #D0-#D6): no card, reads #FF, writes ignored";
+        }
+        else if (window == 0 && (pld.sc & 0x01) && pld.ramSys)
+        {
+            kind = "RAM";
+            note = "system RAM in window 0 (#1FFD bit 0 with RAM_SYS), page from the cells #E0-#EF";
+        }
+        else if (window == 0)
+        {
+            kind = "vROM";
+            writable = false;
+            note = "Spectrum ROM image in RAM (read-only), from the cells #E0-#EF";
+        }
+        else if (window == 3 && pld.starting && page == SprinterMemory::kPortTablePage)
+        {
+            kind = "port table";
+            note = "the PLD just reset: page #40 until the first port read";
+        }
+        else if (action == SprinterMemory::BankAction::ResetPage)
+        {
+            kind = "RAM (reset page)";
+            note = "page #A0 with #1FFD = #10: a write resets the CPU";
+        }
+        else
+            kind = "RAM";
+    }
+
+    w["kind"] = kind;
+    w["page"] = page;
+    w["page_hex"] = page >= 0 ? Hex8(static_cast<unsigned>(page)) : std::string("-");
+    w["writable"] = writable;
+    // The cell that names the page (window 3: the Spectrum page's cell #D0-#FF)
+    if (configured)
+    {
+        if (window == 1)
+            w["cell"] = "#E9";
+        else if (window == 2)
+            w["cell"] = "#EA";
+        else if (window == 3)
+            w["cell"] = StringHelper::Format("#%02X", 0xC0 + (pld.pg3 & 0x3F));
+        else if (window == 0 && mode == BANK_RAM)
+            w["cell"] = "#E0-#EF";
+    }
+    if (!note.empty())
+        w["note"] = note;
+    return w;
+}
+
+/// Square kind of a mode table entry (sprintervideorenderer.h)
+enum class SquareKind
+{
+    Graphics320,
+    Graphics640,
+    Text40,
+    Text80,
+    Border,
+    Blank,
+    Count
+};
+
+SquareKind ClassifySquare(uint8_t m0)
+{
+    if (!(m0 & 0x10))
+        return (m0 & 0x20) ? SquareKind::Graphics320 : SquareKind::Graphics640;
+    if ((m0 & 0xFC) == 0xFC)
+        return SquareKind::Blank;
+    if ((m0 >> 5) == 7)
+        return SquareKind::Border;
+    return (m0 & 0x20) ? SquareKind::Text40 : SquareKind::Text80;
+}
+
+const char* SquareKindKey(SquareKind kind)
+{
+    switch (kind)
+    {
+        case SquareKind::Graphics320: return "graphics_320";
+        case SquareKind::Graphics640: return "graphics_640";
+        case SquareKind::Text40: return "text_40";
+        case SquareKind::Text80: return "text_80";
+        case SquareKind::Border: return "border";
+        default: return "blank";
+    }
+}
+
+const char* SquareKindName(SquareKind kind)
+{
+    switch (kind)
+    {
+        case SquareKind::Graphics320: return "graphics 320 x 256, 256 colors";
+        case SquareKind::Graphics640: return "graphics 640 x 256, 16 colors";
+        case SquareKind::Text40: return "text, 40 columns";
+        case SquareKind::Text80: return "text, 80 columns";
+        case SquareKind::Border: return "border";
+        default: return "blank";
+    }
+}
+
+StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
+{
+    const SprinterPldState& pld = decoder.GetPldState();
+    const SprinterVideoRam& vram = decoder.GetVideoRam();
+    const uint8_t modePage = pld.rgMod & 0x01;
+    auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
+    const uint16_t lines = screen ? screen->FrameLines() : (pld.frameLines ? 312 : 320);
+
+    // The 56 x 40 squares of the mode page; the picture is the 40 x 32 squares from (0, 0)
+    int all[static_cast<int>(SquareKind::Count)] = {};
+    int picture[static_cast<int>(SquareKind::Count)] = {};
+    int lowres = 0;
+    int intArmed = 0;
+    for (uint8_t b = 0; b < 40; b++)
+    {
+        for (uint8_t a = 0; a < SprinterIntSource::kSquareColumns; a++)
+        {
+            const uint32_t address = SprinterVideoRam::ModeAddress(a, b, modePage);
+            const uint8_t m0 = vram.Read(address);
+            const SquareKind kind = ClassifySquare(m0);
+            all[static_cast<int>(kind)]++;
+            if (a < 40 && b < 32)
+                picture[static_cast<int>(kind)]++;
+            if ((kind == SquareKind::Graphics320 || kind == SquareKind::Graphics640) && (vram.Read(address + 2) & 0x04))
+                lowres++;
+            if ((m0 & 0xFD) == 0xFD)
+                intArmed++;
+        }
+    }
+
+    StateNode v = StateNode::Object();
+    v["mode_page"] = int(modePage);
+    int best = 0;
+    for (int k = 1; k < static_cast<int>(SquareKind::Count); k++)
+        if (picture[k] > picture[best])
+            best = k;
+    v["picture_mode"] = SquareKindName(static_cast<SquareKind>(best));
+    v["picture_mode_squares"] = StringHelper::Format("%d of 1280", picture[best]);
+    StateNode squares = StateNode::Object();
+    for (int k = 0; k < static_cast<int>(SquareKind::Count); k++)
+        squares[SquareKindKey(static_cast<SquareKind>(k))] = all[k];
+    squares["low_res"] = lowres;
+    squares["int_armed"] = intArmed;
+    v["squares"] = squares;
+    v["port_y"] = int(pld.portY);
+    v["border"] = int(pld.Cell(SprinterCode::Border) & 0x07);
+    StateNode hold = StateNode::Object();
+    hold["value"] = Hex8(pld.hold);
+    hold["x_pixels"] = (7 - static_cast<int>(pld.hold & 0x0F)) * 2;
+    hold["y_lines"] = 7 - static_cast<int>(pld.hold >> 4);
+    v["hold"] = hold;
+
+    // The frame INT positions the mode table places (base T-states, 3.5 MHz)
+    const std::vector<uint32_t> positions = SprinterIntSource::ComputePositions(vram, modePage, lines);
+    StateNode ints = StateNode::Array();
+    for (size_t i = 0; i < positions.size() && i < 8; i++)
+        ints.push(positions[i]);
+    v["int_count"] = static_cast<uint64_t>(positions.size());
+    v["int_positions"] = ints;
+    v["keyboard_int_latched"] = decoder.GetIntSource().KeyboardIntLatched();
+    return v;
+}
+
+StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
+{
+    Z84Lib::Z84C15& chip = decoder.GetZ84();
+    StateNode z = StateNode::Object();
+    Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
+    z["engine"] = (z80 && z80->GetEngine()) ? "z84c15 library (Z84C15Engine)" : "native Z80 interpreter";
+
+    const Z84Lib::Z84SystemRegs& sys = chip.system;
+    StateNode s = StateNode::Object();
+    s["wcr"] = Hex8(sys.wcr);
+    s["mwbr"] = Hex8(sys.mwbr);
+    s["csbr"] = Hex8(sys.csbr);
+    s["mcr"] = Hex8(sys.mcr);
+    s["cs0_end"] = Hex32(sys.Cs0End());
+    s["scrp"] = Hex8(sys.scrp);
+    s["irq_priority"] = Hex8(sys.irqPriority);
+    z["system"] = s;
+
+    StateNode wd = StateNode::Object();
+    wd["wdtmr"] = Hex8(sys.wdtmr);
+    wd["wdtcr"] = Hex8(sys.wdtcr);
+    wd["enabled"] = (sys.wdtmr & 0x80) != 0;
+    wd["running"] = chip.WatchdogRunning();
+    wd["period_clocks_log2"] = 16 + 2 * ((sys.wdtmr >> 5) & 0x03);
+    wd["output"] = "not connected (/WDTOUT, research-cpu-z84c15.md Q3)";
+    z["watchdog"] = wd;
+
+    StateNode ctc = StateNode::Object();
+    ctc["vector"] = Hex8(chip.ctc.Vector());
+    StateNode channels = StateNode::Array();
+    for (uint8_t c = 0; c < 4; c++)
+    {
+        const Z84Lib::Z84Ctc::ChannelState& ch = chip.ctc.GetChannel(c);
+        StateNode n = StateNode::Object();
+        n["channel"] = int(c);
+        n["control"] = Hex8(ch.control);
+        n["mode"] = (ch.control & 0x40) ? "counter" : "timer";
+        n["interrupt"] = (ch.control & 0x80) != 0;
+        n["time_constant"] = ch.timeConstant ? int(ch.timeConstant) : 256;
+        n["running"] = ch.running != 0;
+        n["ip"] = ch.ip != 0;
+        n["ius"] = ch.ius != 0;
+        channels.push(n);
+    }
+    ctc["channels"] = channels;
+    z["ctc"] = ctc;
+
+    StateNode sio = StateNode::Array();
+    static const char* const kSioUse[2] = {"AT keyboard (set 2 scan codes)", "serial mouse (Microsoft, 1200 baud)"};
+    for (uint8_t c = 0; c < 2; c++)
+    {
+        const Z84Lib::Z84Sio::Channel& ch = chip.sio.GetChannel(c);
+        StateNode n = StateNode::Object();
+        n["channel"] = c == 0 ? "A" : "B";
+        n["use"] = kSioUse[c];
+        n["wr1"] = Hex8(ch.wr[1]);
+        n["wr3"] = Hex8(ch.wr[3]);
+        n["wr4"] = Hex8(ch.wr[4]);
+        n["wr5"] = Hex8(ch.wr[5]);
+        n["rx_enabled"] = (ch.wr[3] & 0x01) != 0;
+        n["fifo_count"] = int(ch.fifoCount);
+        n["fifo"] = HexRow(ch.fifo, ch.fifoCount);
+        n["overrun"] = ch.overrun != 0;
+        sio.push(n);
+    }
+    z["sio"] = sio;
+
+    SprinterInput& input = decoder.GetInput();
+    StateNode kbd = StateNode::Object();
+    kbd["int_enabled"] = input.KeyboardIntEnabled();
+    kbd["bytes_on_the_way"] = input.KeyboardStream().Busy();
+    kbd["overruns"] = input.KeyboardOverruns();
+    kbd["sio_a_fifo"] = HexRow(chip.sio.GetChannel(0).fifo, chip.sio.GetChannel(0).fifoCount);
+    z["keyboard"] = kbd;
+
+    StateNode pio = StateNode::Array();
+    static const char* const kPioModes[4] = {"output", "input", "bidirectional", "bit control"};
+    for (uint8_t p = 0; p < 2; p++)
+    {
+        const Z84Lib::Z84Pio::Port& port = chip.pio.GetPort(p);
+        StateNode n = StateNode::Object();
+        n["port"] = p == 0 ? "A" : "B";
+        n["mode"] = kPioModes[port.mode & 3];
+        n["direction"] = Hex8(port.direction);
+        n["output"] = Hex8(port.output);
+        n["inputs"] = Hex8(port.inputs);
+        n["ip"] = port.ip != 0;
+        pio.push(n);
+    }
+    z["pio"] = pio;
+    z["any_under_service"] = chip.AnyUnderService();
+    return z;
+}
+
+StateNode Bios(EmulatorContext* context)
+{
+    StateNode b = StateNode::Object();
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+    const std::string romFile = rom ? rom->GetROMFilename() : std::string(context->config.sprinter_rom_path);
+    b["rom_file"] = romFile;
+    if (rom && context->pMemory)
+    {
+        static const struct
+        {
+            uint8_t page;
+            const char* key;
+        } kPages[] = {{8, "page_8"}, {0, "page_0"}, {12, "page_12"}};
+        StateNode pages = StateNode::Object();
+        for (const auto& p : kPages)
+        {
+            const uint8_t* data = context->pMemory->ROMPageHostAddress(p.page);
+            if (data)
+                pages[p.key] = rom->GetROMTitle(rom->CalculateSignature(data, 0x4000));
+        }
+        b["identified"] = pages;
+    }
+
+    // The shipped images, looked up as ROM::LoadROM finds a ROM: as given, then beside the
+    // executable, then in the resources folder (macOS bundles)
+    auto exists = [](const std::string& relative) {
+        if (FileHelper::FileExists(FileHelper::NormalizePath(relative)))
+            return true;
+        for (const std::string& base : {FileHelper::GetExecutablePath(), FileHelper::GetResourcesPath()})
+            if (!base.empty() && FileHelper::FileExists(FileHelper::PathCombine(base, relative)))
+                return true;
+        return false;
+    };
+    const std::string activeName = std::filesystem::path(romFile).filename().string();
+    StateNode images = StateNode::Array();
+    for (const KnownBios& known : kKnownBios)
+    {
+        const std::string file = std::string("rom/sprinter/") + known.file;
+        StateNode n = StateNode::Object();
+        n["file"] = file;
+        n["version"] = known.version;
+        n["crc32"] = known.crc32;
+        n["present"] = exists(file);
+        n["active"] = activeName == known.file;
+        images.push(n);
+    }
+    b["images"] = images;
+    b["select"] = "[ROM] SPRINTER=rom/sprinter/<file> in configs/sprinter/unreal.ini beside the binary (macOS: "
+                  "unreal-qt.app/Contents/Resources/configs), then create the machine again; [SPRINTER] FastStart=1 "
+                  "skips the PLD loader (docs/inprogress/2026-09-28-sprinter/bios-versions.md)";
+    return b;
+}
+
+/// Greedy cover of a set of 9-bit address points with cubes (value, mask of fixed bits) -
+/// tools/machines/sprinter/dcp-table/dcp-table.py cubes(), restricted to the address bits
+std::vector<std::pair<uint16_t, uint16_t>> Cubes(const std::set<uint16_t>& points)
+{
+    constexpr int kBits = 9;
+    constexpr uint16_t kFull = (1u << kBits) - 1u;
+    std::set<uint16_t> remaining = points;
+    std::vector<std::pair<uint16_t, uint16_t>> out;
+
+    auto forEach = [](uint16_t value, uint16_t mask, const auto& fn) {
+        // Every point of the cube: the free bits run through all combinations
+        uint16_t free = static_cast<uint16_t>(~mask & kFull);
+        uint16_t sub = 0;
+        while (true)
+        {
+            if (!fn(static_cast<uint16_t>((value & mask) | sub)))
+                return false;
+            if (sub == free)
+                return true;
+            sub = static_cast<uint16_t>((sub - free) & free);
+        }
+    };
+
+    while (!remaining.empty())
+    {
+        const uint16_t seed = *remaining.begin();
+        uint16_t mask = kFull;
+        for (int bit = 0; bit < kBits; bit++)
+        {
+            const uint16_t trial = static_cast<uint16_t>(mask & ~(1u << bit));
+            if (forEach(seed, trial, [&](uint16_t p) { return points.count(p) != 0; }))
+                mask = trial;
+        }
+        forEach(seed, mask, [&](uint16_t p) {
+            remaining.erase(p);
+            return true;
+        });
+        out.emplace_back(static_cast<uint16_t>(seed & mask), mask);
+    }
+    return out;
+}
+
+/// "xxxx xxxx 000x x111": the address bits a cube fixes, A15 first (dcp-table.py describe())
+std::string AddressPattern(uint16_t value, uint16_t mask)
+{
+    // index bit -> address bit
+    static const int kAddressBit[9] = {0, 1, 2, 7, 13, 5, 6, 14, 15};
+    char addr[16];
+    std::fill(addr, addr + 16, 'x');
+    for (int ib = 0; ib < 9; ib++)
+    {
+        if ((mask >> ib) & 1)
+            addr[15 - kAddressBit[ib]] = ((value >> ib) & 1) ? '1' : '0';
+    }
+    std::string out;
+    for (int i = 0; i < 16; i++)
+    {
+        if (i && i % 4 == 0)
+            out += ' ';
+        out += addr[i];
+    }
+    return out;
+}
+
+struct QueryState
+{
+    uint8_t map;
+    bool dosOn;
+    bool pn5;
+};
+
+QueryState Resolve(const SprinterPldState& pld, const DeviceState::SprinterPortQuery& query)
+{
+    QueryState s;
+    s.map = query.map >= 0 ? static_cast<uint8_t>(query.map & 3) : static_cast<uint8_t>((pld.cnf >> 3) & 3);
+    s.dosOn = query.dos >= 0 ? query.dos != 0 : pld.dos == 0;
+    s.pn5 = query.pn5 >= 0 ? query.pn5 != 0 : (pld.pn & 0x20) != 0;
+    return s;
+}
+
+void PutQuery(StateNode& n, const QueryState& s, const DeviceState::SprinterPortQuery& query)
+{
+    n["map"] = int(s.map);
+    n["dos"] = s.dosOn;
+    n["pn5"] = s.pn5;
+    n["from_machine"] = query.map < 0 && query.dos < 0 && query.pn5 < 0;
+}
+
+/// The Z84C15's on-chip ports: the chip answers them itself, the port table never sees them
+StateNode Z84Ports(const std::map<uint16_t, std::string>& names)
+{
+    StateNode arr = StateNode::Array();
+    for (const auto& [code, name] : names)
+    {
+        if (code < PortDecoder_Sprinter::kTraceZ84Base)
+            continue;
+        StateNode n = StateNode::Object();
+        n["port"] = StringHelper::Format("#xx%02X", code & 0xFFu);
+        n["code"] = Hex16(code);
+        n["name"] = name;
+        arr.push(n);
+    }
+    return arr;
+}
+}  // namespace
+
+namespace DeviceState
+{
+
+StateNode Sprinter(EmulatorContext* context)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    const EmulatorState& state = context->emulatorState;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+
+    // PLD configuration
+    {
+        StateNode p = StateNode::Object();
+        p["state"] = ConfigStateName(pld.configState);
+        const SprinterPldModuleDescriptor& module = decoder->ActiveModule().Descriptor();
+        p["module_index"] = int(pld.configModule);
+        p["module"] = module.name;
+        StateNode modules = StateNode::Array();
+        for (size_t i = 0; i < decoder->GetRegistry().Count(); i++)
+            modules.push(decoder->GetRegistry().At(i).Descriptor().name);
+        p["modules_known"] = modules;
+        StateNode bitstream = StateNode::Object();
+        bitstream["writes"] = static_cast<uint64_t>(pld.bitstreamCount);
+        bitstream["writes_expected"] = static_cast<uint64_t>(SprinterPldConfig::kPldConfigurationWrites);
+        bitstream["full_hash"] = Hex32(pld.bitstreamHashFull);
+        bitstream["head_hash"] = Hex32(pld.bitstreamHashHead);
+        bitstream["module_full_hash"] = Hex32(module.fullHash);
+        bitstream["module_head_hash"] = Hex32(module.headHash);
+        bitstream["fast_start"] = context->config.sprinter.fast_start != 0;
+        p["bitstream"] = bitstream;
+        if (pld.configState == SprinterConfigState::Loading)
+            p["load_watchdog_frames"] = static_cast<uint64_t>(pld.loadWatchdog);
+        p["dcp_open"] = pld.configState == SprinterConfigState::Configured && !pld.starting;
+        p["dcp_opened_frame"] = decoder->DcpOpenedFrame();
+        p["dcp_opened_pc"] = Hex16(decoder->DcpOpenedPc());
+        ret["pld"] = p;
+    }
+
+    // The port decoder: which map and signals the table is read with now
+    {
+        StateNode d = StateNode::Object();
+        d["map"] = int((pld.cnf >> 3) & 0x03);
+        d["cnf"] = Hex8(pld.cnf);
+        d["cnf_clean_rules"] = int(pld.cnf >> 5);
+        d["dos"] = pld.dos == 0;
+        d["pn5"] = (pld.pn & 0x20) != 0;
+        d["port_7ffd"] = Hex8(pld.pn);
+        d["port_1ffd"] = Hex8(pld.sc);
+        d["port_table_page"] = Hex8(SprinterMemory::kPortTablePage);
+        d["see"] = "GET /state/sprinter/ports (the table), /state/sprinter/ports/lookup?port= (one port)";
+        ret["decoder"] = d;
+    }
+
+    // The four windows
+    {
+        StateNode windows = StateNode::Array();
+        for (uint8_t w = 0; w < 4; w++)
+            windows.push(Window(context, *decoder, w));
+        ret["windows"] = windows;
+    }
+
+    // Registers and the cells #C0-#FF
+    {
+        StateNode r = StateNode::Object();
+        r["rom_rg"] = Hex8(pld.romRg);
+        r["sys_pg"] = int(pld.sysPg);
+        r["rom_off"] = pld.romOff != 0;
+        r["ram_sys"] = pld.ramSys != 0;
+        r["arom16"] = pld.arom16 != 0;
+        r["cache_on"] = pld.cacheOn != 0;
+        StateNode allMode = StateNode::Object();
+        allMode["value"] = Hex8(pld.allMode);
+        allMode["zx_screen_shadow"] = (pld.allMode & 0x01) == 0;
+        allMode["keyboard_int"] = (pld.allMode & 0x09) == 0x09;
+        r["all_mode"] = allMode;
+        r["port_y"] = Hex8(pld.portY);
+        StateNode rgMod = StateNode::Object();
+        rgMod["value"] = Hex8(pld.rgMod);
+        rgMod["mode_page"] = int(pld.rgMod & 0x01);
+        r["rgmod"] = rgMod;
+        r["hold"] = Hex8(pld.hold);
+        r["scale"] = Hex8(pld.Cell(SprinterCode::Scale));
+        r["isa_addr_ext"] = Hex8(pld.isaAddrExt);
+        r["cbl_control"] = Hex8(decoder->CblControl());
+        ret["registers"] = r;
+
+        StateNode cells = StateNode::Object();
+        cells["C0-CF"] = HexRow(pld.cells, 16);
+        cells["D0-DF"] = HexRow(pld.cells + 16, 16);
+        cells["E0-EF"] = HexRow(pld.cells + 32, 16);
+        cells["F0-FF"] = HexRow(pld.cells + 48, 16);
+        cells["window_3_cell"] = StringHelper::Format("#%02X", 0xC0 + (pld.pg3 & 0x3F));
+        ret["cells"] = cells;
+    }
+
+    // Clock and frame
+    {
+        StateNode c = StateNode::Object();
+        c["turbo_requested"] = pld.turbo != 0;
+        c["turbo_switch"] = pld.turboHard != 0;
+        const unsigned ratio = state.hw_turbo_ratio ? state.hw_turbo_ratio : 1;
+        c["ratio"] = ratio;
+        c["mhz"] = ratio >= 6 ? "21" : "3.5";
+        ret["clock"] = c;
+
+        auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
+        StateNode f = StateNode::Object();
+        f["lines_requested"] = pld.frameLines ? 312 : 320;
+        f["lines"] = screen ? int(screen->FrameLines()) : (pld.frameLines ? 312 : 320);
+        f["t_states"] = static_cast<uint64_t>(context->config.frame);
+        f["note"] = "base T-states at 3.5 MHz: 320 x 224 = 71680 (code #2C), 312 x 224 = 69888 (code #2D)";
+        ret["frame"] = f;
+    }
+
+    ret["video"] = VideoSummary(*decoder, context);
+    ret["z84c15"] = Z84Summary(*decoder, context);
+
+    // Floppy: the WD1793 behind codes #10-#17
+    {
+        StateNode f = StateNode::Object();
+        f["density_latch"] = pld.fdcHd ? "1.44 MB (code #17)" : "720 KB (code #16)";
+        f["codes_off"] = pld.fdcOff != 0;
+        if (WD1793* wd = context->pBetaDisk)
+        {
+            f["clock"] = wd->GetClock() == FdcClock::Clock2MHz ? "2 MHz" : "1 MHz";
+            f["data_rate"] = wd->GetDataRate() == FdcDataRate::Rate500Kbps ? "500 kbit/s" : "250 kbit/s";
+            f["clock_policy"] = wd->GetClockPolicy() == FdcClockPolicy::Latched ? "latched" : "other";
+            f["drive"] = StringHelper::Format("%c", 'A' + (wd->getSelectedDriveIndex() & 3));
+        }
+        f["see"] = "GET /state/fdc (registers, drives), /media (slots fdd.a / fdd.b)";
+        ret["fdc"] = f;
+    }
+
+    // CMOS: the DS12887A report is the rtc aspect
+    {
+        PortDecoder::RtcBinding binding = decoder->GetRtcBinding();
+        StateNode c = StateNode::Object();
+        c["chip"] = "DS12887A";
+        c["ports"] = binding.ports;
+        c["nvram_file"] = binding.nvramFile;
+        c["see"] = "GET /state/rtc (CLI state rtc, Lua / Python rtc_state(), MCP inspect_state rtc)";
+        ret["cmos"] = c;
+    }
+
+    // IDE channel (S3b-IDE: the IdeAdapterSprinter / IDE slots of branch sprinter-s3b fill this block)
+    {
+        StateNode i = StateNode::Object();
+        i["emulated"] = false;
+        i["status"] = "not on this branch: the IDE adapter comes with phase S3b (codes #20-#2B are decoded, no drive answers)";
+        i["channel"] = pld.ideChannel ? "secondary" : "primary";
+        i["data_latch"] = Hex8(pld.ideLatch);
+        ret["ide"] = i;
+    }
+
+    ret["bios"] = Bios(context);
+    return ret;
+}
+
+StateNode SprinterPaging(EmulatorContext* context)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["pld_state"] = ConfigStateName(pld.configState);
+    StateNode windows = StateNode::Array();
+    for (uint8_t w = 0; w < 4; w++)
+        windows.push(Window(context, *decoder, w));
+    ret["windows"] = windows;
+    ret["map"] = int((pld.cnf >> 3) & 0x03);
+    ret["dos"] = pld.dos == 0;
+    ret["turbo"] = context->emulatorState.hw_turbo_ratio > 1;
+    ret["port_7ffd"] = Hex8(pld.pn);
+    ret["port_1ffd"] = Hex8(pld.sc);
+    ret["rom_rg"] = Hex8(pld.romRg);
+    ret["cache_on"] = pld.cacheOn != 0;
+    ret["cells_E8_EA"] = HexRow(pld.cells + 0x28, 3);
+    ret["cells_F0_FF"] = HexRow(pld.cells + 0x30, 16);
+    return ret;
+}
+
+StateNode SprinterText(EmulatorContext* context)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder)
+        return Unavailable("Not a Sprinter machine");
+
+    // The text squares of the picture (a = 0..39, b = 0..31) in the current mode page: a text
+    // square's Mode1 byte is its character (tdd-video §3); a 640 square holds two (Line1, then
+    // Line2 one row lower), a 320 square one, shown as the character and a space. Graphics,
+    // border and blank squares read as spaces
+    const SprinterVideoRam& vram = decoder->GetVideoRam();
+    const uint8_t modePage = decoder->GetPldState().rgMod & 0x01;
+    constexpr uint8_t kColumns = 40;
+    constexpr uint8_t kRows = 32;
+    StateNode lines = StateNode::Array();
+    int textSquares = 0;
+    for (uint8_t b = 0; b < kRows; b++)
+    {
+        std::string text;
+        std::string codes;
+        for (uint8_t a = 0; a < kColumns; a++)
+        {
+            const uint32_t address = SprinterVideoRam::ModeAddress(a, b, modePage);
+            const uint8_t m0 = vram.Read(address);
+            const bool isText = (m0 & 0x10) && (m0 & 0xFC) != 0xFC && (m0 >> 5) != 7;
+            for (uint8_t half = 0; half < 2; half++)
+            {
+                uint8_t c = 0x20;
+                if (isText && (half == 0 || !(m0 & 0x20)))
+                    c = vram.Read(address + 1 + half * SprinterVideoRam::kRowBytes);
+                text.push_back((c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : (c == 0 ? ' ' : '.'));
+                codes += StringHelper::Format("%02X", c);
+            }
+            textSquares += isText ? 1 : 0;
+        }
+        // Trailing spaces carry nothing
+        const size_t end = text.find_last_not_of(' ');
+        StateNode line = StateNode::Object();
+        line["row"] = int(b);
+        line["text"] = end == std::string::npos ? std::string() : text.substr(0, end + 1);
+        line["codes"] = codes;
+        lines.push(line);
+    }
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["mode_page"] = int(modePage);
+    ret["columns"] = 80;
+    ret["rows"] = int(kRows);
+    ret["text_squares"] = textSquares;
+    ret["lines"] = lines;
+    return ret;
+}
+
+bool SprinterPortFromString(const std::string& text, uint16_t& port)
+{
+    std::string t = text;
+    if (!t.empty() && t[0] == '#')
+        t = t.substr(1);
+    else if (t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X'))
+        t = t.substr(2);
+    if (t.empty() || t.size() > 4)
+        return false;
+    unsigned value = 0;
+    for (char c : t)
+    {
+        const int digit = std::isdigit(static_cast<unsigned char>(c)) ? c - '0'
+                          : (c >= 'a' && c <= 'f')                    ? c - 'a' + 10
+                          : (c >= 'A' && c <= 'F')                    ? c - 'A' + 10
+                                                                      : -1;
+        if (digit < 0)
+            return false;
+        value = value * 16 + static_cast<unsigned>(digit);
+    }
+    port = static_cast<uint16_t>(value);
+    return true;
+}
+
+bool SprinterPortQueryFromStrings(const std::string& map, const std::string& dos, const std::string& pn5,
+                                  const std::string& rw, SprinterPortQuery& query, std::string& error)
+{
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    auto flag = [&](const std::string& text, const char* name, int& out) {
+        const std::string v = lower(text);
+        if (v.empty() || v == "current")
+            out = -1;
+        else if (v == "1" || v == "on" || v == "true" || v == "yes")
+            out = 1;
+        else if (v == "0" || v == "off" || v == "false" || v == "no")
+            out = 0;
+        else
+        {
+            error = std::string(name) + " must be 0 / 1 (or on / off; omit for the machine's current state)";
+            return false;
+        }
+        return true;
+    };
+
+    query = SprinterPortQuery();
+    const std::string m = lower(map);
+    if (!m.empty() && m != "current")
+    {
+        if (m.size() != 1 || m[0] < '0' || m[0] > '3')
+        {
+            error = "map must be 0-3 (omit for the current CNF map)";
+            return false;
+        }
+        query.map = m[0] - '0';
+    }
+    if (!flag(dos, "dos", query.dos) || !flag(pn5, "pn5", query.pn5))
+        return false;
+    const std::string d = lower(rw);
+    if (d.empty() || d == "rw" || d == "both")
+        query.direction = -1;
+    else if (d == "r" || d == "read" || d == "in")
+        query.direction = 1;
+    else if (d == "w" || d == "write" || d == "out")
+        query.direction = 0;
+    else
+    {
+        error = "rw must be r, w or rw";
+        return false;
+    }
+    return true;
+}
+
+StateNode SprinterPortTable(EmulatorContext* context, const SprinterPortQuery& query)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    const QueryState s = Resolve(pld, query);
+    const uint8_t* table = context->pMemory->RAMPageAddress(SprinterMemory::kPortTablePage);
+    const std::map<uint16_t, std::string> names = CodeNames(*decoder);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    PutQuery(ret, s, query);
+    ret["direction"] = query.direction < 0 ? "rw" : (query.direction ? "r" : "w");
+    ret["pld_state"] = ConfigStateName(pld.configState);
+    if (pld.configState != SprinterConfigState::Configured || pld.starting)
+        ret["note"] = "the BIOS has not opened the port decoder yet: page #40 may not hold its table";
+    ret["source"] = StringHelper::Format("RAM page #40, offset #%04X", s.map * SprinterPortTable::kMapSize);
+
+    StateNode rows = StateNode::Array();
+    int unmapped = 0;
+    for (int dir = 1; dir >= 0; dir--)
+    {
+        if (query.direction >= 0 && query.direction != dir)
+            continue;
+        std::map<uint8_t, std::set<uint16_t>> byCode;
+        for (uint16_t bits = 0; bits < SprinterPortTable::kAddressCombinations; bits++)
+        {
+            const uint16_t index = SprinterPortTable::Index(s.map, s.pn5, !s.dosOn, dir != 0, SprinterPortTable::ExamplePort(bits));
+            const uint8_t code = table[index];
+            if (code)
+                byCode[code].insert(bits);
+            else
+                unmapped++;
+        }
+        for (const auto& [code, points] : byCode)
+        {
+            for (const auto& [value, mask] : Cubes(points))
+            {
+                StateNode row = StateNode::Object();
+                row["code"] = Hex8(code);
+                row["name"] = CodeName(names, code);
+                row["direction"] = dir ? "r" : "w";
+                row["pattern"] = AddressPattern(value, mask);
+                row["example"] = Hex16(SprinterPortTable::ExamplePort(value));
+                int fixedBits = 0;
+                for (uint16_t m = mask; m; m &= static_cast<uint16_t>(m - 1))
+                    fixedBits++;
+                row["addresses"] = 1 << (9 - fixedBits);
+                rows.push(row);
+            }
+        }
+    }
+    ret["rows"] = rows;
+    ret["unmapped_combinations"] = unmapped;
+    ret["pattern_bits"] = "A15..A0; x = not decoded. Index bits: A15 A14 A6 A5 A13 A7 A2 A1 A0";
+    ret["z84c15_ports"] = Z84Ports(names);
+    return ret;
+}
+
+StateNode SprinterPortLookup(EmulatorContext* context, uint16_t port, const SprinterPortQuery& query)
+{
+    PortDecoder_Sprinter* decoder = SprinterDecoder(context);
+    if (!decoder || !context->pMemory)
+        return Unavailable("Not a Sprinter machine");
+
+    const SprinterPldState& pld = decoder->GetPldState();
+    const QueryState s = Resolve(pld, query);
+    const uint8_t* table = context->pMemory->RAMPageAddress(SprinterMemory::kPortTablePage);
+    const std::map<uint16_t, std::string> names = CodeNames(*decoder);
+    const uint8_t low = static_cast<uint8_t>(port);
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["port"] = Hex16(port);
+    PutQuery(ret, s, query);
+    ret["pld_state"] = ConfigStateName(pld.configState);
+
+    StateNode results = StateNode::Array();
+    for (int dir = 1; dir >= 0; dir--)
+    {
+        if (query.direction >= 0 && query.direction != dir)
+            continue;
+        StateNode r = StateNode::Object();
+        r["direction"] = dir ? "r" : "w";
+        if (Z84Lib::Z84C15::Owns(low))
+        {
+            const uint16_t code = static_cast<uint16_t>(PortDecoder_Sprinter::kTraceZ84Base + low);
+            r["answered_by"] = "Z84C15";
+            r["code"] = Hex16(code);
+            r["name"] = CodeName(names, code);
+            r["note"] = dir ? "the chip answers; the PLD does not see the read"
+                            : "the chip takes it; the PLD sees the write as well (its table code below)";
+        }
+        else
+            r["answered_by"] = "PLD";
+        if (!Z84Lib::Z84C15::Owns(low) || !dir)
+        {
+            const uint16_t index = SprinterPortTable::Index(s.map, s.pn5, !s.dosOn, dir != 0, port);
+            const uint8_t code = table[index];
+            r["index"] = Hex16(index);
+            r["index_in_map"] = Hex16(index & (SprinterPortTable::kMapSize - 1));
+            r["address_bits"] = Hex16(SprinterPortTable::AddressBits(port));
+            r[Z84Lib::Z84C15::Owns(low) ? "pld_code" : "code"] = Hex8(code);
+            r[Z84Lib::Z84C15::Owns(low) ? "pld_name" : "name"] = code ? CodeName(names, code) : std::string(dir ? "None (no device: reads #FF)" : "None (no device)");
+        }
+        // Decodes the PLD makes before the table (MAME dcp_r / dcp_w)
+        if (dir && (port & 0x7F) == 0x7B)
+            r["fixed_decode"] = "IN #FB / #7B: fast RAM in window 0 on / off (before the table)";
+        if (!dir && (port & 0xBF) == 0x3C)
+            r["fixed_decode"] = "OUT #3C / #7C: system ROM out of / into window 0 (before the table)";
+        if (!dir && low == 0x5C)
+            r["fixed_decode"] = "OUT #5C: ROM_RG while the system ROM is in (before the table)";
+        // The #1F operand rewrite (hardware-reference §4.4): TR-DOS's IN A,(#1F) from RAM is a #0F access
+        if (low == 0x1F)
+            r["operand_rewrite"] = "IN A,(#1F) / OUT (#1F),A with the operand byte in RAM reach the bus as #xx0F "
+                                   "(the WD1793 in TR-DOS): look up #0F for that case";
+        results.push(r);
+    }
+    ret["results"] = results;
+    return ret;
+}
+
+}  // namespace DeviceState

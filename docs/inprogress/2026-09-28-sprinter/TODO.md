@@ -122,10 +122,18 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
   before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
   hardware.
-- Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
-  off before the PLD check).
-- BIOS 3.06 image (CRC `187f4382`): MAME's copy is in the owner's MAME pack (`roms/sprinter.zip`), used for the
-  S3b MAME captures; not kept in `data/rom/` (the kept 3.06 is Hotfix 2, bios-versions.md §3.3).
+- BIOS 3.06 image (CRC `187f4382`, MAME's): copies exist in the owner's MAME pack (`roms/sprinter.zip`,
+  used for the S3b MAME captures) and inside the official updater `UP306.EXE` on the DSS 1.71 floppy; not
+  kept in `data/rom/` (the kept 3.06 is Hotfix 2, [bios-versions.md](bios-versions.md) §3.3).
+- **Deferred (owner, 2026-10-02: secondary feature, plan only): BIOS flash emulation.** The 256 KB ROM
+  is a flash chip (write enable = ROM page port `#5C` bit 4). Model it with the JEDEC flash device that
+  already exists for NeoGS (`core/src/emulator/io/flash/flash29f040b.*`, a 256 KB 29F020-class variant
+  with the IDs the BIOS updater checks), so `UP306.EXE` (DSS 1.71 floppy) can update the BIOS: the
+  instance's ROM starts from the selected image (`[ROM] SPRINTER=`) and keeps every write until the
+  instance is destroyed (resets keep it); a "save ROM to file" dump on every automation surface and in
+  the GUI, an optional persistent flash file like `CmosFile=`; flash contents in the TTD state. End-to-end
+  test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
+  identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
 - IDE follow-ups after S3b ([roadmap-and-plan.md](roadmap-and-plan.md) §9):
   - DSS 1.71 needs a BIOS newer than 3.04 (bios-versions.md §5.1): which BIOS function, and whether 3.05 does;
   - code `#29` (drive address) reads `#FF` (the shared core has no drive-address register);

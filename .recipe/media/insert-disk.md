@@ -165,6 +165,26 @@ inspect_state   {"aspects":["fdc"]}      # [fdc] uPD765A (+3): phase, last comma
 - Disk access runs at the real speed (the drive spins up, the head steps, the
   disk turns): give `basic/run` the frames a real +3 would need.
 
+### Sprinter: 1.44 MB floppies and the density latch
+
+The `SPRINTER` model reads both PC formats with its WD1793: 720 KB at 1 MHz /
+250 kbit/s and 1.44 MB at 2 MHz / 500 kbit/s. Software picks the density with
+a latch (port `#01BD` / `#21BD`, codes `#16` / `#17`); the BIOS probes it at
+boot (720 KB first, then 1.44 MB). DSS boots from a 1.44 MB FAT12 image in
+drive B ([machines/sprinter.md](../machines/sprinter.md#2-boot-dss-from-a-floppy)):
+
+```text
+load_software {"path":"/abs/path/testdata/machines/sprinter/dss_1_62_92.img","drive":"B"}   # 1 474 560 bytes, uploaded
+inspect_state {"aspects":["sprinter"]}
+#   → sprinter.fdc after the DSS boot:
+#     {"density_latch":"1.44 MB (code #17)","clock":"2 MHz","data_rate":"500 kbit/s","clock_policy":"latched","drive":"B"}
+#     in Spectrum mode / TR-DOS (720 KB TRD images in drive A):
+#     {"density_latch":"720 KB (code #16)","clock":"1 MHz","data_rate":"250 kbit/s","clock_policy":"latched","drive":"A"}
+```
+
+An upload takes images up to 4 MB, so 1.44 MB PC floppies and HD UDI images go
+through `load_software` from the agent host too.
+
 ### Eject
 
 ```bash

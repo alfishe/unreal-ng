@@ -308,6 +308,41 @@ Wait states at 14 MHz (cache miss, external I/O) and the VDAC color curves are n
 debugger views are pending (the model-first debugger).
 )md";
 
+const char* const kMachineSprinter = R"md(# Peters Plus Sprinter Sp2000 (model SPRINTER)
+
+A PC-like Spectrum clone: Z84C15 CPU (3.5 or 21 MHz), 4 MB RAM, a PLD (ACEX EP1K30) that the BIOS loads at power-on,
+256 KB flash BIOS, its own video modes (text 40 / 80 columns, 320 x 256 x 256 colors, 640 x 256 x 16 colors, chosen
+per 8 x 8 square from the mode table in video RAM), WD1793 floppy (720 KB and 1.44 MB), DS12887A CMOS, AT keyboard on
+the Z84C15 SIO. Create with `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
+
+## BIOS and start
+`[ROM] SPRINTER=` picks the image: `rom/sprinter/sp2k-3.04.rom` (default), `sp2k-3.06-hf2.rom`, `sp2k-3.07-beta1.rom`.
+`[SPRINTER] FastStart=0` (default) runs the PLD loader (~1.7 s emulated), `1` starts configured. The BIOS waits ~31 s
+per empty IDE unit: press F4 (`type_input action=key key=f4`) at "[Press F4". `inspect_state aspects:["sprinter"]`
+lists the images and which one runs (`bios`).
+
+## Ports
+Every port goes through the port table the BIOS writes to RAM page #40: index = map << 12 | PN5 << 11 | /DOS << 10 |
+/WR << 9 | A15 A14 A6 A5 A13 A7 A2 A1 A0, the byte is the device code (#10-#17 WD1793 + density, #1C-#1E CMOS, #20-#2B
+IDE, #40 keyboard, #C0 #1FFD, #C1 #7FFD, #C3 ALL_MODE, #C4 PORT_Y, #C5 RGMOD, #C6 CNF, #E8-#EA / #F0 window pages ...).
+`inspect_state aspects:["sprinter_ports"]` decodes the current table; `invoke_api GET
+/api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC&rw=w` resolves one port. The Z84C15 answers #10-#1F,
+#EE/#EF, #F0/#F1, #F4 itself. Port trace events carry the code (`code`, `code_name`); Z84C15 ports as #100 + low byte.
+
+## Memory
+Four windows, each a physical page with a kind: ROM (system ROM), fast RAM (IN #FB), vROM (Spectrum ROM image in RAM),
+RAM, graphics (pages #50-#5F, PORT_Y row), ISA. `inspect_state aspects:["sprinter"]` (windows) or `["paging"]`.
+
+## Software
+DSS (Estex DSS, the Sprinter's DOS) boots from a 1.44 MB FAT12 floppy in drive B (SETUP's default alternative start):
+`load_software path=testdata/machines/sprinter/dss_1_62_92.img drive=B` before the boot, then F4 at both IDE waits.
+Spectrum mode: DSS `SPECTRUM.EXE PENT128.ZX` (A:\ZX), then TR-DOS from drive A.
+
+## Known limitations
+No IDE adapter yet (phase S3b); Flex Navigator (DSS shell) crashes; accelerator and Covox-Blaster pending; TTD refuses
+to record this machine (phase S7). In the GUI F4 is bound to a speed shortcut.
+)md";
+
 struct StaticResource
 {
     const char* uri;
@@ -325,6 +360,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
     {"unreal://machine/profi", "machine-profi", "Profi 1024 machine: ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res mode, timing, limitations", "text/markdown", kMachineProfi},
     {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
+    {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS images and start, the PLD port table and codes, windows, DSS from a floppy, Spectrum mode, limitations", "text/markdown", kMachineSprinter},
 };
 
 constexpr size_t kStaticResourceCount = sizeof(kStaticResources) / sizeof(kStaticResources[0]);

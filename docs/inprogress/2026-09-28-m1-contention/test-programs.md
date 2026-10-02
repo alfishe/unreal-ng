@@ -41,7 +41,7 @@ zxe.io depot (`ZX Spectrum - Tests (2025-07-19).7z`). Every program keeps its ow
 |:--|:--|:--|:--|:--|:--|
 | **Timing Test v0.3**, Patrik Rak (after Bobrowski's zxtests) | zxe.io depot, `Timing Test v0.3 (2013-12-09)(Rak, Patrik)`; originally zxds.raxoft.cz | GPL, source included | 48K, 128K / +2, +2A / +3 (published expected screens each); Pentagon gives flat numbers | frame length; **contended `NOP` at `#7FFF` (M1)**; the snow `NOP` (`LD I,A`); `IN` on `#00FE`, `#00FF`, `#7FFE`, `#7FFF`, `#FFFE`, `#FFFF` (**all I/O patterns**); `RET` in a banked page at `#C000` | Grid of durations per start T; call its timing routine from the host and compare with the published tables. **Best single fit.** |
 | **fusetest**, Philip Kendall | FUSE SVN mirror (`github.com/vamposdecampos/fuse-emulator-svn`, `fusetest/`); spectrumcomputing entry 32100 | GPL | 48K / 128K / +3 / Pentagon, per-test mask | **memory contention**, **high-port contention** (two parts), contended `IN`, **`LDIR` at the contention edge**, floating bus, `#7FFD` / `#BFFD` / `#3FFD` reads, some flags | "passed / failed (code) / skipped" text; each routine returns Z = pass. Source only (pasmo Makefile). |
-| **Timing Tests 128K v1.0**, R. and T. Butler (2015) | zxe.io depot (`.szx`) | none stated | 128K / +2 (written on a late-timing +2; real early machines fail tests 4, 17, 18, 26, 33) | contended timing groups | Same failure text as the 48K one. Needs an SZX loader or a `.z80` copy. |
+| **Timing Tests 128K v1.0**, R. and T. Butler (2015) | zxe.io depot (`.szx`), in the tree since 2026-10-02: `testdata/contention/butler/` | none stated | 128K / +2 (written on a late-timing +2; real early machines fail tests 4, 17, 18, 26, 33) | contended timing groups | Same failure text as the 48K one. unreal-ng's 128K: as the real early machines (below) |
 | **Floating Spy v0.33**, Ramsoft | zxe.io depot | none stated | 48K, 128K | floating bus at exact T across 8 lines | self-test prints an error count |
 | **HALT2INT v3**, Mark Woodmass | `github.com/redcode/Z80/wiki/HALT2INT` | GPL-2 | 48K, 128K | `R` at interrupt acceptance after `HALT`: interrupt timing + **HALT fetch contention** + floating bus | on-screen values; screen compare |
 | EIHALT, Super HALT Invaders, Woodmass | `github.com/oldbit-com/Spectron/tree/main/tests/Files` (reference screens in `Results/`) | not stated | 48K / 128K | `EI` / `HALT` / interrupt acceptance | reference-screen compare |
@@ -139,7 +139,14 @@ differing must still differ, so the phase that fixes it fails the test and moves
 fusetest: built from source with pasmo 0.5.5 and run by `FuseTest_Test` on the 48K, 128K, +3 and Pentagon since
 2026-09-30 ([tools/verification/contention/fusetest](../../../tools/verification/contention/fusetest/README.md)); it
 found three core defects, fixed ([2026-09-30-fusetest-core-defects](../2026-09-30-fusetest-core-defects/TODO.md)).
-Not done: the Butler 128K suite (`.szx`) - [contention backlog](../2026-10-01-contention-backlog/backlog.md) C5.
+**Butler, Timing Tests 128K v1.0** (since 2026-10-02, `testdata/contention/butler/`): tests 1-34 from
+uncontended and contended RAM, with the values of the late-timing +2 the suite was written on. unreal-ng's 128K
+(early timings) fails exactly tests 4, 17, 18, 26 and 33 from contended RAM, with the R, loop and SP values
+listed for two real early Toastracks (Issue 6K and 6U) on the tests wiki; every other result passes. Default run:
+test 4 (`Butler128KTest4MatchesTheEarlyHardware`, ~0.1 s); opt-in: the whole suite (~7 s).
+
+fusetest under the co-emulation harness: the wrapper `fusetest-coemu` (2026-10-02), results on eight emulators in
+[reports/2026-10-02-fusetest-matrix.md](../../../tools/verification/coemu/reports/2026-10-02-fusetest-matrix.md).
 
 ## 3. The probe suite (`ctprobe`)
 
@@ -371,7 +378,12 @@ fails when the committed files drift from the source.
 
 **Not measurable with this engine:**
 - M1-10 (`HALT`) and D-05 (the IM1 / IM2 acknowledge): an interrupt inside the fragment breaks the engine's
-  chain of stages. The host unit tests cover them.
+  chain of stages. Since 2026-10-02 HALT2INT v3 (Woodmass, `testdata/contention/halt2int-v3/`, `Halt2Int_Test`)
+  measures when the interrupt is taken after a `HALT` on the 48K, against the published early-timing screen (the
+  same values as a photo of a real early 48K). It found a core defect, [backlog](../2026-10-01-contention-backlog/backlog.md)
+  C9: during HALT the Z80 fetches the byte after the HALT (#8000 for a HALT at #7FFF, uncontended), unreal-ng the
+  HALT itself; the test pins unreal-ng's three differing values until the fix. The acknowledge's pushes with `SP`
+  in contended RAM (D-05) stay with the host unit tests.
 - P-03 (`#0FFD` on the gate array): between fetches it reads the last contended byte, which the probe
   cannot pin.
 

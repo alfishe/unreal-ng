@@ -96,6 +96,43 @@ StateNode TsConf(EmulatorContext* context);
 /// raw words) and the 256 CRAM cells (value, rgb). Unavailable on other machines
 StateNode TsConfTsu(EmulatorContext* context);
 
+/// Peters Plus Sprinter Sp2000 (Sprinter tdd-integration §3; built beside the Sprinter code,
+/// ports/models/sprinter/sprinterdevicestate.cpp):
+/// - `Sprinter()`: the PLD configuration (state, active module, bitstream hashes, port decoder
+///   opened), the decoder (CNF map, DOS, PN5, #7FFD / #1FFD after the clean rules), the four
+///   windows (physical page and kind: ROM / fast RAM / vROM / RAM / graphics / ISA / port table),
+///   registers (ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, SCALE) and the cells #C0-#FF, the clock
+///   (turbo x6), the frame (320 / 312 lines), a video summary of the mode table (square kinds,
+///   INT positions), the Z84C15 (system registers, watchdog, CTC, SIO with the keyboard FIFO,
+///   PIO), the WD1793 density latch, links to the CMOS (`Rtc()`) and IDE, and the BIOS images.
+/// - `SprinterPaging()`: the windows and the paging latches alone (the /state/paging view).
+/// - `SprinterText()`: the screen text of the mode table's text squares (80 x 32).
+/// - `SprinterPortTable(query)`: the decoded port table of RAM page #40 for one map / DOS / PN5
+///   (unset = the machine's current ones) and direction: rows of code, name and address pattern.
+/// - `SprinterPortLookup(port, query)`: one port: the index into page #40, the code and its name
+///   (or the Z84C15 when the chip answers the port itself).
+/// Unavailable on every other machine.
+struct SprinterPortQuery
+{
+    int map = -1;        ///< 0-3, -1 = the current CNF map
+    int dos = -1;        ///< 1 = TR-DOS on, 0 = off, -1 = current
+    int pn5 = -1;        ///< #7FFD bit 5: 0 / 1, -1 = current
+    int direction = -1;  ///< 1 = read (IN), 0 = write (OUT), -1 = both
+};
+StateNode Sprinter(EmulatorContext* context);
+StateNode SprinterPaging(EmulatorContext* context);
+/// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
+/// Sprinter has no ZX screen to OCR; graphics squares read as spaces
+StateNode SprinterText(EmulatorContext* context);
+StateNode SprinterPortTable(EmulatorContext* context, const SprinterPortQuery& query);
+StateNode SprinterPortLookup(EmulatorContext* context, uint16_t port, const SprinterPortQuery& query);
+/// The query from text parameters, the same on every interface: map "0"-"3", dos / pn5 "0" / "1"
+/// (also on / off), rw "r" / "w" / "rw"; empty = current. False with `error` on a bad value
+/// A port number as text: hex, with or without "#" / "0x" ("21BC", "#21BC", "0x21BC")
+bool SprinterPortFromString(const std::string& text, uint16_t& port);
+bool SprinterPortQueryFromStrings(const std::string& map, const std::string& dos, const std::string& pn5,
+                                  const std::string& rw, SprinterPortQuery& query, std::string& error);
+
 /// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
 /// guest access or frame run - reading it never advances the chip.
 /// - `MoonSound()`: NEW / NEW2, status, the guest address latches, the block

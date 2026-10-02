@@ -735,6 +735,10 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
+| Sprinter Sp2000 machine (PLD, windows, cells, clock, video, Z84C15, floppy latch, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` |
+| Sprinter port table (map / DOS / PN5 / direction) | `state sprinter ports map=0 dos=1 rw=w` | `GET /state/sprinter/ports?map=0&dos=1&rw=w` | `sprinter_ports{map=0, dos=1, rw="w"}` | `sprinter_ports(map=0, dos=1, rw="w")` | `sprinter_ports` (current state); `invoke_api` for another map |
+| Sprinter port lookup (index, code, name) | `state sprinter port 21BC rw=w` | `GET /state/sprinter/ports/lookup?port=21BC&rw=w` | `sprinter_port(0x21BC, {rw="w"})` | `sprinter_port(0x21BC, rw="w")` | `invoke_api` |
+| Sprinter screen text (80 x 32 text squares) | `state sprinter text` | `GET /state/sprinter/text` | `sprinter_text()` | `sprinter_text()` | `sprinter_text` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
 | Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |

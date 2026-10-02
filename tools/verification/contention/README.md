@@ -8,7 +8,7 @@ and a fourth one, FUSE's own timing test, is built here from its source:
 | [ctprobe](ctprobe/README.md) | contention (how long the CPU waits for the screen), the floating bus, the Scorpion's "Even M1" | `ctprobe/ctprobe.tap`, `ctprobe/ctprobe.trd` |
 | [snowtest](snowtest/README.md) | ULA snow (a picture corrupted by the CPU's memory refresh) | `snowtest/snowtest.tap`, `snowtest/snowtest.trd` |
 | [turbotest](turbotest/README.md) | the memory waits in turbo: the Scorpion Turbo+ at 7 MHz (and which logic firmware, SC15.1 / SC15.3, it has), the ZX-Evo at 14 MHz | `turbotest/turbotest.trd`, `turbotest/turbotest.tap` |
-| [fusetest](fusetest/README.md) (Philip Kendall, GPL) | contention, contended `IN`, high-port contention, the floating bus, reads of the paging and AY ports | `fusetest/fusetest.tap` (48K, 128K, +3; its Pentagon detection is broken) |
+| [fusetest](fusetest/README.md) (Philip Kendall, GPL) | contention, contended `IN`, high-port contention, the floating bus, reads of the paging and AY ports | `fusetest/fusetest.tap` (48K, 128K, +2, +2A, +3; its Pentagon detection is broken), `fusetest/fusetest-coemu.tap` for the co-emulation harness |
 
 They load like any program (`LOAD ""`, or `RUN` in TR-DOS) and print their result on the screen; ctprobe and
 snowtest run at 3.5 MHz, turbotest at 3.5 and 7 MHz. unreal-ng passes ctprobe on every machine it has, snowtest

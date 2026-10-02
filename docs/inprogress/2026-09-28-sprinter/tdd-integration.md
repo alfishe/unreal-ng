@@ -114,6 +114,31 @@ recording; replay uses it (NFR-3).
 | Per-model switches | extend: `state_memory_api.cpp:175`, `:355-372` (ROM page counts: 16), `cli-processor-state.cpp:338`, `:365`, `:471-474`, `:512`, `state_screen_api.cpp:132` (mode name `sprinter`), `ports_api.cpp:106`, `lua_emulator.h:3037`, `:3197`, `python_emulator.h:3097`, `:3242` |
 | Recipe | `.recipe/machines/sprinter.md`: create, boot DSS from a floppy image, from a folder; switch to Spectrum mode; read the port table |
 
+**Status (2026-10-02, branch `sprinter-automation`): implemented**, on all five surfaces from one
+core source (`DeviceState::Sprinter` / `SprinterPaging` / `SprinterPortTable` / `SprinterPortLookup` /
+`SprinterText` in `ports/models/sprinter/sprinterdevicestate.cpp`); as built and verified:
+[automation-outcome.md](automation-outcome.md). Deviations from the table above:
+
+- **Names.** Lua / Python use the existing style: `sprinter_state()`, `sprinter_ports{...}`,
+  `sprinter_port(port, ...)`, `sprinter_text()` (not `emu:sprinter()` / `emulator.sprinter()`); CLI
+  `state sprinter [ports | port <hex> | text]`; MCP aspects `sprinter`, `sprinter_ports`, `sprinter_text`.
+- **Added:** `GET /state/sprinter/text` (the screen text of the mode table's text squares: the ZX OCR
+  cannot read BIOS / DSS screens), the BIOS images in the state block (`bios`: which image runs,
+  which are shipped, how to pick one), MCP resource `unreal://machine/sprinter`, `UNREAL_MCP_PORT`,
+  disk uploads up to 4 MB (1.44 MB floppies).
+- **Not in the state block:** the accelerator mode beyond the `SCALE` cell (phase S5); the IDE
+  channel is a placeholder that S3b fills.
+- **Paging:** `/state/paging` keeps its shape; on the Sprinter `banks[].type` is the window kind and
+  `banks[].page` the physical page, with the whole view under `sprinter`; the generic latch list is
+  empty (`#7FFD` / `#1FFD` live in the PLD). `GET /ports` lists BIOS 3.04's map-0 rows and the fixed
+  decodes (no live latch binding) plus `live.sprinter_port_table`.
+- **Per-model switches:** the file:line hints above are from 2026-09-28; the switches went into
+  `state_memory_api.cpp` (`getStateMemory`, `getStateMemoryRAM`, ROM pages 16, `getStatePaging`),
+  `state_screen_api.cpp` (`M_SPRINTER` legacy fields; the mode name `Sprinter` already came from
+  `Screen`), `ports_api.cpp`, `cli-processor-state.cpp` (`state memory` / `ram` / `rom`), the Lua and
+  Python `paging_state` / `ports_map`, `ROM::GetROMPageRole` and `PortDecoder::getPortMapEntries`.
+- **Media:** the existing `disk` / `media` verbs serve the floppies; IDE slots come with S3b.
+
 ## 4. Debugger (Qt)
 
 | View | Content |

@@ -13,6 +13,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterporttable.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 
@@ -500,14 +501,9 @@ void PortDecoder_Sprinter::CatchUpScreen()
 
 uint16_t PortDecoder_Sprinter::LookupIndex(uint16_t port, bool isRead) const
 {
-    return static_cast<uint16_t>(((_pld.cnf >> 3) & 0x03) << 12      // map 0-3
-                                 | ((_pld.pn >> 5) & 0x01) << 11      // PN5 (#7FFD bit 5)
-                                 | (_pld.dos ? 1 : 0) << 10           // /DOS
-                                 | (isRead ? 1 : 0) << 9              // /WR
-                                 | ((port >> 14) & 0x03) << 7         // A15, A14
-                                 | ((port >> 13) & 0x01) << 4         // A13
-                                 | ((port >> 7) & 0x01) << 3          // A7
-                                 | (port & 0x67));                    // A6, A5, A2, A1, A0
+    // map 0-3 (CNF bits 4-3), PN5 (#7FFD bit 5), /DOS, /WR, the 9 address bits (sprinterporttable.h)
+    return SprinterPortTable::Index(static_cast<uint8_t>((_pld.cnf >> 3) & 0x03), (_pld.pn & 0x20) != 0, _pld.dos != 0,
+                                    isRead, port);
 }
 
 uint8_t PortDecoder_Sprinter::LookupCode(uint16_t port, bool isRead) const

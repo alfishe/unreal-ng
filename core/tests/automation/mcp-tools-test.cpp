@@ -643,6 +643,82 @@ TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/registers"));
 }
 
+// Sprinter (tdd-integration §3): the aspects sprinter / sprinter_ports / sprinter_text read
+// /state/sprinter, /state/sprinter/ports and /state/sprinter/text; the summary names the PLD,
+// the windows, the table rows and the screen lines; a 404 (another machine) is "unavailable"
+TEST_F(McpTools_Test, InspectState_SprinterAspects_ReadTheSprinterEndpoints)
+{
+    Json::Value state;
+    state["available"] = true;
+    state["pld"]["state"] = "configured";
+    state["pld"]["module"] = "Standard";
+    state["decoder"]["map"] = 0;
+    state["decoder"]["dos"] = false;
+    state["clock"]["mhz"] = "21";
+    state["frame"]["lines"] = 320;
+    state["video"]["picture_mode"] = "text, 80 columns";
+    Json::Value window;
+    window["window"] = 0;
+    window["kind"] = "ROM";
+    window["page_hex"] = "0x08";
+    state["windows"].append(window);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter"] = {200, state};
+
+    Json::Value ports;
+    ports["available"] = true;
+    ports["map"] = 0;
+    ports["dos"] = true;
+    ports["pn5"] = false;
+    Json::Value row;
+    row["code"] = "0x2B";
+    row["direction"] = "w";
+    row["pattern"] = "001x xxxx 101x x100";
+    row["name"] = "IdePrimary";
+    ports["rows"].append(row);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/ports"] = {200, ports};
+
+    Json::Value text;
+    text["available"] = true;
+    text["text_squares"] = 640;
+    text["mode_page"] = 1;
+    Json::Value line;
+    line["text"] = "B:\\>";
+    text["lines"].append(line);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/text"] = {200, text};
+
+    Json::Value args;
+    args["aspects"].append("sprinter");
+    args["aspects"].append("sprinter_ports");
+    args["aspects"].append("sprinter_text");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.structured["sprinter"]["pld"]["module"].asString(), "Standard");
+    EXPECT_EQ(result.structured["sprinter_ports"]["rows"][0]["name"].asString(), "IdePrimary");
+    EXPECT_NE(result.text.find("[sprinter] PLD configured (Standard), map 0, DOS off, 21 MHz, 320 lines, text, 80 columns"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("window 0: ROM 0x08"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x2B w 001x xxxx 101x x100  IdePrimary"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[sprinter_text] 640 text squares, mode page 1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("B:\\>"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_SprinterAspect_OtherMachineIsUnavailable)
+{
+    Json::Value notFound;
+    notFound["message"] = "Not a Sprinter machine";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter"] = {404, notFound};
+
+    Json::Value args;
+    args["aspects"].append("sprinter");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_FALSE(result.structured["sprinter"]["available"].asBool());
+    EXPECT_NE(result.text.find("[sprinter] Not a Sprinter machine"), std::string::npos) << result.text;
+}
+
 // TD-3 Phase 1: the memory_map aspect hits GET /memory/map with the
 // view/min_run/max_blocks args and the summary names the model + blocks
 TEST_F(McpTools_Test, InspectState_MemoryMapAspect_FetchesSparseMap)
