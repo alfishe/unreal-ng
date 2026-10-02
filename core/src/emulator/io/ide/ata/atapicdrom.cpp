@@ -189,6 +189,7 @@ void AtapiCdrom::MediumChanged()
         }
     }
     _pendingDisc = nullptr;
+    _stage.trayOpen = 0;  // a disc put in from outside: the tray is closed with it
     // A new disc: the drive reads its TOC from the lead-in, the head waits at the start
     _audio.SetDisc(_disc);
     _audio.SeekTo(0);
@@ -196,8 +197,12 @@ void AtapiCdrom::MediumChanged()
 
 void AtapiCdrom::PowerOnReset()
 {
+    // The tray does not move on a reset (only a command or a disc put in from outside moves it);
+    // PREVENT ALLOW is cleared (SPC: the prevention ends at a reset)
+    const uint8_t tray = _stage.trayOpen;
     _audio.Reset();
     _stage = AtapiStage{};
+    _stage.trayOpen = tray;
 }
 
 bool AtapiCdrom::CountsAsActivity() const
@@ -336,6 +341,11 @@ void AtapiCdrom::ExecutePacket()
         CheckCondition(kSenseUnitAttention, kAscMediumChanged);
         return;
     }
+
+    // SPC: sense data is kept for the REQUEST SENSE that follows the failing command; any other
+    // command discards it (its own outcome is what the next REQUEST SENSE reports)
+    if (op != Scsi::RequestSense)
+        _s.senseKey = _s.asc = _s.ascq = 0;
 
     switch (op)
     {
@@ -497,13 +507,37 @@ void AtapiCdrom::ExecutePacket()
         }
 
         case Scsi::StartStopUnit:
-            // START = 0 without LOEJ spins the disc down: audio play ends
-            if ((cdb[4] & 0x03) == 0)
+        {
+            // MMC-3 START STOP UNIT (Table 'Start/Stop and Eject operations'): Start 0 stops the disc - an audio
+            // play ends (MAME t10mmc stops audio on every START STOP UNIT); LoEj with Start 0 ejects (the tray
+            // opens: no disc for the drive), LoEj with Start 1 loads it again (UNIT ATTENTION: a medium came).
+            // An eject while PREVENT ALLOW MEDIUM REMOVAL holds it: NOT READY, MEDIUM REMOVAL PREVENTED
+            const bool start = cdb[4] & 0x01;
+            const bool loej = cdb[4] & 0x02;
+            if (loej && !start && _stage.preventRemoval)
+            {
+                CheckCondition(kSenseIllegalRequest, kAscMediumRemovalPrevented, 0x02);
+                break;
+            }
+            if (!start)
                 _audio.Stop();
+            if (loej && !start && !_stage.trayOpen)
+                _stage.trayOpen = 1;
+            else if (loej && start && _stage.trayOpen)
+            {
+                _stage.trayOpen = 0;
+                _audio.SeekTo(0);
+                _s.unitAttention = HasDisc() ? 1 : 0;
+            }
+            CompletePacket();
+            break;
+        }
+
+        case Scsi::PreventAllow:
+            _stage.preventRemoval = cdb[4] & 0x01;
             CompletePacket();
             break;
 
-        case Scsi::PreventAllow:
         case Scsi::SynchronizeCache:
         case Scsi::SetCdSpeed:
             CompletePacket();
@@ -1117,8 +1151,8 @@ void AtapiCdrom::ModeSense(bool ten)
         length += BuildPage(page, control, b + length);  // an unknown page: the header alone
     }
 
-    uint8_t medium = 0x70;  // no disc
-    if (HasDisc() && _disc)
+    uint8_t medium = _stage.trayOpen ? 0x71 : 0x70;  // door open / no disc
+    if (HasDisc() && _disc && !_stage.trayOpen)
     {
         bool data = false;
         for (size_t i = 0; i < _disc->TrackCount(); i++)
@@ -1281,9 +1315,9 @@ bool AtapiCdrom::InSessionGap(uint32_t lba, uint32_t blocks) const
 
 bool AtapiCdrom::DiscReady()
 {
-    if (HasDisc() && _disc)
+    if (HasDisc() && _disc && !_stage.trayOpen)
         return true;
-    CheckCondition(kSenseNotReady, kAscMediumNotPresent);
+    CheckCondition(kSenseNotReady, kAscMediumNotPresent, _stage.trayOpen ? 0x02 : 0x01);  // tray open / closed
     return false;
 }
 

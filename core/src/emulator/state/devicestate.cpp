@@ -1918,6 +1918,7 @@ StateNode Ide(EmulatorContext* context)
         {
             StateNode atapi = StateNode::Object();
             atapi["disc"] = device->Medium() != nullptr;
+            atapi["tray_open"] = static_cast<const AtapiCdrom*>(device)->TrayOpen();
             atapi["unit_attention"] = s.unitAttention != 0;
             atapi["byte_count_limit"] = int(s.byteLimit);
             atapi["transfer_left"] = static_cast<unsigned>(s.transferLeft);

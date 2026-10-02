@@ -49,3 +49,33 @@ Regression test: `AtapiCdromAudio_Test.SprinterCdplayerFlxPlaysFromTheFirstTrack
 command sequence). Live check: the plugin's own routines (C1BCh-C35Dh) loaded into a running
 Sprinter (BIOS port table), `call C285h` then `call C2FAh` with C352h: first call UNIT ATTENTION,
 second call playing track 1 to LBA 4800 (the Enhanced CD test disc's audio lead-out).
+
+## "No INT after Play, FN stops reacting" (owner, 2026-10-02, branch `cd-plugin-int`)
+
+Reproduced live in Flex Navigator 1.15 (DSS 1.71, BIOS 3.06, `sp-hdd-sys.chd`, the Enhanced CD on
+`ide0.slave`): open the plugin, click Play - track 1 plays at 75 frames a second through the disc to
+`completed` (LBA 4799). Findings:
+
+- **The frame INT keeps coming.** PC #A441 (`ld a,(#87C4) / or a / ret nz / push ix / halt`) is
+  FN's idle loop: every INT wakes it, nothing to do, it halts again - a sample of PC / SP finds it
+  there whether INTs come or not. FN's clock in the menu bar kept counting through the whole play,
+  the SIO keyboard FIFO and the Z84C15 daisy chain stayed empty (no request stuck in service).
+- **Only Play, Eject, Enter and Esc do anything while the plugin's window is open**: the Pause, Stop,
+  track and seek buttons are drawn but beta1 has no code behind them (a click sends no packet:
+  `ide_state` `last_packet` stays the PLAY). Esc / Enter close the window; FN then reacts as usual.
+- **Eject was a real drive bug**: the plugin's `1B 00 00 00 02` (START STOP UNIT, LoEj, Start 0) was
+  acknowledged and the audio played on, so the only way to stop the music did nothing. Now (MMC-3,
+  as MAME t10mmc): Start 0 stops the play; LoEj + Start 0 opens the tray (the drive reads no disc:
+  NOT READY, MEDIUM NOT PRESENT - TRAY OPEN, MODE SENSE medium type 71h); LoEj + Start 1 loads it
+  (UNIT ATTENTION); PREVENT ALLOW MEDIUM REMOVAL refuses an eject (05h / 53h / 02h). The medium stays
+  in the slot; inserting a disc from outside closes the tray. The plugin has no Load button: after
+  Eject, re-insert the disc (media panel / `media insert`).
+- The repeating sound: the test disc's tracks are steady sine tones (330 / 660 / 990 Hz), so the
+  disc "loops" by design until it completes.
+- Also fixed on the way (SPC): the sense data of a failed command is discarded by the next command
+  other than REQUEST SENSE; `ide_state` no longer shows a stale sense (it showed 05h / 64h from an
+  earlier refused command after the successful Play).
+
+Live check after the fix: Play, then Eject - the audio stops (`idle`, `tray_open` true), Esc closes the
+plugin, the cursor keys move FN's panel. Tests: `AtapiCdromAudio_Test.StartStopUnitStopsAudioAndEjectOpensTheTray`
+(the plugin's Play + Eject packets), `.SenseIsDiscardedByTheNextCommand`.

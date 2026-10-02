@@ -933,3 +933,75 @@ TEST_F(AtapiCdromAudio_Test, SprinterCdplayerFlxPlaysFromTheFirstTrack)
     SendPacket({0x47, 0x00, 0x00, 0x00, 0x02, 0x00, 0x50, 0x00, 0x4A, 0x00, 0x00, 0x00}, 0xEB14);
     ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscIllegalModeForTrack);
 }
+
+TEST_F(AtapiCdromAudio_Test, StartStopUnitStopsAudioAndEjectOpensTheTray)
+{
+    // The Sprinter CDPLAYER.FLX's two functions in a row: Play (PLAY AUDIO MSF 00:02:00 - 80:00:74) and
+    // Eject (START STOP UNIT LoEj, Start 0: `1B 00 00 00 02`). MMC-3: Start 0 stops the disc - the play
+    // ends (MAME t10mmc stops audio on every START STOP UNIT); LoEj + Start 0 opens the tray: the drive
+    // has no disc (NOT READY, MEDIUM NOT PRESENT - TRAY OPEN) until LoEj + Start 1 loads it again
+    // (UNIT ATTENTION). Before: the eject was acknowledged and the audio played on
+    std::string error;
+    UseDisc(CdImageFormats::Open(cdtest::WriteMusicDisc(_folder->Path(), 2, 4, 300), &error));
+    SendPacket({0x47, 0x00, 0x00, 0x00, 0x02, 0x00, 0x50, 0x00, 0x4A, 0x00, 0x00, 0x00});
+    ASSERT_TRUE(Completed());
+    Frames(5);
+    ASSERT_EQ(_cd->Audio().Status(), CdAudioStatus::Playing);
+
+    SendPacket({0x1B, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_TRUE(Completed());
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle) << "the eject stops the play";
+    EXPECT_TRUE(_cd->TrayOpen());
+    SendPacket({0x00});
+    EXPECT_EQ(Status() & Status::ERR, Status::ERR);
+    std::vector<uint8_t> sense = Sense();
+    EXPECT_EQ(sense[2], 0x02) << "NOT READY";
+    EXPECT_EQ(sense[12], 0x3A);
+    EXPECT_EQ(sense[13], 0x02) << "tray open";
+    SendPacket({0x47, 0, 0, 0, 2, 0, 0, 4, 0});
+    ExpectCheck(AtapiCdrom::kSenseNotReady, AtapiCdrom::kAscMediumNotPresent);
+    EXPECT_EQ(Command({0x5A, 0, 0x0E, 0, 0, 0, 0, 0, 24})[2], 0x71) << "MODE SENSE medium type: door open";
+
+    // Load: the disc is back, reported once as a new medium
+    SendPacket({0x1B, 0x00, 0x00, 0x00, 0x03});
+    EXPECT_TRUE(Completed());
+    EXPECT_FALSE(_cd->TrayOpen());
+    SendPacket({0x00});
+    ExpectCheck(AtapiCdrom::kSenseUnitAttention, AtapiCdrom::kAscMediumChanged);
+    SendPacket({0x00});
+    EXPECT_TRUE(Completed());
+
+    // Start 0 without LoEj (spin down): the play stops, the tray stays
+    SendPacket({0x47, 0, 0, 0, 2, 0, 0, 4, 0});
+    ASSERT_TRUE(Completed());
+    SendPacket({0x1B, 0, 0, 0, 0x00});
+    EXPECT_EQ(_cd->Audio().Status(), CdAudioStatus::Idle);
+    EXPECT_FALSE(_cd->TrayOpen());
+
+    // PREVENT ALLOW MEDIUM REMOVAL: the eject is refused, the tray stays; ALLOW again: it opens
+    SendPacket({0x1E, 0, 0, 0, 0x01});
+    ASSERT_TRUE(Completed());
+    SendPacket({0x1B, 0, 0, 0, 0x02});
+    ExpectCheck(AtapiCdrom::kSenseIllegalRequest, AtapiCdrom::kAscMediumRemovalPrevented);
+    EXPECT_FALSE(_cd->TrayOpen());
+    SendPacket({0x1E, 0, 0, 0, 0x00});
+    SendPacket({0x1B, 0, 0, 0, 0x02});
+    EXPECT_TRUE(_cd->TrayOpen());
+
+    // A disc put in from outside closes the tray
+    UseDisc(CdImageFormats::Open(cdtest::WriteMusicDisc(_folder->Path(), 2, 4, 300), &error));
+    EXPECT_FALSE(_cd->TrayOpen());
+}
+
+TEST_F(AtapiCdromAudio_Test, SenseIsDiscardedByTheNextCommand)
+{
+    // SPC: the sense data of a failed command is for the REQUEST SENSE that follows it; any other command
+    // discards it. A PLAY of the data track, then TEST UNIT READY: REQUEST SENSE reports no error
+    SendPacket({0x45, 0, 0, 0, 0, 1, 0, 0, 2});
+    ASSERT_EQ(Status() & Status::ERR, Status::ERR);
+    SendPacket({0x00});
+    ASSERT_TRUE(Completed());
+    const std::vector<uint8_t> sense = Sense();
+    EXPECT_EQ(sense[2], 0);
+    EXPECT_EQ(sense[12], 0);
+}

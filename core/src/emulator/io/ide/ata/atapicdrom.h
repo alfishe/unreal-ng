@@ -63,7 +63,9 @@ struct AtapiStage
 {
     uint16_t pos = 0;   ///< bytes of the staged sector already in the data buffer
     uint16_t len = 0;   ///< bytes of the staged sector; 0: none
-    uint8_t reserved[4] = {};
+    uint8_t trayOpen = 0;   ///< START STOP UNIT LoEj + Start 0 opened the tray: the disc is out of the drive
+    uint8_t preventRemoval = 0;  ///< PREVENT ALLOW MEDIUM REMOVAL: eject refused (bit 0 persistent prevent)
+    uint8_t reserved[2] = {};
     uint8_t bytes[2816] = {};
 };
 static_assert(std::has_unique_object_representations_v<AtapiStage>, "AtapiStage must have no padding: its bytes are the TTD blob");
@@ -88,7 +90,8 @@ public:
     static constexpr uint8_t kAscInvalidParameter = 0x26;
     static constexpr uint8_t kAscMediumChanged = 0x28;
     static constexpr uint8_t kAscCommandSequenceError = 0x2C;
-    static constexpr uint8_t kAscMediumNotPresent = 0x3A;
+    static constexpr uint8_t kAscMediumNotPresent = 0x3A;  ///< ASCQ 02h: tray open
+    static constexpr uint8_t kAscMediumRemovalPrevented = 0x53;  ///< ASCQ 02h
     static constexpr uint8_t kAscEndOfUserArea = 0x63;   ///< END OF USER AREA ENCOUNTERED ON THIS TRACK
     static constexpr uint8_t kAscIllegalModeForTrack = 0x64;
 
@@ -97,6 +100,9 @@ public:
 
     bool IsPresent() const override { return true; }
     bool HasDisc() const { return _medium != nullptr; }
+    /// The guest opened the tray (START STOP UNIT eject): the drive reads no disc until it loads
+    /// it again (LoEj + Start 1) or another disc is inserted; the medium stays in the slot
+    bool TrayOpen() const { return _stage.trayOpen != 0; }
     uint32_t Blocks() const { return _medium ? static_cast<uint32_t>(_medium->SectorCount() / kSectorsPerBlock) : 0; }
 
     /// The disc's tracks and frames for the next AttachMedium (the media manager

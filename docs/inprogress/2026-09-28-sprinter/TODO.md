@@ -170,7 +170,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     MP3 / FLAC / WAV files in the CD slot is an audio CD too. `CD_PLAY.TRD` plays (owner, live, BIOS 3.06 + DSS
     1.71); the Flex Navigator plugin `C:\FN\FLX\cdplayer.flx` did not - its PLAY MSF 00:02:00 - 80:00:74 was refused
     for the end past the lead-out, fixed per MMC-3 (only the start is checked); the plugin plays from track 1
-    only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)).
+    only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)). The
+    owner's "no INT after Play, FN stuck" (2026-10-02): INTs and FN keep working (PC #A441 is FN's idle HALT); the
+    plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
+    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by

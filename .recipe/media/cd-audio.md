@@ -145,7 +145,11 @@ slot is an audio CD anyway; `media targets <folder>` offers the CD drive first.
 - **Sprinter `CDPLAYER.FLX`** (Flex Navigator plugin) plays from the first track only (it has no
   track skip), asks for 00:02:00 - 80:00:74, never reads the status and sends no TEST UNIT READY:
   track 1 must be audio, and the first press after a disc change only clears the drive's unit
-  attention ([its disassembly](../../docs/disasm/software/sprinter/cdplayer-flx/README.md)).
+  attention ([its disassembly](../../docs/disasm/software/sprinter/cdplayer-flx/README.md)). Its
+  Pause / Stop / skip buttons do nothing (beta1); Eject stops the music and opens the drive's tray.
+- **A guest eject opens the tray** (START STOP UNIT LoEj): `cdaudio` state `tray_open` true, the drive
+  answers NOT READY (3Ah / 02h) and `cdaudio play` `no-disc` until the guest loads it again or the disc
+  is inserted again from outside; the medium stays in its slot.
 - **cdplay does not check the drive's errors**: `3` on the Enhanced CD's data track (or `1` on a
   mixed-mode disc) shows `[PLAYING]` and then follows the drive back to the track that still
   plays (or stays at 00:00 when nothing played) - the player's behavior, a real drive answers the same.

@@ -28,6 +28,11 @@ results: [README.md](README.md).
 - [x] Sprinter `CDPLAYER.FLX` (Flex Navigator) did not play: its PLAY MSF 00:02:00 - 80:00:74 was refused
   for the end past the lead-out; fixed per MMC-3 5.13; disassembly and notes in
   [docs/disasm/software/sprinter/cdplayer-flx/](../../disasm/software/sprinter/cdplayer-flx/README.md)
+- [x] CDPLAYER.FLX "no INT after Play" (branch `cd-plugin-int`): INTs and FN were fine (PC #A441 is FN's
+  idle HALT); its Stop / Pause / skip buttons are unimplemented in beta1; its Eject was ignored by the
+  drive - now START STOP UNIT stops the play and LoEj opens / closes a tray (NOT READY 3Ah / 02h while
+  open, PREVENT ALLOW honored; TTD: in the CdDrive stage bytes, layout unchanged); sense data is
+  discarded by the next command (SPC)
 - [x] cdplay's frozen `[PLAYING] 00:00` and "`1` played the track under the cursor": cdplay ignores the
   drive's errors (documented; the ZX-Evo keyboard delivers the digits right)
 - [x] Activity LED: data reads only (READ, READ CD); audio shows on the HUD's "CD"

@@ -638,8 +638,14 @@ types:
         type: u2
       - id: stage_len
         type: u2
+      - id: tray_open
+        type: u1
+        doc: START STOP UNIT eject opened the tray (no disc for the drive until it loads); 0 before 2026-10-02
+      - id: prevent_removal
+        type: u1
+        doc: PREVENT ALLOW MEDIUM REMOVAL (bit 0)
       - id: stage_reserved
-        size: 4
+        size: 2
       - id: stage
         size: 2816
         doc: the READ CD sector (with C2 and subchannel fields) still going to the 2048-byte data buffer

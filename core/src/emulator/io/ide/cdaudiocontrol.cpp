@@ -163,6 +163,7 @@ StateNode CdAudioControl::DriveState(EmulatorContext* context, int unit)
         return drive;
     drive["unit"] = unit;
     drive["slot"] = IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits);
+    drive["tray_open"] = cd->TrayOpen();
 
     CdAudioPlayer& audio = cd->Audio();
     const CdImage* disc = cd->HasDisc() ? cd->Disc() : nullptr;
@@ -343,6 +344,9 @@ CdAudioReply CdAudioControl::Execute(const CdAudioRequest& request)
         return Volume(unit, request.options);
     if (!cd->HasDisc() || !cd->Disc())
         return Fail("no-disc", "no disc in " + IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits));
+    if (cd->TrayOpen())
+        return Fail("no-disc", "the guest ejected the disc of " + IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits) +
+                                   " (tray open): START STOP UNIT load, or insert the disc again");
     if (verb == "play")
         return Play(unit, request.options);
 

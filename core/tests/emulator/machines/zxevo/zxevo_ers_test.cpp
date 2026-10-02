@@ -1097,9 +1097,8 @@ TEST_F(ZXEvoErs_Test, CdBootSeesTheDiscEjectedAndInsertedAgain)
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9000), 0xB0) << "entered with A = #B0 (slave)";
     drive = atapi();
     EXPECT_TRUE(drive.find("disc")->b);
-    EXPECT_FALSE(drive.find("unit_attention")->b) << "the ERS cleared the unit attention";
-    EXPECT_EQ(drive.find("sense_key")->i, AtapiCdrom::kSenseUnitAttention) << "the swap was reported";
-    EXPECT_EQ(drive.find("asc")->i, AtapiCdrom::kAscMediumChanged);
+    EXPECT_FALSE(drive.find("unit_attention")->b) << "the swap was reported (UNIT ATTENTION) and the ERS took it";
+    EXPECT_EQ(drive.find("sense_key")->i, 0) << "the reads after it succeeded: no sense left (SPC: the next command discards it)";
 }
 
 /// NOS-KBD-1: NedoOS on ZX-Evo reads its keyboard only from the AVR's PS/2 log
