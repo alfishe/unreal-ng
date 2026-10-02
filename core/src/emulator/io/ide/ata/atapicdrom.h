@@ -48,6 +48,7 @@
 /// registers, interrupt reason 2 (data to the host), DRQ; the host reads 1024
 /// words; the drive completes (interrupt reason 3, DRDY).
 
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -103,6 +104,11 @@ public:
     /// The guest opened the tray (START STOP UNIT eject): the drive reads no disc until it loads
     /// it again (LoEj + Start 1) or another disc is inserted; the medium stays in the slot
     bool TrayOpen() const { return _stage.trayOpen != 0; }
+
+    /// The guest ejected the disc (START STOP UNIT LoEj + Start 0 accepted, a disc in the drive):
+    /// the slot's owner takes the medium out (MediaManager::GuestEject). Host side, not machine
+    /// state; called from inside the command, on the emulation thread
+    void SetEjectListener(std::function<void()> listener) { _onEject = std::move(listener); }
     uint32_t Blocks() const { return _medium ? static_cast<uint32_t>(_medium->SectorCount() / kSectorsPerBlock) : 0; }
 
     /// The disc's tracks and frames for the next AttachMedium (the media manager
@@ -186,4 +192,5 @@ private:
     CdImage* _pendingDisc = nullptr;
     CdImage* _disc = nullptr;
     std::unique_ptr<CdImage> _ownDisc;  ///< built over a bare block device
+    std::function<void()> _onEject;
 };

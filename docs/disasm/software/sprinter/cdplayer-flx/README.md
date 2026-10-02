@@ -67,8 +67,9 @@ Reproduced live in Flex Navigator 1.15 (DSS 1.71, BIOS 3.06, `sp-hdd-sys.chd`, t
   acknowledged and the audio played on, so the only way to stop the music did nothing. Now (MMC-3,
   as MAME t10mmc): Start 0 stops the play; LoEj + Start 0 opens the tray (the drive reads no disc:
   NOT READY, MEDIUM NOT PRESENT - TRAY OPEN, MODE SENSE medium type 71h); LoEj + Start 1 loads it
-  (UNIT ATTENTION); PREVENT ALLOW MEDIUM REMOVAL refuses an eject (05h / 53h / 02h). The medium stays
-  in the slot; inserting a disc from outside closes the tray. The plugin has no Load button: after
+  (UNIT ATTENTION); PREVENT ALLOW MEDIUM REMOVAL refuses an eject (05h / 53h / 02h). Since branch
+  `cd-eject-unmount` the guest's eject also empties the media slot (as a user's eject would);
+  inserting a disc from outside closes the tray. The plugin has no Load button: after
   Eject, re-insert the disc (media panel / `media insert`).
 - The repeating sound: the test disc's tracks are steady sine tones (330 / 660 / 990 Hz), so the
   disc "loops" by design until it completes.

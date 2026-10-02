@@ -186,7 +186,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)). The
     owner's "no INT after Play, FN stuck" (2026-10-02): INTs and FN keep working (PC #A441 is FN's idle HALT); the
     plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
-    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
+    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens); since `cd-eject-unmount` the guest's eject
+    also empties the CD slot in the media manager (the plugin's Eject leaves `ide0.slave` empty).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
