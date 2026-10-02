@@ -97,6 +97,17 @@ QKeySequence MouseCaptureController::releaseKey() const
     return sequence;
 }
 
+QString MouseCaptureController::releaseKeyText() const
+{
+    // The config's own words (physical keys), normalized; before the macOS Control / Meta swap
+    const std::string text = settings().releaseKey;
+    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text),
+                                                     QKeySequence::PortableText);
+    if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown || sequence[0].key() == 0)
+        sequence = QKeySequence::fromString(kDefaultReleaseKey, QKeySequence::PortableText);
+    return sequence.toString(QKeySequence::PortableText);
+}
+
 bool MouseCaptureController::eventFilter(QObject* watched, QEvent* event)
 {
     // The release key reaches whichever window or widget Qt delivers it to (the

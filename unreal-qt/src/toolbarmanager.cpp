@@ -220,8 +220,7 @@ void ToolBarManager::refreshMouseAction()
 
     using State = MouseCaptureController::State;
     const State state = _mouseCapture ? _mouseCapture->state() : State::NoDevice;
-    const QKeySequence releaseKey = _mouseCapture ? _mouseCapture->releaseKey() : QKeySequence();
-    const QString releaseText = releaseKey.toString(QKeySequence::NativeText);
+    const QString releaseText = _mouseCapture ? _mouseCapture->releaseKeyText() : QStringLiteral("Ctrl+Esc");
 
     _mouseAction->setChecked(state == State::Captured);
     _mouseAction->setEnabled(state != State::NoDevice || !_mouseGateOpen);

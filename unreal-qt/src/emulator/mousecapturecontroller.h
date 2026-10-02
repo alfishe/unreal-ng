@@ -136,6 +136,9 @@ public:
     /// The release key of the shown machine's config, as Qt sees the physical keys
     /// (on macOS "Ctrl" in the config is the Control key, Qt's Meta modifier)
     QKeySequence releaseKey() const;
+    /// The release key for people to read, naming the physical keys ("Ctrl+Esc" on every
+    /// platform: not Qt's native macOS symbols, where the Control key is a hard-to-see glyph)
+    QString releaseKeyText() const;
 
     /// While captured: the release key anywhere in the application releases
     bool eventFilter(QObject* watched, QEvent* event) override;
