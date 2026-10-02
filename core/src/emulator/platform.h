@@ -595,6 +595,7 @@ struct CONFIG
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
+	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
 	IDE_CONFIG ide[2];				// master, slave
 
 	uint32_t sd_delay;

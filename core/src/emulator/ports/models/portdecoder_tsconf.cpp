@@ -20,6 +20,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
+#include "emulator/platforms/tsconf/vdac2card.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -37,6 +38,12 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
             return _zc.ReadData();
         _zc.WriteData(out);
         return 0xFF;
+    });
+    // The VDAC2 card keeps time in raster tacts; it closes a frame once the
+    // engine has accounted all of it (the DMA's last SPI bytes included)
+    _engine.SetFrameEndListener([this]() {
+        if (_vdac2)
+            _vdac2->OnFrameEnd();
     });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
@@ -74,6 +81,9 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
+    _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+    _vdac2.reset();
+
     if (_context->pMediaManager)
         _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
 
@@ -118,6 +128,33 @@ void PortDecoder_TSConf::PowerOn()
     std::memcpy(_ts.cram, kTsConfCramPowerOn, sizeof(_ts.cram));
     _ts.pwrUp = 1;
     _poweredOn = true;
+
+    // The card is powered with the board
+    if (_vdac2)
+        _vdac2->PowerOn();
+}
+
+void PortDecoder_TSConf::RefreshVdac2Card()
+{
+#ifdef ENABLE_VDAC2
+    // The firmware build is fixed per machine (the card is swapped with the
+    // power off and the FPGA reflashed, vdac2-tdd.md §6.1); a test may change
+    // the config and reset, so the card follows the config at every reset
+    const bool wanted = VdacVersion() == 7;
+    if (wanted && !_vdac2)
+    {
+        // Time inside the frame: the engine's accounted position (the CPU's
+        // tact at a port access, the DMA's while a transfer is accounted)
+        _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
+        _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
+                         Vdac2Card::kSpiSelectActiveHigh);
+    }
+    else if (!wanted && _vdac2)
+    {
+        _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+        _vdac2.reset();
+    }
+#endif
 }
 
 /// Warm reset (hardware-spec §10). Not reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE,
@@ -179,6 +216,12 @@ void PortDecoder_TSConf::reset()
 
     if (_screen)
         _screen->SetBorderColor(COLOR_WHITE);
+
+    // The VDAC2 card follows the configured build; it keeps running through
+    // the Evo's reset (Vdac2Card::Reset)
+    RefreshVdac2Card();
+    if (_vdac2)
+        _vdac2->Reset();
 
     // The card and its session writes survive a reset; the controller
     // deselects it ([V] zports.v: SPI chip selects reset to 1)

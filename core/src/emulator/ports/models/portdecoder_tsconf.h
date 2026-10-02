@@ -18,6 +18,7 @@
 #include "emulator/ports/portdecoder.h"
 
 class TsConfMemory;
+class Vdac2Card;
 
 /// TS-Conf (ZX-Evo with the TS-Labs FPGA configuration) port decoder.
 ///
@@ -110,6 +111,10 @@ public:
     /// BaseConf; it outlives Core::Reset() like the board's
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
+    /// The VDAC2 card (FT812) on the IDE connector: present in the VDAC2
+    /// build ([MISC] TS_VDAC2=1) of a binary with ENABLE_VDAC2, else nullptr
+    /// (vdac2-integration-design.md §5)
+    Vdac2Card* GetVdac2Card() const { return _vdac2.get(); }
     /// Insert an image file / a medium through the media manager (directly
     /// when the context has none: bare decoder tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
@@ -211,6 +216,8 @@ private:
     };
 
     void RefreshM1Hook();
+    /// Fit or remove the VDAC2 card to match the configured firmware build
+    void RefreshVdac2Card();
     void UpdateSdStatus();
     /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
     void ApplyIdeStall();
@@ -272,4 +279,8 @@ private:
     ZControllerSpi _zc;
     SdSlot _sdSlot{*this};
     bool _sdWriteProtect = false;
+
+    // The VDAC2 card: slot 1 of the SPI hub (declared after _zc, so it is
+    // destroyed first; the destructor detaches it)
+    std::unique_ptr<Vdac2Card> _vdac2;
 };

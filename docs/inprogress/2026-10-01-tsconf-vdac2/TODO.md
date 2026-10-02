@@ -15,7 +15,7 @@ Status 2026-10-01: research done, design written, nothing implemented.
   in-flight operation records; A1-A3 decided (own repository + submodule `lib/eve-emu`, `stb_image`, BUILTIN decoders)
 - [ ] D-C: integration design - draft [vdac2-integration-design.md](vdac2-integration-design.md)
   (2026-10-01): submodule `lib/eve-emu` + `ENABLE_VDAC2`, SPI hub, `Vdac2Card`, INT line
-  source, FT812-rate presentation, exact LUT, TTD id 25 + regions; open C1-C2
+  source, FT812-rate presentation, exact LUT, TTD id 26 + regions; open C1-C2
 - [ ] D-D: test corpus and oracles - draft [vdac2-test-corpus.md](vdac2-test-corpus.md)
   (2026-10-01): layers, TS-Labs SDK programs, BT8XX harness, replay format `.evr`,
   card test programs; open O1-O3
@@ -23,5 +23,9 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off
   `13263c804`, ROM extraction tool `e6d50bc9d`, SPI hub `d3fecc61a`
 - [ ] Library L0-L3b: in progress by a separate agent (own repository)
-- [ ] Integration: the rest of I1 (`Vdac2Card`) and I2-I5, after the library host side; the TO VERIFY
-  list in design §12.1
+- [x] I1 rest, branch `vdac2-i1`: CMake `ENABLE_VDAC2` (OFF until the submodule exists) +
+  `EVE_EMU_DIR`, `[VDAC2] RomImage`, refusal without library support, `Vdac2Card` (hub slot 1,
+  raster tacts -> FT812 clocks with exact remainder, frame-end call from the engine), tests
+  `vdac2card_test.cpp`
+- [ ] Submodule `lib/eve-emu` once the library has a published repository; then `ENABLE_VDAC2` ON
+- [ ] Integration I2-I5; the TO VERIFY list in design §12.1

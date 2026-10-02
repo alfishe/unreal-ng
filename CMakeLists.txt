@@ -351,6 +351,31 @@ endif ()
 #     level, so a known-pinned version is required.
 
 # ========================================
+# eve-emu (FT812 for the TS-Conf VDAC2 card)
+# ========================================
+# The chip is a separate static library (docs/inprogress/2026-10-01-tsconf-vdac2/
+# eve-emu-architecture.md), meant as the submodule lib/eve-emu; EVE_EMU_DIR points
+# at another checkout (a developer working on both). OFF by default until the
+# submodule is in the tree (vdac2-integration-design.md §2). With it OFF, a
+# configuration asking for the card ([MISC] TS_VDAC2=1) fails to load.
+option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" OFF)
+set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/eve-emu" CACHE PATH "eve-emu checkout")
+if (ENABLE_VDAC2)
+    if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
+                "Run 'git submodule update --init --recursive lib/eve-emu', set EVE_EMU_DIR, or set ENABLE_VDAC2=OFF")
+    endif()
+    # Built-in decoders for CMD_INFLATE / CMD_LOADIMAGE (architecture decision A3)
+    set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
+    set(EVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(EVE_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    message(STATUS ">>> VDAC2: eve-emu from ${EVE_EMU_DIR}")
+    add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
+endif()
+
+# ========================================
 # Core Library
 # ========================================
 message(STATUS ">>> Building core library")

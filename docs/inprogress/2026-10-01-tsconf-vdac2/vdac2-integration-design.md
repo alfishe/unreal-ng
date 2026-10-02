@@ -34,7 +34,7 @@ a device-state report. The isolation test keeps passing.
 - Root `CMakeLists.txt`:
 
   ```cmake
-  option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
+  option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" OFF)
   set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/eve-emu" CACHE PATH "eve-emu checkout")
   if (ENABLE_VDAC2)
       if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
@@ -48,15 +48,18 @@ a device-state report. The isolation test keeps passing.
   endif()
   ```
 
-  before `add_subdirectory(core/src)`. `EVE_EMU_DIR` lets a developer point at a local
-  checkout of the library while working on both.
+  before `add_subdirectory(core/src)`, with the library's own tests and benchmarks off.
+  `EVE_EMU_DIR` lets a developer point at a local checkout of the library while working
+  on both. The option stays **OFF until the submodule is in the tree** (the library has
+  no published repository yet); then it turns ON.
 - `core/src/CMakeLists.txt`: with `ENABLE_VDAC2`, `target_link_libraries(core PRIVATE
-  eve::emu)` and `target_compile_definitions(core PRIVATE ENABLE_VDAC2)`. The card's
-  sources compile only then.
+  eve::emu)` and `target_compile_definitions(core PUBLIC ENABLE_VDAC2)`. The gate is
+  PUBLIC like `UNREALNG_HAVE_OPL4`: `core-tests` compiles core sources itself and links
+  `eve::emu` too. The card's source compiles to nothing without the gate.
 - `ENABLE_VDAC2=OFF`: a configuration asking for `TS_VDAC2=1` fails machine creation
   with "this build has no VDAC2 support" on every surface; nothing silently falls back.
-- New worktrees and CI checkouts need `git submodule update --init lib/eve-emu` (the same
-  rule as the other submodules; memory note on worktrees).
+- New worktrees and CI checkouts need `git submodule update --init --recursive
+  lib/eve-emu` (the library has its own submodules: miniz and stb).
 
 ## 3. Configuration and the IDE slot
 
@@ -137,6 +140,12 @@ when `ts_vdac == 7`.
   `EveExchange`, each after advancing the chip to "now" (§5.2).
 - Drives the chip's time, watches INT_N (§6), owns the FT812 picture (§7).
 - Serializes for TTD (§9), reports device state for automation (§11).
+- **Lifetime.** The decoder fits the card at a reset when the config says VDAC2
+  (`ts_vdac == 7`) and removes it otherwise, so it follows the configured firmware build.
+  A board power-on (`PowerCycle`) resets the FT812 like power applied (`EveReset`). The
+  Evo's reset button does not: the card's FT812 has its own power-on reset, and the
+  software's `ft_init` starts with `PWRDOWN` / `ACTIVE` / `RST_PULSE` anyway (TO VERIFY on
+  the card's schematic: where PD_N goes).
 
 ### 5.2 Time
 
@@ -148,11 +157,20 @@ when `ts_vdac == 7`.
 - `f_sys` changes only while the FT812 clock is stopped (`CLKSEL` is accepted in SLEEP
   only, spec §2.2). The card advances the chip to "now" before every bus access, so each
   interval is converted at the frequency that was in force during it.
-- The card keeps a 64-bit raster-tact counter since its creation and the remainder in its
-  own state (§9).
+- The card keeps an absolute raster-tact position (a frame base plus the tact inside the
+  frame) and the remainder in its own state (§9). The tact inside the frame is the
+  TS-Conf engine's accounted position (`TsConfState::budgetRaster`): at a port access the
+  decoder has caught the engine up to the CPU, so it is the CPU's tact; while the engine
+  accounts a `DMA_RAM_SPI` transfer it is the DMA's position, so DMA bytes reach the chip
+  at their own time. The engine calls the card when it closes a frame (after the old
+  frame's DMA is accounted, before positions restart at 0), and the card moves its frame
+  base on. A Z80 reset or a power-on that zeroes the engine position cannot move the
+  card's time backwards: a position below the card's is ignored until the engine is back.
+- While the chip's clock is stopped (`EveSystemClockHz` = 0) time passes without clocks and
+  the remainder is dropped.
 - **When it advances the chip:**
   - before every `select` / `exchange` (port access and DMA alike);
-  - at the machine frame end;
+  - at the machine frame end (the engine's frame-end call);
   - at the next chip event while it matters: the card implements `IMachineStepHook` and
     compares the current raster tact with the precomputed tact of the next INT_N change
     or FT812 frame end (`EveClocksToNextEvent` converted back). One integer comparison per
@@ -256,7 +274,8 @@ The palette cache (CRAM version counter) needs no change: `ts_vdac` is fixed per
 
 ### 9.1 What is recorded
 
-- **Device blob** `PeripheralId::Vdac2` = 25 (the next free id; `ttdserializable.h`),
+- **Device blob** `PeripheralId::Vdac2` = 26 (the next free id; 25 went to `SprinterPld`;
+  `ttdserializable.h`),
   appended to `PortDecoder_TSConf::GetTTDModelStateIds` / `CreateTTDSerializers` when
   the card exists. Payload, fixed size: the card's fields (raster-tact counter,
   conversion remainder, last INT_N level, the msel source state) + `EveSaveState`
