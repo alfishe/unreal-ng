@@ -13,11 +13,14 @@
 ///                                first, then the host resolver) at each connect
 ///   SERIAL:<device>[,<baud>]     a host serial device; <baud> until the ZX
 ///                                programs its own rate (115200 by default)
-///   ESPNET                       an emulated ESP module with NedoOS's ESPNET
+///   ESPNET[,<baud>]              an emulated ESP module with NedoOS's ESPNET
 ///                                firmware (binary socket protocol)
-///   AT                           an emulated ESP module with Espressif's AT firmware
+///   AT[,<baud>]                  an emulated ESP module with Espressif's AT firmware
 /// The ESP modules use the virtual network for their sockets; [NETWORK]
-/// EspChip= picks ESP32 (8 sockets) or ESP8266 (4)
+/// EspChip= picks ESP32 (8 sockets) or ESP8266 (4). Their <baud> is the rate
+/// the module's firmware was built for; without it the port's own (the ATM
+/// Turbo 2+ keyboard controller: 38400, the ESPNET "ATM2COM" build; any
+/// other port: 115200)
 
 #include <cstdint>
 #include <string>
@@ -38,7 +41,7 @@ struct ComPortSpec
     uint32_t addr = 0;        ///< Tcp: IPv4, host order; 0 = `host` is a name to resolve
     uint16_t port = 0;        ///< Tcp
     std::string device;       ///< Serial
-    uint32_t baud = 115200;   ///< Serial
+    uint32_t baud = 115200;   ///< Serial; Espnet / At: 0 = the port's default rate
 
     static bool Parse(const std::string& text, ComPortSpec& out, std::string& error);
     /// Back to the INI form

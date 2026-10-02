@@ -4,11 +4,13 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "_helpers/romeditortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "debugger/debugmanager.h"
@@ -104,6 +106,11 @@ TEST_F(CoEmu_Test, Run)
         }
         const CoEmuMachine& m = it->second;
         TearDown();  // a fresh emulator per machine
+        // The machine as a user has it: the test runner leaves the sound slot empty, but every machine here
+        // but the 48K has its AY on the board (a program may read #FFFD / #BFFD)
+        std::optional<SoundCardScope> ay;
+        if (name != "48k")
+            ay.emplace(TestSound::TurboSound);
         BootEditor(m.editor);
         if (HasFatalFailure())
         {

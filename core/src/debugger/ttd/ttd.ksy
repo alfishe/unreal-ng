@@ -532,7 +532,7 @@ types:
           10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
-          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
+          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches; a second channel appended on the Sprinter),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
@@ -547,7 +547,11 @@ types:
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
           netstate::SerialPort; without a peer only the header and the UART registers and FIFOs),
           25 SprinterPld (Sprinter Sp2000 PLD state + configuration module; reserved: no blob is
-          written before its serializer, Sprinter phase S7 - the machine refuses to record until then).
+          written before its serializer, Sprinter phase S7 - the machine refuses to record until then),
+          26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
+          interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
+          27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
+          keyboard controller's RS-232: netstate::Com, the peer part only).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

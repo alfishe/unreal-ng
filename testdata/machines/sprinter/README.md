@@ -10,6 +10,8 @@ standard PC-format FAT12 floppy.
 |:--|:--|
 | `dss_1_62_92.img` | the DSS 1.62.92 bootable 1.44 MB floppy, a raw PC sector dump |
 | `dss160r/` | five files of the official DSS 1.60R binary release (February 2003) |
+| `golden/setup-menu.png` | BIOS 3.04 SETUP 1.58 menu as `ScreenSprinter` renders it (736x288; reviewed by eye, phase S2): the golden image of `SprinterBoot_Test.Bios304_SetupSavesSettingToCmos`. The MAME captures are in `reference/` |
+| `golden/dss-prompt.png` | DSS 1.62.92 at its `B:\>` prompt after the floppy boot, as `ScreenSprinter` renders it (736x288; reviewed by eye, phase S3a): the golden image of `SprinterBoot_Test.Dss162_BootsFromTheHdFloppyToThePrompt`, compared pixel for pixel |
 
 ## `dss_1_62_92.img` - the DSS 1.62.92 boot floppy
 

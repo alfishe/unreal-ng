@@ -39,6 +39,12 @@ public:
     uint8_t AcknowledgeInterrupt(uint32_t t) override;
     /// endregion </IInterruptSource>
 
+    /// The keyboard interrupt (ALL_MODE bits 0 and 3, MAME on_kbd_data): a byte
+    /// from the keyboard arrived. The PLD's one INT flip-flop holds it until the
+    /// acknowledge (PLD SP2_1K30.TDF INT_X), which answers #FF like the frame INT
+    void LatchKeyboardInt() { _keyboardInt = true; }
+    bool KeyboardIntLatched() const { return _keyboardInt; }
+
     /// The mode table changed (a blank + INT byte, RGMOD bit 0, the frame length):
     /// the INT list is rebuilt at the next query
     void Invalidate() { _dirty = true; }
@@ -65,4 +71,5 @@ private:
     uint8_t _modePage = 0;
     uint16_t _frameLines = 320;
     int64_t _ackedPulse = -1;
+    bool _keyboardInt = false;
 };

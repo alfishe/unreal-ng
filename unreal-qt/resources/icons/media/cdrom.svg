@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Compact disc: iridescent surface, clear hub, centre hole -->
+  <defs>
+    <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d0bfff"/>
+      <stop offset="0.25" stop-color="#99e9f2"/>
+      <stop offset="0.45" stop-color="#f8f9fa"/>
+      <stop offset="0.6" stop-color="#ffec99"/>
+      <stop offset="0.8" stop-color="#ffc9c9"/>
+      <stop offset="1" stop-color="#a5d8ff"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="27" fill="url(#rainbow)" stroke="#868e96" stroke-width="1.2"/>
+  <path d="M32 5 A27 27 0 0 1 59 32 L45 32 A13 13 0 0 0 32 19 z" fill="url(#shine)"/>
+  <circle cx="32" cy="32" r="21" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.8"/>
+  <circle cx="32" cy="32" r="10" fill="#e9ecef" stroke="#adb5bd" stroke-width="1"/>
+  <circle cx="32" cy="32" r="6.5" fill="none" stroke="#ced4da" stroke-width="1"/>
+  <circle cx="32" cy="32" r="3.5" fill="#ffffff" stroke="#868e96" stroke-width="1"/>
+</svg>

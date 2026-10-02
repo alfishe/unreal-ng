@@ -284,17 +284,17 @@ TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 // resources
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ResourcesList_ContainsEightResources)
+TEST_F(McpDispatcher_Test, ResourcesList_ContainsNineResources)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/list"));
 
     const Json::Value& resources = response["result"]["resources"];
     ASSERT_TRUE(resources.isArray());
-    EXPECT_EQ(resources.size(), 8u);
+    EXPECT_EQ(resources.size(), 9u);
 
     const char* expectedUris[] = {"unreal://keyboard-layout", "unreal://basic-reference", "unreal://z80-isa",
                                   "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state",
-                                  "unreal://machine/profi",   "unreal://machine/tsconf"};
+                                  "unreal://machine/profi",   "unreal://machine/tsconf",  "unreal://machine/sprinter"};
     for (const char* uri : expectedUris)
     {
         bool found = false;
@@ -338,6 +338,21 @@ TEST_F(McpDispatcher_Test, ResourcesRead_MachineTsConf_DescribesRegistersAndSpg)
     const std::string text = contents[0]["text"].asString();
     EXPECT_NE(text.find("#nnAF"), std::string::npos);
     EXPECT_NE(text.find(".spg"), std::string::npos);
+}
+
+TEST_F(McpDispatcher_Test, ResourcesRead_MachineSprinter_DescribesPortTableAndBios)
+{
+    Json::Value params;
+    params["uri"] = "unreal://machine/sprinter";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/read", params));
+
+    const Json::Value& contents = response["result"]["contents"];
+    ASSERT_TRUE(contents.isArray());
+    ASSERT_EQ(contents.size(), 1u);
+    const std::string text = contents[0]["text"].asString();
+    EXPECT_NE(text.find("[ROM] SPRINTER="), std::string::npos);
+    EXPECT_NE(text.find("sprinter_ports"), std::string::npos);
+    EXPECT_NE(text.find("page #40"), std::string::npos);
 }
 
 TEST_F(McpDispatcher_Test, ResourcesRead_EmbeddedResource_ReturnsMarkdownText)

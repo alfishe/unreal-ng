@@ -73,13 +73,17 @@ Configuration modules — `sprinterpldconfiguration_test.cpp` (T-PLDM):
 
 ### 2.4 Video — `screensprinter_test.cpp`, `sprinterintsource_test.cpp` (T-VID)
 
+Built in S2 (2026-10-01): T-VID-1..7 and 9 in `screensprinter_test.cpp` (T-VID-8 and 10 since S1);
+ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.cpp`
+(roadmap §7).
+
 | ID | Case | Expected |
 |---|---|---|
 | T-VID-1 | graphics 320: one square with known bytes and palette 2 | golden 16-pixel strip |
-| T-VID-2 | graphics 640: nibble order | low nibble first |
+| T-VID-2 | graphics 640: nibble order | high nibble first (S2: MAME and the PLD; the design said low) |
 | T-VID-3 | text 320 and 640 (Line2 override) | golden strips; flash swaps at frame bit 4 |
-| T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = black |
-| T-VID-5 | palette byte order | BIOS CGA entry 1 (`#A8,#00,#00`) renders blue (decision HW §4.5) |
+| T-VID-4 | border square, blank square | border color = text palette 0 index `border × 9`; blank = pen `#400` (text paper colour 0, S2) |
+| T-VID-5 | palette byte order | video RAM holds R, G, B: the BIOS CGA "blue" (`#A8,#00,#00` as B, G, R to function `#A4`) is `#00,#00,#A8` in video RAM and renders blue (decision HW §4.5, S2) |
 | T-VID-6 | RGMOD bit 0 flips mid-frame | lines after the beam use page 1 |
 | T-VID-7 | HOLD `#00` vs `#77` | picture offset 14 pixels, 7 lines |
 | T-VID-8 | INT list from a hand-built mode page (run of `#FD` squares) | INT T-states match MAME's `update_int` on the same page |
@@ -99,7 +103,20 @@ Configuration modules — `sprinterpldconfiguration_test.cpp` (T-PLDM):
 | T-IDE-7 | reset | primary selected, latch 0, drives reset |
 | T-IDE-8 (ROM, after S7 for the CD case) | BIOS device probe with `ide0.slave` empty, then with an empty CD unit there | the BIOS unit list matches each setup; boot from `ide0.master` unaffected |
 
+As built (S3b, 2026-10-02; the Sprinter decode is a region of the shared `IdeAdapter`, so the tests sit with the
+files under test): T-IDE-1..4, 7 = `IdeAdapter_Test.SprinterTruthTable`, `SprinterWordOrder`, `SprinterSharedLatch`,
+`SprinterChannelSelect`, `SprinterReset` (+ `SprinterWithoutABoard`, the Sprinter in `RandomPortTrafficIsSafe`);
+T-IDE-5 / 6 = `PortDecoderSprinterIde_Test.IniLoopReadsASectorInOrder` / `OutiLoopWritesASectorInOrder` (the BIOS's
+unrolled loops on the Z84C15 engine, the 3.04 port table) and `Z84C15_IniOutiPutBOnTheHighAddressByte`;
+T-IDE-8 = `SprinterBoot_Test.Bios304_FindsAnEmptyCdUnitOnTheSlave` (the CD case already in S3b) and the "None" line
+of `Dss162_BootsFromAHardDiskImage`; R-5 = `SprinterBoot_Test.Dss162_BootsFromAHardDiskImage`.
+
 ### 2.6 Floppy — `wd1793_test.cpp` additions, `loader_rawpc_test.cpp` (T-FDD)
+
+Built in S3a (2026-10-01): T-FDD-1/2/3 in `loader_rawpc_test.cpp` (S0, PLAN #60(f)) and
+`WD1793Clock_Test.Latched_RateChange*` (the latch flipped during the search), T-FDD-4..7 as
+`PortDecoderSprinter_Test.Fdc_*` / `Dos_M1HookOpensAndClosesTheFloppyPorts`; R-4 / R-7 as
+`SprinterBoot_Test.Dss162_*`.
 
 | ID | Case | Expected |
 |---|---|---|
@@ -154,11 +171,11 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 |---|---|---|
 | R-1 | ACC-1a | page `#40` equals the S0 capture after "DCP opened"; boot-menu text in VRAM |
 | R-2 | ACC-1 | logo frame equals the golden image (no turbo mode) |
-| R-3 | ACC-2 | setup date change persists in the CMOS file |
+| R-3 | ACC-2 | a SETUP setting change (BIOS 3.04's SETUP has no date page: "Memory Test") persists in the CMOS file with a valid checksum |
 | R-4 | ACC-3 | "Starting DOS..." then the DSS prompt text in VRAM; density port = HD |
 | R-5 | ACC-4 | same from `ide0.master` built image |
 | R-6 | ACC-5 | same from a folder; folder tree hash unchanged |
-| R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM) |
+| R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM). As built: through DSS `SPECTRUM.EXE` (BIOS 3.04 has no Spectrum ROMs); `LOAD "smReadMe" CODE` compared with the file's bytes |
 | R-8 | ACC-7/8 | native program frames equal MAME captures |
 | R-9 | ACC-10 | TTD record 5 s of R-4, seek, replay: equal frame hashes |
 

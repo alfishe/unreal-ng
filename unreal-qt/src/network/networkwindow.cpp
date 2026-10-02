@@ -135,6 +135,19 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     serial->addWidget(_baud);
     layout->addWidget(_serialRow);
 
+    // An ESP module ships at the rate its firmware was built for
+    _espRow = new QWidget(this);
+    auto* espLine = new QHBoxLayout(_espRow);
+    espLine->setContentsMargins(0, 0, 0, 0);
+    _espBaud = new QComboBox(_espRow);
+    _espBaud->addItem(tr("The port's default (ATM Turbo 2+: 38400, others: 115200)"), 0u);
+    for (uint32_t rate : NetworkSerialBaudChoices())
+        _espBaud->addItem(QString::number(rate), rate);
+    _espBaud->setToolTip(tr("The module's firmware rate; the ZX must program the same, else both sides read garbage"));
+    espLine->addWidget(new QLabel(tr("Module baud"), _espRow));
+    espLine->addWidget(_espBaud, 1);
+    layout->addWidget(_espRow);
+
     connect(_kind, &QComboBox::currentIndexChanged, this, [this] {
         updateFields();
         emit edited();
@@ -143,12 +156,13 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     connect(_port, &QSpinBox::valueChanged, this, &SerialPeerEditor::edited);
     connect(_device, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
     connect(_baud, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
+    connect(_espBaud, &QComboBox::currentIndexChanged, this, &SerialPeerEditor::edited);
     updateFields();
 }
 
 void SerialPeerEditor::setSpec(const ComPortSpec& spec)
 {
-    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud);
+    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud);
     _kind->setCurrentIndex(IndexOf(spec.kind));
     if (spec.kind == ComPortSpec::Kind::Tcp)
     {
@@ -159,6 +173,16 @@ void SerialPeerEditor::setSpec(const ComPortSpec& spec)
     {
         _device->setCurrentText(Q(spec.device));
         _baud->setCurrentText(QString::number(spec.baud));
+    }
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+    {
+        int index = _espBaud->findData(spec.baud);
+        if (index < 0)
+        {
+            _espBaud->addItem(QString::number(spec.baud), spec.baud);
+            index = _espBaud->count() - 1;
+        }
+        _espBaud->setCurrentIndex(index);
     }
     updateFields();
 }
@@ -179,6 +203,8 @@ ComPortSpec SerialPeerEditor::spec() const
         const uint32_t baud = _baud->currentText().trimmed().toUInt(&ok);
         spec.baud = ok && baud ? baud : 115200;
     }
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+        spec.baud = _espBaud->currentData().toUInt();
     return spec;
 }
 
@@ -198,6 +224,7 @@ void SerialPeerEditor::updateFields()
 {
     _tcpRow->setVisible(_kind->currentIndex() == PeerTcp);
     _serialRow->setVisible(_kind->currentIndex() == PeerSerial);
+    _espRow->setVisible(_kind->currentIndex() == PeerEspnet || _kind->currentIndex() == PeerAt);
 }
 
 /// endregion </SerialPeerEditor>
@@ -274,9 +301,20 @@ void NetworkWindow::buildUi()
     }
     _avrFirmware->setToolTip(tr("The ZX-Evo AVR firmware the COM port behaves like ([EVO] Avr=); a change restarts its UART"));
     comForm->addRow(tr("AVR firmware"), _avrFirmware);
+    _kbcFirmware = new QComboBox(com);
+    for (const auto& [name, text] : NetworkKbcFirmwareChoices())
+    {
+        _kbcFirmware->addItem(Q(name) + QStringLiteral(" - ") + Q(text), Q(name));
+        _kbcFirmware->setItemData(_kbcFirmware->count() - 1, Q(text), Qt::ToolTipRole);
+    }
+    _kbcFirmware->setToolTip(tr("The ATM Turbo 2+ keyboard controller firmware ([ATM] Kbc=); its RS-232 is the "
+                                "machine's serial port from V31 on; a change fits a new controller, which boots afresh"));
+    comForm->addRow(tr("Keyboard controller"), _kbcFirmware);
     comLayout->addLayout(comForm);
     _avrWhy = why(com);
     comLayout->addWidget(_avrWhy);
+    _kbcWhy = why(com);
+    comLayout->addWidget(_kbcWhy);
     page->addWidget(com);
 
     // ESP module and serial line options
@@ -347,7 +385,7 @@ void NetworkWindow::buildUi()
     connect(_revert, &QPushButton::clicked, this, &NetworkWindow::onRevert);
     for (QCheckBox* box : {_zxNetUsb, _zxWifi, _modemLines, _hostAccess})
         connect(box, &QCheckBox::toggled, this, &NetworkWindow::onEdited);
-    for (QComboBox* combo : {_avrFirmware, _espChip, _dnsMode})
+    for (QComboBox* combo : {_avrFirmware, _kbcFirmware, _espChip, _dnsMode})
         connect(combo, &QComboBox::currentIndexChanged, this, &NetworkWindow::onEdited);
     for (QLineEdit* edit : {_hosts, _forwards})
         connect(edit, &QLineEdit::textEdited, this, &NetworkWindow::onEdited);
@@ -403,9 +441,10 @@ void NetworkWindow::refresh()
     const StateNode network = DeviceState::Network(context);
     const NetworkForm form = NetworkFormFromState(network);
 
-    const QString serial = form.serialPort == "evo-avr" ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
-                           : form.serialPort == "zifi"  ? tr("TS-Conf ZiFi (not emulated yet)")
-                                                        : tr("none");
+    const QString serial = form.serialPort == "evo-avr"    ? tr("the ZX-Evo AVR's 16550 (#F8EF..#FFEF)")
+                           : form.serialPort == "zifi"     ? tr("TS-Conf ZiFi (not emulated yet)")
+                           : form.serialPort == "atm2-kbc" ? tr("the keyboard controller's RS-232 (IN #FE commands)")
+                                                           : tr("none");
     _machine->setText(tr("This machine: ZX-Bus %1; its own serial port: %2.")
                           .arg(form.zxBus ? tr("yes") : tr("no"), serial));
 
@@ -427,6 +466,7 @@ void NetworkWindow::refresh()
     {
         _applied.zxBus = form.zxBus;
         _applied.serialPort = form.serialPort;
+        _applied.kbcFirmware = form.kbcFirmware;
     }
     updateAvailability();
     updateStatusTree(network);
@@ -440,6 +480,7 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     _zxWifiPeer->setSpec(form.zxWifiPeer);
     _comPort->setSpec(form.comPort);
     _avrFirmware->setCurrentIndex(std::max(0, _avrFirmware->findData(Q(form.avrFirmware))));
+    _kbcFirmware->setCurrentIndex(std::max(0, _kbcFirmware->findData(Q(form.kbcFirmware.empty() ? "V41" : form.kbcFirmware))));
     _espChip->setCurrentIndex(std::max(0, _espChip->findData(Q(form.espChip))));
     _modemLines->setChecked(form.modemLines);
     _hostAccess->setChecked(form.hostAccess);
@@ -460,6 +501,8 @@ NetworkForm NetworkWindow::readForm() const
     form.zxWifiPeer = _zxWifiPeer->spec();
     form.comPort = _comPort->spec();
     form.avrFirmware = S(_avrFirmware->currentData().toString());
+    if (!form.kbcFirmware.empty())   // only where the board has the socket
+        form.kbcFirmware = S(_kbcFirmware->currentData().toString());
     form.espChip = S(_espChip->currentData().toString());
     form.modemLines = _modemLines->isChecked();
     form.hostAccess = _hostAccess->isChecked();
@@ -489,6 +532,11 @@ void NetworkWindow::updateAvailability()
     _avrFirmware->setEnabled(a.avrFirmware);
     _avrWhy->setText(Q(a.avrFirmwareWhy));
     _avrWhy->setVisible(!a.avrFirmware);
+    _kbcFirmware->setEnabled(a.kbcFirmware);
+    _kbcWhy->setText(Q(a.kbcFirmwareWhy));
+    _kbcWhy->setVisible(!a.kbcFirmware && a.avrFirmware);   // one "only the X has" line is enough
+    if (!a.kbcFirmware && !a.avrFirmware)
+        _avrWhy->setText(Q(a.avrFirmwareWhy + " " + a.kbcFirmwareWhy));
     const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer));
     _espChip->setEnabled(esp);
     const bool serial = form.comPort.kind == ComPortSpec::Kind::Serial ||

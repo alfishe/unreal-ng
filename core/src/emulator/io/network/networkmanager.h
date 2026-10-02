@@ -63,6 +63,7 @@ public:
         std::optional<bool> comModemLines;     ///< a serial device's RTS / DTR / CTS / DSR / RI / DCD
         std::optional<uint8_t> espChip;        ///< 0 ESP32, 1 ESP8266
         std::optional<uint8_t> avrFirmware;    ///< ZX-Evo: Uart16550::AvrFirmware ([EVO] Avr=)
+        std::optional<uint8_t> kbcFirmware;    ///< ATM Turbo 2+: Atm2Kbc::Firmware ([ATM] Kbc=)
     };
     bool RequestChange(const Change& change, std::string& error);
 
@@ -72,7 +73,9 @@ public:
     /// (ComPortSpec: none | loopback | tcp:<host>:<port> |
     /// serial:<device>[,<baud>] | espnet | at), com_modem_lines (on | off),
     /// esp_chip (esp32 | esp8266), avr_firmware (ZX-Evo, [EVO] Avr= names:
-    /// baseconf | base2010 .. base2023 | ts | ts2013 | ts2016-02 | ts2016-04).
+    /// baseconf | base2010 .. base2023 | ts | ts2013 | ts2016-02 | ts2016-04),
+    /// kbc_firmware (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names:
+    /// none | v22-7 .. v41).
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
@@ -95,7 +98,7 @@ public:
         std::string card;                 ///< "ZXNETUSB" or empty
         std::string cards;                ///< the ZX-Bus cards fitted: "ZXNETUSB,ZXWIFI" | "NONE"
         bool zxBus = true;                ///< the machine takes ZX-Bus cards
-        std::string serialPort;           ///< the machine's own: none | evo-avr | zifi
+        std::string serialPort;           ///< the machine's own: none | evo-avr | zifi | atm2-kbc
         std::vector<std::string> notes;   ///< configured devices not fitted, and why
 
         /// The settings in force (the machine config), in ParseChange's terms
@@ -106,6 +109,7 @@ public:
             std::string zxWifi;           ///< ComPortSpec text, AT when empty
             std::string espChip;          ///< ESP32 | ESP8266
             std::string avrFirmware;      ///< [EVO] Avr= name
+            std::string kbcFirmware;      ///< [ATM] Kbc= name; empty: no controller socket on this board
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
@@ -132,8 +136,8 @@ public:
         struct Com
         {
             bool fitted = false;
-            std::string flavor;           ///< evo (the ZX-Evo AVR) | zxwifi (a 16550 card)
-            std::string firmware;         ///< evo: the AVR firmware ([EVO] Avr=)
+            std::string flavor;           ///< evo (the ZX-Evo AVR) | zxwifi (a 16550 card) | atm2kbc (ATM Turbo 2+ keyboard controller)
+            std::string firmware;         ///< evo: the AVR firmware ([EVO] Avr=); atm2kbc: [ATM] Kbc=
             std::string peer;             ///< loopback | tcp | serial
             std::string target;           ///< host:port (resolved address), device,baud
             std::string phase;            ///< idle | resolving | connecting | connected (stream peers)
@@ -143,10 +147,18 @@ public:
             Uart16550::View uart;
             uint32_t baud = 0;
             uint32_t frameBits = 0;
+            /// atm2kbc: no 16550 (`uart` stays empty) - the MCU's line
+            bool rts = false, dtr = false;
+            uint64_t bytesIn = 0, bytesOut = 0, lost = 0;
             size_t pending = 0;           ///< bytes the peer holds for the ZX
+            uint32_t peerBaud = 0;        ///< ESP module: its firmware's rate (0: not an ESP module)
             std::vector<std::pair<std::string, std::string>> exchanges;   ///< ESP module: recent requests / replies
             uint64_t requests = 0;
         } com;
+
+        /// The machine's own serial port when it is no 16550 on #xxEF (ATM
+        /// Turbo 2+ keyboard controller): fitted beside a ZX-WiFi card's `com`
+        Com machineSerial;
     };
     Status GetStatus() const;
 
@@ -158,24 +170,36 @@ private:
         enum class Serial : uint8_t { None, EvoAvr, ZxWifi } serial = Serial::None;
         uint8_t avr = 0;                  ///< EvoAvr: the AVR firmware
         std::string peer;                 ///< ComPortSpec of the serial port's peer
+        bool machineSerial = false;       ///< the machine's own port is no 16550 (Atm2Kbc)
+        std::string machinePeer;          ///< ComPortSpec of its peer
         std::vector<std::string> notes;
         bool operator==(const Plan& o) const
         {
-            return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer;
+            return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer &&
+                   machineSerial == o.machineSerial && machinePeer == o.machinePeer;
         }
     };
     Plan MakePlan() const;
     void Refit();
     void Unplug();
     void FitCom(const Plan& plan, const Uart16550::State* keep);
+    /// The peer a ComPortSpec names (nullptr for NONE); an ESP module without
+    /// its own ,<baud> ships at `espBaud` (the port's default)
+    static constexpr uint32_t kDefaultEspBaud = 115200;
+    std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText, uint32_t espBaud) const;
+    /// Plug `_machinePeer` into the machine's own non-16550 port
+    void FitMachineSerial(const Plan& plan);
+    void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
     EmulatorContext* _context = nullptr;
     std::unique_ptr<VirtualNetwork> _network;
     std::unique_ptr<ZxNetUsb> _card;
     std::unique_ptr<ComPort> _com;
+    std::unique_ptr<ISerialPeer> _machinePeer;   ///< on the machine's own non-16550 port (Atm2Kbc)
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
-    bool _forceRefit = false;             ///< the next refit unplugs first (settings changed)
+    bool _forceRefit = false;
+    std::string _firmwareNote;            ///< why the last firmware change did not load             ///< the next refit unplugs first (settings changed)
     std::mutex _changeMutex;
     std::optional<Change> _pendingChange; ///< applied to the machine config on the machine thread
 

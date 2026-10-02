@@ -259,9 +259,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
-                        done(ToolResult::Ok("Created and started emulator " + response["id"].asString() + " (model " +
-                                                response.get("symbolic_id", Json::Value("")).asString() + ")",
-                                            std::move(response)));
+                        // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
+                                                 response.get("symbolic_id", Json::Value("")).asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }
                     done(ToolResult::Error("Create failed (HTTP " + std::to_string(status) + "): " + DescribeErrorBody(response)));
@@ -767,7 +768,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                         caller.Call("GET", Endpoint(id, "/registers"), nullptr, [body, done](int regStatus, Json::Value registers) mutable {
                             if (regStatus == 200)
                             {
-                                done(ToolResult::Ok("Paused. " + FormatRegisters(registers), std::move(registers)));
+                                // the text first: argument order is unspecified (gcc moves `registers` out first)
+                                const std::string text = "Paused. " + FormatRegisters(registers);
+                                done(ToolResult::Ok(text, std::move(registers)));
                             }
                             else
                             {
@@ -1057,7 +1060,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu"})
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text"})
     {
         allowed.append(aspect);
     }
@@ -1091,7 +1094,13 @@ void RegisterInspectState(ToolRegistry& registry)
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
         "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
         "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
-        "other machines.";
+        "other machines. 'sprinter' = the Sprinter Sp2000 (PLD configuration and module, CNF map / DOS / PN5, the four "
+        "windows with physical page and kind, ALL_MODE / PORT_Y / RGMOD / HOLD, the cells #C0-#FF, turbo, frame "
+        "length, a video summary of the mode table, the Z84C15 with the keyboard FIFO, the floppy density latch, BIOS "
+        "images), 'sprinter_ports' = its decoded port table for the current map / DOS / PN5 (code, name, address "
+        "pattern; one port or another map: invoke_api GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC "
+        "and /state/sprinter/ports?map=0&dos=1&rw=r), 'sprinter_text' = its screen text (80 x 32 from the mode table's "
+        "text squares: BIOS SETUP, DSS - screen_ocr reads ZX screens only); all three unavailable on other machines.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -1132,7 +1141,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
-        "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
+        "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
+        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -1156,11 +1166,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu")
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention, tsconf"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text"));
                     return;
                 }
             }
@@ -1443,6 +1453,20 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::TsConf via the WebAPI; 404 = not a TS-Conf machine
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/tsconf"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "sprinter" || aspect == "sprinter_ports" || aspect == "sprinter_text")
+                        {
+                            // Core DeviceState::Sprinter / SprinterPortTable / SprinterText via the WebAPI; 404 = not a Sprinter
+                            const std::string path = aspect == "sprinter"         ? "/state/sprinter"
+                                                     : aspect == "sprinter_ports" ? "/state/sprinter/ports"
+                                                                                  : "/state/sprinter/text";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1744,13 +1768,25 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (com["connected"].asBool() ? "" : " (not connected)") << ", " << com["baud"].asUInt() << " baud, rx "
                                             << com["rx_fifo"].asInt() << " / tx " << com["tx_fifo"].asInt() << " in FIFO, in " << com["bytes_in"].asUInt64()
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
+                                    const Json::Value& machineSerial = value["machine_serial"];
+                                    if (machineSerial["fitted"].asBool())
+                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                            << machineSerial["peer"].asString()
+                                            << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
+                                            << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()
+                                            << " baud"
+                                            << (machineSerial.isMember("peer_baud") ? " (module " + std::to_string(machineSerial["peer_baud"].asUInt()) + ")" : std::string())
+                                            << ", RTS " << (machineSerial["rts"].asBool() ? "on" : "off") << ", in "
+                                            << machineSerial["bytes_in"].asUInt64() << " / out " << machineSerial["bytes_out"].asUInt64() << " bytes, lost "
+                                            << machineSerial["lost"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
                                     if (set.isObject())
                                         out << "\n[network] settings: card " << set["card"].asString() << ", com_port " << set["com_port"].asString()
                                             << ", zx_wifi " << set["zx_wifi"].asString() << ", esp_chip " << set["esp_chip"].asString()
-                                            << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string());
+                                            << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
+                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string());
                                 }
                             }
                             else if (aspect == "rtc")
@@ -1770,6 +1806,47 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << " active sprites, sprite page " << value["sprite_page"].asInt() << ", tilemap page "
                                         << value["tilemap_page"].asInt();
                             }
+                            else if (aspect == "sprinter")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter] PLD " << value["pld"]["state"].asString() << " (" << value["pld"]["module"].asString()
+                                        << "), map " << value["decoder"]["map"].asInt() << ", DOS " << (value["decoder"]["dos"].asBool() ? "on" : "off")
+                                        << ", " << value["clock"]["mhz"].asString() << " MHz, " << value["frame"]["lines"].asInt() << " lines, "
+                                        << value["video"]["picture_mode"].asString();
+                                    for (const Json::Value& window : value["windows"])
+                                        out << "\n  window " << window["window"].asInt() << ": " << window["kind"].asString() << " "
+                                            << window["page_hex"].asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_text")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_text] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_text] " << value["text_squares"].asInt() << " text squares, mode page "
+                                        << value["mode_page"].asInt();
+                                    for (const Json::Value& line : value["lines"])
+                                        if (!line["text"].asString().empty())
+                                            out << "\n  " << line["text"].asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_ports")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_ports] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_ports] map " << value["map"].asInt() << ", DOS " << (value["dos"].asBool() ? "on" : "off")
+                                        << ", PN5 " << (value["pn5"].asBool() ? 1 : 0) << ": " << value["rows"].size() << " rows";
+                                    for (const Json::Value& row : value["rows"])
+                                        out << "\n  " << row["code"].asString() << " " << row["direction"].asString() << " " << row["pattern"].asString()
+                                            << "  " << row["name"].asString();
+                                }
+                            }
                             else if (aspect == "tsconf")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
@@ -1786,10 +1863,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << "\n[ide] " << value["description"].asString();
                                 else
                                 {
-                                    out << "\n[ide] " << value["scheme"].asString() << ", selected " << value["selected"].asString();
+                                    out << "\n[ide] " << value["scheme"].asString() << ", selected ";
+                                    if (value.isMember("selected_channel"))
+                                        out << value["selected_channel"].asString() << " ";
+                                    out << value["selected"].asString();
+                                    if (value["adapter"].isMember("data_latch"))
+                                        out << ", data latch #" << std::hex << value["adapter"]["data_latch"].asUInt() << std::dec;
                                     for (const Json::Value& unit : value["units"])
                                     {
-                                        out << "\n  " << unit["position"].asString() << " (" << unit["kind"].asString() << "): ";
+                                        out << "\n  " << unit["slot"].asString() << " (" << unit["kind"].asString() << "): ";
                                         if (unit["medium"].isObject())
                                             out << unit["medium"]["description"].asString();
                                         else
@@ -2078,12 +2160,19 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys"})
+    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once.";
+        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
+        "ATM Turbo 2+, both); 'status' shows it.";
+    schema["properties"]["route"]["type"] = "string";
+    schema["properties"]["route"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* route : {"auto", "matrix", "ps2", "both"})
+        schema["properties"]["route"]["enum"].append(route);
+    schema["properties"]["route"]["description"] = "For 'route': where host and injected keys go";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["text"]["type"] = "string";
@@ -2119,6 +2208,18 @@ void RegisterTypeInput(ToolRegistry& registry)
             if (action == "status")
             {
                 ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", done);
+                return;
+            }
+            if (action == "route")
+            {
+                if (!args.isMember("route"))
+                {
+                    done(ToolResult::Error("route requires 'route' (auto | matrix | ps2 | both)"));
+                    return;
+                }
+                Json::Value body;
+                body["route"] = args["route"].asString();
+                ResolveAndForward(args, "POST", "/keyboard/route", &body, caller, "Keyboard route set", done);
                 return;
             }
             if (action == "list_keys")

@@ -23,6 +23,7 @@ class Mouse;
 class VirtualNetwork;
 class ZxNetUsb;
 class ComPort;
+class ISerialPeer;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -122,6 +123,9 @@ public:
 
 	// COM port (16550 UART on #xxEF and its peer), when [NETWORK] ComPort= fits one
 	ComPort* pComPort = nullptr;
+	// The peer on the machine's own serial port when that port is no 16550 on
+	// #xxEF (ATM Turbo 2+ keyboard controller's RS-232), when fitted
+	ISerialPeer* pMachineSerialPeer = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;
@@ -246,7 +250,8 @@ public:
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
-        // Next free: 1u << 5
+        kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
+        // Next free: 1u << 6
     };
     std::atomic<uint32_t> stepWork{0};
 

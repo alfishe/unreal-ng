@@ -3,6 +3,7 @@
 
 #include "portdecoder_atm450_test.h"
 
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
@@ -307,6 +308,25 @@ TEST_F(PortDecoder_ATM450_Test, PalMarkerWindows)
     EXPECT_EQ(PortDecoder_ATM450::PalMarker(7283), 0x80);
     EXPECT_EQ(PortDecoder_ATM450::PalMarker(7366), 0x80);
     EXPECT_EQ(PortDecoder_ATM450::PalMarker(69887), 0x80);
+}
+
+// The windows are INT-relative (UnrealSpeccy cpu.t starts at the INT edge); this core raises INT at
+// intstart + 1 of its frame, so a real #FE read at frame T = intstart + 1 + 7200 sees the first zero. The
+// system ROM's copy protection samples Z after HALT and decrypts its CP/M loader with the result - with a
+// frame-relative window the key was wrong and the CP/M menu entry fell back to the menu
+TEST_F(PortDecoder_ATM450_Test, PalMarkerIsIntRelativeOnPortRead)
+{
+    Z80* z80 = _context->pCore->GetZ80();
+    const uint32_t intT = _context->config.intstart + 1;
+
+    z80->t = intT + 7200;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x7FFE, 0x0000) & 0x80, 0x00) << "first zero window, INT + 7200";
+    z80->t = intT + 7330;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x7FFE, 0x0000) & 0x80, 0x00);
+    z80->t = intT + 7199;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x7FFE, 0x0000) & 0x80, 0x80);
+    z80->t = 7200;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x7FFE, 0x0000) & 0x80, 0x80) << "frame-relative 7200 is not a window";
 }
 
 /// endregion </#FE read PAL marker>

@@ -557,11 +557,7 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
         }
     }
     // A snapshot, a recording or labels are no medium: `insert` takes media only
-    file.kinds.erase(std::remove_if(file.kinds.begin(), file.kinds.end(),
-                                    [](FileKind k) {
-                                        return k != FileKind::Floppy && k != FileKind::Tape && k != FileKind::Hdd &&
-                                               k != FileKind::SdCard && k != FileKind::Optical;
-                                    }),
+    file.kinds.erase(std::remove_if(file.kinds.begin(), file.kinds.end(), [](FileKind k) { return !MediaTargets::IsMedium(k); }),
                      file.kinds.end());
     if (file.kinds.empty())
         return MediaResult::Fail(MediaError::UnknownFormat,
@@ -571,16 +567,19 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
     if (plan.Refused())
         return MediaResult::Fail(MediaError::KindMismatch, plan.refusal);
 
-    // The chooser's first entry: an empty slot before an occupied one, the
-    // primary / boot slot first (an occupied one is replaced only when every
-    // slot of the kind is taken)
+    // One target: no question. Several: the caller names one - except floppy
+    // drives, which are interchangeable: the first empty one (an occupied
+    // drive is replaced only when every drive is taken, drive A first)
     const MediaTarget& chosen = plan.targets.front();
-    slotId = chosen.slotId;
-    MediaResult result = MediaResult::Success();
     if (plan.targets.size() > 1 && chosen.as != FileKind::Floppy)
-        result.report.push_back("several slots take it (" + plan.SlotList() + "): " + slotId +
-                                " chosen; name the slot to pick another");
-    return result;
+    {
+        const size_t slash = path.find_last_of("/\\");
+        return MediaResult::Fail(MediaError::AmbiguousSlot, "several slots take '" +
+                                                                (slash == std::string::npos ? path : path.substr(slash + 1)) +
+                                                                "': " + plan.SlotList() + " - name one");
+    }
+    slotId = chosen.slotId;
+    return MediaResult::Success();
 }
 
 MediaResult MediaControl::ApplyDisposition(const std::string& slotId, const Options& options, Disposition& remaining)
@@ -653,7 +652,6 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
         reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
     if (!reply.result.Ok())
         return reply;
-    const std::vector<std::string> choice = reply.result.report;  // why this slot, when several take it
     const Options& o = request.options;
 
     // An IDE unit can change its drive first: device=cdrom puts a CD-ROM drive
@@ -665,7 +663,7 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
             return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk or cdrom");
         const int unit = IdeController::UnitForSlot(reply.slot);
         if (unit < 0 || !_context || !_context->pIdeController)
-            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave) changes its drive");
+            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave; ide1.* on the Sprinter) changes its drive");
         std::string error;
         ParkedEmulator parked(_context);
         if (!_context->pIdeController->SetUnitKind(unit, device == "cdrom", &error))
@@ -728,7 +726,6 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     options.cancelRequested = request.cancelRequested;
     options.onProgress = request.onProgress;
     reply.result = _manager->Insert(reply.slot, source, options);
-    reply.result.report.insert(reply.result.report.begin(), choice.begin(), choice.end());
     Finish(reply, o);
     return reply;
 }

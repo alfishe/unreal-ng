@@ -95,8 +95,8 @@ public:
     /// TTD state: card ports, the chip, the virtual network's tables (netstate.h)
     /// `comGuest`: the COM port's peer, whose network sockets are saved and
     /// restored as its own (VirtualNetwork::SaveState)
-    bool SaveState(netstate::Adapters& out, const INetGuest* comGuest = nullptr) const;
-    bool LoadState(const netstate::Adapters& in, const W5300::ByteSource& bytes, INetGuest* comGuest = nullptr);
+    bool SaveState(netstate::Adapters& out, const SerialGuests& serial = {}) const;
+    bool LoadState(const netstate::Adapters& in, const W5300::ByteSource& bytes, const SerialGuests& serial = {});
 
     /// W5300 byte address an I/O access at `port` reaches (A15 = 0)
     uint16_t ChipAddress(uint16_t port) const;

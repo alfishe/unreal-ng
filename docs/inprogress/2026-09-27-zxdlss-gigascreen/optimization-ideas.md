@@ -27,7 +27,9 @@ the quality tests still green.
 | O-15 | Border | 1-D beam-order processing; uniform-border fast path | cheap border handling | design-analysis §8 |
 | O-16 | Threads | Horizontal bands per core for classification and composition; regions crossing bands in a second pass | scales with cores | R-8 |
 | O-17 | SIMD | AVX2 paths with runtime CPU dispatch for the hottest loops | wider lanes on x86 | only if SSE measurements justify it |
-| O-18 | SIMD | Scene stage (mod-tpgwa, spec 7.8): 16-byte compares for the 7-frame constant / period-2 / dyn tests and per-tile counts | the scene features are per-pixel compares over 7 frames | measure first; the stage already runs by tile rows on threads |
+| O-18 | SIMD | Scene stage (mod-tpgwa, spec 7.8): 16-byte compares for the 7-frame constant / period-2 / dyn tests and per-tile counts | the scene features are per-pixel compares over 7 frames | **done 2026-10-02**: `simd::sceneTile16`, colors from the tile histograms; 0.69 -> 0.08 ms/frame (1 thread, i7-11850H) |
+| O-19 | Threads | Several ranges per thread in every parallel stage (dynamic claiming) | uneven work: flicker sits in parts of the frame | **done 2026-10-02**: 4 per thread; 2.0 -> 1.6 ms/frame at 8 threads |
+| O-20 | Motion | Shift search only on tiles whose unshifted cost passes the c0 test | static frames skip the search | **done 2026-10-02**: exact; with dx-major shift order for cache |
 
 ---
 
@@ -51,6 +53,8 @@ to benefit from SIMD gets a comment tag at the time it is written:
 | Candidate | Data shape | Why it vectorizes | Idea | Status |
 |---|---|---|---|---|
 | Plane B capture next to RGBA write in the ZX renderer | 8 pixels per segment | same loop already has a NEON path (`screenzx.cpp:985`) | O-13 | planned |
+| Motion search, 288 shifts per candidate tile | 32 x 32 tile columns | byte compares accumulated in lanes, one reduction per tile | O-2 | done (`diff32Rows`, `diff32` / `addDiffBlocks8` via psadbw) |
+| Scene stage 7-frame tests | 16 x 16 tiles, 7 frames | 16-byte compares, counts in lanes | O-18 | done (`sceneTile16`) |
 | Segment signature history compare (period / recurring-set tests) | 6144 × 16-bit per frame × up to 10 frames | independent lanes, compare + mask | O-4 | planned |
 | Whole-frame "nothing changed" check | 6912 bytes screen + border | bulk compare | O-3 | planned |
 | Bitmap motion search (XOR + popcount) | 1-bit plane, region × search window | wide XOR, popcount (`vcntq_u8` / SSE4.2 or table) | O-5 | planned |

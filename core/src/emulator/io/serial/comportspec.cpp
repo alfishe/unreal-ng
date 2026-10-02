@@ -95,15 +95,22 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Loopback;
         return true;
     }
-    if (upper == "ESPNET")
+    // ESPNET / AT, optionally with the module's rate: ESPNET,38400
     {
-        out.kind = Kind::Espnet;
-        return true;
-    }
-    if (upper == "AT")
-    {
-        out.kind = Kind::At;
-        return true;
+        const size_t comma = upper.find(',');
+        const std::string head = Trim(upper.substr(0, comma));
+        if (head == "ESPNET" || head == "AT")
+        {
+            out.kind = head == "ESPNET" ? Kind::Espnet : Kind::At;
+            out.baud = 0;
+            if (comma != std::string::npos &&
+                (!ParseUnsigned(Trim(upper.substr(comma + 1)), 4000000, out.baud) || out.baud == 0))
+            {
+                error = "expected " + head + "[,<baud>]";
+                return false;
+            }
+            return true;
+        }
     }
     if (upper.rfind("TCP:", 0) == 0)
     {
@@ -155,7 +162,7 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Serial;
         return true;
     }
-    error = "unknown value (NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET | AT)";
+    error = "unknown value (NONE | LOOPBACK | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | AT[,<baud>])";
     return false;
 }
 
@@ -167,8 +174,8 @@ std::string ComPortSpec::ToString() const
         case Kind::Tcp:
             return "TCP:" + host + ":" + std::to_string(port);
         case Kind::Serial: return "SERIAL:" + device + "," + std::to_string(baud);
-        case Kind::Espnet: return "ESPNET";
-        case Kind::At: return "AT";
+        case Kind::Espnet: return baud ? "ESPNET," + std::to_string(baud) : std::string("ESPNET");
+        case Kind::At: return baud ? "AT," + std::to_string(baud) : std::string("AT");
         default: return "NONE";
     }
 }

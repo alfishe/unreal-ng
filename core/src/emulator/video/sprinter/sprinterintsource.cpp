@@ -15,6 +15,7 @@ SprinterIntSource::SprinterIntSource(EmulatorContext* context, const SprinterVid
 void SprinterIntSource::Reset()
 {
     _ackedPulse = -1;
+    _keyboardInt = false;
     _dirty = true;
 }
 
@@ -107,12 +108,15 @@ int64_t SprinterIntSource::PulseAt(uint64_t frame, uint32_t raster)
 
 bool SprinterIntSource::IsIntAsserted(uint32_t t)
 {
+    if (_keyboardInt)
+        return true;
     const int64_t pulse = PulseAt(_context->emulatorState.frame_counter, t / Multiplier());
     return pulse >= 0 && pulse != _ackedPulse;
 }
 
 uint8_t SprinterIntSource::AcknowledgeInterrupt(uint32_t t)
 {
+    _keyboardInt = false;  // one flip-flop for every PLD source
     const int64_t pulse = PulseAt(_context->emulatorState.frame_counter, t / Multiplier());
     if (pulse >= 0)
         _ackedPulse = pulse;

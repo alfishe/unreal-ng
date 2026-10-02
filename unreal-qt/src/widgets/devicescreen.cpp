@@ -377,6 +377,19 @@ bool DeviceScreen::isMouseCaptured() const
     return _mouseManager->isCaptured();
 }
 
+bool DeviceScreen::event(QEvent* event)
+{
+    // A PC-keyboard machine owns the bare F-keys while the view has focus: accepting the
+    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here
+    if (event->type() == QEvent::ShortcutOverride &&
+        KeyboardManager::machineOwnsKey(static_cast<QKeyEvent*>(event), _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+    {
+        event->accept();
+        return true;
+    }
+    return QWidget::event(event);
+}
+
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
@@ -394,10 +407,9 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? std::string(_emulator->GetUUID()) : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_PRESSED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_PRESSED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_PRESSED, targetId);
     }
 }
 
@@ -417,10 +429,9 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? std::string(_emulator->GetUUID()) : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_RELEASED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_RELEASED, targetId);
     }
 }
 

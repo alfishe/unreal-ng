@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Compact cassette: shell, label, window with two reels -->
+  <defs>
+    <linearGradient id="shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#495057"/>
+      <stop offset="1" stop-color="#212529"/>
+    </linearGradient>
+    <linearGradient id="label" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffd43b"/>
+      <stop offset="1" stop-color="#fab005"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="12" width="56" height="40" rx="4" fill="url(#shell)" stroke="#111" stroke-width="1.2"/>
+  <rect x="9" y="16" width="46" height="22" rx="2" fill="url(#label)"/>
+  <rect x="9" y="16" width="46" height="5" fill="#e8590c"/>
+  <rect x="17" y="24" width="30" height="11" rx="5.5" fill="#343a40" stroke="#868e96" stroke-width="0.8"/>
+  <circle cx="23" cy="29.5" r="4.2" fill="#f8f9fa"/>
+  <circle cx="23" cy="29.5" r="1.8" fill="#343a40"/>
+  <circle cx="41" cy="29.5" r="4.2" fill="#f8f9fa"/>
+  <circle cx="41" cy="29.5" r="1.8" fill="#343a40"/>
+  <rect x="28" y="27.5" width="8" height="4" fill="#8d6e63"/>
+  <path d="M16 52 L19 43 H45 L48 52 z" fill="#343a40" stroke="#111" stroke-width="1"/>
+  <circle cx="24" cy="48" r="1.5" fill="#868e96"/>
+  <circle cx="40" cy="48" r="1.5" fill="#868e96"/>
+  <circle cx="8" cy="16" r="1.2" fill="#adb5bd"/>
+  <circle cx="56" cy="16" r="1.2" fill="#adb5bd"/>
+</svg>

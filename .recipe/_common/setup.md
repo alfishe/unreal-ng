@@ -81,6 +81,19 @@ Port map (all bind without authentication — trusted network only):
 iOS/embedded hosts may use different ports (e.g. the cube app uses 8091) —
 a port collision means a second host silently serves nothing.
 
+A **second instance** beside one that owns the defaults (another checkout, a
+recipe check) gets its own ports from the environment, without stopping the
+first one:
+
+```bash
+UNREAL_WEBAPI_PORT=8190 UNREAL_CLI_PORT=8191 UNREAL_MCP_PORT=8192 \
+  ./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
+curl -s -X POST http://localhost:8192/mcp -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools | length'
+```
+
+Check the ports with `lsof -i :<port>` first; stop only that instance's PID.
+
 ### 3. Pick a machine model
 
 Runtime-authoritative list with `creatable` flags:

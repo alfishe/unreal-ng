@@ -149,6 +149,12 @@ endif()
 file (GLOB UNREAL_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-z80/*.cpp)
 set_source_files_properties(${UNREAL_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
+# z84c15 (the Sprinter's Zilog Z84C15 CPU: a fork of unreal-z80 0.5.0 with the
+# chip's on-chip block): the same treatment; namespace Z84Lib, C API prefix
+# Z84Cpu (see 3rdparty/z84c15/README.md)
+file (GLOB Z84C15_FILES ${SOURCE_DIR}/3rdparty/z84c15/*.cpp)
+set_source_files_properties(${Z84C15_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 # rapidyaml (single-header YAML / JSON parser): its definitions compile in one
 # translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
 # -Wall -Wextra -Werror and must not be force-fed stdafx.h

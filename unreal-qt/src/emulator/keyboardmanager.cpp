@@ -101,7 +101,7 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKey(int qtKey)
     }
 
     // No matrix code is the normal answer for PS/2-only keys (F-keys, Tab,
-    // navigation cluster): createKeyboardEvent logs only when a key event has
+    // navigation cluster): postHostKey logs only when a key event has
     // neither the ZX nor the physical code
 
     return result;
@@ -218,19 +218,19 @@ PcKey KeyboardManager::mapQtEventToPcKey(const QKeyEvent* event)
     return key;
 }
 
-KeyboardEvent* KeyboardManager::createKeyboardEvent(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId)
+void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId)
 {
     if (!event)
-        return nullptr;
+        return;
 
     const quint8 zxKey = mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
     const PcKey pcKey = mapQtEventToPcKey(event);
     if (zxKey == ZXKEY_NONE && pcKey == PcKey::None)
     {
-        qDebug() << QString("createKeyboardEvent: no ZX or physical mapping for qtKey: 0x%1 (%2)")
+        qDebug() << QString("postHostKey: no ZX or physical mapping for qtKey: 0x%1 (%2)")
                         .arg(event->key(), 0, 16)
                         .arg(event->key());
-        return nullptr;
+        return;
     }
 
     // The AVR keymap keeps the two shifts apart (kbmap.c): left -> Caps Shift,
@@ -243,21 +243,37 @@ KeyboardEvent* KeyboardManager::createKeyboardEvent(const QKeyEvent* event, KeyE
     else if (pcKey == PcKey::LeftShift)
         matrixKey = ZXKEY_CAPS_SHIFT;
 
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     if (pcKey != PcKey::None)
     {
         if (type == KEY_PRESSED)
             _heldPcKeys.insert(static_cast<uint8_t>(pcKey));
         else
             _heldPcKeys.erase(static_cast<uint8_t>(pcKey));
+        messageCenter.Post(type == KEY_PRESSED ? MC_PCKEY_PRESSED : MC_PCKEY_RELEASED,
+                           new PcKeyEvent(static_cast<uint8_t>(pcKey), type, targetId));
     }
-
-    return new KeyboardEvent(matrixKey, static_cast<uint8_t>(pcKey), type, targetId);
+    if (matrixKey != ZXKEY_NONE)
+        messageCenter.Post(type == KEY_PRESSED ? MC_KEY_PRESSED : MC_KEY_RELEASED,
+                           new KeyboardEvent(matrixKey, type, targetId));
 }
 
 void KeyboardManager::postHeldKeyReleases(const std::string& targetId)
 {
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     for (uint8_t pcKey : _heldPcKeys)
-        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_NONE, pcKey, KEY_RELEASED, targetId));
+        messageCenter.Post(MC_PCKEY_RELEASED, new PcKeyEvent(pcKey, KEY_RELEASED, targetId));
     _heldPcKeys.clear();
+}
+
+bool KeyboardManager::machineOwnsKey(const QKeyEvent* event, const Keyboard* keyboard)
+{
+    if (!event || !keyboard || !keyboard->RoutesToPs2())
+        return false;
+    const int key = event->key();
+    if (key < Qt::Key_F1 || key > Qt::Key_F12)
+        return false;
+    // Keypad and Shift do not make a GUI shortcut; Ctrl / Alt / Cmd (Meta) do
+    const Qt::KeyboardModifiers gui = Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+    return (event->modifiers() & gui) == 0;
 }

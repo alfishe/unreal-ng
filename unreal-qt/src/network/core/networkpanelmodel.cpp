@@ -1,5 +1,6 @@
 #include "networkpanelmodel.h"
 
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 
 namespace
@@ -64,6 +65,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     form.espChip = Upper(Text(set->find("esp_chip"), "ESP32"));
     form.modemLines = Flag(set->find("com_modem_lines"), false);
     form.avrFirmware = Upper(Text(set->find("avr_firmware"), "BASE2023"));
+    form.kbcFirmware = Upper(Text(set->find("kbc_firmware")));
     form.hostAccess = Flag(set->find("host_access"), true);
     form.dnsMode = Upper(Text(set->find("dns_mode"), "HOST"));
     form.hosts = Text(set->find("hosts"));
@@ -88,6 +90,8 @@ std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const Networ
         out.emplace_back("com_modem_lines", after.modemLines ? "on" : "off");
     if (Upper(before.avrFirmware) != Upper(after.avrFirmware))
         out.emplace_back("avr_firmware", after.avrFirmware);
+    if (!after.kbcFirmware.empty() && Upper(before.kbcFirmware) != Upper(after.kbcFirmware))
+        out.emplace_back("kbc_firmware", after.kbcFirmware);
     if (before.hostAccess != after.hostAccess)
         out.emplace_back("host_access", after.hostAccess ? "on" : "off");
     if (Upper(before.dnsMode) != Upper(after.dnsMode))
@@ -125,10 +129,26 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
         a.zxWifiWhy = "Ports #xxEF are TS-Conf's ZiFi.";
     }
 
+    // ATM Turbo 2+: the port follows the controller firmware chosen (V31 on has RS-232)
+    Atm2Kbc::Firmware kbc = Atm2Kbc::Firmware::None;
+    const bool kbcSocket = !form.kbcFirmware.empty();
+    const Atm2Kbc::FirmwareInfo* kbcInfo =
+        kbcSocket && Atm2Kbc::ParseFirmware(form.kbcFirmware.c_str(), kbc) ? Atm2Kbc::Info(kbc) : nullptr;
+
     if (form.serialPort == "zifi")
     {
         a.comPort = false;
         a.comPortWhy = "TS-Conf's serial port (ZiFi) is not emulated yet.";
+    }
+    else if (kbcSocket)
+    {
+        if (!kbcInfo || !kbcInfo->serialPort)
+        {
+            a.comPort = false;
+            a.comPortWhy = kbc == Atm2Kbc::Firmware::None
+                               ? "No keyboard controller fitted: its RS-232 is the machine's serial port."
+                               : "This keyboard controller firmware has no RS-232: choose V31 or later.";
+        }
     }
     else if (form.serialPort != "evo-avr")
     {
@@ -140,6 +160,11 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
     {
         a.avrFirmware = false;
         a.avrFirmwareWhy = "Only the ZX-Evo has the AVR.";
+    }
+    if (!kbcSocket)
+    {
+        a.kbcFirmware = false;
+        a.kbcFirmwareWhy = "Only the ATM Turbo 2+ (v7.xx) has the keyboard controller.";
     }
     return a;
 }
@@ -166,6 +191,19 @@ std::vector<std::pair<std::string, std::string>> NetworkAvrFirmwareChoices()
     std::vector<std::pair<std::string, std::string>> out;
     for (const auto& [firmware, text] : rows)
         out.emplace_back(Uart16550::AvrFirmwareName(firmware), text);
+    return out;
+}
+
+std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices()
+{
+    using F = Atm2Kbc::Firmware;
+    std::vector<std::pair<std::string, std::string>> out;
+    out.emplace_back(Atm2Kbc::FirmwareName(F::None), "no controller: #FE is the plain matrix port");
+    for (F firmware : {F::V22At7, F::V22At11, F::V22At12, F::V31At7, F::V31At11, F::V32At7, F::V32At11, F::V40, F::V41})
+    {
+        const Atm2Kbc::FirmwareInfo* info = Atm2Kbc::Info(firmware);
+        out.emplace_back(Atm2Kbc::FirmwareName(firmware), info ? info->description : "");
+    }
     return out;
 }
 

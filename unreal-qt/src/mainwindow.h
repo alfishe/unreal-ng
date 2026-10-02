@@ -27,6 +27,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/guiemulatorcontext.h"
+#include "emulator/media/mediatargets.h"
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
@@ -78,6 +79,14 @@ class MainWindow : public QMainWindow, public Observer
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+    /// Where a file to open comes from: it decides how a question is asked and a refusal is told
+    enum class LoadOrigin
+    {
+        Interactive,  ///< a menu or a dialog: a slot chooser at the cursor, a refusal in a message box
+        Drop,         ///< drag and drop: the chooser at the cursor, the refusal in the status bar (the drag showed it)
+        Unattended,   ///< the command line, the CLI's open: no question (the chooser's first entry), the log
+    };
+
     /// A file named on the command line. zxpolyModel: machine of a ZX-Poly group
     /// (skips the model question); a .trd/.scl with it boots as a ZX-Poly disk
     void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
@@ -114,7 +123,7 @@ private slots:
     void openDiskDialog();
     void openSpecificFile(const QString& filepath);
     /// Open a file by type. mountOnly: a disk is mounted without the TR-DOS autostart (Shift+drop)
-    void loadFile(const QString& filePath, bool mountOnly = false);
+    void loadFile(const QString& filePath, bool mountOnly = false, LoadOrigin origin = LoadOrigin::Interactive);
     void saveFileDialog();
     void saveFileDialogZ80();
     void saveDiskDialog();
@@ -217,6 +226,42 @@ protected:
     /// emulator as the upper bound for turbo-mode rendering (re-run on screen change)
     void applyDisplayRefreshRate();
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
+
+private:
+    /// A medium (floppy, tape, hard disk, card, CD) into the slot the core's plan
+    /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
+    /// else the plan's default, else the slot chooser (the call ends there and
+    /// comes back with the pick); unattended callers take the first entry
+    void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
+                     const std::string& slot = {});
+    void refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin);
+    /// Several dropped files: floppy images go to the drives in order (A first,
+    /// booted last), anything else takes the first file only
+    void dropFiles(const QStringList& paths, bool mountOnly);
+    /// While a file is dragged over the window: the highlight; nothing takes it:
+    /// the red refusal over the screen at once; several slots take it: the drop
+    /// zones after a 1.5 s hold
+    void showDropVerdict(const QString& filePath);
+    void clearDropVerdict();
+    void onDropDragLeft();
+    /// The screen area in global coordinates (where the overlay goes)
+    QRect dropArea() const;
+    /// File > Insert Medium...: a file, then the slot chooser with every slot that takes it
+    void insertMediumDialog();
+
+    /// The slot chooser / drop zones / refusal over the screen
+    class DropTargetOverlay* _dropOverlay = nullptr;
+    QTimer _dropHoldTimer;  ///< 1.5 s hold before the drop zones appear
+    QString _dragPath;      ///< the file being dragged over the window
+    bool _dragActive = false;
+    /// The placement waiting for the chooser's answer
+    struct PendingPlacement
+    {
+        QString path;
+        bool mountOnly = false;
+        LoadOrigin origin = LoadOrigin::Interactive;
+        bool active = false;
+    } _pendingPlacement;
 
 private:
     // Save the last directory path to settings

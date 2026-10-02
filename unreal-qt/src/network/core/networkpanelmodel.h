@@ -9,8 +9,10 @@
 /// (networkwindow.cpp) only draws these.
 ///
 /// The machine decides what can be set (PortDecoder::DescribeNetwork): the
-/// ZX-Bus takes cards, its own serial port (ZX-Evo: the AVR's) takes a peer,
-/// the AVR firmware exists only on a ZX-Evo. Network TDD §8.
+/// ZX-Bus takes cards, its own serial port (ZX-Evo: the AVR's; ATM Turbo 2+:
+/// the keyboard controller's RS-232) takes a peer, the AVR firmware exists
+/// only on a ZX-Evo, the keyboard controller firmware only on an ATM Turbo 2+
+/// v7.xx. Network TDD §8, tdd-atm2-kbc.md §8.
 
 #include <string>
 #include <utility>
@@ -24,7 +26,7 @@ struct NetworkForm
 {
     // What the machine offers (read-only)
     bool zxBus = true;
-    std::string serialPort = "none";   ///< none | evo-avr | zifi
+    std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc
 
     // ZX-Bus cards
     bool zxNetUsb = false;
@@ -36,6 +38,7 @@ struct NetworkForm
     std::string espChip = "ESP32";     ///< ESP32 | ESP8266
     bool modemLines = false;
     std::string avrFirmware = "BASE2023";
+    std::string kbcFirmware;           ///< [ATM] Kbc= name; empty: no controller socket
 
     // Virtual network
     bool hostAccess = true;
@@ -49,7 +52,7 @@ struct NetworkForm
 NetworkForm NetworkFormFromState(const StateNode& network);
 
 /// The settings that differ between two forms, as ParseChange takes them
-/// (card, com_port, zx_wifi, esp_chip, com_modem_lines, avr_firmware,
+/// (card, com_port, zx_wifi, esp_chip, com_modem_lines, avr_firmware, kbc_firmware,
 /// host_access, dns_mode, hosts, forwards, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
 
@@ -60,6 +63,7 @@ struct NetworkAvailability
     bool zxWifi = true;         std::string zxWifiWhy;
     bool comPort = true;        std::string comPortWhy;
     bool avrFirmware = true;    std::string avrFirmwareWhy;
+    bool kbcFirmware = true;    std::string kbcFirmwareWhy;
 };
 NetworkAvailability NetworkFormAvailability(const NetworkForm& form);
 
@@ -69,6 +73,10 @@ bool NetworkPeerIsEsp(const ComPortSpec& peer);
 /// [EVO] Avr= presets, oldest first, with a line for people:
 /// {"BASE2010", "NedoPC 2010: a register file, no transfer"}, ...
 std::vector<std::pair<std::string, std::string>> NetworkAvrFirmwareChoices();
+
+/// [ATM] Kbc= presets, oldest first, with a line for people:
+/// {"NONE", "no controller: #FE is the plain matrix port"}, {"V22-7", ...}, ...
+std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices();
 
 /// The baud rates offered for a SERIAL: peer (any other can be typed)
 std::vector<uint32_t> NetworkSerialBaudChoices();

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 3.5" diskette: body, metal shutter, label -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b5bdb"/>
+      <stop offset="1" stop-color="#1c2f8a"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f1f3f5"/>
+      <stop offset="0.5" stop-color="#adb5bd"/>
+      <stop offset="1" stop-color="#dee2e6"/>
+    </linearGradient>
+  </defs>
+  <path d="M8 6 H50 L58 14 V54 a4 4 0 0 1 -4 4 H10 a4 4 0 0 1 -4 -4 V10 a4 4 0 0 1 2 -4 z" fill="url(#body)" stroke="#14206b" stroke-width="1.5"/>
+  <rect x="18" y="6" width="26" height="18" rx="1.5" fill="url(#metal)" stroke="#6c757d" stroke-width="1"/>
+  <rect x="34" y="9" width="6" height="12" rx="1" fill="#1c2f8a"/>
+  <rect x="13" y="32" width="38" height="22" rx="2" fill="#f8f9fa" stroke="#ced4da" stroke-width="1"/>
+  <line x1="17" y1="39" x2="47" y2="39" stroke="#e03131" stroke-width="1.6"/>
+  <line x1="17" y1="44" x2="47" y2="44" stroke="#adb5bd" stroke-width="1"/>
+  <line x1="17" y1="49" x2="40" y2="49" stroke="#adb5bd" stroke-width="1"/>
+  <rect x="9" y="50" width="3" height="4" fill="#0b1452"/>
+</svg>

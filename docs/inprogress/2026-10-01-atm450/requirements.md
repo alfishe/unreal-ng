@@ -30,8 +30,12 @@ place where the two references disagree is listed in cross-mapping §3.3.
   short name).
 - Default RAM 512 KiB; `RAM_512 | RAM_1024` selectable (already in
   `config.h:60` — do not change).
-- Frame timing already correct and shared with 710/ATM3
-  (`config.cpp` `intstart=1756`, `intlen=32`, frame 69888, line 224). No change.
+- Frame timing: **308 lines × 224 T = 68 992 T**, not the 312 lines of 710/ATM3 and of
+  every reference emulator. The system ROM measures the frame before CP/M starts and
+  corrupts typed keys (and random memory) when the measure misses its calibration
+  window; 312 lines miss it. The 4 lines are taken from the vertical blank, INT moves
+  with them (`intstart` 860), INT-to-paper stays 14 395 T. Evidence, the ROM code and
+  what is still unknown: [frame-timing-protection.md](frame-timing-protection.md).
 - `data/configs/atm450/unreal.ini` derives from `data/configs/atm710/unreal.ini`
   with: `HIMEM=ATM450`, `RAMSize=512`, `[ROM] ATM1=rom/atm1.rom` +
   a `ROMSET=ROM.ATM1` whose labels match the verified page order of R3
@@ -113,7 +117,15 @@ Port arms (UnrealSpeccy `memory.cpp:134-162`, `io.cpp:533-537,577-582`):
    A3 (`(port & 8) ^ 8`, `io.cpp:461-463`) into `atmBorderBright`.
 6. **`#FE` read**: bit 7 = `atm450_z(t)` — 0x80 normally, three short zero
    windows in a normal-speed frame: t in [7200,7240), [7284,7324),
-   [7326,7366) (t = T-state within the frame; ZXMAK2 `Tact % FrameTactCount`).
+   [7326,7366), where **t counts from the INT edge** (UnrealSpeccy `cpu.t`
+   starts at INT, `while (cpu.t < conf.intlen)`). This core counts frame
+   T-states from the frame start and raises INT at `intstart + 1`, so the
+   decoder converts: `t = (frameT - (intstart + 1)) mod frame`.
+   **This is the system ROM's copy-protection key:** before CP/M starts, the
+   ROM halts, waits a fixed delay, samples Z 16 times (~42 T apart, `2027`-
+   `2031` in `atm1.rom`) and XOR-decrypts its CP/M loader (`22B3` → `#D400`)
+   with the result. Frame-relative windows gave a wrong key and the CP/M menu
+   entry silently fell back to the menu.
    Bits 6-0 come from the normal keyboard/tape read. Implement faithfully with
    unit tests pinning the windows; the copy-protection games that read it are
    the point of having the machine at all.
@@ -244,7 +256,9 @@ mechanism our `Z80Step` already implements — nothing model-specific to port.
 | OQ-6 | `aFB` latch: fall-through + `#FF` (UnrealSpeccy) or side effect on every A2=0 read (ZXMAK2) | Open. The manual: the A2=0, A0=1 read is the **printer port** read (CPSYS from A7, BUSY on D7, ULINE on D6), so the board drives the bus. Shipped: UnrealSpeccy (fall-through, `#FF`, GS claimed first). On the real board a GS `#BB` read would also flip CPSYS - not emulated |
 | OQ-7 | FDC ports while the system ROM is mapped outside a TR-DOS session (ZXMAK2 SYSEN: open; UnrealSpeccy: closed) | Open; ship UnrealSpeccy. The boot menu's TR-DOS / 128 / 48 entries work with it; CP/M needs a CP/M disk to tell |
 | OQ-8 | Palette intensity order (`bgrBGR` in the manual) | **Resolved empirically**: the system ROM's Sinclair palette is right with the emulators' `--grbGRB` layout (R4) |
-| OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | Open; the UnrealSpeccy windows ship. The PLM has no public dump |
+| OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | **Resolved by the ROM**: the UnrealSpeccy windows, measured from INT, produce the key that decrypts the system ROM's CP/M loader (boot test `MenuCpmLoaderReachesTheDisk`). The PLM has no public dump |
+| OQ-10 | CP/M system disk for the 4.50 | **Resolved**: none needed - CCP and BDOS are in the ROM; the loader reads the CP/M directory (cylinder 1). `testdata/machines/atm450/cpm/sys.trd` (NedoPC "SYSTEM" disk for ATM1/2/2+) boots to `A>` and `DIR B:` lists it (boot test `CpmBootsFromSystemDiskAndListsIt`). B: is the floppy, A: the electronic disk |
+| OQ-11 | Keys typed in CP/M sometimes arrive as scan code + 1 | **Resolved**: the ROM's frame-timing protection (`l1500`: `inc (hl)` on the key buffer when the frame measure `#5F74` is outside `#E6..#EC`); fixed with a 308-line frame - [frame-timing-protection.md](frame-timing-protection.md) |
 
 ## Definition of done
 

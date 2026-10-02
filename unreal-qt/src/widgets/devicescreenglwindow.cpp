@@ -16,6 +16,7 @@
 #include <cstring>
 
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
@@ -605,10 +606,9 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? _emulator->GetUUID().toString() : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_PRESSED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_PRESSED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_PRESSED, targetId);
     }
 }
 
@@ -624,10 +624,9 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
     if (!event->isAutoRepeat())
     {
-        // Both codes of the key: the ZX key for the matrix, the physical key for a PS/2 machine
+        // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
         const std::string targetId = _emulator ? _emulator->GetUUID().toString() : std::string();
-        if (KeyboardEvent* keyEvent = KeyboardManager::createKeyboardEvent(event, KEY_RELEASED, targetId))
-            MessageCenter::DefaultMessageCenter().Post(MC_KEY_RELEASED, keyEvent);
+        KeyboardManager::postHostKey(event, KEY_RELEASED, targetId);
     }
 }
 
@@ -646,6 +645,12 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             event->ignore();
             return false;
         }
+        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here
+        if (KeyboardManager::machineOwnsKey(keyEvent, _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+        {
+            event->accept();
+            return true;
+        }
     }
 
     switch (event->type())
@@ -656,7 +661,8 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             if (dragEvent->mimeData()->hasUrls())
             {
                 dragEvent->acceptProposedAction();
-                emit dragEntered();
+                const QList<QUrl> urls = dragEvent->mimeData()->urls();
+                emit dragEntered(urls.isEmpty() ? QString() : urls.first().toLocalFile());
                 return true;
             }
             break;
@@ -671,12 +677,16 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             const QMimeData* mimeData = dropEvent->mimeData();
             if (mimeData->hasUrls())
             {
-                QList<QUrl> urls = mimeData->urls();
-                if (!urls.isEmpty())
+                QStringList paths;
+                for (const QUrl& url : mimeData->urls())
                 {
-                    QString filePath = urls.first().toLocalFile();
-                    qDebug() << "DeviceScreenGLWindow: File dropped:" << filePath;
-                    emit fileDropped(filePath);
+                    if (url.isLocalFile())
+                        paths << url.toLocalFile();
+                }
+                if (!paths.isEmpty())
+                {
+                    qDebug() << "DeviceScreenGLWindow: files dropped:" << paths;
+                    emit filesDropped(paths);
                 }
                 emit dragLeft();
                 return true;

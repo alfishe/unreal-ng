@@ -1949,6 +1949,54 @@ namespace PythonBindings
             .def("tsconf_tsu", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConfTsu(self.GetContext()));
             }, "TS-Conf TSU and palette for debug views: tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells; available=False on other machines")
+            // Sprinter Sp2000: the same reports every interface uses (DeviceState::Sprinter,
+            // SprinterPortTable, SprinterPortLookup); map / dos / pn5 / rw omitted = the machine's current state
+            .def("sprinter_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Sprinter(self.GetContext()));
+            }, "Sprinter Sp2000: PLD configuration, port map, windows, registers and cells, clock, frame, video summary, Z84C15, floppy latch, CMOS / IDE links, BIOS images; available=False on other machines")
+            .def("sprinter_text", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterText(self.GetContext()));
+            }, "Sprinter screen text: the mode table's text squares, 80 x 32 (BIOS SETUP, DSS); available=False on other machines")
+            .def("sprinter_ports", [](Emulator& self, py::object map, py::object dos, py::object pn5, const std::string& rw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortTable(self.GetContext(), query));
+            }, py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(), py::arg("rw") = "",
+               "The decoded Sprinter port table (RAM page #40): rows of code, name, address pattern; map 0-3, dos 0/1 (1 = TR-DOS on), pn5 0/1, rw 'r'/'w'/'rw'")
+            .def("sprinter_port", [](Emulator& self, py::object port, const std::string& rw, py::object map, py::object dos, py::object pn5) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    if (py::isinstance<py::bool_>(value))
+                        return value.cast<bool>() ? "1" : "0";
+                    return py::str(value);
+                };
+                uint16_t number = 0;
+                if (py::isinstance<py::int_>(port))
+                {
+                    const long long value = port.cast<long long>();
+                    if (value < 0 || value > 0xFFFF)
+                        throw py::value_error("port must be 0-0xFFFF");
+                    number = static_cast<uint16_t>(value);
+                }
+                else if (!py::isinstance<py::str>(port) || !DeviceState::SprinterPortFromString(port.cast<std::string>(), number))
+                    throw py::value_error("port: an int or a hex string ('21BC', '#21BC')");
+                DeviceState::SprinterPortQuery query;
+                std::string error;
+                if (!DeviceState::SprinterPortQueryFromStrings(text(map), text(dos), text(pn5), rw, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterPortLookup(self.GetContext(), number, query));
+            }, py::arg("port"), py::arg("rw") = "", py::arg("map") = py::none(), py::arg("dos") = py::none(), py::arg("pn5") = py::none(),
+               "One Sprinter port through the port table: index into page #40, code and name (or the Z84C15 when the chip answers it)")
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
@@ -1971,7 +2019,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet'|'at' (the machine's serial port, ZX-Evo AVR), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -2732,6 +2780,15 @@ namespace PythonBindings
                 return result;
             }, "Get status of all profilers")
             
+            .def("key_route", [](Emulator& self, const std::string& route) -> std::string {
+                Keyboard* keyboard = self.GetContext()->pKeyboard;
+                if (!keyboard)
+                    throw py::value_error("no keyboard");
+                std::string error;
+                if (!route.empty() && !keyboard->RequestHostRoute(route, error))
+                    throw py::value_error(error);
+                return Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
+            }, py::arg("route") = "", "Where host and injected keys go: route='auto'|'matrix'|'ps2'|'both' (the ZX matrix, the PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force")
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
@@ -4032,6 +4089,13 @@ namespace PythonBindings
                 live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
             else
                 live["shadow_monitor_paged"] = py::none();  // latch does not exist on this model
+            // Sprinter: the map / DOS / PN5 the port table is read with now (as WebAPI /ports)
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::Sprinter(context);
+                if (const StateNode* decoderNode = sprinter.find("decoder"))
+                    live["sprinter_port_table"] = StateNodeToPy(*decoderNode);
+            }
             d["live"] = live;
             return d;
         }, "Static port map: which devices answer which I/O ports on this model, "
@@ -4146,6 +4210,25 @@ namespace PythonBindings
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.append(bank);
+            }
+
+            // Sprinter: the PLD maps the windows - kind and physical page from DeviceState::SprinterPaging
+            // (the /state/paging view), and the whole view as `sprinter`
+            if (config.mem_model == MM_SPRINTER)
+            {
+                const StateNode sprinter = DeviceState::SprinterPaging(context);
+                if (const StateNode* windows = sprinter.find("windows"))
+                {
+                    for (size_t i = 0; i < windows->items.size() && i < 4; i++)
+                    {
+                        py::dict bank = banks[i].cast<py::dict>();
+                        if (const StateNode* kind = windows->items[i].find("kind"))
+                            bank["type"] = kind->s;
+                        if (const StateNode* page = windows->items[i].find("page"))
+                            bank["page"] = page->i;
+                    }
+                }
+                d["sprinter"] = StateNodeToPy(sprinter);
             }
             d["banks"] = banks;
             return d;

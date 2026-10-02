@@ -9,9 +9,13 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
+#include "emulator/ports/models/sprinter/sprinterporttable.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/sprinter/sprintervideorenderer.h"
 
 namespace
 {
@@ -40,13 +44,27 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
+    // A video RAM byte that changes the picture: the beam is drawn up to now with the old one first
+    _vram.SetBeforeChangeListener([this]() { CatchUpScreen(); });
 
-    // The Z84C15's CTC counts the CPU clock: base T-states x the current ratio
-    _z84.ctc.SetClock([this]() -> uint64_t {
+    // The Z84C15's CTC and watchdog count the CPU clock: base T-states x the current ratio.
+    // The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
+    // (research-cpu-z84c15.md Q3) and BIOS 3.04 never clears it
+    _z84.SetClock([this]() -> uint64_t {
         const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
         const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
         return _state->t_states * multiplier + (z80 ? z80->t : 0);
     });
+
+    // The AT keyboard: the host's physical keys reach SIO A (and the PLD's reset and turbo keys)
+    _input.SetResetHandler([this]() { RequestCpuReset(SprinterResetKind::SoftReset); });
+    _input.SetTurboSwitchHandler([this]() {
+        _pld.turboHard ^= 1;
+        ApplyTurbo();
+    });
+    _input.SetStepHookListener([this]() { RefreshStepHook(); });
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_input);
 
     // Core creates SprinterMemory for this model; the windows are mapped from our state
     _sprinterMemory = dynamic_cast<SprinterMemory*>(_memory);
@@ -56,19 +74,34 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         MLOGWARNING("PortDecoder_Sprinter: the memory subsystem is not SprinterMemory - windows stay at the loader layout");
 
     if (_context->pCore && _context->pCore->GetZ80())
+    {
         _waits = std::make_unique<SprinterWaits>(_context->pCore->GetZ80());
+        _cpuEngine = std::make_unique<Z84C15Engine>(_context, _context->pCore->GetZ80(), _z84);
+    }
+
+    // The WD1793 has its own clock: the disk keeps 300 rpm when the CPU runs at 21 MHz
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(true);
 }
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_input)
+        _context->pKeyboard->SetPs2Sink(nullptr);
+
+    // Core::Release deletes the memory before the decoder and clears pMemory first: only a memory that is still
+    // the context's is alive (detaching from a freed SprinterMemory was a heap-use-after-free on every teardown)
+    SprinterMemory* memory = _sprinterMemory && _context->pMemory == _sprinterMemory ? _sprinterMemory : nullptr;
+
     Core* core = _context->pCore;
     if (core)
     {
-        if (_sprinterMemory)
-            core->RemoveBusOverlay(&_sprinterMemory->GetWriteIntercept());
+        if (memory)
+            core->RemoveBusOverlay(&memory->GetWriteIntercept());
         if (_waits)
             core->RemoveBusOverlay(_waits.get());
         Z80* z80 = core->GetZ80();
+        _cpuEngine.reset();  // gives the CPU back to the native interpreter
         if (z80 && z80->GetInterruptSource() == &_intSource)
             z80->SetInterruptSource(nullptr);
         if (z80 && z80->GetMachineStepHook() == this)
@@ -77,8 +110,9 @@ PortDecoder_Sprinter::~PortDecoder_Sprinter()
             z80->machineM1Hook = nullptr;
     }
 
-    if (_sprinterMemory)
-        _sprinterMemory->AttachDecoder(nullptr);
+    if (memory)
+        memory->AttachDecoder(nullptr);
+    _sprinterMemory = nullptr;
 
     // Battery-backed state outlives the machine ([SPRINTER] CmosFile)
     const char* cmosPath = _context->config.sprinter.cmos_path;
@@ -96,11 +130,12 @@ void PortDecoder_Sprinter::PowerOn()
     _pld.allMode = 0;
     _pld.portY = 0;
     _pld.rgMod = 0;
-    _pld.hold = 0;
+    _pld.hold = 0x77;  // no picture offset (MAME machine_start m_hold = {0, 0})
     _pld.turbo = 0;
     _pld.configModule = 0;
     _pld.configState = SprinterConfigState::Unconfigured;
     _z84.PowerOn();
+    _input.Clear();
     _vram.Clear();
     _intSource.SetModePage(0);
 
@@ -122,7 +157,9 @@ void PortDecoder_Sprinter::reset()
     if (powerOn)
         PowerOn();
 
-    // Core::Reset has reset the Z80 already; the RESET button reloads the PLD
+    // Core::Reset has reset the Z80 already; the RESET button reloads the PLD.
+    // The keyboard is not reset; the machine's clock restarted under it
+    _input.Rebase();
     _z84.Reset();
     ResetPld(powerOn ? SprinterResetKind::PowerOn : SprinterResetKind::Button);
     InstallHooks();
@@ -154,13 +191,16 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     _pld.romRg = 0;
     _pld.cacheOn = 0;
     _pld.isaAddrExt = 0;
-    _pld.ideChannel = 0;
-    _pld.ideLatch = 0;
+    GetIdeAdapter().SprinterReset();  // the primary channel (MAME machine_reset :1582)
     _pld.frameLines = 0;
     _pld.turboHard = _context->config.sprinter.turbo_allowed ? 1 : 0;
     if (kind != SprinterResetKind::SoftReset)
         _pld.turbo = 0;  // a new configuration starts at 3.5 MHz
     _pld.resetPending = 0;
+    // The density latch starts at 720 KB, the FDC codes on (ZXMAK2 SprinterFdd.cs:318; MAME enables the Beta interface)
+    _pld.fdcHd = 0;
+    _pld.fdcOff = 0;
+    ApplyFdcDensity();
     _cblControl = 0;
     _dcpOpenedFrame = -1;
 
@@ -199,12 +239,12 @@ void PortDecoder_Sprinter::FastStart()
     // What the 3.04 loader does before its stream (#0000-#0087): the Z84C15
     // system registers (WCR = 4, MCR = 3, CSBR = #FE), and the hand-over
     // registers the BIOS reads (IY = #0107, IX = #FFFD; page 8 #02B3)
-    _z84.system.Write(0xEE, 0x00);
-    _z84.system.Write(0xEF, 0x04);
-    _z84.system.Write(0xEE, 0x03);
-    _z84.system.Write(0xEF, 0x03);
-    _z84.system.Write(0xEE, 0x02);
-    _z84.system.Write(0xEF, 0xFE);
+    _z84.Write(0xEE, 0x00);
+    _z84.Write(0xEF, 0x04);  // ends the power-on wait window: one memory wait from here (the BIOS clears it)
+    _z84.Write(0xEE, 0x03);
+    _z84.Write(0xEF, 0x03);
+    _z84.Write(0xEE, 0x02);
+    _z84.Write(0xEF, 0xFE);
     if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
     {
         z80->iy = 0x0107;
@@ -329,8 +369,12 @@ void PortDecoder_Sprinter::InstallHooks()
         return;
 
     Z80* z80 = core->GetZ80();
-    if (z80->GetInterruptSource() != &_intSource)
-        z80->SetInterruptSource(&_intSource);
+    // The CPU runs on the Z84C15 library; its interrupt source is the chip's daisy chain with the
+    // PLD's /INT (_intSource) behind it
+    if (!_cpuEngine)
+        _cpuEngine = std::make_unique<Z84C15Engine>(_context, z80, _z84);
+    if (!_cpuEngine->IsInstalled())
+        _cpuEngine->Install(&_intSource);
     z80->machineM1Hook = this;
     if (_sprinterMemory)
         core->AddBusOverlay(&_sprinterMemory->GetWriteIntercept());
@@ -348,7 +392,8 @@ void PortDecoder_Sprinter::RefreshStepHook()
         return;
 
     Z80* z80 = core->GetZ80();
-    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading;
+    // ... or while a keyboard byte is on its way that raises the keyboard INT
+    const bool needed = _pld.resetPending || _pld.configState == SprinterConfigState::Loading || _input.NeedsStepHook();
     if (needed)
         z80->SetMachineStepHook(this);
     else if (z80->GetMachineStepHook() == this)
@@ -359,6 +404,12 @@ void PortDecoder_Sprinter::OnMachineStep([[maybe_unused]] uint32_t t)
 {
     if (_pld.resetPending)
         PerformPendingReset();
+    if (_input.NeedsStepHook())
+    {
+        _input.Advance();
+        if (!_input.NeedsStepHook())
+            RefreshStepHook();
+    }
 }
 
 void PortDecoder_Sprinter::BeforeMachineM1(uint16_t address)
@@ -430,20 +481,29 @@ void PortDecoder_Sprinter::OnBanksChanged()
         _waits->SetSlotWaits(bank, _memory->GetMemoryBankMode(bank) == BANK_RAM);
 }
 
+const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
+{
+    const SprinterVideoRenderer* renderer = ActiveModule().VideoRenderer();
+    if (!renderer)
+        renderer = _registry.Standard().VideoRenderer();
+    return renderer ? *renderer : SprinterVideoRenderer::Standard();
+}
+
+void PortDecoder_Sprinter::CatchUpScreen()
+{
+    if (_context->pScreen && _context->pCore && _context->pCore->GetZ80())
+        _context->pScreen->UpdateScreen();
+}
+
 /// endregion </Hooks>
 
 /// region <Port table>
 
 uint16_t PortDecoder_Sprinter::LookupIndex(uint16_t port, bool isRead) const
 {
-    return static_cast<uint16_t>(((_pld.cnf >> 3) & 0x03) << 12      // map 0-3
-                                 | ((_pld.pn >> 5) & 0x01) << 11      // PN5 (#7FFD bit 5)
-                                 | (_pld.dos ? 1 : 0) << 10           // /DOS
-                                 | (isRead ? 1 : 0) << 9              // /WR
-                                 | ((port >> 14) & 0x03) << 7         // A15, A14
-                                 | ((port >> 13) & 0x01) << 4         // A13
-                                 | ((port >> 7) & 0x01) << 3          // A7
-                                 | (port & 0x67));                    // A6, A5, A2, A1, A0
+    // map 0-3 (CNF bits 4-3), PN5 (#7FFD bit 5), /DOS, /WR, the 9 address bits (sprinterporttable.h)
+    return SprinterPortTable::Index(static_cast<uint8_t>((_pld.cnf >> 3) & 0x03), (_pld.pn & 0x20) != 0, _pld.dos != 0,
+                                    isRead, port);
 }
 
 uint8_t PortDecoder_Sprinter::LookupCode(uint16_t port, bool isRead) const
@@ -469,9 +529,31 @@ void PortDecoder_Sprinter::UpdateBanks()
 
 /// region <Port access>
 
+uint16_t PortDecoder_Sprinter::RewriteIoOperand(uint16_t port) const
+{
+    // MAME check_accel (sprinter.cpp:1009-1015, :1323): after an unprefixed #D3 / #DB opcode fetch the
+    // operand read #1F becomes #0F when its window holds RAM (vROM included), not the system ROM or fast RAM.
+    // Done here at the I/O cycle, from the instruction's bytes: the CPU core stays generic, and the only
+    // CPU-visible trace of the operand (MEMPTR's high byte = A) is the same for #1F and #0F
+    if ((port & 0x00FF) != 0x001F)
+        return port;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return port;
+    const uint16_t start = z80->m1_pc;
+    const uint16_t operand = static_cast<uint16_t>(start + 1);
+    const uint8_t opcode = _memory->DirectReadFromZ80Memory(start);
+    if ((opcode & 0xF7) != 0xD3 || _memory->DirectReadFromZ80Memory(operand) != 0x1F)
+        return port;
+    if (_memory->GetMemoryBankMode(static_cast<uint8_t>(operand >> 14)) != BANK_RAM)
+        return port;
+    return static_cast<uint16_t>((port & 0xFF00) | 0x000F);
+}
+
 uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 {
     _pc = pc;
+    port = RewriteIoOperand(port);
     // The PLD answers every cycle: an unmapped port reads #FF, never the floating bus
     _lastPortDecoded = true;
 
@@ -483,9 +565,10 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 
     const uint8_t low = static_cast<uint8_t>(port);
     uint8_t value = 0xFF;
-    if (Z84C15::Owns(low))
+    if (Z84Lib::Z84C15::Owns(low))
     {
         // The Z84C15 decodes its own ports; the PLD does not see the read (MAME internal map)
+        _input.BeforeChipAccess(low);
         value = _z84.Read(low);
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
     }
@@ -520,6 +603,7 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     _pc = pc;
+    port = RewriteIoOperand(port);
 
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -528,9 +612,10 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
     disp.wasHandledInline = true;
 
     const uint8_t low = static_cast<uint8_t>(port);
-    const bool z84Port = Z84C15::Owns(low);
+    const bool z84Port = Z84Lib::Z84C15::Owns(low);
     if (z84Port)
     {
+        _input.BeforeChipAccess(low);
         _z84.Write(low, value);
         disp.internalCode = static_cast<uint16_t>(kTraceZ84Base + low);
         // A layout change of the loader's chip selects moves its fast RAM window
@@ -570,16 +655,30 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
     OnPortOutComplete(port, value, pc, disp);
 }
 
+/// Codes #10-#13: the WD1793 through its canonical Beta port (tdd-storage §2.1); the table decides
+/// when, so the chip's own TR-DOS gating is not consulted. Off after a density write with bit 1 set
 uint8_t PortDecoder_Sprinter::FdcRead(uint8_t code)
 {
     static constexpr uint16_t kFdcPorts[4] = {0x1F, 0x3F, 0x5F, 0x7F};
-    return PeripheralPortIn(kFdcPorts[code & 3]);
+    return _pld.fdcOff ? 0xFF : PeripheralPortIn(kFdcPorts[code & 3]);
 }
 
 void PortDecoder_Sprinter::FdcWrite(uint8_t code, uint8_t value)
 {
     static constexpr uint16_t kFdcPorts[4] = {0x1F, 0x3F, 0x5F, 0x7F};
-    PeripheralPortOut(kFdcPorts[code & 3], value);
+    if (!_pld.fdcOff)
+        PeripheralPortOut(kFdcPorts[code & 3], value);
+}
+
+void PortDecoder_Sprinter::ApplyFdcDensity()
+{
+    if (WD1793* fdc = _context->pBetaDisk)
+    {
+        if (_pld.fdcHd)
+            fdc->SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps);
+        else
+            fdc->SetLatchedClock(FdcClock::Clock1MHz, FdcDataRate::Rate250Kbps);
+    }
 }
 
 /// The standard configuration's reads (hardware-reference §4.3; MAME dcp_r)
@@ -593,7 +692,12 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
         case 0x10: case 0x11: case 0x12: case 0x13:
             return FdcRead(code);
         case SprinterCode::BetaState:
-            return PeripheralPortIn(0xFF);  // DRQ / INTRQ; the joystick bits come with phase S3a
+        {
+            // MAME: beta state_r() & joy_ctrl_r(1) - INTRQ / DRQ in bits 7-6, the Kempston bits below
+            // (also the DOS-off view of #1F / #0F). Off: the joystick alone
+            const uint8_t state = _pld.fdcOff ? 0x00 : static_cast<uint8_t>(PeripheralPortIn(0xFF) & 0xC0);
+            return static_cast<uint8_t>(state | (Default_Port_KempstonJoystick_In() & 0x3F));
+        }
 
         case SprinterCode::CmosRead:
             return _rtc.ReadData();
@@ -614,12 +718,14 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             break;
     }
 
+    if (code >= SprinterCode::IdeData && code <= SprinterCode::IdeDriveAddress)
+        return GetIdeAdapter().SprinterIn(code, port);  // tdd-storage §3; #FF without [HDD] Scheme=SPRINTER
     if (code >= 0xC0 && code < 0xF0)
         return _pld.Cell(code);
     if (code >= 0xF0)
         return _pld.cells[_pld.pg3 & 0x3F];
 
-    // IDE (#20-#29, phase S3b) and the codes the standard configuration does not answer
+    // The codes the standard configuration does not answer
     return 0xFF;
 }
 
@@ -636,11 +742,18 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             FdcWrite(code, value);
             return;
         case SprinterCode::BetaSystem:
-            PeripheralPortOut(0xFF, value);
+            if (!_pld.fdcOff)
+                PeripheralPortOut(0xFF, value);
             return;
         case SprinterCode::DensityDD:
         case SprinterCode::DensityHD:
-            return;  // the #BD density latch is wired to the WD1793 in phase S3a
+            // OUT (#BD),A: A13 (#01BD / #21BD) picks the density, the data only switches the FDC off
+            // (bit 1, MAME sprinter.cpp:727-734; unverified in the PLD). The WD1793 clock and its data
+            // separator change together (tdd-storage §2.3)
+            _pld.fdcHd = code & 1;
+            _pld.fdcOff = (value & 0x02) ? 1 : 0;
+            ApplyFdcDensity();
+            return;
 
         case SprinterCode::IsaControl:
             _pld.isaAddrExt = value & 0x3F;
@@ -653,14 +766,13 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
 
         case SprinterCode::IdeSecondary:
-            _pld.ideChannel = 1;
-            return;
         case SprinterCode::IdePrimary:
-            _pld.ideChannel = 0;
+            GetIdeAdapter().SprinterOut(code, port, value);  // the channel latch (OUT (#BC),A: A13 = 1 primary)
             return;
         case SprinterCode::Frame320:
         case SprinterCode::Frame312:
-            // The frame length itself follows with the renderer (phase S2); the INT list uses it now
+            // The INT list follows at once; the frame itself (ScreenSprinter: config.frame,
+            // the raster) from the next frame start
             _pld.frameLines = code & 1;
             _intSource.SetFrameLines(_pld.frameLines ? 312 : 320);
             return;
@@ -707,9 +819,12 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             Default_Port_FE_Out(port, value, _pc);
             return;
         case SprinterCode::AllMode:
+            _input.BeforeAllModeWrite();
             _pld.allMode = value;
+            RefreshStepHook();  // the keyboard INT on or off
             return;
         case SprinterCode::Hold:
+            CatchUpScreen();
             _pld.hold = value;
             return;
         case SprinterCode::PortY:
@@ -718,6 +833,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::RgMod:
         case 0xCD:
+            CatchUpScreen();
             _pld.rgMod = value;
             _intSource.SetModePage(value & 1);
             return;
@@ -767,8 +883,13 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
     }
     if (code >= 0xC0)
         return;  // plain storage cells (#CA ...)
+    if (code >= SprinterCode::IdeData && code <= SprinterCode::IdeDriveAddress)
+    {
+        GetIdeAdapter().SprinterOut(code, port, value);  // tdd-storage §3
+        return;
+    }
 
-    // IDE (#20-#29, phase S3b) and unknown codes: ignored, logged once per code
+    // Unknown codes: ignored, logged once per code
     uint64_t& bits = _loggedUnknownCodes[code >> 6];
     const uint64_t bit = 1ull << (code & 63);
     if (!(bits & bit))

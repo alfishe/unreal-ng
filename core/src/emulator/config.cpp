@@ -10,8 +10,10 @@
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/video/atm/atmgeometry.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include <cassert>
 #include <array>
@@ -134,7 +136,8 @@ bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
 {
 	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
 		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
-		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE},
+		{"SPRINTER", IDE_SPRINTER}};
 	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
 	for (const auto& [text, id] : schemes)
 	{
@@ -159,6 +162,7 @@ const char* Config::IdeSchemeName(IDE_SCHEME scheme)
 		case IDE_SMUC: return "SMUC";
 		case IDE_PROFI: return "PROFI";
 		case IDE_DIVIDE: return "DIVIDE";
+		case IDE_SPRINTER: return "SPRINTER";
 	}
 	return "?";
 }
@@ -290,6 +294,20 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [EVO] Avr=%s, BASECONF (the latest NedoPC firmware) used", avr);
 		config.atm.evo_avr = static_cast<uint8_t>(firmware);
 	}
+	{
+		// [ATM] Kbc=: the keyboard controller of ATM Turbo 2+ boards (its real firmware on an MCS-51 core)
+		const char* kbc = inimanager.GetValue("ATM", "Kbc", nullptr);
+		Atm2Kbc::Firmware firmware = Atm2Kbc::kDefaultFirmware;
+		// The Unreal Speccy key [INPUT] ATMKBD=0 (no controller) counts when Kbc= is not given
+		if (!kbc && inimanager.GetValue(input, "ATMKBD", nullptr) && inimanager.GetLongValue(input, "ATMKBD", 1) == 0)
+			firmware = Atm2Kbc::Firmware::None;
+		else if (!Atm2Kbc::ParseFirmware(kbc, firmware))
+			MLOGWARNING("Config: unknown [ATM] Kbc=%s, V41 used (NONE | V22-7 | V22-11 | V22-12 | V31-7 | V31-11 | V32-7 | "
+			            "V32-11 | V40 | V41)", kbc);
+		config.atm.kbc_firmware = static_cast<uint8_t>(firmware);
+		config.atm.kbc_rom_path[0] = '\0';
+		CopyStringValue(inimanager.GetValue(rom, "ATM2KBC", nullptr), config.atm.kbc_rom_path, sizeof config.atm.kbc_rom_path);
+	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
@@ -367,6 +385,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr), config.appendboot, sizeof config.appendboot);
 
+	// [INPUT] HostKeyboard=: where the host keyboard goes (the ZX matrix, the PS/2 controller, both)
+	{
+		config.input.hostKeyboard[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "HostKeyboard", nullptr), config.input.hostKeyboard, sizeof config.input.hostKeyboard);
+		HostKeyboardRoute route;
+		if (!Keyboard::ParseHostRoute(config.input.hostKeyboard, route))
+		{
+			MLOGWARNING("Config: unknown [INPUT] HostKeyboard=%s, AUTO used (AUTO | MATRIX | PS2 | BOTH)", config.input.hostKeyboard);
+			config.input.hostKeyboard[0] = '\0';
+		}
+	}
+
 	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
 	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
 	{
@@ -434,7 +464,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
 		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
-		for (int unit = 0; unit < 2; unit++)
+		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
+		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+		for (int unit = 0; unit < 4; unit++)
 		{
 			IDE_CONFIG& ide = config.ide[unit];
 			ide = IDE_CONFIG{};
@@ -453,7 +485,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			}
 			// A CD drive: CDn=1, or the unit's configured image is an ISO
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
-			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
 			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
@@ -1271,9 +1303,18 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_ATM450:
+            // ATM Turbo 2 v4.50: 308 x 224 T = 68992 T, inferred from the system ROM's
+            // frame-timing protection (it corrupts typed keys unless its frame measure
+            // lands in a window that 312 lines miss). The 4 lines come out of the
+            // vertical blank, so INT moves 4 lines earlier and INT-to-paper stays 14395T.
+            // See docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+            config.intstart = AtmGeometry::kAtm450IntStart;
+            config.intlen   = 32;
+            break;
+
         case MM_ATM710:
         case MM_ATM3:
-            // ATM Turbo 1/2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
+            // ATM Turbo 2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
             // clock in every video mode; the FF77.3 turbo multiplies the CPU only.
             // INT-to-first-ZX-paper distance 14395T (UnrealSpeccy
             // PRESET.ATM1_2_3.5MHz, "thanks to DDp"; Xpeccy ULA.ATM2: 14384T).
@@ -1341,6 +1382,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.intlen = 28;
                 break;
             case MM_ATM450:
+                // 308 lines: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+                config.frame = AtmGeometry::kAtm450Frame;   // 224 * 308
+                config.t_line = 224;
+                config.intstart = AtmGeometry::kAtm450IntStart;
+                config.intlen = 32;
+                break;
             case MM_ATM710:
             case MM_ATM3:
                 config.frame = 69888;   // 224 * 312

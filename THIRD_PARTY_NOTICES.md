@@ -24,6 +24,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | blip_buf (C++ port of Shay Green's blip_buf 1.1.0) | `core/src/3rdparty/blip_buf/` | LGPL-2.1-or-later | static |
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
+| z84c15, a fork of unreal-z80 0.5.0 @ a0433ec (the Sprinter's Zilog Z84C15 CPU; local changes in `README.md` there) | `core/src/3rdparty/z84c15/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | miniz 3.1.2 (zlib streams of SZX snapshots; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |

@@ -118,7 +118,11 @@ accesses this was 1.25 ms of 21-MHz run time; after the fix the difference is 5.
 remaining per-access differences of ±1-7 clocks cancel out; they are the rounding of MAME's
 timestamps and the Z84C15-write wait below). Pinned by `SprinterReference_Test.Bios304_PortTraceMatchesMame`.
 
-Still open (pending the CPU research, `research-cpu-z84c15.md`): where the rule comes from on the
+The CPU research ([research-cpu-z84c15.md](research-cpu-z84c15.md) §8.3) traced MAME's rule to the
+PLD, not the Z84C15. The Z84C15's own wait generator (WCR) is now modeled by the Sprinter's CPU
+library ([2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/design.md) §6) and adds to
+the PLD wait; it is active only from power-on until BIOS 3.04 clears it (the loader: 142 T per
+bitstream byte; the BIOS start: 22 T before `InitCpuPorts`). Still open: where the rule comes from on the
 board. The PLD has its own wait counter on `/IO` (`DCP.TDF:537-551`, a per-code wait length from
 `W_TAB[]`) and a memory-cycle wait (`/MR_WAIT`, `DCP.TDF:484`); whether MAME's "align to 6, then
 6 − taken" matches them, and whether the Z84C15's own wait generator (WCR) adds to it, is not
@@ -141,6 +145,6 @@ A `sprinterisolation_test.cpp` (the TSConf precedent, TSConf technical design §
 | BIOS 3.04 depends on PLD behavior nobody documented (e.g. a status bit during POST) | hangs before the logo | trace the BIOS in MAME and in unreal-ng side by side (port trace with codes); the PLD sources are the tie-breaker |
 | The loader's bitstream sink ends at the wrong moment | no boot or wrong config | the end is the real bitstream length (write count traced in S0) plus a watchdog timeout; fast start as the default for tests; the full path tested once per ROM version (tdd-ports-memory §6) |
 | Accelerator timing interacts with INT and the turbo waits | wrong demo speed | S5 differential tests against MAME frame counts |
-| Palette byte order wrong in one source | wrong colors everywhere | settled in S2 by the BIOS setup screen (§4.5 of HW) |
+| Palette byte order wrong in one source | wrong colors everywhere | **settled in S2**: R, G, B in video RAM (the PLD's bank wiring, BIOS function `#A4`, the logo against MAME; §4.5 of HW) |
 | The media manager (#58) or the IDE core (#13a) slip | S3/S4 blocked | the floppy path (ACC-3) needs neither; the IDE adapter can be written against the IDE design's interfaces and a `MemoryDisk` |
 | Performance at 21 MHz with per-access waits and intercepts | not real time | benchmarks from S1; intercept flags only on banks that need them |

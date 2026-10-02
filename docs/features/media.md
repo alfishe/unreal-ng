@@ -55,7 +55,7 @@ medium (source, format, access, dirty, dirty units, and `changes`: the unsaved c
 | alias | `B`, `b:`, `sd` | the slot with that alias (case does not matter; a trailing `:` is ignored) |
 | kind:index | `floppy:1` | the second floppy slot |
 | tag query | `tag:sd+neogs` | the one slot with all these tags |
-| `auto` | (insert only) | the slot the file's content calls for: the first entry `targets` lists (an empty slot first, the main one first); with several, the reply's `report` names the others |
+| `auto` | (insert only) | the slot the file's content calls for, when one takes it (`targets` lists them); with several it answers `ambiguous-slot` and names them - except floppy drives, where the first empty drive is used (drive A first) |
 
 A selector that matches nothing answers `unknown-slot` and lists the machine's slots; one that
 matches several answers `ambiguous-slot` and lists them. A letter the machine does not have (`C`
@@ -341,7 +341,24 @@ Each method returns the result as a dict.
 
 **Tools → Media** (Ctrl+4) shows the slots in a table. Insert a file or a folder into the
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
-medium. When a dirty medium would leave, the panel asks Save / Export / Discard.
+medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
+cannot take the dropped file says why and inserts nothing.
+
+**Drag and drop on the main window** uses the same analysis as `targets`:
+
+- a file only one slot takes goes there at once (a CD image on a ZX-Evo: its CD-ROM drive);
+- a floppy image goes to drive A and boots (Shift: mount only); several floppy images go to A, B,
+  C, D in order;
+- a file several slots take (a card image on a ZX-Evo with NeoGS) opens the **slot chooser** over
+  the screen after the drop: one tile per slot with the device's icon, its name and what it holds
+  now; click one, press its number, or Esc;
+- **holding** the file over the window for 1.5 s (or pressing Alt / Option) shows the same tiles
+  while dragging - drop on the slot you want, e.g. a disk into drive B;
+- a file no slot takes turns the screen red with the reason at once, and a drop does nothing; a CD,
+  hard-disk or card image never starts a machine (which one would be a guess).
+
+**File → Insert Medium...** (Ctrl+Shift+I) picks a file, then opens the slot chooser with every
+slot that takes it.
 
 ## Older calls
 

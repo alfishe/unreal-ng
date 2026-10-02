@@ -34,6 +34,7 @@ void ScreenZX::SelectRangeRenderer()
     {
         case VideoFamily::None:
         case VideoFamily::TsConf:  // ScreenTSConf overrides DrawRange
+        case VideoFamily::Sprinter:  // ScreenSprinter is not a ScreenZX
             _rangeRenderer = &ScreenZX::DrawRangeNull;
             break;
         case VideoFamily::Atm:
@@ -759,7 +760,9 @@ void ScreenZX::DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate)
 {
     if (!_atmScreen)
         _atmScreen = std::make_unique<ScreenAtm>(_context, _memory);
-    _atmScreen->DrawRange(fromTstate, toTstate, _mode, rasterDescriptors[_mode], _framebuffer);
+    // The timing descriptor: same storage geometry as rasterDescriptors[_mode], and the ATM450's
+    // shorter vertical blank (docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
+    _atmScreen->DrawRange(fromTstate, toTstate, _mode, GetTimingDescriptor(_mode), _framebuffer);
 }
 
 void ScreenZX::DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate)

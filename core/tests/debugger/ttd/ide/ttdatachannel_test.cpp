@@ -167,3 +167,55 @@ TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
     EXPECT_EQ(manager.Eject("ide0.master", {Disposition::Discard}).error, MediaError::Recording);
     ttd->StopRecording();
 }
+
+/// One-channel boards keep the v1 blob size; the Sprinter's two channels append the second one, and a blob taken
+/// mid-transfer on the secondary channel (selected by the adapter) continues there
+TEST(TTDAtaChannelSprinter_Test, SecondChannelIsInTheBlob)
+{
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    const size_t oneChannel = ttd::TTDAtaChannel(pentagon->GetContext()).TTDStateSize();
+    EXPECT_EQ(oneChannel, 4 + sizeof(IdeAdapterState) + 2 * sizeof(AtaDeviceState)) << "unchanged for one channel";
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+
+    Emulator* sprinter = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(sprinter, nullptr);
+    EmulatorContext* context = sprinter->GetContext();
+    ttd::TTDAtaChannel blob(context);
+    EXPECT_EQ(blob.TTDStateSize(), oneChannel + 4 + 2 * sizeof(AtaDeviceState));
+
+    ScratchFolder folder("ttd-ide-sprinter");
+    std::string disk;
+    for (int n = 0; n < 16; n++)
+    {
+        std::string sector(512, static_cast<char>(n));
+        sector[1] = static_cast<char>(0x80 | n);
+        disk += sector;
+    }
+    MediaSource source;
+    source.path = Utf8(folder.File("ide1.img", disk));
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide1.master", source, options).Ok());
+
+    IdeAdapter& adapter = context->pPortDecoder->GetIdeAdapter();
+    adapter.SprinterOut(0x2A, 0x01BC, 0x01);  // secondary
+    for (const auto& [code, value] : std::vector<std::pair<uint8_t, uint8_t>>{
+             {0x26, 0xE0}, {0x22, 1}, {0x23, 5}, {0x24, 0}, {0x25, 0}, {0x27, Command::ReadSectors}})
+        adapter.SprinterOut(code, static_cast<uint16_t>(0x0150 | (code & 7)), value);
+    for (int i = 0; i < 10; i++)
+        adapter.SprinterIn(0x20, 0x0050);
+
+    std::vector<uint8_t> saved(blob.TTDStateSize());
+    blob.TTDSaveState(saved.data());
+    const uint8_t next = adapter.SprinterIn(0x20, 0x0050);
+
+    adapter.SprinterOut(0x2B, 0x21BC, 0x21);  // primary: another channel, another latch
+    adapter.SprinterIn(0x20, 0x0050);
+    context->pIdeController->Channel(1).HardReset();
+
+    blob.TTDLoadState(saved.data());
+    EXPECT_EQ(adapter.State().channel, 1) << "the channel select came back";
+    EXPECT_EQ(adapter.SprinterIn(0x20, 0x0050), next) << "the secondary unit continues its sector";
+    EmulatorTestHelper::CleanupEmulator(sprinter);
+}

@@ -34,9 +34,23 @@ that the emulator works out of the box, on the following basis:
   believed public domain). ROM pages: 0 = disk drivers and the packed SETUP, 8 = the BIOS proper, `#C`-`#F` = the
   PLD loader and bitstream, the rest empty; annotated listings in `docs/disasm/rom/sprinter/`. A known variant
   (ZXMAK2 `SP_304.BIN`, CRC32 `a3970620`) differs in 5 bytes: the page 0 checksum and the page 8 board-id byte.
-  The community BIOS 3.06 (`sp2k-3.06.rom`, CRC32 `187f4382` in MAME) is not included: no copy was found in the
-  public repositories (Tolik-Trek `Sprinter-BIOS` publishes sources only, no releases); take it from the MAME
-  `sprinter` ROM set or build it from https://zxgit.org/Tolik-Trek/Sprinter-BIOS.
+  MAME's community BIOS 3.05 / 3.06 images (CRC32 `fe1c2685` / `187f4382`) are not included: no copy is public
+  (Tolik-Trek `Sprinter-BIOS` publishes sources only, no releases); take them from the MAME `sprinter` ROM set.
+* **Community Sprinter BIOS builds** (`sprinter/sp2k-3.06-hf2.rom`, `sprinter/sp2k-3.07-beta1.rom`): built here from
+  the sources of Anatoly Belyansky (Tolik-Trek), https://zxgit.org/Tolik-Trek/Sprinter-BIOS (no license file;
+  treated as MIT per the project rule for unlicensed sources), with `tools/machines/sprinter/bios-build/make-bios.py` and sjasmplus
+  1.21.1. 262 144 bytes each, the 1K30 board image. Pages: 0 ROM + SETUP, 1 logo, 2-4 the ZX ROMs (128, 48,
+  TR-DOS), 5-7 and 9-11 the recovery ROM disk (DSS), 8 the BIOS, `#C`-`#F` loader + bitstream.
+  * `sp2k-3.06-hf2.rom`: "Firmware v3.06 Hotfix 2", Release 19.01.2026, branch `master` commit `c14a8c5`, build
+    date fixed to 2026-01-19; bitstream "Core 1K30 v3.05" taken from `Build/Bin/LOADER_K30.BIN` of commit
+    `4c5d44a` (the tree itself has none). CRC32 `9aa7bb29`, SHA-256
+    `fc910ba4c32f42a8b130b804434f3b449f2f01ed710510a9e8340d8d3ae9a90a`.
+  * `sp2k-3.07-beta1.rom`: "Firmware v3.07 BETA 1", branch `beta` commit `f546c4e` (2026-09-24), build date
+    2026-09-24 12:00:00, its own bitstream. CRC32 `a06a1a02`, SHA-256
+    `3745a845e3729189fc5a9590a6c3d5e0dff5ee02da98d120b4a5bb3905505c22`.
+
+  No author's build of these versions is public to compare against; how they were made, the boot results and
+  how to follow new builds: `docs/inprogress/2026-09-28-sprinter/bios-versions.md`.
 * **ZX Profi factory firmware** (`profi/*.rom`): the stock 64K images of the two board families, each four 16K
   pages in the order SYS (BIOS), TR-DOS, 128 BASIC, 48 BASIC. Downloaded unchanged from
   [speccy4ever](https://speccy4ever.speccy.org/_PR.htm), which names each file by its CRC32; every CRC32 below

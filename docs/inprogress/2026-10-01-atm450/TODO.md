@@ -4,8 +4,9 @@
 not yet merged.**
 
 - [README.md](README.md) — scope, deliverables, effort, how to start
-- [requirements.md](requirements.md) — R1-R8 + open questions OQ-1..OQ-9
+- [requirements.md](requirements.md) — R1-R8 + open questions OQ-1..OQ-11
 - [tdd-plan.md](tdd-plan.md) — phases 0-5, ordered test list
+- [frame-timing-protection.md](frame-timing-protection.md) — why the 4.50 frame is 308 lines
 - [cross-mapping.md](cross-mapping.md) — reference survey, variant comparison,
   behavior→reference→our-code table, reference divergences (§3.3), prewire
   inventory (§4)
@@ -30,8 +31,13 @@ not yet merged.**
       `devicestate_test.cpp`; ROM page roles in `ROM::GetROMPageRole`
 - [x] Phase 3: `atm450_boot_test.cpp` - system ROM menu + Sinclair palette,
       TR-DOS 48 / SPECTRUM 128 / SPECTRUM 48 entries, `RESET=DOS`
-- [ ] Phase 3 rest: an ATM 16-color program end-to-end (T3.4, needs a title in testdata),
-      CP/M boot from a disk (OQ-7 evidence)
+- [x] CP/M entry: the PAL marker is INT-relative (was frame-relative: wrong copy-protection key,
+      the loader stayed encrypted); the loader now decrypts and reads the system tracks
+- [x] CP/M to the `A>` prompt from `testdata/machines/atm450/cpm/sys.trd`, `DIR B:` lists the floppy
+- [x] OQ-11: typed keys arrived as scan code + 1 - the ROM's frame-timing protection; 308-line
+      frame ([frame-timing-protection.md](frame-timing-protection.md))
+- [ ] Confirm the 4.50 raster on real hardware (VS / INT capture or the PLM equations)
+- [ ] Phase 3 rest: an ATM 16-color program end-to-end (T3.4, needs a title in testdata)
 - [x] Phase 4: `pFDFD` in the TTD ATM blob (former zero filler, layout unchanged),
       ATM450 seek test, `TtdClockUnits() == 1`
 - [ ] Phase 4 rest: snapshot / model switch away-and-back (T4.4)

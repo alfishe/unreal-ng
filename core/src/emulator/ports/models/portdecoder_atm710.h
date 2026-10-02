@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
@@ -56,12 +57,29 @@ public:
 public:
     PortDecoder_ATM710() = delete;
     PortDecoder_ATM710(EmulatorContext* context);
+protected:
+    /// `keyboardController`: fit the v7.xx board's keyboard controller ([ATM]
+    /// Kbc=). The ZX-Evo (ATM3) derives from this decoder without it: its
+    /// keyboard is the AVR
+    PortDecoder_ATM710(EmulatorContext* context, bool keyboardController);
+public:
     virtual ~PortDecoder_ATM710();
     /// endregion </Constructors / Destructors>
 
     /// region <Interface methods>
 public:
     void reset() override;
+    void OnFrameEnd() override;
+
+    /// Fit the keyboard controller [ATM] Kbc= / [ROM] ATM2KBC= name (power-on of
+    /// the controller; a runtime firmware change); its peer stays attached
+    bool ReloadKeyboardController(std::string& error);
+
+    /// The controller's RS-232 is the machine's own serial port (Atm2Kbc)
+    NetworkCapabilities DescribeNetwork() override;
+
+    /// The keyboard controller (nullptr when [ATM] Kbc=NONE or on the ZX-Evo)
+    Atm2Kbc* GetKeyboardController() const { return _kbc && _kbc->Present() ? _kbc.get() : nullptr; }
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
@@ -143,4 +161,7 @@ protected:
     std::string Dump_FFF7_value(unsigned value);
     std::string Dump_EFF7_value(uint8_t value);
     /// endregion </Debug methods>
+
+    /// The v7.xx keyboard controller behind IN #FE (Atm2Kbc), when fitted
+    std::unique_ptr<Atm2Kbc> _kbc;
 };

@@ -15,6 +15,7 @@
 
 #include "emulator/io/network/netstate.h"
 #include "emulator/io/serial/serialpeer.h"
+#include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/ports/portdecoder.h"
 
@@ -65,6 +66,11 @@ public:
     /// The stream peer as a virtual-network guest (its sockets in the network
     /// state belong to it), nullptr for loopback
     INetGuest* NetGuest() const;
+    /// A peer's side on the virtual network (an ESP module's stack, a stream link), or nullptr
+    static INetGuest* NetGuestOf(ISerialPeer* peer);
+    /// Both serial ports' peers on the network: the #xxEF port's and the
+    /// machine's own (EmulatorContext::pMachineSerialPeer)
+    static SerialGuests SerialNetGuests(const EmulatorContext* context);
 
     /// TTD state (netstate::Com): UART registers, the echo queue by value,
     /// bytes from the network by journal reference. False when something did
@@ -75,6 +81,12 @@ public:
     /// when some referenced bytes were missing
     using ByteSource = std::function<bool(uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out)>;
     bool LoadState(const netstate::Com& in, const ByteSource& bytes);
+
+    /// A peer's part of netstate::Com (loopback queue, stream link and bytes,
+    /// ESP module), shared with the ports that are no 16550 (ATM Turbo 2+
+    /// keyboard controller)
+    static bool SavePeer(const ISerialPeer* peer, netstate::Com& out);
+    static bool LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSource& bytes);
 
 private:
     void AddAccessWait(uint8_t reg, bool read);

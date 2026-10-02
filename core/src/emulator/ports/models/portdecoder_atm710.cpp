@@ -1,3 +1,4 @@
+#include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
 
@@ -12,17 +13,88 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder(context)
+PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder_ATM710(context, true)
+{
+}
+
+PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool keyboardController) : PortDecoder(context)
 {
     _context = context;
     _state = &context->emulatorState;
     _memory = context->pMemory;
     _screen = context->pScreen;
     _keyboard = context->pKeyboard;
+
+    if (keyboardController)
+    {
+        // The v7.xx board's keyboard controller socket: its real firmware answers IN #FE
+        _kbc = std::make_unique<Atm2Kbc>(context);
+        _kbc->SetNativePort([this](uint16_t port) { return Default_Port_FE_In(port, 0); });
+        std::string error;
+        if (!ReloadKeyboardController(error))
+            MLOGWARNING("PortDecoder_ATM710: %s - no keyboard controller, #FE reads the matrix", error.c_str());
+    }
+}
+
+bool PortDecoder_ATM710::ReloadKeyboardController(std::string& error)
+{
+    if (!_kbc)
+    {
+        error = "this board has no keyboard controller socket";
+        return false;
+    }
+    // A firmware change is a new chip in the socket: the network refit plugs the peer in again
+    _kbc->SetSerialPeer(nullptr);
+    if (_keyboard && _keyboard->GetPs2Sink() == _kbc.get())
+        _keyboard->SetPs2Sink(nullptr);
+    const auto firmware = static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware);
+    const bool loaded = _kbc->Load(firmware, _context->config.atm.kbc_rom_path, error);
+    if (!loaded)
+        _kbc->Load(Atm2Kbc::Firmware::None, "", error);
+    if (_kbc->Present())
+    {
+        if (_keyboard)
+            _keyboard->SetPs2Sink(_kbc.get());   // the host's PC keys reach its keyboard lines
+    }
+    return loaded;
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_ATM710::DescribeNetwork()
+{
+    // ZX-Bus cards fit; with the v7.xx keyboard controller (firmware 3.1 and
+    // later) its RS-232 is the machine's own serial port, away from #xxEF:
+    // a ZX-WiFi card fits beside it
+    NetworkCapabilities caps;
+    if (_kbc)
+    {
+        Atm2Kbc* socket = _kbc.get();
+        caps.reloadFirmware = [this](std::string& error) { return ReloadKeyboardController(error); };
+        caps.attachSerialPeer = [socket](ISerialPeer* peer) { socket->SetSerialPeer(peer); };   // detach works for any firmware
+    }
+    Atm2Kbc* kbc = GetKeyboardController();
+    const Atm2Kbc::FirmwareInfo* info = kbc ? Atm2Kbc::Info(kbc->GetFirmware()) : nullptr;
+    if (info && info->serialPort)
+    {
+        caps.serialPort = NetworkCapabilities::SerialPort::Atm2Kbc;
+        caps.firmware = info->name;
+        caps.serialBaud = [kbc]() { return kbc->SerialBaud(); };
+        // NedoOS's ESPNET firmware is built for 38400 on this port ("ATM2COM"):
+        // the controller's receive keeps up with it, not with 115200
+        caps.espBaud = 38400;
+    }
+    return caps;
+}
+
+void PortDecoder_ATM710::OnFrameEnd()
+{
+    if (_kbc)
+        _kbc->OnFrameEnd();
 }
 
 PortDecoder_ATM710::~PortDecoder_ATM710()
 {
+    if (_kbc && _keyboard && _keyboard->GetPs2Sink() == _kbc.get())
+        _keyboard->SetPs2Sink(nullptr);
     MLOGDEBUG("PortDecoder_ATM710::~PortDecoder_ATM710()");
 }
 
@@ -32,6 +104,10 @@ PortDecoder_ATM710::~PortDecoder_ATM710()
 
 void PortDecoder_ATM710::reset()
 {
+    // The keyboard controller's RST is on the board's reset line
+    if (_kbc)
+        _kbc->BoardReset();
+
 
     _state->p7FFD = 0x00;
     _state->pEFF7 = 0x00;
@@ -138,7 +214,8 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     // Port #FE - keyboard, tape, border
     if (IsPort_FE(port))
     {
-        result = Default_Port_FE_In(port, pc);
+        // v7.xx boards: every read goes through the keyboard controller (it waits the Z80)
+        result = _kbc ? _kbc->ReadPort(port) : Default_Port_FE_In(port, pc);
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
@@ -582,6 +659,10 @@ void PortDecoder_ATM710::Port_FF77_Out(uint16_t port, uint8_t value, [[maybe_unu
     _state->pFF77 = value;
     _state->aFF77 = port;
 
+    // Bit 6 = VE1: the keyboard controller off (all reads go to the ZX keyboard)
+    if (_kbc)
+        _kbc->SetVe1((value & 0x40) != 0);
+
     // Update video mode if changed (bits 0,1,2 per original Unreal Speccy)
     if ((oldValue ^ value) & ATM_FF77_VMODE_MASK)
     {
@@ -878,12 +959,17 @@ std::string PortDecoder_ATM710::Dump_EFF7_value(uint8_t value)
 
 std::vector<ttd::PeripheralId> PortDecoder_ATM710::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::AtmPaging};
+    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::AtmPaging};
+    if (GetKeyboardController())
+        ids.push_back(ttd::PeripheralId::Atm2Kbc);   // the v7.xx keyboard controller, when fitted
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM710::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDAtmPaging>(_context));
+    if (Atm2Kbc* kbc = GetKeyboardController())
+        serializers.push_back(std::make_unique<ttd::TTDAtm2Kbc>(*kbc));
     return serializers;
 }

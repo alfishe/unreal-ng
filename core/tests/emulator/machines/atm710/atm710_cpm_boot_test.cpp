@@ -22,6 +22,8 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/keyboard/keyboard.h>
+#include <debugger/debugmanager.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
@@ -61,80 +63,42 @@ protected:
         }
     }
 
-    /// One menu "down" press: CAPS SHIFT + 6 held together
+    // Keys go in as a user's would: through the automation keyboard, which
+    // follows the host keyboard's route - the ZX matrix and, with the v7.xx
+    // keyboard controller fitted, the PC keyboard on its PS/2 lines (CP/M reads
+    // its codes there)
+    static DebugKeyboardManager* Keys(const std::shared_ptr<Emulator>& emulator)
+    {
+        return emulator->GetContext()->pDebugManager->GetKeyboardManager();
+    }
+
+    /// One menu "down" press: the cursor key (CAPS SHIFT + 6 on the matrix, Down on the PC keyboard)
     static void PressDown(const std::shared_ptr<Emulator>& emulator, int holdFrames = 8)
     {
-        Keyboard* keyboard = emulator->GetContext()->pKeyboard;
-        keyboard->PressKey(ZXKEY_CAPS_SHIFT);
-        keyboard->PressKey(ZXKEY_6);
+        Keys(emulator)->PressKey(ZXKEY_EXT_DOWN);
         emulator->RunNFrames(holdFrames, true);
-        keyboard->ReleaseKey(ZXKEY_6);
-        keyboard->ReleaseKey(ZXKEY_CAPS_SHIFT);
+        Keys(emulator)->ReleaseKey(ZXKEY_EXT_DOWN);
         emulator->RunNFrames(holdFrames, true);
     }
 
     static void PressEnter(const std::shared_ptr<Emulator>& emulator)
     {
-        Keyboard* keyboard = emulator->GetContext()->pKeyboard;
-        keyboard->PressKey(ZXKEY_ENTER);
+        Keys(emulator)->PressKey(ZXKEY_ENTER);
         emulator->RunNFrames(12, true);
-        keyboard->ReleaseKey(ZXKEY_ENTER);
+        Keys(emulator)->ReleaseKey(ZXKEY_ENTER);
         emulator->RunNFrames(12, true);
     }
 
-    /// Type plain text at the CP/M console (letters/digits/space only - the
-    /// CP/M command line needs nothing else for DIR / PR2)
+    /// Type plain text at the CP/M console: each character as the keys that
+    /// type it (':' is Symbol Shift + Z on the matrix, Shift + ; on a PC)
     static void TypeText(const std::shared_ptr<Emulator>& emulator, const std::string& text)
     {
-        Keyboard* keyboard = emulator->GetContext()->pKeyboard;
-        for (char c : text)
-        {
-            if (c >= 'a' && c <= 'z')
-            {
-                c = (char)std::toupper((unsigned char)c);  // same key either way
-            }
-            ZXKeysEnum key;
-            if (c == ' ')
-            {
-                key = ZXKEY_SPACE;
-            }
-            else if (c == ':')
-            {
-                // CP/M drive prefixes ("DIR B:") need the colon: SYM SHIFT
-                // + Z on the ZX matrix (see keyboard.h special-symbol map)
-                Keyboard* keyboard = emulator->GetContext()->pKeyboard;
-                keyboard->PressKey(ZXKEY_SYM_SHIFT);
-                keyboard->PressKey(ZXKEY_Z);
-                emulator->RunNFrames(10, true);
-                keyboard->ReleaseKey(ZXKEY_Z);
-                keyboard->ReleaseKey(ZXKEY_SYM_SHIFT);
-                emulator->RunNFrames(8, true);
-                continue;
-            }
-            else if (c >= 'A' && c <= 'Z')
-            {
-                // The enum mirrors the ZX matrix: ZXKEY_I = 0x48 and
-                // ZXKEY_H = 0x49 are swapped versus ASCII order
-                if (c == 'H')
-                    key = ZXKEY_H;
-                else if (c == 'I')
-                    key = ZXKEY_I;
-                else
-                    key = static_cast<ZXKeysEnum>(0x41 + (c - 'A'));
-            }
-            else if (c >= '0' && c <= '9')
-            {
-                key = static_cast<ZXKeysEnum>(0x30 + (c - '0'));
-            }
-            else
-            {
-                continue;
-            }
-            keyboard->PressKey(key);
-            emulator->RunNFrames(10, true);
-            keyboard->ReleaseKey(key);
-            emulator->RunNFrames(8, true);
-        }
+        std::string upper = text;
+        for (char& c : upper)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));   // same key either way
+        Keys(emulator)->TypeText(upper, 8);
+        for (int frame = 0; frame < 50 * 20 && Keys(emulator)->IsSequenceRunning(); ++frame)
+            emulator->RunNFrames(1, true);
     }
 
     /// Type a CP/M command and wait until the console echoed it on the
@@ -367,16 +331,15 @@ protected:
         EXPECT_GT(fdcAtSwitch, 0) << "no floppy reads while loading PR2.COM";
 
         // The title waits on the game's own line reader: SPACE (buffered as
-        // text) then ENTER (CR ends the line). Raw keys - the CP/M console
-        // is switched out already
-        Keyboard* keyboard = context->pKeyboard;
-        keyboard->PressKey(ZXKEY_SPACE);
+        // text) then ENTER (CR ends the line), as a user presses them (the
+        // game reads the keyboard controller's codes)
+        Keys(emulator)->PressKey(ZXKEY_SPACE);
         emulator->RunNFrames(12, true);
-        keyboard->ReleaseKey(ZXKEY_SPACE);
+        Keys(emulator)->ReleaseKey(ZXKEY_SPACE);
         emulator->RunNFrames(20, true);
-        keyboard->PressKey(ZXKEY_ENTER);
+        Keys(emulator)->PressKey(ZXKEY_ENTER);
         emulator->RunNFrames(12, true);
-        keyboard->ReleaseKey(ZXKEY_ENTER);
+        Keys(emulator)->ReleaseKey(ZXKEY_ENTER);
         emulator->RunNFrames(40, true);
 
         // Title screen on the displayed page. The game paints it

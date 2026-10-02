@@ -52,13 +52,13 @@ zx-evo-unreal, Zero, ZXSpeculator, zxsp, Spectral) mentions Sprinter (`grep -ril
 | BIOS ROM 256 KB | MAME ROM set `sprinter` (`sp2k-2.13.rom` … `sp2k-3.06.rom`, CRCs at `sprinter.cpp:2030-2049`); the exact 3.04 image (CRC `1729cb5c`) as `fw/bios/sp2k-3.04.253.bin` in [zxgit.org/Sprinter/2000](https://zxgit.org/Sprinter/2000); "Sprinter Firmware 3.04.253" on [app.sprinter.ru/os/sprinter-firmware](https://app.sprinter.ru/os/sprinter-firmware) | 3.04 **provisioned 2026-10-01** as `data/rom/sprinter/sp2k-3.04.rom`; 3.06 not found in a public repository (Tolik-Trek publishes sources only, no releases; take it from the MAME set) | S0 provisioning (§5) |
 | Sample Sprinter programs | SPRINTEM `disk/*.EXE` (GPL repo; individual program licenses not stated) | available | "a native program runs" acceptance (small, no disk needed beyond a folder) |
 | Sprinter software archive | [app.sprinter.ru](https://app.sprinter.ru/) (games, demos, utilities) | not surveyed item by item | demo/game acceptance picks (S2, S5) |
-| HDD image with DSS installed | none found | **missing** | built by the test itself (§4) |
+| HDD images with DSS installed | (1) the **owner's MAME pack** (`mame_release_v306_25.05.2025`, `IMG/sp_hdd_sys.chd` and `sp_hdd_media.chd`, run by its `_306.bat` as `-hard1` / `-hard2` with `-bios v3.06`); (2) the **ZXMAK2 bundle** from app.sprinter.ru ("ZXMAK2" 2.9.3.8, 07.10.2021: `SprinterEmu/HDD/sp_disk1.vhd`) | **found 2026-10-02**, kept outside the repository (1-2 GiB each, third-party contents, not redistributed). `sp_hdd_sys`: CHD v5, CHS 4096/16/32, 512-byte sectors; raw 1 GiB after `chdman extractraw`; MBR entry 0 = active FAT16 `#06` at LBA 63, 2 097 089 sectors; the DSS loader ("Starting...") at LBA 1-4; OEM "DSS 1.70"; DSS **1.71.57** (`SYSTEM.DOS` 16 832, `SYSTEM.EXE` 7 922); root `BIN C DEMOS DEV DOCS DSS FM FN GAMES MODEM TESTS TRD UTILS ZX`; `SYSTEM.BAT` sets PATH, runs `ver` and `fn`. `sp_hdd_media`: FAT16 data disk (`MEDIA/`). `sp_disk1.vhd`: fixed VHD, MBR entry 0 = FAT16 at LBA 62, DSS **1.62.93**, the same loader bytes as the DSS 1.62.92 floppy's LBA 1-3 | optional real-disk boots (`UNREAL_SPRINTER_HDD`, `UNREAL_SPRINTER_HDD_VHD`; roadmap §9) and the MAME HDD captures (`testdata/machines/sprinter/reference/hdd-boot-30x.txt`); DSS 1.71 needs BIOS 3.06 (bios-versions.md §5.1). The in-repo test builds its own image (§4) |
 
 ## 4. What is missing and how to get it
 
 | Missing | Why it matters | Plan |
 |---|---|---|
-| A reference HDD image with DSS installed | the "DSS boots from HDD" acceptance test | **Build it in the test**: an MBR with one FAT16 partition of type `#06` in **entry 0** (the loader checks only the first entry, see hardware-reference §9.3), the 1 536-byte loader from `BOOT.EXE` at LBA 1-3, `SYSTEM.DOS` / `SYSTEM.EXE` / `SYSTEM.BAT` in the root. The same recipe makes the folder volume bootable (technical design `tdd-storage.md` §5). Cross-check once against MAME booting the same image |
+| A reference HDD image with DSS installed | the "DSS boots from HDD" acceptance test | **Built in the test (S3b, 2026-10-02)**: `BuildDssHdd` in `sprinter_boot_test.cpp` makes a 16 MiB image with an MBR whose entry 0 is an active FAT16 partition (`#06`, LBA 63; the loader checks only the first entry, hardware-reference §9.3), the DSS 1.62.92 floppy's loader (its LBA 1-3, byte-equal to the ZXMAK2 hard disk's) at LBA 1-3, and the floppy's `SYSTEM.DOS` / `SYSTEM.EXE` plus a test `SYSTEM.BAT` in the root (ACC-4). The `BOOT.EXE` route stays for the folder profile (tdd-storage §5). Cross-checked against real disks instead of MAME booting the built image: the owner's MAME-pack disk boots in both emulators with the same reads (roadmap §9) |
 | The exact on-disk layout DSS `FORMAT`/`BOOT` produce on an HDD | confidence that the built image matches the real thing | read `utils/BOOT/SYS.ASM:130-140` (done: loader at LBA 1, 3 sectors, device `#80`/`#81`); ask the community (zx-pk.ru Sprinter threads) for a real image |
 | ISA card behavior (which cards exist, memory window) | S6 | MAME leaves ISA memory unimplemented (`sprinter.cpp:43`, `:1256`); out of scope beyond the register model until a card is chosen |
 | Accelerator edge cases (interrupts during a block, "DooM" stretch modes) | S5 accuracy | PLD `ACCELER.TDF` is the ground truth; compare with MAME in differential tests |
@@ -66,6 +66,8 @@ zx-evo-unreal, Zero, ZXSpeculator, zxsp, Spectral) mentions Sprinter (`grep -ril
 | The zx-pk.ru ZXMAK2 HDD thread ([t=16830 p.22](https://zx-pk.ru/printthread.php?t=16830&pp=40&page=22)) | notes on ZXMAK2 IDE and images | returned HTTP 403 on 2026-09-28; read in a browser later |
 
 ## 5. ROM provisioning (S0)
+
+Every known BIOS build (2.13-3.07 beta), the community builds kept in `data/rom/sprinter/` and how to track new ones: [bios-versions.md](bios-versions.md).
 
 | File | Size | CRC32 (MAME) | Notes |
 |---|---|---|---|

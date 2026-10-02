@@ -22,7 +22,7 @@ const std::vector<std::string> kSprinterPaths = {
     "emulator/ports/models/portdecoder_sprinter.",
     "emulator/memory/sprinter/",
     "emulator/video/sprinter/",
-    "emulator/io/z84c15/",  // the reusable Z84C15 package: names no Sprinter type
+    "emulator/io/z84c15/",  // the Z84C15 engine adapter (machine neutral): names no Sprinter type
 };
 
 /// Files that may name the model id or construct a Sprinter type: the registration surface
@@ -33,6 +33,8 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/memory/rom.cpp",          // the ROM path / size rows
     "emulator/ports/portdecoder.cpp",   // the decoder factory + IsModelSupported
     "emulator/cpu/core.cpp",            // the memory factory (SprinterMemory)
+    "emulator/video/videocontroller.cpp",  // the screen factory (ScreenSprinter, PLAN #60(e))
+    "emulator/io/ide/idecontroller.cpp",   // [HDD] Scheme=SPRINTER fits MM_SPRINTER only (IdeController::SchemeFits, S3b)
     "debugger/ttd/ttdserializable.h",   // the PeripheralId::SprinterPld row (serializer in phase S7)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
 };
@@ -129,7 +131,7 @@ TEST(SprinterIsolation_Test, NoSprinterStateOrModelIdInSharedCode)
     EXPECT_TRUE(violations.empty()) << "Sprinter code outside its files (technical-design §5):" << report;
 }
 
-// The Z84C15 package is reusable: it never names the Sprinter
+// The Z84C15 engine adapter is reusable: it never names the Sprinter
 TEST(SprinterIsolation_Test, Z84C15PackageIsMachineNeutral)
 {
     const fs::path dir = TestPathHelper::FindProjectRoot() / "core" / "src" / "emulator" / "io" / "z84c15";

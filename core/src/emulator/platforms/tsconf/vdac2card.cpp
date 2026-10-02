@@ -436,4 +436,29 @@ uint8_t Vdac2Card::exchange(uint8_t mosi)
     return miso;
 }
 
+#else // ENABLE_VDAC2
+
+// A build without the FT812 library: the decoder never fits the card (a
+// VDAC2 configuration is refused at load), but the decoder's calls still
+// link against these. Nothing here runs
+Vdac2Card::Vdac2Card(EmulatorContext* context, std::function<uint32_t()> rasterInFrame)
+    : _context(context), _rasterInFrame(std::move(rasterInFrame))
+{
+}
+Vdac2Card::~Vdac2Card() = default;
+void Vdac2Card::PowerOn() {}
+void Vdac2Card::OnFrameEnd() {}
+void Vdac2Card::Synchronize() {}
+void Vdac2Card::SetShowing(bool) {}
+size_t Vdac2Card::TakeIntEdges(uint32_t, uint32_t*, size_t) { return 0; }
+bool Vdac2Card::StartCapture(const std::string&, std::string* error)
+{
+    if (error)
+        *error = "this build has no VDAC2 support";
+    return false;
+}
+bool Vdac2Card::StopCapture() { return false; }
+void Vdac2Card::select(bool) {}
+uint8_t Vdac2Card::exchange(uint8_t) { return 0xFF; }
+
 #endif // ENABLE_VDAC2

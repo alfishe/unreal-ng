@@ -1752,6 +1752,7 @@ namespace
             case IDE_ATM:
             case IDE_SMUC: return "TR-DOS ports on";
             case IDE_PROFI: return "Profi EXT mode (#DFFD.5 and #7FFD.4)";
+            case IDE_SPRINTER: return "the PLD port table (codes #20-#2B)";
             default: return "";
         }
     }
@@ -1768,7 +1769,13 @@ StateNode Ide(EmulatorContext* context)
     ret["available"] = true;
     ret["scheme"] = Config::IdeSchemeName(ide->Scheme());
     ret["gate"] = IdeGateText(ide->Scheme());
-    AtaChannel& channel = ide->Channel();
+    // The channel the adapter talks to (the Sprinter selects one of two; the other boards have one)
+    const uint8_t selectedChannel = context->pPortDecoder ? context->pPortDecoder->GetIdeAdapter().State().channel : 0;
+    const int channelCount = ide->ChannelCount();
+    AtaChannel& channel = ide->Channel(selectedChannel);
+    ret["channels"] = channelCount;
+    if (channelCount == 2)
+        ret["selected_channel"] = selectedChannel ? "secondary" : "primary";
     ret["selected"] = channel.Selected() ? "slave" : "master";
     ret["intrq"] = channel.Intrq();
 
@@ -1781,20 +1788,33 @@ StateNode Ide(EmulatorContext* context)
         adapter["read_pair"] = latches.readPair != 0;
         adapter["write_pair"] = latches.writePair != 0;
         adapter["write_high_armed"] = latches.writeHigh != 0;
+        if (ide->Scheme() == IDE_SPRINTER)
+        {
+            // One PLD latch (HDDR) for both directions: read_latch is that register
+            adapter["data_latch"] = int(latches.readLatch);
+            adapter["channel"] = int(latches.channel);
+        }
         ret["adapter"] = adapter;
     }
 
     StateNode units = StateNode::Array();
-    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    for (int index = 0; index < channelCount * AtaChannel::kUnits; index++)
     {
-        AtaDevice* device = channel.Unit(unit);
+        const int channelIndex = index / AtaChannel::kUnits;
+        const int unit = index % AtaChannel::kUnits;
+        AtaDevice* device = ide->Channel(channelIndex).Unit(unit);
         if (!device)
             continue;
         const AtaDeviceState& s = device->State();
         const bool cd = device->Kind() == AtaDeviceKind::Cdrom;
         StateNode u = StateNode::Object();
         u["position"] = unit ? "slave" : "master";
-        u["slot"] = IdeUnitSlot::IdFor(0, unit);
+        u["slot"] = IdeUnitSlot::IdFor(channelIndex, unit);
+        if (channelCount == 2)
+        {
+            u["channel"] = channelIndex ? "secondary" : "primary";
+            u["selected"] = ide->Channel(channelIndex).Selected() == unit;
+        }
         u["kind"] = cd ? "cdrom" : "disk";
         u["present"] = device->IsPresent();
 
@@ -1974,6 +1994,8 @@ StateNode Network(EmulatorContext* context)
     set["esp_chip"] = st.settings.espChip;
     set["com_modem_lines"] = st.settings.comModemLines;
     set["avr_firmware"] = st.settings.avrFirmware;
+    if (!st.settings.kbcFirmware.empty())
+        set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
     set["dns_mode"] = st.settings.dnsMode;
     set["hosts"] = st.settings.hosts;
@@ -1999,6 +2021,54 @@ StateNode Network(EmulatorContext* context)
             notes.push(StateNode(n));
     }
 
+    // A serial port's peer (either port)
+    auto peerFields = [](StateNode& node, const NetworkManager::Status::Com& c) {
+        node["peer"] = c.peer.empty() ? std::string("none") : c.peer;
+        if (!c.target.empty())
+            node["target"] = c.target;
+        node["connected"] = c.connected;
+        if (!c.phase.empty())
+            node["phase"] = c.phase;
+        if (!c.error.empty())
+            node["error"] = c.error;
+        node["modem_lines"] = c.modemLines;
+        if (!c.exchanges.empty() || c.requests)
+        {
+            node["requests"] = c.requests;
+            StateNode& log = node["recent_exchanges"];
+            log = StateNode::Array();
+            for (const auto& [request, reply] : c.exchanges)
+            {
+                StateNode e = StateNode::Object();
+                e["request"] = request;
+                e["reply"] = reply;
+                log.push(std::move(e));
+            }
+        }
+        node["baud"] = c.baud;
+        node["frame_bits"] = c.frameBits;
+        node["peer_pending"] = uint64_t(c.pending);
+        if (c.peerBaud)
+            node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
+    };
+
+    // The machine's own serial port when it is no 16550 (ATM Turbo 2+
+    // keyboard controller): the MCU's UART line and its peer
+    StateNode& machineSerial = ret["machine_serial"];
+    machineSerial["fitted"] = st.machineSerial.fitted;
+    if (st.machineSerial.fitted)
+    {
+        const NetworkManager::Status::Com& m = st.machineSerial;
+        machineSerial["flavor"] = m.flavor;
+        machineSerial["kbc_firmware"] = m.firmware;
+        peerFields(machineSerial, m);
+        machineSerial["rts"] = m.rts;
+        machineSerial["dtr"] = m.dtr;
+        machineSerial["bytes_in"] = m.bytesIn;
+        machineSerial["bytes_out"] = m.bytesOut;
+        machineSerial["lost"] = m.lost;
+    }
+
     // The COM port (TDD §7): the UART as the Z80 sees it and the peer
     StateNode& com = ret["com_port"];
     com["fitted"] = st.com.fitted;
@@ -2008,30 +2078,7 @@ StateNode Network(EmulatorContext* context)
         com["flavor"] = st.com.flavor;
         if (!st.com.firmware.empty())
             com["avr_firmware"] = st.com.firmware;
-        com["peer"] = st.com.peer.empty() ? std::string("none") : st.com.peer;
-        if (!st.com.target.empty())
-            com["target"] = st.com.target;
-        com["connected"] = st.com.connected;
-        if (!st.com.phase.empty())
-            com["phase"] = st.com.phase;
-        if (!st.com.error.empty())
-            com["error"] = st.com.error;
-        com["modem_lines"] = st.com.modemLines;
-        if (!st.com.exchanges.empty() || st.com.requests)
-        {
-            com["requests"] = st.com.requests;
-            StateNode& log = com["recent_exchanges"];
-            log = StateNode::Array();
-            for (const auto& [request, reply] : st.com.exchanges)
-            {
-                StateNode e = StateNode::Object();
-                e["request"] = request;
-                e["reply"] = reply;
-                log.push(std::move(e));
-            }
-        }
-        com["baud"] = st.com.baud;
-        com["frame_bits"] = st.com.frameBits;
+        peerFields(com, st.com);
         com["divisor"] = int(u.divisor);
         com["lcr"] = StringHelper::Format("#%02X", u.lcr);
         com["mcr"] = StringHelper::Format("#%02X", u.mcr);
@@ -2044,7 +2091,6 @@ StateNode Network(EmulatorContext* context)
         com["cts"] = (u.msr & Uart16550::kMsrCts) != 0;
         com["rx_fifo"] = int(u.rxCount);
         com["tx_fifo"] = int(u.txCount);
-        com["peer_pending"] = uint64_t(st.com.pending);
         com["bytes_in"] = u.bytesIn;
         com["bytes_out"] = u.bytesOut;
         com["overruns"] = u.overruns;

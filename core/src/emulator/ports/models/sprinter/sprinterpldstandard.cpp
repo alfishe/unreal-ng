@@ -2,6 +2,7 @@
 
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/video/sprinter/sprintervideorenderer.h"
 
 SprinterPldStandard::SprinterPldStandard()
 {
@@ -26,4 +27,9 @@ bool SprinterPldStandard::UpdateBanks(SprinterMemory& memory, const SprinterPldS
 {
     memory.StandardUpdateBanks(pld);
     return true;
+}
+
+const SprinterVideoRenderer* SprinterPldStandard::VideoRenderer() const
+{
+    return &SprinterVideoRenderer::Standard();
 }

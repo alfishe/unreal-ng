@@ -299,6 +299,7 @@ enum IDE_SCHEME
 	IDE_SMUC,
 	IDE_PROFI,
 	IDE_DIVIDE,
+	IDE_SPRINTER,	// Sprinter Sp2000: two channels behind the PLD port table (codes #20-#2B)
 };
 
 enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMPSTON }; //0.36.6 from 0.35b2
@@ -597,7 +598,7 @@ struct CONFIG
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
-	IDE_CONFIG ide[2];				// master, slave
+	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;
 
@@ -738,6 +739,8 @@ struct CONFIG
 		bool joystickConfigured;
 		bool joystickKeysConfigured;
 		char joystickKeys[160];
+		/// [INPUT] HostKeyboard= AUTO | MATRIX | PS2 | BOTH (Keyboard::ParseHostRoute)
+		char hostKeyboard[16];
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -772,6 +775,10 @@ struct CONFIG
 		// ZX-Evo AVR firmware ([EVO] Avr=): Uart16550::AvrFirmware - the COM
 		// port's emulation differs between NedoPC and TS-Labs releases
 		uint8_t evo_avr;
+		// ATM Turbo 2+ keyboard controller ([ATM] Kbc=): Atm2Kbc::Firmware
+		uint8_t kbc_firmware;
+		// Its image instead of the preset's ([ROM] ATM2KBC=); empty = the preset's
+		char kbc_rom_path[FILENAME_MAX];
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
