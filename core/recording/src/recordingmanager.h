@@ -176,6 +176,44 @@ public:
         return _outputFilename;
     }
 
+    /// Video codec of the current (or last) session ("" = audio only)
+    const std::string& GetVideoCodec() const
+    {
+        return _videoCodec;
+    }
+
+    /// Audio codec of the current (or last) session ("" = video only)
+    const std::string& GetAudioCodec() const
+    {
+        return _audioCodec;
+    }
+
+    /// True when the current (or last) session records an audio track
+    bool HasAudio() const
+    {
+        return !_audioCodec.empty() && _audioChannels > 0 && !_audioTracks.empty();
+    }
+
+    /// Audio sample rate (Hz) the recording is stamped with - the emulator's core audio rate
+    uint32_t GetAudioSampleRate() const
+    {
+        return _audioSampleRate;
+    }
+
+    /// Audio channels of the current (or last) session (0 = no audio)
+    uint32_t GetAudioChannels() const
+    {
+        return _audioChannels;
+    }
+
+    /// Emulated seconds of audio captured so far (0 without audio)
+    double GetAudioDuration() const
+    {
+        if (_audioChannels == 0 || _audioSampleRate == 0)
+            return 0.0;
+        return static_cast<double>(_stats.audioSamplesRecorded / _audioChannels) / _audioSampleRate;
+    }
+
     /// Check if encoder can keep up with realtime
     bool IsRealtimeCapable() const
     {
@@ -378,6 +416,10 @@ protected:
     // Emulated time tracking
     uint64_t _emulatedFrameCount = 0;
     uint64_t _emulatedAudioSampleCount = 0;
+    /// Emulated seconds of the frames captured so far: the next frame's timestamp. A sum of each frame's own
+    /// duration, never count x the current duration - a machine that changes its frame length mid-recording
+    /// (Sprinter 320 / 312 lines) would otherwise step the timestamps backwards and fail the encoder
+    double _emulatedVideoTime = 0.0;
 
     // Wall clock tracking for real elapsed recording time
     using Clock = std::chrono::steady_clock;

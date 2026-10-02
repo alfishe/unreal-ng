@@ -136,6 +136,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["fps"]["description"] = "Recording fps (1-100). With every_nth:Q the default is 50/Q so playback is real-time";
     schema["properties"]["scale"]["type"] = "integer";
     schema["properties"]["scale"]["description"] = "Integer upscale for recording (1-4, default 1)";
+    schema["properties"]["audio"]["type"] = "string";
+    schema["properties"]["audio"]["description"] =
+        "record_start: audio codec for the emulated sound track (aac, mp3, opus, vorbis, flac, pcm_s16le). Omit "
+        "for video only (default). Must fit the container: h264/hevc + aac in .mp4/.mov is native on macOS; "
+        "gif has no audio (refused)";
+    schema["properties"]["video_bitrate"]["type"] = "integer";
+    schema["properties"]["video_bitrate"]["description"] = "record_start: video bitrate kbps (0 = default, 100-200000)";
+    schema["properties"]["audio_bitrate"]["type"] = "integer";
+    schema["properties"]["audio_bitrate"]["description"] = "record_start: audio bitrate kbps (0 = default, 32-512)";
     schema["properties"]["region"]["type"] = "string";
     schema["properties"]["region"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["region"]["enum"].append("full");
@@ -167,7 +176,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     registry.Register(
         "capture_media",
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
-        "(GIF native) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
+        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac') with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
         "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), and the "
         "TS-Conf VDAC2 card's FT812 bus capture (vdac2_capture_start / _stop / _status: every chip select and byte "
@@ -323,7 +332,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             if (fps < 1) fps = 1;
                             (*body)["fps"] = fps;
                         }
-                        for (const char* field : {"format", "fps", "scale", "region", "filename"})
+                        for (const char* field : {"format", "fps", "scale", "region", "filename", "audio",
+                                                  "video_bitrate", "audio_bitrate"})
                         {
                             if (args.isMember(field) && !args[field].isNull())
                             {
@@ -342,6 +352,22 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             {
                                 done(ToolResult::Error("Recording start failed (HTTP " + std::to_string(status) + "): " +
                                                        DescribeErrorBody(startResponse)));
+                                return;
+                            }
+
+                            // Unbounded (no 'frames'): the session stays open until record_stop
+                            if (frames == 0)
+                            {
+                                std::ostringstream out;
+                                out << "Recording started → " << startResponse.get("output", "").asString() << " ("
+                                    << startResponse.get("format", "").asString();
+                                if (startResponse.get("audio", false).asBool())
+                                {
+                                    out << " + " << startResponse.get("audio_codec", "").asString() << " audio "
+                                        << startResponse.get("audio_sample_rate", 0).asUInt() << " Hz";
+                                }
+                                out << "); run the emulator, then record_stop [target " << id << "]";
+                                done(ToolResult::Ok(out.str(), std::move(startResponse)));
                                 return;
                             }
 
@@ -368,8 +394,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                             return;
                                         }
                                         std::ostringstream out;
-                                        out << "Recorded " << stopResponse["stats"].get("framesRecorded", frames).asUInt()
+                                        out << "Recorded " << stopResponse.get("frames_recorded", frames).asUInt()
                                             << " frame(s)";
+                                        if (stopResponse.get("audio", false).asBool())
+                                        {
+                                            out << " + " << stopResponse.get("audio_duration", 0.0).asDouble() << " s of "
+                                                << stopResponse.get("audio_codec", "").asString() << " audio";
+                                        }
                                         if (quantum > 1)
                                         {
                                             out << " (every_nth=" << quantum << " → ~" << (50.0 / quantum) << " Hz updates)";

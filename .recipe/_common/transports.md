@@ -97,7 +97,7 @@ Tool catalog (16):
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |
 | `analyze_performance` | coverage_*, frame_cost, profiler suites, porttrace |
-| `capture_media` | screenshot, screen_digest, GIF recording, audio capture |
+| `capture_media` | screenshot, screen_digest, video recording (GIF, H.264/HEVC + optional AAC sound), audio capture |
 | `search_api` / `invoke_api` | the escape hatch (below) |
 
 MCP also serves static references worth reading before guessing:
