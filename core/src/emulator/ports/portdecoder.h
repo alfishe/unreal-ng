@@ -806,6 +806,10 @@ public:
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
         std::string firmware;
 
+        /// The rate an ESP module on the machine's own port ships at when
+        /// ComPort= names none (ESPNET / AT without ,<baud>)
+        uint32_t espBaud = 115200;
+
         /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
 

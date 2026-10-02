@@ -21,6 +21,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
 
@@ -423,6 +424,18 @@ TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsThePeer)
     EXPECT_EQ(loop->Queue().front(), 0x77);
 }
 
+TEST_F(Atm2KbcSerial_Test, AnEspModuleRateCanBeGiven)
+{
+    // A module built for another rate: ComPort=ESPNET,115200
+    CreateWith({{"com_port", "espnet,115200"}});
+    auto* module = dynamic_cast<EspModule*>(_context->pMachineSerialPeer);
+    ASSERT_NE(module, nullptr);
+    EXPECT_EQ(module->Baud(), 115200u);
+    const NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.machineSerial.peerBaud, 115200u);
+    EXPECT_EQ(st.settings.comPort, "ESPNET,115200");
+}
+
 TEST_F(Atm2KbcSerial_Test, AnEspModuleAnswersThroughTheController)
 {
     // The emulated ESP (AT firmware) on the controller's RS-232: "AT" -> "OK".
@@ -435,13 +448,16 @@ TEST_F(Atm2KbcSerial_Test, AnEspModuleAnswersThroughTheController)
     // frame; both come before the UART in the 8051 polling order)
     CreateWith({{"com_port", "at"}});
     ASSERT_NE(_context->pMachineSerialPeer, nullptr);
+    auto* module = dynamic_cast<EspModule*>(_context->pMachineSerialPeer);
+    ASSERT_NE(module, nullptr);
+    EXPECT_EQ(module->Baud(), 38400u) << "the ATM2 COM build: the port's default rate";
     Z80* z80 = _context->pCore->GetZ80();
     _context->pMemory->DirectWriteToZ80Memory(0x8000, 0xF3);   // DI
     _context->pMemory->DirectWriteToZ80Memory(0x8001, 0x18);   // JR $
     _context->pMemory->DirectWriteToZ80Memory(0x8002, 0xFE);
     z80->pc = 0x8000;
 
-    Command(0xC3, 1);      // 115200 baud, the module's default
+    Command(0xC3, 3);      // divisor 3: 38400 baud, the module's rate on this port
     Command(0x43, 0x01);   // DTR only
     for (char c : std::string("AT\r\n"))
         Command(0x03, static_cast<uint8_t>(c));   // the firmware queues them (64-byte TX ring on v4)

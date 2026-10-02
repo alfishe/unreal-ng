@@ -175,6 +175,46 @@ As built (K4):
   UART completely. That is the firmware on the real chip, not an emulation
   artifact; it is why the drivers pulse RTS (reference §2.5). The tests pace
   their reads like a driver (`DriverIn`, RTS off while reading out).
+- An ESP module on this port ships at 38400 (`ComPort=ESPNET` / `AT` without
+  `,<baud>`; `NetworkCapabilities::espBaud`): NedoOS's ESPNET firmware is
+  built for 38400 on the ATM2 COM (`src/kapps/common/espnet/pins.h`
+  "ATM2COM - 38400", `release/ini/espcom.ini` "1 ATM2 COM 38400").
+
+### 7.1 NedoOS over the ATM2 COM (checked 2026-10-02)
+
+NedoOS `osatm2esp.trd` on ATM710 with `ComPort=ESPNET`, `wget example.com/`,
+the model unchanged (Z80 released at the /VWR strobe):
+
+| Z80 | Line | received / sent / lost | Result |
+|---|---|---|---|
+| 7 MHz (NedoOS turns turbo on) | 115200 | 4 / 16 / 14 | stops after SOCKET |
+| 7 MHz | 38400 | 6 / 16 / 12 | stops after SOCKET |
+| 3.5 MHz | 115200 | 10 / 16 / 8 | stops after SOCKET |
+| 3.5 MHz | 38400 | 1274 / 334 / 0 | DNS, CONNECT, HTTP request, 1027-byte reply |
+
+Why (from the v4.1 source and the v7.10 schematic `cp7_2`):
+
+- The Z80 is released by the asynchronous preset of D71 on the falling edge
+  of /VWR; D102 drives the data bus only while /VWR is low. A later release
+  cannot be: the model matches the board within about 1 us per read.
+- INT1 answers take 27..60 machine cycles to /VWR plus 9 to RETI (no loops),
+  timer 0 ticks every 8.89 ms (39-40 cycles), INT0 (PS/2) is the only high
+  priority. The serial interrupt runs only when the poll after RETI finds no
+  new /KEYRD edge: the Z80 needs a gap of more than about 10 machine cycles
+  (38 T at 3.5 MHz, 76 T at 7 MHz) after a read.
+- The NedoOS receive loop (`_sdk/espnet.asm` `esp_fill1`) reads `#FE` with
+  20..58 T gaps. At 7 MHz the empty poll leaves no serial window at all; at
+  3.5 MHz it leaves one per iteration, enough for 38400 (240 cycles a frame,
+  one byte per ~167 us RTS pulse) and not for 115200.
+- So the floppy as shipped cannot work on the real board either: it runs
+  `wizcfg` (W5300), not `espcfg`, and the kernel's default is divisor 1
+  (115200). A working setup sets `/ini/espcom.ini` `comType = 1`,
+  `divider = 3` and runs at 3.5 MHz while it polls (or with I/O waits in
+  turbo - WAIT_H not traced yet).
+
+Open: whether the real ATM2 holds 3.5 MHz (or adds I/O waits) during the
+NedoOS network loop; an end-to-end fixture needs a NedoOS image with an
+`espcom.ini` for the ATM2 COM.
 
 ## 8. Configuration and surfaces
 

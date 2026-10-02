@@ -69,8 +69,8 @@ takes the same values for the card's side:
 | `NONE` | nothing on the line (the ZX-Evo's registers still answer) |
 | `LOOPBACK` | every byte the ZX sends comes back |
 | `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
-| `ESPNET` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps) |
-| `AT` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools) |
+| `ESPNET[,<baud>]` | an emulated ESP module with NedoOS's ESPNET firmware 1.27 (binary sockets; NedoOS `sd_bootesp.$C` kernel and `currentNetwork=2` apps); `<baud>` = the rate its firmware was built for, by default the port's (ATM Turbo 2+ controller 38400, else 115200) |
+| `AT[,<baud>]` | an emulated ESP module with Espressif's AT firmware (NedoOS `currentNetwork=1` apps, Moon Rabbit, Karabas net-tools); `<baud>` as for `ESPNET` |
 | `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
 
 The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
@@ -78,19 +78,29 @@ The ZX-Evo's UART behaves like the AVR firmware chosen by `[EVO] Avr=`
 since 2010 is a preset: no interrupts, RTS by software, every access holds
 the Z80 ~30-50 us); at runtime `avr_firmware=ts2013` etc. The ZX-WiFi card is a real 16550 (auto flow control with
 MCR bit 5). A ZX-WiFi card on a ZX-Evo or TS-Conf is not fitted (#xxEF is
-taken): `not_fitted` in `inspect_state network` says so.
+taken): `not_fitted` in `inspect_state network` says so. The
+bytes that arrive are TTD input like the card's. Details:
+[reference-evo-com-port.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-evo-com-port.md).
 
 On the ATM Turbo 2+ (`ATM710`) the machine's serial port is the keyboard
 controller's RS-232: `ComPort=` plugs into the MCU's own UART (firmware
-`[ATM] Kbc=` V31 and later; the default V41 runs up to 115200 baud). The
-Z80 drives it through `IN #FE` commands (`#55`, `#03 d` send, `#02` receive,
-`#C2` count, `#43 d` DTR / RTS, `#C3 d` baud divisor); the peer only sends
-while RTS is asserted. It is not on #xxEF, so a ZX-WiFi card fits beside it.
-`inspect_state network` shows it as `machine_serial`; at runtime
-`kbc_firmware=v31-11` etc. fits another controller. Details:
-[tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md). The
-bytes that arrive are TTD input like the card's. Details:
-[reference-evo-com-port.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-evo-com-port.md).
+`[ATM] Kbc=` V31 and later). The Z80 drives it through `IN #FE` commands
+(`#55`, `#03 d` send, `#02` receive, `#C2` count, `#43 d` DTR / RTS, `#C3 d`
+baud divisor); the peer only sends while RTS is asserted. It is not on
+#xxEF, so a ZX-WiFi card fits beside it. `inspect_state network` shows it
+as `machine_serial` (with `peer_baud`, the module's own rate); at runtime
+`kbc_firmware=v31-11` etc. fits another controller.
+
+An ESP module on this port ships at **38400** (`ESPNET` / `AT` without
+`,<baud>`): NedoOS's ESPNET firmware is built for 38400 here ("ATM2COM"),
+and the controller's receive does not keep up with 115200. NedoOS selects
+the port with `/ini/espcom.ini` `comType = 1`, `divider = 3` and `espcfg`
+(the floppy `osatm2esp.trd` runs `wizcfg` instead and stays at the kernel's
+115200: the line then reads garbage). The NedoOS driver also needs the Z80
+at 3.5 MHz while it polls: at 7 MHz its back-to-back `IN #FE` reads leave
+the 8051 no time for its serial interrupt, and received bytes are lost
+(`lost` in `machine_serial`; measured, tdd-atm2-kbc.md §7). Details:
+[tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
 
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",

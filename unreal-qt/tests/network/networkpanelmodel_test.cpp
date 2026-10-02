@@ -153,3 +153,17 @@ TEST(NetworkPanelModel_Test, EveryAvrPresetParses)
         EXPECT_FALSE(text.empty());
     }
 }
+
+TEST(NetworkPanelModel_Test, AnEspModuleKeepsItsRate)
+{
+    const NetworkForm form = NetworkFormFromState(State("atm2-kbc", true, "NONE", "ESPNET,38400", "AT"));
+    EXPECT_EQ(form.comPort.kind, ComPortSpec::Kind::Espnet);
+    EXPECT_EQ(form.comPort.baud, 38400u);
+
+    NetworkForm edited = form;
+    edited.comPort.baud = 0;   // back to the port's default
+    const auto changes = NetworkFormChanges(form, edited);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, "com_port");
+    EXPECT_EQ(changes[0].second, "ESPNET");
+}

@@ -1753,7 +1753,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << machineSerial["peer"].asString()
                                             << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
                                             << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()
-                                            << " baud, RTS " << (machineSerial["rts"].asBool() ? "on" : "off") << ", in "
+                                            << " baud"
+                                            << (machineSerial.isMember("peer_baud") ? " (module " + std::to_string(machineSerial["peer_baud"].asUInt()) + ")" : std::string())
+                                            << ", RTS " << (machineSerial["rts"].asBool() ? "on" : "off") << ", in "
                                             << machineSerial["bytes_in"].asUInt64() << " / out " << machineSerial["bytes_out"].asUInt64() << " bytes, lost "
                                             << machineSerial["lost"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])

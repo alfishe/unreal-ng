@@ -135,6 +135,19 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     serial->addWidget(_baud);
     layout->addWidget(_serialRow);
 
+    // An ESP module ships at the rate its firmware was built for
+    _espRow = new QWidget(this);
+    auto* espLine = new QHBoxLayout(_espRow);
+    espLine->setContentsMargins(0, 0, 0, 0);
+    _espBaud = new QComboBox(_espRow);
+    _espBaud->addItem(tr("The port's default (ATM Turbo 2+: 38400, others: 115200)"), 0u);
+    for (uint32_t rate : NetworkSerialBaudChoices())
+        _espBaud->addItem(QString::number(rate), rate);
+    _espBaud->setToolTip(tr("The module's firmware rate; the ZX must program the same, else both sides read garbage"));
+    espLine->addWidget(new QLabel(tr("Module baud"), _espRow));
+    espLine->addWidget(_espBaud, 1);
+    layout->addWidget(_espRow);
+
     connect(_kind, &QComboBox::currentIndexChanged, this, [this] {
         updateFields();
         emit edited();
@@ -143,12 +156,13 @@ SerialPeerEditor::SerialPeerEditor(QWidget* parent) : QWidget(parent)
     connect(_port, &QSpinBox::valueChanged, this, &SerialPeerEditor::edited);
     connect(_device, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
     connect(_baud, &QComboBox::currentTextChanged, this, &SerialPeerEditor::edited);
+    connect(_espBaud, &QComboBox::currentIndexChanged, this, &SerialPeerEditor::edited);
     updateFields();
 }
 
 void SerialPeerEditor::setSpec(const ComPortSpec& spec)
 {
-    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud);
+    const QSignalBlocker b1(_kind), b2(_host), b3(_port), b4(_device), b5(_baud), b6(_espBaud);
     _kind->setCurrentIndex(IndexOf(spec.kind));
     if (spec.kind == ComPortSpec::Kind::Tcp)
     {
@@ -159,6 +173,16 @@ void SerialPeerEditor::setSpec(const ComPortSpec& spec)
     {
         _device->setCurrentText(Q(spec.device));
         _baud->setCurrentText(QString::number(spec.baud));
+    }
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+    {
+        int index = _espBaud->findData(spec.baud);
+        if (index < 0)
+        {
+            _espBaud->addItem(QString::number(spec.baud), spec.baud);
+            index = _espBaud->count() - 1;
+        }
+        _espBaud->setCurrentIndex(index);
     }
     updateFields();
 }
@@ -179,6 +203,8 @@ ComPortSpec SerialPeerEditor::spec() const
         const uint32_t baud = _baud->currentText().trimmed().toUInt(&ok);
         spec.baud = ok && baud ? baud : 115200;
     }
+    if (spec.kind == ComPortSpec::Kind::Espnet || spec.kind == ComPortSpec::Kind::At)
+        spec.baud = _espBaud->currentData().toUInt();
     return spec;
 }
 
@@ -198,6 +224,7 @@ void SerialPeerEditor::updateFields()
 {
     _tcpRow->setVisible(_kind->currentIndex() == PeerTcp);
     _serialRow->setVisible(_kind->currentIndex() == PeerSerial);
+    _espRow->setVisible(_kind->currentIndex() == PeerEspnet || _kind->currentIndex() == PeerAt);
 }
 
 /// endregion </SerialPeerEditor>

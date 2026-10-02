@@ -78,6 +78,9 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM710::DescribeNetwork()
         caps.serialPort = NetworkCapabilities::SerialPort::Atm2Kbc;
         caps.firmware = info->name;
         caps.serialBaud = [kbc]() { return kbc->SerialBaud(); };
+        // NedoOS's ESPNET firmware is built for 38400 on this port ("ATM2COM"):
+        // the controller's receive keeps up with it, not with 115200
+        caps.espBaud = 38400;
     }
     return caps;
 }

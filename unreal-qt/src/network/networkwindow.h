@@ -59,6 +59,8 @@ private:
     QComboBox* _baud = nullptr;
     QWidget* _tcpRow = nullptr;
     QWidget* _serialRow = nullptr;
+    QComboBox* _espBaud = nullptr;
+    QWidget* _espRow = nullptr;
     QStringList _devices;
 };
 
