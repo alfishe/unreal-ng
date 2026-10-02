@@ -273,6 +273,9 @@ Z3 can run in parallel with Z1.
 5. **Q5 — may `zx run` copy the file into an attached hard-disk image?** *Recommendation:* no: only into
    an attached host folder, or use a file already on a volume; refuse otherwise with the reason. Images
    are the user's data.
+   **Owner decision (2026-10-02): yes, through the change layer** - `zx run` may copy the file into an attached
+   hard-disk image, but only into its change layer (the shared CHD-style layer; the base image is never written),
+   and the layer can be discarded. A host folder or a file already on a volume needs no copy.
 6. **Q6 — default mode for `zx run`.** *Recommendation:* the disk's own `SPECTRUM.CFG` (what a user gets
    typing `spectrum game.trd`); `mode` overrides; tape files default to `P128.ZX` because the default mode
    has `/turbo`.
