@@ -217,6 +217,12 @@ set(ZLIB_LIBRARIES ${ZLIB_LIBRARIES} CACHE STRING "" FORCE)
 set(ZLIB_INCLUDE_DIRS ${ZLIB_INCLUDE_DIR} CACHE PATH "" FORCE)
 
 # Add Drogon
+# Linux distributions can provide shared-only development libraries (for
+# example Fedora's libuuid-devel). Keep Drogon itself static, but allow its
+# system dependencies to use the distribution's shared libraries.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    option(USE_STATIC_LIBS_ONLY "Use only static libraries as dependencies" OFF)
+endif()
 add_subdirectory(lib/drogon)
 
 
@@ -424,6 +430,5 @@ if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
 endif()
-
 
 

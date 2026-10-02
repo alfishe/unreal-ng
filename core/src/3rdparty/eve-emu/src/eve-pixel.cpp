@@ -159,13 +159,16 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
             dst[c] = out[c];
     if (WritesTag(run))
         run.tag[x] = ctx.tag;
-    if (Mode == LineMode::Probe && x == run.probeX)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = run.primitive;
+        if (x == run.probeX)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = run.primitive;
+        }
     }
 }
 
@@ -280,13 +283,16 @@ void ClearLine(LineRun& run, uint32_t mask)
     }
     if ((mask & kClearTag) && WritesTag(run))
         std::memset(run.tag + first, ctx.clearTag, count);
-    if (Mode == LineMode::Probe && (mask & kClearColor) && run.probeX >= first && run.probeX < last)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = kPrimNone;
+        if ((mask & kClearColor) && run.probeX >= first && run.probeX < last)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = kPrimNone;
+        }
     }
     run.fillCost += static_cast<uint64_t>(last - first) * (kFillCostScale / kPrimitivePixelsPerClock);
 }

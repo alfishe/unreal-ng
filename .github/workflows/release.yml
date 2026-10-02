@@ -29,17 +29,24 @@ on:
     tags:
       - 'v*'
 
+  # Pull requests build packages without publishing a release.
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+
   # Rolling snapshots: triggered manually via GitHub Actions UI
   workflow_dispatch:
 
 # Prevent duplicate release builds
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && 'continuous' || github.ref }}
   cancel-in-progress: false
 
-# Permissions required for creating releases and tags
+# Only the final publishing job can modify releases or tags.
 permissions:
-  contents: write
+  contents: read
 
 env:
   BUILD_TYPE: Release
@@ -52,16 +59,143 @@ env:
   PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
 jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      package-version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Generate package version (no manual version bumps)
+        id: version
+        run: echo "value=$(date -u +%Y%m%d.%H%M%S)" >> "$GITHUB_OUTPUT"
+
+  build-native-linux:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:25.10
+            format: DEB
+            extension: deb
+            artifact: DEB-system
+            basename: UnrealNG-Suite-Ubuntu-25.10-x86_64
+          - image: fedora:43
+            format: RPM
+            extension: rpm
+            artifact: RPM
+            basename: UnrealNG-Suite-Linux-x86_64
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install Debian build dependencies
+        if: matrix.format == 'DEB'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential cmake ninja-build pkg-config file \
+            qt6-base-dev qt6-multimedia-dev qt6-svg-dev qt6-5compat-dev libqt6opengl6-dev \
+            qt6-qpa-plugins libqt6svg6 libgl1-mesa-dev \
+            libssl-dev zlib1g-dev uuid-dev libbrotli-dev dpkg-dev
+      - name: Install RPM build dependencies
+        if: matrix.format == 'RPM'
+        run: |
+          dnf install -y git gcc-c++ libstdc++-static cmake ninja-build pkgconf-pkg-config \
+            qt6-qtbase-devel qt6-qtmultimedia-devel qt6-qtsvg-devel qt6-qt5compat-devel \
+            mesa-libGL-devel openssl-devel zlib-devel libuuid-devel brotli-devel \
+            rpm-build
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure with system Qt (also tests Linux Qt discovery)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+            -DRELEASE_WITH_DEBUG_SYMBOLS=OFF \
+            -DUNREAL_PACKAGE_VERSION=${{ needs.metadata.outputs.package-version }} \
+            -DUNREAL_PACKAGE_BASENAME=${{ matrix.basename }}
+      - name: Build
+        run: |
+          jobs=$(( $(nproc) / 2 ))
+          cmake --build build --parallel "$(( jobs > 0 ? jobs : 1 ))"
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -G ${{ matrix.format }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Suite-Linux-${{ matrix.artifact }}
+          path: build/packages/*.${{ matrix.extension }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  verify-native-linux:
+    needs: [build-native-linux, build-linux]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            format: DEB
+            artifact: DEB-bundled
+            bundled: true
+          - image: ubuntu:25.10
+            format: DEB
+            artifact: DEB-system
+            bundled: false
+          - image: ubuntu:26.04
+            format: DEB
+            artifact: DEB-system
+            bundled: false
+          - image: fedora:43
+            format: RPM
+            artifact: RPM
+            bundled: false
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: UnrealNG-Suite-Linux-${{ matrix.artifact }}
+          path: packages
+      - name: Install DEB and verify runtime
+        if: matrix.format == 'DEB'
+        run: |
+          apt-get update
+          apt-get install -y ./packages/*.deb
+          dpkg-deb --info packages/*.deb
+          if [ '${{ matrix.bundled }}' = true ]; then
+            test -f /usr/lib/unreal-ng/lib/libQt6Core.so.6
+            test -f /usr/lib/unreal-ng/plugins/platforms/libqxcb.so
+            test -f /usr/lib/unreal-ng/plugins/iconengines/libqsvgicon.so
+            # Ubuntu 24.04 must not need its older system Qt packages.
+            if dpkg-query -W 'libqt6*' 2>/dev/null | grep -q .; then
+              echo "Unexpected system Qt dependency in bundled DEB" >&2
+              exit 1
+            fi
+          else
+            test ! -e /usr/lib/unreal-ng/lib/libQt6Core.so.6
+            dpkg-query -W libqt6core6t64
+          fi
+          QT_QPA_PLATFORM=offscreen unreal-qt --help
+          test -f /usr/lib/unreal-ng/configs/pentagon512k/unreal.ini
+          test -f /usr/lib/unreal-ng/rom/README-ROMS.md
+      - name: Install RPM and verify runtime
+        if: matrix.format == 'RPM'
+        run: |
+          dnf install -y ./packages/*.rpm
+          rpm -qR unreal-ng
+          QT_QPA_PLATFORM=offscreen unreal-qt --help
+          test -f /usr/lib/unreal-ng/configs/pentagon512k/unreal.ini
+          test -f /usr/lib/unreal-ng/rom/README-ROMS.md
+
   # ========================================
-  # Linux Build (using Docker container)
+  # Ubuntu DEB and portable Linux build (bundled Qt)
   # ========================================
   build-linux:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/alfishe/unreal-ng:qt6.9.3
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    needs: metadata
+    runs-on: ubuntu-24.04
+    env:
+      UNREAL_PACKAGE_VERSION: ${{ needs.metadata.outputs.package-version }}
 
     steps:
       - name: Checkout
@@ -69,8 +203,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Fix git permissions
-        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      - name: Install build and deployment dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev zlib1g-dev uuid-dev libbrotli-dev \
+            libgl1-mesa-dev libfuse2t64 patchelf desktop-file-utils dpkg-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qtmultimedia qt5compat'
+          cache: true
 
       - name: Configure CMake
         run: |
@@ -80,23 +224,71 @@ jobs:
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
-            -DQT_INSTALL_PATH=/opt/qt/current
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DUNREAL_PACKAGE_VERSION="$UNREAL_PACKAGE_VERSION" \
+            -DUNREAL_BUNDLE_QT=ON \
+            -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Ubuntu-24.04-Qt-bundled-x86_64
 
       - name: Build
-        run: cmake --build build --parallel
+        shell: bash
+        run: |
+          jobs=$(python -c 'import os; print(max(1, (os.cpu_count() or 1) // 2))')
+          cmake --build build --parallel "$jobs"
+
+      - name: Package DEB with private Qt runtime
+        run: cpack --config build/CPackConfig.cmake -G DEB
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Suite-Linux-DEB-bundled
+          path: build/packages/*.deb
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        run: cmake --build build --target package_symbols_linux
+        run: cmake --build build --parallel 1 --target package_symbols_linux
 
       - name: Package
-        run: cmake --build build --target package_suite_linux
+        run: cmake --build build --parallel 1 --target package_suite_linux
+
+      - name: Download AppImage deployment tools
+        run: |
+          mkdir -p build/deploy-tools
+          for tool in linuxdeploy linuxdeploy-plugin-qt; do
+            curl --fail --location --retry 3 \
+              "https://github.com/linuxdeploy/$tool/releases/download/continuous/$tool-x86_64.AppImage" \
+              -o "build/deploy-tools/$tool-x86_64.AppImage"
+            chmod +x "build/deploy-tools/$tool-x86_64.AppImage"
+          done
+          echo "$PWD/build/deploy-tools" >> "$GITHUB_PATH"
+
+      - name: Package AppImage
+        run: QMAKE="$QT_ROOT_DIR/bin/qmake" bash tools/package-appimage.sh build
+
+      - name: Verify bundled application without the Qt SDK environment
+        run: |
+          env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR \
+            APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen \
+            build/packages/UnrealNG-Suite-Linux-x86_64.AppImage --help
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v6
+        with:
+          name: UnrealNG-Suite-Linux-AppImage
+          path: build/packages/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v6
         with:
           name: UnrealNG-Suite-Linux
           path: build/packages/UnrealNG-Suite-Linux.tar.gz
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
 
@@ -106,6 +298,7 @@ jobs:
         with:
           name: UnrealNG-Symbols-Linux
           path: build/packages/UnrealNG-Symbols-Linux.tar.gz
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
@@ -113,7 +306,21 @@ jobs:
   # Windows MSVC Build
   # ========================================
   build-windows-msvc:
-    runs-on: windows-2022  # Pin to VS 2022 (windows-latest has VS 2025)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch: x64
+            qt-host: windows
+            qt-arch: win64_msvc2022_64
+            artifact: MSVC
+          - runner: windows-11-arm
+            arch: arm64
+            qt-host: windows_arm64
+            qt-arch: win64_msvc2022_arm64
+            artifact: ARM64
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -125,26 +332,35 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          architecture: ${{ matrix.arch }}
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
-          host: 'windows'
+          host: ${{ matrix.qt-host }}
           target: 'desktop'
-          arch: 'win64_msvc2022_64'
+          arch: ${{ matrix.qt-arch }}
           modules: 'qtmultimedia qt5compat'
           cache: true
 
       - name: Setup MSVC
         uses: egor-tensin/vs-shell@v2
         with:
-          arch: x64
+          arch: ${{ matrix.arch }}
 
+      - name: Install static OpenSSL
+        run: vcpkg install openssl:${{ matrix.arch }}-windows-static-md
+
+      # Each link runs windeployqt into the shared bin directory; serialize those copies.
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_JOB_POOLS=qt_deployment=1 `
+            -DCMAKE_JOB_POOL_LINK=qt_deployment `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.arch }}-windows-static-md `
             -DBUILD_QT_APPS=ON `
             -DTESTS=OFF `
             -DBENCHMARKS=OFF `
@@ -153,20 +369,29 @@ jobs:
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
-        run: cmake --build build --parallel
+        shell: bash
+        run: |
+          jobs=$(python -c 'import os; print(max(1, (os.cpu_count() or 1) // 2))')
+          cmake --build build --parallel "$jobs"
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        run: cmake --build build --target package_symbols_windows
+        run: cmake --build build --parallel 1 --target package_symbols_windows
 
       - name: Package
-        run: cmake --build build --target package_suite_windows
+        run: cmake --build build --parallel 1 --target package_suite_windows
+
+      - name: Verify packaged executable
+        shell: pwsh
+        timeout-minutes: 2
+        run: ./tools/verify-windows-package.ps1 -Architecture ${{ matrix.arch }} -RequireMSVCRuntime
 
       - name: Upload Windows MSVC artifact
         uses: actions/upload-artifact@v6
         with:
-          name: UnrealNG-Suite-Windows-MSVC
+          name: UnrealNG-Suite-Windows-${{ matrix.artifact }}
           path: build/packages/UnrealNG-Suite-Windows.zip
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
 
@@ -174,8 +399,9 @@ jobs:
         if: env.PACKAGE_SYMBOLS == 'ON'
         uses: actions/upload-artifact@v6
         with:
-          name: UnrealNG-Symbols-Windows-MSVC
+          name: UnrealNG-Symbols-Windows-${{ matrix.artifact }}
           path: build/packages/UnrealNG-Symbols-Windows-MSVC.zip
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
@@ -220,6 +446,7 @@ jobs:
           Write-Host "QT_ROOT_DIR: $env:QT_ROOT_DIR"
           Get-ChildItem "$env:QT_ROOT_DIR\lib\cmake" -Directory | Select-Object Name
 
+      # Each link runs windeployqt into the shared bin directory; serialize those copies.
       - name: Configure CMake
         shell: msys2 {0}
         run: |
@@ -228,6 +455,8 @@ jobs:
           echo "Using Qt at: $QT_PATH"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_JOB_POOLS=qt_deployment=1 \
+            -DCMAKE_JOB_POOL_LINK=qt_deployment \
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
@@ -237,18 +466,25 @@ jobs:
 
       - name: Build
         shell: msys2 {0}
-        run: cmake --build build --parallel
+        run: |
+          jobs=$(python -c 'import os; print(max(1, (os.cpu_count() or 1) // 2))')
+          cmake --build build --parallel "$jobs"
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
         shell: msys2 {0}
-        run: cmake --build build --target package_symbols_mingw
+        run: cmake --build build --parallel 1 --target package_symbols_mingw
 
       - name: Package
         shell: msys2 {0}
         run: |
-          cmake --build build --target package_suite_windows
-          cmake --build build --target package_mingw_runtime
+          cmake --build build --parallel 1 --target package_suite_windows
+          cmake --build build --parallel 1 --target package_mingw_runtime
+
+      - name: Verify packaged executable
+        shell: pwsh
+        timeout-minutes: 2
+        run: ./tools/verify-windows-package.ps1
 
       - name: Rename artifact
         shell: pwsh
@@ -260,6 +496,7 @@ jobs:
         with:
           name: UnrealNG-Suite-Windows-MinGW
           path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0  # Already compressed, skip double-compression
 
@@ -269,17 +506,15 @@ jobs:
         with:
           name: UnrealNG-Symbols-Windows-MinGW
           path: build/packages/UnrealNG-Symbols-Windows-MinGW.zip
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
   # ========================================
-  # macOS Build (Intel x64) - DISABLED
-  # No macOS Intel runners available on GitHub Actions.
-  # Re-enable by removing `if: false` and adding back to release `needs`.
+  # macOS Build (Intel x64)
   # ========================================
   build-macos:
-    if: false
-    runs-on: macos-13  # Last Intel runner
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout
@@ -297,10 +532,14 @@ jobs:
           modules: 'qtmultimedia qt5compat'
           cache: true
 
+      - name: Install build dependencies
+        run: brew install ninja openssl@3
+
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOS_DEPLOYMENT_TARGET }} \
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
@@ -308,7 +547,10 @@ jobs:
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
-        run: cmake --build build --parallel
+        shell: bash
+        run: |
+          jobs=$(python -c 'import os; print(max(1, (os.cpu_count() or 1) // 2))')
+          cmake --build build --parallel "$jobs"
 
       - name: Verify macOS deployment target
         run: |
@@ -331,13 +573,14 @@ jobs:
           fi
 
       - name: Package
-        run: cmake --build build --target package_suite_macos
+        run: cmake --build build --parallel 1 --target package_suite_macos
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v6
         with:
-          name: UnrealNG-Suite-macOS
+          name: UnrealNG-Suite-macOS-Intel
           path: build/packages/UnrealNG-Suite.dmg
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0  # DMG is already compressed
 
@@ -363,10 +606,14 @@ jobs:
           modules: 'qtmultimedia qt5compat'
           cache: true
 
+      - name: Install build dependencies
+        run: brew install ninja openssl@3
+
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOS_DEPLOYMENT_TARGET }} \
             -DBUILD_QT_APPS=ON \
@@ -376,7 +623,7 @@ jobs:
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 1
 
       - name: Verify macOS deployment target
         run: |
@@ -400,10 +647,10 @@ jobs:
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
-        run: cmake --build build --target package_symbols_macos
+        run: cmake --build build --parallel 1 --target package_symbols_macos
 
       - name: Package
-        run: cmake --build build --target package_suite_macos
+        run: cmake --build build --parallel 1 --target package_suite_macos
 
       - name: Rename artifact
         run: mv build/packages/UnrealNG-Suite.dmg build/packages/UnrealNG-Suite-macOS-ARM64.dmg
@@ -413,6 +660,7 @@ jobs:
         with:
           name: UnrealNG-Suite-macOS-ARM64
           path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0  # DMG is already compressed
 
@@ -422,6 +670,7 @@ jobs:
         with:
           name: UnrealNG-Symbols-macOS-ARM64
           path: build/packages/UnrealNG-Symbols-macOS.tar.gz
+          if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
@@ -434,7 +683,7 @@ jobs:
   # - tag push (v*)     → Milestone release (permanent, never deleted)
   #
   release:
-    needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos-arm64]
+    needs: [metadata, verify-native-linux, build-linux, build-windows-msvc, build-windows-mingw, build-macos, build-macos-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
@@ -442,11 +691,8 @@ jobs:
       contents: write
 
     steps:
-      # Need full git history for git-describe to work
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v6
@@ -457,7 +703,13 @@ jobs:
         run: |
           mkdir -p release
           cp artifacts/UnrealNG-Suite-Linux/UnrealNG-Suite-Linux.tar.gz release/
+          cp artifacts/UnrealNG-Suite-Linux-DEB-bundled/*.deb release/
+          cp artifacts/UnrealNG-Suite-Linux-DEB-system/*.deb release/
+          cp artifacts/UnrealNG-Suite-Linux-RPM/*.rpm release/
+          cp artifacts/UnrealNG-Suite-Linux-AppImage/*.AppImage release/
+          cp artifacts/UnrealNG-Suite-macOS-Intel/UnrealNG-Suite.dmg release/UnrealNG-Suite-macOS-Intel.dmg
           cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
+          cp artifacts/UnrealNG-Suite-Windows-ARM64/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-ARM64.zip
           cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
           cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
           ls -la release/
@@ -468,6 +720,7 @@ jobs:
           # Copy symbol archives if they exist (only for rolling snapshots)
           cp artifacts/UnrealNG-Symbols-Linux/UnrealNG-Symbols-Linux.tar.gz release/ 2>/dev/null || true
           cp artifacts/UnrealNG-Symbols-Windows-MSVC/UnrealNG-Symbols-Windows-MSVC.zip release/ 2>/dev/null || true
+          cp artifacts/UnrealNG-Symbols-Windows-ARM64/UnrealNG-Symbols-Windows-MSVC.zip release/UnrealNG-Symbols-Windows-ARM64.zip 2>/dev/null || true
           cp artifacts/UnrealNG-Symbols-Windows-MinGW/UnrealNG-Symbols-Windows-MinGW.zip release/ 2>/dev/null || true
           cp artifacts/UnrealNG-Symbols-macOS-ARM64/UnrealNG-Symbols-macOS.tar.gz release/UnrealNG-Symbols-macOS-ARM64.tar.gz 2>/dev/null || true
           ls -la release/
@@ -484,7 +737,7 @@ jobs:
       # - Deletes existing "continuous" release and tag
       # - Creates new "continuous" release pointing to current commit
       # - Marked as pre-release
-      # - Version derived from git: 0.1.0-<commits>-g<hash>
+      # - Package version generated from the build timestamp
       # - Stable URL: https://github.com/alfishe/unreal-ng/releases/tag/continuous
       #
       - name: Create Rolling Snapshot
@@ -492,10 +745,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Generate version string from git history
-          # Format: 0.1.0-123-gabcdef0 (base version + commit count + short hash)
-          VERSION=$(git describe --tags --long --always 2>/dev/null || \
-                    echo "0.1.0-$(git rev-list --count HEAD)-g$(git rev-parse --short HEAD)")
+          # Automatically generated; no version tags or source edits required.
+          VERSION="${{ needs.metadata.outputs.package-version }}"
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           SHORT_SHA=$(git rev-parse --short HEAD)
 
@@ -524,7 +775,13 @@ jobs:
           | Platform | File |
           |----------|------|
           | Linux (x64) | \`UnrealNG-Suite-Linux.tar.gz\` |
+          | Ubuntu 24.04 (x64, bundled Qt) | \`UnrealNG-Suite-Ubuntu-24.04-Qt-bundled-x86_64.deb\` |
+          | Ubuntu 25.10 (x64, system Qt) | \`UnrealNG-Suite-Ubuntu-25.10-x86_64.deb\` |
+          | Fedora 43 (x64) | \`UnrealNG-Suite-Linux-x86_64.rpm\` |
+          | Linux AppImage (x64, glibc 2.39+) | \`UnrealNG-Suite-Linux-x86_64.AppImage\` |
+          | macOS Intel, macOS 12 or later | \`UnrealNG-Suite-macOS-Intel.dmg\` |
           | Windows MSVC (x64) | \`UnrealNG-Suite-Windows-MSVC.zip\` |
+          | Windows ARM64 | \`UnrealNG-Suite-Windows-ARM64.zip\` |
           | Windows MinGW (x64) | \`UnrealNG-Suite-Windows-MinGW.zip\` |
           | macOS Apple Silicon (ARM64), macOS 12 or later | \`UnrealNG-Suite-macOS-ARM64.dmg\` |
 
@@ -534,6 +791,7 @@ jobs:
           |----------|------|
           | Linux | \`UnrealNG-Symbols-Linux.tar.gz\` |
           | Windows MSVC | \`UnrealNG-Symbols-Windows-MSVC.zip\` |
+          | Windows ARM64 | \`UnrealNG-Symbols-Windows-ARM64.zip\` |
           | Windows MinGW | \`UnrealNG-Symbols-Windows-MinGW.zip\` |
           | macOS ARM64 | \`UnrealNG-Symbols-macOS-ARM64.tar.gz\` |
 
@@ -560,8 +818,13 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
           files: |
+            release/*.deb
+            release/*.rpm
+            release/*.AppImage
+            release/UnrealNG-Suite-macOS-Intel.dmg
             release/UnrealNG-Suite-Linux.tar.gz
             release/UnrealNG-Suite-Windows-MSVC.zip
+            release/UnrealNG-Suite-Windows-ARM64.zip
             release/UnrealNG-Suite-Windows-MinGW.zip
             release/UnrealNG-Suite-macOS-ARM64.dmg
             release/SHA256SUMS.txt
@@ -579,7 +842,13 @@ jobs:
             | Platform | File |
             |----------|------|
             | Linux (x64) | `UnrealNG-Suite-Linux.tar.gz` |
+            | Ubuntu 24.04 (x64, bundled Qt) | `UnrealNG-Suite-Ubuntu-24.04-Qt-bundled-x86_64.deb` |
+            | Ubuntu 25.10 (x64, system Qt) | `UnrealNG-Suite-Ubuntu-25.10-x86_64.deb` |
+            | Fedora 43 (x64) | `UnrealNG-Suite-Linux-x86_64.rpm` |
+            | Linux AppImage (x64, glibc 2.39+) | `UnrealNG-Suite-Linux-x86_64.AppImage` |
+            | macOS Intel, macOS 12 or later | `UnrealNG-Suite-macOS-Intel.dmg` |
             | Windows MSVC (x64) | `UnrealNG-Suite-Windows-MSVC.zip` |
+            | Windows ARM64 | `UnrealNG-Suite-Windows-ARM64.zip` |
             | Windows MinGW (x64) | `UnrealNG-Suite-Windows-MinGW.zip` |
             | macOS Apple Silicon (ARM64), macOS 12 or later | `UnrealNG-Suite-macOS-ARM64.dmg` |
 

@@ -17,11 +17,11 @@
 namespace
 {
 /// The area's rectangle inside the frame
-bool AreaRect(const PictureGeometry& g, ScreenshotArea area, FrameRect& rect, std::string& why)
+bool AreaRect(const PictureGeometry& g, ScreenshotArea area, VideoFrameRect& rect, std::string& why)
 {
     if (area == ScreenshotArea::Full)
     {
-        rect = FrameRect{0, 0, g.width, g.height};
+        rect = VideoFrameRect{0, 0, g.width, g.height};
         return true;
     }
 
@@ -39,7 +39,7 @@ bool AreaRect(const PictureGeometry& g, ScreenshotArea area, FrameRect& rect, st
 }
 
 /// RGBA of `rect` out of a frame of `stride` bytes per line
-std::vector<uint8_t> Crop(const std::vector<uint8_t>& pixels, uint32_t stride, const FrameRect& rect)
+std::vector<uint8_t> Crop(const std::vector<uint8_t>& pixels, uint32_t stride, const VideoFrameRect& rect)
 {
     std::vector<uint8_t> out(static_cast<size_t>(rect.width) * rect.height * RGBA_SIZE);
     const size_t lineBytes = static_cast<size_t>(rect.width) * RGBA_SIZE;
@@ -121,7 +121,7 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
     if (g.width == 0 || g.height == 0 || snapshot.pixels.size() != static_cast<size_t>(g.stride) * g.height)
         return Fail(ScreenshotError::NoFrame, "The frame has no pixels or its geometry does not match them");
 
-    FrameRect rect;
+    VideoFrameRect rect;
     std::string why;
     if (!AreaRect(g, options.area, rect, why))
         return Fail(ScreenshotError::BadGeometry, why);

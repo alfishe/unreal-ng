@@ -22,7 +22,7 @@
 namespace
 {
 /// A frame where pixel (x, y) is {x, y, x ^ y, 255}: every pixel tells where it came from
-FrameSnapshot Gradient(uint16_t width, uint16_t height, FrameRect window)
+FrameSnapshot Gradient(uint16_t width, uint16_t height, VideoFrameRect window)
 {
     FrameSnapshot s;
     s.geometry.width = width;
@@ -64,7 +64,7 @@ ScreenshotOptions Options(ScreenshotArea area, ScreenshotFormat format = Screens
 
 TEST(Screenshotter_Test, FullFrameIsReturnedAsIsAndSaysWhatItIs)
 {
-    const FrameSnapshot frame = Gradient(20, 10, FrameRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(20, 10, VideoFrameRect{4, 2, 8, 5});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
     ASSERT_TRUE(r.ok) << r.errorMessage;
     EXPECT_EQ(r.width, 20);
@@ -87,7 +87,7 @@ TEST(Screenshotter_Test, FullFrameIsReturnedAsIsAndSaysWhatItIs)
 
 TEST(Screenshotter_Test, ScreenAreaIsExactlyTheFramesWindow)
 {
-    const FrameSnapshot frame = Gradient(20, 10, FrameRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(20, 10, VideoFrameRect{4, 2, 8, 5});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(r.ok) << r.errorMessage;
     EXPECT_EQ(r.width, 8);
@@ -114,7 +114,7 @@ TEST(Screenshotter_Test, ScreenAreaIsExactlyTheFramesWindow)
 TEST(Screenshotter_Test, WindowThatIsTheWholeFrameMakesFullAndScreenTheSamePicture)
 {
     // Hires modes: the working picture can be the whole frame, and then there is nothing to cut
-    const FrameSnapshot frame = Gradient(16, 8, FrameRect{0, 0, 16, 8});
+    const FrameSnapshot frame = Gradient(16, 8, VideoFrameRect{0, 0, 16, 8});
     const ScreenshotResult full = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
     const ScreenshotResult screen = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(full.ok && screen.ok);
@@ -123,7 +123,7 @@ TEST(Screenshotter_Test, WindowThatIsTheWholeFrameMakesFullAndScreenTheSamePictu
 
 TEST(Screenshotter_Test, WindowOutsideTheFrameIsAnErrorNamingTheSizes)
 {
-    for (const FrameRect window : {FrameRect{15, 0, 8, 5}, FrameRect{0, 8, 4, 4}, FrameRect{0, 0, 0, 0}})
+    for (const VideoFrameRect window : {VideoFrameRect{15, 0, 8, 5}, VideoFrameRect{0, 8, 4, 4}, VideoFrameRect{0, 0, 0, 0}})
     {
         const FrameSnapshot frame = Gradient(20, 10, window);
         const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
@@ -133,12 +133,12 @@ TEST(Screenshotter_Test, WindowOutsideTheFrameIsAnErrorNamingTheSizes)
         EXPECT_TRUE(r.bytes.empty()) << "never a silent substitute picture";
     }
     // The whole frame still works for the same snapshot
-    EXPECT_TRUE(Screenshotter::Render(Gradient(20, 10, FrameRect{0, 0, 0, 0}), Options(ScreenshotArea::Full)).ok);
+    EXPECT_TRUE(Screenshotter::Render(Gradient(20, 10, VideoFrameRect{0, 0, 0, 0}), Options(ScreenshotArea::Full)).ok);
 }
 
 TEST(Screenshotter_Test, PixelsThatDoNotMatchTheirGeometryAreNoFrame)
 {
-    FrameSnapshot frame = Gradient(20, 10, FrameRect{0, 0, 20, 10});
+    FrameSnapshot frame = Gradient(20, 10, VideoFrameRect{0, 0, 20, 10});
     frame.pixels.resize(frame.pixels.size() - 4);
     EXPECT_EQ(Screenshotter::Render(frame, Options(ScreenshotArea::Full)).error, ScreenshotError::NoFrame);
     EXPECT_EQ(Screenshotter::Render(FrameSnapshot{}, Options(ScreenshotArea::Full)).error, ScreenshotError::NoFrame);
@@ -150,7 +150,7 @@ TEST(Screenshotter_Test, PixelsThatDoNotMatchTheirGeometryAreNoFrame)
 
 TEST(Screenshotter_Test, GifIsAGifOfTheRightSize)
 {
-    const FrameSnapshot frame = Gradient(20, 10, FrameRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(20, 10, VideoFrameRect{4, 2, 8, 5});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen, ScreenshotFormat::Gif));
     ASSERT_TRUE(r.ok) << r.errorMessage;
     ASSERT_GT(r.bytes.size(), 13u);
@@ -164,7 +164,7 @@ TEST(Screenshotter_Test, GifIsAGifOfTheRightSize)
 /// same buffer shared it; here many threads encode the same frame at once and each gets its own file
 TEST(Screenshotter_Test, ConcurrentGifEncodesDoNotShareATempFile)
 {
-    const FrameSnapshot frame = Gradient(64, 48, FrameRect{0, 0, 64, 48});
+    const FrameSnapshot frame = Gradient(64, 48, VideoFrameRect{0, 0, 64, 48});
     const ScreenshotResult reference = Screenshotter::Render(frame, Options(ScreenshotArea::Full, ScreenshotFormat::Gif));
     ASSERT_TRUE(reference.ok);
 
@@ -192,7 +192,7 @@ TEST(Screenshotter_Test, ConcurrentGifEncodesDoNotShareATempFile)
 
 TEST(Screenshotter_Test, SaveToWritesTheSameBytesAndCreatesTheFolders)
 {
-    const FrameSnapshot frame = Gradient(20, 10, FrameRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(20, 10, VideoFrameRect{4, 2, 8, 5});
     const ScreenshotResult inMemory = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(inMemory.ok);
 
@@ -217,7 +217,7 @@ TEST(Screenshotter_Test, UnwritablePathIsAnIoErrorWithThePath)
     std::ofstream(blocker) << "x";
     ScreenshotOptions options = Options(ScreenshotArea::Full);
     options.saveTo = blocker + "/shot.png";
-    const ScreenshotResult r = Screenshotter::Render(Gradient(8, 8, FrameRect{0, 0, 8, 8}), options);
+    const ScreenshotResult r = Screenshotter::Render(Gradient(8, 8, VideoFrameRect{0, 0, 8, 8}), options);
     EXPECT_FALSE(r.ok);
     EXPECT_EQ(r.error, ScreenshotError::IoFailed);
     EXPECT_NE(r.errorMessage.find("shot.png"), std::string::npos) << r.errorMessage;

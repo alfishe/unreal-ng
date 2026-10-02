@@ -69,7 +69,7 @@ struct ScreenshotResult
 
     uint16_t width = 0;   ///< size of the returned image
     uint16_t height = 0;
-    FrameRect crop;       ///< the returned image's rectangle inside the frame
+    VideoFrameRect crop;       ///< the returned image's rectangle inside the frame
     PictureGeometry frame;  ///< the frame the image was taken from
 };
 
