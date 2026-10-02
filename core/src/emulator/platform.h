@@ -792,6 +792,9 @@ struct CONFIG
 		uint8_t fast_start;
 		// 1 = the front-panel turbo allows 21 MHz (MAME "turbo hard")
 		uint8_t turbo_allowed;
+		// 1 = an INT acknowledge suspends the accelerator until the M1 after RETI (the PLD's ACC_BLK,
+		// default); 0 = MAME's behavior ([SPRINTER] AccelIntSuspend=, tdd-accel-sound-input §1.3)
+		uint8_t accel_int_suspend = 1;
 		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
 		char cmos_path[FILENAME_MAX];
 	} sprinter;
