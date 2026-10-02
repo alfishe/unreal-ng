@@ -113,6 +113,10 @@ private:
     QComboBox* _avrFirmware = nullptr;
     QLabel* _avrWhy = nullptr;
     QComboBox* _kbcFirmware = nullptr;
+    QCheckBox* _atm2IoEsp = nullptr;
+    QLabel* _atm2IoEspWhy = nullptr;
+    SerialPeerEditor* _atm2IoEspPeer = nullptr;
+    QComboBox* _atm2IoEspAddress = nullptr;
     QLabel* _kbcWhy = nullptr;
     QComboBox* _espChip = nullptr;
     QCheckBox* _modemLines = nullptr;

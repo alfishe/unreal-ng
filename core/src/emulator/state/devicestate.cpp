@@ -1982,6 +1982,8 @@ StateNode Network(EmulatorContext* context)
     set["esp_chip"] = st.settings.espChip;
     set["com_modem_lines"] = st.settings.comModemLines;
     set["avr_firmware"] = st.settings.avrFirmware;
+    set["atm2ioesp"] = st.settings.atm2IoEsp;
+    set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
@@ -2000,6 +2002,7 @@ StateNode Network(EmulatorContext* context)
     StateNode& machine = ret["machine"];
     machine["zx_bus"] = st.zxBus;
     machine["serial_port"] = st.serialPort;
+    machine["internal_io"] = st.internalIo;
     ret["cards"] = st.cards;
     if (!st.notes.empty())
     {
@@ -2057,31 +2060,46 @@ StateNode Network(EmulatorContext* context)
         machineSerial["lost"] = m.lost;
     }
 
+    // A 16550's registers as the Z80 sees them (the #xxEF port, the ATM2IOESP card)
+    auto uartFields = [](StateNode& node, const NetworkManager::Status::Com& c) {
+        const Uart16550::View& u = c.uart;
+        node["divisor"] = int(u.divisor);
+        node["lcr"] = StringHelper::Format("#%02X", u.lcr);
+        node["mcr"] = StringHelper::Format("#%02X", u.mcr);
+        node["lsr"] = StringHelper::Format("#%02X", u.lsr);
+        node["msr"] = StringHelper::Format("#%02X", u.msr);
+        node["ier"] = StringHelper::Format("#%02X", u.ier);
+        node["iir"] = StringHelper::Format("#%02X", u.iir);
+        node["scr"] = StringHelper::Format("#%02X", u.scr);
+        node["rts"] = (u.mcr & Uart16550::kMcrRts) != 0;
+        node["cts"] = (u.msr & Uart16550::kMsrCts) != 0;
+        node["rx_fifo"] = int(u.rxCount);
+        node["tx_fifo"] = int(u.txCount);
+        node["bytes_in"] = u.bytesIn;
+        node["bytes_out"] = u.bytesOut;
+        node["overruns"] = u.overruns;
+    };
+
     // The COM port (TDD §7): the UART as the Z80 sees it and the peer
     StateNode& com = ret["com_port"];
     com["fitted"] = st.com.fitted;
     if (st.com.fitted)
     {
-        const Uart16550::View& u = st.com.uart;
         com["flavor"] = st.com.flavor;
         if (!st.com.firmware.empty())
             com["avr_firmware"] = st.com.firmware;
         peerFields(com, st.com);
-        com["divisor"] = int(u.divisor);
-        com["lcr"] = StringHelper::Format("#%02X", u.lcr);
-        com["mcr"] = StringHelper::Format("#%02X", u.mcr);
-        com["lsr"] = StringHelper::Format("#%02X", u.lsr);
-        com["msr"] = StringHelper::Format("#%02X", u.msr);
-        com["ier"] = StringHelper::Format("#%02X", u.ier);
-        com["iir"] = StringHelper::Format("#%02X", u.iir);
-        com["scr"] = StringHelper::Format("#%02X", u.scr);
-        com["rts"] = (u.mcr & Uart16550::kMcrRts) != 0;
-        com["cts"] = (u.msr & Uart16550::kMsrCts) != 0;
-        com["rx_fifo"] = int(u.rxCount);
-        com["tx_fifo"] = int(u.txCount);
-        com["bytes_in"] = u.bytesIn;
-        com["bytes_out"] = u.bytesOut;
-        com["overruns"] = u.overruns;
+        uartFields(com, st.com);
+    }
+
+    // The ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector: bus address (#FB), the 16550 and the peer
+    StateNode& ioEsp = ret["atm2ioesp"];
+    ioEsp["fitted"] = st.atm2IoEsp.fitted;
+    if (st.atm2IoEsp.fitted)
+    {
+        ioEsp["address"] = StringHelper::Format("0x%02X", st.atm2IoEspAddress);
+        peerFields(ioEsp, st.atm2IoEsp);
+        uartFields(ioEsp, st.atm2IoEsp);
     }
 
     StateNode& card = ret["card"];

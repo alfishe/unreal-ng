@@ -152,7 +152,16 @@ protected:
                 EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != echoed; }, 60, 1);
             }
         }
-        Tap({ZXKEY_ENTER}, kTypeHold);
+        // ENTER can be missed in a deaf phase like any key (the BIOS scans the keyboard every other phase):
+        // press again until CP/M echoes the line end
+        for (int tries = 0; tries < 6; tries++)
+        {
+            const size_t before = console.text.size();
+            Tap({ZXKEY_ENTER}, kTypeHold);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != before; }, 60, 1);
+            if (console.text.size() != before)
+                break;
+        }
     }
 
     void TapChar(char c)

@@ -9,12 +9,18 @@
 /// The blob size is chosen when the recording starts (the port's set is fixed
 /// while TTD records): the full netstate::SerialPort with a peer, only the
 /// header and the UART without one (a ZX-Evo whose COM port is unconnected).
+///
+/// The same serializer saves any other 16550 + peer the machine has under its
+/// own id: the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector.
 
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/network/netstate.h"
 
+class ComPort;
 class EmulatorContext;
 
 namespace ttd
@@ -23,17 +29,23 @@ namespace ttd
 class TTDSerialPort : public TTDSerializable
 {
 public:
+    /// The #xxEF port (EmulatorContext::pComPort)
     explicit TTDSerialPort(EmulatorContext* context);
+    /// Another 16550 + peer: `port` finds it at save / load time
+    TTDSerialPort(EmulatorContext* context, std::function<ComPort*()> port, PeripheralId id, std::string name);
 
     size_t TTDStateSize() const override { return _size; }
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
-    std::string TTDDeviceName() const override { return "SerialPort"; }
-    PeripheralId TTDPeripheralId() const override { return PeripheralId::SerialPort; }
+    std::string TTDDeviceName() const override { return _name; }
+    PeripheralId TTDPeripheralId() const override { return _id; }
     uint64_t TTDHashState() const override;
 
 private:
     EmulatorContext* _context = nullptr;
+    std::function<ComPort*()> _port;
+    PeripheralId _id = PeripheralId::SerialPort;
+    std::string _name = "SerialPort";
     size_t _size = netstate::kSerialPortShortSize;
     std::unique_ptr<netstate::SerialPort> _scratch;   ///< one buffer for save / load: no allocation per frame
 };

@@ -892,6 +892,25 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.zxWifi[0] = '\0';
 		}
 	}
+	config.network.atm2IoEsp[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Atm2IoEsp", nullptr), config.network.atm2IoEsp, sizeof config.network.atm2IoEsp);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.atm2IoEsp, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] Atm2IoEsp=%s: %s - the card's ESP runs AT", config.network.atm2IoEsp, error.c_str());
+			config.network.atm2IoEsp[0] = '\0';
+		}
+	}
+	{
+		// The card's bus address: a multiple of 8 (CT2..CT0 pick the register)
+		const long address = inimanager.GetLongValue(network, "Atm2IoEspAddress", 0xF0);
+		config.network.atm2IoEspAddress = static_cast<uint8_t>(address & 0xF8);
+		if (address < 0 || address > 0xFF || (address & 0x07))
+			MLOGWARNING("Config: [NETWORK] Atm2IoEspAddress=%ld: a bus address 0x00..0xF8 in steps of 8 (0xF0 or 0xF8); 0x%02X used",
+			            address, config.network.atm2IoEspAddress);
+	}
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");

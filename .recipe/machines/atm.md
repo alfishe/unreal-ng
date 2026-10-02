@@ -78,6 +78,14 @@ sources: [docs/inprogress/2026-10-01-atm450](../../docs/inprogress/2026-10-01-at
 
 ### The ATM 7.10 / ZX-Evo port model (what software writes)
 
+- ATM 7.10 decodes `#FE` on **A2..A0 = 110** (since 2026-10-02; before, A0
+  alone). `#FA` (010) and `#FB` (011) are the **INTERNAL I/O** port pair:
+  `OUT (#FB)` latches an 8-bit bus address (the same latch feeds the printer
+  and the Covox DAC), `IN` / `OUT (#FA)` reach the device that address
+  selects - the ATM2IOESP Wi-Fi card ([network.md](../peripherals/network.md)).
+  With no device an `IN (#FA)` reads #FF; it never reaches the keyboard
+  controller. At 7 MHz every RAM access waits 2-3 T (the contention report's
+  `atm710_turbo_waits`).
 - `#FF77` — **ATM control register**: video mode select, CPU turbo,
   memory swap, INT gate. Decoder bits worth knowing: bit 8 `PEN` enables
   ATM paging, bit 9 selects TR-DOS vs **CP/M mode**, bit 14 (`pen2`)

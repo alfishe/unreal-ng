@@ -32,6 +32,23 @@
 
 class Atm710TurboOverlay;
 
+/// A device on the ATM Turbo 2+ INTERNAL I/O connector (the board's "external
+/// devices port"): OUT (#FB) latches an 8-bit bus address on CT0..CT7 (the
+/// same latch drives the printer data and the Covox DAC), IN / OUT (#FA)
+/// strobe IORD' / IOWR'. A device answers the addresses it decodes from the
+/// latch (docs/inprogress/2026-10-02-atm2ioesp/reference-atm2ioesp.md).
+/// No interrupt and no wait line on the connector
+class IAtmIoDevice
+{
+public:
+    virtual ~IAtmIoDevice() = default;
+    virtual bool Matches(uint8_t busAddress) const = 0;
+    virtual uint8_t Read(uint8_t busAddress) = 0;
+    virtual void Write(uint8_t busAddress, uint8_t value) = 0;
+    /// The connector's RS line (machine reset)
+    virtual void Reset() = 0;
+};
+
 class PortDecoder_ATM710 : public PortDecoder
 {
     /// region <Constants>
@@ -61,9 +78,9 @@ public:
     PortDecoder_ATM710(EmulatorContext* context);
 protected:
     /// `v710Board`: the ATM Turbo 2+ v7.xx board itself - its keyboard
-    /// controller ([ATM] Kbc=) and its RAM waits at 7 MHz. The ZX-Evo (ATM3)
-    /// derives from this decoder without them: its keyboard is the AVR, its
-    /// turbo waits are the FPGA's (EvoTurboOverlay)
+    /// controller ([ATM] Kbc=), the INTERNAL I/O connector, the #FE decode on
+    /// A2..A0 and its RAM waits at 7 MHz. The ZX-Evo (ATM3) and the ATM Turbo
+    /// 4.50 derive from this decoder without them
     PortDecoder_ATM710(EmulatorContext* context, bool v710Board);
 public:
     virtual ~PortDecoder_ATM710();
@@ -83,6 +100,14 @@ public:
 
     /// The keyboard controller (nullptr when [ATM] Kbc=NONE or on the ZX-Evo)
     Atm2Kbc* GetKeyboardController() const { return _kbc && _kbc->Present() ? _kbc.get() : nullptr; }
+
+    /// The INTERNAL I/O connector (v7.10 board only): devices plug in by address
+    bool HasInternalIo() const { return _v710Board; }
+    void AttachIoDevice(IAtmIoDevice* device);
+    void DetachIoDevice(IAtmIoDevice* device);
+    /// The #FB latch: the bus address (TTD; not readable by the Z80 - an IN #FB is the printer status)
+    uint8_t IoBusAddress() const { return _ioBusAddress; }
+    void SetIoBusAddress(uint8_t address) { _ioBusAddress = address; }
 
     /// Install the 7 MHz RAM wait overlay (Atm710TurboOverlay) while #FF77 bit 3
     /// selects turbo, remove it otherwise (updateTurboMode, reset, a TTD
@@ -176,4 +201,6 @@ protected:
     bool _v710Board = false;
     std::unique_ptr<Atm710TurboOverlay> _turboRamOverlay;   ///< created on the first switch to turbo
     bool _turboRamWaitsInstalled = false;
+    uint8_t _ioBusAddress = 0x00;                     ///< the #FB latch (CT0..CT7)
+    std::vector<IAtmIoDevice*> _ioDevices;            ///< on the INTERNAL I/O connector
 };

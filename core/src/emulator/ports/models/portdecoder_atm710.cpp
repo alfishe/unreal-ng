@@ -2,6 +2,9 @@
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
 
+#include <algorithm>
+
+#include "debugger/ttd/atm/ttdatmiobus.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
 
 #include "common/modulelogger.h"
@@ -67,6 +70,13 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM710::DescribeNetwork()
     // later) its RS-232 is the machine's own serial port, away from #xxEF:
     // a ZX-WiFi card fits beside it
     NetworkCapabilities caps;
+    if (_v710Board)
+        caps.internalIo = [this](IAtmIoDevice* device, bool attach) {
+            if (attach)
+                AttachIoDevice(device);
+            else
+                DetachIoDevice(device);
+        };
     if (_kbc)
     {
         Atm2Kbc* socket = _kbc.get();
@@ -108,9 +118,11 @@ PortDecoder_ATM710::~PortDecoder_ATM710()
 
 void PortDecoder_ATM710::reset()
 {
-    // The keyboard controller's RST is on the board's reset line
+    // The keyboard controller's RST is on the board's reset line, so is the INTERNAL I/O connector's RS
     if (_kbc)
         _kbc->BoardReset();
+    for (IAtmIoDevice* device : _ioDevices)
+        device->Reset();
 
 
     _state->p7FFD = 0x00;
@@ -224,6 +236,23 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
     }
+    // Port #FA (A2..A0 = 010): IORD' on the INTERNAL I/O connector - the device the #FB latch selects drives
+    // the bus; with none, the bus floats (#FF)
+    else if (_v710Board && (port & 0x0007) == 0x0002)
+    {
+        result = 0xFF;
+        for (IAtmIoDevice* device : _ioDevices)
+        {
+            if (device->Matches(_ioBusAddress))
+            {
+                result = device->Read(_ioBusAddress);
+                _lastPortDecoded = true;
+                break;
+            }
+        }
+        disp.decodedPort = 0x00FA;
+        disp.wasHandledInline = true;
+    }
     // Port #FFFD - AY register read
     else if (IsPort_FFFD(port))
     {
@@ -304,6 +333,28 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     // names its port and device; a gated arm leaves wasDecoded clear
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
     disp.wasDecoded = true;
+
+    // Port #FB (A2..A0 = 011): the CT0..CT7 latch - the INTERNAL I/O bus address, the printer data and the
+    // Covox DAC at once. Latched here, the write goes on to its other listeners (Covox) below
+    if (_v710Board && (port & 0x0007) == 0x0003)
+        _ioBusAddress = value;
+
+    // Port #FA (A2..A0 = 010): IOWR' on the INTERNAL I/O connector
+    if (_v710Board && (port & 0x0007) == 0x0002)
+    {
+        for (IAtmIoDevice* device : _ioDevices)
+        {
+            if (device->Matches(_ioBusAddress))
+            {
+                device->Write(_ioBusAddress, value);
+                break;
+            }
+        }
+        disp.decodedPort = 0x00FA;
+        disp.wasHandledInline = true;
+        OnPortOutComplete(port, value, pc, disp);
+        return;
+    }
 
     // Port #FE - border, beeper, tape
     if (IsPort_FE(port))
@@ -490,7 +541,11 @@ void PortDecoder_ATM710::SetROMPage(uint8_t page)
 
 bool PortDecoder_ATM710::IsPort_FE(uint16_t port)
 {
-    // Port #FE: A0 = 0
+    // ATM 7.10: A2..A0 = 110 (the ATM 7.10 ports doc "#FE = %nnnnnnnn1111x110"; Xpeccy mask #07 = #06; MAME).
+    // The open decode is on A2..A0: #FA = 010 and #FB = 011 are the INTERNAL I/O port pair, #FF = 111.
+    // The boards that derive from this decoder without the v7.10 logic (ATM 4.50) keep A0 alone
+    if (_v710Board)
+        return (port & 0x0007) == 0x0006;
     return (port & 0x0001) == 0x0000;
 }
 
@@ -912,6 +967,17 @@ void PortDecoder_ATM710::updateTurboMode()
     MLOGDEBUG("updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X)", _state->hw_turbo_ratio, _state->pFF77);
 }
 
+void PortDecoder_ATM710::AttachIoDevice(IAtmIoDevice* device)
+{
+    if (device && std::find(_ioDevices.begin(), _ioDevices.end(), device) == _ioDevices.end())
+        _ioDevices.push_back(device);
+}
+
+void PortDecoder_ATM710::DetachIoDevice(IAtmIoDevice* device)
+{
+    _ioDevices.erase(std::remove(_ioDevices.begin(), _ioDevices.end(), device), _ioDevices.end());
+}
+
 void PortDecoder_ATM710::SyncTurboRamWaits()
 {
     Core* core = _context->pCore;
@@ -991,6 +1057,8 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM710::GetTTDModelStateIds() const
     std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::AtmPaging};
     if (GetKeyboardController())
         ids.push_back(ttd::PeripheralId::Atm2Kbc);   // the v7.xx keyboard controller, when fitted
+    if (_v710Board)
+        ids.push_back(ttd::PeripheralId::AtmIoBus);  // the INTERNAL I/O connector's #FB latch
     return ids;
 }
 
@@ -1000,5 +1068,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM710::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDAtmPaging>(_context));
     if (Atm2Kbc* kbc = GetKeyboardController())
         serializers.push_back(std::make_unique<ttd::TTDAtm2Kbc>(*kbc));
+    if (_v710Board)
+        serializers.push_back(std::make_unique<ttd::TTDAtmIoBus>(_context));
     return serializers;
 }

@@ -103,6 +103,16 @@ feature off they are gone and received bytes are lost (`lost` in
 `machine_serial`; tdd-atm2-kbc.md §7.1). Details:
 [tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
 
+The other real-world way on the ATM Turbo 2+ is the **ATM2IOESP** card
+(`Card=ATM2IOESP`, `Atm2IoEsp=AT|ESPNET|...`, `Atm2IoEspAddress=0xF0`, 0xF8
+on Rev 1.0): a TL16C550C and an ESP32 on the INTERNAL I/O connector. The Z80
+writes the register's bus address to `#FB` (`0xF0 + register`) and moves the
+data through `#FA`; 115200, no interrupt, RTS pulsed by software. NedoOS:
+`espcom.ini` `comType = 3`, the registers `0xF0..0xF7`, `divider = 1`. It does
+not depend on the keyboard controller, so it does not lose bytes the way the
+COM port can. `inspect_state network` shows it as `atm2ioesp`. Details:
+[2026-10-02-atm2ioesp](../../docs/inprogress/2026-10-02-atm2ioesp/README.md).
+
 ```json
 {"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
   "body": {"com_port": "tcp:127.0.0.1:2323"}}}

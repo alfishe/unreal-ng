@@ -551,7 +551,9 @@ types:
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232: netstate::Com, the peer part only).
+          keyboard controller's RS-232: netstate::Com, the peer part only),
+          28 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
+          29 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
