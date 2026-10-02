@@ -11,4 +11,6 @@
 | Config, runtime keys, state report on every surface, Qt Network window | done 2026-10-02 |
 | Tests | done 2026-10-02: `Atm2IoEsp_Test` (10) |
 | NedoOS end to end (20 runs of `wget example.com/`) | done 2026-10-02: 20 of 20 complete (the whole page), 0 overruns, 7 MHz turbo with the RAM waits, `Atm2IoEsp=ESPNET` at 115200. The ATM2 COM in the same series: 16 of 20 (each failure one lost byte) |
-| Open questions (reference): an unselected #FA read, the full #FA / #FB decode, #FB read without a printer, other ATM boards | open |
+| Open questions researched (7.10 schematic, 8.0+ netlist, the card's Rev 2 gerbers, forums) | done 2026-10-02: 5 of 8 answered, 3 in part (reference) |
+| From the answers: #FB read = #FF (printer status), the card's MSR with only CTS wired | done 2026-10-02 |
+| Still open: UniProg / Z-Contact bus addresses, TASiTERM's driver (iS-DOS archive), the ATM 4.50 connector | open |

@@ -75,15 +75,16 @@ enum class PeripheralId : uint8_t
     Z84C15 = 29,          // Zilog Z84C15 on-chip block: system registers, wait generator, watchdog, CTC, SIO (FIFOs), PIO, daisy chain
     SprinterFastRam = 30, // Sprinter fast RAM (the four 16 KB cache pages), 64 KB whole (a TTD v2 memory region once those exist)
     SprinterInput = 31,   // Sprinter AT keyboard byte stream (SIO A) and Microsoft serial mouse packet generator (SIO B)
+    SprinterCovoxBlaster = 32, // Sprinter Covox / Covox-Blaster: ring, indices, rate phase, INT request, DAC words (S6)
     // Reserved for Sprinter devices that do not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
     // never declared. The device that lands takes its id, declares it and adds its blob - the existing Sprinter
     // blobs keep their layout, so a checkpoint only gains a blob
-    SprinterCovoxBlaster = 32, // reserved (S6): Covox / Covox-Blaster ring, indices, rate phase, INT request, 16-bit DAC
     SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
     SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
     Atm2IoEsp = 37,       // the ATM2IOESP card on it: the 16550 and its peer (netstate::SerialPort)
+    EvoMouse = 38,        // ZX-Evo AVR PS/2 mouse: the Kempston-address registers, plugged in (ATM3, TSConf)
     // Future: SAA1099, GS512, etc.
     Count
 };

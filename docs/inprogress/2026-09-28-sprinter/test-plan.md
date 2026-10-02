@@ -151,7 +151,9 @@ acknowledge a store is plain, the mode register is unchanged, the first opcode a
 ### 2.9 Sound — `covoxblaster_test.cpp` (T-CBL)
 
 Rate table (16 rows), mono/stereo, 8/16-bit pairing (`XOR #80`), INT every 128 samples, `#FE` bit 7
-and bit 5 semantics, CBL off → plain Covox.
+and bit 5 semantics, CBL off → plain Covox. Built in S6 (`core/tests/emulator/sound/sprinter/`), plus the
+machine wiring (codes, INT, page `#FD`, mixer slot, single AY, TTD blob) and the 21 MHz checks (AY pitch, CBL
+rate, CPU throughput against MAME): [s6-sound-outcome.md](s6-sound-outcome.md) §6.
 
 ### 2.10 Z84C15 — `z84sio_test.cpp`, `z84ctc_test.cpp`, `z84pio_test.cpp` (T-Z84)
 
@@ -176,6 +178,7 @@ default) and 3.06 (review round 1, Q1), as two parameterized instances.
 | R-5 | ACC-4 | same from `ide0.master` built image |
 | R-6 | ACC-5 | same from a folder; folder tree hash unchanged |
 | R-7 | ACC-6 | Spectrum mode: `LOAD` from a TRD, BASIC program running (marker in RAM). As built: through DSS `SPECTRUM.EXE` (BIOS 3.04 has no Spectrum ROMs); `LOAD "smReadMe" CODE` compared with the file's bytes |
+| R-7b | ACC-6 extended (S8) | the ZX mode beyond the floppy: launcher v2.03 + TRD / SCL into the RAM disk, Ctrl+Alt+Del back to DSS, a TAP through the tape input, snapshots in ZX mode: T-ZX-1..14 in [tdd-zx-mode.md](tdd-zx-mode.md) §8 |
 | R-8 | ACC-7/8 | native program frames equal MAME captures |
 | R-9 | ACC-10 | TTD record 5 s of R-4, seek, replay: equal frame hashes |
 

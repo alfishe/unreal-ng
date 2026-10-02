@@ -14,6 +14,7 @@
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
@@ -52,6 +53,9 @@ class TTDSprinterPld;
 ///     daisy chain);
 ///   - the keyboard and the serial mouse on the chip's SIO (SprinterInput: the
 ///     host's PS/2 sink, the keyboard INT, Ctrl+Alt+Del, the F12 turbo switch);
+///   - the Covox / Covox-Blaster DAC (codes #88 / #89, page #FD; CovoxBlaster,
+///     mixed by SoundManager in the COVOX slot) - the AY is the shared chip on
+///     codes #90 / #91 / #52;
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
@@ -90,6 +94,13 @@ public:
     bool HasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView)
+    bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
+    {
+        static constexpr uint16_t kPorts[3] = {0xFADF, 0xFBDF, 0xFFDF};
+        value = reg < 3 ? _input.ReadMouseView(kPorts[reg]) : 0xFF;
+        return true;
+    }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
     RtcBinding GetRtcBinding() override;
@@ -163,8 +174,16 @@ public:
     /// first port read after the last PLD reset ("DCP opened"), -1 = not yet
     int64_t DcpOpenedFrame() const { return _dcpOpenedFrame; }
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
-    /// Code #89 (Covox-Blaster control, phase S6): the last value written (automation state block)
-    uint8_t CblControl() const { return _cblControl; }
+    /// Code #89 (Covox-Blaster control): the last value written
+    uint8_t CblControl() const { return _cbl.State().control; }
+    /// The Covox / Covox-Blaster DAC (S6, tdd-accel-sound-input §2)
+    CovoxBlaster& GetCovoxBlaster() { return _cbl; }
+    const CovoxBlaster& GetCovoxBlaster() const { return _cbl; }
+    /// A CPU or accelerator store into RAM page #FD (SprinterMemory's write intercept): the PLD's
+    /// CBL_WR page term - an accelerator copy (ACC_DIR bit 1) while the Covox-Blaster INT is on
+    void OnCblPageWrite(uint16_t addr, uint8_t value);
+    /// Base T-state (3.5 MHz) of the CPU within the frame: the time base of the frame-locked devices
+    uint32_t BaseTstate() const;
     SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
 
@@ -233,7 +252,8 @@ private:
     bool _cmosLoaded = false;
     bool _poweredOn = false;
 
-    uint8_t _cblControl = 0;      ///< code #89 (Covox-Blaster, phase S6): stored for the read-back
+    /// The Covox / Covox-Blaster (codes #88 / #89, page #FD), its INT through _intSource
+    CovoxBlaster _cbl{_context};
     uint16_t _pc = 0;             ///< PC of the I/O in progress (border writes)
     int64_t _dcpOpenedFrame = -1;
     uint16_t _dcpOpenedPc = 0;

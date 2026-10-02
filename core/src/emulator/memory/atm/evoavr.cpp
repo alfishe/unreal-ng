@@ -222,6 +222,12 @@ void EvoAvr::ReceivePs2Byte(uint8_t byte)
     if (byte == 0xFA || byte == 0xFE || byte == 0xEE || byte == 0xAA)
         return;
 
+    // The keypad keys that set the mouse resolution (zx.c to_zx: on the press, no E0)
+    // (a typematic repeat of the key already down is not a new press)
+    const bool repeat = byte == _ps2.lastScancode && _ps2.lastScancodeE0 == 0;
+    if (!_ps2.wasE0 && !_ps2.wasRelease && _ps2.skipBytes == 0 && !repeat && (byte == 0x79 || byte == 0x7B || byte == 0x7C))
+        _mouse.OnKeypadKey(byte);
+
     // Log only whole key data: Pause is not logged, and after a reset the first
     // byte logged must start a key
     if (byte != 0xE1 && _ps2.skipBytes == 0)
@@ -378,8 +384,10 @@ bool EvoAvr::LoadNvram(const std::string& path)
     if (file.gcount() != static_cast<std::streamsize>(image.size()))
         return false;
 
-    // Only the battery-backed cells: the clock registers 0x00-0x0D are live
+    // Only the battery-backed cells: the clock registers 0x00-0x0D are live. Above
+    // the Z80's cells, the AVR keeps the mouse resolution in its RTC chip (#FD)
     std::memcpy(&_cells[kFirstRamCell], &image[kFirstRamCell], kExtensionFirst - kFirstRamCell);
+    _cells[EvoAvrMouse::kResolutionCell] = image[EvoAvrMouse::kResolutionCell];
     std::memcpy(_eeprom.data(), &image[0x100], kEepromSize);
     return true;
 }

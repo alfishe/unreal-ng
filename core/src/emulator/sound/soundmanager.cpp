@@ -84,6 +84,15 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSoundFM(_context);
             LOGINFO("SoundManager: TurboSound slot = TSFM (TurboSound FM, 2 x YM2203)");
             break;
+        case TurboSoundKind::Single:
+        {
+            // One AY (the Sprinter): the second chip exists but is never selected
+            auto* single = new SoundChip_TurboSound(_context);
+            single->setSingleChip(true);
+            _turboSound = single;
+            LOGINFO("SoundManager: TurboSound slot = single AY");
+            break;
+        }
         default:
             _turboSound = new SoundChip_TurboSound(_context);
             break;
@@ -396,6 +405,8 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
         case AudioSourceType::FM2:
             return _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
         case AudioSourceType::COVOX:
+            if (_modelAudio)
+                return _modelAudio->AudioBuffer();
             return _covox ? _covox->getBuffer() : nullptr;
         case AudioSourceType::GeneralSound:
             return _gs ? _gs->getBuffer() : nullptr;
@@ -557,6 +568,8 @@ void SoundManager::applyCoreRate(size_t rate)
     _beeper->setSampleRate(rate);
     if (_covox)
         _covox->setSampleRate(rate);
+    if (_modelAudio)
+        _modelAudio->AudioSetSampleRate(rate);
     if (_gs)
         _gs->setSampleRate(rate);
 #ifdef UNREALNG_HAVE_OPL4
@@ -706,6 +719,10 @@ void SoundManager::handleFrameStart()
         if (_covox)
             _covox->handleFrameStart();
 
+        // A machine's DAC: the same rule - its play position and interrupts are machine state
+        if (_modelAudio)
+            _modelAudio->AudioFrameStart(generationOff);
+
         if (suppressed)
             return;  // Skip beeper frame setup and buffer clears (never consumed in turbo)
     }
@@ -758,6 +775,8 @@ void SoundManager::handleFrameEnd()
         _ayVoicing1.invalidateHistory();
         if (_gs)
             _gs->handleFrameEnd(0);
+        if (_modelAudio)
+            _modelAudio->AudioFrameEnd(0);
 #ifdef UNREALNG_HAVE_OPL4
         if (_moonsound)
             _moonsound->handleFrameEnd(0);
@@ -942,6 +961,13 @@ void SoundManager::handleFrameEnd()
         else
             _covox->handleFrameEnd(samplesThisFrame);
     }
+    if (_modelAudio)
+    {
+        // The frame always ends for the device (machine state); sound off renders nothing
+        _modelAudio->AudioFrameEnd(soundOff ? 0 : samplesThisFrame);
+        if (soundOff)
+            memset(_modelAudio->AudioBuffer(), 0x00, AudioFrameDescriptor::memoryBufferSizeInBytes);
+    }
 
 #ifdef UNREALNG_HAVE_OPL4
     // Finalize MoonSound frame (advance the core to the frame end; render)
@@ -1013,7 +1039,7 @@ void SoundManager::handleFrameEnd()
                 srcBuffer = _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
                 break;
             case AudioSourceType::COVOX:
-                srcBuffer = _covox ? _covox->getBuffer() : nullptr;
+                srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : _covox ? _covox->getBuffer() : nullptr;
                 break;
             case AudioSourceType::GeneralSound:
                 srcBuffer = _gs ? _gs->getBuffer() : nullptr;
@@ -1071,7 +1097,7 @@ void SoundManager::handleFrameEnd()
         {
             // Same again for a DAC latched away from 0x80 (DC removal is off
             // by default)
-            d.activeRecently = _covox && _covox->hadSoundLastFrame();
+            d.activeRecently = _modelAudio ? _modelAudio->AudioHadSoundLastFrame() : _covox && _covox->hadSoundLastFrame();
         }
         else
         {
@@ -1736,3 +1762,46 @@ bool SoundManager::detachFromPorts()
 }
 
 /// endregion </Port interconnection>
+
+/// region <Model audio source>
+
+void SoundManager::attachModelAudioSource(IModelAudioSource* source)
+{
+    if (!source || _modelAudio == source)
+        return;
+    _modelAudio = source;
+    source->AudioSetSampleRate(_coreRate);
+
+    // The COVOX row carries the device's name; one row only
+    for (AudioDeviceInfo& d : _devices)
+    {
+        if (d.type == AudioSourceType::COVOX)
+        {
+            d.name = source->AudioSourceName();
+            if (_covox)
+                LOGINFO("SoundManager: %s takes the COVOX slot; the configured Covox / SoundDrive is not mixed",
+                        source->AudioSourceName());
+            return;
+        }
+    }
+    _devices.push_back({AudioSourceType::COVOX, source->AudioSourceName(), false, false, 1.0f, 0.0f, false});
+}
+
+void SoundManager::detachModelAudioSource(IModelAudioSource* source)
+{
+    if (!source || _modelAudio != source)
+        return;
+    _modelAudio = nullptr;
+    for (auto it = _devices.begin(); it != _devices.end(); ++it)
+    {
+        if (it->type != AudioSourceType::COVOX)
+            continue;
+        if (_covox)
+            it->name = "COVOX";
+        else
+            _devices.erase(it);
+        break;
+    }
+}
+
+/// endregion </Model audio source>

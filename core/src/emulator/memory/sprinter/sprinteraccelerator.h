@@ -60,7 +60,7 @@ static_assert(sizeof(SprinterAccelState) == 256 + 16 + 8, "SprinterAccelState mu
 /// wait states: 3 CPU clocks per access at 21 MHz, 1/2 at 3.5 MHz (rounded up
 /// per operation).
 ///
-/// INT suspend ([SPRINTER] AccelIntSuspend=1, default; the PLD's ACC_BLK): an
+/// INT suspend ([SPRINTER] AccelIntSuspend=1; default 0 since S6, see tdd-accel-sound-input §1.3): an
 /// INT acknowledge blocks new operations; the first opcode fetch after RETI
 /// (ED 4D) unblocks; the mode is kept; RETN does not unblock; NMI does not block.
 ///

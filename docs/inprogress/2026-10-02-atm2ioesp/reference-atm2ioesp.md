@@ -79,8 +79,8 @@ CS2 = CSA;
 ```
 
 So the UART is selected when `CT[7:4] == jumpers` and CT3 has the revision's level. The jumpers are all
-1 by default, giving the high nibble F. The UART's A0..A2 come from CT0..CT2 [inferred: the manual says
-"bits 0-2 set the 16550 port address", and the GAL does not use CT0..CT2]. The connector's RS line
+1 by default, giving the high nibble F. The UART's A0..A2 come from CT0..CT2 (traced on the Rev 2
+gerbers, open question 4). The connector's RS line
 (system reset) drives MR, so **a machine reset resets the UART**.
 
 ### The ATM side: INTERNAL I/O and ports #FA / #FB
@@ -106,7 +106,7 @@ and Configuration Manual.doc":
 
 Connector pinout as printed on the card (rows A12/B12): `12V 5V GND GND D7 D6 D5 D4 D3 D2 D1 D0` and
 `WR -12 RD CT7 CT6 CT5 CT4 CT3 CT2 CT1 CT0 RS`. There is **no INT and no WAIT pin**. The TL16C550C
-INTRPT output has nowhere to go [inferred from the pinout], and accesses run at full speed
+INTRPT output is not connected at all (open question 5), and accesses run at full speed
 [inferred]. The manual warns against plugging a Centronics printer into the card: ±12 V sit where
 STROBE and BUSY would be.
 
@@ -124,8 +124,8 @@ STROBE and BUSY would be.
 Higher address bits (A3..A15) are not part of the #FA/#FB decode, per the ATM docs and Xpeccy's mask
 0x0007. MAME decodes #FB on the full low byte. Software only ever uses #FA/#FB.
 
-What a read of #FA returns when no device matches the latch is not documented. A floating bus reading
-#FF is the likely answer [inferred].
+A read of #FA with no matching device returns #FF: the IO lines float into the LS-TTL buffer D87
+(open question 1, answered from the schematic).
 
 ### Register index (bus address = base + reg; base #F0, or #F8 on Rev 1.0)
 
@@ -320,7 +320,33 @@ Local only (NedoPC SVN `svn://svn.nedopc.com/atmturbo`, which curl cannot check)
 - `doc/ver_7_10/Сборка и Наладка Турбо2+.doc` / `TURBO 2+ Assembly and Configuration Manual.doc`:
   "IOWR', IORD' (#FA) - read/write external ports (connectors INTERNAL and EXTERNAL I/O)" from D16/D17,
   and the CT0..CT7 bus shared by the printer, the external address bus and the DAC.
-- `pcad/ver_7_10/cp7*.pdf`: schematics (not transcribed here).
+- `pcad/ver_7_10/cp7_1.pdf` (main sheet: D16/D36 decode, D87 IO buffer, D51 CT latch, D70/R39 BUSY,
+  INTERNAL I/O table), `cp7_2.pdf` (parts list: R39 = 10 kΩ), `bom.pdf` (555АП6 = 74(LS,ALS)245 only).
+  Rendered with PyMuPDF and read as images (open questions 1-3).
+- `pcad/ver_8_0_zorel/АТМ Турбо 8.01+.pcb` (P-CAD ASCII, with a netlist): same reference designators as
+  7.10, used to confirm every 7.10 net reading (D16, D36, D70, D87, D97, D51, R97, X3, I1).
+- `pcad/ver_7_18/cp718pcb_T1.pcb`, `cp718pcb_T2.pcb`, `pcad/ver_7_10/ver7_10.PCB` (binary P-CAD):
+  only the net names were checked (`~IORD`, `~IOWR`, `CTS0..7`, `IO0..7`).
+
+Added 2026-10-02 for the open questions (HTTP 200 with curl unless noted):
+
+- Card PCB, Rev 2 gerbers: [ATM2IOESPv2.zip](https://raw.githubusercontent.com/Kulicheg/ATM2IOESP/main/PCB/ATM2IOESPv2.zip)
+  (the `github.com/.../blob/...` page answered 503 to curl). Last changed in
+  [commit 8ecb00e](https://github.com/Kulicheg/ATM2IOESP/commit/8ecb00e), 2025-05-24. Rendered and
+  net-traced (open questions 4, 5). The resistor values come from
+  [pcb_rev02.PNG](https://raw.githubusercontent.com/Kulicheg/ATM2IOESP/main/PCB/pcb_rev02.PNG).
+- MicroArt manual "Многофункциональный компьютер ATM Turbo" (1991) on ZXPRESS:
+  [book index](https://zxpress.ru/book.php?id=170),
+  [D16 decoder description](https://zxpress.ru/ru/books/chapter/2349),
+  [connectors: "Внешний порт"](https://zxpress.ru/ru/books/chapter/2353),
+  [appendix 2 port table](https://zxpress.ru/ru/books/chapter/2356),
+  [Ver 4.50 schematic scan](https://zxpress.ru/chapters_images/atmturbo-6.jpg) (open question 6).
+- UniProg on ATM: [zx-pk.ru thread 14779, page 3](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page3.html)
+  and [page 4](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page4.html) (open question 7).
+- TASiTERM: [description](http://atmturbo.nedopc.com/download/isdos/tasiterm/tasiterm.htm),
+  [archive ttrm0971.ipc](http://atmturbo.nedopc.com/download/isdos/tasiterm/ttrm0971.ipc),
+  [iS-DOS/TASiS download page](http://atmturbo.nedopc.com/load_isdos.htm),
+  [ATM news (v0.97, v0.971 entries)](http://atmturbo.nedopc.com/atmnews.htm) (open question 8).
 
 ## Other emulators
 
@@ -356,11 +382,11 @@ ATM710 decoder:
 - `#FB` write (A2..A0 = 011): store `ctBus = value` (motherboard state, saved in TTD). Also forward it
   to the Covox DAC, which is driven by the same latch, and to the printer if one is ever emulated.
   A7=0 is the printer strobe.
-- `#FB` read: printer status. #FF with no printer [inferred: BUSY reads 1 with nothing connected;
-  unverified].
+- `#FB` read: printer status. #FF with no printer (pull-up R39 on `CTBUSY'`, D0..D6 undriven; open
+  question 3).
 - `#FA` read/write (A2..A0 = 010): offer `(ctBus, data)` to the devices on the INTERNAL I/O bus. The
-  first device whose address matches drives the read. With no match, the read returns the floating
-  bus (#FF) [inferred].
+  first device whose address matches drives the read. With no match, the read returns #FF (open
+  question 1).
 - Machine reset: pulse RS to every bus device. ATM2IOESP: UART MR.
 
 The bus takes a small device interface: `bool Matches(uint8_t ctBus)`, `uint8_t Read(uint8_t ctBus)`,
@@ -439,19 +465,126 @@ Atm2IoEspAddress=0xF0       ; bus base: 0xF0 = Rev 1.5/2.0 default, 0xF8 = Rev 1
 
 ## Open questions
 
-1. **Unselected #FA read.** Does the ATM data bus float to #FF, or do pull-ups or the last value show?
-   The answer needs the `cp7*.pdf` schematic around the D0..D7 buffer to the INTERNAL I/O connector.
-2. **Full #FA/#FB decode.** Are A3..A7 really ignored (Xpeccy), or does D16/D17 also need A3..A7 = 1
-   (MAME's #FB is a full low byte)? Check D16/D17 in the v7.10 schematic.
-3. **#FB read with no printer.** Is D7 (BUSY) 1 or 0 with nothing on the Centronics header?
-4. **UART CS wiring.** Are the TL16C550C CS0/CS1 pins tied to the GAL's !CS0/!CS1 or to fixed levels?
-   Only CS2 carries the full match. This does not change behavior if the GAL equations above hold.
-5. **INTRPT and the RTS/CTS direction.** Confirm on the Rev 2 layout (`ATM2IOESP Rev2.lay6`, Sprint
-   Layout 6) that INTRPT is unconnected and that UART RTS goes to ESP CTS and UART CTS to ESP RTS.
-   The silkscreen shows CTS/RTS labels but not the nets.
-6. **Other ATM boards.** Do ATM Turbo 2 v4.50 (our `ATM450`) and ATM Turbo 8.x have the same #FA
-   external port and INTERNAL I/O connector? The ATM2+ doc says the printer port works "as in previous
-   models", but says nothing about #FA on 4.50.
-7. **UniProg and "Analytic" addresses.** Which bus addresses do they occupy? This matters only once a
-   second INTERNAL I/O device is modeled.
-8. **TASiS `tasiterm.com`.** Which addresses and comType does it assume? No source was found.
+Status after the 2026-10-02 research pass. Schematic evidence comes from the NedoPC atmturbo SVN
+(`pcad/ver_7_10/cp7_1.pdf`, rendered and cropped; the machine-readable netlist of the Zorel 8.0+
+derivative, `pcad/ver_8_0_zorel/АТМ Турбо 8.01+.pcb`, which keeps the 7.10 reference designators and
+was used to confirm each 7.10 reading). Card evidence comes from the Rev 2 gerbers
+(`PCB/ATM2IOESPv2.zip`, last changed 2025-05-24), rendered and traced for copper connectivity
+(top + bottom + drill), with the TL16C550C FN (PLCC-44) pin numbers from the datasheet in the repo.
+
+1. **Unselected #FA read - answered: #FF.** The INTERNAL I/O data lines IO0..IO7 reach the board
+   only through **D87 (555АП6 = 74LS245)**: pin 19 (OE) is tied to GND, so the buffer is always on,
+   and pin 1 (direction, `T`) is driven by `IORD'` (cp7_1, the D87 block next to the INTERNAL I/O
+   table; 8.0+ netlist: `D87.1 = ~IORD`, `D87.19 = GND`, `D87.11..18 = IO7..IO0`). During
+   `IN (#FA)` the B side (IO0..IO7) becomes the input. The IO nets have no pull-up or pull-down
+   (8.0+ nets IO0..IO7 contain only X3, I1 and D87). The 7.10 BOM lists D34, D87, D97, D102 as
+   "74(LS,ALS)245" only, unlike most other parts it allows as HCT/ACT, so the open inputs are TTL
+   inputs and read as 1. The CPU sees the internal D bus through **D97** (also 74LS245, direction
+   `RD'`; netlist `D97.1 = ~RD`, A side Z0..Z7 at the Z80 with 10 kΩ RS1 pull-ups). With no card
+   driving IO0..IO7, `IN (#FA)` returns **#FF**. The same holds when a card is fitted but its
+   address does not match (the TL16C550C data pins are tri-state while not selected). The
+   "buffered data bus (ID0-ID7)" wording in the assembly manual (`Сборка и Наладка Турбо2+.doc`,
+   connector I1 paragraph) agrees. Caveat: this is the standard behavior of a floating LS-TTL
+   input, not a measurement on a real board.
+2. **Full #FA/#FB decode - answered: A2..A0 with A1 = 1, A3..A15 ignored.** The ports come from
+   **D16 (555ИД7 = 74LS138)**. Select inputs: A (pin 1) = `A0`, B (pin 2) = `A2`, C (pin 3) =
+   `WR'`. Enables: G2A' (pin 4) = `A1` through the inverter **D36** (pins 1→2), G2B' (pin 5) =
+   `IORQ'`, G1 (pin 6) = `M1'`. Outputs: Y0 `IOWR'` (#FA write), Y1 `PRWR'` (#FB write), Y2
+   `BRDWR'` (#FE write), Y3 `FFWR'`, Y4 `IORD'` (#FA read), Y5 `PRRD'` (#FB read), Y6 `KEYRD'` (#FE
+   read), Y7 `FFRD'`. Read from the cp7_1 drawing and confirmed net by net in the 8.0+ netlist
+   (`D16.1 = A0`, `D16.2 = A2`, `D16.3 = ~WR`, `D16.4 = D36.2` with `D36.1 = A1`,
+   `D16.5 = ~IRQ` [the IORQ net], `D16.6 = ~M1`). No A3..A7 term exists anywhere in the chain, so
+   Xpeccy's mask `0x0007` is right and MAME's full-low-byte #FB decode is stricter than the
+   hardware. `M1'` on G1 also keeps interrupt-acknowledge cycles off these ports. The doc's
+   `%nnnnnnnn11111010` pattern (`Описание архитектуры и портов ATM2+.doc`, section 4) names the
+   canonical port, not a full decode.
+3. **#FB read with no printer - answered: #FF.** `PRRD'` enables one gate of **D70 (555ЛП8 =
+   74LS125)** whose input is `CTBUSY'` and whose output is D7 (cp7_1: D70 pins 4/5/6; netlist
+   `D70.4 = ~PRRD`, `D70.5 = ~CTBUSY`, `D70.6 = D7`). `CTBUSY'` has a pull-up to +5 V: **R39**
+   on 7.10 (10 kΩ per the cp7_2 parts list), R97 on 8.0+. Nothing drives D0..D6, so they float
+   high through D97. With no printer the read is **#FF**. The ATM2+ port doc says the same in
+   words: D0-D6 "Всегда установлены в 1", and D7 = 1 means the printer is not ready, "или просто
+   отключен" (section on #FB input). `CTBUSY'` exists only on the Centronics/EXTERNAL I/O connector
+   X3, not on INTERNAL I/O, so the card can never affect a #FB read.
+4. **UART CS wiring - answered.** TL16C550C **CS0 (pin 14) and CS1 (pin 15) are tied to +5 V**
+   (same copper net as VCC pin 44). **CS2' (pin 16) is the GAL's pin 15** (`!CS2`), silk "CS".
+   The GAL's pin 13/14 outputs (`!CS0`/`!CS1`) are intermediate terms and reach nothing. The
+   other control pins: **ADS' (28) = GND** (address latch transparent), **RD2 (25) and WR2 (21) =
+   GND** (inactive), **RD1' (24) = connector `RD` (IORD')**, **WR1' (20) = connector `WR`
+   (IOWR')**, **MR (39) = GAL pin 12**. **A0/A1/A2 (31/30/29) = CT0/CT1/CT2** of the connector,
+   which turns the earlier [inferred] into a traced fact. The behavior matches the GAL equations
+   above.
+5. **INTRPT and RTS/CTS - answered.** **INTRPT (pin 33) has no copper connection**, nor do RXRDY
+   (32), TXRDY (27), DDIS (26), OUT1 (38), OUT2 (35), DTR (37) and BAUDOUT/RCLK beyond their
+   mutual link (17-10). Serial nets, each through a series resistor (values from the Rev 2
+   silkscreen in `pcb_rev02.PNG`):
+   - UART SOUT (13) → 470 Ω → ESP pin "RX";
+   - ESP "TX" → 47 Ω → UART SIN (11);
+   - **UART RTS' (36) → 47 Ω → ESP pin "CTS"**;
+   - **ESP pin "RTS" → 470 Ω → UART CTS' (40)**.
+   The modem inputs are strapped: **DCD' (42) and DSR' (41) to GND** (always asserted), **RI'
+   (43) to +5 V** (never ringing).
+6. **Other ATM boards - partly answered.**
+   - **ATM Turbo 2+ 7.18 (Tetroid):** the binary P-CAD boards `pcad/ver_7_18/cp718pcb_T1.pcb` and
+     `T2.pcb` carry the same net names (`~IORD`, `~IOWR`, `CTS0..CTS7`, `IO0..IO7`) as
+     `ver7_10.PCB`. The bus is present. The binary netlist was not parsed further.
+   - **ATM Turbo 8.0+/8.01+ (Zorel):** the ASCII netlist shows D16, D36, D51, D70, D87 and both
+     24-pin connectors wired exactly as on 7.10. Connector I1 (INTERNAL I/O) pins: 1 +12 V,
+     2 `IOWR'`, 3 +5 V, 4 -12 V, 5/7 GND, 6 `IORD'`, 8..23 CTS7/IO7 ... CTS0/IO0 interleaved,
+     24 `RS'`. X3 (EXTERNAL I/O / Centronics) is the same bus with `STROBE'` and `CTBUSY'` in
+     place of ±12 V. The card works there unchanged.
+   - **ATM Turbo (1) v4.50 (our `ATM450`):** the bus exists, under another name and with another
+     decode. The MicroArt manual calls the connector the **"External port"** ("Внешний порт",
+     ОНП-24): GND, +5 V, +12 V, D0-D7, "CTS0-CTS7 - адресное пространство внешней шины", IORD,
+     IOWR, RS. MicroArt designed UniProg for it
+     ([chapter "Периферия, ее подключение и разъемы"](https://zxpress.ru/ru/books/chapter/2353)).
+     The decoder is again D16 ("D16 - IOWR, IORD - запись, чтение внешних устройств",
+     [chapter 2349](https://zxpress.ru/ru/books/chapter/2349)). Appendix 2 gives "EXTERNAL PORTS:
+     IN & OUT WITH A2=A0=0" ([chapter 2356](https://zxpress.ru/ru/books/chapter/2356)). On the
+     4.50 schematic scan ([atmturbo-6.jpg](https://zxpress.ru/chapters_images/atmturbo-6.jpg)),
+     D16's V1/V2 appear joined and V3 goes to M1, with no A1 input. That suggests **A1 is not
+     decoded on 4.50**, so #F8/#FA (and every A2=A0=0 port) strobe IOWR/IORD [inferred from a
+     low-resolution scan]. Still open: the connector's pin order (the text lists no -12 V) and
+     whether the 4.50 IO data lines are buffered as on 7.10.
+7. **UniProg and "Analytic" addresses - partly answered.** "Analytic" is the company
+   **Аналитик-ТС**, which co-developed the **Z-Contact 1200** V.22 modem with MicroArt. The modem
+   mounts "вторым этажом" on I1 (assembly manual, I1 paragraph and the Z-Contact advertisement in
+   `Сборка и Наладка Турбо2+.doc`). So "compatible with UniProg and Analytic" means the UniProg
+   programmer and the Z-Contact modem. NedoPC's Maksagor reports that the UniProg ZX software works
+   on ATM "через его порт внешних устройств #FFFA" and the printer port
+   ([zx-pk.ru thread 14779, page 4](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page4.html);
+   see also [page 3](https://zx-pk.ru/threads/14779-programmator-uniprog-(by-microart)/page3.html)).
+   **The CT bus addresses that UniProg and Z-Contact decode were not found.** The card's own
+   manual (appendix G) only implies that UniProg sits in the #F8..#FF range, because Rev 1.5 left
+   it "для совместимости с UniProg". The UniProg 1.2 article ("Радиолюбитель" No. 9, 1993) and the
+   Z-Contact manual were not available.
+8. **TASiS `tasiterm.com` - partly answered.** TASiTERM is by Maksagor (NedoPC). v0.971
+   (31.12.2024) "внесен экспериментальный драйвер под разъем внешних IO-портов АТМ", a driver that
+   "still awaits its testers" ([ATM news page](http://atmturbo.nedopc.com/atmnews.htm), New Year
+   2025 entry). Drivers are separate files: the user renames the chosen one to `tasiterm.drv`, and
+   settings live in `tasiterm.set` (same page, v0.97 entry). NedoOS's `espcom.ini` comType does
+   not apply to it. The archive
+   ([ttrm0971.ipc](http://atmturbo.nedopc.com/download/isdos/tasiterm/ttrm0971.ipc)) is
+   iS-DOS-packed and could not be unpacked here, so **the bus addresses its driver uses remain
+   open**. A TASiS + TASiTERM run in the emulator, with an IN/OUT trace on #FA/#FB, would answer it.
+
+### Impact on the emulation
+
+- **Unselected #FA read = #FF.** This confirms §2 of the proposal and drops the [inferred]. The
+  value is the same with no card, with a card at another address, and for every A2..A0 = 010 port.
+- **Decode on ATM710 = A2..A0 only, A1 = 1 required, M1 cycles excluded:** #FA = `(port & 7) == 2`,
+  #FB = `(port & 7) == 3`, #FE = `(port & 7) == 6`, #FF = `(port & 7) == 7`. A3..A15 are don't-care.
+  Do not copy MAME's full-low-byte #FB decode.
+- **#FB read = #FF** with no printer. This drops the [inferred] in §2 of the proposal.
+- **Card MSR:** DCD and DSR are strapped asserted and RI deasserted, so MSR bits 7/5 read 1 and
+  bit 6 reads 0, with only CTS (bit 4, from the ESP's RTS) changing. Model these as fixed modem
+  inputs of the card's `Uart16550` and do not take them from the peer. Delta bits other than ΔCTS
+  never set.
+- **No interrupt and no outputs:** INTRPT, OUT1, OUT2 and DTR go nowhere. IER and those MCR bits
+  are register state only.
+- **Flow control wiring:** UART RTS' → ESP CTS and ESP RTS → UART CTS'. An `AT` peer modeling
+  `AT+UART=...,3` must hold its transmission while the UART's MCR RTS is off and must report its
+  own receive readiness as the UART's CTS.
+- **ATM450:** if the card is ever offered there, the external port decodes on A2 = A0 = 0
+  (A1 ignored) [inferred], and connector compatibility is unverified. Keep `internalIo = false`
+  for ATM450 until the 4.50 connector pinout is confirmed.

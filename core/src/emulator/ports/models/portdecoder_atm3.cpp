@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include "portdecoder_atm3.h"
 
+#include "emulator/io/mouse/mousemanager.h"
+
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevofontram.h"
+#include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/atm/ttdevoturbocache.h"
@@ -40,6 +43,12 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_evoAvr);
 
+    // The AVR's PS/2 mouse is the board's mouse: the host mouse reaches it through the
+    // emulator's mouse manager, and the Kempston-address ports read its registers
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
+    if (_context->pMouseManager)
+        _context->pMouseManager->AddSink(&_evoAvr.Ps2Mouse());
+
     // The AVR owns the board's resets: F12 released after a short hold = the
     // reset button, a key pressed with Ctrl+Alt held = the power cycle. The
     // sink is resolved when a reset fires: the decoder is built before
@@ -61,6 +70,8 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
 
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_evoAvr)
         _context->pKeyboard->SetPs2Sink(nullptr);
+    if (_context->pMouseManager)
+        _context->pMouseManager->RemoveSink(&_evoAvr.Ps2Mouse());
 
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
@@ -86,6 +97,10 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
 void PortDecoder_ATM3::reset()
 {
     PortDecoder_ATM710::reset();
+
+    // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
+    // registers themselves outlive a Z80 reset (the AVR keeps running)
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
 
     // ATM3-specific reset
     _state->pBDl = 0x00;
@@ -382,7 +397,7 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             // #xxDF: A8=0 buttons + wheel, A8=1 & A10=0 X, A10=1 Y (zkbdmus.v:118-120);
             // the AVR answers #FF with no mouse. Not DOS-gated on this board
             const uint8_t reg = (port & 0x0100) ? ((port & 0x0400) ? 2 : 1) : 0;
-            result = (_mouse && _mouse->IsPresent()) ? _mouse->ReadRegister(reg) : 0xFF;
+            result = _evoAvr.Ps2Mouse().ReadRegister(reg);  // #FF / #FF / #FF with no mouse (zx_mouse_reset(0))
             break;
         }
         case PortArm::EvoConfig:
@@ -1381,6 +1396,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     ids.push_back(ttd::PeripheralId::EvoSdCard);
     ids.push_back(ttd::PeripheralId::Ds12887);
     ids.push_back(ttd::PeripheralId::EvoPs2);
+    ids.push_back(ttd::PeripheralId::EvoMouse);
     ids.push_back(ttd::PeripheralId::EvoTurboCache);
     ids.push_back(ttd::PeripheralId::EvoFontRam);
     return ids;
@@ -1395,6 +1411,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self._sdCard, self._zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(const_cast<EvoAvr&>(_evoAvr)));
+    serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(const_cast<EvoAvr&>(_evoAvr).Ps2Mouse()));
     serializers.push_back(std::make_unique<ttd::TTDEvoTurboCache>(const_cast<PortDecoder_ATM3&>(*this)));
     serializers.push_back(std::make_unique<ttd::TTDEvoFontRam>(_context));
     return serializers;

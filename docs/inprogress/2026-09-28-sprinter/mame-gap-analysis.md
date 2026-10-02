@@ -102,7 +102,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | T5 | Length of an INT nobody acknowledges | 32 T; frame and keyboard share one timer (`:1715`, `:1736`, `:1742-1746`) | 32 T frame pulse; PLD: 32-64 T | **open** | Audit |
 | T6 | An acknowledged on-chip interrupt (CTC / SIO / PIO) | also clears the PLD's frame, keyboard and Covox-Blaster requests (§3 item 3) | the PLD INT sits behind the chip's daisy chain (`portdecoder_sprinter.cpp:368-373`) | **MAME wrong** | done |
 | T7 | Keyboard INT (ALL_MODE `& #09 == #09`) | per 11 keyboard clock edges, 32 T pulse (`:1706-1718`) | per received byte, latched until the acknowledge (`sprinterintsource.h:42-46`; PLD `KBD.TDF`) | **ours better** | done (S4) |
-| T8 | Covox-Blaster INT every 128 samples | `:1760-1764`, request 2 | none | **missing** | S6 |
+| T8 | Covox-Blaster INT every 128 samples | `:1760-1764`, request 2 | `CovoxBlaster` (CNT bit 6 falling, PLD `CBL_INT`) through `SprinterIntSource`, vector `#FF` | **equal** | done (S6) |
 
 ### 2.3 PLD port table and codes
 
@@ -160,8 +160,8 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | A4 | Double byte (`LD H,H`) | second write at `addr ^ 1` (`:975-979`) | the same (`sprinteraccelerator.cpp:207-227`); the PLD drives the IDE high-byte latch on the other lane - both simplify | **equal** | S5 |
 | A5 | Alternate buffer addressing (codes `#C7` / `#CF`, XCNT / AAGR) | `:887-893`, `:1114-1125` | `sprinteraccelerator.h:93-94` | **equal** | S5 |
 | A6 | Timing: 6 clocks of 42 MHz per extra access (3 CPU clocks at 21 MHz) | `acc_tick`, `:956-997` | `sprinteraccelerator.cpp:130-146`. Example: `LD C,C : LD (IX+0),A` with length 4 adds 9 clocks | **equal** | S5 |
-| A7 | INT stops new operations until the first M1 after `RETI` (PLD `ACC_BLK`) | none | `[SPRINTER] AccelIntSuspend=1` (default), `sprinteraccelerator.cpp:59-91` | **ours better** | S5 |
-| A8 | Accelerator writes into the Covox-Blaster page `#FD` (8- and 16-bit packing) | `:1069-1087` | none | **missing** | S6 |
+| A7 | INT stops new operations until the first M1 after `RETI` (PLD `ACC_BLK`) | none | `[SPRINTER] AccelIntSuspend=1` as an option; default 0 since S6 (the literal `ACC_BLK` preset and WAVPLAY, tdd-accel-sound-input §1.3) | **equal** (default) | S5, S6 |
+| A8 | Accelerator writes into the Covox-Blaster page `#FD` (8- and 16-bit packing) | `:1069-1087`, every copy | copies (`ACC_DIR` bit 1) while the CBL INT is on (PLD `CBL_WR`), `PortDecoder_Sprinter::OnCblPageWrite` | **MAME simplified** | done (S6) |
 | A9 | Windows that are not main RAM are skipped | `accel_mem_r` / `_w`, `:1098-1112` | the same (`sprinteraccelerator.h:55-57`) | **equal** | S5 |
 
 ### 2.7 Keyboard, mouse, joystick
@@ -172,8 +172,8 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | I2 | Commands to the keyboard (LEDs, reset, typematic rate) | not wired (only keyboard to CPU) | not modeled | **both missing** | - |
 | I3 | ZX matrix on code `#40` with PC key combinations (arrows = CS+5..8, Backspace = CS+0) | `kbd_fe_r`, `:1669-1704`; map `:1773-1891` | shared key event, `portdecoder_sprinter.cpp:701-702` | **equal** | done |
 | I4 | Ctrl+Alt+Del | left to the software | PLD reset from the stream, `sprinterinput.cpp:62` | **ours better** | done (S4) |
-| I5 | Tape input, `#FE` bit 6 | `:1692-1694` | the shared `#FE` path (not yet tested on the Sprinter) | **equal** | Audit (a test) |
-| I6 | `#FE` bits 5 (beam below the picture) and 7 (Covox-Blaster half) in CBL mode | `:1696-1701` | none | **missing** | S6 |
+| I5 | Tape input, `#FE` bit 6 | `:1689-1694`: `data |= 0xe0; data ^= 0x40` leaves bit 6 at 0 and the cassette test can only clear it, so the bit never follows the tape; a TAP in the 128 Tape Loader never loads (2026-10-02, [research-zx-mode.md](research-zx-mode.md) §9.6) | the shared `#FE` path, untested on the Sprinter; the tape counts CPU clocks, so at 21 MHz it plays six times faster with the CPU (the board plays in real time) | **MAME wrong**, ours unfaithful in turbo | S8 Z2 |
+| I6 | `#FE` bits 5 (beam below the picture) and 7 (Covox-Blaster half) in CBL mode | `:1696-1701` | `CovoxBlaster::ApplyFeBits` | **equal** | done (S6) |
 | I7 | Serial mouse on SIO B | HLE Microsoft (default), Logitech 3-button, wheel, Mouse Systems (`:2000-2005`); baud from CTC ZC0 | Microsoft 2-button at a fixed 1 200 baud (`core/src/emulator/io/mouse/msserialmouse.h`) | **partial** | new (input extras) |
 | I8 | Kempston mouse view, code `#58` (`#FADF` / `#FBDF` / `#FFDF`) | its own inputs (`:644-659`, `:1894-1904`) | the same journaled counters as the serial mouse (`portdecoder_sprinter.cpp:707-708`) | **equal** | done |
 | I9 | Kempston joystick bits on code `#15` | `joy_ctrl_r(1)` default state (`:605-607`) | `portdecoder_sprinter.cpp:690-696` | **equal** | done |
@@ -214,12 +214,12 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 
 | # | Feature | MAME | unreal-ng | Status | Phase |
 |---|---|---|---|---|---|
-| S1 | AY clock and stereo | 42 MHz / 24 = 1.75 MHz; A left, B both at half, C right (`:2013-2017`) | `[AY] FQ=1774400` (1.4 % high) and `[SOUND] TurboSound=FM` in `data/configs/sprinter/unreal.ini` (a second chip the board does not have) | **partial** | S6 |
+| S1 | AY clock and stereo | 42 MHz / 24 = 1.75 MHz; A left, B both at half, C right (`:2013-2017`) | one AY (`[SOUND] TurboSound=Single`), 3.5 MHz / 2 = 1.75 MHz (the `FQ=` key was never read); the shared ABC preset (B at half to both sides) | **equal** (clock), panning differs | done (S6) |
 | S2 | AY read (code `#52`), write (`#90` / `#91`) | `:640-642`, `:822-827` | `portdecoder_sprinter.cpp:704-705`, `:791-796` | **equal** | done |
 | S3 | Beeper | Spectrum ULA path | shared `#FE` path | **equal** | done |
-| S4 | Covox (code `#88` with CBL off: both channels) | `:785-793` | ignored (`portdecoder_sprinter.cpp:779-780`) | **missing** | S6 |
-| S5 | Covox-Blaster: 256-sample ring, rates from 218.75 kHz / (n + 1) (n = 13 gives 15.6 kHz), stereo, 16-bit (high byte sign-flipped, channels swapped) | `:795-814`, `:1748-1765`, `:1752-1756`, `:1082` | control register stored only (`portdecoder_sprinter.cpp:781-783`) | **missing** | S6 |
-| S6 | 16-bit stereo DAC (TDA1543) | two `DAC_16BIT_R2R` (`:2019-2020`) | none | **missing** | S6 |
+| S4 | Covox (code `#88` with CBL off: both channels) | `:785-793` | `CovoxBlaster::WriteData` with CBL off | **equal** | done (S6) |
+| S5 | Covox-Blaster: 256-sample ring, rates from 218.75 kHz / (n + 1) (n = 13 gives 15.6 kHz), stereo, 16-bit (high byte sign-flipped, channels swapped) | `:795-814`, `:1748-1765`, `:1752-1756`, `:1082` | `CovoxBlaster` per the PLD: write address `~A15..A8` with the INT off, rates 2-7 at 218.75 kHz, continuous output, no 16-bit swap | **MAME differs** (addressing, reserved rates, swap) | done (S6) |
+| S6 | 16-bit stereo DAC (TDA1543) | two `DAC_16BIT_R2R` (`:2019-2020`) | the "Covox-Blaster" mixer row (COVOX slot), `(word - #8000) / 2` | **equal** | done (S6) |
 
 ### 2.12 Expansion slots
 
@@ -246,7 +246,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | # | Feature | MAME | unreal-ng | Status | Phase |
 |---|---|---|---|---|---|
 | D1 | Save states | `MACHINE_SUPPORTS_SAVE`, `:1468-1520`, `:2059` | TTD refuses to record (`portdecoder_sprinter.cpp:897-902`) | **missing** | S7-TTD |
-| D2 | Spectrum media: snapshots (`.sna`, `.z80`, ...), quickload `.scr`, cassette | inherited from `spec128` (`-listmedia`); whether a snapshot loads correctly on the Sprinter is untested | tape through the shared path; the snapshot loaders know nothing of the PLD | **partial** | new (low; capture 5.10) |
+| D2 | Spectrum media: snapshots (`.sna`, `.z80`, ...), quickload `.scr`, cassette | inherited from `spec128` (`-listmedia`); a 128K SNA loads and runs **in ZX mode** (2026-10-02, `P128.ZX`, `action.sna`: the writes go through the program space and `OUT (#7FFD)`, which the PLD routes); outside ZX mode nothing stops it; the cassette never reaches `#FE` (I5) | tape through the shared path; the snapshot loaders write physical pages 0-7 (Sprinter system pages) and nothing refuses | **partial** (ours wrong for snapshots) | S8 Z5 |
 | D3 | Z84C15 system registers in the debugger | WCR, MWBR, CSBR, MCR (`z84c015.cpp:106-109`) | `state/sprinter` on WebAPI, MCP, CLI, Lua, Python ([automation-outcome.md](automation-outcome.md)) | **ours better** | done |
 | D4 | Port trace | `LOGIO` lines only (`:679`, `:912`) | trace with internal codes and names (`portdecoder_sprinter.cpp:911-954`), port table decode and lookup | **ours better** | done |
 | D5 | Video RAM viewer | graphics / tilemap viewer fed by `gfxdecode` and the tilemap (`:1609-1647`; the tilemap is not used for drawing) | `SprinterVideoMapper` (the sources of a pixel), screen text; no GUI viewer | **partial** | S7 |
@@ -298,6 +298,8 @@ Each item names what unreal-ng does instead and the evidence.
 11. **Smaller ones.** RAM 64 MB by default, of which 4 MB can be addressed (`:1953`); RTC chip DS12885 instead
     of DS12887A on host time (`:1966`); ISA buses without interrupts or DMA (`:1973-1979`), so a Sound Blaster
     card could play FM but no samples; all four floppy drives are 5.25" QD by default (`beta_m.cpp:320`).
+12. **Tape input stuck at 0** (I5): `kbd_fe_r` flips bit 6 after setting it, so the tape never reaches the ROM
+    loader (research-zx-mode §9.6). The "original waits" (ALL_MODE bit 2) are not modeled either.
 
 ## 4. Missing in unreal-ng, by priority
 
@@ -306,9 +308,9 @@ Effort on the repository's scale: S < 1 week, M 1-2 weeks, L 2-4 weeks.
 | # | Item | Rows | Effort | Owner phase | Note |
 |---|---|---|---|---|---|
 | 1 | Save state: the whole machine in TTD | D1 | L | **S7-TTD** (next) | already queued; MAME's `save_item` list (`:1468-1520`) is a checklist of PLD fields |
-| 2 | Covox, Covox-Blaster (ring, rates, stereo, 16-bit, INT, `#FE` bits 5 / 7), the 16-bit DAC, the accelerator path into page `#FD` | S4-S6, T8, I6, A8 | M | **S6** | see "order" below |
+| 2 | Covox, Covox-Blaster (ring, rates, stereo, 16-bit, INT, `#FE` bits 5 / 7), the 16-bit DAC, the accelerator path into page `#FD` | S4-S6, T8, I6, A8 | M | **S6, done** | [s6-sound-outcome.md](s6-sound-outcome.md) |
 | 3 | ISA I/O window + ZX-bus adapter + NeoGS on it | M9, Z1, Z2 | M | **new S6b** (after S6) | the owner's MAME setup uses NeoGS; the NeoGS device already exists in unreal-ng, only the path is missing |
-| 4 | AY at 1.75 MHz, one AY (no TurboSound FM) in the Sprinter config | S1 | S | **S6** | config and a pitch test |
+| 4 | AY at 1.75 MHz, one AY (no TurboSound FM) in the Sprinter config | S1 | S | **S6, done** | `SprinterSoundTurbo_Test` |
 | 5 | BIOS images 2.13, 2.17, 3.00 / 3.03 (MAME builds), 3.05 and MAME's 3.06 (`187f4382`) from the owner's pack `roms/sprinter.zip`; BIOS choice through the API | B4, B5 | S | **Audit** | MAME's 3.06 is the image the owner's DSS 1.71 runs on |
 | 6 | CD audio, CUE / CHD CD images, a CD boot check with BIOS 3.06 | H6, H7 | M | **S7** (ATAPI CD) | MAME routes CD audio from the primary slave only |
 | 7 | CHD hard-disk images | H5 | M | **new** (shared media work) | today the pack's `sp_hdd_sys.chd` must go through `chdman extractraw` first |

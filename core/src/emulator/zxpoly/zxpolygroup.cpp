@@ -20,6 +20,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
@@ -179,8 +180,8 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
         // (frame-boundary aligned)
         if (context->pKeyboard)
             context->pKeyboard->SetHostInputGated(true);
-        if (context->pMouse)
-            context->pMouse->SetHostInputGated(true);
+        if (context->pMouseManager)
+            context->pMouseManager->SetHostInputGated(true);
 
         // The ZX-Poly platform ports sit in front of the model's port decoder
         _interceptors[m] = std::make_unique<ZXPolyPortInterceptor>(*this, m);
@@ -1058,21 +1059,22 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
         {
             case InputOp::KeyDown: context->pKeyboard->PressKey(op.key); break;
             case InputOp::KeyUp: context->pKeyboard->ReleaseKey(op.key); break;
+            // Every mouse device of the member, through its manager
             case InputOp::MouseMove:
-                if (context->pMouse)
-                    context->pMouse->Move(op.a, op.b);
+                if (context->pMouseManager)
+                    context->pMouseManager->ApplyMotion(op.a, op.b);
                 break;
             case InputOp::MouseButtons:
-                if (context->pMouse)
-                    context->pMouse->SetButtons(static_cast<uint8_t>(op.a));
+                if (context->pMouseManager)
+                    context->pMouseManager->ApplyButtons(static_cast<uint8_t>(op.a));
                 break;
             case InputOp::MouseWheel:
-                if (context->pMouse)
-                    context->pMouse->SetWheel(op.a);
+                if (context->pMouseManager)
+                    context->pMouseManager->ApplyWheel(op.a);
                 break;
             case InputOp::MouseCounters:
-                if (context->pMouse)
-                    context->pMouse->SetCounters(static_cast<uint8_t>(op.a), static_cast<uint8_t>(op.b));
+                if (context->pMouseManager)
+                    context->pMouseManager->ApplyCounters(static_cast<uint8_t>(op.a), static_cast<uint8_t>(op.b));
                 break;
             case InputOp::KeyboardReset:
                 context->pKeyboard->Reset();

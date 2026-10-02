@@ -148,6 +148,8 @@ void SprinterMemory::MapRamToBank(uint8_t bank, uint8_t ramPage, bool writable)
     }
     if (!writable || graphics)
         SetBankWriteProtected(bank);
+    else if (ramPage == kCblPage)
+        _action[bank & 3] = BankAction::CblPage;
 }
 
 void SprinterMemory::MapFastRamToBank(uint8_t bank, uint8_t fastRamPage)
@@ -271,6 +273,9 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             return;
         case BankAction::ResetPage:
             _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+            break;
+        case BankAction::CblPage:
+            _decoder->OnCblPageWrite(addr, value);
             break;
         default:
             break;

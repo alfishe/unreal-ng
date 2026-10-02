@@ -231,3 +231,8 @@ unreal-ng's tests run the same programs from the DSS 1.62 floppy with BIOS 3.04
 `..._FlexNavigatorDrawsWithTheAccelerator`). The ACCTEST picture (display pixels x 48-175, y 16-79) is
 identical; the Flex Navigator F-key bar has the same pixels with one color mapped (light gray 170 here,
 192 in FN 1.15). See `docs/inprogress/2026-09-28-sprinter/s5-accelerator-outcome.md`.
+
+## ZX mode (BIOS 3.06, 2026-10-02)
+
+The Spectrum-mode session captures (launcher v2.03 with a TRD and an SCL from the MAME-pack disk, the reset back
+to DSS, MAME's tape and snapshot behavior) are in [zx-mode/](zx-mode/README.md).

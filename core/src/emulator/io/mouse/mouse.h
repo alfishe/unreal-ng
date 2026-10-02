@@ -5,6 +5,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/io/mouse/imousesink.h"
 #include "emulator/platform.h"
 
 class EmulatorContext;
@@ -69,14 +70,16 @@ private:
 
 /// Kempston Mouse device: three read-only registers (buttons [+ wheel], X, Y).
 ///
-/// State is written from more than one thread - host input arrives on the
-/// MessageCenter worker, automation calls DebugMouseManager on its own thread,
-/// the Z80 reads on the emulator thread - so every counter is atomic and the
-/// relative updates are compare-and-swap loops (no lost moves).
+/// A sink of the emulator's MouseManager (mousemanager.h): the manager hands
+/// it every input on the emulator thread. The counters are also the board's
+/// mouse counters for the machines whose other mouse view samples them (the
+/// Sprinter serial mouse), so they move whether or not the Kempston ports are
+/// fitted. Debug writes and reads come from other threads, so every counter
+/// is atomic and the relative updates are compare-and-swap loops.
 ///
 /// "Fitting" properties (present, wheel) come from the machine config and are
 /// not device state: Reset() keeps them and TTD does not save them.
-class Mouse : public Observer, public ttd::TTDSerializable
+class Mouse : public IMouseSink, public ttd::TTDSerializable
 {
 public:
     /// Reset coordinates: two different non-zero values - software infers
@@ -110,9 +113,6 @@ public:
     /// what software detection expects (ProfROM #08FB tests bits 5-3 == 1).
     void SetWheelEnabled(bool enabled) { _wheelEnabled.store(enabled, std::memory_order_relaxed); }
 
-    /// Ignore host (MessageCenter) mouse events: a ZX-Poly group member gets
-    /// its mouse input from the group, at frame boundaries
-    void SetHostInputGated(bool gated) { _hostInputGated.store(gated, std::memory_order_relaxed); }
     bool IsWheelEnabled() const { return _wheelEnabled.load(std::memory_order_relaxed); }
 
     /// Apply the machine config (Mouse=, Wheel=) and the kempstonmouse feature to the fitting
@@ -123,12 +123,13 @@ public:
     uint8_t GetButtons() const { return _buttons.load(std::memory_order_relaxed); }
     uint8_t GetWheel() const { return _wheel.load(std::memory_order_relaxed); }
 
-    // Observer callbacks for MessageCenter (host input from the desktop front end).
-    // Routed through DebugMouseManager when present, so host input is replay-guarded
-    // and TTD-journalled exactly like automation input.
-    void OnMouseMove(int id, Message* message);
-    void OnMouseButton(int id, Message* message);
-    void OnMouseWheel(int id, Message* message);
+    /// region <IMouseSink: input from the MouseManager>
+    bool IsMouseFitted() const override { return IsPresent(); }
+    void OnMouseMotion(int dx, int dy) override { Move(dx, dy); }
+    void OnMouseButtons(uint8_t activeLowMask) override { SetButtons(activeLowMask); }
+    void OnMouseWheel(int steps) override { SetWheel(steps); }
+    void OnMouseCounters(uint8_t x, uint8_t y) override { SetCounters(x, y); }
+    /// endregion </IMouseSink>
 
     /// region <TTD (Kempston Mouse design §6.1)>
     size_t TTDStateSize() const override;
@@ -140,9 +141,6 @@ public:
     /// endregion </TTD>
 
 private:
-    MouseEvent* AcceptEvent(Message* message, MouseEventKind kind) const;
-    std::atomic<bool> _hostInputGated{false};
-
     EmulatorContext* _context = nullptr;
     ModuleLogger* _logger = nullptr;
 

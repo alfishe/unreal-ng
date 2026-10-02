@@ -7,7 +7,7 @@
 | Part | Choice |
 |:--|:--|
 | #FE | A2..A0 = 110 (the ATM 7.10 ports doc, Xpeccy, MAME). It was A0 alone: `IN (#FA)` became a keyboard controller command with a Z80 wait, `OUT (#FA)` a border write |
-| #FB (A2..A0 = 011) | `OUT` latches the bus address CT0..CT7 (`PortDecoder_ATM710::IoBusAddress`); the write goes on to the Covox DAC, which shares the latch. An `IN` is the printer status (not the latch): left undecoded |
+| #FB (A2..A0 = 011) | `OUT` latches the bus address CT0..CT7 (`PortDecoder_ATM710::IoBusAddress`); the write goes on to the Covox DAC, which shares the latch. An `IN` that no ZX-Bus card claims is the printer status: #FF without a printer (BUSY' pulled up by R39, D0..D6 undriven); the latch cannot be read back |
 | #FA (A2..A0 = 010) | `IN` / `OUT` go to the first device whose `IAtmIoDevice::Matches(latch)`; an `IN` with none reads #FF (the bus floats) |
 | Reset | the connector's RS: every device's `Reset()` (the board reset) |
 | Devices | `IAtmIoDevice` (`Matches`, `Read`, `Write`, `Reset`), `AttachIoDevice` / `DetachIoDevice`; only the v7.10 board (`v710Board`), never the ZX-Evo |
@@ -17,7 +17,9 @@
 
 `Atm2IoEsp` (`core/src/emulator/io/network/atm2ioesp.h`): matches `(latch & #F8) == base` (#F0 Rev 1.5 / 2.0,
 #F8 Rev 1.0), the register is `latch & 7`. The UART and its peer are a `ComPort` built with the plain
-`Chip16550` parameters (1.8432 MHz, AFE present, no access wait, INTRPT not wired) and a register map
+`Chip16550` parameters (1.8432 MHz, AFE present, no access wait, INTRPT not wired) with `ctsOnly`: only
+CTS' comes from the ESP (its RTS), DCD' and DSR' are tied asserted, RI' inactive (traced on the Rev 2
+gerbers), and a register map
 `port & 7`, reached through the bus instead of #xxEF. TTD: the same `TTDSerialPort` serializer under
 its own id `Atm2IoEsp` (37). On the virtual network its peer is guest 4.
 

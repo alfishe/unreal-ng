@@ -14,6 +14,7 @@
 
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/memory/atm/evoavrmouse.h"
 
 /// ZX-Evo BaseConf AVR as the Z80 sees it through the Gluk clock ports
 /// (#DFF7 address / #BFF7 data, #DEF7 / #BEF7 in shadow).
@@ -150,6 +151,11 @@ public:
     void SetResetHandler(ResetHandler handler) { _resetHandler = std::move(handler); }
     /// endregion </PS/2 keyboard>
 
+    /// The PS/2 mouse on the AVR and the Kempston-address registers it keeps
+    /// (evoavrmouse.h); a sink of the emulator's MouseManager
+    EvoAvrMouse& Ps2Mouse() { return _mouse; }
+    const EvoAvrMouse& Ps2Mouse() const { return _mouse; }
+
     /// region <TTD>
     /// Volatile AVR state (AtmPagingState). The clock and its cells are the
     /// Ds12887 blob; the 4 KiB EEPROM is not captured (the guest writes it
@@ -180,4 +186,7 @@ protected:
     ResetHandler _resetHandler;
     std::chrono::steady_clock::time_point _f12Press{};
     bool _f12Down = false;
+    // Its resolution lives in the AVR's battery-backed RTC cell #FD, which the Z80 cannot reach
+    EvoAvrMouse _mouse{[this] { return GetCell(EvoAvrMouse::kResolutionCell); },
+                       [this](uint8_t value) { SetCell(EvoAvrMouse::kResolutionCell, value); }};
 };

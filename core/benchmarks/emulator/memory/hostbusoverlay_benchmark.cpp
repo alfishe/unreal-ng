@@ -85,6 +85,9 @@ static void BM_HostFrame_TSConf_Debug(benchmark::State& s) { RunHostFrame(s, "TS
 // keyboard controller each IN #FE runs its firmware: the worst case for it)
 static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
 static void BM_HostFrame_ATM710_Debug(benchmark::State& s) { RunHostFrame(s, "ATM710", true); }
+// Sprinter Sp2000: the BIOS at 21 MHz on the Z84C15 engine; the PLD INT source (frame, keyboard, Covox-Blaster)
+// is asked before every instruction
+static void BM_HostFrame_Sprinter_Fast(benchmark::State& s) { RunHostFrame(s, "SPRINTER", false); }
 static void BM_HostFrame_Pentagon_Overlay_Fast(benchmark::State& s) { RunHostFrame(s, "PENTAGON", false, true); }
 static void BM_HostFrame_Pentagon_Overlay_Debug(benchmark::State& s) { RunHostFrame(s, "PENTAGON", true, true); }
 
@@ -98,6 +101,7 @@ BENCHMARK(BM_HostFrame_TSConf_Fast)->Iterations(1000)->Unit(benchmark::kMicrosec
 BENCHMARK(BM_HostFrame_TSConf_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Sprinter_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 
