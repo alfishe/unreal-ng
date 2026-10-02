@@ -59,8 +59,8 @@ results: [README.md](README.md).
 - [ ] v3 / v4 CD CHDs (`CHCD` metadata) and GD-ROM / DVD CHDs are refused with the reason.
 - [ ] A better resampler than linear interpolation when the mixer does not run at 44.1 kHz.
 - [ ] Audio CD from a folder, v2 ideas (not needed now): decode lazily per track or on a worker thread
-  with a spill file instead of ~10 MiB a minute in memory and ~5 s for 80 minutes at insert; build a
-  main-window drop off the UI thread like the media panel does; CD-TEXT from the files' tags; Ogg /
+  with a spill file instead of ~10 MiB a minute in memory and ~5 s for 80 minutes at insert (off the
+  UI thread already: every Qt path uses the panel's folder worker); CD-TEXT from the files' tags; Ogg /
   Opus; a `.m3u` playlist as the track order.
 - [ ] TTD: the CdDrive blob's disc identity is reported (log + `DiscMismatches`), not shown in the TTD
   status / GUI; a UNS media section (roadmap UNS-6) would carry it for every medium.

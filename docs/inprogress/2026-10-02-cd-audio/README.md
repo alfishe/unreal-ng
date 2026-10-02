@@ -126,8 +126,11 @@ The owner's five requests after the first live runs.
 192 kbit/s) + 3 FLAC (5 min, 48 kHz: resampled) = 75:30 of audio in **5.0 s** on the dev Mac
 (Release build); the 16th file did not fit and ended the disc. Memory: the disc's PCM, 10.1 MiB per
 minute (~760 MiB here); the build peaks higher (one file's float samples, the disc buffer's growth).
-A drop on the main window builds on the UI thread (a pause of that length); the media panel builds
-off it.
+In unreal-qt no path builds on the UI thread: the media panel's Insert Folder, a drop on the main
+window and File > Open all hand the folder to the panel's folder worker (the one HDD / SD folder
+volumes use, BUGS.md #3: `MediaPanelWindow::insertFolder`): the row shows "pending", progress feeds
+the stall watchdog, the table refreshes on completion. The automation surfaces build on their own
+request thread.
 
 ### Tests added / changed
 

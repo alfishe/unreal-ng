@@ -423,6 +423,19 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
     report(run("insert", slot, S(path), options), tr("Insert"));
 }
 
+bool MediaPanelWindow::insertFolder(const std::string& slot, const QString& path, QString* reason)
+{
+    if (_insertWorker.joinable())
+    {
+        if (reason)
+            *reason = tr("another folder is still being built");
+        return false;
+    }
+    _lastDirectory = QFileInfo(path).absolutePath();
+    insertFolderAsync(slot, path, {{"async", "true"}});
+    return true;
+}
+
 void MediaPanelWindow::insertFolderAsync(const std::string& slot, const QString& path,
                                          std::map<std::string, std::string> options)
 {

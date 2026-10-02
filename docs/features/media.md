@@ -400,7 +400,8 @@ Each method returns the result as a dict.
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
 medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
 cannot take the dropped file says why and inserts nothing. **Insert Folder** into a CD-ROM drive
-builds an audio CD of the folder's MP3 / FLAC / WAV files (off the UI thread, with progress); into an
+builds an audio CD of the folder's MP3 / FLAC / WAV files (off the UI thread, with progress - a folder
+dropped on the main window or opened with File > Open goes through the same worker); into an
 empty IDE unit of the other kind the panel asks to swap the unit's drive first (a CD image or a
 music folder into a hard-disk unit, a disk image into a CD drive).
 
