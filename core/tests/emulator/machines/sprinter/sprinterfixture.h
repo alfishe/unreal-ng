@@ -83,6 +83,15 @@ protected:
     /// The first IN after a PLD reset opens the port decoder (through a code-#00 port)
     void OpenDcp() { In(0x00FE); }
 
+    /// One instruction on the Sprinter's CPU: the Z84C15 engine (Z80::Z80Step is the native interpreter)
+    void Step()
+    {
+        if (_z80->GetEngine())
+            _z80->EngineStep();
+        else
+            _z80->Z80Step();
+    }
+
     /// Run code placed at `origin` (a RAM window) until PC passes its end
     void RunCode(const std::vector<uint8_t>& code, uint16_t origin = 0x8000)
     {
@@ -91,7 +100,7 @@ protected:
         _z80->pc = origin;
         const uint16_t end = static_cast<uint16_t>(origin + code.size());
         for (int guard = 0; guard < 100000 && _z80->pc != end; guard++)
-            _z80->Z80Step();
+            Step();
         ASSERT_EQ(_z80->pc, end);
     }
 
@@ -226,6 +235,16 @@ private:
         if (!_realRom)
             TagRam();
         _core->Reset();
+
+        // The fast start leaves the Z84C15 as the loader does: WCR = #04, one memory wait per
+        // cycle until the BIOS's InitCpuPorts clears it. The synthetic ROM has no BIOS: the
+        // fixture clears it the same way (OUT (#EE),0 : OUT (#EF),0), so test code runs with the
+        // PLD's waits only. The real ROM's BIOS does it itself
+        if (!_realRom && _fastStart)
+        {
+            _decoder->GetZ84().Write(0xEE, 0x00);
+            _decoder->GetZ84().Write(0xEF, 0x00);
+        }
         return true;
     }
 
