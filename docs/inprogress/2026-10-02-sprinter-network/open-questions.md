@@ -18,6 +18,8 @@ Slot 1 holds the ZX-bus adapter with the NeoGS (ISA Q2). Slot 2 is free.
 
 **Recommendation: A**, plus a ready-made recipe line. B is a one-line change later if the owner prefers it.
 
+**Owner decision (2026-10-02): B** - the NE2000 is fitted by default (slot 2, RTL8019AS at `#300`): "the network card is fitted by default - that is the most important part". The Sprinter boot fixture is re-recorded with its blob when SN1 lands.
+
 ## Q2. Bridge to the host's real LAN (phase SN6)?
 
 The user-mode gateway (NAT) gives the Sprinter everything the kits need (DHCP, DNS, TCP, UDP, ping, inbound
@@ -26,6 +28,8 @@ see the Sprinter), but needs libpcap / Npcap (Windows users install Npcap) or a 
 received frame becomes a journaled TTD input.
 
 **Recommendation:** not now. Build NAT (SN2); keep SN6 in the plan as optional and start it only on request.
+
+**Owner decision (2026-10-02): the bridge right away** - SN6 is no longer optional and moves up next to SN2 (NAT stays as the no-admin default; the bridge is the second host path for the same card).
 
 ## Q3. Default MAC address
 
@@ -92,6 +96,8 @@ the guest's TCP / IP.
 | C | Vendor libslirp (BSD-3, needs GLib) | QEMU's proven NAT, but it talks to host sockets itself: it would bypass our host bridge and the TTD journal (a parallel host path, against the reuse rule) |
 
 **Recommendation: A.**
+
+**Owner decision (2026-10-02): A** - our own gateway component, shared by every Ethernet card, "and test it well": a dedicated test suite (ARP, IPv4 fragments, ICMP, UDP, TCP state machine incl. retransmit, window, out-of-order, RST / FIN races, DHCP and DNS through the virtual network, inbound forwards, TTD replay bit-exact) plus end-to-end runs of the real Sprinter kit programs.
 
 ## Q10. Guest registry for virtual network peers
 
