@@ -1744,13 +1744,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (com["connected"].asBool() ? "" : " (not connected)") << ", " << com["baud"].asUInt() << " baud, rx "
                                             << com["rx_fifo"].asInt() << " / tx " << com["tx_fifo"].asInt() << " in FIFO, in " << com["bytes_in"].asUInt64()
                                             << " / out " << com["bytes_out"].asUInt64() << " bytes";
+                                    const Json::Value& machineSerial = value["machine_serial"];
+                                    if (machineSerial["fitted"].asBool())
+                                        out << "\n[com] keyboard controller " << machineSerial["kbc_firmware"].asString() << " RS-232, "
+                                            << machineSerial["peer"].asString()
+                                            << (machineSerial.isMember("target") ? " " + machineSerial["target"].asString() : std::string())
+                                            << (machineSerial["connected"].asBool() ? "" : " (not connected)") << ", " << machineSerial["baud"].asUInt()
+                                            << " baud, RTS " << (machineSerial["rts"].asBool() ? "on" : "off") << ", in "
+                                            << machineSerial["bytes_in"].asUInt64() << " / out " << machineSerial["bytes_out"].asUInt64() << " bytes, lost "
+                                            << machineSerial["lost"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
                                     if (set.isObject())
                                         out << "\n[network] settings: card " << set["card"].asString() << ", com_port " << set["com_port"].asString()
                                             << ", zx_wifi " << set["zx_wifi"].asString() << ", esp_chip " << set["esp_chip"].asString()
-                                            << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string());
+                                            << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
+                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string());
                                 }
                             }
                             else if (aspect == "rtc")

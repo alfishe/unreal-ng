@@ -143,6 +143,39 @@ A PS/2 (AT, scan code set 2) keyboard on the clock / data lines:
 - The peers are the existing ones: `NONE`, `LOOPBACK`, `TCP:`, `SERIAL:`,
   `ESPNET`, `AT` (network TDD §7.2).
 
+As built (K4):
+
+- The controller does not own the peer: `NetworkManager` builds it from
+  `ComPort=` (the same factory as for the #xxEF port) and plugs it in through
+  `NetworkCapabilities::attachSerialPeer`; `EmulatorContext::pMachineSerialPeer`
+  points at it. A V22-* firmware has no RS-232: the port is not offered and
+  `not_fitted` says why.
+- Receive: when the peer has a byte (and RTS is asserted, for a peer that
+  honors it) the frame starts on RXD; `SerialIn` hands it to the MCU when the
+  middle of its stop bit is sampled (one frame time later, at the bit rate of
+  the receiving timer). The next frame cannot start before the stop bit ends.
+  A frame that arrives while RI is still set is counted as `lost`.
+- Transmit: the MCU's `serialOut` (at the end of the frame on TXD) hands the
+  byte to the peer and ends the MCU's run slice, so an echo or a module's
+  answer starts at once; so does a change of RTS / DTR.
+- Modem inputs: CD, CTS, RI from the peer on P1.0..P1.2 (asserted = 0); with
+  nothing plugged in they read deasserted.
+- The peer's clock is the machine's (`SetClock` with the emulated T-state
+  counter); a byte from outside makes the controller catch up to its arrival
+  time first (`onReceive`).
+- On the virtual network the peer is guest 3 (`SerialGuests::machine`; the
+  card's chip is 1, the #xxEF port's peer 2): its sockets survive a ZX-Bus
+  reset and come back to it after a TTD seek.
+- Measured on V41 (2026-10-01, the emulated MCU): the INT1 answer takes 34..83
+  machine cycles, the timer 0 tick 36, the serial ISR 24; one frame at
+  115200 baud is 80 cycles. INT1 and TF0 come before the UART in the polling
+  order, so a Z80 that reads `#FE` while RTS is on (a program polling the
+  keyboard, a driver reading the buffer out) loses a received frame now and
+  then (`lost` in the state), and reads back to back with no gap starve the
+  UART completely. That is the firmware on the real chip, not an emulation
+  artifact; it is why the drivers pulse RTS (reference §2.5). The tests pace
+  their reads like a driver (`DriverIn`, RTS off while reading out).
+
 ## 8. Configuration and surfaces
 
 ```ini
@@ -159,8 +192,9 @@ ComPort=NONE       ; what is plugged into the controller's RS-232 port (ATM710)
 - State: `GET /state/atm2kbc` (and the MCP aspect, CLI `atm2kbc`, Lua / Python
   `atm2kbc_state()`): firmware, crystal, mode, VE1, W_ON, command state,
   keyboard registers and LEDs, clock, RX / TX counts, baud, modem lines, and
-  the MCU (PC, registers, timers) for debugging. The network state's
-  `com_port` shows the controller as the serial port (`flavor` `atm2kbc`).
+  the MCU (PC, registers, timers) for debugging. The network state shows the
+  controller's port as `machine_serial` (`flavor` `atm2kbc`, beside a ZX-WiFi
+  card's `com_port`); `machine.serial_port` is `atm2-kbc`.
 - Qt: the Network window offers the controller firmware where the machine has
   it, like the AVR firmware on the ZX-Evo.
 
@@ -169,7 +203,11 @@ ComPort=NONE       ; what is plugged into the controller's RS-232 port (ATM710)
 A new blob `PeripheralId::Atm2Kbc` (next free id): the MCU state (internal
 RAM, SFRs, PC, oscillator clock, interrupt state), the board latches (A15..A8,
 D102, WAIT flip-flop), the PS/2 keyboard model (queue, bit position, LEDs) and
-the UART line state. The peer stays in the SerialPort blob. Host input is
+the UART line state (`SerialLineState`: the frame on RXD, counters). The peer
+has its own blob, `PeripheralId::MachineSerialPeer` (27): the peer part of
+`netstate::Com` (loopback queue, stream link with its received bytes as
+journal references, ESP module), shared code with the SerialPort blob
+(`ComPort::SavePeer` / `LoadPeer`). Host input is
 already journaled (`PcKey` events, NetEvents). Contract-test row and
 `ttd.ksy`.
 

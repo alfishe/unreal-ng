@@ -110,6 +110,8 @@ private:
     SerialPeerEditor* _comPort = nullptr;
     QComboBox* _avrFirmware = nullptr;
     QLabel* _avrWhy = nullptr;
+    QComboBox* _kbcFirmware = nullptr;
+    QLabel* _kbcWhy = nullptr;
     QComboBox* _espChip = nullptr;
     QCheckBox* _modemLines = nullptr;
     QCheckBox* _hostAccess = nullptr;

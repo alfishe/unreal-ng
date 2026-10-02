@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "network/ttdmachineserialpeer.h"
 #include "network/ttdserialport.h"
 #include "network/ttdzxnetusb.h"
 #include "emulator/emulatorcontext.h"
@@ -100,6 +101,12 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto serial = std::make_unique<TTDSerialPort>(context);
         registry.Register(PeripheralId::SerialPort, serial.get());
         ownedSerializers.push_back(std::move(serial));
+    }
+    if (context->pMachineSerialPeer)
+    {
+        auto peer = std::make_unique<TTDMachineSerialPeer>(context);
+        registry.Register(PeripheralId::MachineSerialPeer, peer.get());
+        ownedSerializers.push_back(std::move(peer));
     }
 
     // --- Model-specific state (TDD 6.4) ---
