@@ -48,7 +48,7 @@ built.
 | R18 | The port decode of every mode equals the board's port decoder PROM (the tables and their wiring: [decoder-prom.md](decoder-prom.md)) | the v3.2 dump (MDESK) | the printed table of v4.01 / v5.0 (transcribed) | H | P7, P8, P9, design 4.3 |
 | R19 | 8255 outside DOS and CP/M: `IN #1F` = Kempston joystick (port A); Covox left `#5F`, right `#3F` | yes | yes | H | P11, P12 |
 | R20 | Mouse at `#FADF/#FBDF/#FFDF` with CP/M off | yes | yes | H | P15 |
-| R21 | Floating bus: the screen byte under the beam on an undecoded read | **yes** (exact form O) | none (no data) | M | P16 |
+| R21 | Floating bus: the pixel byte the video latch holds, on an undecoded `IN` with A0 = 1 (design 4.4) | **yes** | none | M (form from the schematic, E3) | P16 |
 | R22 | PSG is an AY-3-8910 | yes | yes | H | P17 |
 
 ### 2.3 Video timing and CPU clock
@@ -59,10 +59,10 @@ built.
 | R30a | INT length | 32 T (O) | 28 T (Gromov's 8-8.6 us) | O / M | T5 |
 | R31 | Hi-res (DS80) timing comes from the upper half of the same PROM | yes | yes | O (the DS80 CPU clock) | design 5.3 |
 | R32 | Turbo: a front-panel switch (no port) in machine control and automation | yes | yes | H (switch exists) | MAN v3.2 p2, p5; v5.0 p2, p5 |
-| R33 | v3 turbo is 7 MHz with RAM waits from the board's DRAM arbitration; the wait rule comes from the v3.2 schematic, cross-checked against the measurements available (design 6) | yes | - | O | T5-T8 |
+| R33 | v3 turbo is 7 MHz with RAM waits from the board's DRAM arbitration; the wait rule comes from the v3.2 schematic, cross-checked against the measurements available (design 6.2) | yes | - | M (E3) | T5-T8 |
 | R34 | v5 turbo up to 15 MHz (third crystal, a configurable clock) | - | yes (rule O) | M (exists) / O (rule) | MAN v5.0 p2, p6 |
 | R35 | No wait states at 3.5 MHz | yes | **no**: see R36 | H | M6 |
-| R36 | v5: the video controller's WAIT on CPU RAM accesses in standard mode (/REDYT), switchable like the 5.06 jumper SB8 (`[PROFI] WaitConfig=profi\|pentagon`); the IORQ one-shot wait | - | yes (per-T rule O) | M (exists) / O (rule) | cross-check 4.4, design 6.4 |
+| R36 | v5: the video controller's WAIT on CPU RAM accesses in standard mode (/REDYT), switchable like the 5.06 jumper SB8 (`[PROFI] WaitConfig=profi\|pentagon`); the ROM one-shot wait as an option (`RomWait`) | - | yes | M (rule from the netlist model, E4) | cross-check 4.4, design 6.4 |
 | R37 | AY clock in 512x240: 1.5 MHz on the original boards (12 MHz / 8) | O | O | O | zx-pk; check against the schematics |
 
 ### 2.4 Integration
@@ -90,9 +90,9 @@ built.
 |:--|:--|:--|:--|
 | Q1 | ~~v3 frame: 69888 / 12580 or 71680 / 47 T~~ **settled**: both, from different PROMs (cross-check 4); `SyncProm=` with v3 default `0a1d`, the original PROM of a 3.2 board | - | - |
 | Q2 | ~~v5 frame: 216 T or 224 T~~ **settled**: 224 T x 312 = 69888, INT 14368 T before paper; 216 T was a decoding mistake (the DD53 load value, cross-check 4.1) | - | - |
-| Q9 | v5 /REDYT wait pattern per T (slot phase, paper vs border) | R36 | E4: the v5.06 netlist |
-| Q3 | v3 floating-bus form: which byte, at which beam positions, on which ports | R21 | the v3.2 schematic (data bus buffer on IORQ reads) |
-| Q4 | v3 turbo wait rule | R33 | the v3.2 schematic (READYT, clock mux U16); check against Tact Meter 1.0 figures (XP+ board: 71680 at 3.5 MHz, 143206 ROM / 88208 RAM in turbo), the Unreal_NS `PROFI_TURBO` preset (116920 T) and the manual's "в 1.7 раза" |
+| Q9 | ~~v5 /REDYT wait pattern per T~~ **settled** by E4: 1 T on every other T of the paper fetch window, phase from power-on, none in the border ([research-profi-v5-wait.md](research-profi-v5-wait.md), design 6.4) | - | - |
+| Q3 | ~~v3 floating-bus form~~ **settled** by E3: the pixel byte only, one tick ahead of the display, `IN` with A0 = 1 ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) B, design 4.4) | - | - |
+| Q4 | ~~v3 turbo wait rule~~ **settled** by E3: RAM waits 2 / 3 7 MHz clocks by the start clock's parity, ROM none; reproduces the 88208 T Tact Meter figure (design 6.2) | - | - |
 | Q5 | v5 palette gate: DS80 alone (every emulator) or "80DS=1 и BLOCK=1 в режиме CP/M" (MAN v5.0 p11) | R12 | the v5.0 schematic (palette RAM write strobe) |
 | Q6 | v5 front-panel CP/M switch: released = micro-DOS boot / self-test, pressed = Spectrum 128 | not built | later, a machine-control switch like turbo |
 | Q7 | ~~Does the SYS ROM see the extended map on v5 (Karabas)~~ **settled: no** ([decoder-prom.md](decoder-prom.md)) | - | - |

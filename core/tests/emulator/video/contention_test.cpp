@@ -659,10 +659,11 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
 
 /// Machines without contention never wait: code and data in #4000-#7FFF across a paper line take the same time
 /// wherever the beam is. The Scorpion's only delay is Even M1 (z80.cpp): a fetch from RAM that would start on an
-/// odd T-state waits one T-state, whatever the beam does
+/// odd T-state waits one T-state, whatever the beam does. The Profi v3 is here; the v5 waits for its video
+/// (ProfiWaitOverlay_Test)
 TEST(ContentionNegative_Test, ClonesNeverWait)
 {
-    for (const char* model : { "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710", "ATM3" })
+    for (const char* model : { "PENTAGON", "SCORPION", "PROFSCORP", "PROFI3", "ATM710", "ATM3" })
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(emulator, nullptr) << model;
@@ -855,7 +856,7 @@ TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
     const Case cases[] = {
         { "PENTAGON", false, false }, { "48K", true, true },       { "128K", true, true },
         { "PLUS2", true, true },      { "PLUS2A", true, false },   { "PLUS3", true, false },
-        { "SCORPION", false, false }, { "PROFSCORP", false, false }, { "PROFI", false, false },
+        { "SCORPION", false, false }, { "PROFSCORP", false, false }, { "PROFI3", false, false },
         { "ATM710", false, false },   { "ATM3", false, false },
     };
 

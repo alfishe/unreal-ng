@@ -705,3 +705,50 @@ TEST_F(ProfiV3PortDecoder_Test, DecodeMatchesThePortDecoderProm)
 }
 
 /// endregion </Port decode against the boards' port decoder PROMs>
+
+/// region <The v3 floating bus>
+
+/// research-profi-v3-turbo-floatbus.md B3: an IN that no device answers reads the pixel latch while it drives the
+/// bus - one 4-T tick ahead of the displayed byte - and #FF from the pull-ups elsewhere. `d` is T3 minus the frame T
+/// of the line's first displayed pixel; the lookup runs at T2, one T earlier
+TEST_F(ProfiV3PortDecoder_Test, FloatingBusReadsThePixelLatch)
+{
+    DosLatchOff();
+    uint8_t* screen = _memory->RAMPageAddress(5);
+    for (uint16_t b = 0; b < 32; b++)
+    {
+        screen[(10 & 0x07) << 8 | (10 & 0x38) << 2 | b] = static_cast<uint8_t>(0x10 + b);   // line 10, byte b
+        screen[(9 & 0x07) << 8 | (9 & 0x38) << 2 | b] = static_cast<uint8_t>(0x80 + b);     // line 9
+    }
+    Z80* z80 = _core->GetZ80();
+    const uint32_t line10 = kProfiPaperStartT + 10 * 224;
+    auto readAt = [&](int32_t d) {
+        z80->t = static_cast<uint32_t>(static_cast<int32_t>(line10) + d - 2);
+        return ReadPort(0x00FF);
+    };
+    EXPECT_EQ(readAt(0), 0x10) << "byte 0 at its first T";
+    EXPECT_EQ(readAt(1), 0x11) << "byte 1 once the latch took it";
+    EXPECT_EQ(readAt(4), 0x11);
+    EXPECT_EQ(readAt(5), 0x12);
+    EXPECT_EQ(readAt(-1), 0x10) << "the tick before the paper holds byte 0";
+    EXPECT_EQ(readAt(-4), 0x9F) << "at its first T the latch still holds byte 31 of the line before";
+    EXPECT_EQ(readAt(123), 0x2F) << "byte 31";
+    EXPECT_EQ(readAt(124), 0xFF) << "the last tick: the latch is off the bus";
+    EXPECT_EQ(readAt(-5), 0xFF) << "left border";
+    EXPECT_EQ(readAt(-10 * 224 - 30), 0xFF) << "top border";
+
+    // An answered port is not the floating bus; neither is the hi-res mode
+    OutDFFD(0x80);
+    EXPECT_EQ(readAt(1), 0xFF) << "DS80: not modeled";
+}
+
+TEST_F(ProfiPortDecoder_Test, V5HasNoFloatingBus)
+{
+    DosLatchOff();
+    uint8_t* screen = _memory->RAMPageAddress(5);
+    screen[(10 & 0x07) << 8 | (10 & 0x38) << 2 | 1] = 0x42;
+    _core->GetZ80()->t = kProfiPaperStartT + 10 * 224 + 1 - 2;
+    EXPECT_EQ(ReadPort(0x00FF), 0xFF);
+}
+
+/// endregion </The v3 floating bus>

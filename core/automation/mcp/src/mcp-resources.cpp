@@ -271,9 +271,26 @@ Covox DAC (8255): #5F left, #3F right while the disk interface is off the bus; o
 extended map. Kempston joystick at #1F outside the DOS port set. NMI (magic button) raises the DOS latch while DS80
 is off. v5 only: the RTC (MC146818 / DS12887, 256 cells; inspect_state aspect rtc) and the Profi IDE.
 
+## TURBO switch (both boards)
+A front-panel switch, not a port: `invoke_api GET /api/v1/emulator/{id}/switches`, `POST .../switches`
+`{"name":"turbo","on":true}` (CLI `switch turbo on`, Lua/Python `set_switch("turbo", true)`; `[PROFI] Turbo=1` sets
+it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a loaded floppy head (WD1793 HLD) holds
+3.5 MHz. The status line shows the clock.
+
+## Wait states and the floating bus (feature `contention`)
+| Board, clock | Waits |
+|:--|:--|
+| v5, 3.5 MHz | RAM accesses: 1 on every other T of the paper fetch window (192 lines x 128 T), none in the border; `[PROFI] WaitPhase=0..3` (power-on phase; 1 = none), `WaitConfig=pentagon` (jumper SB8: none), `RomWait=1` (ROM reads +1) |
+| v5, 7 MHz | approximation: RAM 1 in the border, 2 in the paper; ROM reads 1 |
+| v3, 3.5 MHz | none |
+| v3, 7 MHz | RAM opcode fetch / read / write: 2 clocks from an even 7 MHz clock, 3 from an odd one; ROM none (RAM code runs ~1.33x, ROM 2x) |
+
+v3 floating bus: an unanswered `IN` with A0=1 reads the pixel byte the video latch holds (one 4-T tick ahead of the
+displayed byte, page 5 or 7 per #7FFD bit 3), `#FF` in the border; no attribute bytes. The v5 reads `#FF`.
+
 ## Known limitations
-Turbo, the v3 floating bus and the v5 video WAIT are not modeled yet (design phases 3b-5). The BIOS boots to its
-main menu; launching the menu entries (CP/M, TR-DOS, Sinclair) has not been verified yet.
+The 512x240 hi-res mode (DS80) has no waits, no floating bus and no 15 MHz third crystal. The v5 turbo waits are an
+approximation. The BIOS menu entries (TR-DOS, Sinclair, 128) are verified on both boards; CP/M boots from a disk.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)

@@ -10,6 +10,7 @@
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/network/virtualnetwork.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -25,6 +26,7 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.joystick = context->pJoystick;
     devices.generalSound = context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
     devices.network = context->pVirtualNetwork;
+    devices.portDecoder = context->pPortDecoder;
     return devices;
 }
 
@@ -95,6 +97,11 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
                 return false;
             joystick->SetState(ev.buttonMask);
             break;
+
+        case TTDInputKind::FrontPanelSwitch:
+            if (!devices.portDecoder)
+                return false;
+            return devices.portDecoder->SetFrontPanelSwitch(static_cast<FrontPanelSwitch>(ev.key), ev.pressed);
 
         case TTDInputKind::GSCommand:
             if (!generalSound)

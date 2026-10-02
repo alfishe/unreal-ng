@@ -21,6 +21,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdinputapply.h"
 #include "emulator/notifications.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/fdc/diskautostart.h"
@@ -996,6 +997,29 @@ void Emulator::RequestNMI()
 
     if (wasRunning)
         Resume(false);
+}
+
+bool Emulator::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
+{
+    PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    if (!decoder || !decoder->HasFrontPanelSwitch(sw))
+        return false;
+
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::FrontPanelSwitch;
+    ev.key = static_cast<uint8_t>(sw);
+    ev.pressed = on;
+    if (_context->pTimeTravelManager)
+        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    return ttd::ApplyInputEvent(ev, ttd::InputDevicesOf(_context));
+}
+
+int Emulator::GetFrontPanelSwitch(FrontPanelSwitch sw) const
+{
+    const PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    if (!decoder || !decoder->HasFrontPanelSwitch(sw))
+        return -1;
+    return decoder->GetFrontPanelSwitch(sw) ? 1 : 0;
 }
 
 void Emulator::RequestMNI()

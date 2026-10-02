@@ -11,6 +11,7 @@
 #include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/platform.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/notifications.h"
@@ -794,6 +795,15 @@ void MenuManager::createMachineMenu()
     _mniAction->setStatusTip(tr("Non-maskable interrupt into the service monitor (plain NMI on other models)"));
     connect(_mniAction, &QAction::triggered, this, &MenuManager::mniRequested);
 
+    // The Profi boards' front-panel TURBO switch (7 MHz; on the v3 a loaded floppy head holds 3.5 MHz). Enabled only
+    // on a machine that has it; recorded by TTD like a key
+    _frontPanelTurboAction = _machineMenu->addAction(tr("&TURBO Switch"));
+    _frontPanelTurboAction->setStatusTip(tr("The Profi front-panel TURBO switch: 7 MHz while on"));
+    _frontPanelTurboAction->setCheckable(true);
+    _frontPanelTurboAction->setEnabled(false);
+    connect(_frontPanelTurboAction, &QAction::triggered, this, &MenuManager::frontPanelTurboToggled);
+    connect(_machineMenu, &QMenu::aboutToShow, this, [this]() { updateFrontPanelSwitches(_activeEmulator.lock()); });
+
     _machineMenu->addSeparator();
 
     // Fast tape loading trap (LD-BYTES $0556 hook — design:
@@ -838,8 +848,8 @@ void MenuManager::createMachineMenu()
     _machineMenu->addSeparator();
     _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
     _contentionAction->setStatusTip(
-        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3, and ULA snow on the 48K / 128K / +2 "
-           "(no effect on other machines); fixed while TTD records or replays"));
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 and the Profi, and ULA snow on the "
+           "48K / 128K / +2 (no effect on other machines); fixed while TTD records or replays"));
     _contentionAction->setCheckable(true);
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
@@ -1400,8 +1410,19 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         }
     }
 
+    updateFrontPanelSwitches(activeEmulator);
+
     // Update machine model selection
     updateMachineModelSelection(activeEmulator);
+}
+
+void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator)
+{
+    if (!_frontPanelTurboAction)
+        return;
+    const int turbo = activeEmulator ? activeEmulator->GetFrontPanelSwitch(FrontPanelSwitch::Turbo) : -1;
+    _frontPanelTurboAction->setEnabled(turbo >= 0);
+    _frontPanelTurboAction->setChecked(turbo > 0);
 }
 
 void MenuManager::resetViewportSelection()

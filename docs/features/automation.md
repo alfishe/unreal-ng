@@ -73,6 +73,7 @@ Supported models (see [Profi 1024](../hardware/profi-1024.md) for that machine):
 pause                   # Pause emulation
 resume                  # Resume emulation
 reset                   # Hardware reset
+switch [turbo [on|off]] # Front-panel switches (Profi TURBO); recorded by TTD
 step / stepin           # Execute one instruction
 stepover                # Step over CALL/RST
 steps <N>               # Execute N instructions
@@ -265,6 +266,8 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
 | POST | `/api/v1/emulator/{id}/reset` | Reset |
+| GET | `/api/v1/emulator/{id}/switches` | Front-panel switches (Profi TURBO) |
+| POST | `/api/v1/emulator/{id}/switches` | Flip one: `{"name": "turbo", "on": true}` |
 | POST | `/api/v1/emulator/{id}/step` | Step one instruction |
 | POST | `/api/v1/emulator/{id}/run_frame` | Run one frame |
 | POST | `/api/v1/emulator/{id}/run_frames` | Run N frames |
@@ -704,6 +707,7 @@ emu.save_state(slot) / emu.load_state(slot)
 emu.run_frames(n) / emu.run_tstates(n)
 emu.pause() / emu.resume()
 emu.reset()
+emu.get_switch("turbo") / emu.set_switch("turbo", True)   # Profi front-panel switch; None without it
 emu.step_out() / emu.skip_until(pc)
 ```
 

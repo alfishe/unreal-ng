@@ -71,8 +71,23 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | TTD: `#DFFD` + palette as `PeripheralId::ProfiPaging` | implemented |
 | IDE (`[HDD] Scheme=PROFI`, answers in EXT mode): slots `ide0.master` / `ide0.slave`; the SYS ROM boots from a hard disk image; geometry from the disk's ProfiHiDD header (16 x 16 without one) | implemented — see [Hard disk](#hard-disk-ide) |
 | Kempston joystick at `#1F`, Covox extended-mode aliases (v5) | implemented |
-| Turbo, the v3 floating bus, the v5 video WAIT, extended keyboard | not implemented |
-| BIOS menu entries (CP/M, TR-DOS, Sinclair 48/128) | main menu reached; entries not yet verified |
+| TURBO front-panel switch (7 MHz; on v3 a loaded floppy head holds 3.5 MHz), recorded by TTD | implemented — see [TURBO switch](#turbo-switch) |
+| v5 video WAIT at 3.5 MHz (`[PROFI] WaitPhase` / `WaitConfig` / `RomWait`), v3 turbo waits, v5 turbo waits (approximation) | implemented (feature `contention`) |
+| v3 floating bus (pixel byte on an unanswered `IN` with A0 = 1) | implemented |
+| Extended keyboard, the 15 MHz third crystal, DS80 waits | not implemented |
+| BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards; CP/M boots from a disk |
+
+### TURBO switch
+
+```bash
+curl -s "$BASE/emulator/$ID/switches" | jq                       # {"switches":[{"name":"turbo","on":false}]}
+curl -s -X POST "$BASE/emulator/$ID/switches" -H 'Content-Type: application/json' \
+     -d '{"name":"turbo","on":true}' | jq                           # 7 MHz
+```
+
+CLI: `switch turbo on`; Lua / Python: `set_switch("turbo", true)`, `get_switch("turbo")`; Qt: Machine > TURBO
+Switch; `[PROFI] Turbo=1` turns it on at power-on. In turbo, code in RAM runs about 1.33x on v3 (the CPU waits for
+its DRAM slot), code in ROM 2x.
 
 ## WebAPI
 

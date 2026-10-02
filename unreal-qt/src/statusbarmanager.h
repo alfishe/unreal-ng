@@ -83,6 +83,8 @@ private slots:
     void updateIde(EmulatorContext* context);
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);
     void updateCpuFreqToolTip(EmulatorContext* context);
+    /// Writes the CPU frequency label (text and colour); UI thread only
+    void showCpuFreq(bool oscillating, uint32_t freqHz, uint32_t loHz, uint32_t hiHz);
     void updateRzx(std::shared_ptr<Emulator> emulator);
     void applyRzxStyle();
     void updateTtd(EmulatorContext* context);

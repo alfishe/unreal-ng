@@ -59,6 +59,7 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 /// endregion </Types>
 
 class FloppyDriveSlots;
+enum class FrontPanelSwitch : uint8_t;  // emulator/ports/portdecoder.h
 class TapeSlot;
 
 class Emulator : public ISoftResetSink
@@ -293,6 +294,13 @@ public:
     /// pulses NMI. Every other model falls back to a plain NMI. Safe to call while
     /// running.
     void RequestMNI();
+
+    /// A front-panel switch (FrontPanelSwitch, e.g. the Profi's TURBO). Set operates it as an outside input: through
+    /// the TTD input journal (journaled while recording, refused while a recording replays), applied on the
+    /// emulation thread. Returns false when the machine has no such switch or the input was refused. Get answers
+    /// -1 when the machine has no such switch, else 0 / 1
+    bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on);
+    int GetFrontPanelSwitch(FrontPanelSwitch sw) const;
 
     void Start();
     void StartAsync();

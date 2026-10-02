@@ -18,6 +18,7 @@ ProfiPagingState TTDProfiPaging::Snapshot() const
     const EmulatorState& state = _context->emulatorState;
 
     blob.pDFFD = state.pDFFD;
+    blob.turboSwitch = state.profi_turbo_switch;
     std::memcpy(blob.profiPalette, state.profiPalette, sizeof(blob.profiPalette));
 
     return blob;
@@ -42,6 +43,7 @@ void TTDProfiPaging::TTDLoadState(const uint8_t* src)
 
     EmulatorState& state = _context->emulatorState;
     state.pDFFD = blob.pDFFD;
+    state.profi_turbo_switch = blob.turboSwitch & 0x01;
     std::memcpy(state.profiPalette, blob.profiPalette, sizeof(blob.profiPalette));
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every

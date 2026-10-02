@@ -10,6 +10,7 @@
 #include <emulator/media/modelswitch.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
 
 #include <algorithm>
 #include <iostream>
@@ -467,6 +468,61 @@ void CLIProcessor::HandleMni(const ClientSession& session, const std::vector<std
 
     emulator->RequestMNI();
     session.SendResponse("MNI requested (magic button: NMI + service monitor)\n");
+}
+
+// HandleSwitch - the machine's front-panel switches: `switch` lists them, `switch turbo` reads one,
+// `switch turbo on|off` flips it (through the TTD input journal, like a key)
+void CLIProcessor::HandleSwitch(const ClientSession& session, const std::vector<std::string>& args)
+{
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, {}, errorMessage);
+    if (!emulator)
+    {
+        session.SendResponse(errorMessage.empty() ? "No emulator selected. Use 'select <id>' or 'list' to see available emulators.\n"
+                                                  : errorMessage + "\n");
+        return;
+    }
+
+    const FrontPanelSwitch all[] = {FrontPanelSwitch::Turbo};
+    if (args.empty())
+    {
+        std::ostringstream oss;
+        bool any = false;
+        for (FrontPanelSwitch sw : all)
+        {
+            const int value = emulator->GetFrontPanelSwitch(sw);
+            if (value < 0)
+                continue;
+            any = true;
+            oss << FrontPanelSwitchName(sw) << ": " << (value ? "on" : "off") << NEWLINE;
+        }
+        session.SendResponse(any ? oss.str() : std::string("This machine has no front-panel switches\n"));
+        return;
+    }
+
+    FrontPanelSwitch sw;
+    if (!ParseFrontPanelSwitch(args[0], sw))
+    {
+        session.SendResponse("Unknown switch '" + args[0] + "'. Known: turbo\n");
+        return;
+    }
+    if (emulator->GetFrontPanelSwitch(sw) < 0)
+    {
+        session.SendResponse(std::string("This machine has no ") + FrontPanelSwitchName(sw) + " switch\n");
+        return;
+    }
+    if (args.size() >= 2)
+    {
+        const std::string& v = args[1];
+        const bool on = v == "on" || v == "1" || v == "true";
+        if (!on && v != "off" && v != "0" && v != "false")
+        {
+            session.SendResponse("Usage: switch " + std::string(FrontPanelSwitchName(sw)) + " [on|off]\n");
+            return;
+        }
+        emulator->SetFrontPanelSwitch(sw, on);
+    }
+    session.SendResponse(std::string(FrontPanelSwitchName(sw)) + ": " + (emulator->GetFrontPanelSwitch(sw) ? "on" : "off") + "\n");
 }
 
 // HandlePause - lines 806-844

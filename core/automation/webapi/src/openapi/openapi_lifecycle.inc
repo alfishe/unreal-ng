@@ -219,6 +219,41 @@
          ["magic"]["description"] = "true = Scorpion MNI (NMI + Shadow Monitor); default false";
     paths["/api/v1/emulator/{id}/nmi"]["post"]["responses"]["200"]["description"] = "NMI/MNI requested";
 
+    // GET / POST /api/v1/emulator/{id}/switches - front-panel switches (Profi TURBO)
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/switches"]["get"];
+        get["tags"].append("Emulator Control");
+        get["summary"] = "Front-panel switches";
+        get["description"] =
+            "The machine's front-panel switches and their positions: the Profi boards' TURBO switch (7 MHz; on the "
+            "v3 a loaded floppy head holds 3.5 MHz). Empty for a machine without switches";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        get["responses"]["200"]["description"] = "{\"emulator_id\", \"switches\": [{\"name\", \"on\"}]}";
+        get["responses"]["404"]["description"] = "Emulator not found";
+
+        Json::Value& post = paths["/api/v1/emulator/{id}/switches"]["post"];
+        post["tags"].append("Emulator Control");
+        post["summary"] = "Flip a front-panel switch";
+        post["description"] =
+            "Set a switch (recorded by TTD like a key press). Answers the switches as GET does; 400 for an unknown "
+            "switch or one the machine does not have";
+        post["parameters"] = get["parameters"];
+        Json::Value& schema = post["requestBody"]["content"]["application/json"]["schema"];
+        post["requestBody"]["required"] = true;
+        schema["type"] = "object";
+        schema["required"].append("name");
+        schema["required"].append("on");
+        schema["properties"]["name"]["type"] = "string";
+        schema["properties"]["name"]["enum"].append("turbo");
+        schema["properties"]["on"]["type"] = "boolean";
+        post["responses"]["200"]["description"] = "The switches after the flip";
+        post["responses"]["400"]["description"] = "Bad body, unknown switch or none on this machine";
+        post["responses"]["404"]["description"] = "Emulator not found";
+    }
+
     // POST /api/v1/emulator/{id}/model - Switch machine model
     // GET /api/v1/emulator/{id}/zxpoly - ZX-Poly group status
     {

@@ -116,8 +116,9 @@ protected:
 
 TEST_F(Core_Test, EveryModelUsesThePlainInterfacesInEveryDebugState)
 {
-    // Not ATM3: its BIOS runs at 14 MHz, where the ZX-Evo's DRAM wait states are an overlay (EvoTurboOverlay_Test)
-    for (const char* model : {"48K", "128k", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710"})
+    // Not ATM3: its BIOS runs at 14 MHz, where the ZX-Evo's DRAM wait states are an overlay (EvoTurboOverlay_Test).
+    // Not PROFI: the v5 board's video WAIT is an overlay at 3.5 MHz too (ProfiWaitOverlay_Test); the v3 has none
+    for (const char* model : {"48K", "128k", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "PROFI3", "ATM710"})
     {
         SCOPED_TRACE(model);
         create(model);

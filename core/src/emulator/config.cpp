@@ -320,6 +320,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [PROFI] SyncProm=%s, the board's own sync PROM used", syncProm);
 		config.profi_sync_prom = static_cast<uint8_t>(prom);
 	}
+	// The boards' wait states and turbo switch (2026-10-01-profi-v3-v5 design section 6)
+	config.profi_wait_phase = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "WaitPhase", 0) & 0x03);
+	{
+		const char* waitConfig = inimanager.GetValue("PROFI", "WaitConfig", "profi");
+		config.profi_wait_pentagon = 0;
+		if (waitConfig && StringHelper::CompareCaseInsensitive(waitConfig, "pentagon", 8) == 0)
+			config.profi_wait_pentagon = 1;
+		else if (waitConfig && StringHelper::CompareCaseInsensitive(waitConfig, "profi", 5) != 0)
+			MLOGWARNING("Config: unknown [PROFI] WaitConfig=%s, profi (the video WAIT on) used", waitConfig);
+	}
+	config.profi_rom_wait = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "RomWait", 0) ? 1 : 0);
+	config.profi_turbo = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "Turbo", 0) ? 1 : 0);
 
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);

@@ -63,6 +63,19 @@ constexpr uint8_t PORT_7FFD_RAM_BANK_7          = 0b0000'0111;
 
 /// region <Types>
 
+/// A switch on the machine's front panel that the user (or automation) operates while it runs. The machine's port
+/// decoder owns it; the change is an outside input, so it travels through the TTD input journal
+/// (TTDInputKind::FrontPanelSwitch) and replays at the same T-state
+enum class FrontPanelSwitch : uint8_t
+{
+    Turbo = 0,   ///< the CPU clock's TURBO switch (Profi v3 / v5)
+};
+
+/// The switch's name on every automation surface ("turbo"); nullptr for an unknown id
+const char* FrontPanelSwitchName(FrontPanelSwitch sw);
+/// The switch for a name; false for an unknown one
+bool ParseFrontPanelSwitch(const std::string& name, FrontPanelSwitch& out);
+
 struct PortMatch
 {
     uint16_t mask;
@@ -690,6 +703,12 @@ public:
         std::string absentReason;
     };
     virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
+
+    /// Front-panel switches (FrontPanelSwitch). A machine without the switch answers false to all three; Set changes
+    /// the machine at once and is called on the emulation thread (Emulator::SetFrontPanelSwitch routes it there)
+    virtual bool HasFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
+    virtual bool GetFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
+    virtual bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on) { (void)sw; (void)on; return false; }
 
     /// Emulated machine time in microseconds: whole frames at the model's
     /// frame duration plus the position in the current frame (TTD time units,

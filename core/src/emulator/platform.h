@@ -840,6 +840,10 @@ struct CONFIG
 	char profi_rom_path[FILENAME_MAX];
 	char profi3_rom_path[FILENAME_MAX];   // [ROM] PROFI3: the Profi v3 system ROM
 	uint8_t profi_sync_prom;              // [PROFI] SyncProm: a ProfiSyncProm (ports/models/profiboard.h), 0 = the board's own
+	uint8_t profi_wait_phase;             // [PROFI] WaitPhase: v5 power-on phase 0..3 of the video WAIT (1 = none)
+	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
+	uint8_t profi_rom_wait;               // [PROFI] RomWait: v5 ROM one-shot gives 1 wait at 3.5 MHz too
+	uint8_t profi_turbo;                  // [PROFI] Turbo: the front-panel turbo switch at power-on
 	char kay_rom_path[FILENAME_MAX];
 	char quorum_rom_path[FILENAME_MAX];
 	char tsl_rom_path[FILENAME_MAX];
@@ -1087,6 +1091,8 @@ struct EmulatorState
                                                 // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
                                                 // the #1FFD-family decode and by reset. Composes with the host speed
                                                 // multiplier at the frame boundary - see Z80::Z80FrameCycle()
+    uint8_t profi_turbo_switch;                 // Profi front-panel TURBO switch: 1 = pressed. The clock is 7 MHz while it is
+                                                // pressed and (v3) the VG93's HLD is low (PortDecoder_Profi::SyncTurbo)
     uint8_t hw_turbo_ratio;                     // Model-neutral HARDWARE turbo: the guest-visible CPU clock multiplier,
                                                 // 1..8 (1 = base clock, 2 = e.g. Scorpion / ATM 7 MHz, 4 = 14 MHz clones,
                                                 // 6 = Sprinter 21 MHz). Maintained by the model's port decoder from its

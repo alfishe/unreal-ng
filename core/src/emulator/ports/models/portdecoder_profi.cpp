@@ -7,6 +7,8 @@
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "emulator/cpu/core.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
@@ -42,6 +44,12 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
+    Core* core = _context->pCore;
+    if (core && core->GetZ80() && core->GetZ80()->GetMachineStepHook() == this)
+        core->GetZ80()->SetMachineStepHook(nullptr);
+    if (_waitsInstalled && core)
+        core->RemoveBusOverlay(_waitOverlay.get());
+
     // Battery-backed state outlives the machine ([PROFI] NvramFile); the v3 board has no clock (_nvramLoaded stays false)
     const char* nvramPath = _context->config.profi_nvram_path;
     if (_nvramLoaded && nvramPath[0] != '\0' && !_rtc.SaveNvram(nvramPath))
@@ -86,6 +94,136 @@ void PortDecoder_Profi::reset()
     // which calls back UpdateModelMemoryBanks() for the RAM windows.
     Memory& memory = *_context->pMemory;
     memory.SetROMMode(RM_SYS);
+
+    // The TURBO switch is a physical switch: [PROFI] Turbo sets it at power-on, a reset leaves it where it is
+    if (!_switchFromConfig)
+    {
+        _switchFromConfig = true;
+        state.profi_turbo_switch = _context->config.profi_turbo ? 1 : 0;
+    }
+    SyncTurbo();
+    SyncWaits();
+}
+
+bool PortDecoder_Profi::GetFrontPanelSwitch(FrontPanelSwitch sw) const
+{
+    return sw == FrontPanelSwitch::Turbo && _state->profi_turbo_switch != 0;
+}
+
+bool PortDecoder_Profi::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
+{
+    if (sw != FrontPanelSwitch::Turbo)
+        return false;
+    _state->profi_turbo_switch = on ? 1 : 0;
+    SyncTurbo();
+    SyncWaits();
+    return true;
+}
+
+void PortDecoder_Profi::SyncTurbo()
+{
+    Core* core = _context->pCore;
+    Z80* z80 = core ? core->GetZ80() : nullptr;
+    const bool pressed = _state->profi_turbo_switch != 0;
+
+    // v3: the VG93's HLD pin is the board's /TURBO, so a loaded head holds 3.5 MHz; follow it while the switch is
+    // pressed (the machine step hook costs nothing otherwise). The v5 board has no such link in its drawings
+    const bool followHld = pressed && !_board.palette;
+    if (z80)
+    {
+        if (followHld && z80->GetMachineStepHook() != this)
+            z80->SetMachineStepHook(this);
+        else if (!followHld && z80->GetMachineStepHook() == this)
+            z80->SetMachineStepHook(nullptr);
+    }
+
+    const bool headLoaded = followHld && _context->pBetaDisk && _context->pBetaDisk->IsHeadLoaded();
+    const uint8_t ratio = (pressed && !headLoaded) ? 2 : 1;
+    if (_state->hw_turbo_ratio == ratio)
+        return;
+    _state->hw_turbo_ratio = ratio;
+    if (z80)
+        z80->ApplyHardwareTurboNow();
+}
+
+void PortDecoder_Profi::OnMachineStep([[maybe_unused]] uint32_t t)
+{
+    SyncTurbo();
+}
+
+void PortDecoder_Profi::SyncWaits()
+{
+    Core* core = _context->pCore;
+    if (!core || !core->GetZ80() || !_context->pMemory)
+        return;
+
+    // v5: the video WAIT at 3.5 MHz (unless SB8 is in its PENTAGON position) and the turbo waits; v3: turbo only
+    const CONFIG& config = _context->config;
+    const bool pressed = _state->profi_turbo_switch != 0;
+    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed) : pressed;
+    if (wanted == _waitsInstalled)
+        return;
+
+    if (wanted)
+    {
+        ProfiWaitOverlay::Setup setup;
+        setup.v5 = _board.palette;
+        setup.phase = config.profi_wait_phase & 0x03;
+        setup.pentagonJumper = config.profi_wait_pentagon != 0;
+        setup.romWait = config.profi_rom_wait != 0;
+        setup.paperStartT = kProfiPaperStartT;
+        _waitOverlay = std::make_unique<ProfiWaitOverlay>(core, core->GetZ80(), _context->pMemory, _state, setup);
+        _waitsInstalled = core->AddBusOverlay(_waitOverlay.get());
+        if (!_waitsInstalled)
+            MLOGWARNING("PortDecoder_Profi: no room for the wait-state overlay; the board runs without waits");
+    }
+    else
+    {
+        core->RemoveBusOverlay(_waitOverlay.get());
+        _waitsInstalled = false;
+    }
+}
+
+uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
+{
+    // research-profi-v3-turbo-floatbus.md B3: the pixel latch U9 drives the data bus through 820R while FLD1 is
+    // high, which leads the displayed paper by one 4-T tick. d = T3 - first displayed pixel of the line:
+    //   -4 .. -1: byte 0 (at -4 the latch still holds byte 31 of the previous line)
+    //    0 .. 123: byte k = d / 4 at the tick's first T, byte k + 1 after it
+    //   otherwise (border, blank, the last tick): #FF from the pull-ups. The attribute latch never reaches the bus
+    const int32_t frame = static_cast<int32_t>(_context->config.frame);
+    if (frame <= 0)
+        return 0xFF;
+    const int32_t t = static_cast<int32_t>(t3 % static_cast<uint32_t>(frame));
+    const int32_t fromPaper = t - static_cast<int32_t>(kProfiPaperStartT) + 4;   // 0 at the window's first T
+    if (fromPaper < 0)
+        return 0xFF;
+    int32_t line = fromPaper / 224;
+    const int32_t inLine = fromPaper % 224;
+    if (line >= 192 || inLine >= 128)
+        return 0xFF;
+    const int32_t d = inLine - 4;   // -4 .. 123
+    int32_t byte;
+    if (d < 0)
+    {
+        if (d == -4)
+        {
+            // The latch still holds byte 31 of the previous paper line (line 191 of the previous frame for line 0)
+            line = line == 0 ? 191 : line - 1;
+            byte = 31;
+        }
+        else
+            byte = 0;
+    }
+    else
+        byte = (d & 3) == 0 ? d / 4 : d / 4 + 1;
+    if (byte > 31)
+        return 0xFF;
+
+    const uint8_t page = (_state->p7FFD & 0x08) ? 7 : 5;
+    const uint16_t y = static_cast<uint16_t>(line);
+    const uint16_t offset = static_cast<uint16_t>(((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | byte);
+    return _context->pMemory->RAMPageAddress(page)[offset];
 }
 
 IdeAdapter::Gate PortDecoder_Profi::IdeGate()
@@ -198,6 +336,17 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         if (_lastPortDecoded)
             disp.decodedPort = port;
     }
+    // The v3 board's floating bus: an IN (A0 = 1) that no device answers reads the video's pixel latch in the
+    // Spectrum raster. The lookup runs at T2 of the I/O cycle; the Z80 takes the data at T3, one T later at 3.5 MHz
+    if (!_lastPortDecoded && !_board.palette && (port & 0x0001) && !(_state->pDFFD & 0x80))
+    {
+        // Z80::t counts CPU clocks of the scaled frame (x the clock multiplier): T3 starts 2 clocks after T2
+        const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+        if (z80)
+            result = FloatingBusV3((z80->t + 2u) / multiplier);
+    }
+
     disp.wasDecoded = _lastPortDecoded;
 
     OnPortInComplete(port, result, pc, disp);
@@ -415,6 +564,10 @@ void PortDecoder_Profi::UpdateModelMemoryBanks()
 
     if (pDFFD & 0x20)   // CPM: disk interface on the bus regardless of the DOS latch
         _state->flags |= CF_DOSPORTS;
+
+    // A TTD restore re-runs the paging decode after loading the switch: bring the clock and the waits in line
+    SyncTurbo();
+    SyncWaits();
 }
 
 PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()

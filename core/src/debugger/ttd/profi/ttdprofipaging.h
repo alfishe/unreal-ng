@@ -29,6 +29,7 @@ struct ProfiPagingState
 {
     uint16_t profiPalette[16];     ///< hi-res palette, 9-bit GGGRRRBBB per entry (see EmulatorState::profiPalette)
     uint8_t pDFFD;                 ///< #DFFD latch
+    uint8_t turboSwitch;           ///< the front-panel TURBO switch (EmulatorState::profi_turbo_switch); was padding
 };
 
 static_assert(sizeof(ProfiPagingState) == 34, "ProfiPagingState layout changed");

@@ -85,6 +85,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"reset", &CLIProcessor::HandleReset},
                         {"nmi", &CLIProcessor::HandleNmi},    // Pulse the NMI line
                         {"mni", &CLIProcessor::HandleMni},    // Scorpion magic button (NMI + service monitor)
+                        {"switch", &CLIProcessor::HandleSwitch},  // Front-panel switches (Profi TURBO)
                         {"pause", &CLIProcessor::HandlePause},
                         {"resume", &CLIProcessor::HandleResume},
                         {"step", &CLIProcessor::HandleStepIn},        // Always one instruction
@@ -584,6 +585,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  switch [turbo [on|off]] - Front-panel switches (Profi TURBO; recorded by TTD like a key)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  step          - Execute single CPU instruction" << NEWLINE;
     oss << "  stepin        - Execute single CPU instruction (alias for step)" << NEWLINE;

@@ -2,7 +2,9 @@
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/profi/profiwaitoverlay.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
@@ -17,7 +19,7 @@
 ///   #7FFD  bits 2:0 RAM low, 3 screen (5|7), 4 ROM14 (1 = 48K/DOS side), 5 lock
 ///   #DFFD  bits 2:0 RAM high, 3 SCO, 4 WOROM, 5 CPM, 6 SCR, 7 DS80 (512x240 + palette)
 ///   DOS latch = CF_TRDOS (set by the $3Dxx M1 trap, cleared on fetch from >= $4000)
-class PortDecoder_Profi : public PortDecoder
+class PortDecoder_Profi : public PortDecoder, public IMachineStepHook
 {
     /// region <Constructors / Destructors>
 public:
@@ -73,6 +75,26 @@ public:
     bool IsExtMode() const;
     /// The Profi IDE answers in EXT mode only (IDE design §3.2)
     IdeAdapter::Gate IdeGate() override;
+
+    /// The front-panel TURBO switch (both boards): 7 MHz while it is pressed and, on v3, while the VG93's HLD is low
+    /// (the HLD pin drives the board's /TURBO; research-profi-v3-turbo-floatbus.md A2)
+    bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override { return sw == FrontPanelSwitch::Turbo; }
+    bool GetFrontPanelSwitch(FrontPanelSwitch sw) const override;
+    bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on) override;
+
+    /// The clock the board runs at now, from the switch and (v3) the HLD pin; applies a change at once
+    void SyncTurbo();
+    /// Installs or removes the wait-state overlay (ProfiWaitOverlay) for the board's mode and clock
+    void SyncWaits();
+    bool AreWaitsInstalled() const { return _waitsInstalled; }
+    const ProfiWaitOverlay* GetWaitOverlay() const { return _waitOverlay.get(); }
+
+    /// The v3 floating bus (research-profi-v3-turbo-floatbus.md B): what an IN that no device answers reads when
+    /// its T3 starts at frame T `t3` - the pixel byte the video latched, #FF outside the read window
+    uint8_t FloatingBusV3(uint32_t t3) const;
+
+    /// IMachineStepHook: on v3 with the switch pressed, follows the HLD pin
+    void OnMachineStep(uint32_t t) override;
     /// #DFFD bit 4 (WOROM) lifts the #7FFD lock (UnrealSpeccy io.cpp)
     bool IsPagingLocked() const override
     {
@@ -98,6 +120,9 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    std::unique_ptr<ProfiWaitOverlay> _waitOverlay;
+    bool _waitsInstalled = false;
+    bool _switchFromConfig = false;  // [PROFI] Turbo read once, at power-on (the switch is not touched by a reset)
     bool _nvramLoaded = false;  // [PROFI] NvramFile read once, on the first reset
 
     /// Tracks whether Covox currently has a live port set - either #3F/#5F (NORMAL,

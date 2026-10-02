@@ -208,28 +208,33 @@ void StatusBarManager::handleCPUFreqChanged(int id, Message* message)
     const uint32_t loHz = payload->_oscLowHz;
     const uint32_t hiHz = payload->_oscHighHz;
     QMetaObject::invokeMethod(this, [this, oscillating, freqHz, loHz, hiHz]() {
-        std::string freqStr;
-        uint32_t shown;
-        if (oscillating)
-        {
-            freqStr = StringHelper::FormatFrequencyMHz(loHz) + "↔" + StringHelper::FormatFrequencyMHz(hiHz);
-            shown = hiHz;
-        }
-        else
-        {
-            freqStr = StringHelper::FormatFrequencyMHz(freqHz);
-            shown = freqHz;
-        }
-        _cpuFreq->setText(QString::fromStdString(freqStr));
-
-        // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
-        if (shown >= 14'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
-        else if (shown >= 7'000'000)
-            _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
-        else
-            _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
+        showCpuFreq(oscillating, freqHz, loHz, hiHz);
     }, Qt::QueuedConnection);
+}
+
+void StatusBarManager::showCpuFreq(bool oscillating, uint32_t freqHz, uint32_t loHz, uint32_t hiHz)
+{
+    std::string freqStr;
+    uint32_t shown;
+    if (oscillating)
+    {
+        freqStr = StringHelper::FormatFrequencyMHz(loHz) + "↔" + StringHelper::FormatFrequencyMHz(hiHz);
+        shown = hiHz;
+    }
+    else
+    {
+        freqStr = StringHelper::FormatFrequencyMHz(freqHz);
+        shown = freqHz;
+    }
+    _cpuFreq->setText(QString::fromStdString(freqStr));
+
+    // Color coding: normal for 3.5MHz, orange for 7MHz, dark red for 14MHz+
+    if (shown >= 14'000'000)
+        _cpuFreq->setStyleSheet("QLabel { color: #B22222; padding-top: 1px; }");
+    else if (shown >= 7'000'000)
+        _cpuFreq->setStyleSheet("QLabel { color: #FF8C00; padding-top: 1px; }");
+    else
+        _cpuFreq->setStyleSheet("QLabel { padding-top: 1px; }");
 }
 
 void StatusBarManager::handleFDDDiskInserted(int id, Message* message)
@@ -364,6 +369,12 @@ void StatusBarManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
     }
     _disk->setActive(_fddStateValid && _fddState.motorOn);
     updateDiskToolTip();
+
+    // The CPU frequency label changes on NC_CPU_FREQ_CHANGED, which is posted only when the clock changes: a machine
+    // that keeps its power-on clock (a Profi, a Pentagon at 3.5 MHz) never posts one, so read it once here, or the
+    // label keeps the previous machine's value (or "-- MHz")
+    if (context)
+        showCpuFreq(false, context->emulatorState.current_z80_frequency, 0, 0);
     refresh();
 }
 

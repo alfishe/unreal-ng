@@ -642,6 +642,19 @@ namespace PythonBindings
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,
                  "Scorpion magic button: page the Shadow Monitor, then NMI (plain NMI on other models)")
+            .def("get_switch", [](Emulator& self, const std::string& name) -> py::object {
+                FrontPanelSwitch sw;
+                if (!ParseFrontPanelSwitch(name, sw))
+                    return py::none();
+                const int value = self.GetFrontPanelSwitch(sw);
+                if (value < 0)
+                    return py::none();
+                return py::bool_(value != 0);
+            }, py::arg("name"), "Front-panel switch position (Profi 'turbo'); None when the machine has no such switch")
+            .def("set_switch", [](Emulator& self, const std::string& name, bool on) {
+                FrontPanelSwitch sw;
+                return ParseFrontPanelSwitch(name, sw) && self.SetFrontPanelSwitch(sw, on);
+            }, py::arg("name"), py::arg("on"), "Flip a front-panel switch (recorded by TTD like a key); True when done")
 
             // Legacy __main__-compatible aliases: the startup registration in
             // automation-python.cpp aliases this class into __main__ (instead

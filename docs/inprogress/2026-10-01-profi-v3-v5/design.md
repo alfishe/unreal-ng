@@ -107,14 +107,18 @@ v5.0 album sheet 1п, and the MDESK P-CAD netlist for v3.2.
 
 ### 4.4 Floating bus on v3
 
-The v3.2 manual says the board reads back the screen pixel during the visible frame (P16). R21 takes it in:
+The v3.2 manual says the board reads back the screen pixel during the visible frame (P16). E3 traced it on the v3.2
+schematic ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) part B), and
+`PortDecoder_Profi::FloatingBusV3` implements it (R21):
 
-- An `IN` that no device answers returns the byte the video fetch is reading at that T-state; in the border and in
-  blanking it returns `#FF`. This is the same contract as `ScreenZX`'s floating-bus read, with the beam position from
-  the Profi raster.
-- Open (Q3): whether the board puts the pixel byte, the attribute byte or both on the bus, and whether DOS / CP/M
-  states change it. Settle this from the v3.2 schematic (the data-bus buffer direction on IORQ read with no
-  device) before the code; until then, R21 stays out of the build.
+- Only the **pixel** byte: the pixel latch U9 drives the data bus through U57 while the paper fetch signal FLD1 is
+  high. The attribute latch never reaches the bus.
+- Only an `IN` with **A0 = 1** that no device answers; DOS and CP/M change nothing beyond which ports answer.
+- **Timing:** the latch leads the displayed byte by one 4-T tick. With `d` = the T of the Z80's T3 minus the first
+  displayed pixel of the line: `d` = -4 gives byte 31 of the line before (line 191 for line 0), -3..-1 byte 0,
+  0..123 byte `d/4` at the tick's first T and `d/4 + 1` after it, anything else `#FF` (border, blanking, the last
+  tick). The screen page is 5 or 7 per `#7FFD` bit 3.
+- Hi-res (DS80) reads `#FF` (its fetch is not modeled). The v5 board has no such path: it reads `#FF`.
 
 ## 5. Video timing
 
@@ -173,65 +177,81 @@ line (64 us) on the v3 PROMs and 46 ticks on the v5 ones. What the CPU clock is 
 make a frame, is not settled (the decode assumed 3 MHz; the open item from the 2026-09-21 design section 12 Q3).
 Hi-res timing stays as it is today until that is settled; this design changes only the standard mode.
 
-## 6. Turbo
+## 6. Turbo and wait states
 
 ### 6.1 The switch
 
-Both boards switch turbo with a front-panel button, not a port (R32). The emulator models it as a machine control:
+Both boards switch turbo with a front-panel switch, not a port (R32). The emulator models it as a machine input,
+`FrontPanelSwitch::Turbo`:
 
 | Surface | Form |
 |:--|:--|
-| Core | `PortDecoder_Profi::SetTurboSwitch(bool)` sets `hw_turbo_ratio` (the same mechanism as ATM / Scorpion) and installs or removes the wait overlay |
-| CLI / WebAPI / MCP / Lua / Python | the existing machine-control verb family (`machine turbo on\|off`), reported in `/state` |
-| Qt | a checkable "Turbo" action in the machine's menu |
-| TTD | the switch is an outside input: recorded as an event at its T-state, replayed from the track (sealed replay) |
+| Core | `Emulator::SetFrontPanelSwitch` / `GetFrontPanelSwitch` (-1 on a machine without it); `PortDecoder_Profi::SetFrontPanelSwitch` sets `EmulatorState::profi_turbo_switch`, `hw_turbo_ratio` (the ATM / Scorpion mechanism, applied mid-frame by `Z80::ApplyHardwareTurboNow`) and installs or removes the wait overlay. `[PROFI] Turbo=1` sets it at power-on; a reset leaves it |
+| CLI | `switch` (list), `switch turbo [on\|off]` |
+| WebAPI / MCP | `GET /api/v1/emulator/{id}/switches`, `POST .../switches` `{"name":"turbo","on":true}` (OpenAPI; MCP through `invoke_api`, described in `unreal://machine/profi`) |
+| Lua / Python | `emu:get_switch("turbo")` / `emu.get_switch("turbo")` (nil / None without the switch), `set_switch("turbo", true)` |
+| Qt | Machine > TURBO Switch, checkable, enabled only on a Profi; the status line shows the clock |
+| TTD | an outside input: `TTDInputKind::FrontPanelSwitch`, recorded at its T-state through `SubmitLiveInput` and replayed from the track (sealed replay); the switch position also travels in the `ProfiPaging` blob (byte 33, the former padding) |
 
-### 6.2 v3 waits
+On v3 the VG93's HLD pin is the board's `/TURBO` (E3, A3): a loaded floppy head holds 3.5 MHz while the switch is
+on. `PortDecoder_Profi` follows HLD with a machine step hook, armed only while the switch is on, so a v3 at 3.5 MHz
+pays nothing. The v5 drawings have no such link.
 
-`ProfiTurboOverlay : MemoryWaitOverlay`, the same pattern as `ScorpionTurboOverlay`. It is installed only while
-turbo is on and the `contention` feature is on, so it costs nothing otherwise (G4). It marks every RAM slot as
-waiting; ROM never waits.
+### 6.2 Wait states: one overlay, both boards
 
-The rule (Q4) is **not** taken from xpeccy-plus. Its model is "2 waits on a slot edge, 3 between, video never
-holds the CPU, VG93 HLD drops turbo"; XP+ says it was measured, but no other source has it. The evidence step is:
+`ProfiWaitOverlay : HostBusOverlay` (`core/src/emulator/memory/profi/`), the `ScorpionTurboOverlay` pattern. It is
+installed only while a rule can apply (v5 at 3.5 MHz with SB8 in its PROFI3+ position, or turbo on either board) and
+adds waits only with the `contention` feature on. Other machines never see it (G4).
 
-1. Read the turbo path off the v3.2 schematic ([Profiv32cl.pdf](https://speccy4ever.speccy.org/doc/Profiv32cl.pdf)
-   sheet 1: the clock mux U16, READYT, the DRAM slot logic), the way `research-scorpion-turbo.md` did for the Scorpion.
-2. Write the rule from that alone, in `research-profi-turbo.md` in this folder.
-3. Check it against every figure available. For each, the overlay must reproduce it, or the difference must be
-   explained:
+| Board, clock | Who waits | Extra CPU clocks per access | Source |
+|:--|:--|:--|:--|
+| v5, 3.5 MHz | RAM opcode fetch / read / write in the paper fetch window (192 lines x 128 T) | 1 on every other T; the parity is the power-on phase (`[PROFI] WaitPhase=0..3`, 1 = never) | E4, 6.4 |
+| v5, 3.5 MHz | ROM reads | 0, or 1 with `[PROFI] RomWait=1` | E4 |
+| v5, 7 MHz | RAM / ROM | approximation: RAM 1 in the border, 2 in the paper; ROM reads 1 | E4 section 3 |
+| v3, 3.5 MHz | nobody | 0 | E3 |
+| v3, 7 MHz | RAM opcode fetch / read / write, paper and border alike | 2 when T1 starts on an even 7 MHz clock, 3 on an odd one | E3, A4 |
 
-   | Figure | Source |
-   |:--|:--|
-   | "в 1.7 раза" (overall speed-up) | MAN v3.2 p2 |
-   | Tact Meter 1.0: 143206 T per frame (code in ROM), 88208 T (code in RAM) | XP+, one v3.2 board |
-   | 116920 T per frame | Unreal_NS `PRESET.PROFI_TURBO`, an unnamed tact meter |
-   | `ADD A,N` 6, `ADD HL,BC` 7, `ADC A,(IX+d)` 13, `BIT b,(IX+d)` 15 (in 3.5 MHz T) | an owner's table, quoted by XP+ |
+ROM, I/O, interrupt acknowledge and refresh never wait on v3. "RAM" is the RAM select, so RAM paged at `#0000`
+waits too. Hi-res (DS80) has no waits at 3.5 MHz, and none on v5 in turbo (its third crystal is not modeled).
 
-4. The HLD drop goes in only if the schematic shows it.
+The v3 rule is **not** taken from xpeccy-plus: E3 read it off the v3.2 schematic
+([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) part A; the slot logic U27/U28 and
+READYT) and then checked it against every figure available
+([tools/machines/profi/turbomodel/](../../../tools/machines/profi/turbomodel/README.md)):
+
+| Figure | Source | The rule gives |
+|:--|:--|:--|
+| Tact Meter 1.0: 88208 T per frame (code in RAM) | XP+, one v3.2 board | 88222 (`INC DE : JP`, 1.2308x); the other rules tried give 81920-104262 |
+| Tact Meter 1.0: 143206 T (code in ROM) | XP+ | 139776 (ROM never waits: 2x) |
+| "в 1.7 раза" (overall speed-up) | MAN v3.2 p2 | between 1.33x (RAM) and 2x (ROM), so a mix |
+| 116920 T per frame | Unreal_NS `PRESET.PROFI_TURBO` | not reproduced; an unnamed meter, left as is |
+
+XP+'s own model ("2 waits on a slot edge, 3 between, VG93 HLD drops turbo") agrees with the schematic.
 
 ### 6.3 v5 turbo
 
-The v5.0 manual gives a third crystal, 16-24 MHz divided down ("до 15 МГц"). The CPU clock becomes
-`[PROFI] TurboClock=` (default 7 MHz, the two-crystal board). In turbo the same /REDYT arbitration (6.4) applies. The
-v5 turbo wait rule comes from E4 together with the 3.5 MHz one.
+The v5 turbo arbitration depends on the history of the slot ring (E4 section 3), so the overlay uses the
+approximation in the table above. The third crystal of the v5.0 manual (16-24 MHz divided down, "до 15 МГц") is
+not modeled: there is no source for how the board switches to it (phase 7).
 
 ### 6.4 v5 video WAIT at 3.5 MHz
 
 The v5 board holds a CPU RAM access until the CPU's DRAM slot comes round (/REDYT), in Spectrum mode as well
-([cross-check.md](cross-check.md) 4.4). Gromov says this is what makes the board behave like a contended Sinclair
-bus. The emulator models it as `ProfiVideoWaitOverlay : MemoryWaitOverlay`:
+([cross-check.md](cross-check.md) 4.4). E4 modeled the 5.06 netlist gate by gate
+([research-profi-v5-wait.md](research-profi-v5-wait.md),
+[tools/machines/profi/waitmodel/](../../../tools/machines/profi/waitmodel/README.md)):
 
-- **When it is installed:** on v5, in standard mode (DS80 = 0), with `[PROFI] WaitConfig=profi` (the default; the
-  5.06 jumper SB8 position PROFI3+) and the `contention` feature on. `WaitConfig=pentagon` turns it off at
-  3.5 MHz, like SB8's other position. It is never installed on v3.
-- **The rule:** extra clocks per RAM access, from the slot pattern that E4 reads off the 5.06 netlist (every slot
-  in the border, every other one in the paper, per the first reading). ROM, I/O and refresh do not wait. The beam
-  phase comes from the Profi raster (5.2). The IORQ one-shot (about 200 ns) is a port wait added by the decoder.
-- **The check:** floatspy, the TEST 4.30 timing pages and the border and multicolor demos Gromov names (QARX,
-  ACADEMY, SHOCK MEGADEMO) are run as emulated test programs. The rule must reproduce the effects he describes.
-- **Board variation:** factory 5.03 boards with the diode mod on /REDYT wait more. That is a later
-  `WaitConfig=` value, if a measurement ever separates the two.
+- **When:** v5, standard mode (DS80 = 0), `[PROFI] WaitConfig=profi` (the default; SB8 in its PROFI3+ position),
+  the `contention` feature on. `WaitConfig=pentagon` turns it off at 3.5 MHz, like SB8's other position. Never on v3.
+- **The rule:** with `d` = the access's T1 minus the first paper fetch (frame T 16152), `L = floor((d + 1) / 224)`
+  (0..191) and `q = d - 224 L`: phase 0 waits 1 T when `q` is even in 0..126; phases 2 and 3 when `q` is odd in
+  -1..125; phase 1 never. One wait at most, then the CPU is in step: a NOP stream in the paper waits once and runs
+  at 4 T from then on; `LD A,(HL)` takes 8 T in the paper and 7 in the border.
+- **Board variation:** the rule is for the 5.06 board, with the diode VD22 on /REDYT. Without VD22 the model waits
+  more (`examples-novd22-output.txt`); the factory 5.03 "diode mod" may be that variant. It becomes a later
+  `WaitConfig=` value if a measurement ever separates the two.
+- **Still to check:** floatspy, the TEST 4.30 timing pages and the demos Gromov names (QARX, ACADEMY, SHOCK
+  MEGADEMO) as emulated test programs.
 
 ## 7. TTD, snapshots, automation, UI
 
@@ -250,14 +270,14 @@ bus. The emulator models it as `ProfiVideoWaitOverlay : MemoryWaitOverlay`:
 |:--|:--|:--|:--|
 | E1 | ~~Sync-PROM decode~~ done ([tools/machines/profi/syncprom/profisync.py](../../../tools/machines/profi/syncprom/profisync.py), cross-check 4); remaining: trace the INT flip-flop (INT length) and the DS80 CPU clock | - | T5, R31 |
 | E2 | ~~Decoder PROMs: tables, wiring, port map, check against unreal-ng~~ done ([decoder-prom.md](decoder-prom.md), tables in `testdata/machines/profi/decoder/`) | - | Q7, R18 |
-| E3 | v3.2 schematic study: turbo and the floating bus | - | Q3, Q4 |
-| E4 | v5.06 netlist study: the /REDYT slot pattern per T, the IORQ one-shot, the SB8 positions | - | Q9 |
+| E3 | ~~v3.2 schematic study: turbo and the floating bus~~ done ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md)) | - | Q3, Q4 |
+| E4 | ~~v5.06 netlist study: the /REDYT slot pattern per T, the ROM one-shot, the SB8 positions~~ done ([research-profi-v5-wait.md](research-profi-v5-wait.md)) | - | Q9 |
 | 1 | `MM_PROFI3`, `ProfiBoard`, `IsProfiModel`, ROM and config plumbing; `PROFI3` creatable; v3 boots Kramis V0.2 / V0.3 | - | R1-R4, R6 |
 | 2 | v3 port set (4.1) and the shared fixes (4.2); PROM-table tests for both boards | - | R10-R20 |
 | 3 | `SyncProm=` table and per-board defaults (5.1); v5 TTD fixtures re-recorded for the new INT position | - | R30 |
-| 3b | v5 video WAIT (`ProfiVideoWaitOverlay`, 6.4) | E4 | R36 |
+| 3b | v5 video WAIT (`ProfiWaitOverlay`, 6.2, 6.4) | E4 | R36 |
 | 4 | v3 floating bus | E3 | R21 |
-| 5 | Turbo switch for both boards; `ProfiTurboOverlay` for v3 | E3 | R32, R33 |
+| 5 | Turbo switch for both boards; the turbo waits in `ProfiWaitOverlay`; HLD holds 3.5 MHz on v3 | E3 | R32, R33 |
 | 6 | Automation, Qt, docs, TTD fixture | 1-5 | R40-R43 |
 | 7 | v5 open items: palette gate, 15 MHz clock, the CP/M boot switch | sources | Q5, Q6, R34 |
 

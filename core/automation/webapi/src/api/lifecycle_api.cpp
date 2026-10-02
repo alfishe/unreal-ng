@@ -11,6 +11,7 @@
 #include <emulator/zxpoly/zxpolygroup.h>
 #include <emulator/media/modelswitch.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
 #include <json/json.h>
 
 #include <functional>
@@ -1007,6 +1008,92 @@ void EmulatorAPI::requestNmi(const HttpRequestPtr& req, std::function<void(const
         addCorsHeaders(resp);
         callback(resp);
     }
+}
+
+namespace
+{
+/// {"switches": [{"name": "turbo", "on": false}]}: the machine's switches (empty when it has none)
+Json::Value SwitchesJson(Emulator& emulator, const std::string& id)
+{
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["switches"] = Json::Value(Json::arrayValue);
+    for (FrontPanelSwitch sw : {FrontPanelSwitch::Turbo})
+    {
+        const int value = emulator.GetFrontPanelSwitch(sw);
+        if (value < 0)
+            continue;
+        Json::Value entry;
+        entry["name"] = FrontPanelSwitchName(sw);
+        entry["on"] = value != 0;
+        ret["switches"].append(entry);
+    }
+    return ret;
+}
+
+void SendSwitchError(std::function<void(const HttpResponsePtr&)>& callback, HttpStatusCode code, const std::string& error,
+                     const std::string& message)
+{
+    Json::Value json;
+    json["error"] = error;
+    json["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(json);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/switches
+/// @brief The machine's front-panel switches and their positions
+void EmulatorAPI::getSwitches([[maybe_unused]] const HttpRequestPtr& req,
+                              std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        SendSwitchError(callback, HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found");
+        return;
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(SwitchesJson(*emulator, id));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/switches
+/// @param body {"name": "turbo", "on": true|false}. The flip is recorded by TTD like a key
+void EmulatorAPI::setSwitch(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        SendSwitchError(callback, HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found");
+        return;
+    }
+    auto json = req->getJsonObject();
+    if (!json || !(*json)["name"].isString() || !(*json)["on"].isBool())
+    {
+        SendSwitchError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                        "Body must be {\"name\": \"turbo\", \"on\": true|false}");
+        return;
+    }
+    FrontPanelSwitch sw;
+    const std::string name = (*json)["name"].asString();
+    if (!ParseFrontPanelSwitch(name, sw))
+    {
+        SendSwitchError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Unknown switch '" + name + "'");
+        return;
+    }
+    if (!emulator->SetFrontPanelSwitch(sw, (*json)["on"].asBool()))
+    {
+        SendSwitchError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                        "This machine has no " + name + " switch");
+        return;
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(SwitchesJson(*emulator, id));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief POST /api/v1/emulator/{id}/model

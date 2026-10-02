@@ -1,6 +1,6 @@
 # Profi v3 and v5 as two machines
 
-**Created:** 2026-10-01 · **Status:** design, no code yet · see [TODO.md](TODO.md)
+**Created:** 2026-10-01 · **Status:** implemented on branch `profi-v3-v5` (phases 1-6), phase 7 open · see [TODO.md](TODO.md)
 
 ## What this is
 
@@ -26,15 +26,18 @@ port table, the factory ROMs, and the board manuals and PROM dumps from
 - **v5 timing:** settled. Its sync PROM dumps first gave a 216 T line, which turned out to be our mistake: v5 boards
   reload the line counter with 61. The frame is 69888 T with INT 14368 T before the paper, and the board adds a
   video WAIT in Spectrum mode.
-- **Evidence steps left:** the v3 turbo wait rule and the v3 floating bus come from the v3.2 schematic (E3). The v5
-  WAIT pattern comes from the v5.06 netlist (E4). Both are in [design.md](design.md) section 8.
+- **Wait states and the floating bus:** the v3 turbo wait rule and the v3 floating bus come from the v3.2
+  schematic (E3); the v5 video WAIT comes from a gate-level model of the v5.06 netlist (E4). Both are implemented
+  ([design.md](design.md) sections 4.4 and 6).
 
 ## Documents
 
 | File | Contents |
 |:--|:--|
 | [cross-check.md](cross-check.md) | every v3/v5 claim, with each source's answer and a verdict; our sync-PROM decode |
-| [tools/machines/profi/](../../../tools/machines/profi/README.md) | the sync-PROM decoder (`syncprom/`) and the port decoder PROM tool (`profidecoder/`), each with its output |
+| [research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) | E3: the v3.2 turbo wait rule, the HLD hold and the floating bus, read off the schematic |
+| [research-profi-v5-wait.md](research-profi-v5-wait.md) | E4: the v5 video WAIT, from a gate-level model of the 5.06 netlist |
+| [tools/machines/profi/](../../../tools/machines/profi/README.md) | the sync-PROM decoder (`syncprom/`), the port decoder PROM tool (`profidecoder/`), the v5 wait model (`waitmodel/`) and the v3 turbo model (`turbomodel/`) |
 | materials (not in the repository) | every file the analysis used: manuals, PROM and ROM dumps, articles, forum pages, other emulators' sources, working reports. Kept outside the repository by decision (2026-10-01), with its own index `materials/README.md`; every external file has its source URL there, and the public ones are linked from these documents |
 | [decoder-prom.md](decoder-prom.md) | both boards' port decoder PROMs: wiring, port map per mode, what they settle, and the check against unreal-ng (no difference) |
 | [roms.md](roms.md) | the factory firmware (now in `data/rom/profi/`), which BIOS needs which board, our non-factory images |
@@ -55,5 +58,5 @@ port table, the factory ROMs, and the board manuals and PROM dumps from
 | v3 frame 71680 T, INT 47 T before paper | **right for one PROM** (`FB0579B6`, our decode gives 71680 / 48 T), but not for the original PROM of a 3.2 board (`0A1DFAFD`, dumped by the MDESK project), which gives the 69888 / 12580 every other emulator uses; that one is the v3 default ([cross-check.md](cross-check.md) section 4) |
 | v5 216 T line, 67392 T frame, 13860 T to paper | **wrong**: a decoding mistake we first made too. v5 boards reload the line counter with 61, not 63 (Kondor's fix list, the 5.06 netlist). With that, the v5 PROM gives 224 T x 312 = 69888 T and INT 14368 T before paper, the 48K's position |
 | (not in xpeccy-plus) v5 has a video WAIT in Spectrum mode | the v5 board holds CPU RAM accesses for the video, like a contended Sinclair bus (Gromov, the 5.06 album: jumper SB8 "торможение спектрум-режима") |
-| v3 turbo wait rule, HLD drops turbo | its own measurements; we derive the rule from the v3.2 schematic and use its figures only as a check |
+| v3 turbo wait rule, HLD drops turbo | **confirmed** by the v3.2 schematic (E3); its Tact Meter figure (88208 T) is reproduced |
 | v3 256K / 768K with `#FF` holes | no other source; open |

@@ -82,6 +82,7 @@ private:
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandleNmi(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMni(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSwitch(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
     void HandleResume(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCreate(const ClientSession& session, const std::vector<std::string>& args);

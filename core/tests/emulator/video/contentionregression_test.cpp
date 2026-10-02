@@ -85,6 +85,7 @@ const Scenario kScenarios[] = {
 /// Every model the emulator can create (GET /api/v1/emulator/models, creatable = true)
 const char* const kModels[] = {
     "PENTAGON", "48K", "128K", "PLUS2", "PLUS2A", "PLUS3", "ATM710", "ATM3", "SCORPION", "PROFSCORP", "PROFI",
+    "PROFI3",
 };
 
 struct Golden
@@ -146,10 +147,15 @@ const std::vector<Golden> kGolden = {
     { "PROFSCORP", "dataContended", 19130, 0x8a36e1fde0d39ab5ull, 0x96d5e7201636f1f5ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
     { "PROFSCORP", "codeContended", 19130, 0x8a36e1fde0d39ab5ull, 0xa082cdbbf9f71b90ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
     { "PROFSCORP", "codePage7", 19130, 0x8a36e1fde0d39ab5ull, 0xd3fb2cce03135670ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
-    { "PROFI", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
-    { "PROFI", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
-    { "PROFI", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
-    { "PROFI", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    // PROFI re-recorded 2026-10-02 (branch profi-v3-v5): the v5 video WAIT; the v3 keeps the old no-wait timing
+    { "PROFI", "free", 19584, 0x40e7aa169adc1633ull, 0x9656ea3c0af12b0ull },
+    { "PROFI", "dataContended", 19584, 0x40e7aa169adc1633ull, 0x96d5e7201636f1f5ull },
+    { "PROFI", "codeContended", 19584, 0x40e7aa169adc1633ull, 0xa082cdbbf9f71b90ull },
+    { "PROFI", "codePage7", 19584, 0x40e7aa169adc1633ull, 0xd3fb2cce03135670ull },
+    { "PROFI3", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PROFI3", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
+    { "PROFI3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PROFI3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
 };
 
 struct Fnv

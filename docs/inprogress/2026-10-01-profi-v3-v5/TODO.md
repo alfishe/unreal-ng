@@ -1,6 +1,6 @@
 # Status: TODO
 
-Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-3 implemented on branch `profi-v3-v5`
+Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-6 implemented on branch `profi-v3-v5`
 (worktree `scratch/wt-profi`); it goes to master after all phases and tests. Plan: [design.md](design.md) section 8.
 
 ## Done
@@ -15,8 +15,11 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-3 impleme
 - [ ] E1b: trace the INT flip-flop (INT length) and the DS80 CPU clock
 - [x] E2a: both port decoder PROMs obtained (v4/v5 transcribed from two manuals, v3.2 dumped by MDESK)
 - [x] E2b: decoder PROM wiring and port map ([decoder-prom.md](decoder-prom.md)); settles Q7, P7, P8, P9, P13; the A2 input traced on both boards; unreal-ng's decode matches the v5 PROM everywhere
-- [ ] E3: v3.2 schematic study, turbo and floating bus (settles Q3, Q4)
-- [ ] E4: v5.06 netlist study, the /REDYT wait pattern (settles Q9)
+- [x] E3: v3.2 schematic study, turbo and floating bus (settles Q3, Q4):
+  [research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md), scripts in
+  [tools/machines/profi/turbomodel/](../../../tools/machines/profi/turbomodel/README.md)
+- [x] E4: v5.06 netlist study, the /REDYT wait pattern (settles Q9): [research-profi-v5-wait.md](research-profi-v5-wait.md),
+  the gate-level model in [tools/machines/profi/waitmodel/](../../../tools/machines/profi/waitmodel/README.md)
 - [x] Phase 1 (branch `profi-v3-v5`): `MM_PROFI3` (short name `PROFI3`, alias `PROFI5` for v5), `IsProfiModel()`,
   `ProfiBoard` (`core/src/emulator/ports/models/profiboard.h`), `[ROM] PROFI3`, `data/configs/profi3`, ROM roles,
   `[ULA] ProfiMonochrome` now read (it never was), v3 always monochrome; CLI / WebAPI (`profi_board`,
@@ -29,8 +32,14 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-3 impleme
 - [x] Phase 3 (branch): `[PROFI] SyncProm=` (`0a1d`, `samx6`, `fb0579b6`, `v503`; empty = the board's own), v3
   69888 T / INT 12580 T, v5 69888 T / INT 14368 T (was 12580); the INI's `intstart` / `intlen` removed so they no
   longer override it. No Profi TTD fixtures exist, so none were re-recorded. Tests in `int_timing_test.cpp`
-- [ ] Phase 3b: v5 video WAIT (`ProfiVideoWaitOverlay`)
-- [ ] Phase 4: v3 floating bus
-- [ ] Phase 5: turbo switch for both, `ProfiTurboOverlay` for v3
-- [ ] Phase 6: automation, Qt, docs, TTD fixture
+- [x] Phase 3b (branch): v5 video WAIT in `ProfiWaitOverlay` (`core/src/emulator/memory/profi/`), `[PROFI] WaitPhase`,
+  `WaitConfig`, `RomWait`; tests in `profiwaitoverlay_test.cpp`
+- [x] Phase 4 (branch): v3 floating bus (`PortDecoder_Profi::FloatingBusV3`); tests in `portdecoder_profi_test.cpp`
+- [x] Phase 5 (branch): the TURBO front-panel switch on both boards (`FrontPanelSwitch::Turbo`, `[PROFI] Turbo`), the
+  v3 turbo waits and the HLD hold, the v5 turbo approximation
+- [x] Phase 6 (branch): CLI `switch`, WebAPI `/switches` + OpenAPI, MCP resource, Lua / Python `get_switch` /
+  `set_switch`, Qt Machine > TURBO Switch; TTD records the switch (`TTDInputKind::FrontPanelSwitch`, ProfiPaging
+  byte 33); the Qt status line now shows the clock of a machine that never changes it. No v3 TTD fixture: no Profi
+  fixtures exist
+- [ ] Emulated test programs for the waits (floatspy, TEST 4.30, the demos Gromov names) - need the programs
 - [ ] Phase 7: v5 open items (palette gate, 15 MHz, CP/M boot switch)

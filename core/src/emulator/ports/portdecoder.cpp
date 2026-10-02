@@ -32,6 +32,25 @@
 #include "emulator/sound/beeper.h"
 #include "stdafx.h"
 
+const char* FrontPanelSwitchName(FrontPanelSwitch sw)
+{
+    switch (sw)
+    {
+        case FrontPanelSwitch::Turbo: return "turbo";
+    }
+    return nullptr;
+}
+
+bool ParseFrontPanelSwitch(const std::string& name, FrontPanelSwitch& out)
+{
+    if (name == "turbo")
+    {
+        out = FrontPanelSwitch::Turbo;
+        return true;
+    }
+    return false;
+}
+
 /// region <Constructors / Destructors>
 PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
 {

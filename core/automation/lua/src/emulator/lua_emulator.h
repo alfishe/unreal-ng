@@ -416,6 +416,20 @@ public:
             "reset", &Emulator::Reset,
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
+            // Front-panel switches (Profi "turbo"): get -> true/false, nil when absent; set -> true when done
+            "get_switch", [](Emulator& self, const std::string& name) -> sol::optional<bool> {
+                FrontPanelSwitch sw;
+                if (!ParseFrontPanelSwitch(name, sw))
+                    return sol::nullopt;
+                const int value = self.GetFrontPanelSwitch(sw);
+                if (value < 0)
+                    return sol::nullopt;
+                return value != 0;
+            },
+            "set_switch", [](Emulator& self, const std::string& name, bool on) {
+                FrontPanelSwitch sw;
+                return ParseFrontPanelSwitch(name, sw) && self.SetFrontPanelSwitch(sw, on);
+            },
             
             // State queries
             "is_running", &Emulator::IsRunning,
