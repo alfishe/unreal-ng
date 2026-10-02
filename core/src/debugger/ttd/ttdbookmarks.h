@@ -108,6 +108,9 @@ public:
     /// event journal's DropAfter). Used by ResumeRecordingFrom.
     void DropAfter(const TTDTimePoint& t);
 
+    /// @brief Drop every bookmark before `t` (the history limit evicted that part).
+    void DropBefore(const TTDTimePoint& t);
+
     /// @brief Remove all bookmarks. Used by StartRecording /
     /// InvalidateSession / DeserializeSession.
     void Clear();

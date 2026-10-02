@@ -142,6 +142,8 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::ZiFiLine: return "zifi-line";
         case PeripheralId::ZiFi: return "zifi";
         case PeripheralId::CdDrive: return "cd-drive";
+        case PeripheralId::Vdac2Memory: return "vdac2-memory";
+        case PeripheralId::Vdac2: return "vdac2";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

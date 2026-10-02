@@ -185,6 +185,35 @@ void EveGetLineCost(const EveChip* chip, uint32_t line, EveLineCost* out)
     GetLineCost(*chip, line, *out);
 }
 
+size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* lineClocks, size_t maxLines)
+{
+    const FrameMetricsState& m = chip->state.metrics;
+    if (out)
+    {
+        *out = EveFrameMetrics{};
+        out->frame = m.frame;
+        out->valid = m.valid;
+        out->lines = m.lines;
+        out->hardBudget = m.hardBudget;
+        out->softBudget = m.softBudget;
+        out->worstLine = m.worstLine;
+        out->worstClocks = m.worstClocks;
+        out->totalClocks = m.totalClocks;
+        out->linesOverSoft = m.linesOverSoft;
+        out->linesOverHard = m.linesOverHard;
+    }
+    if (!lineClocks)
+        return 0;
+    const size_t count = maxLines < m.lines ? maxLines : m.lines;
+    std::memcpy(lineClocks, m.lineClocks, count * sizeof(uint16_t));
+    return count;
+}
+
+void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent)
+{
+    chip->lineBudgetMargin = percent > 50 ? 50 : percent;
+}
+
 int EveProbePixel(const EveChip* chip, uint32_t x, uint32_t y, EvePixelSource* out)
 {
     *out = EvePixelSource{};

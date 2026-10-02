@@ -20,7 +20,7 @@ Dependencies:
 | Needed | Why | Status |
 |---|---|---|
 | `eve-emu` | the chip | designed (arch), implemented by a separate agent |
-| TTD v2 memory regions (PLAN #40 V1) | the chip's 7 memory regions (arch §4.5) | planned, not built. Until it exists, a VDAC2 machine refuses to record (§9.3) |
+| TTD v2 memory regions (PLAN #40 phase 1) | the chip's 7 memory regions (arch §4.5) as changed pages | planned, not built. Until then the regions are a whole blob in every checkpoint (§9.1) |
 | ROM image file | ROM fonts (spec §1) | extracted by a tool (§10) |
 
 Isolation rule (tdd §7): shared files (`zcontrollerspi`, `screen`, the automation
@@ -278,32 +278,112 @@ The palette cache (CRAM version counter) needs no change: `ts_vdac` is fixed per
 
 ## 9. TTD
 
+Built 2026-10-02 (branch `vdac2-line-metrics`; design of the change:
+[line-budget-metrics.md](line-budget-metrics.md) §3.4). Until then a TTD recording on a
+VDAC2 machine ran and silently left the FT812 out.
+
 ### 9.1 What is recorded
 
-- **Device blob** `PeripheralId::Vdac2` = 26 (the next free id; 25 went to `SprinterPld`;
-  `ttdserializable.h`),
-  appended to `PortDecoder_TSConf::GetTTDModelStateIds` / `CreateTTDSerializers` when
-  the card exists. Payload, fixed size: the card's fields (raster-tact counter,
-  conversion remainder, last INT_N level, the msel source state) + `EveSaveState`
-  (fixed size, arch §4.5).
-- **Memory regions:** the chip's seven regions (arch §4.5: `RAM_G`, `DL0`, `DL1`, `REG`,
-  `CMD`, `SPECIAL`, `INFLIGHT`) registered as TTD v2 device regions; only dirty 4 KB pages
-  are stored per checkpoint.
-- The FT812 framebuffer is not recorded: after a seek it is redrawn from the restored
-  memory (arch §7.4).
+Two device blobs per checkpoint, registered by `PortDecoder_TSConf::GetTTDModelStateIds` /
+`CreateTTDSerializers` when the card exists and its chip was created (the serializers:
+`core/src/debugger/ttd/tsconf/ttdvdac2.h`, the data: `Vdac2Card::Ttd*`):
+
+| Id | Name | Content | Size |
+|:--|:--|:--|:--|
+| 42 | `Vdac2Memory` | every memory region of the chip in region order: `RAM_G` (1 MB), `DL0`, `DL1` (8 KB each), `REG`, `CMD`, `SPECIAL` (4 KB each), `INFLIGHT`; zero runs of 64 bytes or more dropped (format below) | variable: 3.3 KB per checkpoint for an empty chip, 645 KB with test6's image in `RAM_G` (after compression); 2.2 MB worst case |
+| 43 | `Vdac2` | the card: blob version (1), what the monitor shows (msel latched), the INT_N level, the INT edges not yet taken (count and up to 16 raster tacts), the card's time (frame base, position, conversion remainder, next event); then the chip's control state (`EveSaveState`: registers, scan, coprocessor, audio, bitmap handles, graphics context, the line budget metrics block of the last finished frame) | 168 bytes + the control state (`EveStateSize`; the metrics block alone is 8 KB) |
+
+- **Whole regions until TTD v2.** The TTD in master stores the machine's RAM as changed
+  pages (a full snapshot every 50 frames) but device memory as whole blobs in every
+  checkpoint (the classic General Sound card's 512 KB is the precedent). The FT812's memory
+  follows that rule: correct, but up to 2.2 MB per frame before compression. When TTD v2
+  memory regions exist (PLAN #40 phase 1), `Vdac2Memory` becomes regions with changed
+  4 KB pages only (eve-emu already tracks them, `EveRegion::dirty`).
+- **Zero runs dropped.** The memory blob is `u32` magic `VZR1`, `u32` byte count of what
+  follows, then per region a sequence of `u32` tokens: bit 31 set = that many zero bytes
+  (the low 31 bits), clear = that many bytes follow as they are. No token crosses a region
+  boundary; a region's tokens add up to exactly its size, and a blob that does not (or has
+  another magic) is refused. The blob is variable-size (`ITTDSerializable::TTDVariableSize`):
+  a checkpoint stores only the bytes written, never the 2.2 MB worst case.
+  - *Threshold 64 bytes.* A zero run inside data costs a run token and a new data token,
+    8 bytes, so runs of 9+ bytes already save space before compression; but zstd shrinks
+    short zero stretches itself, and every token is a branch on save and restore. 64 keeps
+    the token count to a few hundred for real content (graphics data has many short zero
+    stretches) while every long one - unused `RAM_G`, the empty display list tail, idle
+    `INFLIGHT` - goes.
+  - *What it buys* (measured on the M1 Ultra, `TSL-VDAC2`, mean of 10 captures): an empty
+    chip's capture 0.94 ms → 0.59 ms per frame (plain `TSL`: 0.18 ms), because 2.2 MB of
+    zeros are no longer allocated, cleared, copied and compressed every frame. The stored
+    size barely changes (3 388 → 3 343 bytes per checkpoint): zstd already squeezed the
+    zeros. With real content (test6: 645 KB per checkpoint, 2.4 ms capture) nothing changes;
+    that is TTD v2's job (changed pages only).
+  - *Test:* `Vdac2Card_Test.TtdMemoryBlobRestoresEveryByteWhereverTheZerosAre` - all zero,
+    no zero at all, runs at a region's start and end and across a region boundary, 63 / 64 /
+    65 bytes, a single non-zero byte at a region's end, random data with random zero
+    stretches; every byte compared after a restore over a different live state.
+- **Not recorded:** the FT812 frame buffer and the presented picture (drawn again from the
+  restored memory, §9.3), the ROM image (not state), the bus capture (a debug tool).
 
 ### 9.2 Restore
 
-`TTDLoadState`: the regions are written back by the region mechanism, the card calls
-`EveMemoryRestored`, then `EveLoadState` with the chip part of the blob. An operation in
-flight restarts per arch §7.3. The present queue is refilled by the next FT812 frame.
+Blobs are restored in id order, so the memory comes first:
 
-### 9.3 Before TTD v2 regions exist
+1. `Vdac2Memory`: each region decoded back (zero runs filled), then `EveMemoryRestored` (the library marks its
+   drawing stale).
+2. `Vdac2`: `EveLoadState` with the control state, then the card's time, edges and monitor
+   source; the output is configured for the restored mode. A restore never paints: if what
+   the monitor shows changed, the Screen's external picture is switched, its content comes
+   from the TTD replay.
 
-The card reports itself not recordable: starting a TTD recording on a VDAC2 machine
-fails on every surface with "VDAC2 needs TTD memory regions (TTD v2), not available in
-this build". Nothing records a state that could not be restored. RZX playback and the
-rest of the machine are unaffected.
+After a restore eve-emu draws the FT812 frame in flight again from line 0 with the
+restored memory (arch §7.4).
+
+### 9.3 What a TTD position shows
+
+The card is a TTD display participant (`ttd::ITTDDisplayParticipant`,
+`EmulatorContext::pTtdDisplayParticipant`), so `TimeTravelManager::ComposeDisplay`, which
+replays the machine to the position in a sandbox and copies what the Screen shows, applies
+the same rule as for the ZX screen:
+
+- **By frame number:** the picture the monitor showed at the end of that machine frame: the
+  FT812 frame that finished last. The FT812 frame (about 16.9 ms) does not line up with the
+  machine frame (about 20 ms), so the replay starts one machine frame earlier
+  (`TTDLeadInFrames() = 1`): the FT812 frame that finished last is then drawn entirely by the
+  replay, even if it started before the target frame's checkpoint.
+- **At a T-state / time point inside a frame:** the FT812 frame in flight, drawn up to that
+  moment, over its previous frame. The library draws lines lazily (at a frame end or before a
+  memory write); `TTDPrepareComposedPicture` brings the chip to the position and makes it draw
+  every line due, then presents its frame buffer.
+- **While the replay runs the chip draws every frame,** shown or not, so the result does not
+  depend on whether the host was looking at the picture (`Vdac2Card::Drawing`).
+
+### 9.4 Checked by
+
+`core/tests/debugger/ttd/ttdvdac2_test.cpp`, on a `TSL-VDAC2` machine running the TS-Labs
+SDK program `test6.spg` (a 1940 x 768 image in `RAM_G`, scrolled every frame):
+
+| Test | What it proves |
+|:--|:--|
+| `ChipBlobsAreRecorded` | both blobs are registered with their sizes |
+| `SeekByFrameMatchesTheLiveRun` | seeking by frame number, back and forth: the picture equals the live picture at the end of that frame; at the live run's exact position the card state, the chip state, every memory region and the metrics block equal the live run's byte for byte |
+| `SeekInsideFrameShowsTheFrameDrawnSoFar` | at three T-states inside frames: the picture equals the live machine's frame drawn so far (and differs from the last finished frame), state and memory equal |
+| `SavedSessionReplaysTheSame` | the session written to a stream and read back seeks to the same pictures and state |
+| `HistoryLimitKeepsTheChipRight` | with a 6-frame history limit (the oldest checkpoints and their blobs released while recording), saved and loaded: every kept frame seeks to the live picture, card state and chip memory |
+
+Notes from building it:
+
+- The card and the TS-Conf engine (whose DMA feeds the card) run lazily: the same moment can
+  sit at different catch-up points in a live run and after a restore. Comparing state needs
+  both brought to the CPU's position first (`CatchUpEngine`, `Synchronize`); after that the
+  bytes are equal.
+- A seek to an exact T-state lands on the first instruction boundary at or after it; at a
+  few frame starts (14 MHz) that is a later boundary than the live run stopped at (2 T-states
+  in the test). That is how TTD positions, not a card effect; the test compares state only
+  where the position matched exactly.
+- The one-frame lead-in is not proven necessary by these captures: the library redraws the
+  frame in flight from line 0 after a restore, so the picture is right without it unless the
+  memory changed during that FT812 frame before the checkpoint. It stays, correct by
+  construction, for one extra replayed frame per seek.
 
 ## 10. The ROM image
 

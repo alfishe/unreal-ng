@@ -50,7 +50,7 @@ class MediaManager;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; }
+namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
@@ -244,6 +244,10 @@ public:
     // the control thread with the emulator paused, and the suppression
     // checks are read from the same thread.
     bool ttdReplayActive = false;
+
+    /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
+    /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
+    ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;
 
     /// Per-step work gate: one bit per rare job that must run around every
     /// instruction. Z80::StepInstruction loads it once per step (relaxed); zero

@@ -57,6 +57,7 @@ void TTDPortJournal::Clear()
     _cursor = 0;
     _blocks.clear();
     _blocks.shrink_to_fit();
+    _droppedBlocks = 0;
     _sealedRecords = 0;
     _open.clear();
     _cache = ReadCache{};
@@ -135,7 +136,7 @@ uint8_t TTDPortJournal::PlayNext(const TTDPortRecord& live)
 
 bool TTDPortJournal::Get(uint64_t index, TTDPortRecord& out, ReadCache& cache) const
 {
-    if (index >= Size())
+    if (index >= Size() || index < FirstIndex())
         return false;
     if (index >= _sealedRecords)
     {
@@ -143,7 +144,7 @@ bool TTDPortJournal::Get(uint64_t index, TTDPortRecord& out, ReadCache& cache) c
         return true;
     }
     // Every sealed block holds exactly kBlockRecords records
-    const size_t block = static_cast<size_t>(index / kBlockRecords);
+    const uint64_t block = index / kBlockRecords;
     if (!DecodeBlock(block, cache))
         return false;
     out = cache.records[static_cast<size_t>(index % kBlockRecords)];
@@ -156,7 +157,7 @@ uint64_t TTDPortJournal::LowerBound(const TTDTimePoint& time, ReadCache& cache) 
     size_t block = 0;
     while (block < _blocks.size() && _blocks[block].lastFrame < time.frame)
         ++block;
-    uint64_t index = static_cast<uint64_t>(block) * kBlockRecords;
+    uint64_t index = (static_cast<uint64_t>(block) + _droppedBlocks) * kBlockRecords;
     TTDPortRecord r;
     while (Get(index, r, cache) && r.Time() < time)
         ++index;
@@ -232,13 +233,13 @@ TTDPortJournal::Block TTDPortJournal::MakeBlock(const std::vector<TTDPortRecord>
     return b;
 }
 
-bool TTDPortJournal::DecodeBlock(size_t block, ReadCache& cache) const
+bool TTDPortJournal::DecodeBlock(uint64_t block, ReadCache& cache) const
 {
     if (cache.block == static_cast<int64_t>(block))
         return true;
-    if (block >= _blocks.size())
+    if (block < _droppedBlocks || block - _droppedBlocks >= _blocks.size())
         return false;
-    const Block& b = _blocks[block];
+    const Block& b = _blocks[static_cast<size_t>(block - _droppedBlocks)];
     const size_t rawSize = static_cast<size_t>(b.records) * kRawRecordBytes;
     std::vector<uint8_t> raw(rawSize);
     if (!codec::Decompress(b.compressed, rawSize, raw.data()) || codec::Crc32C(raw.data(), rawSize) != b.crc ||
@@ -262,16 +263,17 @@ void TTDPortJournal::TruncateTo(uint64_t count)
 {
     if (count >= Size())
         return;
+    count = std::max(count, FirstIndex());  // dropped records cannot come back
     if (count < _sealedRecords)
     {
         // The block holding the cut becomes the open block again, cut to size
-        const size_t block = static_cast<size_t>(count / kBlockRecords);
+        const uint64_t block = count / kBlockRecords;
         const uint64_t keep = count % kBlockRecords;
         std::vector<TTDPortRecord> kept;
         if (keep > 0 && DecodeBlock(block, _cache))
             kept.assign(_cache.records.begin(), _cache.records.begin() + static_cast<std::ptrdiff_t>(keep));
-        _blocks.resize(block);
-        _sealedRecords = static_cast<uint64_t>(block) * kBlockRecords;
+        _blocks.resize(static_cast<size_t>(block - _droppedBlocks));
+        _sealedRecords = block * kBlockRecords;
         _open = std::move(kept);
         _open.reserve(kBlockRecords);
         _cache = ReadCache{};
@@ -282,6 +284,21 @@ void TTDPortJournal::TruncateTo(uint64_t count)
     }
     if (_cursor > Size())
         _cursor = Size();
+}
+
+void TTDPortJournal::DropBefore(uint64_t index)
+{
+    // A sealed block goes when its last record is before `index`
+    size_t drop = 0;
+    while (drop < _blocks.size() && (_droppedBlocks + drop + 1) * kBlockRecords <= index)
+        ++drop;
+    if (drop == 0)
+        return;
+    _blocks.erase(_blocks.begin(), _blocks.begin() + static_cast<std::ptrdiff_t>(drop));
+    _droppedBlocks += drop;
+    _cache = ReadCache{};
+    if (_cursor < FirstIndex())
+        _cursor = FirstIndex();
 }
 
 size_t TTDPortJournal::HeapBytes() const
@@ -326,7 +343,7 @@ bool TTDPortJournal::Serialize(std::ostream& out, const std::vector<uint64_t>& c
         blocks.push_back(&open);
     }
 
-    const uint64_t count = Size();
+    const uint64_t count = Size() - FirstIndex();  // a file holds the records still kept
     const uint32_t blockRecords = kBlockRecords;
     const uint32_t blockCount = static_cast<uint32_t>(blocks.size());
     if (!WritePod(out, count) || !WritePod(out, blockRecords) || !WritePod(out, blockCount))

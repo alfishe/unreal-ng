@@ -19,7 +19,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [ ] D-D: test corpus and oracles - draft [vdac2-test-corpus.md](vdac2-test-corpus.md)
   (2026-10-01): layers, TS-Labs SDK programs, BT8XX harness, replay format `.evr`,
   card test programs; open O1-O3
-- [ ] Dependency: TTD v2 memory regions (PLAN #40 V1) before VDAC2 can be recorded
+- [x] TTD for the FT812 (design §9): `Vdac2Memory` (whole regions) + `Vdac2` blobs, the picture after a seek by frame / T-state, tests `ttdvdac2_test.cpp`
+- [ ] When TTD v2 memory regions exist: `Vdac2Memory` as changed pages only
 - [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off
   `13263c804`, ROM extraction tool `e6d50bc9d`, SPI hub `d3fecc61a`
 - [ ] Library L0-L3b: in progress by a separate agent (own repository)

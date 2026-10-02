@@ -83,6 +83,9 @@ enum class ContextReset { PerLine, PerFrame, Never };
 constexpr ContextReset kContextReset = ContextReset::PerLine;
 // spec §5.2, V7: clocks of the line period not available to drawing.
 constexpr uint32_t kLineBudgetOverhead = 0;                          // TO VERIFY (R-Type: ~44 at HCYCLE 1344)
+// Line budget metrics: the soft budget's default margin below the hard budget, percent
+// (practice on VDAC2: keep about 10 % below the theoretical 1344 clocks per line).
+constexpr uint32_t kLineBudgetMarginPercent = 10;
 // spec §5.2, V7: the line budget floor, applied when HCYCLE x PCLK >= this value.
 constexpr uint32_t kLineBudgetFloor = 2048;                          // TO VERIFY
 // spec §5.2, V7: fill cost of points, lines, rectangles and edge strips, pixels per clock.

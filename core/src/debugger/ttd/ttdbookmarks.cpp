@@ -75,6 +75,13 @@ bool TTDBookmarkJournal::Remove(const std::string& label)
     return true;
 }
 
+void TTDBookmarkJournal::DropBefore(const TTDTimePoint& t)
+{
+    std::lock_guard<std::mutex> lk(_mutex);
+    _bookmarks.erase(std::remove_if(_bookmarks.begin(), _bookmarks.end(), [&](const TTDBookmark& b) { return b.time < t; }),
+                     _bookmarks.end());
+}
+
 void TTDBookmarkJournal::DropAfter(const TTDTimePoint& t)
 {
     std::lock_guard<std::mutex> lk(_mutex);

@@ -182,6 +182,9 @@ public:
     /// recorded after T. Markers exactly at T are kept.
     void DropAfter(const TTDTimePoint& t);
 
+    /// @brief Drop every marker with time strictly before `t` (history limit).
+    void DropBefore(const TTDTimePoint& t);
+
     /// @brief Drop all markers. Called by InvalidateSession and StartRecording.
     void Clear();
 

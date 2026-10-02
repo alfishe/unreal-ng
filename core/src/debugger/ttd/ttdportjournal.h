@@ -157,6 +157,14 @@ public:
     /// Keep the first `count` records. Recording continues after them
     void TruncateTo(uint64_t count);
 
+    /// Index of the first record still held: the history limit drops whole
+    /// sealed blocks from the front (DropBefore); indices stay absolute, so the
+    /// cursors of the remaining checkpoints are unchanged
+    uint64_t FirstIndex() const { return _droppedBlocks * kBlockRecords; }
+    /// Drop the sealed blocks whose records all lie before `index` (the oldest
+    /// checkpoint's cursor). Records at and after it are kept
+    void DropBefore(uint64_t index);
+
     /// Replay statistics since the last Clear / ResetStatistics.
     /// ValueMismatches: reads the live device answered differently (the CPU got
     /// the recorded value). Divergences: accesses at another time, from another
@@ -179,7 +187,7 @@ public:
     size_t SerializedBytes() const;
 
     /// Section body (ttd.ksy port journal). Cursors: one per checkpoint, in
-    /// timeline order
+    /// timeline order, relative to FirstIndex() (a file starts at its first record)
     bool Serialize(std::ostream& out, const std::vector<uint64_t>& cursors, std::string& err) const;
     /// Reads into `this` (cleared first) and `cursors`; every block is
     /// decompressed and CRC-checked and the records must be in time order.
@@ -210,14 +218,16 @@ private:
     static std::vector<uint8_t> RawLayout(const std::vector<TTDPortRecord>& records);
     static bool DecodeRaw(const uint8_t* raw, uint32_t records, uint64_t baseFrame, std::vector<TTDPortRecord>& out);
     static Block MakeBlock(const std::vector<TTDPortRecord>& records);
-    bool DecodeBlock(size_t block, ReadCache& cache) const;
+    /// `block`: absolute block number (dropped blocks counted)
+    bool DecodeBlock(uint64_t block, ReadCache& cache) const;
 
     Direction _direction;
     Mode _mode = Mode::Off;
     uint64_t _cursor = 0;  ///< next record replayed (Play)
 
-    std::vector<Block> _blocks;
-    uint64_t _sealedRecords = 0;
+    std::vector<Block> _blocks;      ///< the sealed blocks still held, oldest first
+    uint64_t _droppedBlocks = 0;     ///< sealed blocks dropped from the front (DropBefore)
+    uint64_t _sealedRecords = 0;     ///< records in sealed blocks, dropped ones included (absolute)
     std::vector<TTDPortRecord> _open;
 
     // Decoded copy of one sealed block (playback reads sequentially)

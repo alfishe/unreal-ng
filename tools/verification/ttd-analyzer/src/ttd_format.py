@@ -243,6 +243,9 @@ PERIPHERAL_ID_NAMES = {
     38: "EvoMouse",
     39: "ZiFiLine",
     40: "ZiFi",
+    41: "CdDrive",
+    42: "Vdac2Memory",
+    43: "Vdac2",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

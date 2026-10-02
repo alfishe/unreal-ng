@@ -106,11 +106,13 @@ void TTDPeripheralRegistry::CaptureAll(
         if (stateSize == 0)
             continue;
 
-        // Capture current state
-        std::vector<uint8_t> currentState(stateSize);
-        device->TTDSaveState(currentState.data());
+        // Capture current state (a variable-size device writes only what it needs)
+        std::vector<uint8_t> currentState;
+        device->TTDSaveStateTo(currentState);
+        if (currentState.empty())
+            continue;
 
-        outBlobs[id] = EncodeBlob(id, currentState.data(), stateSize);
+        outBlobs[id] = EncodeBlob(id, currentState.data(), currentState.size());
     }
 }
 
@@ -146,7 +148,9 @@ TTDRestoreReport TTDPeripheralRegistry::RestoreAll(
         }
 
         auto state = DecodeBlob(id, blobIt->second);
-        if (state.size() != device->TTDStateSize())
+        const bool sizeOk = device->TTDVariableSize() ? (!state.empty() && state.size() <= device->TTDStateSize())
+                                                      : state.size() == device->TTDStateSize();
+        if (!sizeOk)
         {
             ++result.sizeMismatches;
             continue;

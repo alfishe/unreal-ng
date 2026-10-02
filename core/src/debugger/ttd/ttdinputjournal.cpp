@@ -107,6 +107,32 @@ void TTDInputJournal::DropAfter(const TTDTimePoint& t)
     _payload.resize(std::min(keepBytes, _payload.size()));
 }
 
+void TTDInputJournal::DropBefore(const TTDTimePoint& t)
+{
+    auto it = std::find_if(_events.begin(), _events.end(), [&](const TTDInputEvent& ev) { return !(ev.time < t); });
+    if (it == _events.begin())
+        return;
+    _events.erase(_events.begin(), it);
+
+    // Network records are numbered from 1 in journal order (0 = none): drop the ones
+    // before the first kept event's, renumber the rest, move their bytes down
+    uint32_t firstNet = 0;
+    for (const TTDInputEvent& ev : _events)
+        if (ev.netIndex != 0 && (firstNet == 0 || ev.netIndex < firstNet))
+            firstNet = ev.netIndex;
+    const size_t dropNet = firstNet == 0 ? _net.size() : std::min<size_t>(firstNet - 1, _net.size());
+    if (dropNet == 0)
+        return;
+    _net.erase(_net.begin(), _net.begin() + static_cast<std::ptrdiff_t>(dropNet));
+    const size_t dropBytes = _net.empty() ? _payload.size() : std::min<size_t>(_net.front().payloadOffset, _payload.size());
+    _payload.erase(_payload.begin(), _payload.begin() + static_cast<std::ptrdiff_t>(dropBytes));
+    for (TTDNetInput& n : _net)
+        n.payloadOffset -= static_cast<decltype(n.payloadOffset)>(dropBytes);
+    for (TTDInputEvent& ev : _events)
+        if (ev.netIndex != 0)
+            ev.netIndex -= static_cast<uint32_t>(dropNet);
+}
+
 void TTDInputJournal::Clear()
 {
     _events.clear();

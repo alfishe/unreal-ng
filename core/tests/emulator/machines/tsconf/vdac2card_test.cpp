@@ -655,3 +655,96 @@ TEST_F(Vdac2Card_Test, DmaRamToSpiReachesTheChip)
 }
 
 #endif // ENABLE_VDAC2
+
+/// The TTD memory blob drops zero runs of 64+ bytes (vdac2-integration-design.md §9.1):
+/// every byte of every region comes back exactly, wherever the zero runs are -
+/// at a region's start or end, across a region boundary, one byte short of the
+/// threshold, a single non-zero byte at the very end - and an empty chip costs
+/// a few tokens. The blob never outgrows the worst case it declares
+TEST_F(Vdac2Card_Test, TtdMemoryBlobRestoresEveryByteWhereverTheZerosAre)
+{
+    Vdac2Card* card = Card();
+    ASSERT_NE(card, nullptr);
+    EveChip* chip = card->Chip();
+    ASSERT_NE(chip, nullptr);
+    const size_t regions = EveRegionCount(chip);
+    ASSERT_GE(regions, 2u);
+
+    auto region = [&](size_t i) {
+        EveRegion r{};
+        EveGetRegion(chip, i, &r);
+        return r;
+    };
+    auto fill = [&](uint8_t value) {
+        for (size_t i = 0; i < regions; i++)
+            std::memset(region(i).base, value, region(i).size);
+    };
+    auto snapshot = [&]() {
+        std::vector<std::vector<uint8_t>> all;
+        for (size_t i = 0; i < regions; i++)
+            all.emplace_back(region(i).base, region(i).base + region(i).size);
+        return all;
+    };
+    uint32_t encodedBytes = 0;
+    auto roundTrip = [&](const char* name) {
+        SCOPED_TRACE(name);
+        const auto before = snapshot();
+        std::vector<uint8_t> blob(card->TtdMemorySize(), 0xEE);
+        const size_t written = card->TtdSaveMemory(blob.data());
+        std::memcpy(&encodedBytes, blob.data() + 4, 4);
+        EXPECT_EQ(written, encodedBytes + 8u) << "header + tokens";
+        EXPECT_LE(written, blob.size()) << "never more than the worst case";
+        blob.resize(written);  // what a checkpoint stores
+        fill(0xA5);  // whatever the live chip holds before the restore
+        ASSERT_TRUE(card->TtdLoadMemory(blob.data()));
+        const auto after = snapshot();
+        for (size_t i = 0; i < regions; i++)
+            ASSERT_TRUE(after[i] == before[i]) << "region " << region(i).name;
+    };
+
+    fill(0x00);
+    roundTrip("all zero");
+    EXPECT_LE(encodedBytes, 4u * regions) << "an empty chip: one zero-run token per region";
+
+    fill(0xFF);
+    roundTrip("no zero at all (worst case)");
+
+    // Zero runs everywhere that matters
+    fill(0x5A);
+    const EveRegion first = region(0);
+    std::memset(first.base, 0, 1000);                            // at the start
+    std::memset(first.base + 5000, 0, 63);                       // one short of the threshold: stays data
+    std::memset(first.base + 6000, 0, 64);                       // exactly the threshold
+    std::memset(first.base + 7000, 0, 65);                       // one over
+    std::memset(first.base + first.size - 4096, 0, 4096);        // at the end ...
+    std::memset(region(1).base, 0, 2048);                        // ... continuing into the next region
+    region(1).base[region(1).size - 1] = 0x01;                   // a single non-zero byte at a region's very end
+    std::memset(region(1).base, 0, region(1).size - 1);
+    for (size_t i = 0; i < first.size; i += 4093)                // isolated non-zero bytes inside long zero stretches
+        first.base[i] = static_cast<uint8_t>(i | 1);
+    roundTrip("mixed runs and boundaries");
+
+    // Pseudo-random data with zero stretches of random lengths
+    uint32_t seed = 0x1234567u;
+    auto next = [&]() { return seed = seed * 1664525u + 1013904223u; };
+    for (size_t i = 0; i < regions; i++)
+    {
+        EveRegion r = region(i);
+        size_t pos = 0;
+        while (pos < r.size)
+        {
+            const size_t length = std::min<size_t>(r.size - pos, 1 + next() % 300);
+            const bool zero = (next() & 3) == 0;
+            for (size_t k = 0; k < length; k++)
+                r.base[pos + k] = zero ? 0 : static_cast<uint8_t>(next() >> 24);
+            pos += length;
+        }
+    }
+    roundTrip("random data and random zero stretches");
+
+    // A damaged blob is refused, not half applied silently
+    std::vector<uint8_t> blob(card->TtdMemorySize());
+    card->TtdSaveMemory(blob.data());
+    blob[0] ^= 0xFF;
+    EXPECT_FALSE(card->TtdLoadMemory(blob.data())) << "wrong magic";
+}

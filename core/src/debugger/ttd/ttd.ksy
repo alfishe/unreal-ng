@@ -573,7 +573,12 @@ types:
           40 ZiFi (the TS AVR's ZiFi API block, 32 bytes: version 1, api, err, selectZf, imr, isr, zibtr, zitor,
           ribtr, ritor, 5 reserved, u8 x 8 zfLastRx, u8 x 8 rsLastRx).
           41 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
-          with a CD unit, so the blobs of every other machine are unchanged).
+          with a CD unit, so the blobs of every other machine are unchanged),
+          42 Vdac2Memory (the TS-Conf VDAC2 card's FT812 memory regions whole, in region order: RAM_G, DL0, DL1,
+          REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
+          43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
+          u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
+          restored after 42).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

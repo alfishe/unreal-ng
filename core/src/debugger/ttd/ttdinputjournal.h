@@ -238,6 +238,11 @@ public:
     /// of the past).
     void DropAfter(const TTDTimePoint& t);
 
+    /// @brief Drop every event with time strictly before `t` (the history
+    /// limit evicted the checkpoints before it); network records and bytes of
+    /// dropped events go too, the kept ones are renumbered.
+    void DropBefore(const TTDTimePoint& t);
+
     /// @brief Drop all events. Called by InvalidateSession and StartRecording.
     void Clear();
 

@@ -67,6 +67,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/ttd/ttddisplayparticipant.h"
 #include "emulator/io/spi/spidevice.h"
 #include "emulator/platforms/tsconf/vdac2capture.h"
 #include "emulator/platform.h"
@@ -75,7 +76,7 @@ class EmulatorContext;
 class ModuleLogger;
 struct EveChip;
 
-class Vdac2Card : public SpiDevice
+class Vdac2Card : public SpiDevice, public ttd::ITTDDisplayParticipant
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -181,6 +182,34 @@ public:
     uint8_t exchange(uint8_t mosi) override;
     /// endregion
 
+    /// region <TTD (line-budget-metrics.md §3.4)>
+    /// Card state: the card's time, the INT edges not yet taken, what the monitor
+    /// shows, and the chip's control state (EveSaveState, the metrics block in it).
+    /// Fixed size for the card's lifetime
+    size_t TtdStateSize() const;
+    void TtdSaveState(uint8_t* dst) const;
+    /// False when the blob is not this card's (version, or the chip refused its state)
+    bool TtdLoadState(const uint8_t* src);
+    /// The chip's memory regions (RAM_G, both display lists, REG, CMD, SPECIAL,
+    /// INFLIGHT) in region order, zero runs of 64+ bytes dropped (format in
+    /// vdac2card.cpp, vdac2-integration-design.md §9.1). TtdMemorySize: the
+    /// worst case; TtdSaveMemory returns the bytes written (a variable-size TTD
+    /// blob). Restored before the card state
+    size_t TtdMemorySize() const;
+    size_t TtdSaveMemory(uint8_t* dst) const;
+    /// False when the blob is not a valid memory blob (the regions may be partly written)
+    bool TtdLoadMemory(const uint8_t* src);
+    /// Hashes of what each blob holds (divergence checks)
+    uint64_t TtdStateHash() const;
+    uint64_t TtdMemoryHash() const;
+
+    /// ITTDDisplayParticipant: one machine frame before a frame target (an FT812
+    /// frame, ~16.9 ms, may have started before the target frame's checkpoint);
+    /// inside a frame the picture is the FT812 frame drawn up to the position
+    unsigned TTDLeadInFrames() const override { return 1; }
+    void TTDPrepareComposedPicture(bool frameTarget) override;
+    /// endregion
+
     const Time& GetTime() const { return _time; }
     /// The chip, for the inspection API of eve/eve.h (nullptr if not ready)
     EveChip* Chip() const { return _chip; }
@@ -201,6 +230,8 @@ private:
     void PublishPicture();
     /// The chip should draw its next frame
     bool Drawing() const;
+    /// The chip's frame buffer (ARGB8888) into the presented picture (RGBA8888)
+    void ConvertFrameToPicture();
     uint64_t Now() const { return _time.frameBase + _rasterInFrame(); }
 
     EmulatorContext* _context;

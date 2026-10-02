@@ -51,6 +51,13 @@ void TTDExternalEventJournal::DropAfter(const TTDTimePoint& t)
     _events.erase(it, _events.end());
 }
 
+void TTDExternalEventJournal::DropBefore(const TTDTimePoint& t)
+{
+    std::lock_guard<std::mutex> lk(_mutex);
+    auto it = std::find_if(_events.begin(), _events.end(), [&](const TTDExternalEvent& ev) { return !(ev.time < t); });
+    _events.erase(_events.begin(), it);
+}
+
 void TTDExternalEventJournal::Clear()
 {
     std::lock_guard<std::mutex> lk(_mutex);
