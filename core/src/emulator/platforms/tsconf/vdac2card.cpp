@@ -689,6 +689,13 @@ size_t Vdac2Card::TtdSaveMemory(uint8_t* dst) const
     return static_cast<size_t>(out - dst);
 }
 
+void Vdac2Card::TtdSaveMemoryHeader(uint8_t* dst)
+{
+    const uint32_t encoded = 0;
+    std::memcpy(dst, &kZeroRunMagic, 4);
+    std::memcpy(dst + 4, &encoded, 4);
+}
+
 bool Vdac2Card::TtdLoadMemory(const uint8_t* src)
 {
     if (!_chip)
@@ -850,6 +857,7 @@ void Vdac2Card::TtdSaveState(uint8_t*) const {}
 bool Vdac2Card::TtdLoadState(const uint8_t*) { return false; }
 size_t Vdac2Card::TtdMemorySize() const { return 0; }
 size_t Vdac2Card::TtdSaveMemory(uint8_t*) const { return 0; }
+void Vdac2Card::TtdSaveMemoryHeader(uint8_t*) {}
 bool Vdac2Card::TtdLoadMemory(const uint8_t*) { return false; }
 uint64_t Vdac2Card::TtdStateHash() const { return 0; }
 uint64_t Vdac2Card::TtdMemoryHash() const { return 0; }

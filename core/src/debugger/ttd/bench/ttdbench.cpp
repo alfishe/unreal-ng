@@ -1093,7 +1093,8 @@ std::vector<Case> Matrix(const std::string& set)
                                    atm3,
                                    Base("TSCONF", "TSL"),
                                    Base("PROFI", "PROFI"),
-                                   Base("SPRINTER", "SPRINTER")};
+                                   Base("SPRINTER", "SPRINTER"),
+                                   Base("TSL-VDAC2", "TSL-VDAC2")};
     for (const Configuration& c : bases)
         add(c, Idle(3000));
 

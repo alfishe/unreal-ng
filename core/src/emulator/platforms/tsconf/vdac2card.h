@@ -226,6 +226,10 @@ public:
     size_t TtdSaveMemory(uint8_t* dst) const;
     /// False when the blob is not a valid memory blob (the regions may be partly written)
     bool TtdLoadMemory(const uint8_t* src);
+    /// The memory blob's 8-byte header with no tokens: the blob when the TTD
+    /// engine keeps the regions themselves (TtdLoadMemory refuses it, leaving
+    /// the memory to the engine's restore)
+    static void TtdSaveMemoryHeader(uint8_t* dst);
     /// Hashes of what each blob holds (divergence checks)
     uint64_t TtdStateHash() const;
     uint64_t TtdMemoryHash() const;

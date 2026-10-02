@@ -187,11 +187,14 @@ enum class TTDRegionId : uint16_t          // stable, stored in files, appended,
     SprinterVideoRam = 6,
     SprinterFastRam = 7,
     Vdac2GraphicsMemory = 8,
-    Vdac2DisplayList = 9,
-    Vdac2Registers = 10,
-    Vdac2CommandFifo = 11,
-    EvoAvrEeprom = 12,
-    SmucEeprom = 13,
+    Vdac2DisplayList0 = 9,
+    Vdac2DisplayList1 = 10,
+    Vdac2Registers = 11,
+    Vdac2CommandFifo = 12,
+    Vdac2Special = 13,
+    Vdac2Inflight = 14,
+    EvoAvrEeprom = 15,
+    SmucEeprom = 16,
 };
 
 struct TTDRegionDesc
@@ -299,7 +302,7 @@ The game is the one case slower than v1 (+8%): the pieces that differ between tw
 | 3 | General Sound (classic) | `GeneralSoundRam` | 128–512 KB | `SoundChip_GeneralSound::writeMem` | copy; the GS blob keeps registers only (95 B) |
 | 4 | GS lightweight | `GeneralSoundUploadStore` | up to the card RAM | the player's store writes | copy; used size stays in the blob |
 | 5 | Sprinter | `SprinterVideoRam`, `SprinterFastRam` | 256 KB, 64 KB | the Sprinter memory write paths | copy |
-| 6 | VDAC2 (FT812) | graphics memory, display list, registers, command FIFO | 1 MB, 2 × 8 KB, 4 KB, 4 KB | the card's bus writes | through the device: computed registers (`REG_ID`, `REG_CLOCK`, ring pointers) and the display list rebuilt ([VDAC2 design](../2026-10-01-tsconf-vdac2/vdac2-integration-design.md) §9.3) |
+| 6 | VDAC2 (FT812) | `Vdac2GraphicsMemory` (RAM_G), `Vdac2DisplayList0/1`, `Vdac2Registers`, `Vdac2CommandFifo`, `Vdac2Special`, `Vdac2Inflight` | 1 MB, 2 × 8 KB, 4 KB, 4 KB, 4 KB, 1.06 MB | eve-emu's dirty bitmap (one bit per 4 KB page, every chip write path), read before each capture | copy, then `EveMemoryRestored` (the chip rebuilds what it derives), as v1's `Vdac2Memory` blob does |
 | 7 | ZX-Evo AVR | `EvoAvrEeprom` | 4 KiB (1 piece) | the EEPROM-window write | copy |
 | 8 | Scorpion SMUC | `SmucEeprom` | 2 KiB (1 partial piece) | the page commit on STOP | copy; the serial-link state goes into a SMUC blob |
 

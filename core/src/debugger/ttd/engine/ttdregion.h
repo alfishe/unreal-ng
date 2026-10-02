@@ -26,12 +26,15 @@ enum class TTDRegionId : uint16_t
     NeoGSFlash = 5,
     SprinterVideoRam = 6,
     SprinterFastRam = 7,
-    Vdac2GraphicsMemory = 8,
-    Vdac2DisplayList = 9,
-    Vdac2Registers = 10,
-    Vdac2CommandFifo = 11,
-    EvoAvrEeprom = 12,
-    SmucEeprom = 13,
+    Vdac2GraphicsMemory = 8,   ///< FT812 RAM_G
+    Vdac2DisplayList0 = 9,
+    Vdac2DisplayList1 = 10,
+    Vdac2Registers = 11,
+    Vdac2CommandFifo = 12,
+    Vdac2Special = 13,         ///< the chip's special page (eve-emu SPECIAL)
+    Vdac2Inflight = 14,        ///< the coprocessor's inflate / media input (eve-emu INFLIGHT)
+    EvoAvrEeprom = 15,
+    SmucEeprom = 16,
 };
 
 /// Size of one piece of memory, the unit the engine stores
