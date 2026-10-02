@@ -39,6 +39,7 @@
 #include <functional>
 
 #include "emulator/io/keyboard/ps2keyboardstream.h"
+#include "emulator/io/mouse/imousesink.h"
 #include "emulator/io/mouse/msserialmouse.h"
 
 class EmulatorContext;
@@ -49,11 +50,24 @@ namespace Z84Lib
 class Z84C15;
 }
 
-class SprinterInput : public IPs2KeySink
+class SprinterInput : public IPs2KeySink, public IMouseSink
 {
 public:
     /// `pld`: ALL_MODE is read from the decoder's PLD state (one copy of it)
     SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, SprinterIntSource& intSource, const SprinterPldState& pld);
+    ~SprinterInput() override;
+    SprinterInput(const SprinterInput&) = delete;
+    SprinterInput& operator=(const SprinterInput&) = delete;
+
+    /// region <IMouseSink: the serial mouse is part of the board>
+    /// Always fitted, whatever [INPUT] Mouse= says about the Kempston port. Its
+    /// input lands in the board's mouse counters (the Kempston device, also a
+    /// sink of the manager), which the serial mouse samples
+    bool IsMouseFitted() const override { return true; }
+    void OnMouseMotion(int, int) override {}
+    void OnMouseButtons(uint8_t) override {}
+    void OnMouseWheel(int) override {}
+    /// endregion
 
     /// region <IPs2KeySink: the host's physical keys (journaled input)>
     void OnPcKey(PcKey key, bool pressed) override;

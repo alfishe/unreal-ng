@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 
@@ -39,6 +40,15 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
         buttons = mouse->GetButtons();
     });
     _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) { _chip.sio.Receive(1, value); });
+
+    if (_context && _context->pMouseManager)
+        _context->pMouseManager->AddSink(this);
+}
+
+SprinterInput::~SprinterInput()
+{
+    if (_context && _context->pMouseManager)
+        _context->pMouseManager->RemoveSink(this);
 }
 
 uint64_t SprinterInput::Now() const

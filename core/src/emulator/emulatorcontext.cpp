@@ -37,6 +37,7 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pCore = nullptr;
     pKeyboard = nullptr;
     pMouse = nullptr;
+    pMouseManager = nullptr;
     pJoystick = nullptr;
     pMemory = nullptr;
     pPortDecoder = nullptr;

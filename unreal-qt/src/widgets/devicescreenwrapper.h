@@ -13,6 +13,7 @@ class Emulator;
 class DeviceScreen;
 class DeviceScreenGL;
 class DeviceScreenGLWindow;
+class MouseCaptureController;
 
 /// @brief Unified wrapper for DeviceScreen implementations.
 /// Automatically selects GPU or software backend based on platform capabilities.
@@ -99,6 +100,9 @@ public:
     /// @brief Get the underlying widget for layout purposes
     QWidget* widget() const { return _widget; }
 
+    /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
+    MouseCaptureController* mouseCapture() const { return _mouseCapture; }
+
     /// @brief Returns true if GPU-accelerated rendering is active
     bool isGPUAccelerated() const { return _useGPU; }
 
@@ -139,6 +143,10 @@ private:
     DeviceScreenGLWindow* _gpuWindow = nullptr;  // QOpenGLWindow for tear-free vsync
     HudOverlay* _hudOverlay = nullptr;
     bool _useGPU = false;
+
+    void setupMouseCapture();
+    MouseCaptureController* _mouseCapture = nullptr;  // QObject child of the wrapper
+    std::weak_ptr<Emulator> _emulator;                // the machine the mouse settings come from
 
     // Track viewport state for getters
     DisplayViewport _displayViewport;

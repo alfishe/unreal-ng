@@ -6,6 +6,12 @@
 
 #include <QDebug>
 #include <QWidget>
+#include <QWindow>
+
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/mouse/mousemanager.h"
+#include "emulator/mousecapturecontroller.h"
 
 DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent)
     : DeviceScreenWrapper(parent, DeviceScreenFactory::probeGPUAcceleration())
@@ -48,6 +54,69 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
         _widget = _software;
         qInfo() << "DeviceScreenWrapper: Using software rendering";
     }
+
+    setupMouseCapture();
+}
+
+void DeviceScreenWrapper::setupMouseCapture()
+{
+    _mouseCapture = new MouseCaptureController(this);
+
+    MouseCaptureController::Surface surface;
+    if (_useGPU && _gpuWindow)
+    {
+        DeviceScreenGLWindow* window = _gpuWindow;
+        surface.centerGlobal = [window] { return window->mapToGlobal(QPoint(window->width() / 2, window->height() / 2)); };
+        surface.logicalSize = [window] { return window->drawnPictureSize(); };
+        surface.devicePixelRatio = [window] { return window->devicePixelRatio(); };
+        surface.setCursorHidden = [window](bool hidden) {
+            if (hidden)
+                window->setCursor(Qt::BlankCursor);
+            else
+                window->unsetCursor();
+        };
+        surface.takeFocus = [window, this] {
+            if (_widget)
+                _widget->setFocus(Qt::MouseFocusReason);
+            window->requestActivate();
+        };
+        _mouseCapture->setSourceSizeProvider([window] { return window->displaySourceRect().size(); });
+        window->setMouseCapture(_mouseCapture);
+    }
+    else if (_software)
+    {
+        DeviceScreen* screen = _software;
+        surface.centerGlobal = [screen] { return screen->mapToGlobal(screen->rect().center()); };
+        surface.logicalSize = [screen] { return screen->size(); };
+        surface.devicePixelRatio = [screen] { return screen->devicePixelRatioF(); };
+        surface.setCursorHidden = [screen](bool hidden) {
+            if (hidden)
+                screen->setCursor(Qt::BlankCursor);
+            else
+                screen->unsetCursor();
+        };
+        surface.takeFocus = [screen] { screen->setFocus(Qt::MouseFocusReason); };
+        surface.setMouseTracking = [screen](bool on) { screen->setMouseTracking(on); };
+        _mouseCapture->setSourceSizeProvider([screen] { return screen->displaySourceRect().size(); });
+        screen->setMouseCapture(_mouseCapture);
+    }
+    _mouseCapture->setSurface(std::move(surface));
+
+    _mouseCapture->setHostSettingsProvider([this] {
+        MouseCaptureController::HostSettings settings;
+        std::shared_ptr<Emulator> emulator = _emulator.lock();
+        EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        if (context)
+        {
+            // Any mouse device of the machine (Kempston port, Sprinter serial mouse, ...)
+            settings.mouseFitted = context->pMouseManager && context->pMouseManager->HasMouseDevice();
+            settings.swapButtons = context->config.input.mouseswap != 0;
+            // CONFIG::input.mousescale is a plain char - unsigned on ARM, so cast before use
+            settings.scaleLog2 = static_cast<signed char>(context->config.input.mousescale);
+            settings.releaseKey = context->config.input.mouseReleaseKey;
+        }
+        return settings;
+    });
 }
 
 DeviceScreenWrapper::~DeviceScreenWrapper()
@@ -56,6 +125,12 @@ DeviceScreenWrapper::~DeviceScreenWrapper()
     // together with the frame. When the wrapper is replaced at runtime (GPU <-> software
     // switch) the orphaned widget would otherwise stay alive and visible at its old
     // geometry, leaving a stale copy of the screen behind after every resize.
+    // The capture first: its surface callbacks point into the widget
+    if (_mouseCapture)
+    {
+        _mouseCapture->release();
+        _mouseCapture->setSurface({});
+    }
     delete _widget;
     _widget = nullptr;
     _gpuWindow = nullptr;  // Owned by the container widget
@@ -74,6 +149,10 @@ void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
 
 void DeviceScreenWrapper::detach()
 {
+    _emulator.reset();
+    if (_mouseCapture)
+        _mouseCapture->setTargetEmulatorId("");
+
     if (_useGPU && _gpuWindow)
         _gpuWindow->detach();
     else if (_software)
@@ -108,6 +187,10 @@ void DeviceScreenWrapper::clearFrameSource()
 
 void DeviceScreenWrapper::setEmulator(std::shared_ptr<Emulator> emulator)
 {
+    _emulator = emulator;
+    if (_mouseCapture)
+        _mouseCapture->setTargetEmulatorId(emulator ? emulator->GetId() : std::string());
+
     if (_useGPU && _gpuWindow)
         _gpuWindow->setEmulator(emulator);
     else if (_software)

@@ -15,7 +15,7 @@
 class CRTFilter;
 
 class Emulator;  // Forward declaration
-class MouseManager;
+class MouseCaptureController;
 
 namespace Ui
 {
@@ -119,9 +119,9 @@ public:
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
 
-    void setMouseCaptured(bool captured);
-    bool isMouseCaptured() const;
-    MouseManager* mouseManager() const { return _mouseManager; }
+    /// Host mouse capture (owned by the screen wrapper): mouse, wheel, focus and
+    /// the release key go there first
+    void setMouseCapture(MouseCaptureController* capture) { _mouseCapture = capture; }
 
     /// Framebuffer area currently drawn into the widget (viewport-cropped), in emulated pixels
     QRectF displaySourceRect() const;
@@ -173,7 +173,7 @@ private:
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
 
-    MouseManager* _mouseManager = nullptr;  // Kempston Mouse host input (owned via QObject parent)
+    MouseCaptureController* _mouseCapture = nullptr;  // host mouse capture (owned by DeviceScreenWrapper)
 };
 
 #endif  // DEVICESCREEN_H
