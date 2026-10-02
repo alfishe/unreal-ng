@@ -8,6 +8,7 @@
 #include "emulator/config.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/video/screen.h"
 
 #include <QCursor>
 #include <QEvent>
@@ -109,12 +110,18 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _ttd->setStyleSheet("padding-top: 1px;");
     _ttd->hide();
 
+    _videoMode = new QLabel(_statusBar);
+    _videoMode->setFont(fpsFont);
+    _videoMode->setStyleSheet("padding-top: 1px;");
+    _videoMode->hide();
+
     auto* separator2 = new QFrame(_statusBar);
     separator2->setFrameShape(QFrame::VLine);
     separator2->setFrameShadow(QFrame::Plain);
     separator2->setFixedHeight(13);
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
+    _statusBar->addPermanentWidget(_videoMode);
     _statusBar->addPermanentWidget(_rzx);
     _statusBar->addPermanentWidget(_ttd);
     _statusBar->addPermanentWidget(_joystick);  // leftmost of the device LEDs: before tape
@@ -398,6 +405,7 @@ void StatusBarManager::refresh()
     _tape->setActive(tapePlaying);
     updateRzx(emulator);
     updateTtd(context);
+    updateVideoMode(context);
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
@@ -664,6 +672,23 @@ void StatusBarManager::updateIde(EmulatorContext* context)
 
 /// RZX playback: "RZX 37.2%" while playing (red after a desync in tolerant mode);
 /// the end or a desync is announced once in the status bar message area
+void StatusBarManager::updateVideoMode(EmulatorContext* context)
+{
+    // Machines whose picture mixes modes per area say so in a few words (Sprinter: "text 80",
+    // "320x256 256c (mixed)"); the full description is the tooltip. Read on the GUI tick like the
+    // other indicators: a torn read of the mode table only shows for one tick
+    Screen* screen = context ? context->pScreen : nullptr;
+    const ScreenState state = screen ? screen->DescribeScreenState() : ScreenState{};
+    if (state.videoModeBrief.empty())
+    {
+        _videoMode->hide();
+        return;
+    }
+    _videoMode->setText(QString::fromStdString(state.videoModeBrief));
+    _videoMode->setToolTip(QString::fromStdString(state.videoMode));
+    _videoMode->show();
+}
+
 void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
 {
     const rzx::SessionStatus status = emulator ? emulator->GetRzxStatus() : rzx::SessionStatus{};

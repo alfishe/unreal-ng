@@ -41,13 +41,18 @@ void AudioCaptureAnalyzer::onActivate(AnalyzerManager* manager)
 
 void AudioCaptureAnalyzer::onDeactivate()
 {
+    if (_manager)
+        _manager->setAudioTapSource(static_cast<int>(AudioSourceType::MasterMix));
     // AnalyzerManager automatically cleans up the subscription
     _armed.store(false, std::memory_order_release);
     _manager = nullptr;
 }
 
-void AudioCaptureAnalyzer::startCapture(size_t targetSamples)
+void AudioCaptureAnalyzer::startCapture(size_t targetSamples, AudioSourceType source)
 {
+    _source = source;
+    if (_manager)
+        _manager->setAudioTapSource(static_cast<int>(source));
     // Round down to a whole stereo pair and clamp to the ceiling
     targetSamples = std::min(targetSamples & ~size_t(1), MAX_CAPTURE_SAMPLES);
 

@@ -12,6 +12,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/screen.h"
 
 namespace
 {
@@ -685,6 +686,8 @@ void PortDecoder_Profi::Port_Palette_Out(uint16_t port)
     const uint16_t colour = static_cast<uint16_t>(static_cast<uint8_t>(~(port >> 8)));
     const uint16_t blueLsb = (_state->pFE & 0x80) ? 0x01 : 0x00;
     _state->profiPalette[index] = static_cast<uint16_t>((colour << 1) | blueLsb);
+    if (_context->pScreen)
+        _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, index);  // the video change log
 }
 
 uint8_t PortDecoder_Profi::Port_FE_In_GX0() const

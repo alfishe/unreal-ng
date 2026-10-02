@@ -956,6 +956,19 @@ void Emulator::Reset(bool hardReset)
         ? _context->pKeyboard->CaptureInputState()
         : Keyboard::InputState{};
 
+    // A ROM selected at runtime (RequestRomReload: the Sprinter's BIOS) is read now, with the
+    // machine paused and TTD recording stopped; the session that relied on the old ROM is invalid
+    if (_romReloadPending.exchange(false))
+    {
+        ROM& rom = *_core->GetROM();
+        if (rom.LoadROM())
+            rom.CalculateSignatures();
+        else
+            MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
+        if (_context && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->InvalidateSession("rom-reload");
+    }
+
     _core->Reset();
 
     if (!hardReset)
@@ -1416,12 +1429,33 @@ bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
 
 void Emulator::Stop()
 {
+    // Every caller blocks here until the emulation thread has actually been
+    // joined, not merely signaled. The old lock-free compare-exchange let a
+    // caller that lost the race return immediately while the winner was still
+    // inside _asyncThread->join() - IsRunning() already read false at that
+    // point, so a concurrent EmulatorManager::RemoveEmulatorInstance() (gated
+    // on IsRunning()) could skip its own Stop() call and run straight into
+    // Release(), freeing Core's Screen / SoundManager / TimeTravelManager
+    // while MainLoop::Run() was still mid-frame on the still-running thread
+    // (observed as a SIGSEGV / pointer-authentication failure in
+    // MainLoop::OnFrameStart() and SoundManager::handleFrameStart(),
+    // 2026-10-02). A thread cannot join itself; guard that instead of
+    // deadlocking if this is ever reached from the emulation thread itself.
+    if (_asyncThread && _asyncThread->get_id() == std::this_thread::get_id())
+    {
+        MLOGERROR("Emulator::Stop() called from the emulation thread itself - ignored");
+        return;
+    }
+
+    std::lock_guard<std::mutex> stopLock(_stopMutex);
+
     // Use atomic compare-exchange to ensure only ONE thread executes stop logic
     // This prevents double-free of _asyncThread when Stop() is called multiple times
     bool expected = true;
     if (!_isRunning.compare_exchange_strong(expected, false, std::memory_order_acq_rel))
     {
-        // Already stopped or another thread is currently stopping - safe to return
+        // Already stopped - whoever won the race already ran the join above
+        // under this same mutex, so the thread is genuinely gone by now.
         return;
     }
 

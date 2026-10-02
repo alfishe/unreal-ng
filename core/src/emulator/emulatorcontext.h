@@ -20,6 +20,7 @@ class Emulator;
 class Joystick;
 class Keyboard;
 class Mouse;
+class MouseManager;
 class VirtualNetwork;
 class ZxNetUsb;
 class ComPort;
@@ -111,6 +112,9 @@ public:
 
 	// Mouse controller instance
 	Mouse* pMouse = nullptr;
+
+	// The one mouse input path: every source in, every mouse device of the machine out
+	MouseManager* pMouseManager = nullptr;
 
 	// Kempston joystick instance
 	Joystick* pJoystick = nullptr;

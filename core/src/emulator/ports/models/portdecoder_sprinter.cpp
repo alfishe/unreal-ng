@@ -53,6 +53,11 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         _context->pSoundManager->attachModelAudioSource(&_cbl);
     // A video RAM byte that changes the picture: the beam is drawn up to now with the old one first
     _vram.SetBeforeChangeListener([this]() { CatchUpScreen(); });
+    // Mode table and palette writes: counted per frame by the video change log (/video/changes)
+    _vram.SetTableWriteListener([this](uint32_t address, bool palette) {
+        if (_context->pScreen)
+            _context->pScreen->NoteVideoTableWrite(palette ? videomap::VideoTable::Palette : videomap::VideoTable::ModeTable, address);
+    });
 
     // The Z84C15's CTC and watchdog count the CPU clock: base T-states x the current ratio.
     // The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
@@ -541,6 +546,14 @@ const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
     return renderer ? *renderer : SprinterVideoRenderer::Standard();
 }
 
+void PortDecoder_Sprinter::NoteVideoLatches()
+{
+    // The video change log (videowritelog.h): RGMOD, HOLD, PORT_Y, ALL_MODE and the frame height
+    // with the frame T and PC (ScreenSprinter::CaptureFamilyLatches reads them from the PLD state)
+    if (_context->pScreen)
+        _context->pScreen->NoteVideoWrite();
+}
+
 void PortDecoder_Sprinter::CatchUpScreen()
 {
     if (_context->pScreen && _context->pCore && _context->pCore->GetZ80())
@@ -849,6 +862,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             // the raster) from the next frame start
             _pld.frameLines = code & 1;
             _intSource.SetFrameLines(_pld.frameLines ? 312 : 320);
+            NoteVideoLatches();
             return;
         case SprinterCode::PldReload:
             RequestCpuReset(SprinterResetKind::Reload);
@@ -898,20 +912,24 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             _input.BeforeAllModeWrite();
             _pld.allMode = value;
             RefreshStepHook();  // the keyboard INT on or off
+            NoteVideoLatches();
             return;
         case SprinterCode::Hold:
             CatchUpScreen();
             _pld.hold = value;
+            NoteVideoLatches();
             return;
         case SprinterCode::PortY:
         case 0xCC:
             _pld.portY = value;
+            NoteVideoLatches();
             return;
         case SprinterCode::RgMod:
         case 0xCD:
             CatchUpScreen();
             _pld.rgMod = value;
             _intSource.SetModePage(value & 1);
+            NoteVideoLatches();
             return;
         case SprinterCode::SysCnf:
         case 0xCE:

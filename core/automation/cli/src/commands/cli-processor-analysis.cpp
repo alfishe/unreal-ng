@@ -3,6 +3,7 @@
 // video recording. Mirrors the WebAPI handlers (analyzers_api, profiler_api,
 // state_screen_api, recording_api) so every interface exposes the same features.
 
+#include "cli-audio-mixer.h"
 #include "cli-processor.h"
 
 #include <3rdparty/tinywav/tinywav.h>
@@ -102,21 +103,8 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
         return;
     }
 
-    const CONFIG& config = context->config;
-    EmulatorState& state = context->emulatorState;
-    Memory* memory = context->pMemory;
-
-    const bool is128K =
-        (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS2 ||
-         config.mem_model == MM_PLUS2A || config.mem_model == MM_PLUS3);
-
     // Arguments: explicit Z80 range ("digest <start> <end>"), bank list, border toggle
-    uint16_t rangeStart = 0;
-    uint16_t rangeEnd = 0;
-    std::vector<uint16_t> banks;
-    bool includeBorder = true;
-    bool activeMode = false;
-
+    ScreenDigestQuery query;
     for (size_t i = 0; i < args.size(); i++)
     {
         if (args[i] == "--banks" && i + 1 < args.size())
@@ -127,108 +115,69 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
             {
                 uint16_t page;
                 if (parseAddress16(token, page))
-                    banks.push_back(page);
+                    query.banks.push_back(page);
             }
         }
         else if (args[i] == "--active")
         {
-            activeMode = true;
+            query.active = true;
         }
         else if (args[i] == "--no-border")
         {
-            includeBorder = false;
+            query.includeBorder = false;
         }
-        else if (i + 1 < args.size() && banks.empty())
+        else if (i + 1 < args.size() && query.banks.empty())
         {
             // Positional pair: start end
-            if (!parseAddress16(args[i], rangeStart) || !parseAddress16(args[i + 1], rangeEnd) || rangeStart > rangeEnd)
+            if (!parseAddress16(args[i], query.start) || !parseAddress16(args[i + 1], query.end) || query.start > query.end)
             {
                 session.SendResponse(
                     "Invalid range. Usage: digest [<start> <end>] [--banks p1,p2] [--active] [--no-border]");
                 return;
             }
+            query.range = query.start != 0 || query.end != 0;
             i++;
         }
     }
 
-    const uint64_t previousDigest = state.last_screen_digest;
-    const uint64_t previousFrame = state.last_screen_digest_frame;
-
-    uint64_t combined = ScreenDigest::kInitialValue;
+    // One computation for every interface (ScreenDigestCompute): the same pages, surface and change tracking
+    const ScreenDigestResult r = ScreenDigestCompute::Compute(context, query);
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
-
-    if (rangeEnd >= rangeStart && (rangeStart != 0 || rangeEnd != 0))
+    if (r.range)
     {
-        // Explicit Z80 range mode
-        const uint64_t rangeDigest = ScreenDigest::DigestZ80Range(memory, rangeStart, rangeEnd);
-        for (int shift = 0; shift < 64; shift += 8)
-        {
-            combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((rangeDigest >> shift) & 0xFF));
-        }
-
-        ss << "Range:  $";
-        ss << std::setw(4) << rangeStart << "-$" << std::setw(4) << rangeEnd << NEWLINE;
-        ss << "Digest: 0x" << std::setw(16) << rangeDigest << NEWLINE;
+        ss << "Range:  $" << std::setw(4) << r.start << "-$" << std::setw(4) << r.end << NEWLINE;
+        ss << "Digest: 0x" << std::setw(16) << r.rangeDigest << NEWLINE;
+    }
+    else if (r.deviceSurface)
+    {
+        ss << "Mode: " << r.videoMode << ", surface: " << r.surface.name << " (" << std::dec << r.surface.bytes
+           << " bytes: " << r.surface.description << ")" << NEWLINE << std::hex;
+        ss << "Surface: 0x" << std::setw(16) << r.surface.digest << NEWLINE;
     }
     else
     {
-        // Bank mode: both screen pages on 128K-class models, page 5 only otherwise
-        if (banks.empty())
+        if (r.activeSurface)
         {
-            if (activeMode)
-            {
-                // Surface actually displayed by the current video mode: ZX modes
-                // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
-                // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
-                // flips the digest even with constant underlying pages
-                const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
-                banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
-
-                ss << "Mode: " << Screen::GetVideoModeName(videoMode) << ", pages:";
-                for (uint16_t page : banks)
-                    ss << " " << std::dec << page;
-                ss << NEWLINE << std::hex << std::uppercase << std::setfill('0');
-            }
-            else
-            {
-                banks.push_back(ScreenDigest::kScreen0RAMPage);
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
-            }
+            ss << "Mode: " << r.videoMode << ", pages:";
+            for (uint16_t page : r.activePages)
+                ss << " " << std::dec << page;
+            ss << NEWLINE << std::hex << std::uppercase << std::setfill('0');
         }
-
-        for (uint16_t page : banks)
-        {
-            const uint64_t digest = ScreenDigest::DigestRAMPage(memory, page);
-            for (int shift = 0; shift < 64; shift += 8)
-            {
-                combined = ScreenDigest::MixValue(combined, static_cast<uint8_t>((digest >> shift) & 0xFF));
-            }
+        for (const auto& [page, digest] : r.banks)
             ss << "Page " << std::dec << std::setw(2) << page << std::hex << std::uppercase << ": 0x" << std::setw(16)
                << digest << NEWLINE;
-        }
     }
 
-    uint8_t borderColor = 0;
-    if (includeBorder)
-    {
-        borderColor = context->pScreen->GetBorderColor();
-        combined = ScreenDigest::MixValue(combined, borderColor);
-    }
-
-    state.last_screen_digest = combined;
-    state.last_screen_digest_frame = state.frame_counter;
-
-    ss << "Combined: 0x" << std::setw(16) << combined << NEWLINE;
+    ss << "Combined: 0x" << std::setw(16) << r.combined << NEWLINE;
     ss << "Algorithm: fnv1a-64" << NEWLINE;
-    ss << "Frame: " << std::dec << state.frame_counter << NEWLINE;
-    ss << "Border: " << static_cast<int>(borderColor) << (includeBorder ? "" : " (excluded)") << NEWLINE;
-    ss << "Changed: " << (combined != previousDigest ? "yes" : "no") << NEWLINE;
-    if (previousFrame != 0)
+    ss << "Frame: " << std::dec << r.frame << NEWLINE;
+    ss << "Border: " << static_cast<int>(r.border) << (r.includeBorder ? "" : " (excluded)") << NEWLINE;
+    ss << "Changed: " << (r.changed ? "yes" : "no") << NEWLINE;
+    if (r.previousFrame != 0)
     {
-        ss << "Previous: 0x" << std::hex << std::setw(16) << previousDigest << " (frame " << std::dec << previousFrame
-           << ", " << (state.frame_counter - previousFrame) << " frames ago)" << NEWLINE;
+        ss << "Previous: 0x" << std::hex << std::setw(16) << r.previousDigest << " (frame " << std::dec << r.previousFrame
+           << ", " << (r.frame - r.previousFrame) << " frames ago)" << NEWLINE;
     }
 
     session.SendResponse(ss.str());
@@ -434,7 +383,9 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video address z80 <addr>       - pixels the byte at a Z80 address feeds\n"
         "  video address palette <offset> - pixels drawn with a palette cell (16-bit cells at 2n)\n"
         "  video address sprite_ram <off> - pixels of the sprite a sprite attribute word describes\n"
-        "  video text [layer]             - text grid of a text mode (ATM / ZX-Evo)\n"
+        "  video address vram <offset>    - pixels a byte of the machine's video RAM feeds (Sprinter)\n"
+        "  video text [layer]             - text grid of a text mode (ATM / ZX-Evo / TS-Conf / Sprinter text squares)\n"
+        "  video changes [1|2]            - video change log: latch changes with T, line, PC; palette / mode table writes\n"
         "  video temporal [status]        - ZX DLSS de-flicker: algorithm, delays, timing\n"
         "  video temporal list            - algorithms that can be switched on\n"
         "  video temporal off             - switch the de-flicker off\n"
@@ -484,12 +435,15 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         report = DeviceState::VideoPixel(context, c, a, b);
     else if (sub == "address" && args.size() == 3 && args[1] == "z80" && number(args[2], a))
         report = DeviceState::VideoAddressZ80(context, a);
-    else if (sub == "address" && args.size() == 3 && (args[1] == "sprite_ram" || args[1] == "palette") && number(args[2], a))
+    else if (sub == "address" && args.size() == 3 && (args[1] == "sprite_ram" || args[1] == "palette" || args[1] == "vram") &&
+             number(args[2], a))
         report = DeviceState::VideoAddressIn(context, args[1], 0, a);
     else if (sub == "address" && args.size() == 3 && number(args[1], a) && number(args[2], b))
         report = DeviceState::VideoAddress(context, a, b);
     else if (sub == "text" && args.size() <= 2 && (args.size() == 1 || number(args[1], a)))
         report = DeviceState::VideoText(context, args.size() == 2 ? a : 0);
+    else if (sub == "changes" && args.size() <= 2 && (args.size() == 1 || number(args[1], a)))
+        report = DeviceState::VideoChanges(context, args.size() == 2 ? a : 2);
     else
     {
         session.SendResponse(kUsage);
@@ -814,6 +768,20 @@ void CLIProcessor::HandleAyLog(const ClientSession& session, const std::vector<s
     session.SendResponse(ss.str());
 }
 
+// HandleMixer — the per-device mixer (cli-audio-mixer.h; mirrors GET / PUT /audio/mixer)
+void CLIProcessor::HandleMixer(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    std::vector<std::string> full = {"mixer"};
+    full.insert(full.end(), args.begin(), args.end());
+    session.SendResponse(CliAudioMixer::Text(emulator->GetContext(), full, NEWLINE));
+}
+
 // HandleAudioCapture — buffered stereo capture via AudioCaptureAnalyzer.
 // Mirrors POST /audio/capture and GET /audio/capture/{status,result}.
 void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args)
@@ -854,7 +822,7 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
             }
             catch (...)
             {
-                session.SendResponse("Invalid duration. Usage: audiocapture start <seconds>");
+                session.SendResponse("Invalid duration. Usage: audiocapture start <seconds> [source]");
                 return;
             }
         }
@@ -864,15 +832,24 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
             return;
         }
 
+        // One mixer device instead of the master mix (core AudioMixer::Capturable; GET /audio/mixer lists them)
+        AudioSourceType source = AudioSourceType::MasterMix;
+        std::string sourceError;
+        if (!AudioMixer::Capturable(context, args.size() >= 3 ? args[2] : std::string(), source, sourceError))
+        {
+            session.SendResponse("Error: " + sourceError);
+            return;
+        }
+
         const size_t rate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
         const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;  // interleaved stereo
 
         analyzerManager->activate("audiocapture");
-        capture->startCapture(target);
+        capture->startCapture(target, source);
 
         std::stringstream ss;
         ss << std::dec << "Audio capture armed: " << seconds << "s (" << target << " stereo samples @ " << rate
-           << " Hz).";
+           << " Hz), source " << AudioMixer::Key(source) << ".";
         session.SendResponse(ss.str());
         return;
     }

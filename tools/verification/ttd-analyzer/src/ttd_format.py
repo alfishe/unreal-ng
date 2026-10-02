@@ -238,6 +238,9 @@ PERIPHERAL_ID_NAMES = {
     33: "SprinterIsa",
     34: "SprinterPads",
     35: "Wd1793Context",
+    36: "AtmIoBus",
+    37: "Atm2IoEsp",
+    38: "EvoMouse",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

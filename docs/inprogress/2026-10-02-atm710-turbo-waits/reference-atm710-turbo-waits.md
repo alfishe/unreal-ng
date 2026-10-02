@@ -14,6 +14,8 @@ part timings, which no document states outright, are marked **[inferred]**.
 | cp7 | v7.10 board placement (part types: D68, D69 = 555TM2; D98 = 555LL1; D76 = 555LN1; D73 = 555LA3) | same folder, `cp7.pdf` |
 | errata-green | NedoPC green-board rework sheet (RC on D68 pin 4, CMX to D65.13) | same folder, `errataGreenRus.pdf` / `Visio-Доработки(зеленая).pdf` |
 | manual-ru | Assembly manual (Russian) with **timing diagrams 1a, 1b, 2** as embedded pictures | [svn atmturbo `doc/ver_7_10/Сборка и Наладка Турбо2+.doc`](http://svn.nedopc.com/listing.php?repname=atmturbo&path=/doc/ver_7_10/) |
+| cp7_2 | v7.10 schematic, second sheet: the **component value list** (R1 = 1k, C9 = 220pF, R6 = 2.2k, C2 = 10nF), D38 (INTZ') | same folder as cp7_1, `cp7_2.pdf` |
+| UM0080 | Zilog Z80 CPU User Manual: WAIT sampled on the falling clock edge of T2/Tw, INT on the rising edge of the final clock | [zilog.com um0080.pdf](https://www.zilog.com/docs/z80/um0080.pdf) |
 | manual-en | Its English translation, "TURBO 2+ Assembly and Configuration Manual" (text only; the diagrams are the same) | same folder, `TURBO 2+ Assembly and Configuration Manual.doc` |
 
 The timing diagrams are only in the `.doc` files. They are PNG pictures in the OLE `Data` stream:
@@ -319,10 +321,155 @@ feature is enabled:
 
 ## 7. Open questions
 
-| # | Question | Impact | What would settle it |
+Status after the follow-up research of 2026-10-02 (schematic sheets cp7_1 and cp7_2 re-read as rendered
+crops, the diagrams 1a, 1b and 2 carved from manual-ru, the forum threads listed below). Edge positions
+within a slot come from diagrams 1a/1b/2; gate delays are typical 74LS/74ALS/CD4000 and Z80A figures, so
+every timing margin below is **[inferred]**.
+
+| # | Question | Verdict | Evidence |
 |:--|:--|:--|:--|
-| Q1 | Is the INT edge (the emulator's frame origin) on a slot boundary (offset 0) or mid-slot (offset 1) in 7 MHz clocks? | At most 1 T on the first RAM access after each INT acceptance. Steady-state loops are unaffected | A scope on INT' vs R' (or FZ vs C') on a real board; or a timing test that reads port `#FF` (the latched attribute, D43) at a known clock after HALT in turbo |
-| Q2 | The odd-phase race: MREQ' falls on the same 14 MHz edge where R' rises at D68.11. The rule assumes the request always misses (3 waits), as diagram 1b draws it. Could a fast CPU (CMOS Z84C) on a board with the 470 Ω/100 pF R' rework catch the earlier slot (1 wait)? | Odd-phase accesses: 3 vs 1 wait | Scope measurement of WAIT' on a real v7.10, or a cycle-counting test (frame-loop counter) on real hardware at 7 MHz |
-| Q3 | Does the WAIT' release reach the Z80 before the first Tw sampling edge on some boards? That would make 1/2 waits instead of 2/3. Diagram 1b says no | Every RAM access −1 T | Same scope or loop-count measurement; diagram 1b is the design intent |
-| Q4 | Memory **write** and the odd-phase **read** are not drawn in diagram 1b | Low: RAMCS' does not depend on RD/WR, and the logic is symmetric | Loop-count test with `LD (HL),A` / `PUSH` on hardware |
-| Q5 | Pulse width of the WD1793 wait (R1, C9 values are not in the text BOM) | FDC port timing at 7 MHz only | The BOM sheet or a measurement; out of scope for the RAM rule |
+| Q1 | Is the INT edge (the emulator's frame origin) on a slot boundary (offset 0) or mid-slot (offset 1) in 7 MHz clocks? | **Partly answered.** The INT edge has a fixed position in the slot grid, the same in every frame and video mode. Whether the Z80 first sees it at a slot-boundary or a mid-slot clock edge depends on part delays, so it can differ from board to board | See Q1 below |
+| Q2 | The odd-phase race: could a fast CPU (or the R' rework) catch the earlier slot and get 1 wait instead of 3? | **Answered: no**, for parts within their data-sheet limits. The real race is in the **even** phase, and there it can only add a wait | See Q2 below |
+| Q3 | Does the WAIT' release reach the Z80 before the first Tw sample (1/2 waits instead of 2/3)? | **Answered: no.** That is impossible by construction | See Q3 below |
+| Q4 | Memory writes and odd-phase reads are not drawn in diagram 1b | **Answered from the circuit, not measured.** They follow the same rule | See Q4 below |
+| Q5 | Pulse width of the WD1793 wait (R1, C9) | **Answered: R1 = 1 kΩ, C9 = 220 pF.** That gives one extra wait state on a WD1793 port access at 7 MHz | See Q5 below |
+
+### Q1: phase of the INT edge
+
+- **Chain (cp7_1).** The PAL D12 (1556KhL8) decodes the sync counters D7/D8/D69.2. D14 (555TM9 = 74LS174)
+  registers the PAL outputs on clock **C2**, and **VS** comes out at D14.Q0. From there:
+  1. D60 (555LN1) inverts VS.
+  2. A differentiator follows: **C2 = 10 nF** in series, **R6 = 2.2 kΩ** to GND.
+  3. D74 (561LN2 = CD4049, CMOS) drives **INT'**.
+  4. INT' resets **D25** (555TM2) through its /R input (pin 13) at once. D25 is clocked by F1 (3.5 MHz) and
+     has D = +5V, so it re-syncs only the end of the pulse. D25.Q is **INT_D'**.
+  5. D38 (AND) combines INT_D' and INT_T', giving **INTZ'** at Z80 pin 16 (cp7_2).
+
+  Manual-ru: "Сигнал INT' делается из сигнала VS с помощью RC-цепочки". The values come from the component
+  list on cp7_2: R6 = 2.2k, C2 = 10nF. That gives τ = 22 µs, which fits the manual's 8-15 µs INT width.
+- **C2 is slot-locked.** The C2 net is built as PE (the D5 divider carry) AND (RG0 OR D109.Q5). Diagram 2
+  draws C2 as a pulse that rises at about 0.75 of a slot and falls at the slot boundary. That is the same
+  instant as the R' rise and an FZ falling edge. So VS always changes at the same point within a slot. The
+  frame is a whole number of slots: 71680 slots = 143360 clocks at 7 MHz, an even number. So the phase is
+  the same in every frame, and "phase from the frame start" holds.
+- **Not settled: which FZ edge first sees INT.** The delay from the C2 rise to INTZ' falling is
+  D14 + D60 + D74 (CMOS) + D25 (/R→Q) + D38, roughly 90-230 ns. So INTZ' falls at about 1.05-1.55 slots
+  after the start of the slot in which C2 rose. The Z80 samples INT "with the rising edge of the final
+  clock" ([UM0080](https://www.zilog.com/docs/z80/um0080.pdf)), and it needs a set-up time of tens of ns.
+  At 7 MHz, FZ rises at 1.0, 1.5 and 2.0 slots.
+  - A fast chain is seen at the **mid-slot** edge (offset 1).
+  - A slow chain (a slow 561LN2) is seen at the **slot-boundary** edge (offset 0).
+
+  The schematic cannot decide between them. It also depends on how the emulator maps "the INT edge" onto
+  `tt` = 0, because its INT check runs at instruction end.
+- **Still open:** a scope on INTZ' (Z80 pin 16) against FZ or C', or a timing test on real hardware. Impact
+  is unchanged: at most 1 T, on the first RAM access after INT acceptance.
+
+### Q2: the odd-phase race (3 waits vs 1)
+
+- **Odd phase.** MREQ' can only fall after the T1 FZ falling edge. That is the same 14 MHz edge (0.75 slot,
+  diagram 1b) at which R' rises at about 0.79 slot (diagram 1a).
+  - The request must then pass D98 → D76 → D69.1 (clock→/Q, VCPU) and meet D68.2's set-up time (about
+    20 ns, [SN74LS74A](https://www.ti.com/lit/ds/symlink/sn74ls74a.pdf)).
+  - It reaches D68.11 about 50-90 ns after R' rises, so it always misses that slot. That gives 3 waits.
+  - The 470 Ω/100 pF rework on D68.11 delays R' by about 25 ns (τ = 47 ns, LS threshold). With the
+    fastest CMOS Z84C and the rework, the margin shrinks to about 10 ns but keeps its sign. So a 1-wait
+    outcome needs out-of-spec parts.
+- **Even phase (new).** MREQ' falls at 0.25 slot + the Z80's MREQ delay (Z80A up to about 85 ns). Adding the
+  same chain (about 55 ns typical, about 90 ns at data-sheet maxima) gives about 166 ns typical against
+  R' rising at about 226 ns, so it fits. At worst-case maxima it is about 245 ns, which **misses** without
+  the rework. With the rework (R' at about 251 ns at D68.11) it just fits. A miss would make the cycle
+  **4 waits** instead of 2.
+  - This fits the English manual's reason for the R' rework, "especially with Soviet CPUs": a slow MREQ'
+    on КР1858ВМ1 / Т34ВМ1 clones.
+- **No measurement** was found on any board. The rule stays as diagram 1b draws it: 2 / 3.
+
+### Q3: an earlier WAIT' release (1/2 waits)
+
+- **Ruled out by construction.**
+  - The first Tw is sampled at the FZ falling edge about 0.25 slot (71 ns) into the CPU slot. The Z80
+    "samples the WAIT line with the falling edge of the clock" during T2 and each Tw (UM0080).
+  - WAIT' can only go high after R' falls in that slot, at about 0.25 slot (diagram 1a). Then come
+    WRES' (D98.6), D69.1 /R→Q, D98.3, D73 and D79.
+  - So WAIT' is still low at the first Tw sample on every board.
+- **The opposite risk** (an extra Tw, i.e. 3/4 waits).
+  - The release lands at about 71 + 70 ns typical, or about 71 + 105 ns at maxima.
+  - The second Tw sample is at 214 ns. Minus the Z80A WAIT set-up (data-sheet maximum about 70 ns, real
+    parts far less), the deadline is about 144 ns.
+  - Diagram 1b draws WAIT' rising at about 0.25 slot, well before the deadline. In practice the
+    design-intent 2 waits hold, but this has no measurement either.
+
+### Q4: memory writes and odd-phase reads
+
+- **Same rule.** RAMCS' = RAM' OR MREQ' (D98.8) has no RD'/WR' input.
+  - In M1, memory read and memory write cycles alike, MREQ' falls after the T1 FZ falling edge
+    (UM0080, the timing figures for all three cycles). So the request reaches D69.1 with the same timing
+    in all three.
+  - An odd-phase read therefore behaves like the odd-phase M1 drawn in diagram 1b (3 waits). A write
+    behaves like a read (2 / 3).
+- **Not measured.** A loop-count test with `LD (HL),A` / `PUSH` on hardware would close it.
+
+### Q5: the WD1793 wait pulse (R1, C9)
+
+- **Values.** The component list on **cp7_2** (top right) reads "R1 - 1k" and "C9 - 220pF".
+- **Circuit (cp7_1).**
+  1. D76 (13 → 12) inverts VGCS'.
+  2. C9 couples the edge to D98 pin 2, with R1 to GND.
+  3. D98.3 carries the pulse to D73 (gated by TURBO) and on to WAIT'.
+
+  The time constant is τ = 220 ns. The pulse stays above the 74ALS32 input threshold for about
+  τ·ln(3.4/1.4), about 150-200 ns from the IORQ'/VGCS' edge.
+- **Waits.** In an I/O cycle at 7 MHz, IORQ' falls early in T2. The Z80 samples WAIT at the falling edge of
+  TW*, about 214 ns after T2 starts. The pulse is still high then, so one Tw is added. It has ended by
+  the next sample, about 357 ns.
+  - Result: **one extra wait state** on accesses to ports #1F/#3F/#5F/#7F at 7 MHz (5 T + 1 instead of
+    4 T at the bus). There are none at 3.5 MHz.
+  - Manual-ru agrees: "процессору выставляется такт ожидания". Only the slowest parts could stretch it
+    to 2.
+
+### Speed measurements on real hardware
+
+**None found.** No benchmark, loop-per-frame count or test-program result for the ATM Turbo 2+ at 7 MHz
+turned up in any of these:
+
+- the NedoPC/ATM sites;
+- the zx-pk.ru ATM section (all 95 threads linked from the
+  [ATM topic index](https://zx-pk.ru/threads/26679-kompyuter-atm-turbo-podborka-ssylok-na-temy-foruma.html),
+  313 pages, searched for WAIT/вейт/ожидан/%/раза);
+- the [performance-test thread](https://zx-pk.ru/threads/3122-sravnitelnyj-test-proizvoditelnosti.html);
+- Kulicheg's [ATM_Turbo repository](https://github.com/Kulicheg/ATM_Turbo).
+
+The only figures are qualitative:
+
+- The manuals (section 5): 140-160 %, 70-80 %, "up to 80 %", about 1.5x.
+- A 2014 forum post in the
+  [v7.10 technical thread](https://zx-pk.ru/threads/15848-tekh-razdel-atm-turbo-7-10/page7.html) (#65),
+  quoted by the moderator: RAM-bound turbo speed "увеличивается всего в 1, 5 раза". This is a claim, not a
+  measurement, but it fits section 5's 1.1-1.6x for RAM code.
+
+The rule 2 + (t mod 2) therefore still has no numeric hardware check. A frame-loop counter run on a real
+v7.10 is the test to ask an owner for.
+
+### Impact on the emulation
+
+The rule in `core/src/emulator/memory/atm/atm710turbooverlay.*` (2 + (t mod 2) waits per RAM access, phase
+from the frame start) **does not change**:
+
+1. **Phase origin.** Keep offset 0. The INT edge is slot-locked and the frame is an even number of 7 MHz
+   clocks, so a frame-relative phase is correct up to one constant. That constant (0 or 1) is
+   board-dependent (Q1) and costs at most 1 T after INT. If a hardware measurement appears, it becomes a
+   single constant in `RamWait()`.
+2. **2 / 3 waits.** Stays as diagram 1b draws it (Q2, Q3, Q4). Worst-case parts could only add waits in the
+   even phase (4 instead of 2). That is not modeled, because no board is known to do it.
+3. **New, outside the overlay.** At 7 MHz, I/O to the WD1793 ports (#1F/#3F/#5F/#7F, VGCS') gets **+1 wait
+   state** (Q5). unreal-ng does not model it yet. It belongs in the ATM710 port decoder (`Z80::AddWaitStates`
+   on a VGCS' access while turbo is on and the `contention` feature is enabled), as section 6 point 5
+   already says.
+
+### URLs that could not be opened
+
+| URL | Result |
+|:--|:--|
+| `https://speccy.info/ATM_Turbo` | 403 (the site blocks scripted fetches); the [web.archive.org copy](https://web.archive.org/web/2020/https://speccy.info/ATM_Turbo) opened (200) and has no timing data |
+| `https://forum.nedopc.com/` | no connection (curl status 000) |
+| zx-pk.ru archive view (`/archive/index.php/t-17340.html`) | 404; the normal thread pages were used instead |

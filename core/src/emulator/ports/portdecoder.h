@@ -32,6 +32,7 @@ class Keyboard;
 class Mouse;
 class PortDevice;
 class Ds12887;
+class IDeviceMemoryRegion;
 
 /// region <Constants>
 
@@ -661,6 +662,12 @@ public:
     /// (Scorpion TR-DOS / Shadow Monitor gating) are honored.
     void GetMouseRoutingState(bool& decoded, std::string& note) const;
 
+    /// What a read of the mouse register `reg` (0 buttons, 1 X, 2 Y) returns on a
+    /// machine whose mouse ports are not the Kempston interface (the ZX-Evo AVR's
+    /// PS/2 mouse, the Sprinter board mouse); no side effects. False: the
+    /// Kempston device answers (Mouse::ReadRegister)
+    virtual bool PeekMouseRegister([[maybe_unused]] uint8_t reg, [[maybe_unused]] uint8_t& value) const { return false; }
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///
@@ -711,6 +718,14 @@ public:
     virtual bool HasFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
     virtual bool GetFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
     virtual bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on) { (void)sw; (void)on; return false; }
+
+    /// The PC of the instruction doing the I/O in progress (the video change log notes it): the
+    /// main CPU's M1 address; a machine whose CPU is a library (the Sprinter's Z84C15) overrides it
+    virtual uint16_t IoPc() const;
+
+    /// Memory the machine's devices own outside the CPU's RAM / ROM pages (devicememory.h:
+    /// the Sprinter's video RAM), reached by name from every automation interface
+    virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { (void)out; }
 
     /// Emulated machine time in microseconds: whole frames at the model's
     /// frame duration plus the position in the current frame (TTD time units,

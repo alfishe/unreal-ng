@@ -1166,10 +1166,17 @@ void SoundManager::handleFrameEnd()
         AnalyzerManager* analyzerManager = _context->pDebugManager->GetAnalyzerManager();
         if (analyzerManager && analyzerManager->hasAudioSampleSubscribers())
         {
-            for (size_t i = 0; i < samplesThisFrame; i++)
+            // The master mix, or the one device a capture asked for (its own buffer, before mute / volume)
+            const int16_t* tap = _outBuffer;
+            const auto source = static_cast<AudioSourceType>(analyzerManager->audioTapSource());
+            if (source != AudioSourceType::MasterMix)
             {
-                analyzerManager->dispatchAudioSample(_outBuffer[i * AUDIO_CHANNELS],
-                                                      _outBuffer[i * AUDIO_CHANNELS + 1]);
+                const int16_t* device = deviceBuffer(source);
+                tap = device ? device : nullptr;
+            }
+            for (size_t i = 0; tap && i < samplesThisFrame; i++)
+            {
+                analyzerManager->dispatchAudioSample(tap[i * AUDIO_CHANNELS], tap[i * AUDIO_CHANNELS + 1]);
             }
         }
     }

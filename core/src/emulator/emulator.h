@@ -136,8 +136,17 @@ protected:
     std::condition_variable _resumeCV;
     volatile bool _isPaused = false;
     std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
+    // Serializes Stop(): a caller that loses the _isRunning CAS below must still
+    // block until the thread that won it has actually joined, not just signaled.
+    // Without this, IsRunning() goes false (and _asyncThread->join() can still be
+    // in flight) before the emulation thread has left MainLoop::Run() - a second
+    // caller that skips its own Stop() because IsRunning() already reads false
+    // (e.g. EmulatorManager::RemoveEmulatorInstance()) could free Core's Screen /
+    // SoundManager / TimeTravelManager while that thread is still mid-frame.
+    std::mutex _stopMutex;
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
+    std::atomic<bool> _romReloadPending{false};  ///< RequestRomReload: reread the ROM at the next Reset
 
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
@@ -478,6 +487,10 @@ public:
 
     // Actions
     bool LoadROM(std::string path);
+    /// Reread the configured ROM at the next Reset (a BIOS selection at runtime: SprinterBios). Reset
+    /// stops TTD recording first; the reload invalidates the TTD session as LoadROM does
+    void RequestRomReload() { _romReloadPending = true; }
+    bool RomReloadPending() const { return _romReloadPending; }
 
     // Debug methods
     void DebugOn();

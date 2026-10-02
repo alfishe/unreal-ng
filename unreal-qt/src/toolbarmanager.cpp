@@ -18,10 +18,15 @@
 #include "menumanager.h"
 #include "recording/src/recordingmanager.h"
 #include "widgets/tintedsvgicon.h"
+#include "emulator/mousecapturecontroller.h"
+#include <QMenu>
+#include <QStatusBar>
 
 namespace
 {
 constexpr const char* kSettingsKey = "View/ToolBarVisible";
+constexpr const char* kMouseGateKey = "Input/HostMouseEnabled";
+constexpr const char* kMouseMatchKey = "Input/MouseMatchesHostPointer";
 
 QString formatMemorySize(uint64_t bytes)
 {
@@ -114,6 +119,40 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
     _toolBar->addSeparator();
     _toolBar->addAction(mediaPanel);
 
+    // ---- Host mouse: capture indicator and gate ---------------------------
+    _mouseAction = new QAction(tintedSvgIcon(QStringLiteral("mouse")), tr("Host Mouse"), this);
+    _mouseAction->setCheckable(true);  // checked = captured (the highlighted look)
+    _mouseAction->setIconVisibleInMenu(false);
+    connect(_mouseAction, &QAction::triggered, this, &ToolBarManager::onMouseActionTriggered);
+    _toolBar->addAction(_mouseAction);
+
+    _mouseGateMenuAction = new QAction(tr("Host &Mouse Enabled"), this);
+    _mouseGateMenuAction->setCheckable(true);
+    _mouseGateMenuAction->setStatusTip(tr("Off: the host mouse is never captured and never reaches the machine"));
+    connect(_mouseGateMenuAction, &QAction::triggered, this, [this](bool checked) {
+        if (checked != _mouseGateOpen)
+            onMouseActionTriggered();
+    });
+    _mouseMatchMenuAction = new QAction(tr("Mouse Follows Host &Pointer Speed"), this);
+    _mouseMatchMenuAction->setCheckable(true);
+    _mouseMatchMenuAction->setChecked(true);
+    _mouseMatchMenuAction->setStatusTip(
+        tr("On: the captured mouse moves as far as the host pointer would over the picture (any window size or zoom). "
+           "Off: one host pixel is one mouse count"));
+    connect(_mouseMatchMenuAction, &QAction::toggled, this, [this](bool checked) {
+        _mouseMatchHostPointer = checked;
+        if (_mouseCapture)
+            _mouseCapture->setMatchHostPointer(checked);
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue(QLatin1String(kMouseMatchKey), checked);
+    });
+    if (QMenu* view = _menuManager->viewMenu())
+    {
+        view->addSeparator();
+        view->addAction(_mouseGateMenuAction);
+        view->addAction(_mouseMatchMenuAction);
+    }
+
     // Breathing LED timer for active recording feedback (Apple-style breathing LED)
     _breathingTimer = new QTimer(this);
     _breathingTimer->setInterval(33); // ~30 FPS
@@ -141,7 +180,94 @@ void ToolBarManager::updateState(std::shared_ptr<Emulator> activeEmulator)
     _restartAction->setEnabled(true);
 
     updateRecordingStates();
+    refreshMouseAction();  // the machine may have gained or lost a mouse device
 }
+
+/// region <Host mouse>
+
+void ToolBarManager::setMouseCapture(MouseCaptureController* capture)
+{
+    if (_mouseCapture)
+        disconnect(_mouseCapture, nullptr, this, nullptr);
+    _mouseCapture = capture;
+    if (_mouseCapture)
+    {
+        _mouseCapture->setGateOpen(_mouseGateOpen);
+        _mouseCapture->setMatchHostPointer(_mouseMatchHostPointer);
+        connect(_mouseCapture, &MouseCaptureController::stateChanged, this, &ToolBarManager::refreshMouseAction);
+    }
+    refreshMouseAction();
+}
+
+void ToolBarManager::onMouseActionTriggered()
+{
+    // Captured or ready: close the gate (releasing the capture). Closed: open it
+    using State = MouseCaptureController::State;
+    const State state = _mouseCapture ? _mouseCapture->state() : State::NoDevice;
+    _mouseGateOpen = state == State::Gated || (state == State::NoDevice && !_mouseGateOpen);
+    if (_mouseCapture)
+        _mouseCapture->setGateOpen(_mouseGateOpen);
+
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue(QLatin1String(kMouseGateKey), _mouseGateOpen);
+    refreshMouseAction();
+}
+
+void ToolBarManager::refreshMouseAction()
+{
+    if (!_mouseAction)
+        return;
+
+    using State = MouseCaptureController::State;
+    const State state = _mouseCapture ? _mouseCapture->state() : State::NoDevice;
+    const QString releaseText = _mouseCapture ? _mouseCapture->releaseKeyText() : QStringLiteral("Ctrl+Esc");
+
+    _mouseAction->setChecked(state == State::Captured);
+    _mouseAction->setEnabled(state != State::NoDevice || !_mouseGateOpen);
+    _mouseAction->setIcon(tintedSvgIcon(state == State::Gated || (state == State::NoDevice && !_mouseGateOpen)
+                                            ? QStringLiteral("mouse-off")
+                                            : QStringLiteral("mouse")));
+    switch (state)
+    {
+        case State::Captured:
+            _mouseAction->setToolTip(tr("Host mouse captured: %1 releases it. Click to release and turn the host mouse off")
+                                         .arg(releaseText));
+            break;
+        case State::Ready:
+            _mouseAction->setToolTip(tr("Click the screen to capture the mouse (%1 releases it). Click here to turn the host mouse off")
+                                         .arg(releaseText));
+            break;
+        case State::Gated:
+            _mouseAction->setToolTip(tr("Host mouse off: never captured, never reaches the machine. Click to turn it on"));
+            break;
+        case State::NoDevice:
+            _mouseAction->setToolTip(_mouseGateOpen ? tr("This machine has no mouse")
+                                                    : tr("Host mouse off. Click to turn it on"));
+            break;
+    }
+    if (_mouseGateMenuAction)
+        _mouseGateMenuAction->setChecked(_mouseGateOpen);
+
+    // Status bar hint while the window holds the mouse; gone with the capture (release
+    // key, focus loss, leaving the application). Only our own message is cleared
+    QStatusBar* statusBar = _mainWindow ? _mainWindow->statusBar() : nullptr;
+    if (statusBar)
+    {
+        if (state == State::Captured)
+        {
+            _mouseStatusMessage = tr("Mouse captured: press %1 to release it").arg(releaseText);
+            statusBar->showMessage(_mouseStatusMessage);
+        }
+        else if (!_mouseStatusMessage.isEmpty())
+        {
+            if (statusBar->currentMessage() == _mouseStatusMessage)
+                statusBar->clearMessage();
+            _mouseStatusMessage.clear();
+        }
+    }
+}
+
+/// endregion </Host mouse>
 
 std::shared_ptr<Emulator> ToolBarManager::getActiveEmulator() const
 {
@@ -534,6 +660,12 @@ void ToolBarManager::restoreSettings()
 {
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     setVisibleByUser(settings.value(QLatin1String(kSettingsKey), true).toBool());
+    _mouseGateOpen = settings.value(QLatin1String(kMouseGateKey), true).toBool();
+    if (_mouseCapture)
+        _mouseCapture->setGateOpen(_mouseGateOpen);
+    _mouseMatchHostPointer = settings.value(QLatin1String(kMouseMatchKey), true).toBool();
+    _mouseMatchMenuAction->setChecked(_mouseMatchHostPointer);  // toggled() applies it
+    refreshMouseAction();
 }
 
 void ToolBarManager::saveSettings() const

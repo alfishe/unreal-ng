@@ -110,14 +110,16 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
                                "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status"})
+                               "temporal_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
+                               "framebuffer"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
         "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
         "(temporal_status / temporal_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
-        "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status).";
+        "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status), or the picture as raw "
+        "pixels (framebuffer: format rgba | index - the Sprinter's u16 pens; metadata, base64 data with include_image).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
@@ -163,6 +165,11 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["seconds"]["type"] = "number";
     schema["properties"]["seconds"]["default"] = 1.0;
     schema["properties"]["seconds"]["description"] = "audio_capture duration in emulated seconds (0.01-30)";
+    schema["properties"]["source"]["type"] = "string";
+    schema["properties"]["source"]["description"] =
+        "audio_capture: one mixer device instead of the master mix - beeper, ay1, ay2, fm1, fm2, covox (also the "
+        "Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm (inspect_state aspect audio_mixer lists "
+        "the fitted ones); its own buffer, before mute / volume";
     schema["properties"]["wav"]["type"] = "boolean";
     schema["properties"]["wav"]["default"] = false;
     schema["properties"]["wav"]["description"] = "Export a WAV file alongside the audio analysis (returns wav_path)";
@@ -557,8 +564,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 if (seconds < 0.01) seconds = 0.01;
                 if (seconds > 30.0) seconds = 30.0;
                 bool wantWav = args.isMember("wav") && args["wav"].asBool();
+                const std::string source = args.isMember("source") && args["source"].isString() ? args["source"].asString() : "";
 
-                TargetResolver::ResolveFromArgs(args, caller, [seconds, wantWav, &caller, done](bool ok, const std::string& idOrError) {
+                TargetResolver::ResolveFromArgs(args, caller, [seconds, wantWav, source, &caller, done](bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
                         done(ToolResult::Error(idOrError));
@@ -569,6 +577,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                     auto arm = std::make_shared<Json::Value>();
                     (*arm)["action"] = "start";
                     (*arm)["seconds"] = seconds;
+                    if (!source.empty())
+                        (*arm)["source"] = source;
                     caller.Call("POST", Endpoint(id, "/audio/capture"), arm.get(), [arm, seconds, wantWav, &caller, id, done](
                                                                                       int status, Json::Value armResponse) mutable {
                         if (status < 200 || status >= 300)
@@ -684,6 +694,39 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 ResolveAndForward(args, "POST", "/vdac2/capture/start", &body, caller, "VDAC2 capture started", done);
                 return;
             }
+            if (action == "framebuffer")
+            {
+                // GET /capture/framebuffer?encoding=base64 (core FramebufferExport); the pixels only on request
+                const bool includeData = args.isMember("include_image") && args["include_image"].asBool();
+                const std::string format = args.isMember("format") && args["format"].isString() && !args["format"].asString().empty()
+                                               ? args["format"].asString()
+                                               : "rgba";
+                TargetResolver::ResolveFromArgs(args, caller, [includeData, format, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    caller.Call("GET", Endpoint(idOrError, "/capture/framebuffer?encoding=base64&format=" + format), nullptr,
+                                [includeData, done](int status, Json::Value body) mutable {
+                                    if (status != 200)
+                                    {
+                                        done(ToolResult::Error("Framebuffer failed (HTTP " + std::to_string(status) + "): " +
+                                                               DescribeErrorBody(body)));
+                                        return;
+                                    }
+                                    const std::string text = "Framebuffer " + std::to_string(body["width"].asUInt()) + " x " +
+                                                             std::to_string(body["height"].asUInt()) + " " + body["format"].asString() +
+                                                             " (" + body["encoding"].asString() + "), " +
+                                                             std::to_string(body["bytes"].asUInt64()) + " bytes" +
+                                                             (includeData ? "" : "; include_image:true for the base64 data");
+                                    if (!includeData)
+                                        body.removeMember("data");
+                                    done(ToolResult::Ok(text, std::move(body)));
+                                });
+                });
+                return;
+            }
             if (action == "vdac2_capture_stop")
             {
                 Json::Value body(Json::objectValue);
@@ -699,7 +742,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set, vdac2_capture_start, vdac2_capture_stop, "
+                                            "temporal_status, temporal_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
                                             "vdac2_capture_status"));
         });
 }

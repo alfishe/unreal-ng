@@ -567,7 +567,8 @@ types:
           loaded. The Sprinter also carries 18 Ds12887, 17 AtaChannel (two channels), 1 BetaDisk, 7 KempstonMouse,
           23 KempstonJoystick.
           36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
-          37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort).
+          37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort),
+          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
@@ -663,7 +664,8 @@ types:
 
   sprinter_input_blob:
     doc: |
-      Payload of peripheral 31 SprinterInput (85 bytes). Times are base (3.5 MHz) T-states of the
+      Payload of peripheral 31 SprinterInput (88 bytes, version 2; version 1 was 85 bytes, without
+      the board mouse counters). Times are base (3.5 MHz) T-states of the
       machine's cumulative clock.
     seq:
       - id: version
@@ -702,6 +704,14 @@ types:
         type: u8
       - id: kbd_overruns
         type: u8
+      - id: board_mouse_x
+        type: u1
+        doc: The board mouse counters both mouse views read (serial packets, the PLD's Kempston view).
+      - id: board_mouse_y
+        type: u1
+      - id: board_mouse_buttons
+        type: u1
+        doc: Active low, D0 left, D1 right, D2 middle.
 
   peripheral_blob:
     doc: |

@@ -350,9 +350,11 @@ TEST_F(McpDispatcher_Test, ResourcesRead_MachineSprinter_DescribesPortTableAndBi
     ASSERT_TRUE(contents.isArray());
     ASSERT_EQ(contents.size(), 1u);
     const std::string text = contents[0]["text"].asString();
-    EXPECT_NE(text.find("[ROM] SPRINTER="), std::string::npos);
+    EXPECT_NE(text.find("sprinter/bios"), std::string::npos) << "the BIOS is selected through the API";
     EXPECT_NE(text.find("sprinter_ports"), std::string::npos);
     EXPECT_NE(text.find("page #40"), std::string::npos);
+    EXPECT_NE(text.find("sprinter_video"), std::string::npos);
+    EXPECT_EQ(text.find("TTD refuses"), std::string::npos) << "stale: TTD records the Sprinter since S7";
 }
 
 TEST_F(McpDispatcher_Test, ResourcesRead_EmbeddedResource_ReturnsMarkdownText)

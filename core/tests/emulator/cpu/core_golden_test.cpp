@@ -71,7 +71,9 @@ const Golden kGolden[] = {
     // int_turbo), not at the next frame; #FE bit 5 reads 0, #FF bit 5 reads 1; and Emulator::RunNFrames now counts
     // frames of emulated time across a mid-run clock switch. The T-states are 150 frames of 69888 now, like the 48K
     // row; the earlier ATM3 rows counted fewer because the 14 MHz switch shortened the run
-    {"ATM3", nullptr, 0x7BD7C7B6B4074DEAull, 0x3213A1A920D2B129ull, 10483200ull},
+    // ATM3 re-recorded 2026-10-02 (mouse-manager M3): the mouse ports read the AVR's PS/2 mouse registers
+    // (found: X = 0, Y = 1) instead of the Kempston interface's power-on 31 / 85; T-states unchanged
+    {"ATM3", nullptr, 0x2AEFD725F44D1D1Dull, 0x55475075DE936CBFull, 10483200ull},
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 

@@ -704,6 +704,150 @@ TEST_F(McpTools_Test, InspectState_SprinterAspects_ReadTheSprinterEndpoints)
     EXPECT_NE(result.text.find("B:\\>"), std::string::npos) << result.text;
 }
 
+// The video / palette / ring aspects (automation audit G3, G4, G10): the map, the palettes and the ring rows in
+// the summary; the accelerator and sound lines in the machine summary
+TEST_F(McpTools_Test, InspectState_SprinterVideoAspects_PrintMapPalettesAndRing)
+{
+    Json::Value state;
+    state["available"] = true;
+    state["pld"]["state"] = "configured";
+    state["accelerator"]["available"] = true;
+    state["accelerator"]["enabled"] = true;
+    state["accelerator"]["mode_name"] = "fill";
+    state["accelerator"]["length"] = 32;
+    state["accelerator"]["function"] = "plain";
+    state["accelerator"]["blocked"] = false;
+    state["accelerator"]["operations"] = 7;
+    state["sound"]["covox_blaster"]["mode"] = "covox-blaster";
+    state["sound"]["covox_blaster"]["bits"] = 16;
+    state["sound"]["covox_blaster"]["stereo"] = true;
+    state["sound"]["covox_blaster"]["rate_hz"] = 31250.0;
+    state["sound"]["covox_blaster"]["play_index"] = "0x40";
+    state["sound"]["covox_blaster"]["write_index"] = "0xC0";
+    state["sound"]["covox_blaster"]["int_pending"] = true;
+    state["sound"]["covox_blaster"]["dac_left"] = "0x8000";
+    state["sound"]["covox_blaster"]["dac_right"] = "0x8000";
+    state["sound"]["ay"]["stereo"] = "ABC";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter"] = {200, state};
+
+    Json::Value video;
+    video["available"] = true;
+    video["mode_page"] = 1;
+    video["displayed"] = true;
+    video["rgmod"] = "0x01";
+    video["hold"]["value"] = "0x77";
+    video["frame"]["lines"] = 320;
+    video["port_y"] = "0x00";
+    video["palettes_used"].append(4);
+    video["legend"] = "G graphics 320";
+    video["map"].append("tttt");
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/video?squares=0"] = {200, video};
+
+    Json::Value palette;
+    palette["available"] = true;
+    palette["selection"] = "used by the picture";
+    Json::Value p;
+    p["k"] = 4;
+    p["role"] = "text paper";
+    p["rgb_row"] = "000000 0000AA";
+    palette["palettes"].append(p);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/palette"] = {200, palette};
+
+    Json::Value ring;
+    ring["available"] = true;
+    ring["mode"] = "covox-blaster";
+    ring["play_index"] = "0x40";
+    ring["write_index"] = "0xC0";
+    ring["rows"].append("00: 8000");
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/sound/ring"] = {200, ring};
+
+    Json::Value args;
+    args["aspects"].append("sprinter");
+    args["aspects"].append("sprinter_video");
+    args["aspects"].append("sprinter_palette");
+    args["aspects"].append("sprinter_sound_ring");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("accelerator enabled, mode fill, length 32, plain, 7 operations"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("sound: CBL 16-bit stereo 31250 Hz, ring play 0x40 / write 0xC0, INT pending"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("[sprinter_video] page 1, RGMOD 0x01, HOLD 0x77, 320 lines, PORT_Y 0x00, palettes 4"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("\n  tttt"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("4 text paper: 000000 0000AA"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[sprinter_sound_ring] covox-blaster, play 0x40, write 0xC0"), std::string::npos) << result.text;
+}
+
+// Generic aspects of the automation audit (G5, G6, G13) and sprinter_bios (G11): each reads its endpoint and
+// prints a summary
+TEST_F(McpTools_Test, InspectState_RegionChangesMixerBios_ReadTheirEndpoints)
+{
+    Json::Value region;
+    region["available"] = true;
+    region["region"] = "vram";
+    region["offset"] = "0x00010";
+    region["length"] = 2;
+    region["hex"] = "ABCD";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/region/vram?offset=16&length=2&format=hex"] = {200, region};
+
+    Json::Value changes;
+    changes["running"] = false;
+    Json::Value frame;
+    frame["frame"] = 7;
+    frame["current"] = true;
+    frame["partial"] = false;
+    frame["tables"]["palette"]["count"] = 3;
+    frame["tables"]["mode_table"]["count"] = 0;
+    Json::Value write;
+    write["t"] = 100;
+    write["line"] = 0;
+    write["t_in_line"] = 100;
+    write["pc"] = "0x8123";
+    write["changes"]["rgmod"] = "0x00 -> 0x01";
+    frame["writes"].append(write);
+    changes["frames"].append(frame);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/changes"] = {200, changes};
+
+    Json::Value mixer;
+    mixer["master"]["muted"] = false;
+    Json::Value device;
+    device["source"] = "covox";
+    device["name"] = "COVOX";
+    device["muted"] = true;
+    device["solo"] = false;
+    device["volume"] = 1.0;
+    device["peak"] = 0.0;
+    device["active"] = false;
+    mixer["devices"].append(device);
+    _caller->routes["GET /api/v1/emulator/emu-1/audio/mixer"] = {200, mixer};
+
+    Json::Value bios;
+    bios["available"] = true;
+    bios["loaded"] = "sp2k-3.04.rom";
+    bios["rom_file"] = "rom/sprinter/sp2k-3.04.rom";
+    bios["reload_pending"] = false;
+    bios["options"]["fast_start"] = false;
+    bios["options"]["accel_int_suspend"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/bios"] = {200, bios};
+
+    Json::Value args;
+    for (const char* aspect : {"memory_region", "video_changes", "audio_mixer", "sprinter_bios"})
+        args["aspects"].append(aspect);
+    args["address"] = 16;
+    args["size"] = 2;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[memory_region] vram 0x00010, 2 bytes"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("00010: AB CD"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 7 (current): 1 latch changes, palette writes 3"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("PC 0x8123: rgmod 0x00 -> 0x01"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("covox (COVOX): muted"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[sprinter_bios] loaded sp2k-3.04.rom"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_SprinterAspect_OtherMachineIsUnavailable)
 {
     Json::Value notFound;

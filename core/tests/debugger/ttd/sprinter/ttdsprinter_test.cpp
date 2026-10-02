@@ -46,6 +46,7 @@
 #include "emulator/io/ide/ata/atadevice.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
@@ -240,13 +241,14 @@ TEST_F(TTDSprinter_Test, Z84_RoundTripsTheChipBesideItsRegisterFile)
 TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
 {
     SprinterInput& input = _decoder->GetInput();
-    ASSERT_NE(_context->pMouse, nullptr);
+    ASSERT_NE(_context->pMouseManager, nullptr);
 
     // A key: its make code is on the wire; the mouse moved: a packet started at the SIO B access
     input.OnPcKey(PcKey::Up, true);  // E0 75
-    _context->pMouse->Move(5, -3);
+    _context->pMouseManager->ApplyMotion(5, -3);
     input.BeforeChipAccess(0x1B);  // first sample: the reference
-    _context->pMouse->Move(7, 2);
+    _context->pMouseManager->ApplyMotion(7, 2);
+    _context->pMouseManager->ApplyButtons(0xFD);
     input.BeforeChipAccess(0x1B);  // the move: a packet in flight
     ASSERT_TRUE(input.KeyboardStream().Busy());
     ASSERT_LT(input.SerialMouse().GetState().sent, 3);
@@ -257,6 +259,7 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     const std::vector<uint8_t> saved = Save(serializer);
 
     input.Clear();
+    input.SetBoardMouse({0, 0, 0xFF});
     ASSERT_NE(Save(serializer), saved);
     serializer.TTDLoadState(saved.data());
     EXPECT_EQ(Save(serializer), saved);
@@ -264,6 +267,10 @@ TEST_F(TTDSprinter_Test, Input_RoundTripsTheKeyboardWireAndTheMousePacket)
     EXPECT_EQ(input.KeyboardStream().GetState().count, 2) << "E0 75 still on the way";
     EXPECT_EQ(input.SerialMouse().GetState().sent, 0) << "the packet resumes at its first byte";
     EXPECT_EQ(input.KeyboardOverruns(), 3u);
+    const SprinterInput::BoardMouse board = input.GetBoardMouse();
+    EXPECT_EQ(board.x, 31 + 12) << "the board mouse counters are in the blob";
+    EXPECT_EQ(board.y, 85 - 1);
+    EXPECT_EQ(board.buttons, 0xFD);
 }
 
 TEST_F(TTDSprinter_Test, VideoRam_RoundTripsWithThePaletteAndTheIntList)
@@ -753,11 +760,15 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidIdeSector)
 /// byte with its channel; keys and mouse moves arrive inside frames. Checkpoints with a PS/2 byte
 /// on the wire and with a serial-mouse packet half sent are replayed: the log (RAM), the FIFOs, the
 /// streams - every boundary equal; a restore in the middle of a packet resumes on the same byte.
+/// The mouse goes through the MouseManager's journal with no Kempston interface fitted ([INPUT]
+/// Mouse=NONE): moves and the left / right buttons reach the board mouse, whose counters travel in
+/// blob 31 with the packet in flight.
 /// ~120 frames at 3.5 MHz, replayed from three points
 TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
 {
     PowerOn(true);
     Skip(10);  // the BIOS starts; the program below takes over the CPU with interrupts off
+    _context->pMouse->SetPresent(false);  // the board mouse alone
 
     // DI; log at #9000: (channel, byte) pairs, then the iteration counter keeps the loop busy
     static const uint8_t program[] = {
@@ -815,9 +826,27 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
             late(i);
             Keys()->ReleaseKey("f4");  // F0 0C
         }, watch);
-        Record(8, {}, watch);
+        // A button held across a few frames: left in the even rounds, right in the odd ones
+        const MouseButton button = round % 2 ? MouseButton::Right : MouseButton::Left;
+        Record(1, [&](int i) {
+            late(i);
+            ASSERT_TRUE(MouseManager()->PressButton(button).ok());
+        }, watch);
+        Record(3, {}, watch);
+        ASSERT_TRUE(MouseManager()->ReleaseButton(button).ok());
+        Record(4, {}, watch);
     }
     _ttd->StopRecording();
+
+    // The board counters are in blob 31 (bytes 85-87: X, Y, buttons): the last checkpoint holds the live ones
+    const SprinterInput::BoardMouse board = _decoder->GetInput().GetBoardMouse();
+    const std::vector<uint8_t> last = BlobOf(_ttd->GetCheckpointCount() - 1, ttd::PeripheralId::SprinterInput);
+    ASSERT_EQ(last.size(), ttd::TTDSprinterInput::kSize);
+    EXPECT_EQ(last[85], board.x);
+    EXPECT_EQ(last[86], board.y);
+    EXPECT_EQ(last[87], 0xFF) << "every button released";
+    EXPECT_EQ(BlobOf(0, ttd::PeripheralId::SprinterInput)[85], static_cast<uint8_t>(board.x - (4 + 5 + 6 + 7 + 8 + 9)))
+        << "the first checkpoint: before the moves";
     ASSERT_GT(midPs2, 0u) << "no boundary with a PS/2 byte on the wire";
     ASSERT_GT(midPacket, 0u) << "no boundary in the middle of a mouse packet";
 
@@ -831,10 +860,23 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
     }
     EXPECT_TRUE(sawA) << "no keyboard byte was logged";
     EXPECT_TRUE(sawB) << "no mouse byte was logged";
+    // The first byte of a packet (bit 6) with bit 5 (left) and with bit 4 (right): D0 / D1 of the manager's mask
+    bool sawLeft = false, sawRight = false;
+    for (uint16_t a = 0x9000; a < 0x9400; a += 2)
+    {
+        const uint8_t b = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a + 1));
+        if (_context->pMemory->DirectReadFromZ80Memory(a) != 0x0B || (b & 0x40) == 0)
+            continue;
+        sawLeft |= (b & 0x30) == 0x20;
+        sawRight |= (b & 0x30) == 0x10;
+    }
+    EXPECT_TRUE(sawLeft) << "no packet with the left button";
+    EXPECT_TRUE(sawRight) << "no packet with the right button";
 
     ExpectExactReplay(0, _ttd->GetCheckpointCount(), "the whole session");
     ExpectExactReplay(midPs2, 30, "from a PS/2 byte on the wire");
     ExpectExactReplay(midPacket, 30, "from the middle of a mouse packet");
+    _context->pMouse->SetPresent(true);
 }
 
 /// Seek anywhere: positions inside frames (the replay to them runs the journal), back and forth,

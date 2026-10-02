@@ -114,6 +114,13 @@ uint8_t PortDecoder_ATM450::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(gsPort);
         disp.decodedPort = gsPort;
     }
+    // An external ZX-bus Kempston mouse card (PortDecoder_ATM710::IsPort_KempstonMouse)
+    else if (uint8_t mouseRegister = 0; IsPort_KempstonMouse(port, mouseRegister))
+    {
+        result = _mouse->ReadRegister(mouseRegister);
+        _lastPortDecoded = true;
+        disp.decodedPort = mouseRegister == 0 ? 0xFADF : (mouseRegister == 1 ? 0xFBDF : 0xFFDF);
+    }
     // Beta128 FDC ports: only inside the TR-DOS session (UnrealSpeccy
     // CF_DOSPORTS; requirements OQ-7 records ZXMAK2's wider SYSEN gate)
     else if (IsBeta128Port(decodedPort) && (_state->flags & CF_DOSPORTS))
@@ -342,6 +349,8 @@ void PortDecoder_ATM450::Port_7DFD_PaletteOut(uint8_t value)
                                (static_cast<uint32_t>(green * 0x11) << 8) | static_cast<uint32_t>(red * 0x11);
 
     MLOGDEBUG("Port_7DFD_PaletteOut: value=0x%02X cell=%d -> 0x%08X", value, cell, _state->atmPalette[cell]);
+    if (_context->pScreen)
+        _context->pScreen->NoteVideoTableWrite(videomap::VideoTable::Palette, cell);  // the video change log
 }
 
 void PortDecoder_ATM450::updateMemoryBanks()

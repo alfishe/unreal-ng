@@ -24,10 +24,11 @@
 ///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol;
 ///     DSS 1.71 reads it, INTMOUSE READ_M: three bytes synced on bit 6, no 'M'
 ///     identification) and the PLD's Kempston view of the same mouse (code #58,
-///     #FADF / #FBDF / #FFDF; DSS 1.62.9x reads that). Both come from one set of
-///     counters, the host mouse's (Mouse: X, Y, buttons), read whether or not a
-///     Kempston interface is configured ([INPUT] Mouse=): the board's mouse is
-///     always there.
+///     #FADF / #FBDF / #FFDF; DSS 1.62.9x reads that). Both views read one set
+///     of board mouse counters (X, Y, buttons) kept here. The board mouse is a
+///     sink of the emulator's MouseManager (always fitted, whatever [INPUT]
+///     Mouse= says about the optional Kempston interface), so the host window,
+///     automation and TTD replay all reach it through the manager.
 ///
 /// Time: base T-states (3.5 MHz) from the machine's cumulative counter. Bytes
 /// are delivered lazily before every access to the SIO ports, and after every
@@ -39,10 +40,12 @@
 /// later; SETUP's next frame INT reads RR0 bit 0 = 1, then #0C from #18, and
 /// skips the drive.
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 
 #include "emulator/io/keyboard/ps2keyboardstream.h"
+#include "emulator/io/mouse/imousesink.h"
 #include "emulator/io/mouse/msserialmouse.h"
 
 class EmulatorContext;
@@ -53,11 +56,37 @@ namespace Z84Lib
 class Z84C15;
 }
 
-class SprinterInput : public IPs2KeySink
+class SprinterInput : public IPs2KeySink, public IMouseSink
 {
 public:
     /// `pld`: ALL_MODE is read from the decoder's PLD state (one copy of it)
     SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, SprinterIntSource& intSource, const SprinterPldState& pld);
+    ~SprinterInput() override;
+    SprinterInput(const SprinterInput&) = delete;
+    SprinterInput& operator=(const SprinterInput&) = delete;
+
+    /// region <IMouseSink: the board mouse (serial packets and the PLD's Kempston view)>
+    /// Always fitted, whatever [INPUT] Mouse= says about the Kempston interface:
+    /// the mouse is part of the board. Input moves the board's counters; the
+    /// serial mouse samples them, the PLD's Kempston view reads them
+    bool IsMouseFitted() const override { return true; }
+    void OnMouseMotion(int dx, int dy) override;
+    void OnMouseButtons(uint8_t activeLowMask) override;
+    /// Neither view has a wheel (Microsoft two-button mouse; MAME's code #58 has no wheel nibble)
+    void OnMouseWheel(int) override {}
+    void OnMouseCounters(uint8_t x, uint8_t y) override;
+    /// endregion
+
+    /// The board mouse counters: X (+ right), Y (+ up), buttons (active low: D0 left, D1 right, D2 middle).
+    /// TTD blob 31 holds them with the serial mouse's packet in flight
+    struct BoardMouse
+    {
+        uint8_t x;
+        uint8_t y;
+        uint8_t buttons;
+    };
+    BoardMouse GetBoardMouse() const;
+    void SetBoardMouse(const BoardMouse& mouse);  ///< TTD restore
 
     /// region <IPs2KeySink: the host's physical keys (journaled input)>
     void OnPcKey(PcKey key, bool pressed) override;
@@ -106,6 +135,11 @@ private:
     /// The board's mouse counters (one source for the serial and the Kempston view)
     void SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const;
 
+    /// Power-on counters: two different non-zero values, as the Kempston interface's
+    /// (software infers "no mouse" from equal axes)
+    static constexpr uint8_t kResetX = 31;
+    static constexpr uint8_t kResetY = 85;
+
     EmulatorContext* _context;
     Z84Lib::Z84C15& _chip;
     SprinterIntSource& _intSource;
@@ -113,6 +147,11 @@ private:
     Ps2KeyboardStream _keyboard;
     MsSerialMouse _mouse;
     uint64_t _keyboardOverruns = 0;
+    // Written on the emulator thread by the manager (or by automation without TTD), read by the decoder:
+    // atomics, the relative moves compare-and-swap loops (as the Kempston interface's counters)
+    std::atomic<uint8_t> _mouseX{kResetX};
+    std::atomic<uint8_t> _mouseY{kResetY};
+    std::atomic<uint8_t> _mouseButtons{0xFF};
     std::function<void()> _onReset;
     std::function<void()> _onTurboSwitch;
     std::function<void()> _onStepHookChange;

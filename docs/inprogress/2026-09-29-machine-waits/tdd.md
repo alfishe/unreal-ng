@@ -78,7 +78,9 @@ From [research-scorpion-turbo.md](research-scorpion-turbo.md), the SC15.1 firmwa
 - Even M1 is already off in turbo (`Z80Step` tests the hardware clock ratio); the turbo M1 wait replaces it, as in the
   equations.
 - 3.5 MHz while /INT is active (research 2.3, since 2026-10-01): while the turbo latch is on the decoder is the
-  Z80's machine step hook; inside the ULA's /INT pulse it sets `hw_turbo_ratio` 1 and applies it at once
+  Z80's machine step hook, run only from the frame start until the pulse is over (2026-10-02: the hook turns its
+  step work off after the pulse and `OnMachineFrameRollover` turns it back on; the first version ran it on every
+  step of the frame and cost the Scorpion 5.6 % per frame, the ROM leaving turbo on); inside the ULA's /INT pulse it sets `hw_turbo_ratio` 1 and applies it at once
   (`Z80::ApplyHardwareTurboNow`), after the pulse 2 again. The switch is at instruction boundaries (the hardware
   switches at the next safe clock edge); the acknowledge, which follows the instruction that saw the pulse, runs at
   3.5 MHz with Even M1 (SC15.1). "Dropped" is not stored: it is the latch on with the ratio 1, so a TTD restore needs

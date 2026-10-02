@@ -88,6 +88,9 @@ private slots:
     void updateRzx(std::shared_ptr<Emulator> emulator);
     void applyRzxStyle();
     void updateTtd(EmulatorContext* context);
+    /// The machine's own video mode summary (ScreenState::videoModeBrief, e.g. the Sprinter's dominant
+    /// square kind); hidden on machines without one
+    void updateVideoMode(EmulatorContext* context);
     void updateJoystick(EmulatorContext* context);
 
 private:
@@ -111,6 +114,7 @@ private:
     QLabel* _fps = nullptr;
     QLabel* _rzx = nullptr;               ///< RZX playback progress, shown while a recording was played
     QLabel* _ttd = nullptr;               ///< TTD history replay progress, shown while positioned in the past
+    QLabel* _videoMode = nullptr;         ///< the picture's mode on machines that mix modes per area (Sprinter: ScreenState::videoModeBrief)
     RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop
     bool _rzxPopoverOpen = false;         ///< the label shows it (a toggle)
     bool _rzxDesynced = false;            ///< the label is red after a desync

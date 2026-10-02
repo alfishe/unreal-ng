@@ -68,8 +68,10 @@ public:
     /// Turbo+: while /INT is active the logic chip runs the CPU at 3.5 MHz (its TRB register only follows the
     /// turbo latch while INT1 is high), so the interrupt acknowledge and the start of the handler run at normal
     /// speed with the normal rules (Even M1 with SC15.1). Installed while the turbo latch is on; switches at
-    /// instruction boundaries (research-scorpion-turbo.md section 2.3)
+    /// instruction boundaries (research-scorpion-turbo.md section 2.3). It runs only from the frame start until
+    /// the pulse is over (OnMachineFrameRollover turns it on, OnMachineStep off): the rest of the frame pays nothing
     void OnMachineStep(uint32_t t) override;
+    void OnMachineFrameRollover(uint32_t frameLength) override;
     bool AreTurboWaitsInstalled() const { return _turboWaitsInstalled; }
     /// endregion </Interface methods>
 

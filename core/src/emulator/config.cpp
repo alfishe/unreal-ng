@@ -481,6 +481,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 			scale = 0;
 		}
 		config.input.mousescale = static_cast<char>(scale);
+
+		config.input.mouseReleaseKey[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "MouseReleaseKey", nullptr), config.input.mouseReleaseKey,
+		                sizeof config.input.mouseReleaseKey);
 	}
 
 	// INPUT section - Kempston joystick (joystick TDD J4, J6):

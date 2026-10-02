@@ -161,6 +161,41 @@ class Emulator:
         """The Sprinter screen text: lines[] (row, text, codes) of the mode table's
         text squares, 80 x 32"""
 
+    def sprinter_video(self, page=None, all=False, squares=True) -> dict:
+        """The mode table per square: map (one letter a square), hold, frame, rgmod,
+        port_y, counts, palettes_used, squares[b][a] decoded"""
+
+    def sprinter_palette(self, k=None) -> dict:
+        """Palettes (k 0-7, 'all', default the used ones): pens n / rgb (R,G,B as stored) / vram"""
+
+    def sprinter_sound_ring(self) -> dict:
+        """The Covox-Blaster ring: 256 words, play / write index"""
+
+    def sprinter_bios(self) -> dict:
+        """BIOS images, the one loaded (CRC-32), the configured one, start options"""
+
+    def sprinter_bios_select(self, bios=None, fast_start=None, accel_int_suspend=None, reset=True) -> dict:
+        """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
+
+    def memory_regions(self) -> dict:
+        """Device memory regions (the Sprinter's 'vram')"""
+
+    def region_read(self, name, offset=0, length=256) -> bytes: ...
+    def region_write(self, name, offset, data) -> int:
+        """data: bytes, a list of ints or a hex string; through the device's write path"""
+    def region_save(self, name, path, offset=0, length=0) -> None: ...
+    def region_load(self, name, path, offset=0) -> int: ...
+
+    def video_changes(self, frames=2) -> dict:
+        """Video change log: latch changes with t, line, pc; palette / mode table writes per frame"""
+
+    def framebuffer(self, format="rgba") -> dict:
+        """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
+
+    def audio_mixer(self) -> dict: ...
+    def audio_mixer_set(self, source, muted=None, solo=None, volume=None, gain_db=None) -> dict: ...
+    # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
+
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
         sprite_page, tile_layers (t0 / t1: enabled, draw_tile_zero, graphics_page,

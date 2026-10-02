@@ -112,7 +112,7 @@ ffmpeg -v info -i scratch/run.mp4 -map 0:a -af astats=measure_perchannel=none -f
 - **A GIF has 1/100 s frame delays**: 20.48 ms frames are written as 20 ms, so a GIF plays about
   2% fast. Use h264 when timing matters.
 - **The sound is what the machine plays**: a silent program records a silent track (RMS -inf).
-  Sprinter DSS programs that use the Covox-Blaster are silent until that card exists.
+  The Sprinter's Covox-Blaster is recorded like any DAC since S6 ([sprinter-sound.md](../machines/sprinter-sound.md)).
 - **GUI on macOS reading `~/Downloads`**: a freshly built app may wait for a privacy prompt the
   first time it opens a file there (the request hangs). Keep media and recordings under the
   project's `scratch/`.

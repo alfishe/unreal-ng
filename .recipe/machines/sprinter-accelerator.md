@@ -75,9 +75,26 @@ pixels (`testdata/machines/sprinter/reference/mame-acctest-306.png`).
 
 ## Accelerator state (debugger and automation)
 
-`PortDecoder_Sprinter::GetAccelerator()` returns the accelerator in use (null while the PLD loads);
-`State()` is the POD `SprinterAccelState`: `mode` (0-7, `SprinterAccelerator::ModeName`), `length`
-(0 = 256), `fn` (`FunctionName`: plain / or / xor / and), `blocked` (an INT acknowledge suspended it,
-`[SPRINTER] AccelIntSuspend=1`; off by default since S6, see [sprinter-sound.md](sprinter-sound.md)), `alt` / `xcnt` / `aagr` (the `#C7` addressing), `buffer[256]`,
-`operations`, `lastExtraClocks`. A WebAPI / MCP view of it (`state/sprinter`) comes with the
-`sprinter-automation` work.
+Every interface reads it as the `accelerator` block of the Sprinter report (core `DeviceState::Sprinter`
+from `PortDecoder_Sprinter::GetAccelerator()->State()`): WebAPI `GET /state/sprinter`, CLI `state sprinter`,
+Lua / Python `sprinter_state().accelerator`, MCP `inspect_state {"aspects":["sprinter"]}` (summary line
+`accelerator enabled, mode ..., length ..., ... operations`). Verified on Flex Navigator 1.15 (DSS 1.71 from
+the HDD, BIOS 3.07, 2026-10-02):
+
+```bash
+curl -s "$BASE/emulator/$EMU/state/sprinter" | jq -c '.accelerator | del(.control)'
+#   {"aagr":0,"alt":false,"armed":false,"available":true,"blocked":false,"buffer_crc32":"0xDC8365E6",
+#    "buffer_head":"00 88 88 08 08 08 08 08 88 00 10 00 20 20 20 01","dir":"0x00","enabled":true,
+#    "function":"plain","int_suspend":false,"last_extra_clocks":21,"length":8,"length_register":"0x08",
+#    "mode":6,"mode_name":"off-halt","operations":40499,"xcnt":0}
+```
+
+`enabled` = ALL_MODE bit 0, `mode` / `mode_name` (off, fill, length, vertical-fill, double, copy, off-halt,
+vertical-copy), `armed` (a mode is on), `length` (accesses per operation, register 0 = 256), `function`
+(plain / or / xor / and), `blocked` (an INT acknowledge suspended it while `int_suspend` =
+`[SPRINTER] AccelIntSuspend=1`; off by default since S6, see [sprinter-sound.md](sprinter-sound.md); switch
+it at runtime: `POST /sprinter/bios {"accel_int_suspend": true, "reset": false}`), `alt` / `xcnt` / `aagr`
+(the `#C7` addressing), `operations` (block operations started), `last_extra_clocks`, `buffer_crc32` /
+`buffer_head` (the line buffer). `available: false` while the PLD loads. The operation itself is in the
+port trace (`LD r,r` is no port access: watch the PC) and in the video change log when it writes the
+mode table or a palette (`video_changes`).

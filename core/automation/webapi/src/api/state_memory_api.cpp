@@ -13,6 +13,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
 #include <emulator/ports/models/profiboard.h>
+#include <emulator/memory/devicememory.h>  // device memory regions (/memory/page/vram/{n})
 #include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
@@ -956,8 +957,106 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     callback(resp);
 }
 
+namespace
+{
+/// /memory/page/{region}/{n}: page n of a device memory region (DeviceMemory, page size from the region).
+/// False when `type` names no region (the caller answers with its own error); true once answered
+bool ReadRegionPage(const HttpRequestPtr& req, EmulatorContext* context, const std::string& type,
+                    const std::string& pageStr, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    IDeviceMemoryRegion* region = DeviceMemory::Find(context, type);
+    if (!region)
+        return false;
+    auto reply = [&](const Json::Value& body, HttpStatusCode code) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    uint64_t page = 0, offset = 0, length = 128;
+    const uint32_t pages = region->Size() / region->PageSize();
+    auto offsetParam = req->getOptionalParameter<std::string>("offset");
+    auto lengthParam = req->getOptionalParameter<std::string>("length");
+    if (!StringHelper::TryParseUInt64(pageStr, page) || page >= pages ||
+        (offsetParam && (!StringHelper::TryParseUInt64(*offsetParam, offset) || offset >= region->PageSize())) ||
+        (lengthParam && (!StringHelper::TryParseUInt64(*lengthParam, length) || length < 1)))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "page 0-" + std::to_string(pages - 1) + ", offset 0-" + std::to_string(region->PageSize() - 1) +
+                           ", length >= 1";
+        reply(error, HttpStatusCode::k400BadRequest);
+        return true;
+    }
+    if (offset + length > region->PageSize())
+        length = region->PageSize() - offset;
+    const bool sparse = req->getOptionalParameter<std::string>("filter").value_or("") == "sparse";
+    const uint32_t start = static_cast<uint32_t>(page * region->PageSize() + offset);
+    Json::Value ret = StateNodeToJson(
+        DeviceState::MemoryRegionRead(context, region->Name(), start, static_cast<uint32_t>(length), sparse ? "sparse" : "data"));
+    ret["type"] = type;
+    ret["page"] = static_cast<Json::UInt64>(page);
+    ret["offset"] = StringHelper::Format("0x%04X", static_cast<unsigned>(offset));
+    ret["region_offset"] = StringHelper::Format("0x%05X", start);
+    ret.removeMember("available");
+    reply(ret, HttpStatusCode::k200OK);
+    return true;
+}
+
+bool WriteRegionPage(const HttpRequestPtr& req, EmulatorContext* context, const std::string& type,
+                     const std::string& pageStr, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    IDeviceMemoryRegion* region = DeviceMemory::Find(context, type);
+    if (!region)
+        return false;
+    auto reply = [&](const Json::Value& body, HttpStatusCode code) {
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    auto fail = [&](const std::string& message) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = message;
+        reply(error, HttpStatusCode::k400BadRequest);
+        return true;
+    };
+    auto body = req->getJsonObject();
+    uint64_t page = 0;
+    uint32_t offset = 0;
+    if (!body || !body->isMember("offset") || !body->isMember("data") || !(*body)["data"].isArray())
+        return fail("Request must contain 'offset' and 'data' fields");
+    if (!StringHelper::TryParseUInt64(pageStr, page) || page >= region->Size() / region->PageSize())
+        return fail("Invalid page number '" + pageStr + "'");
+    const Json::Value& offsetValue = (*body)["offset"];
+    if (!(offsetValue.isUInt() ? (offset = offsetValue.asUInt(), true) : DeviceMemory::ParseNumber(offsetValue.asString(), offset)) ||
+        offset >= region->PageSize())
+        return fail("Invalid offset (0-" + std::to_string(region->PageSize() - 1) + ")");
+    std::vector<uint8_t> bytes;
+    for (const Json::Value& v : (*body)["data"])
+    {
+        if (offset + bytes.size() >= region->PageSize())
+            break;
+        bytes.push_back(static_cast<uint8_t>(v.asUInt()));
+    }
+    std::string error;
+    if (!DeviceMemory::Write(context, region->Name(), static_cast<uint32_t>(page * region->PageSize() + offset), bytes,
+                             "WebAPI page write", error))
+        return fail(error);
+    Json::Value ret;
+    ret["success"] = true;
+    ret["type"] = type;
+    ret["page"] = static_cast<Json::UInt64>(page);
+    ret["offset"] = StringHelper::Format("0x%04X", offset);
+    ret["bytes_written"] = static_cast<Json::UInt64>(bytes.size());
+    reply(ret, HttpStatusCode::k200OK);
+    return true;
+}
+}  // namespace
+
 /// @brief GET /api/v1/emulator/{id}/memory/page/{type}/{page}
-/// @brief Read from specific RAM/ROM page
+/// @brief Read from specific RAM/ROM page (or a page of a device memory region: /memory/page/vram/{n})
 void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id, const std::string& type, const std::string& pageStr) const
 {
@@ -993,11 +1092,13 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
 
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
+    if (!isROM && !isRAM && ReadRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+        return;  // a device memory region by name (/memory/page/vram/{n}: the Sprinter's video RAM)
     if (!isROM && !isRAM)
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Type must be 'ram' or 'rom'";
+        error["message"] = "Type must be 'ram', 'rom' or a device memory region (GET /memory/regions)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1155,6 +1256,8 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Memory* memory = emulator->GetMemory();
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
+    if (!isROM && !isRAM && WriteRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+        return;  // a device memory region by name (DeviceMemory::Write: the device's own write path)
 
     if (isROM && s_romWriteProtected)
     {

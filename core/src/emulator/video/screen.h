@@ -11,6 +11,7 @@
 #include "stdafx.h"
 
 class Z80;
+struct ScreenDigestSurface;
 
 /// region <Constants>
 
@@ -277,6 +278,7 @@ struct ScreenState
     MEM_MODEL model = MM_PENTAGON;
     VideoModeEnum mode = M_NUL;
     std::string videoMode;               // Screen::GetVideoModeName
+    std::string videoModeBrief;          // a few words for a status bar (machines whose picture mixes modes: Sprinter); empty = videoMode
     uint16_t width = 0, height = 0;      // mode picture size
     VideoModeInfo format;
     uint8_t borderColor = 0;
@@ -556,7 +558,6 @@ protected:
 
     /// Latches after every video port write of the current and previous frame (cold: port handlers only)
     videomap::VideoWriteLog _videoWriteLog;
-    void NoteVideoWrite();
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
@@ -681,6 +682,25 @@ public:
     /// and the previous frame (videowritelog.h)
     videomap::VideoLatches CaptureVideoLatches() const;
     const videomap::VideoWriteLog& GetVideoWriteLog() const { return _videoWriteLog; }
+    /// After a port handler changed video state: log the latches with the frame T and the I/O's PC
+    /// (only when they differ from the last entry; cold - port handlers only)
+    void NoteVideoWrite();
+    /// A write into a video table (a palette entry, the Sprinter's mode table) at the current T;
+    /// `address` = the table address (palette cell, video RAM address). Cold: called by the device
+    /// only when a table byte changed
+    void NoteVideoTableWrite(videomap::VideoTable table, uint32_t address);
+    /// A picture the machine keeps outside the RAM pages, for the screen digest (screendigest.h):
+    /// false = none (the digest hashes RAM pages); the Sprinter hashes its video RAM
+    virtual bool DigestSurface(ScreenDigestSurface& out) const { (void)out; return false; }
+    /// The picture as pen / palette indices (framebufferexport.h, format=index): false = none on this
+    /// machine; the Sprinter answers its 2 048 pens for the 736 x 288 window, from the state now
+    virtual bool IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, uint16_t& height, std::string& encoding) const
+    {
+        (void)pens; (void)width; (void)height; (void)encoding;
+        return false;
+    }
+    /// A machine family's own latches (VideoLatches::rgMod ...): the Sprinter overrides it
+    virtual void CaptureFamilyLatches(videomap::VideoLatches& latches) const { (void)latches; }
 
     /// @brief Read-only access to the calculated raster zone boundaries
     /// (t-state ranges for blank/border/screen areas, vertical and horizontal)

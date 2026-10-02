@@ -22,6 +22,7 @@ class Joystick;
 class Keyboard;
 class Mouse;
 class PortDecoder;
+class MouseManager;
 class VirtualNetwork;
 
 namespace ttd {
@@ -31,7 +32,8 @@ namespace ttd {
 struct TTDInputDevices
 {
     Keyboard* keyboard = nullptr;
-    Mouse* mouse = nullptr;
+    Mouse* mouse = nullptr;              ///< without a manager (bare contexts): the Kempston device alone
+    MouseManager* mouseManager = nullptr; ///< every mouse device of the machine (wins over `mouse`)
     Joystick* joystick = nullptr;
     GeneralSoundCard* generalSound = nullptr;
     VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)

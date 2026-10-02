@@ -25,3 +25,9 @@ Next: K5 (state report `atm2kbc` on every surface, A/B benchmark - skipped for n
 Open: tdd §12; seen once: the same CP/M test reaches a key at a slightly different
 controller clock depending on which tests ran before it in the process (to explain
 before TTD work).
+
+2026-10-02: open questions researched (reference (b), tdd §12). From the answers: a blocked
+controller's MOVX reads see #FF (no `#55` arming while blocked; Ins blocks, Home unblocks);
+D108 is the address buffer (not D23). Still open: which firmware other NedoOS ESP users run; no
+scope measurement of the WAIT exists. ZXTERM (CP/M, v3.x only) is a candidate end-to-end test
+of the COM port on the `V31-*` / `V32-*` presets.

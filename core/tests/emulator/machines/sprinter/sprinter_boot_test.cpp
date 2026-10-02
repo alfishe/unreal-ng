@@ -46,6 +46,7 @@
 #include "sprinterfixture.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/io/storage/chd/chdfile.h"
 #include "emulator/io/storage/chd/chdimage.h"
@@ -1188,11 +1189,142 @@ protected:
         _emulator->GetDebugManager()->GetKeyboardManager()->TapKey(key);
         EmulatorTestHelper::RunFramesFast(_emulator.get(), frames);
     }
+
+    /// The automation mouse (what the WebAPI / MCP / CLI / Lua / Python mouse surfaces call): its input goes
+    /// through the emulator's MouseManager, journaled, to the board mouse
+    DebugMouseManager* Mouse() { return _emulator->GetDebugManager()->GetMouseManager(); }
+
+    /// `steps` moves of (dx, dy) (Kempston units: + right, + up), `frames` after each for the DSS driver to follow
+    void MoveMouse(int dx, int dy, int steps, uint16_t frames = 3)
+    {
+        for (int i = 0; i < steps && (dx || dy); i++)
+        {
+            ASSERT_TRUE(Mouse()->Move(dx, dy).ok());
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), frames);
+        }
+    }
+
+    /// `button` held for `frames`, released, then `settle` frames
+    void ClickMouse(MouseButton button, uint16_t frames, uint16_t settle)
+    {
+        ASSERT_TRUE(Mouse()->PressButton(button).ok());
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), frames);
+        ASSERT_TRUE(Mouse()->ReleaseButton(button).ok());
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), settle);
+    }
+
+    /// The whole picture rendered in full (two frames without the turbo mode)
+    std::vector<uint32_t> Picture()
+    {
+        _emulator->DisableTurboMode();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+        _emulator->EnableTurboMode();
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        return std::vector<uint32_t>(pixels, pixels + static_cast<size_t>(fb.width) * fb.height);
+    }
+
+    /// The box around the pixels two pictures disagree on (empty: right < left)
+    struct Box
+    {
+        int left = 1 << 30;
+        int top = 1 << 30;
+        int right = -1;
+        int bottom = -1;
+        bool Empty() const { return right < left; }
+    };
+    Box Changed(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b, int fromX = 0, int toX = 1 << 30)
+    {
+        const int width = static_cast<int>(_context->pScreen->GetFramebufferDescriptor().width);
+        Box box;
+        for (size_t i = 0; i < a.size() && i < b.size(); i++)
+        {
+            const int x = static_cast<int>(i % width);
+            const int y = static_cast<int>(i / width);
+            if (a[i] == b[i] || x < fromX || x >= toX)
+                continue;
+            box.left = std::min(box.left, x);
+            box.right = std::max(box.right, x);
+            box.top = std::min(box.top, y);
+            box.bottom = std::max(box.bottom, y);
+        }
+        return box;
+    }
+
+    /// The panel list's row `row` (8 pixels each from y = 79), its middle line
+    static constexpr int RowY(int row) { return 79 + 8 * row + 3; }
+
+    /// The mouse in Flex Navigator, through the automation (WebAPI / MCP mouse surfaces), the panels as in
+    /// the tests below (the left one active, the pointer where FN put it). `bar`: the cursor bar's color,
+    /// `fileRow`: a row of the right panel's list that holds a file (FN marks files, not directories).
+    /// 1. The pointer follows the mouse: 40 units right moves it 40 pixels right, 40 units down 40 pixels down
+    ///    (Kempston Y grows upward; both DSS drivers scale 1:1 in the 640-pixel mode);
+    /// 2. into the right panel's list, where the right button (D1) and the middle one (D2) do not activate the
+    ///    panel - only the left one (D0) does;
+    /// 3. a left click on a row puts the cursor bar there; a right click marks the file and moves the bar down
+    void ExerciseMouse(uint32_t bar, int fileRow, uint16_t settle)
+    {
+        // 1. The pointer
+        std::vector<uint32_t> before = Picture();
+        ASSERT_NO_FATAL_FAILURE(MoveMouse(8, 0, 5));
+        std::vector<uint32_t> after = Picture();
+        Box box = Changed(before, after);
+        ASSERT_FALSE(box.Empty()) << "the pointer did not move";
+        const int pointerWidth = box.right - box.left + 1 - 40;
+        const int pointerHeight = box.bottom - box.top + 1;
+        EXPECT_GE(pointerWidth, 6) << "40 pixels right: the old and the new pointer side by side";
+        EXPECT_LE(pointerWidth, 24);
+        EXPECT_LE(pointerHeight, 20) << "a move to the right does not move the pointer vertically";
+
+        before = std::move(after);
+        ASSERT_NO_FATAL_FAILURE(MoveMouse(0, -8, 5));
+        after = Picture();
+        box = Changed(before, after);
+        ASSERT_FALSE(box.Empty()) << "the pointer did not move down";
+        EXPECT_NEAR(box.bottom - box.top + 1, pointerHeight + 40, 2) << "40 pixels down";
+        EXPECT_LE(box.right - box.left + 1, pointerWidth + 2) << "a move down does not move the pointer sideways";
+        int pointerX = box.right - pointerWidth + 1;
+        int pointerY = box.bottom - pointerHeight + 1;  // the hot spot: the arrow's tip, its top left
+
+        // 2. Into the right panel's list, two rows below the file, on the name column (FN 1.15 selects a row only
+        //    there; the pointer's tip at x = 400 keeps the arrow off the pixels ActivePanel reads at x = 420);
+        //    D1 and D2 do not activate the panel, D0 does
+        const int dx = 400 - pointerX;
+        const int dy = RowY(fileRow + 2) - pointerY;
+        ASSERT_NO_FATAL_FAILURE(MoveMouse(dx / 20, -dy / 20, 20));
+        ASSERT_NO_FATAL_FAILURE(MoveMouse(dx % 20, -(dy % 20), 1));
+        pointerX += dx;
+        pointerY += dy;
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+        ASSERT_EQ(ActivePanel(bar), 'L') << "moving does not click";
+        ASSERT_NO_FATAL_FAILURE(ClickMouse(MouseButton::Right, 10, settle));
+        EXPECT_EQ(ActivePanel(bar), 'L') << "the right button (D1) is not the left one";
+        before = Picture();
+        ASSERT_NO_FATAL_FAILURE(ClickMouse(MouseButton::Middle, 10, settle));
+        EXPECT_TRUE(Changed(before, Picture()).Empty()) << "FN does nothing with the middle button (D2)";
+        ASSERT_NO_FATAL_FAILURE(ClickMouse(MouseButton::Left, 10, settle));
+        EXPECT_EQ(ActivePanel(bar), 'R') << "the left button (D0) activates the right panel";
+
+        // 3. A left click on the file row selects it; a right click marks it and moves the bar down
+        ASSERT_NO_FATAL_FAILURE(MoveMouse(0, 16, 1));
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 5);
+        ASSERT_NO_FATAL_FAILURE(ClickMouse(MouseButton::Left, 10, settle));
+        // Read at x = 432, the 8th character of the name (a space for these names): the right panel only, the left
+        // panel's names are in the bar's color in FN 1.15, and FN 1.15's bar covers the name and extension only
+        EXPECT_EQ(Pixel(432, RowY(fileRow)), bar) << "the left click put the bar on the row under the pointer";
+        ASSERT_NO_FATAL_FAILURE(ClickMouse(MouseButton::Right, 3, settle));
+        EXPECT_NE(Pixel(432, RowY(fileRow)), bar) << "the right click moved the bar off the file it marked";
+        bool below = false;
+        for (int row = fileRow + 1; row <= fileRow + 3 && !below; row++)
+            below = Pixel(432, RowY(row)) == bar;
+        EXPECT_TRUE(below) << "the bar is on a row below";
+    }
 };
 
 // FN 1.10 from the DSS 1.62.92 floppy (the S5 RESTORE workaround of Dss162_FlexNavigatorDrawsWithTheAccelerator):
-// Tab switches the panels and back, Down moves the cursor, the mouse (with no Kempston interface configured: the
-// board's mouse) moves the pointer onto the right panel and a left click makes that panel active.
+// Tab switches the panels and back, Down moves the cursor; the mouse through the automation (with no Kempston
+// interface configured: the board's mouse) moves the pointer, the buttons map D0 left / D1 right / D2 middle, a
+// left click activates the right panel and selects a row, a right click marks a file (ExerciseMouse).
 // Boot-bound (BIOS, DSS, Flex Navigator loading from the floppy, its disk reads per panel switch): ~9 s host time
 // with the turbo mode
 TEST_F(SprinterFlexNavigator_Test, Dss162_Fn110KeysAndMouse)
@@ -1228,26 +1360,15 @@ TEST_F(SprinterFlexNavigator_Test, Dss162_Fn110KeysAndMouse)
     Tap("up", kSettle);
     EXPECT_EQ(_decoder->GetInput().KeyboardOverruns(), 0u);
 
-    // The pointer from the top of the screen into the right panel's list, then a left click
-    for (int i = 0; i < 21; i++)
-    {
-        _context->pMouse->Move(10, -2);
-        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
-    }
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
-    EXPECT_EQ(ActivePanel(kBar), 'L') << "moving does not click";
-    _context->pMouse->SetButtons(0xFE);
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
-    _context->pMouse->SetButtons(0xFF);
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), kSettle);
-    EXPECT_EQ(ActivePanel(kBar), 'R') << "the click activates the right panel";
+    // The mouse (no Kempston interface: the board mouse, the PLD's Kempston view DSS 1.62.92 reads); fn ini is row 4
+    ExerciseMouse(kBar, 4, kSettle);
     z80->busTraceHook = nullptr;
     _context->pMouse->SetPresent(true);
 }
 
 // FN 1.15 on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img; not in the repo): Tab
-// switches the panels, and the serial mouse (DSS 1.71 reads SIO B) moves the pointer onto the right panel, where a
-// click activates it. Boot-bound (BIOS 3.06, DSS 1.71 and FN from the hard disk): ~8 s host time with the turbo mode
+// switches the panels, and the serial mouse (DSS 1.71 reads SIO B) moves the pointer, activates the right panel,
+// selects and marks a file (ExerciseMouse). Boot-bound (BIOS 3.06, DSS 1.71 and FN from the hard disk): ~8 s host time with the turbo mode
 TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
 {
     const char* path = std::getenv("UNREAL_SPRINTER_HDD");
@@ -1267,17 +1388,8 @@ TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
     Tap("tab");
     EXPECT_EQ(ActivePanel(kBar), 'L') << "Tab again: the left panel";
 
-    for (int i = 0; i < 20; i++)
-    {
-        _context->pMouse->Move(10, -1);
-        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
-    }
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
-    _context->pMouse->SetButtons(0xFE);
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
-    _context->pMouse->SetButtons(0xFF);
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 30);
-    EXPECT_NE(ActivePanel(kBar), 'L') << "the click on the right panel moved the focus there";
+    // The mouse: the serial packets on SIO B DSS 1.71 reads; "system bat" is row 14 of the root of drive C
+    ExerciseMouse(kBar, 14, 30);
 }
 
 /// endregion </Flex Navigator input>

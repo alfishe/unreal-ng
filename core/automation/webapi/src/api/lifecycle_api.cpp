@@ -1,6 +1,7 @@
 // WebAPI Emulator Lifecycle Management Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
@@ -61,6 +62,54 @@ bool ParseRamPowerOnField(const std::shared_ptr<Json::Value>& json, std::optiona
 std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>& mode)
 {
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
+}
+
+/// Optional "sprinter": {"bios": "3.06" | <file>, "fast_start": bool, "accel_int_suspend": bool} of a create /
+/// start body (SprinterBios, automation audit G11): the BIOS image and start options of a new SPRINTER.
+/// True when absent or valid; false with a 400 already sent
+bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
+                        const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!json || !json->isMember("sprinter"))
+        return true;
+    const Json::Value& value = (*json)["sprinter"];
+    auto text = [&](const char* key) -> std::string {
+        if (!value.isMember(key))
+            return std::string();
+        const Json::Value& v = value[key];
+        return v.isBool() ? (v.asBool() ? "1" : "0") : v.asString();
+    };
+    SprinterBios::Options options;
+    std::string error, path;
+    if (!value.isObject() ||
+        !SprinterBios::OptionsFromStrings(text("bios"), text("fast_start"), text("accel_int_suspend"), "", options, error) ||
+        (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
+    {
+        Json::Value err;
+        err["error"] = "Bad Request";
+        err["message"] = error.empty() ? std::string("sprinter must be an object {bios, fast_start, accel_int_suspend}")
+                                       : "sprinter: " + error;
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return false;
+    }
+    out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+/// Both create-time overrides in order (either may be empty)
+std::function<void(CONFIG&)> Combine(std::function<void(CONFIG&)> first, std::function<void(CONFIG&)> second)
+{
+    if (!first)
+        return second;
+    if (!second)
+        return first;
+    return [first, second](CONFIG& config) {
+        first(config);
+        second(config);
+    };
 }
 
 // Machine identity block shared by lifecycle responses (P0-1: a triage
@@ -375,6 +424,10 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     std::optional<RamPowerOn> ramPowerOn;
     if (!ParseRamPowerOnField(json, ramPowerOn, callback))
         return;
+    std::function<void(CONFIG&)> sprinterOverride;
+    if (!ParseSprinterField(json, sprinterOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
 
     try
     {
@@ -386,18 +439,18 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
             // Create with specific model and RAM size - strict: no fallback
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
                                                               LoggerLevel::LogWarning, &createError,
-                                                              RamPowerOnOverride(ramPowerOn));
+                                                              createOverride);
         }
         else if (!modelName.empty())
         {
             // Create with specific model (default RAM) - strict: no fallback
             emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError,
-                                                        RamPowerOnOverride(ramPowerOn));
+                                                        createOverride);
         }
         else
         {
             // Create with default configuration (48K)
-            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, RamPowerOnOverride(ramPowerOn));
+            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, createOverride);
         }
 
         if (!emulator)
@@ -570,6 +623,10 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::optional<RamPowerOn> ramPowerOn;
     if (!ParseRamPowerOnField(json, ramPowerOn, callback))
         return;
+    std::function<void(CONFIG&)> sprinterOverride;
+    if (!ParseSprinterField(json, sprinterOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
 
     // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
     const bool zxpoly = json && json->isMember("zxpoly") &&
@@ -592,22 +649,22 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         {
             // Four synchronized instances; the master is the machine returned
             emulator = manager->CreateZXPolyMachine(symbolicId, modelName.empty() ? "PENTAGON" : modelName,
-                                                    zxpolyFile, &createError, RamPowerOnOverride(ramPowerOn));
+                                                    zxpolyFile, &createError, createOverride);
         }
         else if (!modelName.empty() && ramSize > 0)
         {
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
                                                               LoggerLevel::LogWarning, &createError,
-                                                              RamPowerOnOverride(ramPowerOn));
+                                                              createOverride);
         }
         else if (!modelName.empty())
         {
             emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError,
-                                                        RamPowerOnOverride(ramPowerOn));
+                                                        createOverride);
         }
         else
         {
-            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, RamPowerOnOverride(ramPowerOn));
+            emulator = manager->CreateEmulator(symbolicId, LoggerLevel::LogWarning, createOverride);
         }
 
         if (!emulator)

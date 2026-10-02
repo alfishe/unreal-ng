@@ -77,3 +77,42 @@ TEST(VideoWriteLog_Test, NoRecordBeforeTheFirstFrame)
     EXPECT_FALSE(log.Current().valid);
     EXPECT_TRUE(log.Current().writes.empty());
 }
+
+// The family block (Sprinter RGMOD ... frame height) is part of the latches: a change is logged
+TEST(VideoWriteLog_Test, FamilyLatchesAreCompared)
+{
+    VideoWriteLog log;
+    VideoLatches l;
+    log.BeginFrame(1, l);
+    l.rgMod = 1;
+    EXPECT_TRUE(log.Changes(l));
+    log.Record(100, l, 0x8123);
+    l.frameLines = 312;
+    log.Record(200, l, 0x8130);
+    ASSERT_EQ(log.Current().writes.size(), 2u);
+    EXPECT_EQ(log.Current().writes[0].pc, 0x8123);
+    EXPECT_EQ(log.Current().StateAt(150).frameLines, 0);
+    EXPECT_EQ(log.Current().StateAt(250).frameLines, 312);
+}
+
+// Table writes (palettes, the Sprinter's mode table) are counted per frame with the first and the last
+TEST(VideoWriteLog_Test, TableWritesAreCountedPerFrame)
+{
+    VideoWriteLog log;
+    log.RecordTable(VideoTable::Palette, 5, 0x10, 0x8000);  // before the first frame: ignored
+    log.BeginFrame(1, VideoLatches{});
+    log.RecordTable(VideoTable::Palette, 100, 0x3E0, 0x8000);
+    log.RecordTable(VideoTable::Palette, 140, 0x3E2, 0x8004);
+    log.RecordTable(VideoTable::ModeTable, 160, 0x700, 0x8010);
+    const VideoTableWrites& palette = log.Current().tables[static_cast<size_t>(VideoTable::Palette)];
+    EXPECT_EQ(palette.count, 2u);
+    EXPECT_EQ(palette.firstT, 100u);
+    EXPECT_EQ(palette.lastT, 140u);
+    EXPECT_EQ(palette.lastAddress, 0x3E2u);
+    EXPECT_EQ(palette.lastPc, 0x8004);
+    EXPECT_EQ(log.Current().tables[static_cast<size_t>(VideoTable::ModeTable)].count, 1u);
+
+    log.BeginFrame(2, VideoLatches{});
+    EXPECT_EQ(log.Current().tables[static_cast<size_t>(VideoTable::Palette)].count, 0u) << "a new frame starts at 0";
+    EXPECT_EQ(log.Previous().tables[static_cast<size_t>(VideoTable::Palette)].count, 2u);
+}

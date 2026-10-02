@@ -1504,6 +1504,29 @@ StateNode ScreenMode(EmulatorContext* context)
         ff77["video_mode_bits"] = int(s.pFF77 & 0x07);
         ret["ff77"] = ff77;
     }
+    if (!s.videoModeBrief.empty())
+        ret["video_mode_brief"] = s.videoModeBrief;
+
+    // Per-mode flags and geometry notes (formerly added by the WebAPI handler alone: now every interface)
+    switch (s.mode)
+    {
+        case M_P16: ret["eff7_16col"] = true; break;
+        case M_PMC: ret["eff7_hwmc"] = true; break;
+        case M_PHR: ret["eff7_512"] = true; break;
+        case M_P384: ret["overscan"] = true; break;
+        case M_PROFIHR:
+            ret["profi_hires"] = true;
+            ret["framebuffer"] = "608x288";
+            ret["raster"] = "312 lines x 224 T (69888 T frame)";
+            break;
+        case M_SPRINTER:
+            ret["framebuffer"] = "736x288";
+            ret["raster"] = "320 or 312 lines x 224 T (71680 / 69888 T frame), 4 pixels per T";
+            ret["sprinter_modes"] = "per 8x8 square from the video RAM mode table: GET /state/sprinter/video (the map), "
+                                    "/state/sprinter (video summary)";
+            break;
+        default: break;
+    }
     return ret;
 }
 

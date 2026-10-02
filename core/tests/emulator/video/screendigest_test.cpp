@@ -132,3 +132,22 @@ TEST_F(ScreenDigest_Test, MixValue_XorsThenMultipliesByPrime)
     constexpr uint64_t kDigest = 0x1122334455667788ull;
     EXPECT_EQ(ScreenDigest::MixValue(kDigest, 0xFE), (kDigest ^ 0xFEull) * ScreenDigest::kPrime);
 }
+
+// The query every interface parses (ScreenDigestCompute::QueryFromStrings)
+TEST(ScreenDigestQuery_Test, ParsesEveryParameter)
+{
+    ScreenDigestQuery q;
+    std::string error;
+    ASSERT_TRUE(ScreenDigestCompute::QueryFromStrings("active", "", "", "", "", q, error)) << error;
+    EXPECT_TRUE(q.active);
+    EXPECT_TRUE(q.includeBorder);
+    ASSERT_TRUE(ScreenDigestCompute::QueryFromStrings("", "5,7", "", "", "false", q, error)) << error;
+    EXPECT_EQ(q.banks.size(), 2u);
+    EXPECT_FALSE(q.includeBorder);
+    ASSERT_TRUE(ScreenDigestCompute::QueryFromStrings("", "", "0x4000", "$57FF", "", q, error)) << error;
+    EXPECT_TRUE(q.range);
+    EXPECT_EQ(q.end, 0x57FF);
+    EXPECT_FALSE(ScreenDigestCompute::QueryFromStrings("bogus", "", "", "", "", q, error));
+    EXPECT_FALSE(ScreenDigestCompute::QueryFromStrings("", "", "0x5000", "0x4000", "", q, error));
+    EXPECT_FALSE(ScreenDigestCompute::QueryFromStrings("", "x,y", "", "", "", q, error));
+}
