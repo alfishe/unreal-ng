@@ -381,5 +381,10 @@ MediaReply MediaTargets::Apply(EmulatorContext* context, const MediaPlan& plan, 
         reply.result = MediaResult::Fail(MediaError::BadRequest, "no machine");
         return reply;
     }
-    return MediaControl(context).Execute(MediaRequest{"insert", target.slotId, plan.file.path, options});
+    MediaRequest request;
+    request.verb = "insert";
+    request.selector = target.slotId;
+    request.path = plan.file.path;
+    request.options = options;
+    return MediaControl(context).Execute(request);
 }
