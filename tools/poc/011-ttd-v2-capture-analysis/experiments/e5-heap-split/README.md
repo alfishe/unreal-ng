@@ -49,6 +49,32 @@ MB held after one minute of recording (`bm4_heap_*` × frames):
 
 ## Conclusions
 
-1. **Exact-size payloads are a v1 fix of their own, worth more than any v2 step for memory.** Shrinking the compressed output to its size (`shrink_to_fit`, or compressing into a reused scratch buffer and copying the exact bytes) would release 13–85 MB per minute of pieces and up to 22 MB per minute of coverage, roughly halving memory on active content, with no format change. It is not done here: it changes core code and gets its own change with tests.
+1. **Exact-size payloads are a v1 fix of their own, worth more than any v2 step for memory.** Shrinking the compressed output to its size would release 13–85 MB per minute of pieces and up to 22 MB per minute of coverage, roughly halving memory on active content, with no format change. Done as a separate change, see [Follow-up](#follow-up-the-fix).
 2. **After that, the write journal dominates** active content: 30–100 MB per minute, capped by a ring that loses history. That is Phase 4 / 5 territory: [E6](../e6-v1-v2-model/README.md) puts numbers on keeping it compressed.
 3. **The BM-4 split stays in the benchmark.** The parts are allocator-dependent, so `ttd_bench_compare.py` compares them with the heap tolerance. The CI gate keeps only their total, and checks that the parts add up to it.
+
+## Follow-up: the fix
+
+`ttd::Compress` now compresses into a scratch buffer and returns the exact bytes (a per-thread scratch for inputs up to 64 KB, a temporary one above). The page store also gives a slot's payload back when the slot is freed or reused for an all-zero piece. The CI gate asserts that pieces, coverage and port-journal blocks hold no unused allocation.
+
+Checked on the whole benchmark matrix, before and after the change, built from the same commit:
+- 17 base models (the 13 before, plus PLUS2, PLUS2A, ATM450, TS-Conf);
+- 9 workloads, 9 peripheral sets on Pentagon and ZX-Evo, the turbo set: 49 cases.
+
+Every recorded byte is identical: streams, files, compressed pieces, device blobs. Only memory changed:
+
+| Case | Before, MB per minute | After | Saved |
+|---|---|---|---|
+| Pentagon 128, BASIC prompt | 23.7 | 9.8 | 59% |
+| Pentagon 128, game | 193.5 | 100.9 | 48% |
+| 7th Reality | 97.3 | 46.6 | 52% |
+| Across the Edge | 211.9 | 107.3 | 49% |
+| Eye Ache | 196.0 | 116.0 | 41% |
+| ZX-Evo, BASIC prompt | 98.4 | 42.1 | 57% |
+| ATM Turbo 2+ (ATM710) | 90.4 | 32.4 | 64% |
+| +3 | 27.5 | 9.0 | 67% |
+| TS-Conf | 32.8 | 21.5 | 34% |
+| ATM Turbo 2 v4.50 | 109.2 | 92.3 | 15% |
+| 48K | 96.8 | 71.5 | 26% |
+
+Across all 49 cases the saving is 15–68%. It is smallest where the write journal dominates (48K BASIC: 1,800 writes per frame; ATM450). Sprinter is not in the matrix: it refuses to record until its state has a serializer (Sprinter phase S7). ZX-Poly runs four machines as a group, which the harness does not build; the fix is in the shared codec code all machines use.

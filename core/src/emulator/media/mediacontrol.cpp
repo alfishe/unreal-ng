@@ -607,7 +607,10 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
     // One target: no question. Several: the caller names one - except floppy
     // drives, which are interchangeable: the first empty one (an occupied
     // drive is replaced only when every drive is taken, drive A first)
-    const MediaTarget& chosen = plan.targets.front();
+    // (the plan's order is fixed whatever the slots hold: the empty one is looked for here)
+    const auto emptyFirst = std::find_if(plan.targets.begin(), plan.targets.end(),
+                                         [](const MediaTarget& t) { return t.occupiedBy.empty(); });
+    const MediaTarget& chosen = emptyFirst != plan.targets.end() ? *emptyFirst : plan.targets.front();
     if (plan.targets.size() > 1 && chosen.as != FileKind::Floppy)
     {
         const size_t slash = path.find_last_of("/\\");

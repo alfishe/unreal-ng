@@ -6,6 +6,16 @@ Step notes for the [roadmap](README.md): how to get from
 shippable on its own: master builds, all tests pass, and TTD works after every
 step. Until 2026-10-01 the steps were numbered V0…V6 ([README §5](README.md#5-former-step-names)).
 
+> **Note (2026-10-02).** From Phase 1 on, the step notes below describe the
+> plan before 2026-10-02, when v2 was to change v1 in place. They are kept as
+> history. v2 is now a new engine next to v1
+> ([engine-approach-and-naming.md](engine-approach-and-naming.md)); the current
+> phases and steps are in [README §2](README.md#2-phases), the mapping from the
+> step names used here to the current ones in
+> [README §5](README.md#5-former-step-names), and the decisions that override
+> these notes in [engine-decisions.md](engine-decisions.md). Phase 0 below is
+> current.
+
 ---
 
 ## 1. The question: merge the branches first, or TTD v2 first?
@@ -83,7 +93,8 @@ tests that would catch regressions.
   after resume (B1), stale write journal after load (B2), empty-journal find-last
   (B3), non-atomic failed load (B5), unbounded sizes in the journal/coverage
   loaders. **Done** in `a2d265df` + `86813dcb` (current-state §10). B4 (turbo
-  timestamps) was confirmed on the way and stays planned in Phase 3.
+  timestamps) was confirmed on the way and **fixed 2026-09-28**: TTD time
+  counts T-states at the model's top clock (current-state §10, B4).
 - **Recommended later** (write-journal follow-ups; none blocks Phase 1):
   - *Journal coverage window* (Phase 5) instead of the all-or-nothing "gapless"
     flag.
@@ -176,8 +187,9 @@ region, GS overlap resolution.
 
 #### Phase 0, Step 4 — Checkpoints inside a frame (dropped)
 
-**Not needed** (Phase 0, Step 2 measured 2.5–3.5 ms p99 on the heaviest turbo configurations
-over 10-minute sessions; [v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
+**Not needed** (Phase 0, Step 2 measured seek p99 ≤ 3.8 ms on every configuration of the
+full matrix, and 2.51 / 3.46 ms on the two heaviest turbo configurations over 10-minute
+sessions; [v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
 Only if Phase 0, Step 2 shows seek p99 above 5 ms on a turbo or heavy configuration
 (requirements PR-5). Adds extra checkpoints at fixed T-state intervals inside
 long frames, so a seek replays at most one interval. Skipped otherwise.
@@ -194,7 +206,7 @@ Technical design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md)
 - **Step 3 — Delta base for changed pieces only.** `_prevPageCache` refreshed
   only for dirty pieces, rebuilt explicitly on seek / resume.
 - **Step 4 — Copy-on-write page reference table.** The reference table in
-  copy-on-write blocks of 16 pages.
+  copy-on-write blocks of 16 pages (8 pages since D2, measured in E3).
 - **Step 5 — Device memory as regions.** General Sound RAM and the lightweight
   upload store, MoonSound wave memory, NeoGS memory, and the device EEPROMs:
   the ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 EEPROM, the

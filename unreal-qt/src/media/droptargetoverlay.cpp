@@ -30,11 +30,6 @@ namespace
     constexpr int kHeader = 52;
     constexpr int kFooter = 34;
 
-    QString FileNameOf(const std::string& path)
-    {
-        return QFileInfo(QString::fromStdString(path)).fileName();
-    }
-
     /// A rounded badge ("AUTOSTART") at `x`, centred on `y`; returns its width
     qreal Badge(QPainter& p, qreal x, qreal y, const QString& text, const QColor& color, qreal scale)
     {
@@ -271,8 +266,8 @@ void DropTargetOverlay::paintEvent(QPaintEvent*)
         p.setPen(kSubtle);
         p.drawText(QRectF(tile.left() + 7 * scale, textTop + 34 * scale, textWidth, 15 * scale), Qt::AlignCenter,
                    QString::fromStdString(target.slotId));
-        const QString holds = target.occupiedBy.empty() ? tr("empty") : tr("replaces %1").arg(FileNameOf(target.occupiedBy));
-        p.setPen(target.occupiedBy.empty() ? QColor(140, 220, 150) : QColor(235, 235, 235));
+        const QString holds = target.occupiedBy.empty() ? tr("empty") : tr("occupied");
+        p.setPen(target.occupiedBy.empty() ? QColor(140, 220, 150) : QColor(255, 165, 40));
         p.drawText(QRectF(tile.left() + 7 * scale, textTop + 49 * scale, textWidth, 15 * scale), Qt::AlignCenter,
                    QFontMetricsF(small).elidedText(holds, Qt::ElideMiddle, textWidth));
 

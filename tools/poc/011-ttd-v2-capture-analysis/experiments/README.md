@@ -19,7 +19,7 @@ They share the input data and two small modules in [`common/`](common/).
 | [E3 — Reference blocks](e3-reference-blocks/README.md) | Block size of the copy-on-write reference table; one or two levels? | 8-page blocks; table bytes 0.21 of v1 (ZX-Evo: 4,096 → 520 B per frame). Two levels are needed for idle device memory (PR-10) |
 | [E4 — Restore differences](e4-restore-differences/README.md) | What does restoring only differing pieces save on a seek? | ZX-Evo memory restore from ~760 to ~145 µs. Most of a full restore writes zeros into untouched memory |
 | [E5 — Heap split](e5-heap-split/README.md) | Where does v1's recording memory go? | Mostly unused allocation: every stored piece holds ~4 KB of heap whatever it compressed to (`ZSTD_compressBound`). Then the write journal |
-| [E6 — v1 / v2 data model](e6-v1-v2-model/README.md) | How much memory and file will a recording take with v2, on real use, and why? | Memory 3–14× smaller. The model matches measured v1 within 0.6% (ZX-Evo 2%). The write journal becomes the largest stream; idle cards cost 2 MB per minute |
+| [E6 — v1 / v2 data model](e6-v1-v2-model/README.md) | How much memory and file will a recording take with v2, on real use, and why? | Memory 3–16× smaller. The model matches measured v1 within 0.6% (ZX-Evo 2%). The write journal becomes the largest stream; idle cards still cost 0.8–0.9 MB per minute |
 
 ## What changes in the design
 

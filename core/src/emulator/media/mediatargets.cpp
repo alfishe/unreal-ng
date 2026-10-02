@@ -58,16 +58,16 @@ namespace
         }
     }
 
-    /// The chooser's order within a kind: an empty slot first, then the slot the
-    /// machine boots from or calls primary, an add-on's slot last
+    /// The chooser's order within a kind: the slot the machine boots from or calls
+    /// primary first, an add-on's slot last. Whether a slot is occupied does not
+    /// matter: the tiles keep their place while the media change
     int Rank(const SlotInfo& info)
     {
-        const int occupied = info.present || info.pending ? 10 : 0;
         if (HasTag(info, "primary") || HasTag(info, "boot"))
-            return occupied;
+            return 0;
         if (HasTag(info, "addon"))
-            return occupied + 2;
-        return occupied + 1;
+            return 2;
+        return 1;
     }
 
     std::string NoSlotReason(const FileClass& file, const std::vector<SlotInfo>& slots)
