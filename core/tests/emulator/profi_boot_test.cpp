@@ -9,11 +9,14 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <iostream>
 
 #include "3rdparty/lodepng/lodepng.h"
@@ -48,6 +51,31 @@ protected:
             const std::string id = _emulator->GetId();
             _emulator.reset();
             _manager->RemoveEmulator(id);
+        }
+    }
+
+    /// Tap keys on the ZX matrix: a comma list where one character is that key, ENT is Enter and Cn is Caps Shift + n
+    /// (Cn with 6 / 7 = cursor down / up). Each key is held 6 frames and released for 12
+    void TapKeys(const std::string& keys)
+    {
+        Keyboard* keyboard = _emulator->GetContext()->pKeyboard;
+        std::stringstream list(keys);
+        std::string token;
+        while (std::getline(list, token, ','))
+        {
+            std::vector<ZXKeysEnum> held;
+            if (token == "ENT")
+                held.push_back(ZXKEY_ENTER);
+            else if (token.size() == 2 && token[0] == 'C')
+                held = {ZXKEY_CAPS_SHIFT, static_cast<ZXKeysEnum>(token[1])};
+            else if (token.size() == 1)
+                held.push_back(static_cast<ZXKeysEnum>(token[0]));
+            for (ZXKeysEnum k : held)
+                keyboard->PressKey(k);
+            _emulator->RunNFrames(6, true);
+            for (ZXKeysEnum k : held)
+                keyboard->ReleaseKey(k);
+            _emulator->RunNFrames(12, true);
         }
     }
 
@@ -210,4 +238,59 @@ TEST_F(ProfiBoot_Test, DISABLED_ProbeBootScreen)
               << " p7FFD=" << std::hex << int(context->emulatorState.p7FFD) << " pDFFD=" << int(context->emulatorState.pDFFD)
               << std::dec << "\n";
     lodepng_encode32_file("scratch/profi/boot.png", fb.memoryBuffer, fb.width, fb.height);
+}
+
+/// @brief The BIOS menu entries start what they name (cursor down = Caps Shift + 6, Enter). Slower than 50 ms on
+///        purpose: each one boots the real BIOS to its menu first
+TEST_F(ProfiBoot_Test, MenuEntriesStartWhatTheyName)
+{
+    // text = nullptr: the screen uses its own font, so the check is the ROM page instead
+    struct Entry { const char* keys; const char* text; uint8_t romPage; const char* what; };
+    const Entry entries[] = {
+        {"C6,ENT",          "TR-DOS Ver 6.08", 3, "TR-DOS 48K: the profi.rom TR-DOS at its prompt"},
+        {"C6,C6,C6,ENT",    "1982 Sinclair",   3, "Sinclair 48: 48 BASIC"},
+        {"C6,C6,C6,C6,ENT", nullptr,           2, "Sinclair 128: the 128 page of profi.rom (STS / Power of Sound menu)"},
+    };
+    for (const Entry& e : entries)
+    {
+        SCOPED_TRACE(e.what);
+        _emulator->Reset(true);
+        EmulatorContext* context = _emulator->GetContext();
+        _emulator->EnableTurboMode();
+        _emulator->RunNFrames(600, true);   // the BIOS menu (BiosReachesMainMenuWithoutDisk)
+        TapKeys(e.keys);
+        auto shown = [&] {
+            return DecodeRows(context, (context->emulatorState.p7FFD & 0x08) ? 7 : 5, 3, 0x3D00, 0, 24);
+        };
+        if (e.text)
+        {
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return shown().find(e.text) != std::string::npos; }, 400);
+            EXPECT_NE(shown().find(e.text), std::string::npos) << shown();
+        }
+        else
+        {
+            _emulator->RunNFrames(300, true);
+            EXPECT_EQ(context->pMemory->GetROMPage(), e.romPage);
+            EXPECT_EQ(context->emulatorState.flags & CF_TRDOS, 0) << "the SYS session is over";
+        }
+        EXPECT_EQ(context->emulatorState.pDFFD & 0x80, 0) << "hi-res is off once the BIOS hands over";
+    }
+}
+
+/// @brief Development probe (disabled): reach the BIOS menu, tap PROFI_PROBE_KEYS (see TapKeys), print the standard
+///        screen and dump the framebuffer to scratch/profi/keys.png
+TEST_F(ProfiBoot_Test, DISABLED_ProbeMenuKeys)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(600, true);
+    const char* keys = std::getenv("PROFI_PROBE_KEYS");
+    TapKeys(keys ? keys : "");
+    _emulator->RunNFrames(300, true);
+    std::cout << "pc=" << std::hex << context->pCore->GetZ80()->pc << " p7FFD=" << int(context->emulatorState.p7FFD)
+              << " pDFFD=" << int(context->emulatorState.pDFFD) << " rom=" << int(context->pMemory->GetROMPage())
+              << " flags=" << int(context->emulatorState.flags) << std::dec << "\n";
+    std::cout << DecodeRows(context, (context->emulatorState.p7FFD & 0x08) ? 7 : 5, 3, 0x3D00, 0, 24);
+    FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+    lodepng_encode32_file("scratch/profi/keys.png", fb.memoryBuffer, fb.width, fb.height);
 }

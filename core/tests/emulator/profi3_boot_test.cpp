@@ -9,6 +9,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include "3rdparty/lodepng/lodepng.h"
@@ -48,6 +50,31 @@ protected:
             const std::string id = _emulator->GetId();
             _emulator.reset();
             _manager->RemoveEmulator(id);
+        }
+    }
+
+    /// Tap keys on the ZX matrix: a comma list where one character is that key, ENT is Enter and Cn is Caps Shift + n
+    /// (Cn with 6 / 7 = cursor down / up). Each key is held 6 frames and released for 12
+    void TapKeys(const std::string& keys)
+    {
+        Keyboard* keyboard = _emulator->GetContext()->pKeyboard;
+        std::stringstream list(keys);
+        std::string token;
+        while (std::getline(list, token, ','))
+        {
+            std::vector<ZXKeysEnum> held;
+            if (token == "ENT")
+                held.push_back(ZXKEY_ENTER);
+            else if (token.size() == 2 && token[0] == 'C')
+                held = {ZXKEY_CAPS_SHIFT, static_cast<ZXKeysEnum>(token[1])};
+            else if (token.size() == 1)
+                held.push_back(static_cast<ZXKeysEnum>(token[0]));
+            for (ZXKeysEnum k : held)
+                keyboard->PressKey(k);
+            _emulator->RunNFrames(6, true);
+            for (ZXKeysEnum k : held)
+                keyboard->ReleaseKey(k);
+            _emulator->RunNFrames(12, true);
         }
     }
 
@@ -156,6 +183,41 @@ TEST_F(Profi3Boot_Test, KramisV03ReachesItsMenu)
     EXPECT_TRUE(KramisMenuOnScreen(context)) << "the V0.3 BIOS menu did not appear";
 }
 
+/// @brief The menu's "Sinclair" entry starts the 128 machine: its own boot menu (the Pentagon 128 editor) appears
+TEST_F(Profi3Boot_Test, KramisMenuSinclairStartsThe128Menu)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
+    ASSERT_TRUE(KramisMenuOnScreen(context));
+    _emulator->RunNFrames(25, true);
+
+    TapKeys("C6,ENT");                  // second entry: Sinclair
+    auto shown = [&] { return DecodeScreen(context, (context->emulatorState.p7FFD & 0x08) ? 7 : 5); };
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return shown().find("48 BASIC") != std::string::npos; }, 300);
+    const std::string screen = shown();
+    EXPECT_NE(screen.find("Tape Loader"), std::string::npos) << screen;
+    EXPECT_NE(screen.find("48 BASIC"), std::string::npos) << screen;
+    EXPECT_EQ(context->emulatorState.flags & CF_TRDOS, 0) << "the SYS session is over";
+}
+
+/// @brief The menu's "TR-DOS" entry starts the board's TR-DOS 5.03 at its A> prompt
+TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->EnableTurboMode();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
+    ASSERT_TRUE(KramisMenuOnScreen(context));
+    _emulator->RunNFrames(25, true);
+
+    TapKeys("C6,C6,C6,C6,ENT");         // fifth entry: TR-DOS
+    EmulatorTestHelper::RunUntil(_emulator.get(),
+        [&] { return DecodeScreen(context, 5).find("A>") != std::string::npos; }, 400);
+    const std::string screen = DecodeScreen(context, 5);
+    EXPECT_NE(screen.find("TR-DOS Ver 5.03"), std::string::npos) << screen;
+    EXPECT_NE(screen.find("A>"), std::string::npos) << screen;
+}
+
 /// @brief Development probe (disabled): boot the Kramis BIOS and print what it leaves on the screen
 TEST_F(Profi3Boot_Test, DISABLED_ProbeKramisBios)
 {
@@ -179,4 +241,29 @@ TEST_F(Profi3Boot_Test, DISABLED_ProbeKramisBios)
     }
     FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
     lodepng_encode32_file("scratch/profi3-probe.png", fb.memoryBuffer, fb.width, fb.height);
+}
+
+/// @brief Development probe (disabled): boot to the menu, tap the keys in PROFI3_PROBE_KEYS (comma list: one
+///        character = that key, ENT = Enter, Cn = Caps Shift + n), then dump the screen to scratch/profi3-keys.png
+TEST_F(Profi3Boot_Test, DISABLED_ProbeMenuKeys)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    if (const char* rom = std::getenv("PROFI3_PROBE_ROM"))
+    {
+        ASSERT_TRUE(_emulator->LoadROM(rom));
+        _emulator->Reset(true);
+    }
+    _emulator->EnableTurboMode();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
+    _emulator->RunNFrames(25, true);
+
+    const char* keys = std::getenv("PROFI3_PROBE_KEYS");
+    TapKeys(keys ? keys : "");
+    _emulator->RunNFrames(250, true);
+    std::cout << "pc=" << std::hex << context->pCore->GetZ80()->pc << " p7FFD=" << int(context->emulatorState.p7FFD)
+              << " pDFFD=" << int(context->emulatorState.pDFFD) << " rom=" << int(context->pMemory->GetROMPage())
+              << " flags=" << int(context->emulatorState.flags) << std::dec << "\n";
+    std::cout << DecodeScreen(context, (context->emulatorState.p7FFD & 0x08) ? 7 : 5);
+    FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+    lodepng_encode32_file("scratch/profi3-keys.png", fb.memoryBuffer, fb.width, fb.height);
 }
