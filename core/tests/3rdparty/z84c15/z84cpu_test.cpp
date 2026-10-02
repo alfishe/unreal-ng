@@ -243,8 +243,9 @@ TEST(Z84Cpu_Test, ExternalWaitFromTheCallback)
     EXPECT_EQ(f.bus.events[2].t - f.bus.events[1].t, 2u + 3u);
 }
 
-// A halted CPU runs M1 cycles at PC through the read callback, 4 T each, R ticking
-TEST(Z84Cpu_Test, HaltedCpuReadsItsM1AtPc)
+// A halted CPU runs M1 cycles at the byte after the HALT through the read callback, 4 T each, R ticking; PC stays
+// on the HALT
+TEST(Z84Cpu_Test, HaltedCpuFetchesTheByteAfterTheHalt)
 {
     Z84CpuFixture f;
     f.bus.Load(0x8000, {0x76});  // HALT
@@ -259,7 +260,7 @@ TEST(Z84Cpu_Test, HaltedCpuReadsItsM1AtPc)
     for (const Z84Test::Event& e : f.bus.events)
     {
         EXPECT_EQ(e.type, 'M');
-        EXPECT_EQ(e.addr, 0x8000);
+        EXPECT_EQ(e.addr, 0x8001);
     }
     EXPECT_EQ((Z84CpuGetReg(f.cpu, Z84CpuRegR) - r0) & 0x7F, 3);
 }

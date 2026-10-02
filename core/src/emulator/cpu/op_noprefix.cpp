@@ -712,7 +712,7 @@ Z80OPCODE op_76(Z80 *cpu) { // halt
    if (!cpu->halted)
        cpu->haltpos = cpu->t;
 
-   cpu->pc--;  // Repeating execution until RESET, INT or NMI
+   cpu->pc--;  // PC stays on the HALT until RESET, INT or NMI; the idle fetches go to the byte after it (Z80::HaltedM1)
    cpu->halted = 1;
    cpu->halt_cycle = 0;
 }

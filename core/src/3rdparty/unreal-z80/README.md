@@ -21,7 +21,13 @@ vendored z80ex.
 
 ## Local patches
 
-None. Update by copying `z80lib/include/z80cpu.h` and `z80lib/src/*` from a
+- The halted CPU's quantum is reported to the contention hook at the byte after the HALT, not at the HALT
+  (`Z80HaltT` in `opcodes-callback.cpp` / `opcodes-paged.cpp`, the `Z80CpuAccessM1` comment in `z80cpu.h`, the
+  `z80step.inc` comment): the same change as the unreal-z80 branch `halt-fetch`
+  (`docs/inprogress/2026-10-02-halt-fetch-address`). The General Sound host installs no hook, so nothing it does
+  changes. Drop this entry at the next resync.
+
+Update by copying `z80lib/include/z80cpu.h` and `z80lib/src/*` from a
 newer unreal-z80 commit and noting the commit and version here.
 
 ## Build notes

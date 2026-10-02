@@ -111,14 +111,16 @@ static Z84INLINE void Z84PoutT(Z84Regs*& rf, Z84CPU* cpu, uint16_t port, uint8_t
     Z84WaitIoRT(rf, cpu, port, tact);
 }
 
-// HALT quantum (z84step.inc): one M1 cycle at PC (the HALT opcode), read
-// through the host like any opcode fetch - the board sees these cycles and
-// may stretch them - with the chip's M1 waits; 4 T plus waits.
+// HALT quantum (z84step.inc): one M1 cycle at the byte after the HALT (the
+// Z80's PC points past it; the engine keeps PC on the HALT), read through the
+// host like any opcode fetch - the board sees these cycles and may stretch
+// them - with the chip's M1 waits, which see the byte fetched; 4 T plus waits.
+// unreal-ng docs/inprogress/2026-10-02-halt-fetch-address
 static Z84INLINE void Z84HaltT(Z84Regs*& rf, Z84CPU* cpu, int& tact)
 {
-    const uint16_t pc = rf->pc;
-    const uint8_t opcode = Z84RdKindT(rf, cpu, pc, Z84CpuAccessM1, tact);
-    Z84WaitM1RT(rf, cpu, pc, opcode, tact);
+    const uint16_t fetch = static_cast<uint16_t>(rf->pc + 1);
+    const uint8_t opcode = Z84RdKindT(rf, cpu, fetch, Z84CpuAccessM1, tact);
+    Z84WaitM1RT(rf, cpu, fetch, opcode, tact);
     tact += 1;
 }
 
