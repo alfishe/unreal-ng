@@ -8,6 +8,7 @@
 #include "emulator/io/ide/ata/atadisk.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "debugger/ttd/timetravelmanager.h"
 
@@ -174,14 +175,16 @@ void IdeController::Reset()
 
 bool IdeController::SchemeFits(IDE_SCHEME scheme, MEM_MODEL model)
 {
-    const bool profi = model == MM_PROFI;
+    // Only the v5 board decodes the Profi IDE (its extended port map); the v3 board has none (ProfiBoard)
+    const bool profi = IsProfiModel(model);
+    const bool profiIde = ProfiBoard::For(model).extendedPorts;
     const bool scorpion = model == MM_SCORP || model == MM_PROFSCORP;
     const bool atm = model == MM_ATM710 || model == MM_ATM450 || model == MM_ATM3;
     const bool sprinter = model == MM_SPRINTER;
     switch (scheme)
     {
         case IDE_NONE: return true;
-        case IDE_PROFI: return profi;
+        case IDE_PROFI: return profiIde;
         case IDE_SMUC: return scorpion;
         case IDE_ATM: return atm;
         case IDE_SPRINTER: return sprinter;

@@ -21,6 +21,7 @@ class GeneralSoundCard;
 class Joystick;
 class Keyboard;
 class Mouse;
+class PortDecoder;
 class MouseManager;
 class VirtualNetwork;
 
@@ -36,6 +37,7 @@ struct TTDInputDevices
     Joystick* joystick = nullptr;
     GeneralSoundCard* generalSound = nullptr;
     VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset)
+    PortDecoder* portDecoder = nullptr;  ///< the machine's own switches (FrontPanelSwitch)
 };
 
 /// @brief The context's input devices at this moment. Look them up per event:

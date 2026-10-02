@@ -29,6 +29,8 @@ public:
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
+    /// The TURBO Switch item follows the machine (CLI / WebAPI / TTD replay flip it too)
+    void updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator);
 
     // Update machine model selection based on active emulator's model
     void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
@@ -116,6 +118,10 @@ signals:
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
     void contentionToggled(bool enabled);
+    /// Machine > TURBO Switch: the Profi front-panel switch
+    void frontPanelTurboToggled(bool on);
+    /// Machine > CP/M Switch: the Profi v5 front-panel switch
+    void frontPanelCpmToggled(bool on);
     /// Machine > Host Keyboard: "auto" | "matrix" | "ps2" | "both"
     void hostKeyboardRouteRequested(const QString& route);
     /// The Machine menu opens: the owner refreshes the route check marks
@@ -271,6 +277,8 @@ private:
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
     QAction* _contentionAction = nullptr;
+    QAction* _frontPanelTurboAction = nullptr;
+    QAction* _frontPanelCpmAction = nullptr;
     QMenu* _hostKeyboardMenu = nullptr;
     QActionGroup* _hostKeyboardGroup = nullptr;
 

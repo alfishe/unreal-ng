@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -241,7 +242,11 @@ TEST_F(INTTiming_Test, INTToFirstPixel_MatchesReferencePerModel)
         // Pentagon: 71635 -> 17988T is verified on "Across the Edge"; 71634 (17989T,
         // the UnrealSpeccy figure) breaks it. References span 17985..17989
         {MM_PENTAGON,    71680, 224, M_PENTAGON128K, 17988, "Pentagon, demo-verified"},
-        {MM_PROFI,       69888, 224, M_PROFI,        12580, "UnrealSpeccy PRESET.PROFI"},
+        // Profi: the board's sync PROM, decoded (docs/inprogress/2026-10-01-profi-v3-v5 cross-check section 4).
+        // v5: D2D4A7C8 of a Kondor 5.04 with the DD53 reload fix; v3: 0A1DFAFD, a v3.2 board's original PROM
+        // (= UnrealSpeccy PRESET.PROFI)
+        {MM_PROFI,       69888, 224, M_PROFI,        14368, "Profi v5 sync PROM D2D4A7C8"},
+        {MM_PROFI3,      69888, 224, M_PROFI,        12580, "Profi v3 sync PROM 0A1DFAFD"},
         {MM_ATM710,      69888, 224, M_ZX48,         14395, "UnrealSpeccy PRESET.ATM1_2_3.5MHz"},
     };
     for (const Case& c : cases)
@@ -259,6 +264,59 @@ TEST_F(INTTiming_Test, INTToFirstPixel_MatchesReferencePerModel)
         const uint32_t intFiresAt = config.intstart + 1;  // Pentagon fires at the end of the previous frame
         EXPECT_EQ((_screen->GetPaperStartTstate() + config.frame - intFiresAt) % config.frame, c.intToPaper);
     }
+}
+
+/// Every [PROFI] SyncProm row on both boards: the frame, the line and the INT-to-paper distance through the
+/// production raster, and the INT length. Values from tools/machines/profi/syncprom (profisync-output.txt)
+TEST_F(INTTiming_Test, ProfiSyncProm_EveryRowOnBothBoards)
+{
+    struct Case { MEM_MODEL model; ProfiSyncProm prom; uint32_t frame; uint32_t intToPaper; uint32_t intLength; };
+    const Case cases[] = {
+        {MM_PROFI,  ProfiSyncProm::Default,  69888, 14368, 28},   // v5's own: v503
+        {MM_PROFI3, ProfiSyncProm::Default,  69888, 12580, 28},   // v3's own: 0a1d
+        {MM_PROFI,  ProfiSyncProm::Vr0a1d,   69888, 12580, 28},
+        {MM_PROFI3, ProfiSyncProm::Samx6,    69888, 12592, 32},
+        {MM_PROFI3, ProfiSyncProm::Fb0579b6, 71680, 48,    32},   // a 320-line frame, INT in the line before paper
+        {MM_PROFI3, ProfiSyncProm::V503,     69888, 14368, 28},
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(std::string(ProfiSyncPromName(c.prom)) + (c.model == MM_PROFI3 ? " on v3" : " on v5"));
+        CONFIG& config = _context->config;
+        config.mem_model = c.model;
+        config.profi_sync_prom = static_cast<uint8_t>(c.prom);
+        config.intstart = 0;
+        config.intlen = 0;
+        Config(_context).ApplyModelTimingDefaults(config, true);
+        _screen->SetVideoMode(M_PROFI);
+
+        EXPECT_EQ(config.frame, c.frame);
+        EXPECT_EQ(config.t_line, 224u);
+        EXPECT_EQ(config.intlen, c.intLength);
+        const uint32_t intFiresAt = config.intstart + 1;
+        EXPECT_EQ((_screen->GetPaperStartTstate() + config.frame - intFiresAt) % config.frame, c.intToPaper);
+    }
+    _context->config.profi_sync_prom = 0;
+}
+
+/// [PROFI] SyncProm= parsing: every name, case-insensitive, empty = the board's own; an unknown name is refused
+TEST_F(INTTiming_Test, ProfiSyncProm_Parse)
+{
+    ProfiSyncProm prom = ProfiSyncProm::Samx6;
+    EXPECT_TRUE(ParseProfiSyncProm("", prom));
+    EXPECT_EQ(prom, ProfiSyncProm::Default);
+    EXPECT_TRUE(ParseProfiSyncProm("FB0579B6", prom));
+    EXPECT_EQ(prom, ProfiSyncProm::Fb0579b6);
+    for (ProfiSyncProm p : {ProfiSyncProm::Vr0a1d, ProfiSyncProm::Samx6, ProfiSyncProm::Fb0579b6, ProfiSyncProm::V503})
+    {
+        ProfiSyncProm parsed = ProfiSyncProm::Default;
+        EXPECT_TRUE(ParseProfiSyncProm(ProfiSyncPromName(p), parsed));
+        EXPECT_EQ(parsed, p);
+    }
+    prom = ProfiSyncProm::Samx6;
+    EXPECT_FALSE(ParseProfiSyncProm("samx12", prom));   // not a checked row (its INT decodes to 4 T)
+    EXPECT_EQ(prom, ProfiSyncProm::Samx6);
+    EXPECT_FALSE(ParseProfiSyncProm("v50", prom));      // a prefix is not a name
 }
 
 /// =========== Cross-model consistency tests ===========

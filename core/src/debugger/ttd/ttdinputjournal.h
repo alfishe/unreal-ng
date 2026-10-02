@@ -98,12 +98,14 @@ enum class TTDInputKind : uint8_t
     NetEvent,           ///< host network event for one virtual-network socket (netIndex -> TTDNetInput + payload)
     NetLinkReset,       ///< every host connection of the virtual network is gone (seek / resume from the past)
 
-    Joystick            ///< Kempston joystick state write (buttonMask = the whole state byte, active high);
+    Joystick,           ///< Kempston joystick state write (buttonMask = the whole state byte, active high);
                         ///< automation input. A host key bound to a button travels as PcKey instead
+
+    FrontPanelSwitch    ///< a front-panel switch operated (key = FrontPanelSwitch, pressed = on), e.g. the Profi's TURBO
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::Joystick;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::FrontPanelSwitch;
 
 struct TTDInputEvent
 {

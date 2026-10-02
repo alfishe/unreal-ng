@@ -46,7 +46,7 @@ constexpr uint8_t ProfiTagPage(uint8_t tag)
 
 /// endregion </Synthetic memory image tags>
 
-/// @brief Full-machine test fixture for the ZX Profi 1024.
+/// @brief Full-machine test fixture for the ZX Profi, either board (_model = MM_PROFI for v5, MM_PROFI3 for v3).
 ///
 /// Builds a real EmulatorContext with Memory, Keyboard, Screen, WD1793 and the
 /// model's PortDecoder wired by Core::Init(), then loads a synthetic patterned
@@ -162,7 +162,7 @@ protected:
 private:
     bool BuildMachine()
     {
-        if (_model != MM_PROFI)
+        if (!IsProfiModel(_model))
         {
             return false;
         }
@@ -193,6 +193,7 @@ private:
             return false;
 
         CopyRomPath(config.profi_rom_path, _romPath);
+        CopyRomPath(config.profi3_rom_path, _romPath);   // the v3 board reads [ROM] PROFI3
 
         _core = new Core(_context);
         if (!_core->Init())

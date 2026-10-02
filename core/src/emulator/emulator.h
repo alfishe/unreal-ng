@@ -59,6 +59,7 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 /// endregion </Types>
 
 class FloppyDriveSlots;
+enum class FrontPanelSwitch : uint8_t;  // emulator/ports/portdecoder.h
 class TapeSlot;
 
 class Emulator : public ISoftResetSink
@@ -135,6 +136,14 @@ protected:
     std::condition_variable _resumeCV;
     volatile bool _isPaused = false;
     std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
+    // Serializes Stop(): a caller that loses the _isRunning CAS below must still
+    // block until the thread that won it has actually joined, not just signaled.
+    // Without this, IsRunning() goes false (and _asyncThread->join() can still be
+    // in flight) before the emulation thread has left MainLoop::Run() - a second
+    // caller that skips its own Stop() because IsRunning() already reads false
+    // (e.g. EmulatorManager::RemoveEmulatorInstance()) could free Core's Screen /
+    // SoundManager / TimeTravelManager while that thread is still mid-frame.
+    std::mutex _stopMutex;
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
     std::atomic<bool> _romReloadPending{false};  ///< RequestRomReload: reread the ROM at the next Reset
@@ -294,6 +303,13 @@ public:
     /// pulses NMI. Every other model falls back to a plain NMI. Safe to call while
     /// running.
     void RequestMNI();
+
+    /// A front-panel switch (FrontPanelSwitch, e.g. the Profi's TURBO). Set operates it as an outside input: through
+    /// the TTD input journal (journaled while recording, refused while a recording replays), applied on the
+    /// emulation thread. Returns false when the machine has no such switch or the input was refused. Get answers
+    /// -1 when the machine has no such switch, else 0 / 1
+    bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on);
+    int GetFrontPanelSwitch(FrontPanelSwitch sw) const;
 
     void Start();
     void StartAsync();

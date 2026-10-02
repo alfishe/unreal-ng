@@ -324,6 +324,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
+    connect(_menuManager, &MenuManager::frontPanelTurboToggled, this, &MainWindow::handleFrontPanelTurboToggled);
+    connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
         Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
         Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
@@ -3102,6 +3104,20 @@ void MainWindow::handleContentionToggled(bool enabled)
             qDebug() << "Memory contention switch refused (TTD timeline bound)";
     }
     _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
+}
+
+void MainWindow::handleFrontPanelTurboToggled(bool on)
+{
+    if (_emulator)
+        _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, on);
+    _menuManager->updateMenuStates(_emulator);  // the menu shows what the machine kept
+}
+
+void MainWindow::handleFrontPanelCpmToggled(bool on)
+{
+    if (_emulator)
+        _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, on);
+    _menuManager->updateMenuStates(_emulator);
 }
 
 void MainWindow::handleAutostartDisksToggled(bool enabled)

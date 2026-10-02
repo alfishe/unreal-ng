@@ -259,6 +259,7 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_ATM3:
             return DetectModeATM3(state);
         case MM_PROFI:
+        case MM_PROFI3:
             return DetectModeProfi(state);
         case MM_SCORP:
         case MM_PROFSCORP:

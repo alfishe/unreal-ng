@@ -21,6 +21,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdinputapply.h"
 #include "emulator/notifications.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/fdc/diskautostart.h"
@@ -1011,6 +1012,29 @@ void Emulator::RequestNMI()
         Resume(false);
 }
 
+bool Emulator::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
+{
+    PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    if (!decoder || !decoder->HasFrontPanelSwitch(sw))
+        return false;
+
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::FrontPanelSwitch;
+    ev.key = static_cast<uint8_t>(sw);
+    ev.pressed = on;
+    if (_context->pTimeTravelManager)
+        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    return ttd::ApplyInputEvent(ev, ttd::InputDevicesOf(_context));
+}
+
+int Emulator::GetFrontPanelSwitch(FrontPanelSwitch sw) const
+{
+    const PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
+    if (!decoder || !decoder->HasFrontPanelSwitch(sw))
+        return -1;
+    return decoder->GetFrontPanelSwitch(sw) ? 1 : 0;
+}
+
 void Emulator::RequestMNI()
 {
     bool wasRunning = _isRunning && !_isPaused;
@@ -1055,7 +1079,7 @@ void Emulator::RequestMNI()
         state.scorpionDosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
-    else if (config.mem_model == MM_PROFI)
+    else if (IsProfiModel(config.mem_model))
     {
         // Profi "magic button" (Karabas video.vhd/TOP:1197-1199 `dos_act` set condition,
         // OR-ed with the #3Dxx M1 trap): NMI with DS80=0 raises the same CF_TRDOS latch
@@ -1405,12 +1429,33 @@ bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
 
 void Emulator::Stop()
 {
+    // Every caller blocks here until the emulation thread has actually been
+    // joined, not merely signaled. The old lock-free compare-exchange let a
+    // caller that lost the race return immediately while the winner was still
+    // inside _asyncThread->join() - IsRunning() already read false at that
+    // point, so a concurrent EmulatorManager::RemoveEmulatorInstance() (gated
+    // on IsRunning()) could skip its own Stop() call and run straight into
+    // Release(), freeing Core's Screen / SoundManager / TimeTravelManager
+    // while MainLoop::Run() was still mid-frame on the still-running thread
+    // (observed as a SIGSEGV / pointer-authentication failure in
+    // MainLoop::OnFrameStart() and SoundManager::handleFrameStart(),
+    // 2026-10-02). A thread cannot join itself; guard that instead of
+    // deadlocking if this is ever reached from the emulation thread itself.
+    if (_asyncThread && _asyncThread->get_id() == std::this_thread::get_id())
+    {
+        MLOGERROR("Emulator::Stop() called from the emulation thread itself - ignored");
+        return;
+    }
+
+    std::lock_guard<std::mutex> stopLock(_stopMutex);
+
     // Use atomic compare-exchange to ensure only ONE thread executes stop logic
     // This prevents double-free of _asyncThread when Stop() is called multiple times
     bool expected = true;
     if (!_isRunning.compare_exchange_strong(expected, false, std::memory_order_acq_rel))
     {
-        // Already stopped or another thread is currently stopping - safe to return
+        // Already stopped - whoever won the race already ran the join above
+        // under this same mutex, so the thread is genuinely gone by now.
         return;
     }
 

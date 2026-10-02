@@ -579,6 +579,23 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
         EXPECT_TRUE(Config::IsModelCreatable(*model));
     }
 
+    // Profi v3 (docs/inprogress/2026-10-01-profi-v3-v5): the v5 decoder with the v3 board profile, configs/profi3;
+    // PROFI5 names the v5 board
+    {
+        EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PROFI3));
+        const TMemModel* model = Config::FindModelByShortName("PROFI3");
+        ASSERT_NE(model, nullptr);
+        EXPECT_EQ(model->Model, MM_PROFI3);
+        EXPECT_TRUE(Config::IsModelCreatable(*model));
+        EXPECT_EQ(Config::GetConfigFolderForModel(MM_PROFI3), "profi3");
+        const TMemModel* v5 = Config::FindModelByShortName("PROFI5");
+        ASSERT_NE(v5, nullptr);
+        EXPECT_EQ(v5->Model, MM_PROFI);
+        const TMemModel* profi = Config::FindModelByShortName("PROFI");
+        ASSERT_NE(profi, nullptr);
+        EXPECT_EQ(profi->Model, MM_PROFI) << "PROFI3 must not shadow PROFI (exact-name match)";
+    }
+
     // Models without decoders (no factory case yet)
     for (MEM_MODEL model : {MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
         EXPECT_FALSE(PortDecoder::IsModelSupported(model)) << int(model);

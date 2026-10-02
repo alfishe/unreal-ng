@@ -548,7 +548,7 @@ TEST_F(PortDecoder_PortTag_Test, RomPageRolePerModelLayout)
     _context->config.mem_model = MM_PROFI;
     EXPECT_EQ(rom.GetROMPageRole(0), "SYS/Menu ROM");
     EXPECT_EQ(rom.GetROMPageRole(1), "TR-DOS ROM");
-    EXPECT_EQ(rom.GetROMPageRole(2), "128K Editor + STS Monitor ROM");
+    EXPECT_EQ(rom.GetROMPageRole(2), "128K ROM");
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
 
     // Beyond the curated 4-page layouts and on uncurated models: generic name
