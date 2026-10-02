@@ -353,10 +353,10 @@ TEST(IdeAdapter_Test, NoBoardNoDecode)
 /// exactly (a TTD restore in the middle of anything)
 TEST(IdeAdapter_Test, RandomPortTrafficIsSafe)
 {
-    for (IDE_SCHEME scheme : {IDE_NEMO, IDE_NEMO_A8, IDE_NEMO_DIVIDE, IDE_ATM, IDE_PROFI, IDE_DIVIDE, IDE_SMUC})
+    for (IDE_SCHEME scheme : {IDE_NEMO, IDE_NEMO_A8, IDE_NEMO_DIVIDE, IDE_ATM, IDE_PROFI, IDE_DIVIDE, IDE_SMUC, IDE_SPRINTER})
     {
         const MEM_MODEL model = scheme == IDE_PROFI ? MM_PROFI : scheme == IDE_ATM ? MM_ATM710
-                                : scheme == IDE_SMUC ? MM_PROFSCORP : MM_PENTAGON;
+                                : scheme == IDE_SMUC ? MM_PROFSCORP : scheme == IDE_SPRINTER ? MM_SPRINTER : MM_PENTAGON;
         Board b(scheme, model);
         uint32_t seed = 0x1DE5EEDu + static_cast<uint32_t>(scheme);
         auto next = [&seed] {
@@ -383,7 +383,16 @@ TEST(IdeAdapter_Test, RandomPortTrafficIsSafe)
             gate.dosPorts = (r >> 2) & 1;
             gate.profiExt = (r >> 3) & 1;
             uint8_t value = static_cast<uint8_t>(next());
-            if (scheme == IDE_SMUC)
+            if (scheme == IDE_SPRINTER)
+            {
+                // Port-table codes #20-#2B (sometimes any code), any bus address
+                const uint8_t code = (r & 3) != 0 ? static_cast<uint8_t>(0x20 + (next() % 12)) : static_cast<uint8_t>(next());
+                if ((r >> 5) & 1)
+                    b.adapter->SprinterOut(code, port, value);
+                else
+                    b.adapter->SprinterIn(code, port);
+            }
+            else if (scheme == IDE_SMUC)
             {
                 const uint8_t system = (r >> 4) & 1 ? 0x80 : 0x00;
                 if ((r >> 5) & 1)
@@ -477,3 +486,166 @@ TEST(IdeAdapter_Test, DmaWithoutABoardReadsAFloatingBus)
     EXPECT_EQ(adapter.DmaReadWord(), 0xFFFF);
     adapter.DmaWriteWord(0x1234);  // goes nowhere, does not crash
 }
+
+/// region <Sprinter (tdd-storage §3, test-plan §2.5)>
+
+namespace
+{
+    /// The Sprinter board: the decoder hands over port-table codes #20-#2B and the bus address (A8 picks the half)
+    struct SprinterBoard : Board
+    {
+        MemoryDisk secondary{256};
+
+        SprinterBoard() : Board(IDE_SPRINTER, MM_SPRINTER)
+        {
+            ide->Channel(1).Unit(0)->AttachMedium(secondary, {});
+            for (uint64_t lba = 0; lba < 256; lba++)
+                std::memset(secondary.Data() + lba * 512, static_cast<int>(0x80 | lba), 512);
+        }
+
+        /// A code with A8 = 0 (`#0050`-style ports) or A8 = 1 (`#0150`)
+        uint8_t Read(uint8_t code, bool a8) { return adapter->SprinterIn(code, a8 ? 0x0150 : 0x0050); }
+        void Write(uint8_t code, bool a8, uint8_t value) { adapter->SprinterOut(code, a8 ? 0x0150 : 0x0050, value); }
+        /// A task-file register the BIOS way: written with A8 = 1
+        void Register(uint8_t reg, uint8_t value) { Write(static_cast<uint8_t>(0x20 | reg), true, value); }
+    };
+}  // namespace
+
+/// T-IDE-1: every code x A8 x direction (MAME sprinter.cpp:613-634, :755-774)
+TEST(IdeAdapter_Test, SprinterTruthTable)
+{
+    SprinterBoard b;
+    const uint8_t ready = Status::DRDY | Status::DSC;
+
+    // Task file 1-7: reads answer with A8 = 0 only, writes land with A8 = 1 only
+    EXPECT_EQ(b.Read(0x27, false), ready) << "#0053 / #4053: status";
+    EXPECT_EQ(b.Read(0x27, true), 0xFF) << "a register read with A8 = 1 drives nothing";
+    for (uint8_t reg = SectorCount; reg <= CylinderHigh; reg++)
+    {
+        b.Write(static_cast<uint8_t>(0x20 | reg), false, 0x5A);
+        EXPECT_NE(b.Read(static_cast<uint8_t>(0x20 | reg), false), 0x5A) << "a register write with A8 = 0 is lost, reg " << int(reg);
+        b.Write(static_cast<uint8_t>(0x20 | reg), true, 0x5A);
+        EXPECT_EQ(b.Read(static_cast<uint8_t>(0x20 | reg), false), 0x5A) << "reg " << int(reg);
+        EXPECT_EQ(b.Read(static_cast<uint8_t>(0x20 | reg), true), 0xFF) << "reg " << int(reg);
+    }
+    b.Register(DeviceHead, 0xE0);
+    EXPECT_EQ(b.Read(0x26, false) & 0x5F, 0x40) << "#4052: device / head, LBA bit";
+
+    // #28: alternate status (read, A8 = 0) / device control (write, A8 = 1); #29: drive address floats
+    EXPECT_EQ(b.Read(0x28, false), ready);
+    EXPECT_EQ(b.Read(0x28, true), 0xFF);
+    EXPECT_EQ(b.Read(0x29, false), 0xFF);
+    b.Write(0x28, false, DeviceControl::SRST);
+    EXPECT_EQ(b.Read(0x27, false), ready) << "device control with A8 = 0 is lost";
+    b.Write(0x28, true, DeviceControl::SRST);
+    EXPECT_EQ(b.Read(0x28, false), Status::BSY) << "SRST through #4154";
+    b.Write(0x28, true, 0);
+
+    // Codes outside #20-#2B do nothing; the port-decode path never claims a Sprinter port (the table does)
+    EXPECT_EQ(b.Read(0x2C, false), 0xFF);
+    EXPECT_FALSE(b.Claims(0x0050, b.on));
+    EXPECT_FALSE(b.Claims(0x4053, b.on));
+}
+
+/// T-IDE-2: word order. OUT (#0050),#CD : OUT (#0150),#AB writes the word #ABCD (image bytes CD AB); IN (#0050)
+/// returns the low byte and latches the high byte for IN (#0150)
+TEST(IdeAdapter_Test, SprinterWordOrder)
+{
+    SprinterBoard b;
+    StartWrite([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    for (int i = 0; i < 256; i++)
+    {
+        b.Write(0x20, false, 0xCD);
+        b.Write(0x20, true, 0xAB);
+    }
+    EXPECT_EQ(b.disk.Data()[5 * 512], 0xCD);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 1], 0xAB);
+    EXPECT_FALSE(b.Read(0x27, false) & Status::DRQ) << "256 words: the sector is written";
+
+    std::memcpy(b.disk.Data() + 9 * 512, "\x34\x12\x78\x56", 4);
+    StartRead([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    EXPECT_EQ(b.Read(0x20, false), 0x34);
+    EXPECT_EQ(b.Read(0x20, true), 0x12);
+    EXPECT_EQ(b.Read(0x20, true), 0x12) << "the latch reads again without a bus cycle";
+    EXPECT_EQ(b.Read(0x20, false), 0x78);
+    EXPECT_EQ(b.Read(0x20, true), 0x56);
+}
+
+/// T-IDE-3: one latch (the PLD's HDDR) for both directions: after a read, a write of only the A8 = 1 half sends
+/// the read's high byte as the low byte
+TEST(IdeAdapter_Test, SprinterSharedLatch)
+{
+    SprinterBoard b;
+    std::memcpy(b.disk.Data() + 9 * 512, "\x34\x12", 2);
+    StartRead([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    EXPECT_EQ(b.Read(0x20, false), 0x34);
+    EXPECT_EQ(b.adapter->State().readLatch, 0x12);
+
+    StartWrite([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    b.Write(0x20, true, 0xAB);  // the low half is whatever the latch holds: #12
+    for (int i = 1; i < 256; i++)
+    {
+        b.Write(0x20, false, 0);
+        b.Write(0x20, true, 0);
+    }
+    EXPECT_EQ(b.disk.Data()[5 * 512], 0x12);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 1], 0xAB);
+}
+
+/// T-IDE-4: OUT (#BC),A with A = #01 (port #01BC, code #2A) selects the secondary channel, A = #21 (#21BC, #2B)
+/// the primary; the other channel's registers stay as they are
+TEST(IdeAdapter_Test, SprinterChannelSelect)
+{
+    SprinterBoard b;
+    EXPECT_EQ(b.adapter->State().channel, 0) << "primary after construction";
+    b.Register(SectorCount, 0x11);
+
+    b.Write(0x2A, false, 0x01);
+    EXPECT_EQ(b.adapter->State().channel, 1);
+    EXPECT_EQ(b.Read(0x22, false), 0x01) << "the secondary unit's sector count (1 after reset)";
+    b.Register(SectorCount, 0x22);
+    std::memcpy(b.secondary.Data() + 9 * 512, "\xEF\xBE", 2);
+    StartRead([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    EXPECT_EQ(b.Read(0x20, false), 0xEF) << "the secondary disk's sector 9";
+
+    b.Write(0x2B, false, 0x21);
+    EXPECT_EQ(b.adapter->State().channel, 0);
+    EXPECT_EQ(b.Read(0x22, false), 0x11) << "the primary's register untouched";
+    EXPECT_EQ(b.Read(0x27, false), Status::DRDY | Status::DSC) << "the primary is idle";
+    EXPECT_TRUE(b.ide->Channel(1).Unit(0)->State().status & Status::DRQ) << "the secondary keeps its transfer";
+}
+
+/// T-IDE-7: reset: the primary channel, the latch cleared, both channels' units back to power-on
+TEST(IdeAdapter_Test, SprinterReset)
+{
+    SprinterBoard b;
+    b.Write(0x2A, false, 0);
+    StartRead([&](uint8_t reg, uint8_t v) { b.Register(reg, v); });
+    b.Read(0x20, false);
+    ASSERT_EQ(b.adapter->State().channel, 1);
+
+    b.adapter->Reset();
+    b.ide->Reset();
+    EXPECT_EQ(b.adapter->State().channel, 0);
+    EXPECT_EQ(b.adapter->State().readLatch, IdeAdapterState{}.readLatch);
+    EXPECT_FALSE(b.ide->Channel(1).Unit(0)->State().status & Status::DRQ) << "the secondary unit was reset";
+
+    b.Write(0x2A, false, 0);
+    b.adapter->SprinterReset();
+    EXPECT_EQ(b.adapter->State().channel, 0) << "a PLD reset selects the primary channel (MAME machine_reset)";
+}
+
+/// Without [HDD] Scheme=SPRINTER the codes read a floating bus and writes go nowhere; the channel latch is a PLD
+/// register and still follows #BC
+TEST(IdeAdapter_Test, SprinterWithoutABoard)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    IdeAdapter adapter(&context);
+    EXPECT_EQ(adapter.SprinterIn(0x27, 0x4053), 0xFF);
+    EXPECT_EQ(adapter.SprinterIn(0x20, 0x0150), 0xFF);
+    adapter.SprinterOut(0x20, 0x0050, 0x12);
+    adapter.SprinterOut(0x2A, 0x01BC, 0x01);
+    EXPECT_EQ(adapter.State().channel, 1);
+}
+
+/// endregion </Sprinter>

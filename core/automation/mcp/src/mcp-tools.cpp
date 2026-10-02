@@ -1801,10 +1801,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << "\n[ide] " << value["description"].asString();
                                 else
                                 {
-                                    out << "\n[ide] " << value["scheme"].asString() << ", selected " << value["selected"].asString();
+                                    out << "\n[ide] " << value["scheme"].asString() << ", selected ";
+                                    if (value.isMember("selected_channel"))
+                                        out << value["selected_channel"].asString() << " ";
+                                    out << value["selected"].asString();
+                                    if (value["adapter"].isMember("data_latch"))
+                                        out << ", data latch #" << std::hex << value["adapter"]["data_latch"].asUInt() << std::dec;
                                     for (const Json::Value& unit : value["units"])
                                     {
-                                        out << "\n  " << unit["position"].asString() << " (" << unit["kind"].asString() << "): ";
+                                        out << "\n  " << unit["slot"].asString() << " (" << unit["kind"].asString() << "): ";
                                         if (unit["medium"].isObject())
                                             out << unit["medium"]["description"].asString();
                                         else

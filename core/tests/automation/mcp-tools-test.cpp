@@ -589,6 +589,43 @@ TEST_F(McpTools_Test, InspectState_RegistersAspect_ReadsRegisters)
     EXPECT_TRUE(result.structured.isMember("registers"));
 }
 
+// The ide aspect's summary names the units by slot and, on a two-channel board (the Sprinter), the selected
+// channel and the PLD's data latch
+TEST_F(McpTools_Test, InspectState_IdeAspect_SummarizesBothSprinterChannels)
+{
+    Json::Value ide;
+    ide["available"] = true;
+    ide["scheme"] = "SPRINTER";
+    ide["channels"] = 2;
+    ide["selected_channel"] = "secondary";
+    ide["selected"] = "master";
+    ide["adapter"]["data_latch"] = 0x5A;
+    ide["adapter"]["channel"] = 1;
+    for (const char* slot : {"ide0.master", "ide1.master"})
+    {
+        Json::Value unit;
+        unit["slot"] = slot;
+        unit["position"] = "master";
+        unit["kind"] = "disk";
+        unit["medium"] = Json::Value();
+        unit["task_file"]["status"] = 0x50;
+        unit["command"]["name"] = "none";
+        ide["units"].append(unit);
+    }
+    _caller->routes["GET /api/v1/emulator/emu-1/state/ide"] = {200, ide};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("ide");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/ide"));
+    EXPECT_NE(result.text.find("[ide] SPRINTER, selected secondary master, data latch #5a"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ide1.master (disk): no medium"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};

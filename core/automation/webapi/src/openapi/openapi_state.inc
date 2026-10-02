@@ -149,9 +149,12 @@
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =
-        "The machine's IDE board ([HDD] Scheme: NEMO, NEMO-A8, NEMO-DIVIDE, ATM, SMUC, PROFI, DIVIDE) and the gate it answers in, "
-        "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ, and per unit "
-        "(master, slave): kind (disk / cdrom), media slot, medium (description, sectors, writable), CHS translation, "
+        "The machine's IDE board ([HDD] Scheme: NEMO, NEMO-A8, NEMO-DIVIDE, ATM, SMUC, PROFI, DIVIDE, SPRINTER) and the gate it answers in, "
+        "the number of channels (2 on the Sprinter, else 1) and, with two, the channel the adapter selected "
+        "(selected_channel: primary | secondary; adapter.channel, adapter.data_latch: the PLD's one data latch), "
+        "the adapter latches (read / write latch, same-port pair flags), the selected unit and INTRQ of the selected "
+        "channel, and per unit (master, slave; with two channels also channel and selected): kind (disk / cdrom), "
+        "media slot (ide0.master ... ide1.slave), medium (description, sectors, writable), CHS translation, "
         "the task file with status / error / device control bits decoded, the command in progress (name, phase, LBA, "
         "sectors left, buffer position), and on a CD drive the disc, unit attention, byte count limit, sense key / ASC / "
         "ASCQ and the last packet. 404 on machines without an IDE board.";

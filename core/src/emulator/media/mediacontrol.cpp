@@ -663,7 +663,7 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
             return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk or cdrom");
         const int unit = IdeController::UnitForSlot(reply.slot);
         if (unit < 0 || !_context || !_context->pIdeController)
-            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave) changes its drive");
+            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave; ide1.* on the Sprinter) changes its drive");
         std::string error;
         ParkedEmulator parked(_context);
         if (!_context->pIdeController->SetUnitKind(unit, device == "cdrom", &error))

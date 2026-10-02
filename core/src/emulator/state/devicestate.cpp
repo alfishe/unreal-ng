@@ -1752,6 +1752,7 @@ namespace
             case IDE_ATM:
             case IDE_SMUC: return "TR-DOS ports on";
             case IDE_PROFI: return "Profi EXT mode (#DFFD.5 and #7FFD.4)";
+            case IDE_SPRINTER: return "the PLD port table (codes #20-#2B)";
             default: return "";
         }
     }
@@ -1768,7 +1769,13 @@ StateNode Ide(EmulatorContext* context)
     ret["available"] = true;
     ret["scheme"] = Config::IdeSchemeName(ide->Scheme());
     ret["gate"] = IdeGateText(ide->Scheme());
-    AtaChannel& channel = ide->Channel();
+    // The channel the adapter talks to (the Sprinter selects one of two; the other boards have one)
+    const uint8_t selectedChannel = context->pPortDecoder ? context->pPortDecoder->GetIdeAdapter().State().channel : 0;
+    const int channelCount = ide->ChannelCount();
+    AtaChannel& channel = ide->Channel(selectedChannel);
+    ret["channels"] = channelCount;
+    if (channelCount == 2)
+        ret["selected_channel"] = selectedChannel ? "secondary" : "primary";
     ret["selected"] = channel.Selected() ? "slave" : "master";
     ret["intrq"] = channel.Intrq();
 
@@ -1781,20 +1788,33 @@ StateNode Ide(EmulatorContext* context)
         adapter["read_pair"] = latches.readPair != 0;
         adapter["write_pair"] = latches.writePair != 0;
         adapter["write_high_armed"] = latches.writeHigh != 0;
+        if (ide->Scheme() == IDE_SPRINTER)
+        {
+            // One PLD latch (HDDR) for both directions: read_latch is that register
+            adapter["data_latch"] = int(latches.readLatch);
+            adapter["channel"] = int(latches.channel);
+        }
         ret["adapter"] = adapter;
     }
 
     StateNode units = StateNode::Array();
-    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    for (int index = 0; index < channelCount * AtaChannel::kUnits; index++)
     {
-        AtaDevice* device = channel.Unit(unit);
+        const int channelIndex = index / AtaChannel::kUnits;
+        const int unit = index % AtaChannel::kUnits;
+        AtaDevice* device = ide->Channel(channelIndex).Unit(unit);
         if (!device)
             continue;
         const AtaDeviceState& s = device->State();
         const bool cd = device->Kind() == AtaDeviceKind::Cdrom;
         StateNode u = StateNode::Object();
         u["position"] = unit ? "slave" : "master";
-        u["slot"] = IdeUnitSlot::IdFor(0, unit);
+        u["slot"] = IdeUnitSlot::IdFor(channelIndex, unit);
+        if (channelCount == 2)
+        {
+            u["channel"] = channelIndex ? "secondary" : "primary";
+            u["selected"] = ide->Channel(channelIndex).Selected() == unit;
+        }
         u["kind"] = cd ? "cdrom" : "disk";
         u["present"] = device->IsPresent();
 
