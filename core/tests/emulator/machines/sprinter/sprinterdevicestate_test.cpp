@@ -93,7 +93,7 @@ TEST_F(SprinterDeviceState_Test, ReportFollowsThePld)
     EXPECT_EQ(Str(Member(report, "cells"), "D0-DF"), "10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F") << "power-on cells";
     EXPECT_EQ(Str(Member(report, "z84c15"), "engine"), "z84c15 library (Z84C15Engine)");
     EXPECT_EQ(Str(Member(report, "cmos"), "chip"), "DS12887A");
-    EXPECT_FALSE(Bool(Member(report, "ide"), "emulated")) << "the IDE adapter comes with S3b";
+    EXPECT_TRUE(Bool(Member(report, "ide"), "emulated")) << "S3b: the IdeAdapter with the SPRINTER decode";
     EXPECT_EQ(Member(Member(report, "bios"), "images").items.size(), 3u);
 }
 

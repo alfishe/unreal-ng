@@ -4,6 +4,7 @@
 // docs/inprogress/2026-09-28-sprinter/tdd-integration.md §3, as built:
 // docs/inprogress/2026-09-28-sprinter/automation-outcome.md
 
+#include "emulator/io/ide/ideadapter.h"
 #include "stdafx.h"
 
 #include <algorithm>
@@ -716,13 +717,14 @@ StateNode Sprinter(EmulatorContext* context)
         ret["cmos"] = c;
     }
 
-    // IDE channel (S3b-IDE: the IdeAdapterSprinter / IDE slots of branch sprinter-s3b fill this block)
+    // IDE (S3b): the shared IdeAdapter with the SPRINTER decode; drives and channels in GET /state/ide
     {
+        const IdeAdapterState& ide = decoder->GetIdeAdapter().State();
         StateNode i = StateNode::Object();
-        i["emulated"] = false;
-        i["status"] = "not on this branch: the IDE adapter comes with phase S3b (codes #20-#2B are decoded, no drive answers)";
-        i["channel"] = pld.ideChannel ? "secondary" : "primary";
-        i["data_latch"] = Hex8(pld.ideLatch);
+        i["emulated"] = true;
+        i["channel"] = ide.channel ? "secondary" : "primary";
+        i["data_latch"] = Hex8(ide.readLatch);
+        i["see"] = "GET /state/ide (CLI state ide, MCP inspect_state ide) for the drives on ide0 / ide1";
         ret["ide"] = i;
     }
 

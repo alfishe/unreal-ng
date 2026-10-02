@@ -220,7 +220,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places) |
 | `z84c15` | WCR / MWBR / CSBR / MCR, watchdog, CTC channels, SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
 | `fdc` | `density_latch` (720 KB code `#16` / 1.44 MB code `#17`), the WD1793 `clock` (1 / 2 MHz) and `data_rate` (250 / 500 kbit/s), `drive` |
-| `cmos`, `ide` | links: the CMOS report is `rtc`; IDE is a placeholder until the IDE adapter (phase S3b) fills it |
+| `cmos`, `ide` | links: the CMOS report is `rtc`; `ide` shows the selected channel and data latch, the drives are in `state/ide` (see [sprinter-hdd.md](../media/sprinter-hdd.md)) |
 | `bios` | the ROM file, the pages identified by signature, the shipped images, how to choose |
 
 ### Ports: the table and the codes
