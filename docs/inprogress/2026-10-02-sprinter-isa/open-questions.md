@@ -8,6 +8,8 @@
 
 ## Q1. Is the ISA bus Sprinter-only, and how much of a shared "ZX-bus" do we build now?
 
+**Owner decision (2026-10-02): A** - the ISA bus is Sprinter-only with the one `ZxBusPresent()` seam. The shared ZX-bus (phase I5) moves into the bus and slot unification, [PLAN #82](../PLAN.md).
+
 **Background.** No other emulated machine has ISA slots. The ZX-bus, on the other hand, is shared: the GS,
 MoonSound and ZXNETUSB are ZX-bus cards used on most machines. They attach today through two different doors
 (the exact port map that machine decoders call, and full-decode observers in the Z80 port funnel). The owner's
@@ -24,6 +26,8 @@ undoing anything.
 
 ## Q2. Default slot population of the `SPRINTER` model
 
+**Owner decision (2026-10-02):** slot 1 = ZX-bus adapter with the NeoGS, slot 2 empty.
+
 | Option | Effect |
 |---|---|
 | **A (recommended)** | Slot 1 = ZX-bus adapter with the GS (personality `[SOUND] GSType=NGS`, as the Sprinter config has today), slot 2 empty. Matches MAME's default and the owner's MAME setup; ProPlay works out of the box; the TTD boot fixture keeps its GS blob |
@@ -32,6 +36,8 @@ undoing anything.
 **Recommendation: A** (the owner uses the adapter + NeoGS daily); B stays one INI line away (`Slot1=NONE`).
 
 ## Q3. Does ISA RESET (`#9FBD` bit 7) reset the General Sound behind the adapter?
+
+**Owner decision (2026-10-02): yes** - ISA RESET reaches the GS through the adapter, as on the hardware; the difference from MAME (which ignores the bit) goes into the MAME comparison.
 
 **Background.** RESET DRV is the only reset an ISA card receives, and on the Sprinter it is driven only by
 software through `#9FBD`. No adapter schematic was found. ESSMIXER and the Wi-Fi library pulse it (`#C0`, 1 ms,
