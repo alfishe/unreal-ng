@@ -73,7 +73,15 @@ anything. Problem 1 did.
   ```
 
   Decoders stop reading another device's counters (Sprinter, ATM3, TS-Conf today).
-- **`HasMouseDevice()`** tells the front end whether capturing makes sense at all.
+- **`HasMouseDevice()`** says a mouse is fitted. **`IsMouseInUse()`** tells the front end
+  whether capturing makes sense *now*: a program is reading the mouse. A sink that
+  cannot tell answers "in use" when fitted. The Kempston `Mouse` answers true only if
+  the port decoder claims the Kempston addresses (not while TR-DOS is active: the
+  ports are Beta Disk's) and a program read a register within the last
+  `kPolledWithinFrames` (50) frames. `ReadRegister` (a program's port read) notes the
+  frame; `PeekRegister` (debug / automation) does not. Reset forgets the last read.
+  ZX-Evo / TS-Conf (AVR PS/2 mouse) and the Sprinter board mouse are "in use" when
+  fitted: no frame counter at those devices yet.
 - **Buttons are changed in one place.** Press / release / click from automation and the
   host's mask are all applied on the emulator thread against the manager's mask.
   The read-modify-write happens there, so nothing is lost (problem 5).
@@ -110,25 +118,32 @@ Source for the AVR behavior:
   from whichever screen widget is active (software `DeviceScreen` or GPU
   `DeviceScreenGLWindow`, through the wrapper). The per-widget `MouseManager` in
   unreal-qt goes away.
-- **When it captures** (agreed 2026-10-02; the polling-based automatic grab stays
-  out of scope): a click on the screen captures only if the machine has a mouse
-  device (`HasMouseDevice()`) and the mouse gate is open. That click is not passed
-  to the machine.
+- **When it captures** (agreed 2026-10-02; there is still no automatic grab, a click
+  is always needed): a click on the screen captures only if a program is reading the
+  machine's mouse (`IsMouseInUse()`) and the mouse gate is open. That click is not
+  passed to the machine. Worked example: under the 128K ROM nothing reads the mouse,
+  so a click captures nothing; in a program with a Kempston mouse driver it does; in
+  TR-DOS it does not (Beta Disk owns the ports).
+- **When it lets go of an unused mouse:** captured, and `IsMouseInUse()` stays false
+  for 3 s in a row (`kUnreachableReleaseMs`, checked every 250 ms while captured) ->
+  released. Unused at 10.0 s and polled again at 11.5 s: kept (a brief TR-DOS access or
+  a pause in polling does not flap the capture); still unused at 13.0 s: released.
+  Nothing re-captures by itself; the next click does, once a program reads the mouse.
 - **Toolbar button: indicator and gate.** One button on the main toolbar, three looks:
 
   | Look | State | Click on the button |
   |:--|:--|:--|
-  | mouse, normal | gate open, not captured (the machine has a mouse device) | closes the gate |
+  | mouse, normal | gate open, not captured (a program reads the mouse) | closes the gate |
   | mouse, highlighted | captured | releases and closes the gate |
   | mouse, crossed out | gate closed | opens the gate |
-  | mouse, grayed out | the machine has no mouse device | none |
+  | mouse, grayed out | no mouse device, or no program reads it now | none |
 
   **Gate closed:** the window never captures and passes no host mouse input to the
   machine, whatever is clicked. Automation input (WebAPI, MCP, CLI, Lua,
   Python) and TTD replay still reach the machine: the gate is about the host
   mouse only. The gate is remembered per window across emulator switches. View →
   Mouse gate is the same toggle as a menu item.
-- **When it releases:** Ctrl+Esc (the physical Control key on every platform, macOS
+- **When it releases:** unused for 3 s (above), Ctrl+Esc (the physical Control key on every platform, macOS
   included; `[INPUT] MouseReleaseKey=` names physical keys; a plain Esc reaches the
   machine), focus loss, leaving the application, switching or closing the emulator.
   While captured, an application-wide event filter catches the release key in any

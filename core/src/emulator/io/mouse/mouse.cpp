@@ -7,6 +7,7 @@
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mousemanager.h"
+#include "emulator/ports/portdecoder.h"
 #include "stdafx.h"
 
 const char* const MC_MOUSE_MOVE = "MC_MOUSE_MOVE";
@@ -42,6 +43,24 @@ void Mouse::Reset()
     _y.store(RESET_Y, std::memory_order_relaxed);
     _buttons.store(0xFF, std::memory_order_relaxed);  // All buttons released (active-low)
     _wheel.store(0x00, std::memory_order_relaxed);
+    _lastPollFrame.store(kNeverPolled, std::memory_order_relaxed);  // the program starts over
+}
+
+bool Mouse::IsMouseInUse() const
+{
+    if (!IsPresent())
+        return false;
+    if (!_context || !_context->pPortDecoder)
+        return true;  // no decoder to ask (unit-test contexts): fitted is reachable
+    bool decoded = false;
+    std::string note;
+    _context->pPortDecoder->GetMouseRoutingState(decoded, note);
+    if (!decoded)
+        return false;
+    // Nobody reads it, or not lately (the 128K ROM, a menu without a mouse driver, TR-DOS)
+    const uint64_t last = _lastPollFrame.load(std::memory_order_relaxed);
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    return last != kNeverPolled && frame >= last && frame - last <= kPolledWithinFrames;
 }
 
 void Mouse::ApplyConfiguration()
@@ -63,6 +82,13 @@ void Mouse::ApplyConfiguration()
 }
 
 uint8_t Mouse::ReadRegister(uint8_t selectRegister) const
+{
+    if (_context)
+        _lastPollFrame.store(_context->emulatorState.frame_counter, std::memory_order_relaxed);
+    return PeekRegister(selectRegister);
+}
+
+uint8_t Mouse::PeekRegister(uint8_t selectRegister) const
 {
     if (!IsPresent())
     {

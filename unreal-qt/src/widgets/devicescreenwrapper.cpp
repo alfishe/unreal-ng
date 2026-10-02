@@ -110,8 +110,9 @@ void DeviceScreenWrapper::setupMouseCapture()
         EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
         if (context)
         {
-            // Any mouse device of the machine (Kempston port, Sprinter serial mouse, ...)
-            settings.mouseFitted = context->pMouseManager && context->pMouseManager->HasMouseDevice();
+            // Capture only while a program reads the mouse (Kempston port polled within the last second;
+            // not in TR-DOS, not under the 128K ROM). Devices that cannot tell count as in use when fitted
+            settings.mouseFitted = context->pMouseManager && context->pMouseManager->IsMouseInUse();
             settings.swapButtons = context->config.input.mouseswap != 0;
             // CONFIG::input.mousescale is a plain char - unsigned on ARM, so cast before use
             settings.scaleLog2 = static_cast<signed char>(context->config.input.mousescale);

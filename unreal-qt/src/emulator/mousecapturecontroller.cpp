@@ -29,6 +29,10 @@ const char* const kDefaultReleaseKey = "Ctrl+Esc";
 
 MouseCaptureController::MouseCaptureController(QObject* parent) : QObject(parent)
 {
+    _elapsed.start();
+    _reachTimer.setInterval(250);
+    connect(&_reachTimer, &QTimer::timeout, this, &MouseCaptureController::checkReachable);
+
     // Leaving the application (Cmd+Tab, another window) releases the mouse
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         if (state != Qt::ApplicationActive)
@@ -147,7 +151,7 @@ void MouseCaptureController::capture()
     const HostSettings host = settings();
     if (!host.mouseFitted)
     {
-        // No mouse device on this machine: grabbing the pointer would only take it away from the user
+        // No program reads the machine's mouse (no device, 128K ROM, TR-DOS): grabbing the pointer would only take it away from the user
         return;
     }
     _swapButtons = host.swapButtons;
@@ -155,6 +159,8 @@ void MouseCaptureController::capture()
     _releaseKey = releaseKey();
 
     _captured = true;
+    _unreachableSince = -1;
+    _reachTimer.start();
     _motion.Reset();
     _wheel.Reset();
     _buttonMask = 0xFF;
@@ -196,6 +202,8 @@ void MouseCaptureController::release()
         return;
 
     _captured = false;
+    _reachTimer.stop();
+    _unreachableSince = -1;
 
     if (_nativeCapture)
     {
@@ -221,6 +229,25 @@ void MouseCaptureController::release()
 
     qDebug() << "MouseCaptureController: capture OFF";
     emit stateChanged();
+}
+
+void MouseCaptureController::checkReachable()
+{
+    if (!_captured)
+        return;
+    if (settings().mouseFitted)
+    {
+        _unreachableSince = -1;
+        return;
+    }
+    const qint64 current = now();
+    if (_unreachableSince < 0)
+        _unreachableSince = current;
+    if (current - _unreachableSince >= kUnreachableReleaseMs)
+    {
+        qDebug() << "MouseCaptureController: no program reads the machine's mouse any more, releasing";
+        release();
+    }
 }
 
 void MouseCaptureController::recenterCursor()

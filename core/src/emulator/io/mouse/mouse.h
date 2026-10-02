@@ -93,9 +93,12 @@ public:
     /// Machine reset: counters, buttons and wheel back to power-on values
     void Reset();
 
-    /// Reads mouse register based on register selection
+    /// Reads mouse register based on register selection: a program's port read. It counts
+    /// as polling (IsMouseInUse)
     /// \param selectRegister 0 = buttons (+wheel), 1 = X axis, 2 = Y axis
     uint8_t ReadRegister(uint8_t selectRegister) const;
+    /// The same value without counting as polling (debug and automation reads)
+    uint8_t PeekRegister(uint8_t selectRegister) const;
 
     void Move(int dx, int dy);
     void SetButtons(uint8_t mask);
@@ -125,6 +128,10 @@ public:
 
     /// region <IMouseSink: input from the MouseManager>
     bool IsMouseFitted() const override { return IsPresent(); }
+    /// Fitted, the port decoder answers the Kempston addresses now (not while TR-DOS is active)
+    /// and a program read a mouse register within the last kPolledWithinFrames frames
+    bool IsMouseInUse() const override;
+    static constexpr uint64_t kPolledWithinFrames = 50;
     void OnMouseMotion(int dx, int dy) override { Move(dx, dy); }
     void OnMouseButtons(uint8_t activeLowMask) override { SetButtons(activeLowMask); }
     void OnMouseWheel(int steps) override { SetWheel(steps); }
@@ -150,4 +157,7 @@ private:
     std::atomic<uint8_t> _wheel{0x00};    // 4 bits, upper nibble of the button register when the wheel is enabled
     std::atomic<bool> _present{true};
     std::atomic<bool> _wheelEnabled{false};
+    /// Frame (EmulatorState::frame_counter) of the last program read; kNeverPolled = none yet
+    static constexpr uint64_t kNeverPolled = ~uint64_t{0};
+    mutable std::atomic<uint64_t> _lastPollFrame{kNeverPolled};
 };

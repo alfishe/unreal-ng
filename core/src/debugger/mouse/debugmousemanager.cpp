@@ -408,7 +408,7 @@ MouseStateSnapshot DebugMouseManager::GetState() const
     uint8_t* ports[3] = {&state.portButtons, &state.portX, &state.portY};
     for (uint8_t reg = 0; reg < 3; reg++)
         if (!decoder || !decoder->PeekMouseRegister(reg, *ports[reg]))
-            *ports[reg] = mouse->ReadRegister(reg);
+            *ports[reg] = mouse->PeekRegister(reg);
 
     std::lock_guard<std::mutex> lock(_mutex);
     state.pendingClickButton = _pendingButton;
