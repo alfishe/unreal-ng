@@ -989,6 +989,10 @@ public:
             }
             return mediaCall(s, "formats", "", "", opts);
         });
+        // Where a file can go: what it is, the slots that take it (in a chooser's order), the default, the refusal
+        lua.set_function("media_targets", [mediaCall](sol::this_state s, const std::string& path) {
+            return mediaCall(s, "targets", "", path, sol::nullopt);
+        });
         for (const char* verb : {"insert", "swap"})
         {
             lua.set_function(std::string("media_") + verb,

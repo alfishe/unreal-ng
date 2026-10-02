@@ -68,6 +68,7 @@ enum class PeripheralId : uint8_t
     EvoFontRam = 22,      // ZX-Evo BaseConf text-mode font RAM (2 KB, #BF bit 2 loads it) and the glyph byte #0EBD reads
     KempstonJoystick = 23, // Kempston joystick state byte (core device; carried by machines whose decoder answers #1F)
     SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
+    SprinterPld = 25,     // Sprinter Sp2000 PLD state + configuration module (Sprinter tdd-integration §2.1; serializer in phase S7)
     // Future: SAA1099, GS512, etc.
     Count
 };

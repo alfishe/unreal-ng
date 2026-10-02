@@ -15,6 +15,7 @@
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
 #include "emulator/memory/scorpion/scorpionmemory.h"
+#include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
@@ -111,6 +112,8 @@ bool Core::Init()
         _memory = new ScorpionMemory(_context);
     else if (_config->mem_model == MM_TSL)
         _memory = new TsConfMemory(_context);
+    else if (_config->mem_model == MM_SPRINTER)
+        _memory = new SprinterMemory(_context);
     else
         _memory = new Memory(_context);
     if (_memory)

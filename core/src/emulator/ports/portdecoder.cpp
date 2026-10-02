@@ -26,6 +26,7 @@
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
 #include "stdafx.h"
@@ -113,6 +114,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_ATM710:
         case MM_ATM3:
         case MM_TSL:
+        case MM_SPRINTER:
             return true;
         default:
             return false;
@@ -176,6 +178,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         case MM_TSL:
             result = new PortDecoder_TSConf(context);
+            break;
+        case MM_SPRINTER:
+            result = new PortDecoder_Sprinter(context);
             break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.

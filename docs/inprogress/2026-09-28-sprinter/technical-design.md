@@ -103,6 +103,30 @@ Worked example: a RAM read at `t = 100`: `100 mod 6 = 4`, so `(6 − 4) mod 6 = 
 gives 5 extra clocks. The same read at `t = 102` (`102 mod 6 = 0`) costs 3. The function is the
 only place the rule lives, so a measured model can replace it (D4).
 
+**Which clock `t` is (checked against MAME, 2026-10-01).** MAME calls the memory and port
+handlers at the *start* of the bus cycle, before the cycle's clocks are counted (`z80.lst`, macros
+`rm`, `wm`, `in`, `out`: `m_mreq_cycles !! handler; m_icount -= cycles`), so `do_mem_wait` sees
+the clock the cycle starts at. For memory, unreal-ng's `AccessStartClock()` is that clock (now − 3,
+the cycle's 3 T are charged before the bus sees it). For ports it is not: every IN / OUT charges only
+the first T of its 4-T I/O cycle before it calls the decoder (`op_D3`, `op_DB`, the ED group), so
+the port cycle starts at now − 1 = `AccessStartClock() + 2` (`SprinterWaits::IoCycleStart`). S1
+took the port wait at `AccessStartClock()`, 2 clocks early. Worked example, the screen-clear loop of
+BIOS 3.04 (page 8 `#0BDC`-`#0BED`: `OUT (#89),A`, three RAM writes, `OUT (#89),A`, three RAM
+writes): MAME times the two halves 78 and 90 clocks at 21 MHz; with the early port clock unreal-ng
+gave 84 and 90 (one more 6-clock slot per pair), with the fix 78 and 90. Over the first 10 000 port
+accesses this was 1.25 ms of 21-MHz run time; after the fix the difference is 5.7 µs net (the
+remaining per-access differences of ±1-7 clocks cancel out; they are the rounding of MAME's
+timestamps and the Z84C15-write wait below). Pinned by `SprinterReference_Test.Bios304_PortTraceMatchesMame`.
+
+Still open (pending the CPU research, `research-cpu-z84c15.md`): where the rule comes from on the
+board. The PLD has its own wait counter on `/IO` (`DCP.TDF:537-551`, a per-code wait length from
+`W_TAB[]`) and a memory-cycle wait (`/MR_WAIT`, `DCP.TDF:484`); whether MAME's "align to 6, then
+6 − taken" matches them, and whether the Z84C15's own wait generator (WCR) adds to it, is not
+settled. Also open: the PLD wait on writes to the Z84C15's own ports. unreal-ng adds it (the PLD sees
+every IORQ write, tdd-ports-memory §3.2); MAME adds none (its write tap forwards these writes to
+`dcp_w`, yet the measured intervals show no wait: `OUT (#19),A` + `LD A,n` = 18 clocks), 16 writes
+in the first 10 000 accesses.
+
 ## 5. State isolation
 
 All Sprinter state lives in Sprinter classes. Shared code gets only the generic hooks above plus

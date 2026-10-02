@@ -1,9 +1,9 @@
-# TODO — SZX (ZX-State) snapshots (2026-09-29)
+# DONE — SZX (ZX-State) snapshots (2026-09-29)
 
-**Status:** S0-S2 and part of S3 implemented 2026-09-29 on branch `szx`: `.szx` loads and
+**Status:** done, on master (2026-09-29; PLAN row #64 retired 2026-10-01). `.szx` loads and
 saves on every surface for 48K, 128K, +2, +2A, +3, Pentagon 128 / 512 / 1024 and Scorpion,
-checked both ways against libspectrum. PLAN row **#64** (T2); prerequisite of **#27**
-(RZX ↔ TTD) beyond 48K / 128K.
+checked both ways against libspectrum; every standard block for hardware we emulate; RZX (#27)
+starts from and seeks with SZX.
 
 **Scope (user, 2026-09-29): standard SZX only.** Machines with an SZX id read and write it; a snapshot
 for another model is refused (no model switch); a model without an SZX id (ATM, ZX-Evo, Profi, TSConf,

@@ -1,10 +1,10 @@
 # TODO — Peters Plus Sprinter Sp2000 machine support
 
-**Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done except the
-MAME captures** (2026-10-01, branch `sprinter-s0`); S1-S7 not started.
-PLAN.md row **#59** (T4, trigger: TSConf #41 landed); the shared pieces this design introduced
-are PLAN row **#60** (shared infrastructure, before TSConf). The Sprinter is the last machine
-program; only S0 can start earlier.
+**Status marker:** design drafted and **review round 1 done** (2026-09-28). **S0 done**
+(2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done**
+(2026-10-01, branch `sprinter-s1`); S2-S7 not started. PLAN.md row **#59** (T4): the owner started
+the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"); the shared pieces
+this design introduced are PLAN row **#60** (shared infrastructure, done).
 
 ## Goal
 
@@ -42,6 +42,24 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     `testdata/NOTICE.md`; `LoaderRawPcFloppyDss_Test` reads the real floppy through the WD1793 at
     500 kbit/s
   - [x] Sprinter sources added to the local corpus ([materials.md](materials.md))
+  - [x] MAME reference captures (2026-10-01, branch `sprinter-mame`; MAME 0.289 subset build
+    `zxsp` with the `sprinter` driver, scripts in `tools/verification/sprinter/`) in
+    [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md): page `#40` after POST (equals the static table,
+    CRC `b7f09600`), the logo frame (frame 60, 1.229 s) and the boot screen (frame 507, 10.383 s),
+    INT positions for the FN_SYNC modes (Scorpion = 3.04 default, Pentagon +16 lines, Spectrum +8
+    more), the first 10 000 port accesses with codes, the loader write count at run time (473 720,
+    confirms Q4)
+
+- [x] S1 (2026-10-01, branch `sprinter-s1`; outcome and deviations in
+  [roadmap-and-plan.md](roadmap-and-plan.md) §6): creatable `SPRINTER`; `PortDecoder_Sprinter`,
+  `SprinterMemory`, the configuration modules (Standard + a test stub), the bitstream sink and
+  fast start, `SprinterVideoRam` + `SprinterIntSource`, the Z84C15 package, the CMOS, the turbo
+  waits, the TR-DOS M1 signal; BIOS 3.04 reaches its boot prompt with the fast and the full start
+  (ACC-1a); page `#40` at the prompt equals the static 3.04 table
+- [x] S1 checked against the MAME references (2026-10-01, roadmap §6.1): the first 10 000 port
+  accesses identical (order, values, PCs, codes) and timed to the T-state at 3.5 MHz; the turbo
+  port wait fixed (2 clocks early; 21-MHz drift over the trace 1 245 µs → 5.7 µs); logo palette,
+  INT positions per FN_SYNC mode, INT acknowledge, loader count equal; `SprinterReference_Test`
 
 ## Remaining
 
@@ -58,15 +76,22 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - optional: DD-mode turbo VG ending at the PLD read/write strobe (`TURBING`, `SP2_MAX.TDF:272-306`);
     not modeled, only seek time differs. Settle first which pins `WSTB`/`RSTB` are (research open
     question 2).
-- S0 remainder, **deferred: needs MAME** (not installed; owner: do not install it): page `#40`
-  after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port
-  accesses of BIOS 3.04 with codes, a runtime trace of the loader (confirms the 473 720 writes, the
-  extra clocks before the PLD starts and the CPU reset). From S1 on the emulator itself can take
-  the page `#40` and loader captures.
+- Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
+  before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
+  hardware.
 - Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
   off before the PLD check).
 - BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
-- Unverified items to settle first (S0/S1): palette byte order, watchdog use by the BIOS,
-  keyboard commands from the BIOS, Z84C15 interrupt use.
+- Unverified items: palette byte order (S2). Settled in S1: BIOS 3.04 never programs the Z84C15
+  watchdog and sends no keyboard commands (SETUP `KeyboardInit` only sets SIO A, WR1 = 0: no
+  Z84C15 interrupts, the keys are polled in the frame INT). Settled against MAME and the board files
+  (2026-10-01, [roadmap-and-plan.md](roadmap-and-plan.md) §6.1): IDE with no drive reads `#FF`
+  (no DD7 pull-down, LS245 inputs float high), the PLD ends the INT at the acknowledge. Still open:
+  the runtime CONF_DONE timing (S1's full start resets after write 473 720 and boots, consistent with
+  the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
+  Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
+  MAME 32 T).
+- S7: the `SprinterPld` TTD serializer (id 25, declared in S1 so TTD refuses to record until
+  then), fast RAM in TTD (cache pages are not journaled), the video RAM region.
 - After v1: Game, DooM and Video PLD configuration modules, after analyzing their bitstreams
   against MAME.

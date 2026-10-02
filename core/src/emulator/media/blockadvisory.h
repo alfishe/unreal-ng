@@ -18,6 +18,8 @@
 /// image on the same slot drives real, varied `READ SECTORS` traffic
 /// (testdata/machines/baseconf/hdd-images/README.md).
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,6 +27,17 @@
 #include "emulator/media/mediatypes.h"
 
 class IBlockDevice;
+
+/// What sector 0 of a block image holds, by the same rules as the advisory:
+/// a FAT boot sector (the SD card layout) or an MBR partition table (the
+/// IDE hard-disk layout). Used before a medium is open (MediaTargets::Classify)
+enum class SectorZeroLayout : uint8_t
+{
+    Unknown,
+    FatVolume,
+    PartitionTable,
+};
+SectorZeroLayout ClassifySectorZero(const uint8_t* sector, size_t size);
 
 /// Empty when sector 0 is unreadable, ambiguous, or matches what the tags
 /// expect. Never throws, never fails the insert - `block`'s read position is

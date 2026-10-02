@@ -20,8 +20,45 @@
     schemas["MediaReply"]["properties"]["formats"]["type"] = "object";
     schemas["MediaReply"]["properties"]["formats"]["additionalProperties"]["type"] = "array";
     schemas["MediaReply"]["properties"]["formats"]["additionalProperties"]["items"]["type"] = "string";
+    schemas["MediaReply"]["properties"]["file"]["$ref"] = "#/components/schemas/MediaFileClass";
+    schemas["MediaReply"]["properties"]["targets"]["type"] = "array";
+    schemas["MediaReply"]["properties"]["targets"]["items"]["$ref"] = "#/components/schemas/MediaTarget";
+    schemas["MediaReply"]["properties"]["default"]["type"] = "integer";
+    schemas["MediaReply"]["properties"]["default"]["nullable"] = true;
+    schemas["MediaReply"]["properties"]["default"]["description"] =
+        "targets: the index used without asking (the only target, or drive A for a floppy image); null: ask";
+    schemas["MediaReply"]["properties"]["refusal"]["type"] = "string";
+    schemas["MediaReply"]["properties"]["refusal"]["nullable"] = true;
+    schemas["MediaReply"]["properties"]["refusal"]["description"] = "targets: why no slot takes the file";
     schemas["MediaReply"]["properties"]["savedPath"]["type"] = "string";
     schemas["MediaReply"]["properties"]["retargeted"]["type"] = "boolean";
+
+    schemas["MediaFileClass"]["type"] = "object";
+    schemas["MediaFileClass"]["properties"]["path"]["type"] = "string";
+    schemas["MediaFileClass"]["properties"]["folder"]["type"] = "boolean";
+    schemas["MediaFileClass"]["properties"]["kinds"]["type"] = "array";
+    schemas["MediaFileClass"]["properties"]["kinds"]["description"] =
+        "Most likely first: floppy, tape, hdd, sdcard, optical, snapshot, rzx, zxpoly, symbols, rom; empty: unknown";
+    schemas["MediaFileClass"]["properties"]["kinds"]["items"]["type"] = "string";
+    schemas["MediaFileClass"]["properties"]["format"]["type"] = "string";
+    schemas["MediaFileClass"]["properties"]["evidence"]["type"] = "array";
+    schemas["MediaFileClass"]["properties"]["evidence"]["items"]["type"] = "string";
+
+    schemas["MediaTarget"]["type"] = "object";
+    schemas["MediaTarget"]["properties"]["action"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["action"]["enum"].append("insert");
+    schemas["MediaTarget"]["properties"]["action"]["enum"].append("load");
+    schemas["MediaTarget"]["properties"]["action"]["enum"].append("newMachine");
+    schemas["MediaTarget"]["properties"]["as"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["slot"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["slot"]["nullable"] = true;
+    schemas["MediaTarget"]["properties"]["model"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["model"]["description"] = "newMachine: the model to start (empty: the default)";
+    schemas["MediaTarget"]["properties"]["label"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["occupiedBy"]["type"] = "string";
+    schemas["MediaTarget"]["properties"]["occupiedBy"]["nullable"] = true;
+    schemas["MediaTarget"]["properties"]["dirty"]["type"] = "boolean";
+    schemas["MediaTarget"]["properties"]["autostart"]["type"] = "boolean";
 
     schemas["MediaSlot"]["type"] = "object";
     schemas["MediaSlot"]["properties"]["id"]["type"] = "string";
