@@ -51,13 +51,17 @@ TEST_F(SprinterIntSource_Test, Pulse_AssertAcknowledgeAndInvalidation)
 {
     SprinterVideoRam& vram = _decoder->GetVideoRam();
     SprinterIntSource& source = _decoder->GetIntSource();
-    ASSERT_EQ(_z80->GetInterruptSource(), &source);
+    // The CPU's interrupt source is the Z84C15's daisy chain with the PLD's /INT behind it
+    IInterruptSource* cpuSource = _z80->GetInterruptSource();
+    ASSERT_NE(cpuSource, nullptr);
+    ASSERT_NE(_z80->GetEngine(), nullptr) << "the Sprinter runs on the Z84C15 library";
     EXPECT_FALSE(source.IsIntAsserted(59120));
 
     SetRun(vram, 30, 40, 45, 0xFD);
     const uint32_t ratio = _context->emulatorState.current_z80_frequency_multiplier;
     EXPECT_FALSE(source.IsIntAsserted(59119 * ratio));
     EXPECT_TRUE(source.IsIntAsserted(59120 * ratio));
+    EXPECT_TRUE(cpuSource->IsIntAsserted(59120 * ratio)) << "the chain passes the PLD's /INT through";
     EXPECT_TRUE(source.IsIntAsserted((59120 + 31) * ratio));
     EXPECT_FALSE(source.IsIntAsserted((59120 + 32) * ratio));
 
