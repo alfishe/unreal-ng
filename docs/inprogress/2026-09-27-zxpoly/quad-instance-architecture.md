@@ -278,7 +278,7 @@ A `.zxp` import yields this package automatically: the diff against module 0
   only within one session (refcounted, `ttdcodecpagestore.h`). The fix is a
   page store shared by the group that interns pages by content, so an
   unchanged page is stored once for all four. That is a later optimization
-  (PLAN #40 V1 memory regions are the natural place); v1 accepts 4×.
+  (PLAN #40 Phase 1 memory regions are the natural place); v1 accepts 4×.
 
 ## 5. Runtime IO: full devices everywhere, input from the master only
 

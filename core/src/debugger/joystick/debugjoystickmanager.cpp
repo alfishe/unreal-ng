@@ -200,6 +200,15 @@ JoystickInjectResult DebugJoystickManager::SetState(uint8_t state)
     return Success("Joystick state set: " + DescribeMask(state));
 }
 
+JoystickInjectResult DebugJoystickManager::SetStateChecked(long long state)
+{
+    if (JoystickInjectResult guard = Guard(); !guard.ok())
+        return guard;
+    if (state < 0 || state > 255)
+        return Invalid("state=" + std::to_string(state) + " out of range 0..255");
+    return SetState(static_cast<uint8_t>(state));
+}
+
 JoystickInjectResult DebugJoystickManager::ReleaseAll()
 {
     return SetState(0);
@@ -247,6 +256,15 @@ JoystickInjectResult DebugJoystickManager::Tap(const std::string& name, uint32_t
         _pendingFrames = static_cast<uint16_t>(holdFrames);
     }
     return Success("Joystick tap: " + DescribeMask(mask) + " for " + std::to_string(holdFrames) + " frames");
+}
+
+JoystickInjectResult DebugJoystickManager::TapChecked(const std::string& name, long long holdFrames)
+{
+    if (JoystickInjectResult guard = Guard(); !guard.ok())
+        return guard;
+    if (holdFrames < 1 || holdFrames > static_cast<long long>(MAX_TAP_FRAMES))
+        return Invalid("frames=" + std::to_string(holdFrames) + " out of range 1.." + std::to_string(MAX_TAP_FRAMES));
+    return Tap(name, static_cast<uint32_t>(holdFrames));
 }
 
 bool DebugJoystickManager::IsTapPending() const

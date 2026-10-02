@@ -2,8 +2,10 @@
 
 #include "common/serial/hostserialport.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
@@ -237,4 +239,32 @@ int HostSerialPort::ModemStatus()
     if (lines & TIOCM_RI) msr |= 0x40;
     if (lines & TIOCM_CD) msr |= 0x80;
     return msr;
+}
+
+std::vector<std::string> HostSerialPort::ListDevices()
+{
+#if defined(__APPLE__)
+    static const char* const kPrefixes[] = {"cu.", "tty."};
+#else
+    static const char* const kPrefixes[] = {"ttyUSB", "ttyACM", "ttyS", "ttyAMA", "rfcomm"};
+#endif
+    std::vector<std::string> out;
+    DIR* dir = ::opendir("/dev");
+    if (!dir)
+        return out;
+    while (const dirent* entry = ::readdir(dir))
+    {
+        const std::string name = entry->d_name;
+        for (const char* prefix : kPrefixes)
+        {
+            if (name.size() > std::strlen(prefix) && name.compare(0, std::strlen(prefix), prefix) == 0)
+            {
+                out.push_back("/dev/" + name);
+                break;
+            }
+        }
+    }
+    ::closedir(dir);
+    std::sort(out.begin(), out.end());
+    return out;
 }

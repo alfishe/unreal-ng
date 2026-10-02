@@ -50,6 +50,12 @@ namespace
             std::vector<FolderEntry> files;
             for (; it != std::filesystem::directory_iterator(); it.increment(ec))
             {
+                if (_options.cancelRequested && _options.cancelRequested())
+                {
+                    _cancelled = true;
+                    break;
+                }
+
                 if (ec)
                 {
                     Skip(relative.empty() ? "." : relative, "folder listing stopped: " + ec.message());
@@ -57,6 +63,8 @@ namespace
                 }
 
                 const std::filesystem::directory_entry& entry = *it;
+                if (_options.onProgress)
+                    _options.onProgress(++_progressCounter, _totalFileBytes);
                 const std::string name = ToUtf8(entry.path().filename());
                 const std::string path = relative.empty() ? name : relative + "/" + name;
 
@@ -135,6 +143,8 @@ namespace
                     _entryCount++;
                     ScanFolder(entry.path(), path, depth + 1, item);
                     folders.push_back(std::move(item));
+                    if (_cancelled)
+                        break;  // unwind every recursion level without visiting further siblings
                 }
                 else
                 {
@@ -166,6 +176,7 @@ namespace
 
         uint32_t EntryCount() const { return _entryCount; }
         uint64_t TotalFileBytes() const { return _totalFileBytes; }
+        bool IsCancelled() const { return _cancelled; }
 
     private:
         void Skip(const std::string& path, std::string reason) { _skipped.push_back({path, std::move(reason)}); }
@@ -183,6 +194,8 @@ namespace
         std::set<std::string> _visited;
         uint32_t _entryCount = 0;
         uint64_t _totalFileBytes = 0;
+        uint64_t _progressCounter = 0;
+        bool _cancelled = false;
     };
 
     void HashTree(const FolderEntry& entry, const std::string& relative, uint64_t& hash)
@@ -223,6 +236,12 @@ bool FolderSnapshot::Scan(const std::filesystem::path& folder, const FolderScanO
 
     Scanner scanner(options, filter, out._skipped);
     scanner.ScanFolder(folder, "", 0, out._root);
+    if (scanner.IsCancelled())
+    {
+        if (error)
+            *error = kCancelledError;
+        return false;
+    }
     out._entryCount = scanner.EntryCount();
     out._totalFileBytes = scanner.TotalFileBytes();
 

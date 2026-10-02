@@ -542,7 +542,7 @@ bool EspStack::SaveState(netstate::EspStackState& out) const
     for (int i = 0; i < out.slotCount; ++i)
     {
         const Slot& s = _slots[static_cast<size_t>(i)];
-        netstate::EspSlot& o = out.slots[i];
+        netstate::EspSlot& o = out.slotStates[i];
         o.state = static_cast<uint8_t>(s.state);
         o.connecting = s.connecting ? 1 : 0;
         o.finSeen = s.finSeen ? 1 : 0;
@@ -591,7 +591,7 @@ bool EspStack::LoadState(const netstate::EspStackState& in, const ByteSource& by
         s = Slot();
     for (int i = 0; i < in.slotCount && i < SlotCount(); ++i)
     {
-        const netstate::EspSlot& o = in.slots[i];
+        const netstate::EspSlot& o = in.slotStates[i];
         Slot& s = _slots[static_cast<size_t>(i)];
         s.state = o.state <= static_cast<uint8_t>(State::Listen) ? static_cast<State>(o.state) : State::Free;
         s.connecting = o.connecting != 0;

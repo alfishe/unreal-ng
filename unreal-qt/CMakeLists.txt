@@ -662,6 +662,9 @@ if (TESTS)
         # The media panel's Qt-free model (src/media/core) is tested here too
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/media/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/*.cpp"
+        # ... and the Network window's (src/network/core)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/network/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/*.cpp"
     )
     add_executable(hud-core-tests ${HUD_TEST_SOURCES})
     set_target_properties(hud-core-tests PROPERTIES

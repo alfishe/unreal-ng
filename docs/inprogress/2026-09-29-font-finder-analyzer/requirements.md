@@ -272,7 +272,7 @@ and escalate:
 - **F5**: default scan range is "everything the program could have written":
   RAM excluding the 16K ROM window(s) and, on banked machines, every mapped
   RAM page (not just the currently paged-in 16K window) — reuses whatever
-  memory-page enumeration the TTD v2 per-region work (PLAN #40 V1) or the
+  memory-page enumeration the TTD v2 per-region work (PLAN #40 Phase 1) or the
   existing `Memory` paging API already expose; if V1 isn't ready when this
   starts, fall back to "current mapping only" and note the gap in TODO.md
   rather than block on it.

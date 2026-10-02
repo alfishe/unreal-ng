@@ -52,10 +52,15 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
 
     FolderScanOptions scan;
     scan.excludePatterns = manifest.exclude;
+    scan.cancelRequested = request.cancelRequested;
+    scan.onProgress = request.onProgress;
     FolderSnapshot snapshot;
     std::string error;
     if (!FolderSnapshot::Scan(folder, scan, snapshot, &error))
-        return MediaResult::Fail(MediaError::UnreadableSource, error);
+    {
+        return MediaResult::Fail(error == FolderSnapshot::kCancelledError ? MediaError::Cancelled : MediaError::UnreadableSource,
+                                 error);
+    }
     for (const SkippedEntry& skipped : snapshot.Skipped())
         result.report.push_back(skipped.path + ": skipped, " + skipped.reason);
 
@@ -112,7 +117,8 @@ static MediaResult OpenFloppy(const OpenRequest& request, std::unique_ptr<Medium
     {
         if (request.access == AccessMode::WriteThrough)
             return MediaResult::Fail(MediaError::KindMismatch, "a folder is never written: use session or readonly access");
-        result = FolderDiskBuilder::BuildTrd(request.context, FileHelper::ToFsPath(source.path), disk);
+        result = FolderDiskBuilder::BuildTrd(request.context, FileHelper::ToFsPath(source.path), disk,
+                                             request.cancelRequested, request.onProgress);
         resolved.type = MediaSourceType::Folder;
         format = "folder-trd";
     }

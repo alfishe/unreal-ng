@@ -159,7 +159,7 @@ struct EspStackState
     uint16_t dnsSocket, dnsId, dnsSeq, pingSocket, querySocket, reserved;
     char resolveName[68];
     uint16_t closeLater[kEspClose];
-    EspSlot slots[kEspSlots];
+    EspSlot slotStates[kEspSlots];   ///< not "slots": a Qt macro, and the GUI includes this header
 };
 
 constexpr int kEspRxBytes = 6144;     ///< bytes from the ZX not parsed yet (the 4 KB ring + a frame in progress)

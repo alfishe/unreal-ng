@@ -35,6 +35,7 @@
 #include "toolbarmanager.h"
 #include "tape/tapemanagerwindow.h"
 #include "media/mediapanelwindow.h"
+#include "network/networkwindow.h"
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreenwrapper.h"
@@ -152,6 +153,7 @@ private slots:
     void handleLogWindowToggled(bool visible);
     void handleTapeManagerToggled(bool visible);
     void handleMediaPanelToggled(bool visible);
+    void handleNetworkWindowToggled(bool visible);
     void handleImportAudioTapeRequested();  // tape-audio-bridge §7.3
     void handleIntParametersRequested();
     void handleAudioSettingsRequested();
@@ -312,6 +314,7 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
+    NetworkWindow* networkWindow = nullptr;
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;
     std::shared_ptr<HudModel> _hudModel;

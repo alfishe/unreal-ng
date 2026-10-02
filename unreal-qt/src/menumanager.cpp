@@ -531,6 +531,12 @@ void MenuManager::setMediaPanelChecked(bool checked)
         _mediaPanelAction->setChecked(checked);
 }
 
+void MenuManager::setNetworkWindowChecked(bool checked)
+{
+    if (_networkWindowAction)
+        _networkWindowAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -1026,6 +1032,15 @@ void MenuManager::createToolsMenu()
     _mediaPanelAction->setCheckable(true);
     _mediaPanelAction->setChecked(false);
     connect(_mediaPanelAction, &QAction::triggered, this, &MenuManager::mediaPanelToggled);
+
+    // Network: ZX-Bus cards, the machine's serial port and what is plugged in,
+    // the ZX-Evo AVR firmware, the virtual network, and their live state
+    _networkWindowAction = _toolsMenu->addAction(tr("Net&work"));
+    _networkWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_5));
+    _networkWindowAction->setStatusTip(tr("Show/hide the network window: cards, serial port, ESP module, virtual network"));
+    _networkWindowAction->setCheckable(true);
+    _networkWindowAction->setChecked(false);
+    connect(_networkWindowAction, &QAction::triggered, this, &MenuManager::networkWindowToggled);
 
     _toolsMenu->addSeparator();
 

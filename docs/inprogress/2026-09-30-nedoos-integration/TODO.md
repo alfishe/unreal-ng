@@ -29,8 +29,9 @@ Index: [README.md](README.md).
   Open: Moon Rabbit / Karabas net-tools check, the ZX-Evo AVR FIFO question
   (reference-esp-modules.md Part 4); the AVR version string (Gluk cells #F0..#FF) still
   says "ZXEvo 4M" 07.01.2026 whatever `Avr=` picks (the old releases' tags and CRCs are not
-  in the sources); the ZiFi API under a TS firmware on BaseConf (N5); the Qt Network window
-  built from the machine's capabilities. Next: N4 ATM2 COM, N5-N6 the rest; debugging per
+  in the sources); the ZiFi API under a TS firmware on BaseConf (N5). The Qt Network window
+  (Tools > Network, Ctrl+5: settings built from the machine's capabilities, live state tree)
+  is on the branch; settings changed there or by automation are not written back to the INI. Next: N4 ATM2 COM, N5-N6 the rest; debugging per
   [tdd-network-debugging.md](tdd-network-debugging.md) later.
 - Answer the open questions in the requirements (§5), then a design for the layer.
 - Emulator prerequisites (NK-23): both ATM register sets in the paging state,

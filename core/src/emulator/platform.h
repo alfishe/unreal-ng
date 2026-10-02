@@ -427,6 +427,16 @@ enum class RamPowerOn : uint8_t
 	Zero
 };
 
+/// The Scorpion Turbo+ board's logic chip firmware ([MISC] ScorpionTurboLogic). Both originals were posted for the
+/// green SC15 board and differ (docs/inprogress/2026-09-29-machine-waits/research-scorpion-turbo.md section 4):
+/// SC151 adds one wait to every opcode fetch from RAM in turbo, two to every I/O cycle, and has Even M1 at 3.5 MHz;
+/// SC153 waits only for the memory slot on fetches too, adds one T per I/O cycle and has no Even M1
+enum class ScorpionTurboLogic : uint8_t
+{
+	SC151,
+	SC153
+};
+
 /// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
 /// Z80 = LLE coprocessor card (dedicated 12 MHz Z80 + 4xDAC),
 /// LW = lightweight in-tree mod player (HLE, no coprocessor - the BASS
@@ -580,6 +590,7 @@ struct CONFIG
 	uint32_t ramsize;
 	uint32_t romsize;
 	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
+	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)

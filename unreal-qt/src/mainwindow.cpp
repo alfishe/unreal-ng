@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "emulator/media/mediacontrol.h"
 #include "emulator/media/modelswitch.h"
 
 #include <QWindow>
@@ -248,6 +249,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
+    // Network window (network TDD §8): hidden by default, Tools → Network (Ctrl+5)
+    networkWindow = new NetworkWindow();
+    networkWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -288,6 +294,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
     connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
+    connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
+    connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -536,6 +544,13 @@ MainWindow::~MainWindow()
         delete mediaPanelWindow;
     }
 
+    if (networkWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(networkWindow);
+        networkWindow->hide();
+        delete networkWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -722,6 +737,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         mediaPanelWindow->hide();
         delete mediaPanelWindow;
         mediaPanelWindow = nullptr;
+    }
+    if (networkWindow)
+    {
+        _dockingManager->removeDockableWindow(networkWindow);
+        networkWindow->hide();
+        delete networkWindow;
+        networkWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -2123,8 +2145,16 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
     SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
     std::string file = filePath.toStdString();
 
-    // Auto-start emulator if not running (except for symbol files which don't need it)
+    // Auto-start emulator if not running (except for symbol files which don't need it). A CD, hard disk
+    // or card image does not say which machine it is for: it never starts one
     bool freshlyStarted = false;
+    if (!_emulator && category == FileStorage)
+    {
+        QMessageBox::information(this, tr("Insert Medium"),
+                                 tr("Start a machine with a slot for %1 first: the image does not say which machine it is for.")
+                                     .arg(QFileInfo(filePath).fileName()));
+        return;
+    }
     if (!_emulator && category != FileSymbol && category != FileUnknown)
     {
         freshlyStarted = true;
@@ -2243,6 +2273,19 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             else
             {
                 qWarning() << "Cannot load disk - emulator not running:" << filePath;
+            }
+            break;
+        case FileStorage:
+            if (_emulator)
+            {
+                // The media manager picks the slot of the image's kind (a CD-ROM drive for an ISO, an IDE
+                // unit for a hard disk, an SD slot for a card) and refuses when the machine has none
+                MediaRequest request{"insert", "auto", file, {{"async", "true"}}};
+                const MediaReply reply = MediaControl(_emulator->GetContext()).Execute(request);
+                if (!reply.result.Ok())
+                    QMessageBox::warning(this, tr("Insert Medium"), QString::fromStdString(reply.result.message));
+                else
+                    qInfo() << "Inserted into" << QString::fromStdString(reply.slot) << ":" << filePath;
             }
             break;
         case FileSymbol:
@@ -2872,6 +2915,12 @@ void MainWindow::handleMediaPanelToggled(bool visible)
 {
     if (mediaPanelWindow)
         mediaPanelWindow->setVisible(visible);
+}
+
+void MainWindow::handleNetworkWindowToggled(bool visible)
+{
+    if (networkWindow)
+        networkWindow->setVisible(visible);
 }
 
 void MainWindow::handleTapeManagerToggled(bool visible)

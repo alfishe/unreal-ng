@@ -189,7 +189,7 @@ TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
 
 /// The PeripheralId table is part of the .ttd format: every id keeps its
 /// number, and ttd.ksy documents each one as "<number> <Name>" (TSConf
-/// INF-10; the unique-table rule of PLAN #40 V0). A new id appends here and
+/// INF-10; the unique-table rule of PLAN #40 Phase 0, Step 1). A new id appends here and
 /// in ttd.ksy in the same change.
 TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
 {

@@ -27,7 +27,7 @@ tests, scratch files via `TestPathHelper::GetUniqueTestScratchPath()`).
 
 ```mermaid
 flowchart LR
-    V0["PLAN #40 V0 (done for TSConf:<br/>page-255 fix, PeripheralId table)"] -.-> P0
+    V0["PLAN #40 Phase 0, Step 1 (done for TSConf:<br/>page-255 fix, PeripheralId table)"] -.-> P0
     P0["P0 infrastructure"] --> P1["P1 decoder + memory"]
     P1 --> P2["P2 INT + clock"]
     P2 --> P3["P3 engine + ZX video"]
@@ -37,12 +37,12 @@ flowchart LR
     P5 --> P6["P6 storage + SPG"]
     P6 --> P7["P7 surfaces + boot"]
     P7 --> P8["P8 timing realism"]
-    V1["PLAN #40 V1<br/>memory regions"] --> P7
+    V1["PLAN #40 Phase 1<br/>memory regions"] --> P7
     M42["PLAN #42<br/>IVideoMapper"] -.-> P7
     NGS["NeoGS SdCardSpi<br/>(if first)"] -.-> P6
 ```
 
-Both PLAN #40 V0 items TSConf depended on are done: the unique `PeripheralId`
+Both PLAN #40 Phase 0, Step 1 items TSConf depended on are done: the unique `PeripheralId`
 table (P1 appends id 16 to it - 13/14 are the +3's, 15 is `EvoSdCard`, which
 TSConf reuses for its SD card) and the page-255 sentinel fix (`3a6eabc6`), so
 vdos's RAM page 0xFF is fully tracked by TTD. V1

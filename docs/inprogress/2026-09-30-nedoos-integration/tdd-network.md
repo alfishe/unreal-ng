@@ -535,7 +535,10 @@ Allow=                    ; optional allow list
   never names a model. A device that clashes with the machine is not fitted and
   `GET /state/network` lists it in `not_fitted` with the reason (a ZX-WiFi card
   on a ZX-Evo: #xxEF is the AVR's). Machine-specific hardware lives in the
-  machine's own section: `[EVO] Avr=` (the AVR firmware). The step after this:
+  machine's own section: `[EVO] Avr=` (the AVR firmware, also `avr_firmware` at
+  runtime). The Qt window Tools > Network (`unreal-qt/src/network/`) edits all of
+  it through the same `ParseChange` keys, offers only what the machine takes
+  (with the reason for the rest) and shows the `GET /state/network` tree live. The step after this:
   machine -> buses / extension slots -> devices, unlimited until ports clash.
 - The legacy keys already shipped in `data/configs/*/unreal.ini`
   (`[MISC] Modem=NONE`, `ZiFi=NONE`) are read too: `Modem=COMn` means

@@ -48,6 +48,14 @@ struct InsertOptions
     /// A dirty medium already in the slot: what happens to its writes
     Disposition disposition = Disposition::None;
     std::string exportPath;            ///< Disposition::Export
+
+    /// Folder volumes only (BUGS.md #3): forwarded to OpenRequest so a caller
+    /// scanning off the UI thread (the GUI's async insert worker) can abort a
+    /// large or slow/network folder and report progress. Empty: no
+    /// cancellation, no progress (every non-GUI caller - WebAPI, CLI, MCP -
+    /// keeps today's plain synchronous behavior unchanged)
+    std::function<bool()> cancelRequested;
+    std::function<void(uint64_t entriesScanned, uint64_t bytesScanned)> onProgress;
 };
 
 struct EjectOptions

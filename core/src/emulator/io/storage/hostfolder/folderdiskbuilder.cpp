@@ -241,7 +241,8 @@ std::vector<const FolderEntry*> FolderDiskBuilder::OrderFiles(const FolderEntry&
 }
 
 MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::filesystem::path& folder,
-                                        std::unique_ptr<DiskImage>& disk)
+                                        std::unique_ptr<DiskImage>& disk, std::function<bool()> cancelRequested,
+                                        std::function<void(uint64_t, uint64_t)> onProgress)
 {
     disk.reset();
     MediaResult result = MediaResult::Success();
@@ -254,10 +255,15 @@ MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::fil
     FolderScanOptions scan;
     scan.recursive = false;
     scan.excludePatterns = manifest.exclude;
+    scan.cancelRequested = cancelRequested;
+    scan.onProgress = onProgress;
     FolderSnapshot snapshot;
     std::string error;
     if (!FolderSnapshot::Scan(folder, scan, snapshot, &error))
-        return MediaResult::Fail(MediaError::UnreadableSource, error);
+    {
+        return MediaResult::Fail(error == FolderSnapshot::kCancelledError ? MediaError::Cancelled : MediaError::UnreadableSource,
+                                 error);
+    }
     for (const SkippedEntry& skipped : snapshot.Skipped())
         result.report.push_back(skipped.path + ": skipped, " + skipped.reason);
 
@@ -276,8 +282,17 @@ MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::fil
     const std::vector<const FolderEntry*> ordered = OrderFiles(snapshot.Root(), manifest, result.report);
 
     std::set<std::string> taken;
+    uint64_t filesPlaced = 0;
+    uint64_t bytesPlaced = 0;
     for (const FolderEntry* file : ordered)
     {
+        // File reads (ReadHostFile/Prepare, below) are the slow part of this
+        // builder - a top-level scan is already bounded by the disk's own
+        // capacity, but a slow/network host folder still makes this loop the
+        // one worth checking (BUGS.md #3)
+        if (cancelRequested && cancelRequested())
+            return MediaResult::Fail(MediaError::Cancelled, FolderSnapshot::kCancelledError);
+
         Candidate candidate;
         std::string why;
         if (!Prepare(*file, manifest, candidate, why))
@@ -299,6 +314,9 @@ MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::fil
             continue;
         }
         taken.insert(NameOf(candidate.entry));
+        bytesPlaced += candidate.body.size();
+        if (onProgress)
+            onProgress(++filesPlaced, bytesPlaced);
     }
 
     std::string label;

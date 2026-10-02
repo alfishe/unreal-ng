@@ -1,6 +1,6 @@
 # TTD benchmark matrix
 
-This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 V0b, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
+This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 Phase 0, Step 2, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
 
 The same emulation runs under every TTD engine (today only `v1`, the current `TimeTravelManager`), so the numbers compare engine against engine and commit against commit.
 
@@ -56,6 +56,7 @@ The following environment variables control a run:
 | `UNREAL_TTD_BENCH_SEEKS` | the number of random seek positions (BM-5) | 40 for `ci`, 200 otherwise |
 | `UNREAL_TTD_BENCH_OVERHEAD` | `0` skips BM-1 (BM-1 costs four extra runs per case) | on |
 | `UNREAL_TTD_BENCH_DIRTY` | `1` adds BM-8 | off |
+| `UNREAL_TTD_BENCH_KEEP_SESSIONS` | a folder: keep each case's saved `.ttd` session there instead of deleting it (input data for the [TTD v2 experiments](../../poc/011-ttd-v2-capture-analysis/experiments/README.md)) | off |
 
 Other sessions running on the same machine inflate timings. Check `uptime` before running, and compare only runs made at a similar load.
 

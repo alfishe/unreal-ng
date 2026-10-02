@@ -230,6 +230,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Kempston Mouse injection commands
                         {"mouse", &CLIProcessor::HandleMouse},
 
+                        // Kempston joystick injection commands
+                        {"joystick", &CLIProcessor::HandleJoystick},
+
                         // Time-Travel Debug commands
                         {"ttd", &CLIProcessor::HandleTTD},
                         
@@ -629,6 +632,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet|at (ZX-Evo AVR UART)" << NEWLINE;
     oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
+    oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
@@ -738,6 +742,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  mouse clear                    - Release all buttons, cancel pending click" << NEWLINE;
     oss << "  mouse status                   - Show counters, buttons, wheel, port values" << NEWLINE;
     oss << "  mouse set <x> <y>              - Debug: write raw X/Y counters (0..255)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Joystick Injection (Kempston, IN #1F):" << NEWLINE;
+    oss << "  joystick press|release <btns>  - Hold or release up|down|left|right|fire|b5..b7 (several: up+fire)" << NEWLINE;
+    oss << "  joystick set <state|btns|none> - Set exactly the held buttons (byte 0..255 or a list)" << NEWLINE;
+    oss << "  joystick tap <btns> [frames]   - Press, hold for frames (default 2), release" << NEWLINE;
+    oss << "  joystick clear                 - Release everything, cancel pending tap" << NEWLINE;
+    oss << "  joystick status                - Show state, port value, routing, host keys" << NEWLINE;
+    oss << "  joystick list                  - List the button names" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

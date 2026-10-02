@@ -71,12 +71,16 @@ public:
     JoystickInjectResult PressMask(uint8_t mask);
     JoystickInjectResult ReleaseMask(uint8_t mask);
     JoystickInjectResult SetState(uint8_t state);  // the whole byte, D5..D7 included
+    /// Surface entry: a raw integer from a JSON / Lua / Python / CLI value, range-checked here (0..255)
+    JoystickInjectResult SetStateChecked(long long state);
     JoystickInjectResult ReleaseAll();             // also cancels a pending tap
     /// endregion </Automation - immediate, validated>
 
     /// region <Automation - timed>
     /// Press now, release after holdFrames emulated frames (released in OnFrame)
     JoystickInjectResult Tap(const std::string& name, uint32_t holdFrames = DEFAULT_TAP_FRAMES);
+    /// Surface entry: frames as the raw integer the caller parsed (negative or beyond 32 bits is rejected, not wrapped)
+    JoystickInjectResult TapChecked(const std::string& name, long long holdFrames);
     bool IsTapPending() const;
     void AbortTap();  // releases the held buttons now
     /// endregion </Automation - timed>

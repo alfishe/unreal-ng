@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -46,15 +47,37 @@ struct FolderScanOptions
     uint64_t maxFileSize = 0xFFFFFFFFull;   ///< FAT's limit: larger files are skipped
     const ServiceFileFilter* filter = nullptr;  ///< nullptr: the built-in collections
     std::vector<std::string> excludePatterns;   ///< wildcards on names (the manifest's `exclude`)
+
+    /// Polled every entry (cheap: a function-pointer check, not a syscall) so
+    /// a caller scanning a large or slow/network folder off the UI thread can
+    /// abort early. Returning true stops the walk at the next checkpoint;
+    /// Scan() then fails with error = "cancelled". Empty = never cancels
+    std::function<bool()> cancelRequested;
+
+    /// Called after each directory entry is visited (accepted or skipped)
+    /// with the running count and the total bytes of every file accepted so
+    /// far (directories don't count; a skipped file's size is not added
+    /// either - this is "how much did we actually keep", not "how much did
+    /// we look at"), off whatever thread calls Scan - never assumed to be the
+    /// UI thread. Empty = no progress reporting. A stall watchdog built on
+    /// this must compare the count across ticks (slow-but-moving is not
+    /// stuck; the count not advancing at all for N seconds is)
+    std::function<void(uint64_t entriesScanned, uint64_t bytesScanned)> onProgress;
 };
 
 class FolderSnapshot
 {
 public:
     /// Scan `folder`. False (with `error`) only when the folder itself cannot
-    /// be read; problems with entries go to Skipped()
+    /// be read, or cancelRequested() returned true mid-walk (error ==
+    /// "cancelled", checked by the caller with ==, not string-matched);
+    /// problems with individual entries go to Skipped() instead
     static bool Scan(const std::filesystem::path& folder, const FolderScanOptions& options, FolderSnapshot& out,
                      std::string* error = nullptr);
+
+    /// The exact string Scan() sets in `error` when cancelRequested() aborted
+    /// the walk - compare with ==, never guess at the text
+    static constexpr const char* kCancelledError = "cancelled";
 
     const FolderEntry& Root() const { return _root; }
     const std::vector<SkippedEntry>& Skipped() const { return _skipped; }

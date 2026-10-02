@@ -86,6 +86,7 @@ private slots:
     void updateRzx(std::shared_ptr<Emulator> emulator);
     void applyRzxStyle();
     void updateTtd(EmulatorContext* context);
+    void updateJoystick(EmulatorContext* context);
 
 private:
     MainWindow* _mainWindow;
@@ -98,6 +99,7 @@ private:
     StatusIndicator* _hdd = nullptr;
     uint64_t _ideTransfers = 0;  ///< sectors moved at the last tick (the IDE LED blinks on a change)
     StatusIndicator* _sound = nullptr;
+    StatusIndicator* _joystick = nullptr;  ///< Kempston joystick: lit while a button is held, hidden when the guest cannot see one
     /// Rendered straight from each NC_CPU_FREQ_CHANGED post - no local polling
     /// or accumulation. Z80::NotifyCPUFrequencyChanged already classifies a
     /// guest that flips its clock every frame (TS-Conf: Wild Commander's AY

@@ -15,14 +15,19 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLocale>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QMimeData>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "common/threadhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/media/mediacontrol.h"
 
 namespace
@@ -104,6 +109,24 @@ MediaPanelWindow::MediaPanelWindow(QWidget* parent) : QWidget(parent)
     _timer = new QTimer(this);
     _timer->setInterval(250);
     connect(_timer, &QTimer::timeout, this, &MediaPanelWindow::refresh);
+
+    // BUGS.md #3: ticks once a second while a folder scan is in flight,
+    // updates the "Scanning... (N entries)" text and watches for a stall
+    _scanWatchdog = new QTimer(this);
+    _scanWatchdog->setInterval(1000);
+    connect(_scanWatchdog, &QTimer::timeout, this, &MediaPanelWindow::checkScanWatchdog);
+}
+
+MediaPanelWindow::~MediaPanelWindow()
+{
+    // The worker's completion lambda captures `this` and is marshaled back
+    // via QMetaObject::invokeMethod - it must never fire after this object is
+    // gone, so cancel and join unconditionally before the rest of the object
+    // (in particular _scanStatus/_scanProgress, read by onInsertFolderFinished
+    // only when invoked, but the thread itself must not outlive `this` either way)
+    cancelInsertWorker();
+    if (_insertWorker.joinable())
+        _insertWorker.join();
 }
 
 void MediaPanelWindow::buildUi()
@@ -121,6 +144,17 @@ void MediaPanelWindow::buildUi()
     _table->horizontalHeader()->setSectionResizeMode(ColMedium, QHeaderView::Stretch);
     _table->setToolTip(tr("Drop a disk image, card image or folder on a row to insert it into that slot"));
     layout->addWidget(_table);
+
+    // BUGS.md #3: shown only while an async folder scan is in flight
+    _scanStatus = new QLabel(this);
+    _scanStatus->hide();
+    layout->addWidget(_scanStatus);
+    _scanProgress = new QProgressBar(this);
+    _scanProgress->setMaximum(0);  // indeterminate: no a-priori total entry count
+    _scanProgress->setTextVisible(false);
+    _scanProgress->setFixedHeight(10);
+    _scanProgress->hide();
+    layout->addWidget(_scanProgress);
 
     auto* buttons = new QHBoxLayout();
     auto add = [this, buttons](const QString& text, const QString& tip, void (MediaPanelWindow::*slot)()) {
@@ -155,7 +189,14 @@ void MediaPanelWindow::setBinding(EmulatorBinding* binding)
     if (_binding)
     {
         connect(_binding, &EmulatorBinding::bound, this, [this] { _revision = UINT64_MAX; refresh(); });
-        connect(_binding, &EmulatorBinding::unbound, this, [this] { _revision = UINT64_MAX; refresh(); });
+        connect(_binding, &EmulatorBinding::unbound, this, [this] {
+            // The worker keeps the old emulator alive via its own shared_ptr
+            // (BUGS.md #3) and is unaffected either way, but there is no
+            // reason to let it keep scanning for a panel that has moved on
+            cancelInsertWorker();
+            _revision = UINT64_MAX;
+            refresh();
+        });
     }
     refresh();
 }
@@ -204,6 +245,7 @@ void MediaPanelWindow::rebuildTable()
     for (int r = 0; r < static_cast<int>(_rows.size()); r++)
     {
         const MediaPanelRow& row = _rows[static_cast<size_t>(r)];
+        const bool scanning = !_insertSlot.empty() && row.slot == _insertSlot;
         const QString medium = row.medium.empty() ? QString() : QFileInfo(Q(row.medium)).fileName() + "  (" + Q(row.format) + ")";
         const QStringList cells = {Q(row.slot), Q(row.alias), Q(row.state), medium, Q(row.access), Q(row.dirty)};
         for (int c = 0; c < ColCount; c++)
@@ -211,9 +253,23 @@ void MediaPanelWindow::rebuildTable()
             auto* item = new QTableWidgetItem(cells[c]);
             item->setToolTip(Q(row.label) + (row.medium.empty() ? QString() : "\n" + Q(row.medium)) +
                              (row.dirty.empty() ? QString() : tr("\nUnsaved: %1").arg(Q(row.dirty))) +
-                             (row.writeProtect ? tr("\nwrite-protected") : QString()));
+                             (row.writeProtect ? tr("\nwrite-protected") : QString()) +
+                             (scanning ? tr("\nScanning a folder...") : QString()));
             if (row.detached)
                 item->setForeground(palette().color(QPalette::Disabled, QPalette::Text));
+            if (scanning)
+            {
+                // BUGS.md #3: makes it unambiguous which mount point an
+                // in-flight async folder scan belongs to. QPalette::Accent
+                // (the system accent color, Qt 6.6+) rather than
+                // QPalette::Highlight - Highlight fades to a dull gray
+                // whenever the window is not key/focused, which made the
+                // scanning row hard to notice; Accent stays the user's chosen
+                // accent color regardless of focus
+                QColor tint = palette().color(QPalette::Accent);
+                tint.setAlpha(110);
+                item->setBackground(tint);
+            }
             _table->setItem(r, c, item);
         }
         if (Q(row.slot) == selected)
@@ -235,6 +291,22 @@ const MediaPanelRow* MediaPanelWindow::selectedRow() const
 
 void MediaPanelWindow::updateButtons()
 {
+    // BUGS.md #3: while a folder scan is in flight, every action is disabled
+    // rather than let the user start a second insert or an eject that would
+    // race the in-flight swap once the scan completes
+    if (_insertWorker.joinable())
+    {
+        _insertFile->setEnabled(false);
+        _insertFolder->setEnabled(false);
+        _eject->setEnabled(false);
+        _save->setEnabled(false);
+        _export->setEnabled(false);
+        _discard->setEnabled(false);
+        _protect->setEnabled(false);
+        _create->setEnabled(false);
+        return;
+    }
+
     const MediaPanelRow* row = selectedRow();
     const bool slot = row && !row->detached;
     _insertFile->setEnabled(slot);
@@ -320,7 +392,139 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
             options["device"] = iso ? "cdrom" : "disk";
         }
     }
+
+    // BUGS.md #3: a folder's scan + volume build can take seconds (a large
+    // folder, a slow/network disk) - keep that off the UI thread. A plain
+    // file insert stays synchronous: MediaFormatRegistry::Open for an image
+    // file is cheap, and the existing disposition dialog (run()'s
+    // askDisposition path) only makes sense on the UI thread anyway
+    if (QFileInfo(path).isDir())
+    {
+        if (_insertWorker.joinable())
+        {
+            QMessageBox::warning(this, tr("Insert"), tr("Another folder is still being scanned."));
+            return;
+        }
+        insertFolderAsync(slot, path, options);
+        return;
+    }
     report(run("insert", slot, S(path), options), tr("Insert"));
+}
+
+void MediaPanelWindow::insertFolderAsync(const std::string& slot, const QString& path,
+                                         std::map<std::string, std::string> options)
+{
+    Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
+    if (!emulator)
+    {
+        StateNode none = StateNode::Object();
+        none["ok"] = false;
+        none["message"] = "no emulator";
+        report(none, tr("Insert"));
+        return;
+    }
+
+    const std::string emulatorId = emulator->GetId();
+    const std::string pathStd = S(path);
+
+    _insertCancelRequested = false;
+    _insertEntriesScanned = 0;
+    _insertBytesScanned = 0;
+    _insertLastSeenEntries = 0;
+    _insertStalledTicks = 0;
+    _insertSlot = slot;
+    _insertPath = path;
+    _scanStatus->setText(tr("<b>%1</b>: scanning %2...").arg(Q(slot), path.toHtmlEscaped()));
+    _scanStatus->show();
+    _scanProgress->show();
+    rebuildTable();  // highlights _insertSlot's row right away, not just on the next refresh() tick
+    _scanWatchdog->start();
+
+    MediaRequest request;
+    request.verb = "insert";
+    request.selector = slot;
+    request.path = pathStd;
+    request.options = std::move(options);
+    request.options["async"] = "true";
+    // Captured by value (atomics behind pointers to `this`): safe to call
+    // from the worker thread for as long as `this` is alive, which the
+    // destructor guarantees by joining before any member is torn down
+    request.cancelRequested = [this]() { return _insertCancelRequested.load(); };
+    request.onProgress = [this](uint64_t count, uint64_t bytes) {
+        _insertEntriesScanned.store(count);
+        _insertBytesScanned.store(bytes);
+    };
+
+    _insertWorker = std::thread([this, emulatorId, request]() {
+        ThreadHelper::setThreadName("media-scan");
+        // A fresh lookup by id, not the EmulatorBinding's raw pointer: keeps
+        // the Emulator (and its EmulatorContext/MediaManager) alive for the
+        // scan's duration even if the GUI unbinds/rebinds concurrently. If
+        // the emulator was removed outright, GetEmulator returns null and
+        // this reports a plain failure instead of touching freed state
+        std::shared_ptr<Emulator> keepAlive = EmulatorManager::GetInstance()->GetEmulator(emulatorId);
+        StateNode reply;
+        if (!keepAlive)
+        {
+            reply = StateNode::Object();
+            reply["ok"] = false;
+            reply["message"] = "emulator no longer available";
+        }
+        else
+        {
+            reply = MediaControl(keepAlive->GetContext()).Execute(request).ToValue();
+        }
+        QMetaObject::invokeMethod(
+            this, [this, reply]() { onInsertFolderFinished(reply); }, Qt::QueuedConnection);
+    });
+}
+
+void MediaPanelWindow::onInsertFolderFinished(const StateNode& reply)
+{
+    if (_insertWorker.joinable())
+        _insertWorker.join();
+    _scanWatchdog->stop();
+    _scanStatus->hide();
+    _scanProgress->hide();
+    _insertSlot.clear();
+    _insertPath.clear();
+    report(reply, tr("Insert"));  // report() forces a refresh(), which clears the row highlight too
+}
+
+void MediaPanelWindow::checkScanWatchdog()
+{
+    const uint64_t current = _insertEntriesScanned.load();
+    if (current != _insertLastSeenEntries)
+    {
+        _insertLastSeenEntries = current;
+        _insertStalledTicks = 0;
+    }
+    else
+    {
+        ++_insertStalledTicks;
+    }
+    const QString size = QLocale().formattedDataSize(static_cast<qint64>(_insertBytesScanned.load()));
+    _scanStatus->setText(tr("<b>%1</b>: scanning %2... (%3 entries, %4)")
+                             .arg(Q(_insertSlot), _insertPath.toHtmlEscaped())
+                             .arg(current)
+                             .arg(size));
+
+    if (_insertStalledTicks >= _insertStallTimeoutSeconds)
+    {
+        // Ask the worker to stop; its own completion still comes through
+        // onInsertFolderFinished with whatever MediaError::Cancelled message
+        // FolderSnapshot/FolderDiskBuilder produced - no UI state is
+        // fabricated here, and the watchdog keeps ticking (harmlessly) until
+        // the worker actually reports back and stops it
+        _insertCancelRequested = true;
+        _scanStatus->setText(
+            tr("<b>%1</b>: no progress for %2s - cancelling...").arg(Q(_insertSlot)).arg(_insertStallTimeoutSeconds));
+    }
+}
+
+void MediaPanelWindow::cancelInsertWorker()
+{
+    _insertCancelRequested = true;
 }
 
 void MediaPanelWindow::onInsertFile()

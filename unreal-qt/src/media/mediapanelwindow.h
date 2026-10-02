@@ -17,13 +17,18 @@
 #include <QTableWidget>
 #include <QWidget>
 
+#include <atomic>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "media/core/mediapanelmodel.h"
+#include "emulator/state/statenode.h"
 
 class EmulatorBinding;
+class QLabel;
+class QProgressBar;
 class QPushButton;
 class QTimer;
 
@@ -50,6 +55,7 @@ class MediaPanelWindow : public QWidget
 
 public:
     explicit MediaPanelWindow(QWidget* parent = nullptr);
+    ~MediaPanelWindow() override;
 
     /// Connect to the central binding (mirrors TapeManagerWindow::setBinding)
     void setBinding(EmulatorBinding* binding);
@@ -87,6 +93,14 @@ private:
     void report(const StateNode& reply, const QString& what);
     void insertInto(const std::string& slot, const QString& path);
 
+    /// BUGS.md #3: a folder insert's scan + FAT/TRD volume build can take
+    /// seconds on a large or slow/network folder - run it on a worker thread
+    /// so the UI stays responsive, instead of blocking inside run()
+    void insertFolderAsync(const std::string& slot, const QString& path, std::map<std::string, std::string> options);
+    void onInsertFolderFinished(const StateNode& reply);
+    void checkScanWatchdog();
+    void cancelInsertWorker();  // best-effort: sets the flag, does not join
+
     EmulatorBinding* _binding = nullptr;
     MediaSlotTable* _table = nullptr;
     QPushButton* _insertFile = nullptr;
@@ -98,6 +112,29 @@ private:
     QPushButton* _protect = nullptr;
     QPushButton* _create = nullptr;
     QTimer* _timer = nullptr;
+
+    /// Async folder insert (BUGS.md #3): one at a time, guarded by
+    /// _insertWorker.joinable(). The worker never touches `this` directly -
+    /// it builds a StateNode reply on its own thread and marshals it back via
+    /// QMetaObject::invokeMethod(this, ..., Qt::QueuedConnection); the
+    /// destructor cancels and joins so that queued call can never fire after
+    /// this object is gone.
+    QLabel* _scanStatus = nullptr;
+    QProgressBar* _scanProgress = nullptr;
+    QTimer* _scanWatchdog = nullptr;
+    std::thread _insertWorker;
+    std::atomic<bool> _insertCancelRequested{false};
+    std::atomic<uint64_t> _insertEntriesScanned{0};
+    std::atomic<uint64_t> _insertBytesScanned{0};
+    uint64_t _insertLastSeenEntries = 0;
+    int _insertStalledTicks = 0;
+    int _insertStallTimeoutSeconds = 30;  ///< "configurable" per BUGS.md #3; a test can lower it
+    /// The slot an async insert is scanning for, "" when none - touched only
+    /// on the UI thread (set in insertFolderAsync, cleared in
+    /// onInsertFolderFinished), used by rebuildTable() to highlight that row
+    /// so it is obvious which mount point a running scan belongs to
+    std::string _insertSlot;
+    QString _insertPath;
 
     std::vector<MediaPanelRow> _rows;
     uint64_t _revision = UINT64_MAX;

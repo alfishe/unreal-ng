@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "common/network/nettypes.h"
 
@@ -22,6 +23,11 @@ class HostSerialPort
 public:
     HostSerialPort();
     ~HostSerialPort();
+
+    /// The serial devices the host has now, sorted: macOS /dev/cu.* and
+    /// /dev/tty.* (not the ptys), Linux /dev/ttyUSB* / ttyACM* / ttyS* /
+    /// ttyAMA* / rfcomm*, Windows the COMn names that exist
+    static std::vector<std::string> ListDevices();
 
     HostSerialPort(const HostSerialPort&) = delete;
     HostSerialPort& operator=(const HostSerialPort&) = delete;
