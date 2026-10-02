@@ -137,7 +137,8 @@ bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
 {
 	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
 		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
-		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE},
+		{"SPRINTER", IDE_SPRINTER}};
 	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
 	for (const auto& [text, id] : schemes)
 	{
@@ -162,6 +163,7 @@ const char* Config::IdeSchemeName(IDE_SCHEME scheme)
 		case IDE_SMUC: return "SMUC";
 		case IDE_PROFI: return "PROFI";
 		case IDE_DIVIDE: return "DIVIDE";
+		case IDE_SPRINTER: return "SPRINTER";
 	}
 	return "?";
 }
@@ -309,6 +311,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	{
+		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
+		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
+		if (preset == "SETUP" || preset == "setup")
+			config.atm.ts_bios_sd_boot = 0;
+		else
+		{
+			config.atm.ts_bios_sd_boot = 1;
+			if (preset != "SDBOOT" && preset != "sdboot")
+				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
@@ -348,6 +362,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
 	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 0) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
@@ -496,7 +511,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
 		// TS-Conf only: the FPGA stalls the Z80 for an IDE bus cycle (hardware-spec §8.3)
 		config.ide_stall = inimanager.GetLongValue(hdd, "IdeStall", 0) != 0 ? 1 : 0;
-		for (int unit = 0; unit < 2; unit++)
+		// Units 0-1: ide0 master / slave; units 2-3: ide1 (the Sprinter's second channel)
+		static const char* const kUnitSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+		for (int unit = 0; unit < 4; unit++)
 		{
 			IDE_CONFIG& ide = config.ide[unit];
 			ide = IDE_CONFIG{};
@@ -515,7 +532,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			}
 			// A CD drive: CDn=1, or the unit's configured image is an ISO
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
-			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
 			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
@@ -596,7 +613,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.moonsound.boardAnalog = (inimanager.GetLongValue(moonsound, "BoardAnalog", 0) != 0) ? 1 : 0;
 
 	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
-	// default), FM (TSFM) or None (no sound chip fitted). Unknown values warn and fall back to AY; a missing
+	// default), FM (TSFM), Single (one AY: the chip-switch values #FE / #FF
+	// select no register, as on a lone AY) or None (no sound chip fitted). Unknown values warn and fall back to AY; a missing
 	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
 	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
 	// honouring them now would silently switch every machine to TSFM.
@@ -617,6 +635,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 		else if (StringHelper::CompareCaseInsensitive(line, "None", strlen("None")) == 0)
 		{
 			config.sound.turboSoundKind = TurboSoundKind::None;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "Single", strlen("Single")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::Single;
 		}
 		else if (line[0] != '\0')
 		{
@@ -874,6 +896,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
 	}
+	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
+	// Resolved by the card like the other ROMs (working dir, executable, resources);
+	// a missing file only leaves the ROM fonts blank
+	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
+	                sizeof config.vdac2_rom_path);
+	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
+	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
+	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
+	                sizeof config.vdac2_capture_path);
 
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.
@@ -927,6 +958,25 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.zxWifi[0] = '\0';
 		}
 	}
+	config.network.atm2IoEsp[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Atm2IoEsp", nullptr), config.network.atm2IoEsp, sizeof config.network.atm2IoEsp);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.atm2IoEsp, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] Atm2IoEsp=%s: %s - the card's ESP runs AT", config.network.atm2IoEsp, error.c_str());
+			config.network.atm2IoEsp[0] = '\0';
+		}
+	}
+	{
+		// The card's bus address: a multiple of 8 (CT2..CT0 pick the register)
+		const long address = inimanager.GetLongValue(network, "Atm2IoEspAddress", 0xF0);
+		config.network.atm2IoEspAddress = static_cast<uint8_t>(address & 0xF8);
+		if (address < 0 || address > 0xFF || (address & 0x07))
+			MLOGWARNING("Config: [NETWORK] Atm2IoEspAddress=%ld: a bus address 0x00..0xF8 in steps of 8 (0xF0 or 0xF8); 0x%02X used",
+			            address, config.network.atm2IoEspAddress);
+	}
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");
@@ -954,6 +1004,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			hook(config);
 
 		result = true;
+#ifndef ENABLE_VDAC2
+		// A build without the FT812 library cannot fit the card: refuse the
+		// machine instead of running it without its video output
+		// (vdac2-integration-design.md §2)
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7)
+		{
+			MLOGERROR("Config: [MISC] TS_VDAC2=1, but this build has no VDAC2 support (CMake ENABLE_VDAC2=OFF)");
+			result = false;
+		}
+#endif
 	}
 	else
 	{

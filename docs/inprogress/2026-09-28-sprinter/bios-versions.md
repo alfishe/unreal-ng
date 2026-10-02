@@ -177,7 +177,8 @@ Alternative Boot from Diskette fail
 PRESS <ENTER> TO REBOOT, <DEL> TO ENTER SETUP OR <ESC> TO ZX-MODE . . .
 ```
 
-- No IDE yet (phase S3b): each of the four units waits for BSY until F4 is pressed (the tests
+- (Before S3b; since 2026-10-02 an empty channel reads `#7F` and each unit is "None" at once, tdd-storage
+  §3.4.) No IDE yet: each of the four units waits for BSY until F4 is pressed (the tests
   send it, as the 3.04 test does); with no floppy (S3a) both boot attempts fail. Nothing in the
   community builds needs a feature the emulator lacks to reach this point.
 - ESC at the prompt starts the ZX mode: the Spectrum 128 menu titled "Sprinter" (TR-DOS,
@@ -186,6 +187,24 @@ PRESS <ENTER> TO REBOOT, <DEL> TO ENTER SETUP OR <ESC> TO ZX-MODE . . .
   the log says "unknown PLD bitstream ... using Standard". Whether the 3.05 core or the 2026-09
   core needs a configuration module of its own (beyond the readable ALL_MODE, which Standard
   already gives) is open; nothing seen so far needs one.
+
+### 5.1 DSS versions and the BIOS (S3b, 2026-10-02)
+
+**DSS 1.71 needs a newer BIOS than 3.04.** The owner's MAME-pack system disk (DSS 1.71.57) and the DSS 1.71
+floppy (`dss171u.img`, same pack) boot their loader and SYSTEM.DOS on BIOS 3.04, then SYSTEM.DOS's start-up
+returns an error and the DSS loader prints a stray character and "Fatal error! Press RESET to restart." (the
+loader's own message; it prints whatever HL points at as the reason). MAME 0.289 with `-bios v3.04` shows the
+same screen at frame 475 ([reference/hdd-boot-304.txt](../../../testdata/machines/sprinter/reference/hdd-boot-304.txt)),
+so it is a version requirement, not an emulation fault. On 3.06 (MAME's `v3.06` and the kept 3.06 Hotfix 2)
+DSS 1.71.57 boots ("Estex DSS version 1.71.57. Shell version 1.2.522."); 3.05 is untried (no image). Which
+BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1.62.92 and 1.62.93 boot on
+3.04 and on 3.06 Hotfix 2.
+
+| DSS | Medium | BIOS 3.04 | BIOS 3.06 Hotfix 2 |
+|---|---|---|---|
+| 1.62.92 | floppy, built hard disk image | boots (ACC-3, ACC-4) | boots (`Bios306_DssUsesBothChannels`) |
+| 1.62.93 | ZXMAK2 `sp_disk1.vhd` | boots (`RealHdd_Dss16293BootsFromTheZxmak2Vhd`) | not tried |
+| 1.71.57 | MAME pack `sp_hdd_sys.img`, `dss171u.img` | "Fatal error" (MAME agrees) | boots (`RealHdd_Dss171BootsFromTheMamePackImage`) |
 
 ## 6. Picking and testing a BIOS
 

@@ -207,8 +207,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget"}},
-        {"export", {}},
+        {"save", {"retarget", "compression"}},
+        {"export", {"compression", "parent"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -663,7 +663,7 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
             return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk or cdrom");
         const int unit = IdeController::UnitForSlot(reply.slot);
         if (unit < 0 || !_context || !_context->pIdeController)
-            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave) changes its drive");
+            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave; ide1.* on the Sprinter) changes its drive");
         std::string error;
         ParkedEmulator parked(_context);
         if (!_context->pIdeController->SetUnitKind(unit, device == "cdrom", &error))
@@ -764,6 +764,8 @@ MediaReply MediaControl::Save(const MediaRequest& request)
     auto it = request.options.find("retarget");
     if (it != request.options.end() && !ParseBool(it->second, options.allowRetarget))
         return Fail(MediaError::BadRequest, "retarget '" + it->second + "': expected true or false");
+    if (auto compression = request.options.find("compression"); compression != request.options.end())
+        options.compression = Trim(compression->second);
 
     SaveOutcome outcome;
     {
@@ -788,8 +790,14 @@ MediaReply MediaControl::Export(const MediaRequest& request)
     if (path.empty())
         return Fail(MediaError::BadRequest, "export needs a path");
 
+    BlockWriteOptions options;
+    if (auto it = request.options.find("compression"); it != request.options.end())
+        options.compression = Trim(it->second);
+    if (auto it = request.options.find("parent"); it != request.options.end())
+        options.parent = Trim(it->second);
+
     ParkedEmulator parked(_context);
-    reply.result = _manager->Export(reply.slot, path);
+    reply.result = _manager->Export(reply.slot, path, options);
     if (reply.result.Ok())
         reply.body["exportedPath"] = path;
     return reply;

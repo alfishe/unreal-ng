@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`); CPU on its own Z84C15 library (2026-10-01, branch `sprinter-cpu`, [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md)); **S2 done** (2026-10-01, branch `sprinter-s2`, §7); **S3a done** (2026-10-01, branch `sprinter-s3a`, §8); S3b, S4-S7 not started. The owner started the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"). PLAN row **#59** (T4); its shared prerequisites are row **#60** (done) |
+| **Status** | Review round 1 done (2026-09-28, decisions in §5). S0 done (2026-10-01, branch `sprinter-s0`; the MAME captures on branch `sprinter-mame`); **S1 done** (2026-10-01, branch `sprinter-s1`); CPU on its own Z84C15 library (2026-10-01, branch `sprinter-cpu`, [2026-10-01-z84c15-cpu-library](../2026-10-01-z84c15-cpu-library/README.md)); **S2 done** (2026-10-01, branch `sprinter-s2`, §7); **S3a done** (2026-10-01, branch `sprinter-s3a`, §8); **S3b done** (2026-10-02, branch `sprinter-s3b`, §9); S4-S7 not started. The owner started the program on 2026-10-01 (TSConf exists; the trigger is no longer "after #41"). PLAN row **#59** (T4); its shared prerequisites are row **#60** (done) |
 | **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, its tests passing; nothing is committed without an explicit request |
 | **Inputs** | [goals-and-requirements.md](goals-and-requirements.md) (ACC-*), [technical-design.md](technical-design.md), [test-plan.md](test-plan.md) |
 
@@ -42,10 +42,10 @@ earlier.
 | **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened"). **Status 2026-10-01: done** (branch `sprinter-s1`, see [§6](#6-s1-outcome-2026-10-01)) | L | S0; PLAN #60 |
 | **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save). **Status 2026-10-01: done** (branch `sprinter-s2`, see [§7](#7-s2-outcome-2026-10-01)) | L | S1 |
 | **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density: the `#BD` latch (codes `#16`/`#17`) wired to the WD1793 `Latched` clock policy via `WD1793::SetLatchedClock` (built 2026-09-29, commits `64756638`, `f304dde1`), `LoaderRawPcFloppy` from PLAN #60(f); TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD). **Status 2026-10-01: done** (branch `sprinter-s3a`, see [§8](#8-s3a-outcome-2026-10-01)): DSS 1.62.92 boots from the floppy to `B:\>`; Spectrum mode (through DSS `SPECTRUM.EXE`: BIOS 3.04 holds no Spectrum ROMs) lists and loads a TRD | M | S1 |
-| **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image) | S-M | S1; IDE R1-1 (PLAN #13a) |
+| **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image). **Status 2026-10-02: done** (branch `sprinter-s3b`, see [§9](#9-s3b-outcome-2026-10-02)): DSS 1.62.92 boots from a built image on `ide0.master` (BIOS 3.04, `C:\>` at frame 495, MKDIR lands in the image), both channels through BIOS 3.06, the owner's real disks boot (DSS 1.71.57 on 3.06, DSS 1.62.93 on 3.04) | S-M | S1; IDE R1-1 (PLAN #13a) |
 | **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
 | **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, **default on** because the PLD has it (Q3, decided 2026-10-01) | T-ACC-*; part of **ACC-9** | M | S2 |
-| **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub | T-CBL-*; **ACC-9** | S-M | S2 |
+| **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub. **Status 2026-10-02: done** (branch `sprinter-s6`, [s6-sound-outcome.md](s6-sound-outcome.md)): `CovoxBlaster` in the COVOX mixer slot, one AY at 1.75 MHz, TTD id 32, PT3PLAY / WAVPLAY against MAME; the accelerator INT suspend default is off since (WAVPLAY) | T-CBL-*; **ACC-9** | S-M | S2 |
 | **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD Phase 1 (PLAN #40) |
 
 Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work).
@@ -167,9 +167,9 @@ Findings and deviations from the design (applied in the documents named):
 - **IDE without a drive**: until the IDE adapter (S3b) the IDE codes read `#FF` (BSY set), as an
   empty bus does on the shared IDE core; SETUP then waits ~31 s per unit ("Detecting IDE ...
   [Press F4 to skip]"). The boot test presses F4 through the SIO (scan code `#0C`), which also
-  proves the keyboard path SETUP polls. **Settled (2026-10-01): `#FF` is the board's answer** - no
-  pull-down on DD7, LS-TTL transceivers read an undriven bus high (hardware-reference §9.1). MAME
-  differs because its default slots hold drives (see §6.1 (b)).
+  proves the keyboard path SETUP polls. ~~Settled (2026-10-01): `#FF` is the board's answer~~
+  **Revised 2026-10-02 (owner):** an empty channel reads `#7F`, the ATA host pull-down on DD7, so every
+  BIOS reports "None" at once (tdd-storage §3.4, hardware-reference §9.1).
 - **TTD**: `PeripheralId::SprinterPld = 25` is declared without a serializer, so TTD refuses to
   record the Sprinter until S7 instead of recording a state it cannot restore; the CMOS uses the
   shared id 18. The ids of tdd-integration §2.1 are therefore 25 (PLD) and up.
@@ -204,7 +204,7 @@ from the BIOS start, frames are MAME's.
 | (c) loader | 473 720 writes, last at 6 691 665 T (1.912 s) | 473 720, last at 6 691 671 T (+6 T: the shared Z80 reset charges 3 T before the first fetch, and the probe read the clock after the 3-T write cycle where MAME stamps its start), 113 T per byte | **equal** (the CPU reset after it is not in MAME) |
 | (a) INT positions, FN_SYNC A = 1/2/3/0 | 60 896 / 64 480 / 66 272 / 66 272 T | the same | **equal** |
 | (a) INT acknowledge | routine's first fetch 6.5-10.5 T after the edge | 7-8 T | **equal**; the acknowledge ends the pulse (PLD) |
-| (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` is the board) |
+| (b) IDE detection | drives in MAME's default slots: master `#52`/IDENTIFY abort `#51`, slave CD `#10`/`#11` polled 280 frames; boot screen frame 507 (10.38 s) | no drive: `#FF`, 1 550 frames per unit; prompt at frame 3 291 (67.4 s) without F4 | **expected difference** (MAME emulates drives; `#FF` was S0-S3b's empty bus, `#7F` since 2026-10-02, §9) |
 | (e) page `#40` | CRC `b7f09600` | equal (`SprinterBoot_Test`) | **equal** |
 
 Fix: the turbo port wait was taken 2 clocks early (`AccessStartClock()` is the start of a 3-T memory
@@ -405,3 +405,81 @@ is no MAME time-to-prompt reference; unreal-ng's prompt at 7.3 s is consistent w
 - Not built: a Type II READ / WRITE SECTOR does not re-run on a rate change (the BIOS sets the density
   before it reads); the retry state is not in the WD1793 TTD blob (only a `Latched` machine changes the rate
   mid-command, and the Sprinter cannot record TTD before S7); the DD-mode turbo VG (as planned).
+
+## 9. S3b outcome (2026-10-02)
+
+Branch `sprinter-s3b`. Design as built: [tdd-storage.md](tdd-storage.md) §3.4. Tests: `IdeAdapter_Test.Sprinter*`
+(T-IDE-1..4, 7, and the fuzz), `PortDecoderSprinterIde_Test` (the 3.04 table's IDE codes, the CPU's B on A15-A8
+for `INI` / `OUTI`, the BIOS sector loops T-IDE-5 / T-IDE-6, the channel select), `IdeController_Test.Sprinter*`,
+`TTDAtaChannelSprinter_Test`, `DeviceStateIde_Test.SprinterReportsBothChannels`, `MediaConfig_Test.LegacyKeysForTheSecondChannel`,
+`McpTools_Test.InspectState_IdeAspect_*`, and the boots in `SprinterBoot_Test` below.
+
+**ACC-4, DSS from a hard disk image.** The 1 GB real disks cannot go into the repository, so the test builds a
+16 MiB image (`BuildDssHdd` in `sprinter_boot_test.cpp`): an MBR whose entry 0 is an active FAT16 partition
+(type `#06`) at LBA 63, the DSS 1.62.92 floppy's loader (its LBA 1-3, the same bytes as on the ZXMAK2 hard disk)
+at LBA 1-3, and a FAT16 volume (4 sectors per cluster, 2 FATs, 512 root entries) with the floppy's `SYSTEM.DOS`
+and `SYSTEM.EXE` and a `SYSTEM.BAT` of `ver` and `mkdir c:\s3b`. BIOS 3.04, blank CMOS (boot device: the IDE
+master), read back from the text-mode video RAM at frame 495 (10.1 s):
+
+```text
+ Detecting IDE Primary Master   ... UNREAL-NG HDD
+ Detecting IDE Primary Slave    ... None
+Start from Hard disk...Ok
+Starting DOS...
+C:\>ver
+Estex DSS Version 1.62.92
+C:\>mkdir c:\s3b
+C:\>
+```
+
+The prompt screen equals `testdata/machines/sprinter/golden/dss-hdd-prompt.png` pixel for pixel, and the image
+file holds the directory `S3B` afterwards (WriteThrough access).
+
+**BIOS detection.** The 31 s-per-unit wait of S1-S3a was the floating bus of an empty channel. S3b kept it
+(`#FF`, checked against BIOS 3.04 only); **revised 2026-10-02:** the owner rejected that outcome, and an empty
+channel now reads `#7F` (the ATA DD7 pull-down): every BIOS reports its units "None" in 1 frame instead of
+1 550-1 650 frames each (tdd-storage §3.4, `SprinterBoot_Test.EmptyChannels_*`). With a disk on the master the BIOS finds it at once;
+the empty slave then takes 280 frames (5.7 s): the master answers the task file for an absent slave (status `#00`,
+the sector count echoes), so SETUP sends a NOP and waits `#118` HALTs for DRDY. MAME shows the same 280-frame
+slave probe with BIOS 3.04 (frames 192-472 in [reference/hdd-boot-304.txt](../../../testdata/machines/sprinter/reference/hdd-boot-304.txt)).
+An empty CD unit on the slave (`CD1=1`, MAME's default wiring) is identified at once as "UNREAL-NG CD-ROM" (T-IDE-8).
+BIOS 3.04 probes two units; BIOS 3.06 probes four, and since the revision an empty secondary channel costs it no
+wait either.
+
+**Both channels.** `Bios306_DssUsesBothChannels`: BIOS 3.06 Hotfix 2 with built disks on `ide0.master` and
+`ide1.master` detects "UNREAL-NG HDD" on the primary and the secondary master and "None" on both slaves without a
+key; DSS 1.62.92 boots from the primary, mounts the secondary as `D:` and `mkdir d:\ide1` writes the second image.
+
+**The owner's real disks** (not in the repo; optional tests, skipped without the environment variables):
+
+| Disk | BIOS | Result | unreal-ng | MAME 0.289 |
+|---|---|---|---|---|
+| MAME pack `sp_hdd_sys.img` (raw 1 GiB from `sp_hdd_sys.chd`; DSS 1.71.57), `UNREAL_SPRINTER_HDD` | 3.06 Hotfix 2 | "Estex DSS version 1.71.57. Shell version 1.2.522.", then `SYSTEM.BAT` starts Flex Navigator (graphics mode, both panels) | banner at frame 187 (then: F4 at the two empty secondary units; since the DD7 revision none needed) | banner at frame 385 (7.885 s; its CD unit on the primary slave takes 200 frames of packet commands) |
+| same | 3.04 | the loader reads SYSTEM.DOS, then "Fatal error! Press RESET to restart." | on screen by frame 500 | frame 475 |
+| ZXMAK2 `sp_disk1.vhd` (fixed VHD, 2 GiB; DSS 1.62.93), `UNREAL_SPRINTER_HDD_VHD` | 3.04 | `C:\>fn` (Flex Navigator next) | frame 482 | - |
+
+The read sequence of the 1.71 boot is the same in both emulators, LBA for LBA (1, 2 x 3, 0, 63, 176 x 16, 432,
+448 x 32, 480 x 3, ...). One difference: MAME's device register reads back with the obsolete bits 7 and 5 clear
+(`#40` for LBA master), unreal-ng's with them set (`#E0`); the BIOS only ORs the head bits into what it reads, so
+both work. DSS 1.71's refusal of BIOS 3.04 is a version requirement (bios-versions.md §5.1).
+
+**GUI: F4 and the other F-keys.** The menu bound bare F1-F11 (speed, run control, debugger), so F4 never reached
+the BIOS IDE wait in the GUI. Now, while the emulator view has focus and the host keyboard reaches the machine's
+PS/2 keyboard (route `ps2` / `both`, Auto on ZX-Evo, TS-Conf, ATM Turbo 2+ and the Sprinter), bare F1-F12 (Shift
+allowed) go to the machine; matrix-only machines keep the shortcuts ([keyboard.md](../../features/keyboard.md)).
+Built and reviewed, not exercised by an automated GUI test (the Qt widgets have none).
+
+**Found on the way:** a heap-use-after-free on every Sprinter teardown (the decoder detached itself from the
+already freed `SprinterMemory`; `InstancesCanBeRemovedAndCreatedAgain`, AddressSanitizer). The same class of bug
+exists in the ATM710 (`~PortDecoder_ATM710` touches the freed keyboard) and TSConf (`~PortDecoder_TSConf` touches
+the freed memory) decoders: not fixed here (TODO).
+
+**Deviations from the design:**
+
+- One shared `IdeAdapter` with a Sprinter region instead of an `IdeAdapterSprinter` class; files in `io/ide/`;
+  the latch and the channel select live in `IdeAdapterState` (tdd-storage §3.4).
+- The empty CD unit on `ide0.slave` is a config option already (the shared ATAPI core serves it); CD boot and
+  CD audio stay in S7.
+- Code `#29` (drive address) reads `#FF`.
+- ACC-4's "a file written by the guest is in the image after Save": the guest's MKDIR goes to the image with the
+  default WriteThrough access; Session + commit is the media manager's (tested there).

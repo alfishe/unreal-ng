@@ -3,6 +3,7 @@
 
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
+#include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
@@ -16,6 +17,7 @@
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
 #include <emulator/ports/portdecoder.h>  // Tagged port registry
+#include <emulator/state/devicestate.h>  // DeviceState::SprinterPaging
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -142,8 +144,13 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
     ram["bank3"] = static_cast<int>(memory.GetRAMPageForBank3());
     ret["ram"] = ram;
 
+    // Sprinter: #7FFD / #1FFD and the windows live in the PLD (DeviceState::SprinterPaging)
+    if (config.mem_model == MM_SPRINTER)
+    {
+        ret["paging"] = StateNodeToJson(DeviceState::SprinterPaging(context));
+    }
     // Paging state (if applicable)
-    if (config.mem_model != MM_SPECTRUM48)
+    else if (config.mem_model != MM_SPECTRUM48)
     {
         Json::Value paging;
         paging["port_7ffd"] = static_cast<int>(state.p7FFD);
@@ -295,8 +302,13 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 
     ret["banks"] = banks;
 
+    // Sprinter: the window kinds (fast RAM, vROM, graphics, ISA) and the PLD latches
+    if (config.mem_model == MM_SPRINTER)
+    {
+        ret["sprinter"] = StateNodeToJson(DeviceState::SprinterPaging(context));
+    }
     // Paging control (if applicable)
-    if (config.mem_model != MM_SPECTRUM48)
+    else if (config.mem_model != MM_SPECTRUM48)
     {
         Json::Value paging;
         paging["port_7ffd_hex"] = StringHelper::Format("0x%02X", state.p7FFD);
@@ -375,6 +387,9 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
         case MM_PROFI:
         case MM_PROFI3:
             totalROMPages = 4;
+            break;
+        case MM_SPRINTER:
+            totalROMPages = 16;  // the 256 KB flash (Sprinter bios-versions.md §2)
             break;
         default:
             totalROMPages = 1;
@@ -460,8 +475,8 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     }
     ret["mapping"] = mapping;
 
-    // Port info (if applicable)
-    if (config.mem_model != MM_SPECTRUM48)
+    // Port info (if applicable; the Sprinter's #7FFD is in the PLD: /state/sprinter)
+    if (config.mem_model != MM_SPECTRUM48 && config.mem_model != MM_SPRINTER)
     {
         ret["port_7ffd_bit4_rom_select"] = (state.p7FFD & 0x10) ? 1 : 0;
     }
@@ -1484,6 +1499,23 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
     // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
     for (Json::ArrayIndex slot = 0; slot < banks.size(); slot++)
         banks[slot]["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(slot));
+
+    // Sprinter: the PLD maps the windows (fast RAM, vROM, graphics, ISA): kind and physical page
+    // from DeviceState::SprinterPaging, the same view every interface shows
+    if (config.mem_model == MM_SPRINTER)
+    {
+        Json::Value sprinter = StateNodeToJson(DeviceState::SprinterPaging(context));
+        for (Json::ArrayIndex slot = 0; slot < banks.size() && slot < sprinter["windows"].size(); slot++)
+        {
+            const Json::Value& window = sprinter["windows"][slot];
+            banks[slot]["type"] = window["kind"];
+            banks[slot]["page"] = window["page"];
+            banks[slot].removeMember("note");
+            if (window.isMember("note"))
+                banks[slot]["note"] = window["note"];
+        }
+        ret["sprinter"] = sprinter;
+    }
 
     ret["banks"] = banks;
 

@@ -41,6 +41,7 @@ public:
         Graphics,    ///< graphics page: the store goes to the video address (plain store trashed)
         ResetPage,   ///< page #A0 with #1FFD = #10: the write resets the CPU
         Isa,         ///< ISA view: ignored
+        CblPage,     ///< page #FD: the plain store, and the Covox-Blaster sees it (accelerator copies, INT on)
     };
 
     /// How a CPU read from a window differs from the mapped page
@@ -91,6 +92,8 @@ public:
     static constexpr uint8_t kPortTablePage = 0x40;
     static constexpr uint8_t kGraphicsFirstPage = 0x50;
     static constexpr uint8_t kResetPage = 0xA0;
+    /// The Covox-Blaster buffer page: accelerator copies into it also feed the ring (INC SP2000.inc:138)
+    static constexpr uint8_t kCblPage = 0xFD;
     static constexpr uint8_t kLoaderRomPage = 0x0C;
 
     /// The Spectrum screen shadow address in video RAM for a CPU write at `addr`
@@ -99,6 +102,21 @@ public:
     /// Worked example: #4000 with PORT_Y = 0: row 0, column 0; #57FF: row #FF, column #17
     static uint32_t ZxShadowAddress(uint16_t addr, uint8_t portY, uint8_t pg3);
     /// endregion </Bank mapping>
+
+    /// region <Accelerator accesses (SprinterAccelerator, tdd-accel-sound-input §1.3)>
+public:
+    /// Whether an accelerator access at `addr` reaches memory: main RAM windows only (not ROM, fast RAM, ISA)
+    bool AcceleratorReaches(uint16_t addr) const
+    {
+        const uint8_t bank = static_cast<uint8_t>(addr >> 14);
+        return _bank_mode[bank] == BANK_RAM && _action[bank] != BankAction::Isa;
+    }
+    /// A read the accelerator repeats: the window's byte with the graphics redirect, no CPU wait
+    uint8_t AcceleratorRead(uint16_t addr) { return MemoryReadFast(addr, false); }
+    /// A store the accelerator repeats: the plain store, TTD dirty page, then the write intercept
+    /// (graphics pages, VRAM shadow, reset page) - what a CPU write does, without its wait
+    void AcceleratorWrite(uint16_t addr, uint8_t value);
+    /// endregion </Accelerator accesses>
 
 protected:
     bool UpdateModelBanks() override;

@@ -106,6 +106,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 # OS-specific implementations (src/platform/<os>/): only the host's own.
 # posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them
@@ -263,6 +264,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 # compiles core sources directly into its own binary and must see the same
 # gate as the core library build (a mismatch would be an ODR hazard).
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
+
+
+# TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The
+# gate is PUBLIC for the same reason as UNREALNG_HAVE_OPL4: core-tests compiles core
+# sources itself and must see the same class layouts
+if (ENABLE_VDAC2)
+    target_link_libraries(${PROJECT_NAME} PRIVATE eve::emu)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_VDAC2)
+endif()
 
 
 # Platform-specific framework and library linkage

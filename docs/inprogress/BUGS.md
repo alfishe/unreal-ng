@@ -9,7 +9,7 @@
 ---
 
 2026-10-02
-## 🟠 [Confirmed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
+## 🟣 [Fix Proposed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
 * **Date Opened:** 2026-10-02
 * **Date Fixed:** -
 * **Commit ID:** -
@@ -29,11 +29,13 @@ References: the hardware (HALT2INT photos and published screens) and MAME fetch 
 SkoolKit fetch the HALT, like unreal-ng.
 
 ### Requirements / Acceptance Criteria
-- [ ] The halted idle fetch goes to PC + 1 on the bus (contention, the +2A / +3 latch, ULA snow, the machine M1 hooks)
+- [x] The halted idle fetch goes to PC + 1 on the bus (contention, the +2A / +3 latch, ULA snow, the machine M1 hooks)
       while PC, the instruction-start work, R and the acknowledge stay as today
-      ([design](2026-10-02-halt-fetch-address/design.md) §3-4).
-- [ ] `Halt2Int_Test` passes with no known deviation; a host test pins the idle fetch address on the 48K, 128K, +3.
-- [ ] No cost on the non-halted path (A/B); unreal-z80 carries the same fix with every suite green.
+      ([design](2026-10-02-halt-fetch-address/design.md) §3-4). `Z80::HaltedM1`, branch `halt-fetch-fix`.
+- [x] `Halt2Int_Test` passes with no known deviation (48K; the 128K program finds "Early"); host tests pin the idle
+      fetch address on the 48K and 128K (`Contention48K_Test` / `Contention128K_Test.HaltedFetchGoesToTheByteAfterTheHalt`).
+- [ ] No cost on the non-halted path (A/B, pending a quiet machine); unreal-z80 carries the same fix with every suite
+      green (library branch `halt-fetch`, done), as do the vendored copies (General Sound, the Sprinter's Z84C15).
 
 Design: [2026-10-02-halt-fetch-address](2026-10-02-halt-fetch-address/design.md). Plan: [PLAN.md](PLAN.md) #81.
 

@@ -3,6 +3,7 @@
 
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/machinevariants.h"
 #include <emulator/buildinfo.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
@@ -646,6 +647,8 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
             {
                 ss << "Model: " << identity.Model << " - " << identity.ModelFullName
                    << " (" << identity.RamKb << "KB)" << NEWLINE;
+                if (!identity.Variant.empty())
+                    ss << "Machine variant: " << identity.Variant << " - " << identity.VariantTitle << NEWLINE;
                 ss << "Config folder: " << identity.ConfigFolder << NEWLINE;
                 ss << "Power-on RAM: " << identity.RamPowerOn << NEWLINE;
                 if (identity.HasVideoMode)
@@ -1199,6 +1202,21 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
         const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
         if (base == nullptr || !Config::IsModelCreatable(*base))
             ss << " (not creatable on this build)";
+        ss << NEWLINE;
+    }
+
+    // Machine variants: a base model with a fixed board, started by name
+    ss << NEWLINE << "Machine variants:" << NEWLINE;
+    for (const MachineVariant& variant : MachineVariants::All())
+    {
+        ss << "  " << variant.name << " - " << variant.title << " (" << variant.baseModel << ", " << variant.ramKb
+           << "KB)";
+        const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
+        std::string reason;
+        if (base == nullptr || !Config::IsModelCreatable(*base))
+            ss << " (not creatable on this build)";
+        else if (!variant.supported(&reason))
+            ss << " (" << reason << ")";
         ss << NEWLINE;
     }
 

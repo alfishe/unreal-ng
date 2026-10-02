@@ -184,15 +184,16 @@ std::vector<MediaSetEntry> MediaConfig::FromIni(const IniFile& ini, const std::s
         if (!ngs->writeProtect)
             ngs->writeProtect = ini.GetLongValue("NGS", "SDWriteProtect", 0) != 0;
     }
-    if (MediaSetEntry* master = legacy("ide0.master", "HDD", "Image0", nullptr))
+    // ImageN / HDnRO: units 0-1 on ide0, 2-3 on ide1 (the Sprinter's second channel)
+    static const char* const kIdeSlots[4] = {"ide0.master", "ide0.slave", "ide1.master", "ide1.slave"};
+    for (int unit = 0; unit < 4; unit++)
     {
-        if (ini.GetLongValue("HDD", "HD0RO", 0) != 0)
-            master->access = AccessMode::ReadOnly;
-    }
-    if (MediaSetEntry* slave = legacy("ide0.slave", "HDD", "Image1", nullptr))
-    {
-        if (ini.GetLongValue("HDD", "HD1RO", 0) != 0)
-            slave->access = AccessMode::ReadOnly;
+        const std::string n = std::to_string(unit);
+        if (MediaSetEntry* entry = legacy(kIdeSlots[unit], "HDD", ("Image" + n).c_str(), nullptr))
+        {
+            if (ini.GetLongValue("HDD", ("HD" + n + "RO").c_str(), 0) != 0)
+                entry->access = AccessMode::ReadOnly;
+        }
     }
 
     // Options without a source (e.g. only "sd.zc.wp = 1") describe the slot, not a medium

@@ -24,9 +24,11 @@ is built phase by phase).
 
 ```text
 emulator_manage {"action":"create","model":"TSL"}      # alias TSCONF; 4096K only
-#   → boots TS-BIOS from rom/zxevo.rom (page 0). With a blank CMOS the BIOS
-#     opens its Setup Utility (text mode); ENTER changes an option and saves
-#     the NVRAM, after a reset it boots the default (TR-DOS)
+#   → boots TS-BIOS from rom/zxevo.rom (page 0). With no NVRAM file the BIOS
+#     starts with "Reset to: BD boot.$c": it boots Wild Commander (boot.$C) from
+#     the SD card in sd.zc ([EVO] TsBiosNvram=SDBOOT, the default). Without a
+#     card it shows "Boot-Device NOT READY". [EVO] TsBiosNvram=SETUP gives the
+#     blank CMOS of a new board: the Setup Utility first
 
 inspect_state {"aspects":["tsconf"]}
 inspect_state {"aspects":["tsconf_tsu"]}             # sprites (85 decoded), tile layers, CRAM
@@ -70,16 +72,24 @@ menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
 #   testdata/machines/tsconf/wildcommander/ (README there)
 curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: application/json' \
      -d '{"path":"testdata/machines/tsconf/wildcommander/sd-images/wc-tslabs-v1.11rc7.img"}'
-# Blank CMOS -> TS-BIOS Setup. Select "Reset to" (3 x CAPS SHIFT+6) and press
-# ENTER 3 x (ROM #00 -> ROM #04 -> RAM #F8 -> BD boot.$c); ENTER saves NVRAM.
-# Then reset: WC (text mode) comes up with both panels on the card's root.
+# Or a host folder holding WC (boot.$C and WC/ in its root) plus games:
+curl -s -X POST "$BASE/emulator/$EMU/media/sd.zc/insert" -H 'Content-Type: application/json' \
+     -d '{"path":"/path/to/sd-folder"}'
+# Reset: WC (text mode) comes up with both panels on the card's root
 curl -s -X POST "$BASE/emulator/$EMU/reset"
 ```
 
 The CMOS has no NVRAM file in the ts-conf config: every new instance starts
-with blank NVRAM (Setup first). From the IDE master instead: insert the image
-into `ide0.master`, then also set "Boot Device" (4 x CAPS SHIFT+6 further, 1 x
-ENTER: SD Z-contr -> IDE Nemo M) before the reset; WC's panels open the drive
+with the settings above ("Reset to: BD boot.$c", the SD card as boot device).
+A folder becomes a FAT32 volume from sector 0 with no MBR in front, whose boot
+sector carries one partition entry over the volume, as an `mformat`-made SD
+image does: TS-BIOS finds the volume only through a partition entry.
+
+With `[EVO] TsBiosNvram=SETUP` (blank CMOS, Setup first): select "Reset to"
+(3 x CAPS SHIFT+6), ENTER 3 x (ROM #00 -> ROM #04 -> RAM #F8 -> BD boot.$c),
+reset. From the IDE master instead: insert the image into `ide0.master`, then
+set "Boot Device" (from Setup: 7 x CAPS SHIFT+6, 1 x ENTER: SD Z-contr -> IDE
+Nemo M) before the reset; WC's panels open the drive
 named in `WC/wc.ini` (`DRV=1` for the IDE master). Setup options, boot devices
 and IDE details: `docs/inprogress/2026-09-27-tsconf/boot-and-storage-notes.md`.
 

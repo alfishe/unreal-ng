@@ -715,6 +715,9 @@ public:
     /// - never across frame boundaries, so manual debug stepping and the
     /// frame-end batch/latch paths are never affected.
     void SetTurboRenderSkip(bool skip) { _turboRenderSkip = skip; }
+    /// The machine frame being run will not be shown (turbo decimation): a
+    /// device drawing its own picture may skip drawing too
+    bool IsTurboRenderSkip() const { return _turboRenderSkip; }
 
     /// @brief Frame T-state of the first pixel of the active mode's display window
     uint32_t GetPaperStartTstate() const
@@ -852,6 +855,17 @@ protected:
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
 
+    // External picture source (SetExternalPicture): its descriptor, and the
+    // present delay in its frames (converted from the native delay)
+    std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
+    FramebufferDescriptor _external;
+    uint32_t _externalFramePeriodUs = 0;
+    /// The present queue's slots for frames of `size` bytes (caller holds _presentMutex)
+    void ResizePresentSlotsLocked(size_t size);
+    /// Copy one frame into the next present slot (caller holds _presentMutex)
+    void LatchIntoSlotLocked(const uint8_t* frame);
+    void PostVideoModeChanged();
+
     // Wall-clock (steady) timestamp of the last LatchFramebuffer, in us.
     // GUI consumers compute video presentation latency = paint time - this.
     std::atomic<uint64_t> _lastLatchTimestampUs{0};
@@ -894,8 +908,12 @@ public:
     {
         const uint8_t base = _presentDelayFrames.load(std::memory_order_acquire);
         const uint8_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
-        return temporal > base ? temporal : base;
+        const uint8_t native = temporal > base ? temporal : base;
+        return IsExternalPictureActive() ? ExternalDelayFrames(native) : native;
     }
+    /// The native delay (machine frames) as external frames of the same
+    /// duration, rounded to the nearest frame
+    uint8_t ExternalDelayFrames(uint8_t nativeFrames) const;
 
     /// @brief Temporal effect run on every frame before presentation (ZX DLSS
     /// de-flicker, core/src/emulator/video/zxdlss): the registry name of the
@@ -912,9 +930,15 @@ public:
     /// NEWEST latch, but the presented frame is GetPresentDelayFrames older)
     uint32_t GetPresentDelayUs() const
     {
+        if (IsExternalPictureActive())
+            return static_cast<uint32_t>(GetEffectivePresentDelayFrames() * static_cast<uint64_t>(_externalFramePeriodUs));
+        return static_cast<uint32_t>(GetEffectivePresentDelayFrames() * static_cast<uint64_t>(NativeFramePeriodUs()));
+    }
+    /// One machine frame in microseconds (the native present delay's unit)
+    uint32_t NativeFramePeriodUs() const
+    {
         const uint32_t frameTStates = (_context && _context->config.frame) ? _context->config.frame : 71680;
-        return static_cast<uint32_t>(GetEffectivePresentDelayFrames() *
-                                     (static_cast<uint64_t>(frameTStates) * 10 / 35));
+        return static_cast<uint32_t>(static_cast<uint64_t>(frameTStates) * 10 / 35);
     }
 
     /// @brief Copy the latched (tear-free) frame into a caller-provided buffer.
@@ -924,8 +948,35 @@ public:
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
 
+    /// The picture the monitor shows: the machine's framebuffer, or the
+    /// external picture while one is active (SetExternalPicture)
     FramebufferDescriptor& GetFramebufferDescriptor();
     void GetFramebufferData(uint32_t** buffer, size_t* size);
+
+    /// region <External picture source>
+    /// A video card that switches the monitor away from the machine's own
+    /// raster (the TS-Conf VDAC2 card shows its FT812 picture while V_CONFIG
+    /// bit 2 is set). While active:
+    ///   - GetFramebufferDescriptor / GetFramebufferData describe the external
+    ///     picture, so screenshots, the UI and the video wall show it;
+    ///   - the machine frame end does not latch the native framebuffer
+    ///     (LatchFramebuffer returns); the owner latches each of its frames
+    ///     with LatchExternalFrame, at its own rate, on the emulation thread;
+    ///   - the present queue is sized for the external picture, and its delay
+    ///     is converted so the A/V offset stays the same at the other rate.
+    /// Switching on or off, or a new size, posts NC_VIDEO_MODE_CHANGED (the
+    /// consumers re-attach, as for a guest video mode switch). The owner keeps
+    /// the buffer: RGBA8888 like the framebuffer, valid until it switches off
+    /// or calls SetExternalPicture again. The native renderer keeps running
+    /// underneath (debugger views read it through the video mappers).
+    void SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height, uint32_t framePeriodUs);
+    void ClearExternalPicture();
+    bool IsExternalPictureActive() const { return _externalActive.load(std::memory_order_acquire); }
+    /// The machine's own framebuffer, whatever the monitor shows
+    FramebufferDescriptor& GetNativeFramebufferDescriptor() { return _framebuffer; }
+    /// Latch the external picture into the present queue (emulation thread)
+    void LatchExternalFrame();
+    /// endregion
 
     /// Display viewport for cropping framebuffer to display
     void SetDisplayViewport(const DisplayViewport& viewport);

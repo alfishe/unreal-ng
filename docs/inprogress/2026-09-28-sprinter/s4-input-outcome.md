@@ -59,3 +59,28 @@ the PC keys exactly as it does for ZX-Evo; no automation change was needed.
 - **MAME reference:** not used for this phase. The local MAME build runs with `-kbd ""` because the
   Microsoft Natural keyboard device ROM (`natural.bin`) is missing; a keyboard capture from MAME
   needs that ROM.
+
+## Flex Navigator follow-up (2026-10-02, branch `sprinter-fn-input`)
+
+The owner's report: in the GUI, Tab did not switch FN's panels and the mouse did nothing.
+
+- **Keys: the core was right.** FN reads keys through DSS (KEYSCAN reads the set 2 bytes from SIO A; Tab = `#0D`,
+  DSS position code `#0F`); through the automation Tab, the arrows and the rest worked on FN 1.10 (DSS 1.62 floppy)
+  and FN 1.15 (DSS 1.71 HDD). **The Qt layer ate Tab:** on the software renderer `QWidget::event` offers Tab to
+  `focusNextPrevChild` before `keyPressEvent`, so the focus jumped to the main window (whose filter forwards keys)
+  and back: every other Tab was lost. `DeviceScreen` / `DeviceScreenGL` now refuse focus traversal, and the GPU
+  window container passes a Tab it receives to the GL window. Verified live with native key events (System Events).
+- **Mouse protocol.** DSS 1.62.9x (`intmouse.asm`, the community build) reads the PLD's Kempston view (`#FADF`
+  buttons, `#FBDF` X, `#FFDF` Y, code `#58`); DSS 1.60 and 1.71 (`SYSTEM.DOS` 1.71: WR4 `#44`, WR3 `#41`, CTC0 /45
+  for the SIO B clock) read Microsoft serial packets on SIO B, synced on bit 6, with no `M` identification. FN only
+  calls the DSS driver. **Fix:** code `#58` read the optional Kempston interface (`#FF` with `[INPUT] Mouse=NONE`);
+  it is the PLD's view of the board's own mouse (MAME reads it unconditionally), so it now reads the counters
+  through `SprinterInput::ReadMouseView`, the same source as the serial packets.
+- **The GUI mouse** does not work on the GPU renderer for any machine (the GL window has no mouse capture); that is
+  the shared mouse manager work (`docs/inprogress/2026-10-02-mouse-manager/`). For the Sprinter it must deliver
+  relative moves and the button mask (D0 left, D1 right, D2 middle) to one per-machine set of counters that both
+  views read, capture on the GL window, and not refuse capture when no Kempston interface is configured.
+- **Tests:** `SprinterInput_Test.MouseWithoutAKempstonInterface`, `SprinterFlexNavigator_Test.Dss162_Fn110KeysAndMouse`
+  (Tab, Down, a mouse click on the right panel, `Mouse=NONE`), `RealHdd_Fn115KeysAndMouse` (`UNREAL_SPRINTER_HDD`).
+- **Open:** after a panel switch FN 1.10 reads the floppy with interrupts off for ~30 frames; keys sent then overrun
+  the SIO FIFO (whether the real machine reads that fast is the S5 floppy-timing question).

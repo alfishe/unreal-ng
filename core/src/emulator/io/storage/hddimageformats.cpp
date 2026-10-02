@@ -10,6 +10,7 @@
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
+#include "emulator/io/storage/chd/chdimage.h"
 
 namespace
 {
@@ -137,6 +138,8 @@ std::string HddImageFormats::Probe(const std::string& path, std::string* error)
     Header h;
     if (!ReadHeader(path, h, error))
         return {};
+    if (h.headRead && h.size >= 16 && std::memcmp(h.head, "MComprHD", 8) == 0)
+        return "chd";
     if (h.isoRead && std::memcmp(h.iso + 1, "CD001", 5) == 0)
         return "iso";
     if (h.headRead && h.size >= 16 && std::memcmp(h.head, "RS-IDE", 6) == 0)
@@ -157,8 +160,16 @@ std::unique_ptr<RawImage> HddImageFormats::Open(const std::string& path, const s
     return RawImage::Open(path, format == "iso" ? RawImage::Access::ReadOnly : access, layout, error);
 }
 
+std::unique_ptr<IBlockDevice> HddImageFormats::OpenBlock(const std::string& path, const std::string& format,
+                                                         RawImage::Access access, std::string* error)
+{
+    if (format == "chd")
+        return ChdImage::Open(path, error);
+    return Open(path, format, access, error);
+}
+
 bool HddImageFormats::IsHardDiskExtension(const std::string& extension)
 {
     const std::string ext = StringHelper::ToLower(extension);
-    return ext == "hdd" || ext == "hd" || ext == "hdf" || ext == "hdi" || ext == "vhd";
+    return ext == "hdd" || ext == "hd" || ext == "hdf" || ext == "hdi" || ext == "vhd" || ext == "chd";
 }

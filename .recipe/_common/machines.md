@@ -97,6 +97,10 @@ Create response and `GET /emulator/{id}` share the identity fields:
 - `inspect_state {"aspects":[...]}` — per-topic snapshots: `registers`,
   `rom`, `video`, `fdc`, `mouse`, `ram_size`, `audio_ay`, `audio_fm`,
   `audio_gs` (see the sound recipes).
+- Machine blocks: `GET /state/tsconf` (aspect `tsconf`,
+  [tsconf.md](../machines/tsconf.md)); `GET /state/sprinter`,
+  `/state/sprinter/ports[/lookup]`, `/state/sprinter/text` (aspects `sprinter`,
+  `sprinter_ports`, `sprinter_text`, [sprinter.md](../machines/sprinter.md)).
 
 ## Branches that add machines and cards
 

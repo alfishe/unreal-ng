@@ -24,11 +24,12 @@ Sprinter uses it; every other machine runs on the native interpreter in
 | Only the callback bus: `opcodes-flat.cpp`, `opcodes-paged.cpp`, `Z80CpuAttachMemory`, `Z80CpuAttachPageTables`, `Z80CpuSyncPageTables` and the page macros removed | `z84cpu.h`, `z84cpu.cpp`, `z84cpu-internal.h`, `z84cpu-dispatch.h` | the host owns memory (paging, the board's /WAIT); the wait generator is written once |
 | The memory read callback gets `Z84CpuAccessKind` (`M1`, `Operand`, `Read`) instead of a 0/1 flag | `z84cpu.h`, `opcodes-callback.cpp`, `z84cpu.cpp` | the host and the wait generator tell an opcode fetch from an operand fetch |
 | The clock is taken back from `cpu->t` after every memory / port callback; `Z84CpuAddWaitStates` | `opcodes-callback.cpp`, `z84cpu.cpp` | the board's external /WAIT, added from the callback |
-| A halted CPU reads the byte at PC as an M1 every quantum | `opcodes-callback.cpp`, `z84step.inc` | the board sees (and stretches) those M1 cycles |
+| A halted CPU reads the byte after the HALT as an M1 every quantum (PC stays on the HALT) | `opcodes-callback.cpp`, `z84step.inc` | the board sees (and stretches) those M1 cycles |
 | The INT / NMI acknowledge's pushes and IM2 vector reads go through the memory callbacks (no raw access) | `z84cpu.cpp` | the board's /WAIT logic sees them; only the callback bus exists |
 | CMOS core: `OUT (C),0` writes `#FF` by default; no LD A,I / LD A,R P/V quirk in `Z84CpuInt` | `z84cpu.cpp`, `z84cpu.h` | the Z84C00 (research section 3) |
 | The wait generator (`Z84WaitGen` in `Z84CPU`, `z84waits.cpp`) in the memory, M1, I/O, INTA, NMI and halted cycles | `z84cpu-internal.h`, `opcodes-callback.cpp`, `z84cpu.cpp`, `z84waits.cpp` | the chip's programmed waits (research section 4.1) |
 | The chip's RETI watcher before the host's RETI callback | `opcodes-ed.inc`, `z84cpu-internal.h` | the on-chip daisy chain |
+| `Z84C15::SaveState` / `LoadState` (`kStateSize` bytes, fixed little-endian layout), `Z84Ctc::SetVector` | `z84c15.h`, `z84c15.cpp` | time travel and snapshots: the chip's state beside the register file (Sprinter S7) |
 | New: `z84c15.h`, `z84c15.cpp`, `z84ctc.cpp`, `z84sio.cpp`, `z84pio.cpp` | | the on-chip block; the CTC / SIO / PIO models moved here from unreal-ng's `core/src/emulator/io/z84c15/` (Sprinter S1) and gained their interrupts |
 
 The opcode bodies (`opcodes-*.inc`) differ from unreal-z80 only by the renames

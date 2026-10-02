@@ -589,6 +589,43 @@ TEST_F(McpTools_Test, InspectState_RegistersAspect_ReadsRegisters)
     EXPECT_TRUE(result.structured.isMember("registers"));
 }
 
+// The ide aspect's summary names the units by slot and, on a two-channel board (the Sprinter), the selected
+// channel and the PLD's data latch
+TEST_F(McpTools_Test, InspectState_IdeAspect_SummarizesBothSprinterChannels)
+{
+    Json::Value ide;
+    ide["available"] = true;
+    ide["scheme"] = "SPRINTER";
+    ide["channels"] = 2;
+    ide["selected_channel"] = "secondary";
+    ide["selected"] = "master";
+    ide["adapter"]["data_latch"] = 0x5A;
+    ide["adapter"]["channel"] = 1;
+    for (const char* slot : {"ide0.master", "ide1.master"})
+    {
+        Json::Value unit;
+        unit["slot"] = slot;
+        unit["position"] = "master";
+        unit["kind"] = "disk";
+        unit["medium"] = Json::Value();
+        unit["task_file"]["status"] = 0x50;
+        unit["command"]["name"] = "none";
+        ide["units"].append(unit);
+    }
+    _caller->routes["GET /api/v1/emulator/emu-1/state/ide"] = {200, ide};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("ide");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/ide"));
+    EXPECT_NE(result.text.find("[ide] SPRINTER, selected secondary master, data latch #5a"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ide1.master (disk): no medium"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
 {
     _caller->routes["GET /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};
@@ -604,6 +641,82 @@ TEST_F(McpTools_Test, InspectState_TwoAspects_FanOutToBothEndpoints)
     ASSERT_FALSE(result.isError);
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1"));
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/registers"));
+}
+
+// Sprinter (tdd-integration §3): the aspects sprinter / sprinter_ports / sprinter_text read
+// /state/sprinter, /state/sprinter/ports and /state/sprinter/text; the summary names the PLD,
+// the windows, the table rows and the screen lines; a 404 (another machine) is "unavailable"
+TEST_F(McpTools_Test, InspectState_SprinterAspects_ReadTheSprinterEndpoints)
+{
+    Json::Value state;
+    state["available"] = true;
+    state["pld"]["state"] = "configured";
+    state["pld"]["module"] = "Standard";
+    state["decoder"]["map"] = 0;
+    state["decoder"]["dos"] = false;
+    state["clock"]["mhz"] = "21";
+    state["frame"]["lines"] = 320;
+    state["video"]["picture_mode"] = "text, 80 columns";
+    Json::Value window;
+    window["window"] = 0;
+    window["kind"] = "ROM";
+    window["page_hex"] = "0x08";
+    state["windows"].append(window);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter"] = {200, state};
+
+    Json::Value ports;
+    ports["available"] = true;
+    ports["map"] = 0;
+    ports["dos"] = true;
+    ports["pn5"] = false;
+    Json::Value row;
+    row["code"] = "0x2B";
+    row["direction"] = "w";
+    row["pattern"] = "001x xxxx 101x x100";
+    row["name"] = "IdePrimary";
+    ports["rows"].append(row);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/ports"] = {200, ports};
+
+    Json::Value text;
+    text["available"] = true;
+    text["text_squares"] = 640;
+    text["mode_page"] = 1;
+    Json::Value line;
+    line["text"] = "B:\\>";
+    text["lines"].append(line);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/text"] = {200, text};
+
+    Json::Value args;
+    args["aspects"].append("sprinter");
+    args["aspects"].append("sprinter_ports");
+    args["aspects"].append("sprinter_text");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.structured["sprinter"]["pld"]["module"].asString(), "Standard");
+    EXPECT_EQ(result.structured["sprinter_ports"]["rows"][0]["name"].asString(), "IdePrimary");
+    EXPECT_NE(result.text.find("[sprinter] PLD configured (Standard), map 0, DOS off, 21 MHz, 320 lines, text, 80 columns"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("window 0: ROM 0x08"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x2B w 001x xxxx 101x x100  IdePrimary"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[sprinter_text] 640 text squares, mode page 1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("B:\\>"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_SprinterAspect_OtherMachineIsUnavailable)
+{
+    Json::Value notFound;
+    notFound["message"] = "Not a Sprinter machine";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter"] = {404, notFound};
+
+    Json::Value args;
+    args["aspects"].append("sprinter");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_FALSE(result.structured["sprinter"]["available"].asBool());
+    EXPECT_NE(result.text.find("[sprinter] Not a Sprinter machine"), std::string::npos) << result.text;
 }
 
 // TD-3 Phase 1: the memory_map aspect hits GET /memory/map with the
@@ -1143,6 +1256,63 @@ TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFrame
         previous = event.first;
     }
     EXPECT_EQ(events.back().first, 1.0); // final report reaches 100%
+}
+
+TEST_F(McpTools_Test, CaptureMedia_RecordStartForwardsAudioAndStaysOpenWithoutFrames)
+{
+    Json::Value started;
+    started["status"] = "success";
+    started["format"] = "h264";
+    started["output"] = "/tmp/rec.mp4";
+    started["audio"] = true;
+    started["audio_codec"] = "aac";
+    started["audio_sample_rate"] = 44100;
+    _caller->routes["POST /api/v1/emulator/emu-1/video/record"] = {200, started};
+
+    Json::Value args;
+    args["action"] = "record_start";
+    args["format"] = "h264";
+    args["filename"] = "/tmp/rec.mp4";
+    args["scale"] = 2;
+    args["audio"] = "aac";
+    args["audio_bitrate"] = 192;
+    args["video_bitrate"] = 8000;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/video/record");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["action"].asString(), "start");
+    EXPECT_EQ(call->body["audio"].asString(), "aac");
+    EXPECT_EQ(call->body["audio_bitrate"].asUInt(), 192u);
+    EXPECT_EQ(call->body["video_bitrate"].asUInt(), 8000u);
+    EXPECT_EQ(call->body["scale"].asUInt(), 2u);
+
+    // No 'frames': the session stays open for record_stop - no frames run, no stop sent
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/run_frames"));
+    size_t recordCalls = 0;
+    for (const auto& c : _caller->calls)
+        recordCalls += c.path == "/api/v1/emulator/emu-1/video/record" ? 1 : 0;
+    EXPECT_EQ(recordCalls, 1u);
+    EXPECT_NE(result.text.find("Recording started"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("aac audio 44100 Hz"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_RecordStartRefusedByServerIsAnError)
+{
+    Json::Value refused;
+    refused["error"] = "Bad Request";
+    refused["message"] = "GIF has no audio track.";
+    _caller->routes["POST /api/v1/emulator/emu-1/video/record"] = {400, refused};
+
+    Json::Value args;
+    args["action"] = "record_start";
+    args["format"] = "gif";
+    args["audio"] = "aac";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("GIF has no audio"), std::string::npos) << result.text;
 }
 
 namespace

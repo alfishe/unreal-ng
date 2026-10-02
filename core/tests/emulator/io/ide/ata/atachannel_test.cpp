@@ -60,6 +60,27 @@ TEST(AtaChannel_Test, EmptyChannelFloats)
     EXPECT_EQ(channel.ReadRegister(StatusCommand), Status::DRDY | Status::DSC);
 }
 
+// A host with the ATA DD7 pull-down (the Sprinter's AT board): an empty channel reads #7F, BSY = 0, so the
+// firmware sees "no device" at once; the master still answers for an absent slave with status #00
+TEST(AtaChannel_Test, EmptyChannelWithTheDd7PullDown)
+{
+    AtaChannel channel;
+    channel.SetEmptyBus(AtaChannel::kEmptyBusDd7PullDown);
+    for (uint8_t reg = ErrorFeatures; reg <= Control; reg++)
+        EXPECT_EQ(channel.ReadRegister(reg), 0x7F) << int(reg);
+    EXPECT_EQ(channel.ReadData(), 0xFF7F);
+    channel.WriteRegister(SectorCount, 0x05);
+    EXPECT_EQ(channel.ReadRegister(SectorCount), 0x7F) << "no register echo: nothing latched the write";
+    channel.WriteRegister(DeviceHead, DeviceBits::DEV);
+    EXPECT_EQ(channel.ReadRegister(StatusCommand), 0x7F) << "either unit of an empty channel";
+
+    Unit master = AddDisk(channel, 0, 0x11);
+    EXPECT_EQ(channel.ReadRegister(StatusCommand), 0x00) << "absent device 1 next to device 0: status 0 (ATA)";
+    EXPECT_EQ(channel.ReadRegister(Control), 0x00);
+    channel.WriteRegister(DeviceHead, 0);
+    EXPECT_EQ(channel.ReadRegister(StatusCommand), Status::DRDY | Status::DSC);
+}
+
 TEST(AtaChannel_Test, MasterAnswersForAnAbsentSlave)
 {
     AtaChannel channel;

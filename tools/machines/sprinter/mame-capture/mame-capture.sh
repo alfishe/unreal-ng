@@ -2,10 +2,15 @@
 # Sprinter Sp2000 reference captures on MAME's `sprinter` driver, headless
 # (see testdata/machines/sprinter/reference/README.md).
 #   MAME_BIN=<mame binary with the sprinter driver> ./mame-capture.sh <mode> [VAR=value ...]
-# mode: boot | loader | sync | palette (see mame-capture.lua). Extra VAR=value pairs go to the Lua script's environment
+# mode: boot | loader | sync | palette | loop (see mame-capture.lua). Extra VAR=value pairs go to the Lua script's environment
 # (SPC_END, SPC_DUMP_AT, ...). Output: $SPC_OUT (default build/<mode>/ here).
 # SPC_FLOP1 / SPC_FLOP2=<image> put a floppy in drive A / B (a 3.5" HD drive; SPC_FLOP_DRIVE: 35hd by default, or
 # 35dd / 525qd). With a blank CMOS the BIOS boots the IDE master, then the alternative device, floppy B.
+# SPC_HARD1=<image> puts a hard disk on the primary master (MAME -hard1, ata1:0: a CHD, e.g. the owner's MAME pack
+# sp_hdd_sys.chd), SPC_HARD2 on the secondary master (-hard2, ata2:0). SPC_BIOS: the MAME BIOS set (default v3.04;
+# v3.06 needs MAME_ROMPATH with MAME's own sprinter.zip, e.g. the MAME pack's roms/ folder).
+# SPC_WAV=<file.wav> writes MAME's mixed sound output (-wavwrite; 48 kHz stereo 16-bit unless SPC_SAMPLERATE): the
+# Sprinter's AY, beeper and Covox / Covox-Blaster DAC, for side-by-side audio checks (phase S6).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -46,13 +51,25 @@ fi
 if [ -n "${SPC_FLOP2:-}" ]; then
 	MEDIA+=(-beta:wd179x:1 "${SPC_FLOP_DRIVE:-35hd}" -flop2 "$(abspath "$SPC_FLOP2")")
 fi
+if [ -n "${SPC_HARD1:-}" ]; then
+	MEDIA+=(-hard1 "$(abspath "$SPC_HARD1")")
+fi
+if [ -n "${SPC_HARD2:-}" ]; then
+	MEDIA+=(-hard2 "$(abspath "$SPC_HARD2")")
+fi
 
-# A fresh CMOS each run (MAME starts from its own default contents), so runs repeat
-rm -rf "$BUILD/run/nvram/sprinter" "$BUILD/run/cfg/sprinter.cfg"
+SOUND=(-sound none)
+if [ -n "${SPC_WAV:-}" ]; then
+	SOUND+=(-wavwrite "$(abspath "$SPC_WAV")" -samplerate "${SPC_SAMPLERATE:-48000}")
+fi
+
+# A fresh CMOS each run (MAME starts from its own default contents), and no hard-disk diff from an earlier run
+# (MAME keeps the guest's writes to a CHD in diff/<name>.dif; a stale one breaks the next image of that name)
+rm -rf "$BUILD/run/nvram/sprinter" "$BUILD/run/cfg/sprinter.cfg" "$BUILD/run/diff"
 cd "$BUILD/run"
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-"$MAME" sprinter -bios v3.04 -kbd "" -rompath "$ROMPATH" \
-	-video none -sound none -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins \
+"$MAME" sprinter -bios "${SPC_BIOS:-v3.04}" -kbd "" -rompath "$ROMPATH" \
+	-video none "${SOUND[@]}" -window -nomaximize -nothrottle -skip_gameinfo -noreadconfig -noplugins \
 	-cfg_directory "$BUILD/run/cfg" -nvram_directory "$BUILD/run/nvram" -snapshot_directory "$OUTDIR" -snapview native \
 	${MEDIA[@]+"${MEDIA[@]}"} \
 	-seconds_to_run $(( END / 48 + 10 )) -autoboot_script "$HERE/mame-capture.lua" 2>&1 | tee "$BUILD/mame-$MODE.log"

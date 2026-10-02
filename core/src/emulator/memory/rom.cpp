@@ -748,6 +748,18 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_PLUS2A:
             return (page < 4) ? PLUS3_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_SPRINTER:
+            // The 256 KB flash (Sprinter bios-versions.md §2): 3.04 leaves pages 1-7 and 9-11 empty,
+            // the community builds keep the logo, the ZX ROMs and a recovery ROM disk there
+            if (page == 0)
+                return "Sprinter disk drivers + SETUP";
+            if (page == 8)
+                return "Sprinter BIOS (EXP)";
+            if (page == 12)
+                return "Sprinter PLD loader + bitstream";
+            if (page > 12 && page < 16)
+                return "Sprinter PLD bitstream";
+            return StringHelper::Format("Sprinter ROM page %d (3.04: empty; 3.06+: logo, ZX ROMs, ROM disk)", static_cast<int>(page));
         default:
             return StringHelper::Format("ROM Page %d", static_cast<int>(page));
     }

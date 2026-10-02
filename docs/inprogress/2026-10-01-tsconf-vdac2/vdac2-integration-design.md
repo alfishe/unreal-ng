@@ -29,34 +29,29 @@ a device-state report. The isolation test keeps passing.
 
 ## 2. Build
 
-- `eve-emu` is a git submodule at `lib/eve-emu`, like `lib/googletest` and
-  `lib/benchmark` (arch §3.2).
-- Root `CMakeLists.txt`:
-
-  ```cmake
-  option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
-  set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/eve-emu" CACHE PATH "eve-emu checkout")
-  if (ENABLE_VDAC2)
-      if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
-          message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
-                  "Run 'git submodule update --init lib/eve-emu' or set ENABLE_VDAC2=OFF")
-      endif()
-      set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)   # A3: built-ins
-      set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
-      set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
-      add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
-  endif()
-  ```
-
-  before `add_subdirectory(core/src)`. `EVE_EMU_DIR` lets a developer point at a local
-  checkout of the library while working on both.
+- `eve-emu` is developed in its own repository and **vendored** at
+  `core/src/3rdparty/eve-emu` (decided 2026-10-02: the library has no published
+  repository to take as a submodule). `VENDORED.md` there names the source commit, the
+  files copied (the library and the two decoder sources it compiles, not its tests,
+  benchmarks and tools) and how to update. `core/src/CMakeLists.txt` keeps the copy out of
+  the core source glob; the library builds with its own CMake.
+- Root `CMakeLists.txt`: `ENABLE_VDAC2` (**ON** by default) and `EVE_EMU_DIR` (default the
+  vendored copy; a developer points it at an eve-emu checkout while working on both);
+  built-in decoders (A3); the library's tests, benchmarks and tools off.
 - `core/src/CMakeLists.txt`: with `ENABLE_VDAC2`, `target_link_libraries(core PRIVATE
-  eve::emu)` and `target_compile_definitions(core PRIVATE ENABLE_VDAC2)`. The card's
-  sources compile only then.
-- `ENABLE_VDAC2=OFF`: a configuration asking for `TS_VDAC2=1` fails machine creation
-  with "this build has no VDAC2 support" on every surface; nothing silently falls back.
-- New worktrees and CI checkouts need `git submodule update --init lib/eve-emu` (the same
-  rule as the other submodules; memory note on worktrees).
+  eve::emu)` and `target_compile_definitions(core PUBLIC ENABLE_VDAC2)`. The gate is
+  PUBLIC like `UNREALNG_HAVE_OPL4`: `core-tests` compiles core sources itself and links
+  `eve::emu` too. Without the gate the card's methods are empty stubs (the card is never
+  fitted then).
+- `ENABLE_VDAC2=OFF`: the `TSL-VDAC2` machine is not offered and a configuration asking
+  for `TS_VDAC2=1` fails with "this build has no VDAC2 support" on every surface; nothing
+  silently falls back.
+- **The machine on every surface:** `TSL-VDAC2` (alias `TSCONF-VDAC2`) is a machine
+  variant (`core/src/emulator/machinevariants.{h,cpp}`): the TSL model with the VDAC2
+  board applied as a config override (`ts_vdac = 7`, no IDE). EmulatorManager creates it
+  by name (create and model switch), the WebAPI / CLI model lists carry it, an instance's
+  identity reports `variant`, and unreal-qt's Machine menu has it as **TS-Conf + VDAC2
+  (FT812)**.
 
 ## 3. Configuration and the IDE slot
 
@@ -137,6 +132,12 @@ when `ts_vdac == 7`.
   `EveExchange`, each after advancing the chip to "now" (§5.2).
 - Drives the chip's time, watches INT_N (§6), owns the FT812 picture (§7).
 - Serializes for TTD (§9), reports device state for automation (§11).
+- **Lifetime.** The decoder fits the card at a reset when the config says VDAC2
+  (`ts_vdac == 7`) and removes it otherwise, so it follows the configured firmware build.
+  A board power-on (`PowerCycle`) resets the FT812 like power applied (`EveReset`). The
+  Evo's reset button does not: the card's FT812 has its own power-on reset, and the
+  software's `ft_init` starts with `PWRDOWN` / `ACTIVE` / `RST_PULSE` anyway (TO VERIFY on
+  the card's schematic: where PD_N goes).
 
 ### 5.2 Time
 
@@ -148,11 +149,20 @@ when `ts_vdac == 7`.
 - `f_sys` changes only while the FT812 clock is stopped (`CLKSEL` is accepted in SLEEP
   only, spec §2.2). The card advances the chip to "now" before every bus access, so each
   interval is converted at the frequency that was in force during it.
-- The card keeps a 64-bit raster-tact counter since its creation and the remainder in its
-  own state (§9).
+- The card keeps an absolute raster-tact position (a frame base plus the tact inside the
+  frame) and the remainder in its own state (§9). The tact inside the frame is the
+  TS-Conf engine's accounted position (`TsConfState::budgetRaster`): at a port access the
+  decoder has caught the engine up to the CPU, so it is the CPU's tact; while the engine
+  accounts a `DMA_RAM_SPI` transfer it is the DMA's position, so DMA bytes reach the chip
+  at their own time. The engine calls the card when it closes a frame (after the old
+  frame's DMA is accounted, before positions restart at 0), and the card moves its frame
+  base on. A Z80 reset or a power-on that zeroes the engine position cannot move the
+  card's time backwards: a position below the card's is ignored until the engine is back.
+- While the chip's clock is stopped (`EveSystemClockHz` = 0) time passes without clocks and
+  the remainder is dropped.
 - **When it advances the chip:**
   - before every `select` / `exchange` (port access and DMA alike);
-  - at the machine frame end;
+  - at the machine frame end (the engine's frame-end call);
   - at the next chip event while it matters: the card implements `IMachineStepHook` and
     compares the current raster tact with the precomputed tact of the next INT_N change
     or FT812 frame end (`EveClocksToNextEvent` converted back). One integer comparison per
@@ -164,22 +174,34 @@ when `ts_vdac == 7`.
   the video cable [C `top.v:36`]. With msel = 1 the TS-Conf **line** interrupt is
   triggered by INT_N's falling edge instead of the raster line start
   (`int_start_lin(vdac2_msel ? int_start_ft : line_start_s)`, [V `top.v:1092-1093`]).
-- `TsConfInterrupts` today latches the line event at raster tact `224 n − 1` on each of the
-  320 lines and evaluates events lazily up to the tact the CPU has reached (`CatchUp`).
-  It gets an optional **external line source**:
+- `TsConfInterrupts` latches the line event at raster tact `224 n − 1` on each of the 320
+  lines and evaluates events lazily up to the tact the CPU has reached (`CatchUp`). It
+  gets an optional **external line source**, implemented by the decoder (it knows the
+  per-line msel) on top of the card (it knows the edges):
 
   ```cpp
-  struct ITsConfLineSource                   // implemented by Vdac2Card
+  struct ITsConfLineSource
   {
-      // Falling INT_N edges in raster tacts (from, to], in order
-      virtual size_t LineEdges(uint32_t fromRaster, uint32_t toRaster, uint32_t* out, size_t max) = 0;
+      virtual bool DrivesLine(uint32_t line) const = 0;      // msel latched for that line
+      virtual size_t TakeLineEdges(uint32_t raster, uint32_t* out, size_t max) = 0;
   };
   ```
 
-  In `CatchUp`, for each raster interval: if msel is 1 at that line (the per-line latched
-  `vConfig` bit 2 from `TsConfEngine`), the line events are the card's edges in that
-  interval; otherwise the usual `224 n − 1` events. The card advances the chip to
-  `toRaster` to answer.
+  In `CatchUp(from, raster)` with a source: the card's falling INT_N edges up to `raster`
+  are taken (always, so a masked edge is gone, not deferred); each latches the line INT
+  if its line drives from the card. The usual `224 n − 1` events latch only on lines that
+  do not. msel of a line is V_CONFIG bit 2 as latched at the line start ([V]
+  `video_ports.v:153-157`): the engine's per-line copy for a line that has started, the
+  register for one that has not (a V_CONFIG write brings the engine up to the write
+  first, so nothing can fall in between).
+- **Event-time stepping.** INT_N can fall between two bus accesses (a swap at the
+  FT812's VSYNC, the coprocessor finishing). The card steps the chip from event to event
+  (`EveClocksToNextEvent`) whenever it advances, records each falling edge with its raster
+  tact, and keeps the tact of the chip's next event. The interrupt controller asks after
+  every instruction; until that tact it costs one comparison. A bus access that changes
+  INT_N (an `INT_EN` write with flags pending, the `REG_INT_FLAGS` read) is sampled at the
+  access. The engine's frame-end call to the card comes last in the rollover, after the
+  interrupt controller has taken the old frame's edges.
 - The FPGA synchronizes INT_N to fclk in two stages [V `top.v:468-471`]: the edge is seen
   two fclk later, i.e. within the same raster tact. The design takes the edge's raster
   tact rounded up.
@@ -190,49 +212,51 @@ when `ts_vdac == 7`.
 
 ### 7.1 Two picture sources
 
-- `ScreenTSConf` keeps its native 720×288 framebuffer and gets a **second framebuffer for
-  the FT812**, sized from `EveGetTiming` (`HSIZE × VSIZE`, up to 2048×2048; 1024×768 in
-  the games). The card passes it to the chip with `EveSetOutput`.
+- `Screen` gets a generic **external picture source** (it never names the card):
+  `SetExternalPicture(buffer, width, height, framePeriodUs)`, `ClearExternalPicture()`,
+  `LatchExternalFrame()`. While one is active, `GetFramebufferDescriptor` /
+  `GetFramebufferData` describe it (videoMode `M_NUL`: no machine raster descriptor, so
+  every consumer takes the whole picture), the machine frame end does not latch the native
+  framebuffer, and the present queue is sized for the external picture. The native
+  renderer keeps running into `GetNativeFramebufferDescriptor()` (video mappers, the
+  ZX-only render path read that one). Switching on or off, and a new size, post
+  `NC_VIDEO_MODE_CHANGED`, the path guest mode switches already use; the Qt window
+  re-attaches on it.
+- The card owns two buffers: the chip draws ARGB8888 into one (`EveSetOutput`), and each
+  finished FT812 frame is converted into the other, RGBA8888 like the framebuffer, which
+  is the external picture. Size: `HSIZE × VSIZE` from `EveGetTiming`; a new mode resizes
+  both at the next FT812 frame end (that frame was drawn for the old size and is not
+  presented).
 - **Which one the monitor shows** follows msel (tdd §2.1, the card switches the whole
-  signal). The `FramebufferDescriptor` the rest of the emulator sees is the native one
-  while msel = 0 and the FT812 one while msel = 1. A switch, and an FT812 mode change,
-  re-describe the framebuffer and post `NC_VIDEO_MODE_CHANGED`, the path the guest mode
-  switches of AlCo, Profi and ATM already use (`screen.cpp:614-629`); the Qt window
-  re-attaches on it (`mainwindow.cpp:1789`).
-- **Drawing on or off.** The chip draws lines only while msel = 1 and the frame will be
-  presented; under turbo decimation (frames not shown) the card passes `drawing = 0`. All
-  timing runs either way, and nothing the guest can observe depends on drawing.
+  signal): at each machine frame end the decoder passes msel as the last line latched it
+  to the card (`SetShowing`), which switches the Screen's external picture on or off.
+- **Drawing on or off.** The chip draws only while it is shown, and not while turbo
+  decimation skips the machine frame (`Screen::IsTurboRenderSkip`). All timing runs
+  either way, and nothing the guest can observe depends on drawing.
 
 ### 7.2 Presenting at the FT812 rate
 
 - **Native picture (msel = 0):** unchanged, latched at the machine frame end
   (`MainLoop::OnFrameEnd` → `Screen::LatchFramebuffer`).
-- **FT812 picture (msel = 1):** the native latch at the machine frame end is skipped. The
-  card latches the FT812 framebuffer each time `EveCompletedFrames` changes, which happens
-  at the FT812's own VSYNC, possibly in the middle of a machine frame, on the emulation
-  thread. `Screen` gets an entry point for that:
-
-  ```cpp
-  void LatchFrameFrom(const FramebufferDescriptor& source, uint64_t emulatedTimeUs);
-  ```
-
-  It does what `LatchFramebuffer` does (copy into the present slot ring under
-  `_presentMutex`), with the frame's emulated time stamp.
-- **Present delay in time, not frames.** The A/V delay (`AVSyncDelayFrames`, the present
-  queue of 4 slots) is counted in machine frames today. With frames arriving at 59 Hz
-  instead of 48.8 Hz, a frame count would change the audio / video offset. The present
-  queue selects the frame by its time stamp against the delay in microseconds
-  (`GetPresentDelayUs`), which keeps the A/V offset the same for both sources.
-  `docs/emulator/design/audio/drc-rate-control.md` gets a note.
+- **FT812 picture (msel = 1):** latched by the card at each FT812 frame end (the chip's
+  frame-end event, found by the event stepping of §6), possibly in the middle of a
+  machine frame, on the emulation thread (`LatchExternalFrame`).
+- **Present delay.** The A/V delay is a number of frames in the present queue. While the
+  external picture is active, the native delay is converted into external frames of the
+  same duration, rounded to the nearest (`Screen::ExternalDelayFrames`): at 59 Hz against
+  48.8 Hz the 2-frame delay stays 2 frames (34 ms against 41 ms), so the A/V offset moves
+  by at most half an FT812 frame. Exact time stamps per frame are a later refinement if
+  that is ever audible.
 - **The host window** shows the newest presentable frame at each host refresh, as for any
-  machine picture.
+  machine picture; the window scales by the framebuffer the descriptor reports, so the
+  descriptor carries the FT812 picture's exact size (`HSIZE × VSIZE`).
 
 ### 7.3 Consumers of the picture
 
 | Consumer | Change |
 |---|---|
 | Qt main window | re-attaches on `NC_VIDEO_MODE_CHANGED` (exists) |
-| Recording (`RecordingManager::CaptureFrame`, `EncodeVideoFrame(framebuffer, timestamp)`) | called from the latch path with the emulated time stamp, so a recording with msel = 1 holds the FT812 frames at the FT812 rate; a source switch mid-recording changes resolution and rate: each backend is checked for that, and where it cannot change resolution the recording is split into a new file at the switch |
+| Recording (`RecordingManager::CaptureFrame`, `EncodeVideoFrame(framebuffer, timestamp)`) | today: called at the machine frame end with the shown descriptor, so a recording with msel = 1 holds the FT812 picture at the machine rate. One picture size per file: frames of another size (a source switch, a new FT812 mode) are not encoded into the running file (logged once). Later: frames from the latch path at the FT812 rate, and a new file at a switch (C1) |
 | Screenshots, `capture_media` | read the current descriptor: work unchanged |
 | Video wall, screen viewer | re-attach on the notification; checked in I2 |
 | ZX DLSS, temporal filters | apply to the native ZX picture only; off while msel = 1 |
@@ -256,7 +280,8 @@ The palette cache (CRAM version counter) needs no change: `ts_vdac` is fixed per
 
 ### 9.1 What is recorded
 
-- **Device blob** `PeripheralId::Vdac2` = 25 (the next free id; `ttdserializable.h`),
+- **Device blob** `PeripheralId::Vdac2` = 26 (the next free id; 25 went to `SprinterPld`;
+  `ttdserializable.h`),
   appended to `PortDecoder_TSConf::GetTTDModelStateIds` / `CreateTTDSerializers` when
   the card exists. Payload, fixed size: the card's fields (raster-tact counter,
   conversion remainder, last INT_N level, the msel source state) + `EveSaveState`
@@ -305,6 +330,7 @@ TS-Conf), so all of them return the same data.
 | CLI | `state vdac2`, `vdac2 dl [active\|pending]`, `vdac2 mem <addr> <len>`, `vdac2 frame <file>`, `vdac2 linecost <line>` | CLI command table |
 | MCP | `inspect_state` aspect `vdac2`; `capture_media` source `vdac2` | `core/automation/mcp/src/mcp-tools.cpp` |
 | Lua / Python | `vdac2_state()`, `vdac2_display_list()`, `vdac2_read(addr, len)`, `vdac2_frame()`, `vdac2_line_cost(line)` | `lua_emulator.h`, `python_emulator.h` |
+| **Bus capture (built)** | WebAPI `POST …/vdac2/capture/start {path}`, `POST …/vdac2/capture/stop`, `GET …/vdac2/capture/status`; CLI `vdac2 capture start <path>\|stop\|status`; MCP `capture_media` actions `vdac2_capture_start` (filename) / `_stop` / `_status`; Lua `vdac2_capture_start/stop/status`; Python `emu.vdac2_capture_*`. All through `Vdac2Control` (`vdac2control.h`): the FT812 bus to an .evr replay stream (vdac2-test-corpus.md §4), started at any moment (the stream then begins with the chip's state) | `api/vdac2_api.cpp`, `openapi/openapi_vdac2.inc`, `cli-processor-vdac2.cpp`, `mcp-media.cpp`, `lua_vdac2.h`, `python_vdac2.h`; recipe `.recipe/machines/tsconf-vdac2.md` |
 | Qt | later (debug UI deferred, as for TS-Conf); the surfaces above are complete enough that a dock is integration only | - |
 | Recipe | `.recipe/machines/tsconf-vdac2.md`: enabling the card, the ROM image, putting a game on the SD card, starting it, taking a picture, which images `ftview` accepts (tdd §2.7) | - |
 

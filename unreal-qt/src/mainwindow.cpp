@@ -4,6 +4,7 @@
 #include "emulator/media/mediaformatregistry.h"
 #include "media/droptargetoverlay.h"
 #include "emulator/media/modelswitch.h"
+#include "emulator/machinevariants.h"
 
 #include <QCursor>
 #include <QWindow>
@@ -3425,6 +3426,8 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     std::string modelName = parts[0].toStdString();
     uint32_t ramSize = parts[1].toUInt();
     QString displayName = QString("%1 %2K").arg(parts[0]).arg(ramSize);
+    if (const MachineVariant* variant = MachineVariants::Find(modelName))
+        displayName = QString::fromUtf8(variant->title);
 
     // Confirm with user
     QMessageBox::StandardButton reply = QMessageBox::question(

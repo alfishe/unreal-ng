@@ -8,16 +8,22 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterMemory;
 class SprinterVideoRenderer;
+namespace ttd
+{
+class TTDSprinterPld;
+}
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -47,6 +53,9 @@ class SprinterVideoRenderer;
 ///     daisy chain);
 ///   - the keyboard and the serial mouse on the chip's SIO (SprinterInput: the
 ///     host's PS/2 sink, the keyboard INT, Ctrl+Alt+Del, the F12 turbo switch);
+///   - the Covox / Covox-Blaster DAC (codes #88 / #89, page #FD; CovoxBlaster,
+///     mixed by SoundManager in the COVOX slot) - the AY is the shared chip on
+///     codes #90 / #91 / #52;
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
@@ -116,6 +125,12 @@ public:
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
     const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The standard configuration's accelerator (owned here, supplied by SprinterPldStandard, hook 4)
+    SprinterAccelerator& StandardAccelerator() { return _accelerator; }
+    /// The accelerator in use: the active module's, Standard's when it brings none; null while the
+    /// PLD is not configured. Its state (mode, length, function, buffer, INT block) is what the
+    /// debugger and automation show (SprinterAccelerator::State, ModeName, FunctionName)
+    SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
 
@@ -152,9 +167,37 @@ public:
     /// first port read after the last PLD reset ("DCP opened"), -1 = not yet
     int64_t DcpOpenedFrame() const { return _dcpOpenedFrame; }
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
+    /// Code #89 (Covox-Blaster control): the last value written
+    uint8_t CblControl() const { return _cbl.State().control; }
+    /// The Covox / Covox-Blaster DAC (S6, tdd-accel-sound-input §2)
+    CovoxBlaster& GetCovoxBlaster() { return _cbl; }
+    const CovoxBlaster& GetCovoxBlaster() const { return _cbl; }
+    /// A CPU or accelerator store into RAM page #FD (SprinterMemory's write intercept): the PLD's
+    /// CBL_WR page term - an accelerator copy (ACC_DIR bit 1) while the Covox-Blaster INT is on
+    void OnCblPageWrite(uint16_t addr, uint8_t value);
+    /// Base T-state (3.5 MHz) of the CPU within the frame: the time base of the frame-locked devices
+    uint32_t BaseTstate() const;
+    SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
 
+    /// region <TTD (phase S7; debugger/ttd/sprinter/ttdsprinter.h)>
+public:
+    /// A TTD serializer loaded part of the machine's state: re-derive what follows from it - the
+    /// engine's boundary hand-over, the turbo and its wait overlay, the bank windows, the step hook
+    void OnTtdStateLoaded();
+
+    /// The standard block accelerator's state (SprinterAccelState: mode, length, function, the INT block,
+    /// the alternate addressing, the 256-byte buffer, the counters), carried in the PLD blob
+    /// (tdd-integration §2.1). A module's own accelerator travels in its module state. The write
+    /// in progress between BeforeWrite and AfterWrite is inside one bus cycle, never at a boundary
+    size_t AccelStateSize() const { return sizeof(SprinterAccelState); }
+    void SaveAccelState(uint8_t* dst) const;
+    void LoadAccelState(const uint8_t* src);
+    /// endregion </TTD>
+
 private:
+    friend class ttd::TTDSprinterPld;  ///< the PLD blob carries the decoder fields below SprinterPldState
+
     void PowerOn();
     /// The PLD's own reset of its registers (MAME machine_reset); `kind` says which reset
     void ResetPld(SprinterResetKind kind);
@@ -167,6 +210,8 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// Ask the active module for its accelerator (hook 4) and make it the CPU's bus agent
+    void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
     void LoadFastRamImage();
@@ -183,6 +228,9 @@ private:
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
+    /// The standard accelerator and the one in use (hook 4)
+    SprinterAccelerator _accelerator{_context, _pld};
+    SprinterAccelerator* _activeAccelerator = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};
@@ -197,7 +245,8 @@ private:
     bool _cmosLoaded = false;
     bool _poweredOn = false;
 
-    uint8_t _cblControl = 0;      ///< code #89 (Covox-Blaster, phase S6): stored for the read-back
+    /// The Covox / Covox-Blaster (codes #88 / #89, page #FD), its INT through _intSource
+    CovoxBlaster _cbl{_context};
     uint16_t _pc = 0;             ///< PC of the I/O in progress (border writes)
     int64_t _dcpOpenedFrame = -1;
     uint16_t _dcpOpenedPc = 0;

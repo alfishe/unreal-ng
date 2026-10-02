@@ -1,5 +1,7 @@
 #include "emulator/io/serial/comport.h"
 
+#include "emulator/io/network/atm2ioesp.h"
+
 #include <cstring>
 
 #include "emulator/cpu/core.h"
@@ -106,6 +108,8 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
     if (context->pComPort)
         guests.com = context->pComPort->NetGuest();
     guests.machine = NetGuestOf(context->pMachineSerialPeer);
+    if (context->pAtm2IoEsp)
+        guests.atmIo = context->pAtm2IoEsp->Com().NetGuest();
     return guests;
 }
 

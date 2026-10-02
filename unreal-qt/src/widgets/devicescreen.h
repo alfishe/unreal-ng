@@ -129,6 +129,11 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
 
+    bool event(QEvent* event) override;
+    /// Tab / Shift+Tab are machine keys here (Flex Navigator switches panels with Tab), not Qt's focus
+    /// traversal: QWidget::event offers them to focusNextPrevChild first and calls keyPressEvent only when
+    /// that refuses. Refusing keeps the key for the machine and the focus on the screen
+    bool focusNextPrevChild(bool) override { return false; }
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;

@@ -15,17 +15,54 @@ namespace ttd
 namespace
 {
     // Layout: [0] version, [1] selected unit, [2] [3] unit kinds (0 none, 1 disk, 2 CD),
-    // [4..11] IdeAdapterState, then AtaDeviceState of unit 0 and unit 1
+    // [4..11] IdeAdapterState, then AtaDeviceState of unit 0 and unit 1.
+    // A two-channel board (the Sprinter) appends the second channel the same way:
+    // [selected, kind 0, kind 1, 0] and its two AtaDeviceStates; one-channel blobs are unchanged
     constexpr size_t kHeader = 4;
     constexpr size_t kAdapter = sizeof(IdeAdapterState);
     constexpr size_t kUnit = sizeof(AtaDeviceState);
+    constexpr size_t kChannel = kHeader + 2 * kUnit;
     constexpr uint8_t kVersion = 1;
     static_assert(kAdapter == 8, "IdeAdapterState layout changed: bump kVersion");
+
+    int Channels(EmulatorContext* context)
+    {
+        IdeController* ide = context ? context->pIdeController : nullptr;
+        return ide && ide->ChannelCount() == 2 ? 2 : 1;
+    }
+
+    /// Selected unit, unit kinds, and the units' states of one channel: header at `header`, units at `units`
+    void SaveChannel(AtaChannel& channel, uint8_t* header, uint8_t* units)
+    {
+        header[0] = static_cast<uint8_t>(channel.SelectedState());
+        for (int unit = 0; unit < 2; unit++)
+        {
+            if (AtaDevice* device = channel.Unit(unit))
+            {
+                header[1 + unit] = static_cast<uint8_t>(device->Kind());
+                std::memcpy(units + unit * kUnit, &device->State(), kUnit);
+            }
+        }
+    }
+
+    void LoadChannel(AtaChannel& channel, const uint8_t* header, const uint8_t* units)
+    {
+        channel.SetSelectedState(header[0]);
+        for (int unit = 0; unit < 2; unit++)
+        {
+            AtaDevice* device = channel.Unit(unit);
+            if (!device || header[1 + unit] != static_cast<uint8_t>(device->Kind()))
+                continue;  // a unit this machine is not set up with: nothing to restore into
+            AtaDeviceState state;
+            std::memcpy(&state, units + unit * kUnit, kUnit);
+            device->SetState(state);
+        }
+    }
 }  // namespace
 
 size_t TTDAtaChannel::TTDStateSize() const
 {
-    return kHeader + kAdapter + 2 * kUnit;
+    return kHeader + kAdapter + 2 * kUnit + (Channels(_context) == 2 ? kChannel : 0);
 }
 
 void TTDAtaChannel::TTDSaveState(uint8_t* dst) const
@@ -35,15 +72,11 @@ void TTDAtaChannel::TTDSaveState(uint8_t* dst) const
     IdeController* ide = _context ? _context->pIdeController : nullptr;
     if (!ide)
         return;
-    AtaChannel& channel = ide->Channel();
-    dst[1] = static_cast<uint8_t>(channel.SelectedState());
-    for (int unit = 0; unit < 2; unit++)
+    SaveChannel(ide->Channel(0), dst + 1, dst + kHeader + kAdapter);
+    if (Channels(_context) == 2)
     {
-        if (AtaDevice* device = channel.Unit(unit))
-        {
-            dst[2 + unit] = static_cast<uint8_t>(device->Kind());
-            std::memcpy(dst + kHeader + kAdapter + unit * kUnit, &device->State(), kUnit);
-        }
+        uint8_t* second = dst + kHeader + kAdapter + 2 * kUnit;
+        SaveChannel(ide->Channel(1), second, second + kHeader);
     }
     if (_context->pPortDecoder)
         std::memcpy(dst + kHeader, &_context->pPortDecoder->GetIdeAdapter().State(), kAdapter);
@@ -54,16 +87,11 @@ void TTDAtaChannel::TTDLoadState(const uint8_t* src)
     IdeController* ide = _context ? _context->pIdeController : nullptr;
     if (src[0] != kVersion || !ide)
         return;
-    AtaChannel& channel = ide->Channel();
-    channel.SetSelectedState(src[1]);
-    for (int unit = 0; unit < 2; unit++)
+    LoadChannel(ide->Channel(0), src + 1, src + kHeader + kAdapter);
+    if (Channels(_context) == 2)
     {
-        AtaDevice* device = channel.Unit(unit);
-        if (!device || src[2 + unit] != static_cast<uint8_t>(device->Kind()))
-            continue;  // a unit this machine is not set up with: nothing to restore into
-        AtaDeviceState state;
-        std::memcpy(&state, src + kHeader + kAdapter + unit * kUnit, kUnit);
-        device->SetState(state);
+        const uint8_t* second = src + kHeader + kAdapter + 2 * kUnit;
+        LoadChannel(ide->Channel(1), second, second + kHeader);
     }
     if (_context->pPortDecoder)
     {

@@ -28,20 +28,44 @@ IdeController::IdeController(EmulatorContext* context) : _context(context)
     if (_scheme == IDE_NONE)
         return;
 
-    for (int unit = 0; unit < 2; unit++)
+    // The Sprinter's AT board pulls DD7 down as the ATA standard asks, so an empty channel reads
+    // BSY = 0 (#7F) and the BIOS (3.04 and the 3.06 / 3.07 four-unit scan) reports "None" at once.
+    // The other boards keep the floating #FF (IDE design §6.2)
+    for (AtaChannel& channel : _channels)
+        channel.SetEmptyBus(_scheme == IDE_SPRINTER ? AtaChannel::kEmptyBusDd7PullDown : AtaChannel::kEmptyBusFloating);
+
+    const int units = ChannelCount() * AtaChannel::kUnits;
+    for (int unit = 0; unit < units; unit++)
         BuildUnit(unit);
 
     if (_context->pMediaManager)
     {
         for (auto& slot : _slots)
-            _context->pMediaManager->RegisterSlot(*slot);
+        {
+            if (slot)
+                _context->pMediaManager->RegisterSlot(*slot);
+        }
         _registered = true;
     }
+}
+
+bool IdeController::FirstOfKind(int unit) const
+{
+    // "hd" / "cd" name the first unit of each kind on the board
+    const bool cd = _context->config.ide[unit].cd != 0;
+    for (int lower = 0; lower < unit; lower++)
+    {
+        if ((_context->config.ide[lower].cd != 0) == cd)
+            return false;
+    }
+    return true;
 }
 
 void IdeController::BuildUnit(int unit)
 {
     const IDE_CONFIG& ide = _context->config.ide[unit];
+    const int channel = unit / AtaChannel::kUnits;
+    const int position = unit % AtaChannel::kUnits;
     DriveConfig config;
     config.geometry.cylinders = ide.c;
     config.geometry.heads = ide.h;
@@ -55,27 +79,31 @@ void IdeController::BuildUnit(int unit)
         device = std::make_unique<AtaDisk>();
     AtaDevice& unitDevice = *device;
     unitDevice.SetActivityCounter(&_activity);
-    _channel.SetUnit(unit, std::move(device));
+    _channels[channel].SetUnit(position, std::move(device));
 
-    auto slot = std::make_unique<IdeUnitSlot>(_context, IdeUnitSlot::IdFor(0, unit), unitDevice, config);
+    auto slot = std::make_unique<IdeUnitSlot>(_context, IdeUnitSlot::IdFor(channel, position), unitDevice, config);
     SlotDescriptor& d = slot->MutableDescriptor();
-    const char* position = unit == 0 ? "master" : "slave";
-    d.label = std::string("IDE ") + position + (ide.cd ? " (CD-ROM)" : " (hard disk)");
-    d.tags = {"ide", position, SchemeTag(_scheme), ide.cd ? "cdrom" : "hdd"};
-    // "hd" / "cd": the first unit of each kind
-    const IDE_CONFIG& other = _context->config.ide[unit ^ 1];
-    const bool firstOfKind = unit == 0 || other.cd != ide.cd;
-    if (firstOfKind)
+    const char* place = position == 0 ? "master" : "slave";
+    // A two-channel board names the channel as its firmware does: primary (ide0), secondary (ide1)
+    const bool twoChannels = ChannelCount() == 2;
+    const char* channelName = channel == 0 ? "primary" : "secondary";
+    d.label = std::string("IDE ") + (twoChannels ? std::string(channelName) + " " : std::string()) + place +
+              (ide.cd ? " (CD-ROM)" : " (hard disk)");
+    d.tags = {"ide", place, SchemeTag(_scheme), ide.cd ? "cdrom" : "hdd"};
+    if (twoChannels)
+        d.tags.push_back(channelName);
+    if (FirstOfKind(unit))
         d.aliases.push_back(ide.cd ? "cd" : "hd");
     _slots[unit] = std::move(slot);
 }
 
 int IdeController::UnitForSlot(const std::string& slotId)
 {
-    if (slotId == IdeUnitSlot::IdFor(0, 0))
-        return 0;
-    if (slotId == IdeUnitSlot::IdFor(0, 1))
-        return 1;
+    for (int unit = 0; unit < kMaxUnits; unit++)
+    {
+        if (slotId == IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits))
+            return unit;
+    }
     return -1;
 }
 
@@ -88,12 +116,12 @@ bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
     };
     if (!Enabled())
         return fail("this machine has no IDE board");
-    if (unit < 0 || unit > 1)
+    if (unit < 0 || unit >= ChannelCount() * AtaChannel::kUnits)
         return fail("no such IDE unit");
     IDE_CONFIG& ide = _context->config.ide[unit];
     if ((ide.cd != 0) == cdrom)
         return true;
-    const std::string id = IdeUnitSlot::IdFor(0, unit);
+    const std::string id = IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits);
     MediaManager* manager = _context->pMediaManager;
     if (manager)
     {
@@ -108,16 +136,16 @@ bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
         manager->UnregisterSlot(id);
     ide.cd = cdrom ? 1 : 0;
     BuildUnit(unit);
-    // The other unit keeps its drive and medium; only its alias may move
+    // The other units keep their drives and media; only their aliases may move
     // ("hd" / "cd" name the first unit of each kind)
-    const int other = unit ^ 1;
-    if (_slots[other])
+    for (int other = 0; other < kMaxUnits; other++)
     {
+        if (other == unit || !_slots[other])
+            continue;
         std::vector<std::string>& aliases = _slots[other]->MutableDescriptor().aliases;
         aliases.clear();
-        const bool otherCd = _context->config.ide[other].cd != 0;
-        if (other == 0 || otherCd != cdrom)
-            aliases.push_back(otherCd ? "cd" : "hd");
+        if (FirstOfKind(other))
+            aliases.push_back(_context->config.ide[other].cd ? "cd" : "hd");
     }
     if (manager && _registered)
         manager->RegisterSlot(*_slots[unit]);
@@ -139,7 +167,8 @@ IdeController::~IdeController()
 void IdeController::Reset()
 {
     // The reset line reaches the units and the board's latches (IDE design §3.3)
-    _channel.HardReset();
+    for (AtaChannel& channel : _channels)
+        channel.HardReset();
     if (_context && _context->pPortDecoder)
         _context->pPortDecoder->GetIdeAdapter().Reset();
 }
@@ -151,16 +180,18 @@ bool IdeController::SchemeFits(IDE_SCHEME scheme, MEM_MODEL model)
     const bool profiIde = ProfiBoard::For(model).extendedPorts;
     const bool scorpion = model == MM_SCORP || model == MM_PROFSCORP;
     const bool atm = model == MM_ATM710 || model == MM_ATM450 || model == MM_ATM3;
+    const bool sprinter = model == MM_SPRINTER;
     switch (scheme)
     {
         case IDE_NONE: return true;
         case IDE_PROFI: return profiIde;
         case IDE_SMUC: return scorpion;
         case IDE_ATM: return atm;
+        case IDE_SPRINTER: return sprinter;
         case IDE_NEMO:
         case IDE_NEMO_A8:
         case IDE_NEMO_DIVIDE:
-        case IDE_DIVIDE: return !profi;  // the Profi's own decode owns its IDE family
+        case IDE_DIVIDE: return !profi && !sprinter;  // the Profi's and the Sprinter's own decode own every port
     }
     return false;
 }
@@ -176,6 +207,7 @@ const char* IdeController::SchemeTag(IDE_SCHEME scheme)
         case IDE_SMUC: return "smuc";
         case IDE_PROFI: return "profi";
         case IDE_DIVIDE: return "divide";
+        case IDE_SPRINTER: return "sprinter";
         case IDE_NONE: break;
     }
     return "none";

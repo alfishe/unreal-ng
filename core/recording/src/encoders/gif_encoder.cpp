@@ -131,8 +131,10 @@ void GIFEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, [[maybe_
         return;
     }
 
-    // Validate framebuffer
-    if (framebuffer.memoryBuffer == nullptr)
+    // Validate framebuffer: the encoder reads _width x _height pixels from it
+    // (a video mode switch mid-recording can leave a smaller framebuffer)
+    if (framebuffer.memoryBuffer == nullptr ||
+        framebuffer.memoryBufferSize < static_cast<size_t>(_width) * _height * 4)
     {
         return;  // Skip invalid frames silently
     }

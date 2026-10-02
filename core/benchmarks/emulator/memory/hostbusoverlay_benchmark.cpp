@@ -76,6 +76,11 @@ static void BM_HostFrame_Pentagon_Debug(benchmark::State& s) { RunHostFrame(s, "
 static void BM_HostFrame_Scorpion_Fast(benchmark::State& s) { RunHostFrame(s, "SCORPION", false); }
 static void BM_HostFrame_Scorpion_Debug(benchmark::State& s) { RunHostFrame(s, "SCORPION", true); }
 
+// TS-Conf: the machine engine and interrupt controller run after every
+// instruction (TsConfEngine::OnMachineStep), the per-step path of that machine
+static void BM_HostFrame_TSConf_Fast(benchmark::State& s) { RunHostFrame(s, "TSL", false); }
+static void BM_HostFrame_TSConf_Debug(benchmark::State& s) { RunHostFrame(s, "TSL", true); }
+
 // ATM Turbo 2+: the BIOS menu polls the keyboard every frame (with the v7.xx
 // keyboard controller each IN #FE runs its firmware: the worst case for it)
 static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
@@ -85,6 +90,9 @@ static void BM_HostFrame_Profi_Fast(benchmark::State& s) { RunHostFrame(s, "PROF
 static void BM_HostFrame_Profi_Debug(benchmark::State& s) { RunHostFrame(s, "PROFI", true); }
 static void BM_HostFrame_Profi3_Fast(benchmark::State& s) { RunHostFrame(s, "PROFI3", false); }
 static void BM_HostFrame_Profi3_Debug(benchmark::State& s) { RunHostFrame(s, "PROFI3", true); }
+// Sprinter Sp2000: the BIOS at 21 MHz on the Z84C15 engine; the PLD INT source (frame, keyboard, Covox-Blaster)
+// is asked before every instruction
+static void BM_HostFrame_Sprinter_Fast(benchmark::State& s) { RunHostFrame(s, "SPRINTER", false); }
 static void BM_HostFrame_Pentagon_Overlay_Fast(benchmark::State& s) { RunHostFrame(s, "PENTAGON", false, true); }
 static void BM_HostFrame_Pentagon_Overlay_Debug(benchmark::State& s) { RunHostFrame(s, "PENTAGON", true, true); }
 
@@ -94,12 +102,15 @@ BENCHMARK(BM_HostFrame_Pentagon_Fast)->Iterations(1000)->Unit(benchmark::kMicros
 BENCHMARK(BM_HostFrame_Pentagon_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Scorpion_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Scorpion_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_TSConf_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_TSConf_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi3_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi3_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_Sprinter_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Pentagon_Overlay_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 

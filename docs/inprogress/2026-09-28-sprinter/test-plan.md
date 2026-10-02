@@ -103,6 +103,14 @@ ACC-1 / R-2 in `sprintervideoboot_test.cpp`, ACC-2 / R-3 in `sprinter_boot_test.
 | T-IDE-7 | reset | primary selected, latch 0, drives reset |
 | T-IDE-8 (ROM, after S7 for the CD case) | BIOS device probe with `ide0.slave` empty, then with an empty CD unit there | the BIOS unit list matches each setup; boot from `ide0.master` unaffected |
 
+As built (S3b, 2026-10-02; the Sprinter decode is a region of the shared `IdeAdapter`, so the tests sit with the
+files under test): T-IDE-1..4, 7 = `IdeAdapter_Test.SprinterTruthTable`, `SprinterWordOrder`, `SprinterSharedLatch`,
+`SprinterChannelSelect`, `SprinterReset` (+ `SprinterWithoutABoard`, the Sprinter in `RandomPortTrafficIsSafe`);
+T-IDE-5 / 6 = `PortDecoderSprinterIde_Test.IniLoopReadsASectorInOrder` / `OutiLoopWritesASectorInOrder` (the BIOS's
+unrolled loops on the Z84C15 engine, the 3.04 port table) and `Z84C15_IniOutiPutBOnTheHighAddressByte`;
+T-IDE-8 = `SprinterBoot_Test.Bios304_FindsAnEmptyCdUnitOnTheSlave` (the CD case already in S3b) and the "None" line
+of `Dss162_BootsFromAHardDiskImage`; R-5 = `SprinterBoot_Test.Dss162_BootsFromAHardDiskImage`.
+
 ### 2.6 Floppy — `wd1793_test.cpp` additions, `loader_rawpc_test.cpp` (T-FDD)
 
 Built in S3a (2026-10-01): T-FDD-1/2/3 in `loader_rawpc_test.cpp` (S0, PLAN #60(f)) and
@@ -143,7 +151,9 @@ acknowledge a store is plain, the mode register is unchanged, the first opcode a
 ### 2.9 Sound — `covoxblaster_test.cpp` (T-CBL)
 
 Rate table (16 rows), mono/stereo, 8/16-bit pairing (`XOR #80`), INT every 128 samples, `#FE` bit 7
-and bit 5 semantics, CBL off → plain Covox.
+and bit 5 semantics, CBL off → plain Covox. Built in S6 (`core/tests/emulator/sound/sprinter/`), plus the
+machine wiring (codes, INT, page `#FD`, mixer slot, single AY, TTD blob) and the 21 MHz checks (AY pitch, CBL
+rate, CPU throughput against MAME): [s6-sound-outcome.md](s6-sound-outcome.md) §6.
 
 ### 2.10 Z84C15 — `z84sio_test.cpp`, `z84ctc_test.cpp`, `z84pio_test.cpp` (T-Z84)
 

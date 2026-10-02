@@ -142,6 +142,25 @@ class Emulator:
         notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
         line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
 
+    def sprinter_state(self) -> dict:
+        """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
+        map, DOS, PN5, #7FFD / #1FFD), windows (kind + physical page), registers,
+        cells #C0-#FF, clock, frame, video (mode table summary), z84c15, fdc, cmos,
+        ide, bios (images, how to select). available=False on other machines"""
+
+    def sprinter_ports(self, map=None, dos=None, pn5=None, rw="") -> dict:
+        """The decoded Sprinter port table: rows of code, name, direction, address
+        pattern, example; None = the machine's current map / DOS / PN5; rw 'r' / 'w' /
+        'rw'. ValueError on a bad value"""
+
+    def sprinter_port(self, port, rw="", map=None, dos=None, pn5=None) -> dict:
+        """One Sprinter port (int or hex string): index into page #40, code, name,
+        or the Z84C15 when the chip answers it"""
+
+    def sprinter_text(self) -> dict:
+        """The Sprinter screen text: lines[] (row, text, codes) of the mode table's
+        text squares, 80 x 32"""
+
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
         sprite_page, tile_layers (t0 / t1: enabled, draw_tile_zero, graphics_page,
@@ -159,10 +178,12 @@ class Emulator:
         controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
 
     def network_configure(self, **settings) -> None:
-        """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass',
+        """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
         com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
-        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()). Applied at the next frame
+        (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
+        atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
+        atm2ioesp in network_state()). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
     def rtc_state(self) -> dict:
@@ -191,7 +212,7 @@ class Emulator:
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
         effective, memory_interface, io_rule, slots[4] (mapping, contended), the +2A/+3
-        floating_bus_latch, even_m1, scorpion_turbo_logic (Scorpion: SC15.1 / SC15.3), statistics
+        floating_bus_latch, even_m1, scorpion_turbo_logic (Scorpion: SC15.1 / SC15.3), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics
         per kind while debug mode is on"""
 
     # Screen reports - same fields as every other module (command-interface.md section 6.6)
@@ -1211,8 +1232,12 @@ emu.get_audio_rate()                 # {'pin': 96000, 'core_rate': 96000, 'targe
 
 # Video recording (requires a build with ENABLE_RECORDING)
 emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict optional
+emu.video_record("start", {"format": "h264", "filename": "run.mp4", "audio": "aac"})  # with sound
+                                     # (True = aac; video_bitrate / audio_bitrate in kbps). No
+                                     # "audio" = video only; gif + audio is refused
 emu.video_record("stop")             # also "pause" / "resume"
-emu.video_record_status()             # recording state + live stats (frames, duration, fps)
+emu.video_record_status()             # recording state + live stats (frames, duration, fps,
+                                     # audio, audio_codec, audio_sample_rate, audio_duration)
 # video_record has no audio-rate option - for a fixed-rate recording pin the
 # rate first: emu.set_audio_rate(48000) before video_record("start", ...)
 

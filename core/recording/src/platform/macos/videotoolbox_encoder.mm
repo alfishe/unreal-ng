@@ -89,8 +89,10 @@ bool VideoToolboxEncoder::Start(const std::string& filename, const EncoderConfig
 
     _isRecording = true;
     _framesEncoded = 0;
+    _lastVideoTimestamp = -1.0;
     _audioSamplesEncoded = 0;
     _baseAudioTimestamp = -1.0;
+    _audioChunksDropped = 0;
 
     return true;
 }
@@ -270,7 +272,11 @@ bool VideoToolboxEncoder::initAssetWriter(const std::string& filename, const Enc
 
             AVAssetWriterInput* audioInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeAudio
                                                                                   outputSettings:audioSettings];
-            audioInput.expectsMediaDataInRealTime = YES;
+            // Not real-time: only then does AVAssetWriter trim the AAC encoder delay (2112 priming frames,
+            // 44 ms at 48 kHz) with an edit list. A real-time input keeps the priming as sound, so the whole
+            // track played 44 ms (over two frames) behind the picture. The emulation thread feeds emulated
+            // time, not a live capture, so nothing here needs the real-time path
+            audioInput.expectsMediaDataInRealTime = NO;
 
             if ([writer canAddInput:audioInput])
             {
@@ -359,6 +365,14 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
         if (framebuffer.memoryBuffer == nullptr || framebuffer.memoryBufferSize < expectedSize)
             return;
 
+        // A frame at or before the previous one would fail the writer (and the
+        // file): drop it, the recording goes on
+        if (timestampSec <= _lastVideoTimestamp)
+        {
+            _lastError = "Video frame timestamp did not advance: dropped";
+            return;
+        }
+
         AVAssetWriterInput* videoInput = (__bridge AVAssetWriterInput*)_videoInput;
         AVAssetWriterInputPixelBufferAdaptor* adaptor =
             (__bridge AVAssetWriterInputPixelBufferAdaptor*)_pixelBufferAdaptor;
@@ -375,7 +389,23 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
         if (![videoInput isReadyForMoreMediaData])
             return;  // Drop frame — writer is stuck
 
-        // Get a pixel buffer from the adaptor's pool and copy the frame in
+        // A failed writer still reports the input ready, but it has no pixel
+        // buffer pool any more: nothing it is given is written. Drop the frame
+        AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
+        if (writer.status != AVAssetWriterStatusWriting)
+        {
+            if (writer.status == AVAssetWriterStatusFailed && _lastError.empty())
+            {
+                NSError* writerError = writer.error;
+                _lastError = std::string("AVAssetWriter failed: ") +
+                             (writerError ? [[writerError description] UTF8String] : "unknown error");
+            }
+            return;
+        }
+
+        // Get a pixel buffer from the adaptor's pool and copy the frame in.
+        // The copy below writes the OUTPUT geometry (_width x _height: the
+        // source times the integer scale), so any buffer must have that size
         CVPixelBufferRef pixelBuffer = nullptr;
         CVPixelBufferPoolRef pool = adaptor.pixelBufferPool;
         OSStatus status;
@@ -385,13 +415,21 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
         }
         else
         {
-            status = CVPixelBufferCreate(kCFAllocatorDefault, expectedWidth, expectedHeight,
-                                         kCVPixelFormatType_32BGRA, nullptr, &pixelBuffer);
+            status = CVPixelBufferCreate(kCFAllocatorDefault, _width, _height, kCVPixelFormatType_32BGRA, nullptr,
+                                         &pixelBuffer);
         }
 
         if (status != kCVReturnSuccess || pixelBuffer == nullptr)
         {
             _lastError = "Failed to obtain CVPixelBuffer: " + std::to_string(status);
+            return;
+        }
+        if (CVPixelBufferGetWidth(pixelBuffer) < static_cast<size_t>(expectedWidth) * _scale ||
+            CVPixelBufferGetHeight(pixelBuffer) < static_cast<size_t>(expectedHeight) * _scale ||
+            CVPixelBufferGetBytesPerRow(pixelBuffer) < static_cast<size_t>(expectedWidth) * _scale * 4)
+        {
+            _lastError = "CVPixelBuffer is smaller than the frame: dropped";
+            CVPixelBufferRelease(pixelBuffer);
             return;
         }
 
@@ -480,13 +518,13 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
 
         if (![adaptor appendPixelBuffer:pixelBuffer withPresentationTime:pts])
         {
-            AVAssetWriter* writer = (__bridge AVAssetWriter*)_assetWriter;
             NSString* errDesc = writer.error ? [writer.error localizedDescription] : @"unknown";
             _lastError = std::string("appendPixelBuffer failed: ") + [errDesc UTF8String];
         }
         else
         {
             _framesEncoded++;
+            _lastVideoTimestamp = timestampSec;
         }
 
         CVPixelBufferRelease(pixelBuffer);
@@ -499,7 +537,6 @@ void VideoToolboxEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer,
 
 void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec)
 {
-    (void)timestampSec;
     if (!_isRecording || !_audioInput || !_hasAudio || samples == nullptr || sampleCount == 0)
         return;
 
@@ -507,10 +544,20 @@ void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCo
     {
         AVAssetWriterInput* audioInput = (__bridge AVAssetWriterInput*)_audioInput;
 
-        // Drop audio if input isn't ready — never block the calling thread
-        // (Blocking here causes CoreAudio HAL overload and main-thread warnings)
+        // Wait briefly for the input, like the video path: AVAssetWriter interleaves the tracks and holds the
+        // audio input back until the video catches up, which is a frame at most. A long block would stall the
+        // emulation thread, so the wait is bounded (a chunk still not accepted is dropped)
+        int waitedUs = 0;
+        while (![audioInput isReadyForMoreMediaData] && waitedUs < 20000)  // max 20ms
+        {
+            usleep(500);
+            waitedUs += 500;
+        }
         if (![audioInput isReadyForMoreMediaData])
+        {
+            _audioChunksDropped++;
             return;
+        }
 
         // Format description created once in initAudioConverter from config
         CMAudioFormatDescriptionRef formatDesc = (CMAudioFormatDescriptionRef)_audioFormatDesc;
@@ -518,7 +565,6 @@ void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCo
             return;
 
         const uint32_t channels = _audioChannels;
-        const uint32_t sampleRate = _audioSampleRate;
 
         size_t dataSize = sampleCount * sizeof(int16_t);
         CMBlockBufferRef blockBuffer = nullptr;
@@ -549,7 +595,9 @@ void VideoToolboxEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCo
             _baseAudioTimestamp = timestampSec;
         }
         
-        double currentPts = _baseAudioTimestamp + (static_cast<double>(_audioSamplesEncoded / channels) / sampleRate);
+        // The chunk's own emulated time (it counts every captured sample, dropped ones too): a dropped chunk
+        // leaves a gap instead of pulling the rest of the sound track earlier than the picture
+        double currentPts = timestampSec;
         timingInfo.presentationTimeStamp = CMTimeMakeWithSeconds(currentPts, 1000000);
 
         size_t sampleSize = dataSize;

@@ -519,6 +519,29 @@ public:
     using CommandHandler = void (WD1793::*)(uint8_t);
     using FSMHandler = void (WD1793::*)();
 
+    /// What a queued command step is (MakeFifoEvent builds the step from it). A TTD restore cannot
+    /// keep the step's closure, so it saves the tag and rebuilds the step (SaveTransferContext)
+    enum class FifoKind : uint8_t
+    {
+        None = 0,
+        ReadSector,       ///< Type II read: find the sector (drive, track register, sector register, side)
+        WriteSector,      ///< Type II write: the same for a write
+        SearchId,         ///< READ ADDRESS: the ID search (no action)
+        ReadIdam,         ///< READ ADDRESS: the 6 ID bytes of the sector found
+        ReadTrack,        ///< READ TRACK: the stream under the head (drive, side)
+        WriteTrack,       ///< WRITE TRACK: the same for a format
+        NextReadSector,   ///< multiple-sector read: the next sector
+        NextWriteSector,  ///< multiple-sector write: the next sector
+    };
+    struct FifoTag
+    {
+        FifoKind kind = FifoKind::None;
+        uint8_t drive = 0xFF;  ///< the drive the command started on (0-3; 0xFF none)
+        uint8_t track = 0;     ///< the track register then
+        uint8_t sector = 0;    ///< the sector register then
+        uint8_t side = 0;
+    };
+
     /// Class to handle FSM transition events
     class FSMEvent
     {
@@ -526,6 +549,15 @@ public:
         FSMEvent(WDSTATE state, std::function<void()> action, size_t delayTStates = 0)
             : _state(state), _delayTStates(delayTStates), _action(action)
         {
+        }
+        FSMEvent(WDSTATE state, std::function<void()> action, size_t delayTStates, const FifoTag& tag)
+            : _state(state), _delayTStates(delayTStates), _action(action), _tag(tag)
+        {
+        }
+
+        const FifoTag& getTag() const
+        {
+            return _tag;
         }
 
         WDSTATE getState() const
@@ -547,6 +579,7 @@ public:
         WDSTATE _state;
         size_t _delayTStates;
         std::function<void()> _action;
+        FifoTag _tag{};
     };
 
 public:
@@ -699,8 +732,9 @@ protected:
     FdcDataRate _dataRate = FdcDataRate::Rate250Kbps;          // Rate the data separator reads at
     // An ID search that found nothing at the current data rate (READ ADDRESS or a Type I verify) waits for its
     // index-hole limit. A latch that switches the separator rate meanwhile (Sprinter #BD) lets the chip see the
-    // track's address marks: the search runs again at the new rate, keeping the original deadline. Transient
-    // (not in the TTD blob): only a Latched machine changes the rate mid-command
+    // track's address marks: the search runs again at the new rate, keeping the original deadline. Not in the
+    // chip's TTD blob: only a Latched machine changes the rate mid-command, and it carries these two in its own
+    // blob (GetRateRetryState / RestoreRateRetry; the Sprinter's PLD blob)
     WDSTATE _rateRetryState = WDSTATE::S_IDLE;
     uint64_t _rateRetryDeadline = 0;
     // Time base in base (3.5 MHz) T-states also under a hardware CPU turbo (see updateTimeFromEmulatorState)
@@ -900,6 +934,26 @@ public:
     /// own; the Sprinter sets it). Off by default: the frame's CPU clocks are taken as they are
     void SetBaseClockTimeBase(bool on) { _baseClockTimeBase = on; }
     bool IsBaseClockTimeBase() const { return _baseClockTimeBase; }
+    /// The ID search a rate switch would run again (_rateRetryState, a WDSTATE; 0 = none) and its
+    /// deadline. Not in the chip's TTD blob (its layout is shared by every Beta machine): a Latched
+    /// machine carries it in its own state (Sprinter: the PLD blob)
+    uint8_t GetRateRetryState() const { return static_cast<uint8_t>(_rateRetryState); }
+    uint64_t GetRateRetryDeadline() const { return _rateRetryDeadline; }
+    void RestoreRateRetry(uint8_t state, uint64_t deadline)
+    {
+        _rateRetryState = static_cast<WDSTATE>(state);
+        _rateRetryDeadline = deadline;
+    }
+
+    /// The command in flight beyond the chip's TTD blob (TTDSaveState): the queued steps (by tag), where the
+    /// transfer pointers point (disk track + offset into its stream; the read-track noise), the sector and
+    /// tracks in use, the byte cell and rotational delay, the multi-sector overrun, the rate-retry search.
+    /// Lets a restore in the middle of a command - an ID search, a sector half read - continue on the same
+    /// byte. Separate from the blob, whose 254-byte layout is shared by every Beta machine's recordings
+    /// (debugger/ttd/ttdwd1793context.h). Load it after TTDLoadState (which empties the queue)
+    static constexpr size_t kTransferContextSize = 112;
+    void SaveTransferContext(uint8_t* dst) const;
+    void LoadTransferContext(const uint8_t* src);
     /// Rate the chip writes at: derived from its clock (datasheet p.19, "all times double when CLK = 1 MHz")
     static FdcDataRate WriteRateForClock(FdcClock clock)
     {
@@ -1012,6 +1066,12 @@ protected:
     std::vector<uint8_t> _readTrackNoise;
     static uint32_t NoiseSeed(size_t cylinder, uint8_t side);
     void FillReadTrackNoise(uint32_t seed, size_t length);
+    uint32_t _readTrackNoiseSeed = 0;  ///< the seed of _readTrackNoise (a TTD restore regenerates it)
+
+    /// A queued command step from its tag (FifoKind); the drive by index, and back
+    FSMEvent MakeFifoEvent(const FifoTag& tag);
+    uint8_t DriveIndexOf(const FDD* drive) const;
+    FDD* DriveAt(uint8_t index) const;
 
     /// endregion </Command handling>
 

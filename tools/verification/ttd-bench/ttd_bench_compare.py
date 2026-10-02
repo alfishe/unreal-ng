@@ -38,6 +38,13 @@ BENCHMARK_KEYS = {
 # growth policy (libc++ and libstdc++ double, MSVC grows by half), so they are
 # exact on one platform but not across platforms
 HEAP_METRICS = {"bm3_coverage_bpf", "bm3_total_bpf", "bm4_resident_bytes", "bm4_resident_bpf"}
+# BM-4 split (bm4_heap_<part>_bpf): allocator-dependent parts, compared with the
+# heap tolerance; the CI gate keeps only their total (bm4_resident_*)
+HEAP_SPLIT_PREFIX = "bm4_heap_"
+
+
+def is_heap_metric(name: str) -> bool:
+    return name in HEAP_METRICS or name.startswith(HEAP_SPLIT_PREFIX)
 
 # Timings where larger is better (none today); everything else: larger = worse
 HIGHER_IS_BETTER = set()
@@ -130,7 +137,7 @@ def cmd_compare(args):
             change = (nv / bv - 1.0) * 100.0 if bv else (0.0 if nv == 0 else float("inf"))
             flag = ""
             if is_byte_metric(metric):
-                tolerance = args.heap_tolerance if metric in HEAP_METRICS else 0.0
+                tolerance = args.heap_tolerance if is_heap_metric(metric) else 0.0
                 if not same(bv, nv) and abs(change) > tolerance:
                     flag = "BYTES"
                     byte_diffs += 1
@@ -226,9 +233,9 @@ def cmd_export_gate(args):
     ]
     for case in sorted(metrics):
         for metric in sorted(metrics[case]):
-            if not is_byte_metric(metric):
+            if not is_byte_metric(metric) or metric.startswith(HEAP_SPLIT_PREFIX):
                 continue
-            tolerance = args.heap_tolerance if metric in HEAP_METRICS else 0.0
+            tolerance = args.heap_tolerance if is_heap_metric(metric) else 0.0
             lines.append(f"{case} {metric} {metrics[case][metric]:.6f} {tolerance:g}")
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

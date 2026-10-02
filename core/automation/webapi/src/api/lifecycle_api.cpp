@@ -9,6 +9,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/zxpoly/zxpolygroup.h>
+#include <emulator/machinevariants.h>
 #include <emulator/media/modelswitch.h>
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
@@ -91,6 +92,12 @@ void AddIdentityFields(Json::Value& target, Emulator& emulator)
     target["speed_multiplier"] = identity.SpeedMultiplier;
     target["config_folder"] = identity.ConfigFolder;
     target["ram_power_on"] = identity.RamPowerOn;
+    // A machine variant (MachineVariants): the base model with a fixed board ("TSL-VDAC2")
+    if (!identity.Variant.empty())
+    {
+        target["variant"] = identity.Variant;
+        target["variant_title"] = identity.VariantTitle;
+    }
 
     // ZX-Poly: the instance is a module of a four-CPU group
     if (identity.ZXPoly)
@@ -242,6 +249,21 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             modelsArray.append(modelInfo);
         }
 
+        // Machine variants: a base model with a fixed board, created by name like any model
+        for (const MachineVariant& variant : MachineVariants::All())
+        {
+            const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
+            Json::Value modelInfo;
+            modelInfo["name"] = std::string(variant.name);
+            modelInfo["full_name"] = std::string(variant.title);
+            modelInfo["description"] = std::string(variant.description);
+            modelInfo["variant"] = true;
+            modelInfo["base_model"] = std::string(variant.baseModel);
+            modelInfo["default_ram_kb"] = variant.ramKb;
+            modelInfo["creatable"] = base != nullptr && Config::IsModelCreatable(*base) && variant.supported(nullptr);
+            modelsArray.append(modelInfo);
+        }
+
         ret["models"] = modelsArray;
         ret["count"] = static_cast<Json::UInt>(modelsArray.size());
 
@@ -315,6 +337,12 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
         const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
         if (base != nullptr && Config::IsModelCreatable(*base))
             creatableModels.append(std::string(configuration.name));
+    }
+    for (const MachineVariant& variant : MachineVariants::All())
+    {
+        const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
+        if (base != nullptr && Config::IsModelCreatable(*base) && variant.supported(nullptr))
+            creatableModels.append(std::string(variant.name));
     }
     ret["models_creatable"] = creatableModels;
 

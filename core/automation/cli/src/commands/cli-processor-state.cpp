@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include "cli-sprinter-format.h"
 #include <emulator/state/devicestate.h>
 
 
@@ -61,6 +62,10 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
+        ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock, video, Z84C15, floppy, BIOS" << NEWLINE;
+        ss << "  sprinter ports [map=0-3] [dos=0|1] [pn5=0|1] [rw=r|w|rw] - the decoded port table (page #40)" << NEWLINE;
+        ss << "  sprinter port <hex> [rw=r|w] [map=..] [dos=..] [pn5=..]  - one port: index, code, name" << NEWLINE;
+        ss << "  sprinter text  - the screen text of the mode table's text squares (BIOS, DSS)" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
@@ -85,6 +90,9 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
         ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
         ss << "  state tsconf tsu     - Show the TSU objects and the palette (debug views)" << NEWLINE;
+        ss << "  state sprinter       - Show the Sprinter machine state (also: sp)" << NEWLINE;
+        ss << "  state sprinter ports map=0 dos=0 rw=w - Show the OUT half of map 0 with TR-DOS off" << NEWLINE;
+        ss << "  state sprinter port 21BC rw=w         - Which device answers OUT (#21BC)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
@@ -209,6 +217,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         std::stringstream ts;
         ts << "TS-Conf" << NEWLINE << "=======" << NEWLINE << DeviceState::ToText(DeviceState::TsConf(context));
         session.SendResponse(ts.str());
+        return;
+    }
+    else if (subsystem == "sprinter" || subsystem == "sp")
+    {
+        session.SendResponse(CliSprinter::StateText(context, args, NEWLINE));
         return;
     }
     else if (subsystem == "rtc" || subsystem == "cmos")
@@ -410,6 +423,12 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
                   : (memory.GetROMPage() == 1) ? "TR-DOS"
                   : (memory.GetROMPage() == 2) ? "128K"
                                                : "48K BASIC";
+    else if (config.mem_model == MM_SPRINTER)
+    {
+        ROM* sprinterRom = context->pCore ? context->pCore->GetROM() : nullptr;
+        romMode = memory.IsBank0ROM() && sprinterRom ? sprinterRom->GetROMPageRole(static_cast<uint8_t>(memory.GetROMPage()))
+                                                     : std::string("none in window 0 (fast RAM or vROM)");
+    }
 
     ss << "  ROM Mode:         " << romMode << NEWLINE;
     ss << "  Bank 0 (0x0000-0x3FFF): " << memory.GetCurrentBankName(0) << NEWLINE;
@@ -423,7 +442,12 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     ss << NEWLINE;
 
     // Paging State
-    if (config.mem_model != MM_SPECTRUM48)
+    if (config.mem_model == MM_SPRINTER)
+    {
+        // The PLD maps the windows: kind and physical page (DeviceState::SprinterPaging)
+        ss << "Sprinter Paging (PLD):" << NEWLINE << DeviceState::ToText(DeviceState::SprinterPaging(context), 1);
+    }
+    else if (config.mem_model != MM_SPECTRUM48)
     {
         ss << "Paging State:" << NEWLINE;
         ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.p7FFD << std::dec
@@ -501,7 +525,11 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write" << contended(3) << ")"
        << NEWLINE;
 
-    if (config.mem_model != MM_SPECTRUM48)
+    if (config.mem_model == MM_SPRINTER)
+    {
+        ss << NEWLINE << "Sprinter windows (PLD):" << NEWLINE << DeviceState::ToText(DeviceState::SprinterPaging(context), 1);
+    }
+    else if (config.mem_model != MM_SPECTRUM48)
     {
         ss << NEWLINE;
         ss << "Paging Control:" << NEWLINE;
@@ -557,6 +585,9 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         case MM_PROFI3:
             totalROMPages = 4;
             break;
+        case MM_SPRINTER:
+            totalROMPages = 16;  // the 256 KB flash (Sprinter bios-versions.md §2)
+            break;
         default:
             totalROMPages = 1;
             break;
@@ -599,6 +630,14 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "  Page 2: 128K ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
+    else if (config.mem_model == MM_SPRINTER)
+    {
+        // Roles from the core layout table (ROM::GetROMPageRole), the same names /state/paging shows
+        ROM* sprinterRom = context->pCore ? context->pCore->GetROM() : nullptr;
+        for (int page = 0; page < totalROMPages && sprinterRom; page++)
+            ss << "  Page " << page << ": " << sprinterRom->GetROMPageRole(static_cast<uint8_t>(page)) << " "
+               << ((memory.IsBank0ROM() && memory.GetROMPage() == page) ? "[ACTIVE]" : "") << NEWLINE;
+    }
     else if (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A)
     {
         ss << "  Page 0: +3 Editor ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
@@ -619,7 +658,7 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
     }
 
-    if (config.mem_model != MM_SPECTRUM48)
+    if (config.mem_model != MM_SPECTRUM48 && config.mem_model != MM_SPRINTER)  // the Sprinter's #7FFD is in the PLD
     {
         ss << NEWLINE;
         ss << "Port 0x7FFD bit 4 (ROM select): " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;

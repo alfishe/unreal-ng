@@ -209,7 +209,8 @@ audiocapture status               # Captured/target sample counts
 audiocapture result               # Peak/RMS stats per channel
 audiocapture save <path.wav>      # Export captured audio to WAV
 videorecord status                # Recording state + stats (default)
-videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N)
+videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N,
+                                  #   --audio aac for a sound track, --video-bitrate / --audio-bitrate KBPS)
 videorecord stop / pause / resume # Control an active recording
 ```
 
@@ -600,7 +601,7 @@ emu.screen_digest() / emu.beam_position() / emu.frame_cost()
 emu.coverage_start() / emu.coverage_gaps(0, 0x3FFF)
 emu.ay_log_start() / emu.ay_log_dump(16)
 emu.audio_capture_start(2.0) / emu.audio_capture_result("out.wav")
-emu.video_record("start", opts={"format": "mp4"})  # ENABLE_RECORDING builds
+emu.video_record("start", opts={"format": "h264", "audio": "aac"})  # ENABLE_RECORDING builds; no "audio" = video only
 emu.assemble("xor a", 0x8000, write=True)
 emu.listing_load("game.lst") / emu.listing_run_to_line(42)
 ```

@@ -20,6 +20,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
+#include "emulator/platforms/tsconf/vdac2card.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -37,6 +38,19 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
             return _zc.ReadData();
         _zc.WriteData(out);
         return 0xFF;
+    });
+    // The VDAC2 card keeps time in raster tacts; it closes a frame once the
+    // engine has accounted all of it (the DMA's last SPI bytes included)
+    _engine.SetFrameEndListener([this]() {
+        if (_vdac2)
+        {
+            _vdac2->OnFrameEnd();
+            // The monitor follows msel as the last line latched it (the
+            // card's CPLD switches the whole signal, vdac2-tdd.md §2.1);
+            // switched per machine frame
+            constexpr uint8_t kMsel = 0x04;
+            _vdac2->SetShowing((_ts.latVConfig & kMsel) != 0);
+        }
     });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
@@ -74,6 +88,10 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
+    _interrupts.SetLineSource(nullptr);
+    _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+    _vdac2.reset();
+
     if (_context->pMediaManager)
         _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
 
@@ -118,6 +136,69 @@ void PortDecoder_TSConf::PowerOn()
     std::memcpy(_ts.cram, kTsConfCramPowerOn, sizeof(_ts.cram));
     _ts.pwrUp = 1;
     _poweredOn = true;
+
+    // The card is powered with the board
+    if (_vdac2)
+        _vdac2->PowerOn();
+}
+
+void PortDecoder_TSConf::ApplyTsBiosSdBootNvram()
+{
+    // TS-BIOS (28.04.2018) NVRAM cells #B0-#E7 as its Setup Utility saves them
+    // after "Reset to" -> BD boot.$c on blank settings: every option at its
+    // default, cell #B4 (Reset to) = 3, the CRC in #E6-#E7 valid. Captured from
+    // the BIOS itself (tsconf_boot_test BOOT-3 steps, boot-and-storage-notes.md §1)
+    static constexpr uint8_t kFirstCell = 0xB0;
+    static constexpr uint8_t kCells[] = {
+        0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x42, 0x08, 0x84, 0x10, 0xC6, 0x18, 0x08, 0x21,
+        0x4A, 0x29, 0x8C, 0x31, 0xCE, 0x39, 0x21, 0x04, 0x63, 0x0C, 0xA5, 0x14, 0xE7, 0x1C, 0x29, 0x25,
+        0x6B, 0x2D, 0xAD, 0x35, 0xEF, 0x3D, 0xA0, 0x75,
+    };
+    for (size_t i = 0; i < sizeof(kCells); ++i)
+        _evoAvr.WriteRegister(static_cast<uint8_t>(kFirstCell + i), kCells[i]);
+}
+
+void PortDecoder_TSConf::RefreshVdac2Card()
+{
+#ifdef ENABLE_VDAC2
+    // The firmware build is fixed per machine (the card is swapped with the
+    // power off and the FPGA reflashed, vdac2-tdd.md §6.1); a test may change
+    // the config and reset, so the card follows the config at every reset
+    const bool wanted = VdacVersion() == 7;
+    if (wanted && !_vdac2)
+    {
+        // Time inside the frame: the engine's accounted position (the CPU's
+        // tact at a port access, the DMA's while a transfer is accounted)
+        _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
+        _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
+                         Vdac2Card::kSpiSelectActiveHigh);
+        _interrupts.SetLineSource(&_vdac2Lines);
+    }
+    else if (!wanted && _vdac2)
+    {
+        _interrupts.SetLineSource(nullptr);
+        _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+        _vdac2.reset();
+    }
+#endif
+}
+
+bool PortDecoder_TSConf::Vdac2LineSource::DrivesLine(uint32_t line) const
+{
+    // msel = V_CONFIG bit 2 as latched at the line's start ([V] video_ports.v:
+    // vconf <= vconf_r at line_start_s). A line that has not started yet will
+    // latch the register as it is now: a V_CONFIG write brings the engine up
+    // to the write first (IsVideoRegister), so no write can fall in between
+    constexpr uint8_t kMsel = 0x04;
+    const TsConfState& ts = _owner._ts;
+    const uint8_t vConfig = line < ts.engNextLine ? _owner._engine.Line(line).vConfig : ts.regs[TsConfReg::VConfig];
+    return (vConfig & kMsel) != 0;
+}
+
+size_t PortDecoder_TSConf::Vdac2LineSource::TakeLineEdges(uint32_t raster, uint32_t* out, size_t max)
+{
+    return _owner._vdac2 ? _owner._vdac2->TakeIntEdges(raster, out, max) : 0;
 }
 
 /// Warm reset (hardware-spec §10). Not reset: BORDER, T_MAP_PAGE, T0/T1_G_PAGE,
@@ -173,12 +254,22 @@ void PortDecoder_TSConf::reset()
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
+        const bool loaded = nvramPath[0] != '\0' && _evoAvr.LoadNvram(nvramPath);
+        if (nvramPath[0] != '\0' && !loaded)
             MLOGINFO("PortDecoder_TSConf: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+        // No saved settings: the TS-BIOS settings that boot from the SD card
+        if (!loaded && _context->config.atm.ts_bios_sd_boot)
+            ApplyTsBiosSdBootNvram();
     }
 
     if (_screen)
         _screen->SetBorderColor(COLOR_WHITE);
+
+    // The VDAC2 card follows the configured build; it keeps running through
+    // the Evo's reset (Vdac2Card::Reset)
+    RefreshVdac2Card();
+    if (_vdac2)
+        _vdac2->Reset();
 
     // The card and its session writes survive a reset; the controller
     // deselects it ([V] zports.v: SPI chip selects reset to 1)
@@ -1113,6 +1204,9 @@ PortDecoder_TSConf::SdSlot::SdSlot(PortDecoder_TSConf& owner) : _owner(owner)
     // a FAT16 image is refused (BUGS.md #1)
     _descriptor.defaultFs = FatType::Fat32;
     _descriptor.fsCompatibility = {FatType::Fat32};
+    // For the same reason a folder becomes a volume from sector 0, with no MBR:
+    // TS-BIOS then boots Wild Commander (boot.$C) from a dropped folder
+    _descriptor.folderMbr = false;
     _descriptor.hasCardDetect = true;          // AVR register C bit 3
     _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
     _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};

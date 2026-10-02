@@ -1,6 +1,7 @@
 # The halted Z80's opcode fetches: the byte after the HALT
 
-Bug: [BUGS.md](../BUGS.md) 2026-10-02 #1. Plan: [PLAN.md](../PLAN.md) #81. Found by HALT2INT v3 through
+Bug: [BUGS.md](../BUGS.md) 2026-10-02 #1. Plan: [PLAN.md](../PLAN.md) #81. Every file the fix touches:
+[impact.md](impact.md). Found by HALT2INT v3 through
 `Halt2Int_Test` (contention backlog C9, [backlog.md](../2026-10-01-contention-backlog/backlog.md)).
 
 ## 1. The problem in plain words
@@ -99,9 +100,11 @@ else
 | PC after the step | PC (op_76 undoes the increment) | PC, untouched |
 | Q | 0 (F unchanged) | 0 |
 
-The memory access tracker: the idle fetch is a bus access, not an executed instruction. Phase 1 checks what the
-debug interfaces do with `isExecution` and picks the variant that does not mark HALT + 1 as executed code (the
-coverage and the "executed" view would otherwise show a byte that never ran).
+The memory access tracker (decided in phase 1): the idle fetch goes through `rdM1` like any opcode fetch, with
+`isExecution` set, so the tracker counts an execute access at HALT + 1, attributed to the HALT (`m1_pc`). That is the
+bus cycle the hardware makes, and HALT + 1 is almost always the next instruction (the interrupt returns there).
+The execute count of the HALT itself now grows by one per HALT, not per idle fetch. The TTD execute probe and the
+instruction-start observers stay on the HALT (`RecordInstructionStart`).
 
 `op_76` itself keeps `pc--`: the first execution of the HALT is a normal instruction; only the idle fetches after
 it change.

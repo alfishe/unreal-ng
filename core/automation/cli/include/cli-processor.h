@@ -203,6 +203,10 @@ private:
     void HandlePortTrace(const ClientSession& session, const std::vector<std::string>& args);
     void ShowPortTraceHelp(const ClientSession& session);
 
+    // TS-Conf VDAC2 card (FT812) command handlers: bus capture
+    void HandleVdac2(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowVdac2Help(const ClientSession& session);
+
 
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);

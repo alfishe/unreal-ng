@@ -30,8 +30,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget"}},
-        {"export", {}},
+        {"save", {"retarget", "compression"}},
+        {"export", {"compression", "parent"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -178,6 +178,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["access"]["enum"].append("writethrough");
     schema["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file before it leaves";
     schema["properties"]["kind"]["description"] = "formats: filter; insert auto: the kind a folder becomes (floppy, block)";
+    schema["properties"]["compression"]["description"] =
+        "save / export of a hard disk or SD card to a .chd: none, default (lzma,zlib,huff,flac) or up to four of zlib, lzma, "
+        "huff, flac, zstd";
+    schema["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk or cdrom - swap the unit's drive first (the unit must be empty)";

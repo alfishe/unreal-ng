@@ -10,16 +10,21 @@
 
 #include "sprinterfixture.h"
 
+#include <cstdio>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
+#include "emulator/media/mediamanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
+#include "emulator/state/devicestate.h"
 
 class SprinterInput_Test : public SprinterFixture
 {
@@ -203,6 +208,36 @@ TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
     EXPECT_EQ(got, (std::vector<uint8_t>{0x4C, 0x05, 0x3D}));
 }
 
+// The board's mouse is always fitted: with no Kempston interface configured ([INPUT] Mouse=NONE) the host
+// counters still reach the guest, as SIO B packets (DSS 1.71) and through the PLD's Kempston view, code #58
+// (DSS 1.62.9x reads #FADF / #FBDF / #FFDF). Before the fix the view read the interface: #FF without it
+TEST_F(SprinterInput_Test, MouseWithoutAKempstonInterface)
+{
+    ASSERT_NE(_context->pMouse, nullptr);
+    _context->pMouse->SetPresent(false);
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    _context->pMouse->SetCounters(40, 90);
+    _context->pMouse->SetButtons(0xFE);  // left held
+    EXPECT_EQ(In(0xFADF), 0xFE) << "buttons: D0 left (active low), D7-D3 = 1";
+    EXPECT_EQ(In(0xFBDF), 40) << "X";
+    EXPECT_EQ(In(0xFFDF), 90) << "Y";
+
+    In(0x001B);  // the poll that starts the packet
+    _context->pMouse->Move(5, 3);
+    In(0x001B);
+    Wait(3 * 26250);
+    std::vector<uint8_t> got;
+    while (In(0x001B) & 0x01)
+        got.push_back(In(0x001A));
+    ASSERT_FALSE(got.empty()) << "no packet on SIO B";
+    EXPECT_EQ(got.front() & 0x60, 0x60) << "a packet with the left button";
+    _context->pMouse->SetPresent(true);
+}
+
 /// region <BIOS 3.04 with the host keyboard>
 
 // The real BIOS, keys through the automation keyboard (DebugKeyboardManager: what type_input and
@@ -242,6 +277,8 @@ protected:
     void TearDown() override
     {
         _emulator.reset();
+        if (!_blankDisk.empty())
+            std::remove(_blankDisk.c_str());
         if (_manager)
         {
             for (const auto& id : _manager->GetEmulatorIds())
@@ -280,25 +317,46 @@ protected:
         return ScreenHas(needle);
     }
 
-    /// Past the IDE detection: F4 at each unit's wait, as the screen asks
+    /// Past the IDE detection: with no drive the empty channel reads #7F (DD7 pull-down) and both units are
+    /// "None" at once
     void SkipIdeWaits()
     {
-        for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
-        {
-            ASSERT_TRUE(RunUntilScreen(unit, 300)) << ScreenText();
-            _keys->TapKey("f4");
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
-            ASSERT_FALSE(ScreenHas(unit)) << "F4 did not skip: " << ScreenText();
-        }
+        ASSERT_TRUE(RunUntilScreen("Primary Slave    ... None", 400)) << ScreenText();
+        ASSERT_TRUE(ScreenHas("Primary Master   ... None")) << ScreenText();
     }
+
+    /// F4 at the one IDE wait BIOS 3.04 still has: a blank disk on the master, so the absent slave gets status #00
+    /// from it and the NOP check waits #118 HALTs (~5.7 s) for DRDY, offering F4
+    void SkipTheSlaveWaitWithF4()
+    {
+        std::vector<uint8_t> disk(1024 * 1024, 0);
+        _blankDisk = TestPathHelper::GetUniqueTestScratchPath("input-blank-hdd.img");
+        ASSERT_TRUE(FileHelper::SaveBufferToFile(_blankDisk, disk.data(), disk.size()));
+        MediaSource source;
+        source.path = _blankDisk;
+        InsertOptions options;
+        options.immediate = true;
+        options.access = AccessMode::Session;
+        const auto result = _context->pMediaManager->Insert("ide0.master", source, options);
+        ASSERT_TRUE(result.Ok()) << result.message;
+
+        const char* waiting = "Primary Slave    ... [Press F4";
+        ASSERT_TRUE(RunUntilScreen(waiting, 400)) << ScreenText();
+        EXPECT_TRUE(ScreenHas("Primary Master   ... UNREAL-NG HDD")) << ScreenText();
+        _keys->TapKey("f4");
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(waiting); }, 100, 1);
+        ASSERT_FALSE(ScreenHas(waiting)) << "F4 did not skip: " << ScreenText();
+        EXPECT_FALSE(ScreenHas("Primary Slave    ... None")) << "F4, not the timeout, ended the wait: " << ScreenText();
+    }
+    std::string _blankDisk;
 };
 
-// The boot prompt: F4 skips the IDE waits, ENTER reboots (SETUP starts over: the boot screen again),
-// DEL on the boot screen opens SETUP.
+// The boot prompt: F4 skips the IDE wait (the absent slave next to a blank master disk), ENTER reboots (SETUP
+// starts over: the boot screen again), DEL on the boot screen opens SETUP.
 // Boot-bound (the logo, the IDE detection, the failed boot, and SETUP's restart: ~900 frames of real ROM)
 TEST_F(SprinterInputBoot_Test, Bios304_F4EnterDel)
 {
-    SkipIdeWaits();
+    SkipTheSlaveWaitWithF4();
     const char* prompt = "PRESS <ENTER> TO REBOOT, <ESC> TO CANCEL";
     ASSERT_TRUE(RunUntilScreen(prompt, 1000)) << ScreenText();
 
@@ -333,6 +391,55 @@ TEST_F(SprinterInputBoot_Test, Bios304_EscThenCtrlAltDel)
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(noRom); }, 100, 1);
     ASSERT_FALSE(ScreenHas(noRom)) << "Ctrl+Alt+Del did not reset";
     EXPECT_TRUE(RunUntilScreen("Sprinter BIOS: ver 3.04", 300)) << ScreenText();
+}
+
+// type_input on DSS (automation-outcome.md; S4 open point "DSS typing"): text typed through the
+// automation keyboard (DebugKeyboardManager::TypeText, behind WebAPI /keyboard/type and MCP type_input)
+// reaches the DSS shell as PC keys. The DSS 1.62 floppy boots from drive B with its SYSTEM.BAT ending
+// before "fn" (Flex Navigator does not run yet); "dir" lists the floppy, read back with the automation
+// screen text (DeviceState::SprinterText, /state/sprinter/text) as well as the test's own reader.
+// Boot-bound (BIOS POST, the IDE waits, DSS from the floppy at 21 MHz, the typing): ~3 s host time
+TEST_F(SprinterInputBoot_Test, Dss162_TypeInputReachesTheShell)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+
+    // SYSTEM.BAT is the third root entry (LBA 19), cluster 49 = LBA 80; drop its last line "fn"
+    std::vector<uint8_t> disk(1474560);
+    {
+        FILE* f = std::fopen(image.c_str(), "rb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(std::fread(disk.data(), 1, disk.size(), f), disk.size());
+        std::fclose(f);
+    }
+    uint8_t* entry = disk.data() + 19 * 512 + 2 * 32;
+    ASSERT_EQ(std::string(reinterpret_cast<const char*>(entry), 11), "SYSTEM  BAT");
+    const uint32_t size = entry[28] | entry[29] << 8;
+    const std::string bat(reinterpret_cast<const char*>(disk.data() + 80 * 512), size);
+    ASSERT_EQ(bat.substr(bat.size() - 4), "fn\r\n");
+    entry[28] = static_cast<uint8_t>(size - 4);
+    const std::string copy = TestPathHelper::GetUniqueTestScratchPath("dss162-nofn.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(copy, disk.data(), disk.size()));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(copy, 1, &error)) << error;
+
+    SkipIdeWaits();
+    ASSERT_TRUE(RunUntilScreen("Estex DSS Version 1.62.92", 3000)) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);  // the prompt after "ver"
+
+    _keys->TypeText("dir\n");
+    ASSERT_TRUE(RunUntilScreen("SYSTEM   EXE", 600)) << ScreenText();
+    EXPECT_TRUE(ScreenHas("B:\\>dir")) << ScreenText();
+
+    // The automation's screen text sees the same listing
+    const StateNode text = DeviceState::SprinterText(_context);
+    std::string all;
+    for (const StateNode& line : text.find("lines")->items)
+        all += line.find("text")->s + "\n";
+    EXPECT_NE(all.find("Directory of B:\\"), std::string::npos) << all;
+    EXPECT_NE(all.find("SYSTEM   DOS"), std::string::npos) << all;
+    EXPECT_EQ(_decoder->GetInput().KeyboardOverruns(), 0u);
 }
 
 /// endregion </BIOS 3.04 with the host keyboard>

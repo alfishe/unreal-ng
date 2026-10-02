@@ -382,15 +382,19 @@ fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_sta
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
+sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
+tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
+lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
+txt = sprinter_text()       -- the screen text of the mode table's text squares (80 x 32: BIOS SETUP, DSS)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
 ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"
-ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- ZX-Bus cards: none | zxnetusb | zxwifi | "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31)
+ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
-con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), statistics (debug mode)
+con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
 mode = screen_mode()        -- picture format, memory_layout, active_ram_pages, eff7/dffd/ff77
@@ -1088,8 +1092,12 @@ emu.video_record("start", {format = "gif", fps = 50, scale = 2})  -- opts table 
 emu.video_record("start", {audio_rate = 48000})  -- pin the core rate first (number or "auto");
                                      -- waits up to 1 s for the rate before recording starts,
                                      -- errors if the emulator is paused
+emu.video_record("start", {format = "h264", filename = "run.mp4", audio = "aac"})  -- with the sound
+                                     -- track (audio = true means aac; video_bitrate / audio_bitrate
+                                     -- in kbps). Omit audio for video only. gif + audio is refused
 emu.video_record("stop")             -- also "pause" / "resume"
-emu.video_record_status()             -- recording state + live stats (frames, duration, fps)
+emu.video_record_status()             -- recording state + live stats (frames, duration, fps,
+                                     -- audio, audio_codec, audio_sample_rate, audio_duration)
 
 -- Assembler
 emu.assemble("ld a,2\nout (254),a", 0x8000)          -- assemble, listing only
