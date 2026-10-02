@@ -218,6 +218,8 @@ private:
     void RefreshM1Hook();
     /// Fit or remove the VDAC2 card to match the configured firmware build
     void RefreshVdac2Card();
+    /// TS-BIOS settings that boot Wild Commander from the SD card ([EVO] TsBiosNvram=SDBOOT)
+    void ApplyTsBiosSdBootNvram();
     void UpdateSdStatus();
     /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
     void ApplyIdeStall();

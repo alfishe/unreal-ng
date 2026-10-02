@@ -34,6 +34,10 @@ struct SlotDescriptor
     /// is built in one of these (the default when it is among them); an image
     /// of another flavour is refused on insert
     std::vector<FatType> fsCompatibility;
+    /// Folder volumes: an MBR with one partition, as SD cards ship (true), or the
+    /// FAT volume straight from sector 0, a "superfloppy" (false) - for a controller
+    /// whose boot path reads FAT from sector 0 with no partition table
+    bool folderMbr = true;
     bool hasCardDetect = false;          ///< the slot reports "present" to its peripheral
     bool hasWriteProtectSwitch = false;  ///< the slot reports its switch to its peripheral
 

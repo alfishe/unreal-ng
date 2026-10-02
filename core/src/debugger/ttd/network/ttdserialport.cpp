@@ -11,9 +11,17 @@ namespace ttd
 {
 
 TTDSerialPort::TTDSerialPort(EmulatorContext* context)
-    : _context(context), _scratch(std::make_unique<netstate::SerialPort>())
+    : TTDSerialPort(context, [context]() { return context ? context->pComPort : nullptr; }, PeripheralId::SerialPort,
+                    "SerialPort")
 {
-    if (_context && _context->pComPort && _context->pComPort->Peer())
+}
+
+TTDSerialPort::TTDSerialPort(EmulatorContext* context, std::function<ComPort*()> port, PeripheralId id, std::string name)
+    : _context(context), _port(std::move(port)), _id(id), _name(std::move(name)),
+      _scratch(std::make_unique<netstate::SerialPort>())
+{
+    const ComPort* com = _port ? _port() : nullptr;
+    if (com && com->Peer())
         _size = sizeof(netstate::SerialPort);
 }
 
@@ -22,7 +30,7 @@ void TTDSerialPort::TTDSaveState(uint8_t* dst) const
     netstate::SerialPort& state = *_scratch;
     std::memset(&state, 0, sizeof(state));
     state.version = netstate::kSerialPortVersion;
-    if (const ComPort* com = _context ? _context->pComPort : nullptr)
+    if (const ComPort* com = _port ? _port() : nullptr)
     {
         if (!com->SaveState(state.com))
             state.incomplete = 1;
@@ -32,7 +40,7 @@ void TTDSerialPort::TTDSaveState(uint8_t* dst) const
 
 void TTDSerialPort::TTDLoadState(const uint8_t* src)
 {
-    ComPort* com = _context ? _context->pComPort : nullptr;
+    ComPort* com = _port ? _port() : nullptr;
     if (!com)
         return;
     netstate::SerialPort& state = *_scratch;
@@ -64,14 +72,14 @@ void TTDSerialPort::TTDLoadState(const uint8_t* src)
         ModuleLogger* _logger = _context->pModuleLogger;
         const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
         const uint16_t _SUBMODULE = 0x0000;
-        MLOGWARNING("TTDSerialPort: the serial port state was restored incompletely (%s)",
+        MLOGWARNING("TTD %s: the serial port state was restored incompletely (%s)", _name.c_str(),
                     state.incomplete ? "it did not fit the checkpoint limits" : "received bytes missing from the journal");
     }
 }
 
 uint64_t TTDSerialPort::TTDHashState() const
 {
-    const ComPort* com = _context ? _context->pComPort : nullptr;
+    const ComPort* com = _port ? _port() : nullptr;
     if (!com)
         return 0;
     uint64_t h = 1469598103934665603ull;

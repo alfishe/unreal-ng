@@ -10,7 +10,9 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_ATM450::PortDecoder_ATM450(EmulatorContext* context) : PortDecoder_ATM710(context) {}
+// Not the v7.10 board: no keyboard controller (#FE is the plain matrix port), no INTERNAL I/O connector, no
+// 7 MHz RAM waits of the v7.10 arbiter; its own #FE decode (A0)
+PortDecoder_ATM450::PortDecoder_ATM450(EmulatorContext* context) : PortDecoder_ATM710(context, false) {}
 
 PortDecoder_ATM450::~PortDecoder_ATM450()
 {

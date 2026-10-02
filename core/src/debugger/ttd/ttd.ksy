@@ -566,6 +566,8 @@ types:
           Every Sprinter blob (25, 28-31, 35) starts with its version byte; a blob of another version is not
           loaded. The Sprinter also carries 18 Ds12887, 17 AtaChannel (two channels), 1 BetaDisk, 7 KempstonMouse,
           23 KempstonJoystick.
+          36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
+          37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

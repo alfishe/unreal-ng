@@ -341,6 +341,7 @@ typedef void (PortDevice::* PortDeviceOutMethod)(uint16_t port, uint8_t value); 
 
 /// Base class for all model port decoders
 class ISerialPeer;
+class IAtmIoDevice;
 class PortDecoder
 {
 
@@ -812,6 +813,10 @@ public:
 
         /// A port that is no 16550 on #xxEF (Atm2Kbc) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
+
+        /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
+        /// plug a device in (true) or pull it (false); empty = no such connector
+        std::function<void(IAtmIoDevice* device, bool attach)> internalIo;
 
         /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
         /// of the firmware from the config ([ATM] Kbc=); false + reason

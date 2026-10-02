@@ -25,7 +25,9 @@
             "peer_pending (bytes the peer holds for the ZX), peer_baud (an ESP module's own rate; a mismatch with baud garbles both sides), bytes_in, bytes_out, overruns; an ESP module adds requests and recent_exchanges (request / reply: ESPNET frames by name, AT lines as text). "
             "machine_serial: the machine's own serial port when it is no 16550 (ATM Turbo 2+: the keyboard controller's RS-232; "
             "machine.serial_port atm2-kbc): fitted, flavor atm2kbc, kbc_firmware, the peer fields as in com_port, baud (as the "
-            "firmware programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost (frames the MCU had no room for). card.kind is none when "
+            "firmware programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost (frames the MCU had no room for). "
+            "atm2ioesp: the ATM2IOESP card (machine.internal_io says the machine has the connector): fitted, address (its bus "
+            "address), the peer fields and the 16550 registers as in com_port. card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
@@ -47,7 +49,9 @@
         paths[kConfig]["post"]["tags"].append("Network");
         paths[kConfig]["post"]["description"] =
             "Change the machine's [NETWORK] settings at runtime. Body: any of card (ZX-Bus cards: \"none\" | "
-            "\"zxnetusb\" | \"zxwifi\" | \"zxnetusb,zxwifi\"), "
+            "\"zxnetusb\" | \"zxwifi\" | \"atm2ioesp\" | a list with ','; ATM2IOESP sits on the ATM Turbo 2+ INTERNAL I/O connector, not "
+            "the ZX-Bus), atm2ioesp (what the ATM2IOESP card's 16550 is wired to, the com_port values, default \"at\"), "
+            "atm2ioesp_address (its bus address on #FB: \"0xF0\" Rev 1.5 / 2.0, \"0xF8\" Rev 1.0), "
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
             "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | \"espnet[,<baud>]\" | \"at[,<baud>]\" (an ESP module's firmware rate; without it the port's: 38400 on the ATM Turbo 2+ keyboard controller, 115200 elsewhere) | "
             "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"; the machine's own serial port: the ZX-Evo "

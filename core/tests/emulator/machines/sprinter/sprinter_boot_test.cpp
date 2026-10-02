@@ -1151,3 +1151,133 @@ TEST_F(SprinterBoot_Test, Dss162_FlexNavigatorDrawsWithTheAccelerator)
 }
 
 /// endregion </The accelerator in real software>
+
+/// region <Flex Navigator input>
+
+// Flex Navigator reads its keys through DSS (WAITKEY / SCANKEY: DSS's KEYSCAN reads the set 2 codes from SIO A in the
+// frame INT; Tab = #0D -> position #0F) and its mouse through the DSS mouse driver (INTMOUSE: DSS 1.62.9x reads the
+// PLD's Kempston view #FADF / #FBDF / #FFDF, DSS 1.71 the Microsoft serial packets on SIO B). These tests drive both
+// through the automation (the same journaled path the GUI posts to) and read the active panel from the picture: the
+// file cursor bar on the first row of the active panel.
+class SprinterFlexNavigator_Test : public SprinterBoot_Test
+{
+protected:
+    /// The picture rendered in full (two frames without the turbo mode), one pixel of it (0x00RRGGBB)
+    uint32_t Pixel(uint32_t x, uint32_t y)
+    {
+        _emulator->DisableTurboMode();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+        _emulator->EnableTurboMode();
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        const uint32_t p = pixels[y * fb.width + x];
+        return (p & 0xFF) << 16 | (p & 0xFF00) | (p >> 16 & 0xFF);
+    }
+
+    /// Which panel shows the cursor bar on row `y` (the left list at x = 100, the right one at x = 420): 'L', 'R', '?'
+    char ActivePanel(uint32_t barColor, uint32_t y = 82)
+    {
+        const bool left = Pixel(100, y) == barColor;
+        const bool right = Pixel(420, y) == barColor;
+        return left == right ? '?' : (left ? 'L' : 'R');
+    }
+
+    /// A key through the automation keyboard, then `frames` for Flex Navigator to act on it
+    void Tap(const std::string& key, uint16_t frames = 20)
+    {
+        _emulator->GetDebugManager()->GetKeyboardManager()->TapKey(key);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), frames);
+    }
+};
+
+// FN 1.10 from the DSS 1.62.92 floppy (the S5 RESTORE workaround of Dss162_FlexNavigatorDrawsWithTheAccelerator):
+// Tab switches the panels and back, Down moves the cursor, the mouse (with no Kempston interface configured: the
+// board's mouse) moves the pointer onto the right panel and a left click makes that panel active.
+// Boot-bound (BIOS, DSS, Flex Navigator loading from the floppy, its disk reads per panel switch): ~9 s host time
+// with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, Dss162_Fn110KeysAndMouse)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(image, 1, &error)) << error;
+    _context->pMouse->SetPresent(false);  // [INPUT] Mouse=NONE: the Sprinter's mouse is still there
+
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->busTraceHook = [this, z80](char type, uint16_t addr, uint8_t) {
+        FDD* drive = _context->pBetaDisk->getDrive();
+        if (type == 'R' && addr == 0x0609 && (z80->pc == 0x0609 || z80->pc == 0x060A) && drive && drive->getTrack() > 20)
+            drive->setTrack(20);
+    };
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("B:\\>"); }, 3000, 5);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 600);
+
+    // A panel switch reads the floppy (~30 frames with interrupts off, SIO A unread): the next key waits for it
+    constexpr uint16_t kSettle = 60;
+    constexpr uint32_t kBar = 0x000000;  // FN 1.10: a black bar on grey panels
+    ASSERT_EQ(ActivePanel(kBar), 'L') << "FN starts on the left panel";
+    Tap("tab", kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "Tab: the right panel";
+    Tap("tab", kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "Tab again: the left panel";
+    Tap("down", kSettle);
+    EXPECT_EQ(ActivePanel(kBar, 90), 'L') << "Down: the bar on the second row";
+    EXPECT_NE(Pixel(100, 82), kBar) << "Down: the first row is no longer marked";
+    Tap("up", kSettle);
+    EXPECT_EQ(_decoder->GetInput().KeyboardOverruns(), 0u);
+
+    // The pointer from the top of the screen into the right panel's list, then a left click
+    for (int i = 0; i < 21; i++)
+    {
+        _context->pMouse->Move(10, -2);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
+    }
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "moving does not click";
+    _context->pMouse->SetButtons(0xFE);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFF);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "the click activates the right panel";
+    z80->busTraceHook = nullptr;
+    _context->pMouse->SetPresent(true);
+}
+
+// FN 1.15 on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img; not in the repo): Tab
+// switches the panels, and the serial mouse (DSS 1.71 reads SIO B) moves the pointer onto the right panel, where a
+// click activates it. Boot-bound (BIOS 3.06, DSS 1.71 and FN from the hard disk): ~8 s host time with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    InsertHdd(path);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+    ASSERT_TRUE(ScreenHas("Shell version")) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+
+    constexpr uint32_t kBar = 0x00FFFF;  // FN 1.15: a cyan bar on blue panels
+    ASSERT_EQ(ActivePanel(kBar), 'L') << "FN starts on the left panel";
+    Tap("tab");
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "Tab: the right panel";
+    Tap("tab");
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "Tab again: the left panel";
+
+    for (int i = 0; i < 20; i++)
+    {
+        _context->pMouse->Move(10, -1);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
+    }
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFE);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFF);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 30);
+    EXPECT_NE(ActivePanel(kBar), 'L') << "the click on the right panel moved the focus there";
+}
+
+/// endregion </Flex Navigator input>

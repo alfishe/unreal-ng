@@ -1,5 +1,8 @@
 #include "networkpanelmodel.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 
@@ -36,13 +39,15 @@ std::string Upper(std::string text)
 
 std::string Cards(const NetworkForm& form)
 {
-    if (form.zxNetUsb && form.zxWifi)
-        return "zxnetusb,zxwifi";
+    std::string out;
+    auto add = [&out](const char* name) { out += (out.empty() ? "" : ",") + std::string(name); };
     if (form.zxNetUsb)
-        return "zxnetusb";
+        add("zxnetusb");
     if (form.zxWifi)
-        return "zxwifi";
-    return "none";
+        add("zxwifi");
+    if (form.atm2IoEsp)
+        add("atm2ioesp");
+    return out.empty() ? "none" : out;
 }
 }  // namespace
 
@@ -52,6 +57,7 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     if (const StateNode* machine = network.find("machine"))
     {
         form.zxBus = Flag(machine->find("zx_bus"), true);
+        form.internalIo = Flag(machine->find("internal_io"), false);
         form.serialPort = Text(machine->find("serial_port"), "none");
     }
     const StateNode* set = network.find("settings");
@@ -60,6 +66,12 @@ NetworkForm NetworkFormFromState(const StateNode& network)
     const std::string cards = Upper(Text(set->find("card"), "NONE"));
     form.zxNetUsb = cards.find("ZXNETUSB") != std::string::npos;
     form.zxWifi = cards.find("ZXWIFI") != std::string::npos;
+    form.atm2IoEsp = cards.find("ATM2IOESP") != std::string::npos;
+    form.atm2IoEspPeer = Peer(Text(set->find("atm2ioesp")), "AT");
+    {
+        const std::string address = Text(set->find("atm2ioesp_address"), "0xF0");
+        form.atm2IoEspAddress = static_cast<unsigned>(std::strtoul(address.c_str(), nullptr, 0));
+    }
     form.comPort = Peer(Text(set->find("com_port")), "NONE");
     form.zxWifiPeer = Peer(Text(set->find("zx_wifi")), "AT");
     form.espChip = Upper(Text(set->find("esp_chip"), "ESP32"));
@@ -78,8 +90,16 @@ NetworkForm NetworkFormFromState(const StateNode& network)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after)
 {
     std::vector<std::pair<std::string, std::string>> out;
-    if (before.zxNetUsb != after.zxNetUsb || before.zxWifi != after.zxWifi)
+    if (before.zxNetUsb != after.zxNetUsb || before.zxWifi != after.zxWifi || before.atm2IoEsp != after.atm2IoEsp)
         out.emplace_back("card", Cards(after));
+    if (before.atm2IoEspPeer.ToString() != after.atm2IoEspPeer.ToString())
+        out.emplace_back("atm2ioesp", after.atm2IoEspPeer.ToString());
+    if (before.atm2IoEspAddress != after.atm2IoEspAddress)
+    {
+        char text[8];
+        std::snprintf(text, sizeof text, "0x%02X", after.atm2IoEspAddress);
+        out.emplace_back("atm2ioesp_address", text);
+    }
     if (before.comPort.ToString() != after.comPort.ToString())
         out.emplace_back("com_port", after.comPort.ToString());
     if (before.zxWifiPeer.ToString() != after.zxWifiPeer.ToString())
@@ -165,6 +185,11 @@ NetworkAvailability NetworkFormAvailability(const NetworkForm& form)
     {
         a.kbcFirmware = false;
         a.kbcFirmwareWhy = "Only the ATM Turbo 2+ (v7.xx) has the keyboard controller.";
+    }
+    if (!form.internalIo)
+    {
+        a.atm2IoEsp = false;
+        a.atm2IoEspWhy = "ATM2IOESP plugs into the ATM Turbo 2+ INTERNAL I/O connector (#FB / #FA); this machine has none.";
     }
     return a;
 }

@@ -59,7 +59,7 @@ rather than of the original board; **low** = forum statements or secondary sourc
 | Scorpion GMX | no (by descent from Turbo+) | no | turbo via #7EFD bit 7 (MAME); waits not documented | as Turbo+ presumably | low | MAME `scorpion.cpp:786-789` |
 | Profi (1024) | no (original) | no | none known at 3.5 MHz; turbo in later revisions | discrete slot scheme | medium: consensus, no original schematic read | [technical-design.md](../2026-09-21-profi/technical-design.md); ZXMAK2 `Profi/UlaProfi3XX.cs` |
 | Karabas-Pro (Profi re-creation, FPGA) | only in its optional "classic" screen mode at 3.5 MHz (#4000-#7FFF and even ports, clock gated) | same condition | 14 MHz: ~400 ns WAIT on every MREQ cycle; turbo drops to 3.5 MHz after FDC access | video uses the second RAM slot of each 7 MHz cycle | high (RTL) | `karabas-pro/firmware/src/fpga/profi/rtl/karabas_pro.vhd:1200-1232`, `memory.vhd:196-210, 273-284` |
-| ATM Turbo 2+ (v7.10) | no | no | 7 MHz turbo (#77 D3); keyboard `IN (#FE)` holds WAIT until the 8031 answers | discrete interleave, not documented in detail | medium | `zx-evo-docs/ATM/atm2_arch.pdf` (port #FE section) |
+| ATM Turbo 2+ (v7.10) | no | no | 7 MHz turbo (#77 D3): every RAM access waits 2-3 T for the CPU's slot; keyboard `IN (#FE)` holds WAIT until the 8031 answers | discrete interleave: D68 gives the CPU every other RAM slot (corrected 2026-10-02, §9.1) | high | v7.10 schematic `cp7_1`, the assembly manual's turbo timing diagram; `zx-evo-docs/ATM/atm2_arch.pdf` (port #FE section) |
 | ATM Turbo 1 (4.50) | no known | no known | 7 MHz turbo; nothing on waits found | not documented | low | none found |
 | ZX-Evo BaseConf (ATM3) | no in the Pentagon raster (default); **emulated** 48K-style contention in the 48K and 128K rasters, only at 3.5 MHz | same condition (even ports) | 14 MHz: a RAM read or M1 that misses two one-word caches (code, data) waits 2 or 3 T by the clock's parity, hits and writes never wait; external I/O (AY, VG93 in shadow) +3 T ([research-zxevo.md](../2026-09-29-machine-waits/research-zxevo.md)); DOS switch stall; WAIT ports #BFF7 / #xxEF (AVR) | DRAM arbiter, 8-cycle blocks, video takes 1/8 or 1/4, CPU the rest | high (RTL) | `pentevo/fpga/base_trdemu/trunk/z80/zclock.v:265-282`, `video/video_sync_h.v:250-283`, `z80/zmem.v:254-305`, `dram/arbiter.v:55-86` |
 | ZX-Evo TS-Conf | no | no | 14 MHz: waits on cache misses; CPU stalls when video + DMA + sprites use the whole DRAM bandwidth; CPU priority lowered for DMA | same arbiter with TS / TM / DMA clients | high (RTL) | `zx-evo-tsconf/pentevo/fpga/current/z80/zmem.v:132-208`, `dram/arbiter.v:40-50, 170-190` |
@@ -285,7 +285,13 @@ in RAM.
 - Turbo 7 MHz by port #77 D3. The only documented WAIT is the keyboard: on `IN A,(#FE)` "процессор
   останавливается сигналом WAIT" ("the CPU is stopped by the WAIT signal") until the 8031 keyboard
   controller answers (`zx-evo-docs/ATM/atm2_arch.pdf`, port #FE section).
-- No memory contention in either speed. The discrete DRAM interleave is not described in the documents found.
+- No memory contention at 3.5 MHz. **At 7 MHz every RAM access waits** (corrected 2026-10-02 from the v7.10
+  schematic `cp7_1` and the Russian assembly manual's timing diagram 1b): the arbiter D68 gives the CPU every
+  other RAM slot (one slot = 2 T at 7 MHz), D69.1 holds /WAIT from the RAM select until RAS falls in the
+  CPU's slot, so a fetch, read or write to RAM waits 2 T from an even clock and 3 from an odd one; ROM and
+  I/O run at full speed; the same in every video mode and in the border. The manual's "140-160%, not 200%
+  due to memory WAIT states". Details:
+  [reference-atm710-turbo-waits.md](../2026-10-02-atm710-turbo-waits/reference-atm710-turbo-waits.md).
 - ATM Turbo 1: nothing specific found; no emulator models a delay.
 
 ### 9.2 ZX-Evo BaseConf (the ATM3 configuration)
@@ -361,7 +367,7 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 | Pentagon (128 / 512) | `none` | - | matches |
 | **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode; SC15.1 turbo slot waits (`ScorpionTurboOverlay`), both since 2026-09-29 | matches the SC15.1 equations; SC15.3 as a setting, the 3.5 MHz drop while /INT is active (both 2026-10-01) |
 | Profi | `none` | - | matches the original Profi. Karabas-Pro's "classic" mode is not modeled, and does not need to be |
-| ATM710 | `none` | turbo modeled as a clock rate only | matches at 3.5 / 7 MHz |
+| ATM710 | `none` | 7 MHz RAM waits (`Atm710TurboOverlay`, since 2026-10-02) | matches the v7.10 schematic at 3.5 / 7 MHz |
 | ATM3 (ZX-Evo BaseConf) | `none` | 14 MHz cache-miss waits and external I/O (`EvoTurboOverlay`, since 2026-09-29); the optional 48K / 128K raster contention not modeled (the rasters are not) | matches the default Pentagon raster |
 | TS-Conf (`data/configs/ts-conf`) | `none` | `tsconf.h:245` has a `cache_miss` field; the 14 MHz wait is not applied | matches at 3.5 / 7 MHz |
 

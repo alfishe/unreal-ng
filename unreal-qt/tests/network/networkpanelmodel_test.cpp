@@ -167,3 +167,29 @@ TEST(NetworkPanelModel_Test, AnEspModuleKeepsItsRate)
     EXPECT_EQ(changes[0].first, "com_port");
     EXPECT_EQ(changes[0].second, "ESPNET");
 }
+
+TEST(NetworkPanelModel_Test, TheAtm2IoEspCardNeedsTheInternalIoConnector)
+{
+    StateNode state = State("atm2-kbc", true, "ATM2IOESP", "NONE", "AT");
+    state["machine"]["internal_io"] = true;
+    state["settings"]["atm2ioesp"] = "ESPNET";
+    state["settings"]["atm2ioesp_address"] = "0xF8";
+    NetworkForm form = NetworkFormFromState(state);
+    EXPECT_TRUE(form.atm2IoEsp);
+    EXPECT_EQ(form.atm2IoEspPeer.kind, ComPortSpec::Kind::Espnet);
+    EXPECT_EQ(form.atm2IoEspAddress, 0xF8u);
+    EXPECT_TRUE(NetworkFormAvailability(form).atm2IoEsp);
+
+    NetworkForm edited = form;
+    edited.atm2IoEspAddress = 0xF0;
+    edited.zxWifi = true;
+    const auto changes = NetworkFormChanges(form, edited);
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[0].first, "card");
+    EXPECT_EQ(changes[0].second, "zxwifi,atm2ioesp");
+    EXPECT_EQ(changes[1].first, "atm2ioesp_address");
+    EXPECT_EQ(changes[1].second, "0xF0");
+
+    form.internalIo = false;
+    EXPECT_FALSE(NetworkFormAvailability(form).atm2IoEsp);
+}

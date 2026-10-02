@@ -82,6 +82,8 @@ enum class PeripheralId : uint8_t
     SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
     SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
+    AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
+    Atm2IoEsp = 37,       // the ATM2IOESP card on it: the 16550 and its peer (netstate::SerialPort)
     // Future: SAA1099, GS512, etc.
     Count
 };

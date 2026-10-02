@@ -5,6 +5,7 @@
 #include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
+#include <QKeyEvent>
 #include <QWidget>
 
 DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent)
@@ -24,6 +25,7 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
             _widget = QWidget::createWindowContainer(_gpuWindow, parent);
             _widget->setMinimumSize(352, 288);
             _widget->setFocusPolicy(Qt::StrongFocus);
+            _widget->installEventFilter(this);
             _useGPU = true;
 
             // Forward drag/drop signals from GPU window
@@ -48,6 +50,25 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
         _widget = _software;
         qInfo() << "DeviceScreenWrapper: Using software rendering";
     }
+}
+
+bool DeviceScreenWrapper::eventFilter(QObject* watched, QEvent* event)
+{
+    // The container is a QWidget: its QWidget::event would turn Tab into focus traversal before any key
+    // handler sees it. Every other key keeps its path (the container ignores it, the content frame forwards it)
+    if (watched == _widget && _gpuWindow && (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease))
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
+        {
+            if (event->type() == QEvent::KeyPress)
+                _gpuWindow->handleExternalKeyPress(keyEvent);
+            else
+                _gpuWindow->handleExternalKeyRelease(keyEvent);
+            return true;
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 DeviceScreenWrapper::~DeviceScreenWrapper()

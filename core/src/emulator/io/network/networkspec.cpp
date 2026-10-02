@@ -24,9 +24,11 @@ bool ParseCards(const std::string& text, uint8_t& mask, std::string& error)
             mask |= kCardZxNetUsb;
         else if (t == "ZXWIFI" || t == "ZX-WIFI")
             mask |= kCardZxWifi;
+        else if (t == "ATM2IOESP" || t == "ATM2-IO-ESP")
+            mask |= kCardAtm2IoEsp;
         else
         {
-            error = "unknown card '" + item + "' (NONE | ZXNETUSB | ZXWIFI, a list with ',')";
+            error = "unknown card '" + item + "' (NONE | ZXNETUSB | ZXWIFI | ATM2IOESP, a list with ',')";
             return false;
         }
     }
@@ -40,6 +42,8 @@ std::string CardsToString(uint8_t mask)
         out = "ZXNETUSB";
     if (mask & kCardZxWifi)
         out += std::string(out.empty() ? "" : ",") + "ZXWIFI";
+    if (mask & kCardAtm2IoEsp)
+        out += std::string(out.empty() ? "" : ",") + "ATM2IOESP";
     return out.empty() ? "NONE" : out;
 }
 }  // namespace networkspec

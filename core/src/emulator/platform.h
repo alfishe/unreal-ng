@@ -716,6 +716,12 @@ struct CONFIG
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];
+		/// What the ATM2IOESP card's 16550 is wired to (ATM Turbo 2+ INTERNAL I/O
+		/// connector, Card=ATM2IOESP): ComPortSpec, empty = AT (its shipped firmware)
+		char atm2IoEsp[256];
+		/// The card's bus address (#FB latch): #F0 (Rev 1.5 / 2.0 default) or #F8
+		/// (Rev 1.0); its 16550 answers base .. base + 7
+		uint8_t atm2IoEspAddress;
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
@@ -783,6 +789,11 @@ struct CONFIG
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
+		// TS-Conf: the TS-BIOS settings a machine starts with when no NVRAM file
+		// gives them ([EVO] TsBiosNvram=): 1 = SDBOOT, "Reset to: BD boot.$c" (the
+		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
+		// BIOS opens its Setup Utility)
+		uint8_t ts_bios_sd_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept

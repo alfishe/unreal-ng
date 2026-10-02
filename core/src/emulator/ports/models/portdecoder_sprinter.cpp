@@ -782,7 +782,8 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             return PeripheralPortIn(0xFFFD);
 
         case SprinterCode::KempstonMouse:
-            return Default_Port_KempstonMouse_In(port, _pc);
+            // The PLD's view of the board's own mouse, not an optional Kempston interface
+            return _input.ReadMouseView(port);
 
         case SprinterCode::CovoxBlaster:
             return _cbl.State().control;

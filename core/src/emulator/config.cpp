@@ -310,6 +310,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	{
+		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
+		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
+		if (preset == "SETUP" || preset == "setup")
+			config.atm.ts_bios_sd_boot = 0;
+		else
+		{
+			config.atm.ts_bios_sd_boot = 1;
+			if (preset != "SDBOOT" && preset != "sdboot")
+				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
@@ -911,6 +923,25 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [NETWORK] ZxWifi=%s: %s - the card's ESP runs AT", config.network.zxWifi, error.c_str());
 			config.network.zxWifi[0] = '\0';
 		}
+	}
+	config.network.atm2IoEsp[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Atm2IoEsp", nullptr), config.network.atm2IoEsp, sizeof config.network.atm2IoEsp);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.atm2IoEsp, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] Atm2IoEsp=%s: %s - the card's ESP runs AT", config.network.atm2IoEsp, error.c_str());
+			config.network.atm2IoEsp[0] = '\0';
+		}
+	}
+	{
+		// The card's bus address: a multiple of 8 (CT2..CT0 pick the register)
+		const long address = inimanager.GetLongValue(network, "Atm2IoEspAddress", 0xF0);
+		config.network.atm2IoEspAddress = static_cast<uint8_t>(address & 0xF8);
+		if (address < 0 || address > 0xFF || (address & 0x07))
+			MLOGWARNING("Config: [NETWORK] Atm2IoEspAddress=%ld: a bus address 0x00..0xF8 in steps of 8 (0xF0 or 0xF8); 0x%02X used",
+			            address, config.network.atm2IoEspAddress);
 	}
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "

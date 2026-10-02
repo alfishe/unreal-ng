@@ -15,6 +15,7 @@ emulates Sinclair contention in some modes. From [contention-by-machine.md](../2
 | ZX-Evo BaseConf (`ATM3`) at 14 MHz | variable waits per memory access, external I/O at 7 MHz | the released FPGA RTL |
 | ZX-Evo BaseConf in its 48K / 128K rasters at 3.5 MHz | emulated Sinclair contention | the released FPGA RTL |
 | ZX-Evo TS-Conf at 14 MHz | waits on cache misses | TS-Conf RTL; **not in this work**: part of the TSConf machine (PLAN #41), which owns `MemoryWaitOverlay` |
+| ATM Turbo 2+ v7.10 (`ATM710`) at 7 MHz | every RAM access (opcode fetches included) waits for the CPU's slot in the video RAM arbitration; ROM and I/O run at full speed | v7.10 schematic `cp7_1` (D69.1, D68, D73, D98, D79) and the assembly manual; added 2026-10-02, [2026-10-02-atm710-turbo-waits](../2026-10-02-atm710-turbo-waits/README.md) |
 
 ## 2. Goals
 
@@ -41,6 +42,6 @@ emulates Sinclair contention in some modes. From [contention-by-machine.md](../2
 | ID | Criterion |
 |:--|:--|
 | AC1 | Worked examples from the research (per rule) reproduce in `core-tests` |
-| AC2 | Pentagon, Scorpion at 3.5 MHz, ATM710 and the Sinclair machines: timing fingerprints unchanged |
+| AC2 | Pentagon, Scorpion and ATM710 at 3.5 MHz and the Sinclair machines: timing fingerprints unchanged. (Until 2026-10-02 ATM710 was listed here without the clock: its 7 MHz turbo has RAM waits too, found when NedoOS's ESP driver lost bytes on the ATM2 COM - [2026-10-02-atm710-turbo-waits](../2026-10-02-atm710-turbo-waits/README.md).) |
 | AC3 | The `contention` feature off removes the waits |
 | AC4 | Full build with zero warnings, all of `core-tests` pass (with `-j` at half the cores) |

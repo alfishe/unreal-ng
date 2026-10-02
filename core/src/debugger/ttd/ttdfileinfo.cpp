@@ -136,6 +136,8 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::SprinterIsa: return "sprinter-isa";
         case PeripheralId::SprinterPads: return "sprinter-pads";
         case PeripheralId::Wd1793Context: return "wd1793-context";
+        case PeripheralId::AtmIoBus: return "atm-io-bus";
+        case PeripheralId::Atm2IoEsp: return "atm2ioesp";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
