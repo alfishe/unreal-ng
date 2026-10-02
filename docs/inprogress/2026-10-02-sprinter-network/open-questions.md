@@ -97,6 +97,8 @@ the guest's TCP / IP.
 
 **Recommendation: A.**
 
+**Owner decision (2026-10-02): A** - our own gateway component, shared by every Ethernet card, "and test it well": a dedicated test suite (ARP, IPv4 fragments, ICMP, UDP, TCP state machine incl. retransmit, window, out-of-order, RST / FIN races, DHCP and DNS through the virtual network, inbound forwards, TTD replay bit-exact) plus end-to-end runs of the real Sprinter kit programs.
+
 ## Q10. Guest registry for virtual network peers
 
 Each new serial peer today needs a fixed guest number and edits in five places (`SerialGuests`, `hasGuest`,
