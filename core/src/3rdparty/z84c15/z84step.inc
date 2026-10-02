@@ -10,8 +10,8 @@
 // of its own (see ddfd_prefixes / PendingPrefixStep).
 
 // HALT: no opcode processing until INT/NMI releases the CPU. The halted CPU
-// keeps running M1 cycles at PC (the HALT opcode): Z84HaltT reads the byte
-// there through the host as an M1 (unreal-z80 only reports the quantum to the
+// keeps running M1 cycles at the byte after the HALT (PC stays on the HALT): Z84HaltT reads that byte
+// through the host as an M1 (unreal-z80 only reports the quantum to the
 // contention hook), 4 T plus the chip's M1 waits, and R ticks.
 static Z84INLINE int HaltedQuantum(Z84CPU* cpu, Z84Regs* rf)
 {

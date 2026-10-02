@@ -382,7 +382,8 @@ fails when the committed files drift from the source.
   measures when the interrupt is taken after a `HALT` on the 48K, against the published early-timing screen (the
   same values as a photo of a real early 48K). It found a core defect, [backlog](../2026-10-01-contention-backlog/backlog.md)
   C9: during HALT the Z80 fetches the byte after the HALT (#8000 for a HALT at #7FFF, uncontended), unreal-ng the
-  HALT itself; the test pins unreal-ng's three differing values until the fix. The acknowledge's pushes with `SP`
+  HALT itself. Fixed 2026-10-02 ([2026-10-02-halt-fetch-address](../2026-10-02-halt-fetch-address/design.md)): every
+  line as the real early 48K; the 128K program finds "Early" for the HALT too. The acknowledge's pushes with `SP`
   in contended RAM (D-05) stay with the host unit tests.
 - P-03 (`#0FFD` on the gate array): between fetches it reads the last contended byte, which the probe
   cannot pin.

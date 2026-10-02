@@ -408,21 +408,30 @@ void Z80::Z80Step(bool skipBreakpoints)
     if (!prefixPending && RunInstructionStartHooks(skipBreakpoints))
         return;
 
-    if (cpu.vm1 && cpu.halted && !prefixPending)
+    // The halted CPU: tested first, so the normal path pays the same one test as before (the HALT latch instead of
+    // the vm1 flag)
+    if (cpu.halted && !prefixPending) [[unlikely]]
     {
-        // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
-        cpu.tt += cpu.rate * 1;
-
-        // Frame cost accounting: one halted step burns exactly one t-state
-        // (rate is fixed at 256 — speed multipliers scale frameLimit instead)
-        state.tstates_halted_current++;
-
-        if (++cpu.halt_cycle == 4)
+        if (cpu.vm1)
         {
-            // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which nothing
-            // selects today: HALT re-executes its own M1 (op_76)
-            cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
-            cpu.halt_cycle = 0;
+            // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
+            cpu.tt += cpu.rate * 1;
+
+            // Frame cost accounting: one halted step burns exactly one t-state
+            // (rate is fixed at 256 — speed multipliers scale frameLimit instead)
+            state.tstates_halted_current++;
+
+            if (++cpu.halt_cycle == 4)
+            {
+                // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which
+                // nothing selects today
+                cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
+                cpu.halt_cycle = 0;
+            }
+        }
+        else
+        {
+            HaltedM1();
         }
     }
     else
@@ -1053,6 +1062,44 @@ uint8_t Z80::m1_cycle()
     IncrementCPUCyclesCounter(1);
 
     return opcode;
+}
+
+/// One idle opcode fetch of the halted CPU (docs/inprogress/2026-10-02-halt-fetch-address). The Z80's program
+/// counter points past the HALT, so the fetch goes to the byte after it, which is read and discarded (HALT2INT v3
+/// on a real 48K, MAME). This emulator keeps PC on the HALT while halted (the INT / NMI acknowledge steps past it;
+/// the snapshot loaders, the debugger and TTD rely on that), so the bus address is PC + 1. Everything else is a
+/// repeat of the HALT, as before: the instruction start at the HALT (m1_pc, the observers), one refresh, 4 T, Q = 0,
+/// opcode #76 for the trace and the profiler. Out of line: the normal path never comes here
+void Z80::HaltedM1()
+{
+    Z80& cpu = *this;
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+    const uint16_t fetch = static_cast<uint16_t>(cpu.pc + 1);
+
+    // Scorpion Even M1: the board looks at the fetch, so at the RAM select of the byte after the HALT
+    if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_ratio <= 1 &&
+        (fetch >= 0x4000 || !_context->pMemory->IsBank0ROM()))
+        cpu.tt += cpu.rate;
+
+    cpu.prev_pc = m1_pc;
+    cpu.prefix = 0x0000;
+    RecordInstructionStart(cpu.pc);  // the HALT repeating: one instruction start per idle fetch, as before
+
+    cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1Before(fetch);
+    (void)rdM1(fetch);  // contention, the +2A / +3 latch, snow, the host bus overlays, the access tracker
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1(fetch);
+    IncrementCPUCyclesCounter(1);
+
+    cpu.opcode = 0x76;
+    cpu.halt_cycle = 0;
+    cpu.q = 0;  // the HALT writes no flags
+
+    if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        _opcodeProfiler->LogExecution(m1_pc, 0, 0x76, f, a, _context->emulatorState.frame_counter, t);
 }
 
 /// Instruction-start bookkeeping: m1_pc (the address every access of the

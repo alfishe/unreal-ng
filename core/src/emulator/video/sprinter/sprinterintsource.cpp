@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 SprinterIntSource::SprinterIntSource(EmulatorContext* context, const SprinterVideoRam& vram)
@@ -110,6 +111,8 @@ bool SprinterIntSource::IsIntAsserted(uint32_t t)
 {
     if (_keyboardInt)
         return true;
+    if (_cbl && _cbl->IntEnabled() && _cbl->IntRequested(t / Multiplier()))
+        return true;
     const int64_t pulse = PulseAt(_context->emulatorState.frame_counter, t / Multiplier());
     return pulse >= 0 && pulse != _ackedPulse;
 }
@@ -117,6 +120,8 @@ bool SprinterIntSource::IsIntAsserted(uint32_t t)
 uint8_t SprinterIntSource::AcknowledgeInterrupt(uint32_t t)
 {
     _keyboardInt = false;  // one flip-flop for every PLD source
+    if (_cbl)
+        _cbl->Acknowledge(t / Multiplier());  // CBL_INT: preset by the acknowledge (/IORQ and /M1)
     const int64_t pulse = PulseAt(_context->emulatorState.frame_counter, t / Multiplier());
     if (pulse >= 0)
         _ackedPulse = pulse;

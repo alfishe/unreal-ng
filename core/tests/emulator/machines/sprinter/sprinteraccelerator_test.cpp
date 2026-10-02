@@ -328,7 +328,7 @@ TEST_F(SprinterAccelerator_Test, Fill_RomWindowNotReached)
 // An INT acknowledge blocks; the handler's stores (here the pushes) are plain; the mode is kept
 TEST_F(SprinterAccelerator_Test, IntSuspend_AcknowledgeBlocks_PushesArePlain)
 {
-    ASSERT_EQ(_context->config.sprinter.accel_int_suspend, 1) << "default on";
+    _context->config.sprinter.accel_int_suspend = 1;  // the option (default off since S6, WAVPLAY)
     RunCode({0x52, 0x3E, 0x04, 0x49});  // len 4 : LD C,C (left armed)
     for (uint16_t a = 0x40F8; a < 0x4108; a++)
         Data(a) = 0x11;
@@ -367,6 +367,7 @@ TEST_F(SprinterAccelerator_Test, IntSuspendOff_PushesAreFilled)
 // While blocked a store is plain; RETI's own pops are still blocked; the first fetch after RETI unblocks
 TEST_F(SprinterAccelerator_Test, IntSuspend_RetiUnblocksAtTheNextFetch)
 {
+    _context->config.sprinter.accel_int_suspend = 1;
     RunCode({0x21, 0x00, 0x41, 0x3E, 0xAA, 0x52, 0x1E, 0x03, 0x49});  // HL = #4100, A = #AA, length 3, LD C,C
     Acc()->OnInterruptAcknowledge();
     ASSERT_EQ(St().blocked, 1);
@@ -411,6 +412,7 @@ TEST_F(SprinterAccelerator_Test, IntSuspend_RetiUnblocksAtTheNextFetch)
 // An NMI has no acknowledge cycle: it does not block
 TEST_F(SprinterAccelerator_Test, IntSuspend_NmiDoesNotBlock)
 {
+    _context->config.sprinter.accel_int_suspend = 1;
     RunCode({0x52, 0x3E, 0x04, 0x49});
     for (uint16_t a = 0x40F8; a < 0x4108; a++)
         Data(a) = 0x11;
@@ -425,6 +427,7 @@ TEST_F(SprinterAccelerator_Test, IntSuspend_NmiDoesNotBlock)
 // Length loads are not blocked (RGACC is not gated by ACC_BLK)
 TEST_F(SprinterAccelerator_Test, IntSuspend_LengthStillLoads)
 {
+    _context->config.sprinter.accel_int_suspend = 1;
     Acc()->OnInterruptAcknowledge();
     RunCode({0x52, 0x1E, 0x09, 0x40});
     EXPECT_EQ(St().length, 9);

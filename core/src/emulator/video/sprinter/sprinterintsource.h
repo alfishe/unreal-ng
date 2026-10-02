@@ -6,6 +6,7 @@
 #include "emulator/cpu/z80.h"
 
 class SprinterVideoRam;
+class CovoxBlaster;
 
 /// The Sprinter's /INT (Sprinter tdd-video §5): not a fixed position but the
 /// mode table in video RAM decides it.
@@ -44,6 +45,10 @@ public:
     /// acknowledge (PLD SP2_1K30.TDF INT_X), which answers #FF like the frame INT
     void LatchKeyboardInt() { _keyboardInt = true; }
     bool KeyboardIntLatched() const { return _keyboardInt; }
+
+    /// The Covox-Blaster's half-ring request (PLD CBL_INT, ORed into INT_X): its own flip-flop,
+    /// cleared by the same acknowledge (vector #FF)
+    void SetCovoxBlaster(CovoxBlaster* cbl) { _cbl = cbl; }
 
     /// The mode table changed (a blank + INT byte, RGMOD bit 0, the frame length):
     /// the INT list is rebuilt at the next query
@@ -87,4 +92,5 @@ private:
     uint16_t _frameLines = 320;
     int64_t _ackedPulse = -1;
     bool _keyboardInt = false;
+    CovoxBlaster* _cbl = nullptr;
 };

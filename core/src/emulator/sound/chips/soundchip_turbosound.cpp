@@ -354,7 +354,7 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
     switch (port)
     {
         case PORT_FFFD:
-            if (value > 0x0F)
+            if (value > 0x0F && !_singleChip)
             {
                 /// region <Attempt to switch active chip>
                 switch (value)
