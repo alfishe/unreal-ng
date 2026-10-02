@@ -51,7 +51,7 @@ public:
     static constexpr int kNativeHeight = 288;
 
 signals:
-    void fileDropped(const QString& filePath);
+    void filesDropped(const QStringList& paths);
     void dragEntered(const QString& filePath);  ///< the first dragged file (empty: not a local file)
     void dragLeft();
 

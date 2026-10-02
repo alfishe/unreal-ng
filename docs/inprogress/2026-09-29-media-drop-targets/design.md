@@ -242,6 +242,25 @@ Details:
 - **A dirty medium** in the chosen slot asks what to do with its writes (the media manager's
   disposition), as the panel does today.
 
+**As built in M4 (2026-10-02):** `DropTargetOverlay` (`unreal-qt/src/media/droptargetoverlay.{h,cpp}`)
+is a frameless translucent window of its own over the screen area, not a child widget: the GPU
+screen is a native OpenGL window a child would not show over, and a window of its own takes the
+drag. One component, three modes:
+
+| Mode | When | What it does |
+|---|---|---|
+| Refusal | drag enters with a file nothing takes; a failed drop | red panel, a "no entry" sign, the file's name and the reason; a drop on it does nothing |
+| Zones | several targets, the file held 1.5 s (Alt / Option: at once) | one tile per target: device icon, slot name (two lines), slot id, "empty" / "replaces <file>", badges AUTOSTART / UNSAVED!; the tile under the cursor lights up; a drop on it picks it, a drop elsewhere opens the chooser |
+| Chooser | a quick drop with several targets and no default; File > Insert Medium... (every target, even with a default) | the same tiles, numbered: click, 1-9, arrows + Enter; Esc or a click outside cancels |
+
+The tile layout is Qt-free (`src/media/core/droptargetlayout`, tested in `hud-core-tests`). The
+icons are new colored SVGs (`resources/icons/media/`: floppy, tape, hdd, cdrom, sdcard). The M3
+stopgaps are gone: no status-bar text, no `QMenu` chooser. Several floppy images dropped together
+go to A, B, C, D in order (A last, so its autostart boots the set); a mixed set takes the first
+file only. Not done: the media panel row turning red while a file is dragged over it (a refused
+drop there says why, M3), and asking about a dirty hard disk or card in the chosen slot (the insert
+is refused with the reason; a floppy is replaced, as `LoadDisk` always did).
+
 ## 6. Other entry points
 
 | Entry point | After |
