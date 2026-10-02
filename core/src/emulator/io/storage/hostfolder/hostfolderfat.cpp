@@ -490,6 +490,14 @@ void HostFolderFat::BuildBootSector(uint8_t* s, bool) const
     Put32(ext + 3, _options.serial);
     std::copy(label.begin(), label.end(), ext + 7);
     std::memcpy(ext + 18, fat32 ? "FAT32   " : "FAT16   ", 8);
+    if (_volumeStart == 0)
+    {
+        // Superfloppy: a partition entry over the whole volume, starting at
+        // LBA 0 (this very sector), as mtools' mformat writes one. Loaders that
+        // only follow a partition table (TS-BIOS: tsfat.asm HDD) find the
+        // volume through it; loaders that check for a BPB first see one
+        BuildMbr(s);
+    }
     s[510] = 0x55;
     s[511] = 0xAA;
 }

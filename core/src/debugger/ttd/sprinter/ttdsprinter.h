@@ -17,6 +17,7 @@
 ///   | 29 Z84C15 | the chip beside its register file (Z84C15::SaveState) | 1 + 171 |
 ///   | 30 SprinterFastRam | the 64 KB fast RAM | 1 + 65 536 |
 ///   | 31 SprinterInput | the AT keyboard's byte stream and the serial mouse's packet generator | 85 |
+///   | 32 SprinterCovoxBlaster | the Covox / Covox-Blaster: ring (256 x 16 bit), control, play / write indices, 16-bit phase, INT request, DAC words, the next play tick, statistics (phase S6) | 1 + 544 |
 ///   | 35 Wd1793Context | the WD1793's command in flight beyond the BetaDisk blob (ttdwd1793context.h) | 1 + 112 |
 ///
 /// Every blob starts with a version byte (kVersion); a blob of another version
@@ -39,6 +40,7 @@
 #include <string>
 
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/sound/sprinter/covoxblaster.h"
 
 class PortDecoder_Sprinter;
 
@@ -144,6 +146,27 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return "SprinterFastRam"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterFastRam; }
+    uint64_t TTDHashState() const override;
+
+private:
+    PortDecoder_Sprinter& _decoder;
+};
+
+/// Id 32: the Covox / Covox-Blaster (CovoxBlasterState, little-endian fields). The PLD blob keeps its copy
+/// of the control byte (layout v1 unchanged); both agree
+class TTDSprinterCovoxBlaster : public TTDSerializable
+{
+public:
+    static constexpr uint8_t kVersion = 1;
+    static constexpr size_t kSize = 1 + sizeof(CovoxBlasterState);
+
+    explicit TTDSprinterCovoxBlaster(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
+
+    size_t TTDStateSize() const override { return kSize; }
+    void TTDSaveState(uint8_t* dst) const override;
+    void TTDLoadState(const uint8_t* src) override;
+    std::string TTDDeviceName() const override { return "SprinterCovoxBlaster"; }
+    PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterCovoxBlaster; }
     uint64_t TTDHashState() const override;
 
 private:

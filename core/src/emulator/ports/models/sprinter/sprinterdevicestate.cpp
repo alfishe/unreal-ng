@@ -27,6 +27,8 @@
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/sound/soundmanager.h"
+#include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
@@ -178,6 +180,11 @@ StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_
         {
             kind = "RAM (reset page)";
             note = "page #A0 with #1FFD = #10: a write resets the CPU";
+        }
+        else if (action == SprinterMemory::BankAction::CblPage)
+        {
+            kind = "RAM (Covox-Blaster page)";
+            note = "page #FD: accelerator copies into it also feed the Covox-Blaster ring while its INT is on";
         }
         else
             kind = "RAM";
@@ -578,6 +585,51 @@ StateNode Z84Ports(const std::map<uint16_t, std::string>& names)
     }
     return arr;
 }
+
+/// The sound devices (tdd-accel-sound-input §2): the PLD's AY, the beeper, the Covox / Covox-Blaster
+StateNode SoundSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
+{
+    StateNode snd = StateNode::Object();
+
+    StateNode ay = StateNode::Object();
+    ay["chip"] = "AY-3-8910 (in the PLD)";
+    ay["clock_hz"] = 1750000;
+    ay["clock_note"] = "42 MHz / 24 (MAME); the emulator's AY runs at 3.5 MHz / 2 on every model";
+    ay["stereo"] = "ABC";
+    ay["chips"] = context->pSoundManager ? context->pSoundManager->getAYChipCount() : 0;
+    ay["ports"] = "#FFFD select (code #90), #BFFD data (code #91), #FFFD read (code #52)";
+    snd["ay"] = ay;
+    snd["beeper"] = "#FE bit 4 (tape out bit 3), the same DAC";
+
+    const CovoxBlaster& cbl = decoder.GetCovoxBlaster();
+    const CovoxBlasterState& c = cbl.State();
+    StateNode b = StateNode::Object();
+    b["control"] = Hex8(c.control);
+    const bool on = (c.control & CovoxBlaster::kControlCbl) != 0;
+    b["mode"] = on ? "covox-blaster" : "covox";
+    b["stereo"] = (c.control & CovoxBlaster::kControlStereo) != 0;
+    b["bits"] = (c.control & CovoxBlaster::kControl16Bit) ? 16 : 8;
+    b["int_enabled"] = (c.control & CovoxBlaster::kControlInt) != 0;
+    b["rate"] = int(c.control & 0x0F);
+    b["divider"] = int(CovoxBlaster::kDivider[c.control & 0x0F]);
+    b["tick_tstates"] = static_cast<uint64_t>(CovoxBlaster::TickTstates(c.control));
+    b["rate_hz"] = CovoxBlaster::RateHz(c.control);
+    b["play_index"] = Hex8(c.cnt);
+    b["write_index"] = Hex8(cbl.EffectiveWriteIndex());
+    b["int_pending"] = c.intPending != 0;
+    b["half_needs_data"] = on && (((c.cnt ^ cbl.EffectiveWriteIndex()) & 0x80) != 0);
+    b["next_tick_tstate"] = static_cast<uint64_t>(c.nextTick);
+    b["dac_left"] = Hex16(c.levelL);
+    b["dac_right"] = Hex16(c.levelR);
+    b["ticks"] = static_cast<uint64_t>(c.ticks);
+    b["ring_writes"] = static_cast<uint64_t>(c.ringWrites);
+    b["covox_writes"] = static_cast<uint64_t>(c.covoxWrites);
+    b["int_requests"] = static_cast<uint64_t>(c.intRequests);
+    b["ports"] = "data #FB / #4F (code #88), control #4E / #0046 (code #89), #FE bits 7 / 5; RAM page #FD (accelerator copies)";
+    b["mixer"] = "COVOX slot, named Covox-Blaster (recording source COVOX)";
+    snd["covox_blaster"] = b;
+    return snd;
+}
 }  // namespace
 
 namespace DeviceState
@@ -699,6 +751,7 @@ StateNode Sprinter(EmulatorContext* context)
     }
 
     ret["video"] = VideoSummary(*decoder, context);
+    ret["sound"] = SoundSummary(*decoder, context);
     ret["z84c15"] = Z84Summary(*decoder, context);
 
     // Floppy: the WD1793 behind codes #10-#17

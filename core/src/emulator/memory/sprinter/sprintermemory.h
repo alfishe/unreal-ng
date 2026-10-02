@@ -41,6 +41,7 @@ public:
         Graphics,    ///< graphics page: the store goes to the video address (plain store trashed)
         ResetPage,   ///< page #A0 with #1FFD = #10: the write resets the CPU
         Isa,         ///< ISA view: ignored
+        CblPage,     ///< page #FD: the plain store, and the Covox-Blaster sees it (accelerator copies, INT on)
     };
 
     /// How a CPU read from a window differs from the mapped page
@@ -91,6 +92,8 @@ public:
     static constexpr uint8_t kPortTablePage = 0x40;
     static constexpr uint8_t kGraphicsFirstPage = 0x50;
     static constexpr uint8_t kResetPage = 0xA0;
+    /// The Covox-Blaster buffer page: accelerator copies into it also feed the ring (INC SP2000.inc:138)
+    static constexpr uint8_t kCblPage = 0xFD;
     static constexpr uint8_t kLoaderRomPage = 0x0C;
 
     /// The Spectrum screen shadow address in video RAM for a CPU write at `addr`

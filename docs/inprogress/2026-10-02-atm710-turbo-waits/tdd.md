@@ -45,8 +45,16 @@ iterations; without them none. NedoOS `osatm2esp.trd` with `espcom.ini` (`comTyp
 `wget example.com/` at 7 MHz: DNS, CONNECT and a 1028-byte HTTP reply, one frame of 1319 lost and recovered
 by the protocol (before: 6 received, 12 lost, stuck after SOCKET).
 
-## 5. Open (reference §7)
+## 5. The WD1793 wait
 
-Q1 the INT edge's slot phase (at most 1 T after each INT acceptance); Q2/Q3 the odd-phase race and the wait
-release on reworked boards; Q4 writes and odd-phase reads (not drawn in the manual's diagram); Q5 the WD1793
-port wait at 7 MHz (`/VGCS` through R1C9) - not modeled yet.
+At 7 MHz the WD1793's select (/VGCS: #1F, #3F, #5F, #7F, not the #FF system register) fires a short WAIT
+through R1 / C9 (1 kOhm, 220 pF, about 150-200 ns) into D98 / D73: one wait state per access. The ATM710
+decoder adds it (`PortDecoder_ATM710::AddFdcTurboWait`, applied clock 7 MHz, `contention` feature on); test
+`Atm710TurboOverlay_Test.FdcPortsWaitOneInTurbo`.
+
+## 6. Open (reference §7)
+
+Q1 the INT edge's slot phase: the phase is the same every frame (143360 clocks at 7 MHz), offset 0 or 1
+depends on the board's gate delays - at most 1 T after each INT acceptance, offset 0 kept. Q2-Q4 answered
+from the circuit (the rule holds for parts within spec; writes and odd-phase reads follow it). No speed
+measurement of a real board exists; a frame-loop counter run on a v7.10 is the missing check.

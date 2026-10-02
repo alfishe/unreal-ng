@@ -413,7 +413,8 @@ enum class TurboSoundKind : uint8_t
 {
 	AY,
 	FM,
-	None
+	None,
+	Single	// one AY, no TurboSound chip switch (the Sprinter's PLD AY: writes of #FE / #FF to #FFFD select no register)
 };
 
 /// RAM contents when a machine is created ([MISC] RAMPowerOn).
@@ -739,7 +740,8 @@ struct CONFIG
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
 		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
 		/// [INPUT] MouseReleaseKey=: the key that releases a captured host mouse, as
-		/// key-sequence text ("Ctrl+Esc"; Ctrl is Cmd on macOS). Empty = the front end's default
+		/// key-sequence text naming physical keys ("Ctrl+Esc": the Control key, macOS
+		/// included). Empty = the front end's default, Ctrl+Esc
 		char mouseReleaseKey[32];
 		/// Kempston joystick: [INPUT] Joystick=KEMPSTON|NONE (1 = fitted) and JoystickKeys= (button:key list).
 		/// joystickConfigured / joystickKeysConfigured are false without an ini: the device stays fitted and
@@ -791,6 +793,11 @@ struct CONFIG
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
+		// TS-Conf: the TS-BIOS settings a machine starts with when no NVRAM file
+		// gives them ([EVO] TsBiosNvram=): 1 = SDBOOT, "Reset to: BD boot.$c" (the
+		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
+		// BIOS opens its Setup Utility)
+		uint8_t ts_bios_sd_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
@@ -804,9 +811,11 @@ struct CONFIG
 		uint8_t fast_start;
 		// 1 = the front-panel turbo allows 21 MHz (MAME "turbo hard")
 		uint8_t turbo_allowed;
-		// 1 = an INT acknowledge suspends the accelerator until the M1 after RETI (the PLD's ACC_BLK,
-		// default); 0 = MAME's behavior ([SPRINTER] AccelIntSuspend=, tdd-accel-sound-input §1.3)
-		uint8_t accel_int_suspend = 1;
+		// 1 = an INT acknowledge suspends the accelerator until the M1 after RETI (one reading of the
+		// PLD's ACC_BLK); 0 = the accelerator also runs in interrupt handlers (default since S6: the
+		// literal ACC_BLK preset, MAME, and WAVPLAY's ring refills in its handler; [SPRINTER]
+		// AccelIntSuspend=, tdd-accel-sound-input §1.3)
+		uint8_t accel_int_suspend = 0;
 		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
 		char cmos_path[FILENAME_MAX];
 	} sprinter;

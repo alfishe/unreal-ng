@@ -39,6 +39,8 @@ MouseCaptureController::MouseCaptureController(QObject* parent) : QObject(parent
 MouseCaptureController::~MouseCaptureController()
 {
     release();
+    if (_filterInstalled)
+        qApp->removeEventFilter(this);
 }
 
 void MouseCaptureController::setTargetEmulatorId(const std::string& emulatorId)
@@ -76,10 +78,61 @@ MouseCaptureController::State MouseCaptureController::state() const
 QKeySequence MouseCaptureController::releaseKey() const
 {
     const std::string text = settings().releaseKey;
-    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text));
-    if (sequence.isEmpty())
-        sequence = QKeySequence::fromString(kDefaultReleaseKey);
+    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text),
+                                                     QKeySequence::PortableText);
+    // One key combination with a key Qt knows, else the default
+    if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown || sequence[0].key() == 0)
+        sequence = QKeySequence::fromString(kDefaultReleaseKey, QKeySequence::PortableText);
+#ifdef Q_OS_MACOS
+    // The config names physical keys: "Ctrl" is the Control key. Qt on macOS reports
+    // Control as Meta and Command as Ctrl, so swap them in the parsed combination
+    const QKeyCombination combination = sequence[0];
+    Qt::KeyboardModifiers modifiers = combination.keyboardModifiers();
+    const bool control = modifiers.testFlag(Qt::ControlModifier);
+    const bool meta = modifiers.testFlag(Qt::MetaModifier);
+    modifiers.setFlag(Qt::ControlModifier, meta);
+    modifiers.setFlag(Qt::MetaModifier, control);
+    sequence = QKeySequence(QKeyCombination(modifiers, combination.key()));
+#endif
     return sequence;
+}
+
+QString MouseCaptureController::releaseKeyText() const
+{
+    // The config's own words (physical keys), normalized; before the macOS Control / Meta swap
+    const std::string text = settings().releaseKey;
+    QKeySequence sequence = QKeySequence::fromString(QString::fromStdString(text.empty() ? kDefaultReleaseKey : text),
+                                                     QKeySequence::PortableText);
+    if (sequence.count() != 1 || sequence[0].key() == Qt::Key_unknown || sequence[0].key() == 0)
+        sequence = QKeySequence::fromString(kDefaultReleaseKey, QKeySequence::PortableText);
+    return sequence.toString(QKeySequence::PortableText);
+}
+
+bool MouseCaptureController::eventFilter(QObject* watched, QEvent* event)
+{
+    // The release key reaches whichever window or widget Qt delivers it to (the
+    // GL window, the main window's key forwarding, a dock): release on the first
+    // sight of it, before shortcuts or the machine see it, and swallow the rest
+    const QEvent::Type type = event->type();
+    if (type == QEvent::ShortcutOverride || type == QEvent::KeyPress || type == QEvent::KeyRelease)
+    {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (type != QEvent::KeyRelease && _captured && isReleaseKey(key))
+        {
+            _swallowKey = key->key();
+            release();
+            event->accept();
+            return true;
+        }
+        if (_swallowKey != 0 && key->key() == _swallowKey)
+        {
+            if (type == QEvent::KeyRelease && !key->isAutoRepeat())
+                _swallowKey = 0;
+            event->accept();
+            return true;
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 /// endregion </Gate and state>
@@ -107,6 +160,12 @@ void MouseCaptureController::capture()
     _buttonMask = 0xFF;
     _swallowKey = 0;
 
+    if (!_filterInstalled)
+    {
+        qApp->installEventFilter(this);
+        _filterInstalled = true;
+    }
+
     if (_surface.takeFocus)
         _surface.takeFocus();
     if (_surface.setCursorHidden)
@@ -116,8 +175,10 @@ void MouseCaptureController::capture()
         _surface.setMouseTracking(true);
 
     const QPoint centerGlobal = _surface.centerGlobal();
-    _nativeCapture = MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
-                                              [this](double dx, double dy) { applyHostMotion(dx, dy); });
+    _nativeCapture = _surface.allowNativeCapture
+                         ? MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
+                                                    [this](double dx, double dy) { applyHostMotion(dx, dy); })
+                         : nullptr;
     if (!_nativeCapture)
     {
         _warpCenterGlobal = centerGlobal;
@@ -164,7 +225,10 @@ void MouseCaptureController::release()
 
 void MouseCaptureController::recenterCursor()
 {
-    QCursor::setPos(_warpCenterGlobal);
+    if (_surface.warpCursor)
+        _surface.warpCursor(_warpCenterGlobal);
+    else
+        QCursor::setPos(_warpCenterGlobal);
     // setPos generates a move event back to the center - it is not user travel
     _ignoreNextMove = true;
 }
@@ -247,7 +311,12 @@ bool MouseCaptureController::handleWheel(QWheelEvent* event)
 
     const int notches = _wheel.Feed(event->angleDelta().y());
     if (notches != 0 && !_targetId.empty())
-        MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_WHEEL, MouseEvent::Wheel(notches, _targetId));
+    {
+        if (_poster.wheel)
+            _poster.wheel(notches);
+        else
+            MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_WHEEL, MouseEvent::Wheel(notches, _targetId));
+    }
     return true;
 }
 
@@ -255,8 +324,10 @@ bool MouseCaptureController::isReleaseKey(const QKeyEvent* event) const
 {
     if (_releaseKey.isEmpty())
         return false;
+    // The key and exactly its modifiers (keypad flag aside)
+    const QKeyCombination wanted = _releaseKey[0];
     const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
-    return _releaseKey[0] == QKeyCombination(modifiers, static_cast<Qt::Key>(event->key()));
+    return event->key() == wanted.key() && modifiers == wanted.keyboardModifiers();
 }
 
 bool MouseCaptureController::handleKeyPress(QKeyEvent* event)
@@ -299,21 +370,30 @@ void MouseCaptureController::applyHostMotion(double dxLogical, double dyLogical)
     if (source.width() <= 0.0 || source.height() <= 0.0 || size.isEmpty())
         return;
 
-    // Work in physical pixels on both sides (Kempston design §5.1): host travel and the drawn image size
+    // Work in physical pixels on both sides (Kempston design §5.1): host travel and the drawn image size.
+    // The travel is the host pointer's own (Qt warp deltas or macOS NSEvent deltas: the system's pointer
+    // speed and acceleration applied), so the guest follows the pointer as it would move over the picture
     const double dpr = _surface.devicePixelRatio ? _surface.devicePixelRatio() : 1.0;
-    const double physPerEmuX = size.width() * dpr / source.width();
-    const double physPerEmuY = size.height() * dpr / source.height();
+    const double physPerEmuX = _matchHostPointer ? size.width() * dpr / source.width() : 1.0;
+    const double physPerEmuY = _matchHostPointer ? size.height() * dpr / source.height() : 1.0;
 
     const MouseDeltaAccumulator::Steps steps = _motion.Feed(dxLogical * dpr, dyLogical * dpr, physPerEmuX, physPerEmuY, _scale);
     if (steps.dx == 0 && steps.dy == 0)
         return;
 
     // Screen Y grows downward, the mouse's Y grows upward
-    MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_MOVE, MouseEvent::Move(steps.dx, -steps.dy, _targetId));
+    if (_poster.move)
+        _poster.move(steps.dx, -steps.dy);
+    else
+        MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_MOVE, MouseEvent::Move(steps.dx, -steps.dy, _targetId));
 }
 
 void MouseCaptureController::postButtons()
 {
-    if (!_targetId.empty())
+    if (_targetId.empty())
+        return;
+    if (_poster.buttons)
+        _poster.buttons(_buttonMask);
+    else
         MessageCenter::DefaultMessageCenter().Post(MC_MOUSE_BUTTON, MouseEvent::Buttons(_buttonMask, _targetId));
 }

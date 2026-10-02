@@ -29,8 +29,10 @@ class QWheelEvent;
 /// Policy:
 ///   - a click on the screen captures when the machine has a mouse device and
 ///     the gate is open; that click is not passed to the machine;
-///   - the release key (default Ctrl+Esc; Cmd+Esc on macOS) and focus loss release;
-///     a plain Esc reaches the machine;
+///   - the release key (default Ctrl+Esc: the physical Control key on every
+///     platform, macOS included) and focus loss release; a plain Esc reaches the
+///     machine. While captured an application-wide event filter catches the
+///     release key in any window, whatever has the focus or a shortcut claims;
 ///   - the gate (toolbar button) closed: never captures, posts nothing.
 ///     Automation and TTD replay do not come through here and are not gated.
 /// No grabMouse(): the menus stay usable while the mouse is captured.
@@ -60,6 +62,9 @@ public:
         std::function<void(bool hidden)> setCursorHidden;
         std::function<void()> takeFocus;
         std::function<void(bool on)> setMouseTracking; ///< QWidget only; a QWindow always gets moves
+        /// Tests: no native relative mode, and the cursor warp replaced (the real cursor stays put)
+        bool allowNativeCapture = true;
+        std::function<void(QPoint global)> warpCursor;  ///< empty = QCursor::setPos
     };
 
     /// Machine-side settings read at capture time
@@ -89,6 +94,27 @@ public:
     bool isGateOpen() const { return _gateOpen; }
     /// endregion
 
+    /// region <Speed>
+    /// On (default): the captured mouse moves the guest exactly as far as the host
+    /// pointer would move over the picture (host travel / size of one emulated
+    /// pixel on screen, whatever the window size, zoom or DPI; the host's own
+    /// pointer speed and acceleration are in the travel). Off: one host pixel of
+    /// travel is one mouse count, independent of the window. Either way times
+    /// 2^[INPUT] MouseScale. Switchable at any time
+    void setMatchHostPointer(bool match) { _matchHostPointer = match; _motion.Reset(); }
+    bool matchesHostPointer() const { return _matchHostPointer; }
+    /// endregion
+
+    /// Where motion, buttons and wheel go (default: the message center, for the
+    /// target emulator's MouseManager). Tests replace it
+    struct Poster
+    {
+        std::function<void(int dx, int dy)> move;  ///< emulated pixels, +y up
+        std::function<void(uint8_t activeLowMask)> buttons;
+        std::function<void(int steps)> wheel;
+    };
+    void setPoster(Poster poster) { _poster = std::move(poster); }
+
     State state() const;
     bool isCaptured() const { return _captured; }
     void capture();
@@ -107,8 +133,15 @@ public:
     /// Called by the capture backend: Qt warp deltas or native macOS deltas.
     void applyHostMotion(double dxLogical, double dyLogical);
 
-    /// The release key of the shown machine's config
+    /// The release key of the shown machine's config, as Qt sees the physical keys
+    /// (on macOS "Ctrl" in the config is the Control key, Qt's Meta modifier)
     QKeySequence releaseKey() const;
+    /// The release key for people to read, naming the physical keys ("Ctrl+Esc" on every
+    /// platform: not Qt's native macOS symbols, where the Control key is a hard-to-see glyph)
+    QString releaseKeyText() const;
+
+    /// While captured: the release key anywhere in the application releases
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 signals:
     /// Captured, gate or target changed: the toolbar button refreshes from state()
@@ -126,11 +159,14 @@ private:
     HostSettingsFn _hostSettings;
     std::string _targetId;
     bool _gateOpen = true;
+    bool _matchHostPointer = true;
+    Poster _poster;
     double _scale = 1.0;         // 2^MouseScale, latched at capture
     bool _swapButtons = false;   // SwapMouse, latched at capture
     QKeySequence _releaseKey;    // latched at capture
 
     bool _captured = false;
+    bool _filterInstalled = false;
     uint8_t _buttonMask = 0xFF;  // Active-low: D0 = Left, D1 = Right, D2 = Middle
     MouseDeltaAccumulator _motion;
     MouseWheelAccumulator _wheel;

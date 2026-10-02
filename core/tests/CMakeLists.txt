@@ -276,18 +276,28 @@ if (NOT TARGET ${PROJECT_NAME})
     # Uses GTest sharding; shard count auto-detects from the logical CPU
     # count (~3x on 4 cores, ~7x on 16P+4E Apple Silicon)
     # Usage: cmake --build build --target test-parallel
+    # The front end's Qt tests (unreal-qt/tests/qt, offscreen platform) run first when the
+    # unreal-qt build defines them (it sets UNREAL_QT_FRONTEND_TESTS): milliseconds, no sharding
+    set(QT_FRONTEND_TEST_COMMAND)
+    set(QT_FRONTEND_TEST_TARGET)
+    if(UNREAL_QT_FRONTEND_TESTS)
+        set(QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-qt-tests>)
+        set(QT_FRONTEND_TEST_TARGET unreal-qt-tests)
+    endif()
     if(UNIX)
         add_custom_target(test-parallel
+            ${QT_FRONTEND_TEST_COMMAND}
             COMMAND ${ROOT_DIR}/scripts/run-tests-parallel.sh $<TARGET_FILE:${PROJECT_NAME}>
-            DEPENDS ${PROJECT_NAME}
+            DEPENDS ${PROJECT_NAME} ${QT_FRONTEND_TEST_TARGET}
             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
             COMMENT "Running tests with auto-detected GTest sharding"
             VERBATIM
         )
     elseif(WIN32)
         add_custom_target(test-parallel
+            ${QT_FRONTEND_TEST_COMMAND}
             COMMAND powershell -ExecutionPolicy Bypass -File ${ROOT_DIR}/scripts/run-tests-parallel.ps1 -Binary $<TARGET_FILE:${PROJECT_NAME}>
-            DEPENDS ${PROJECT_NAME}
+            DEPENDS ${PROJECT_NAME} ${QT_FRONTEND_TEST_TARGET}
             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
             COMMENT "Running tests with auto-detected GTest sharding"
             VERBATIM

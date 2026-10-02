@@ -1,0 +1,8 @@
+zxsteps: frame 5 kbdonly ms_naturl | m_rom_rg=00 m_ram_sys=00 m_sc=00 m_turbo=00 m_pg3=30 m_pn=00 m_dos=01 m_cnf=00 m_all_mode=00 PC=019C SP=FEFF
+zxsteps: keyboard : enabled=false
+zxsteps: keyboard :kbd:ms_naturl enabled=true
+zxsteps: frame 1100 keys cd \trd{ENTER} | m_rom_rg=00 m_ram_sys=01 m_sc=01 m_turbo=01 m_pg3=30 m_pn=10 m_dos=01 m_cnf=04 m_all_mode=FF PC=00B8 SP=BFED
+zxsteps: frame 1200 keys spectrum atarin.trd{ENTER} | m_rom_rg=00 m_ram_sys=01 m_sc=01 m_turbo=01 m_pg3=30 m_pn=10 m_dos=01 m_cnf=04 m_all_mode=FF PC=00B7 SP=BFEE
+zxsteps: frame 1400 state  | m_rom_rg=00 m_ram_sys=01 m_sc=00 m_turbo=01 m_pg3=37 m_pn=07 m_dos=01 m_cnf=07 m_all_mode=FE PC=0043 SP=5BF3
+zxsteps: frame 1600 state  | m_rom_rg=00 m_ram_sys=01 m_sc=00 m_turbo=01 m_pg3=37 m_pn=07 m_dos=01 m_cnf=07 m_all_mode=FE PC=0045 SP=5BF1
+zxsteps: frame 1900 end  | m_rom_rg=00 m_ram_sys=01 m_sc=00 m_turbo=01 m_pg3=37 m_pn=07 m_dos=01 m_cnf=07 m_all_mode=FE PC=0045 SP=5BF1

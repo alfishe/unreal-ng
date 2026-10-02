@@ -4,8 +4,11 @@
 
 #include "portdecoder_tsconf.h"
 
+#include "emulator/io/mouse/mousemanager.h"
+
 #include <cstring>
 
+#include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/tsconf/ttdtsconfstate.h"
@@ -72,6 +75,12 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_evoAvr);
 
+    // The AVR's PS/2 mouse is the board's mouse: the host mouse reaches it through the
+    // emulator's mouse manager, and the Kempston-address ports read its registers
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
+    if (_context->pMouseManager)
+        _context->pMouseManager->AddSink(&_evoAvr.Ps2Mouse());
+
     // The AVR owns the board's resets: F12 released after a short hold = the
     // reset button, a key pressed with Ctrl+Alt held = the power cycle. The
     // sink is resolved when a reset fires: the decoder is built before
@@ -97,6 +106,8 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
 
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_evoAvr)
         _context->pKeyboard->SetPs2Sink(nullptr);
+    if (_context->pMouseManager)
+        _context->pMouseManager->RemoveSink(&_evoAvr.Ps2Mouse());
 
     Core* core = _context->pCore;
     if (core)
@@ -140,6 +151,23 @@ void PortDecoder_TSConf::PowerOn()
     // The card is powered with the board
     if (_vdac2)
         _vdac2->PowerOn();
+}
+
+void PortDecoder_TSConf::ApplyTsBiosSdBootNvram()
+{
+    // TS-BIOS (28.04.2018) NVRAM cells #B0-#E7 as its Setup Utility saves them
+    // after "Reset to" -> BD boot.$c on blank settings: every option at its
+    // default, cell #B4 (Reset to) = 3, the CRC in #E6-#E7 valid. Captured from
+    // the BIOS itself (tsconf_boot_test BOOT-3 steps, boot-and-storage-notes.md §1)
+    static constexpr uint8_t kFirstCell = 0xB0;
+    static constexpr uint8_t kCells[] = {
+        0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x42, 0x08, 0x84, 0x10, 0xC6, 0x18, 0x08, 0x21,
+        0x4A, 0x29, 0x8C, 0x31, 0xCE, 0x39, 0x21, 0x04, 0x63, 0x0C, 0xA5, 0x14, 0xE7, 0x1C, 0x29, 0x25,
+        0x6B, 0x2D, 0xAD, 0x35, 0xEF, 0x3D, 0xA0, 0x75,
+    };
+    for (size_t i = 0; i < sizeof(kCells); ++i)
+        _evoAvr.WriteRegister(static_cast<uint8_t>(kFirstCell + i), kCells[i]);
 }
 
 void PortDecoder_TSConf::RefreshVdac2Card()
@@ -192,6 +220,10 @@ void PortDecoder_TSConf::reset()
     if (!_poweredOn)
         PowerOn();
 
+    // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
+    // registers themselves outlive a Z80 reset (the AVR keeps running)
+    _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
+
     uint8_t* r = _ts.regs;
     r[TsConfReg::VConfig] = 0x00;
     r[TsConfReg::VPage] = 0x05;
@@ -237,8 +269,12 @@ void PortDecoder_TSConf::reset()
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
+        const bool loaded = nvramPath[0] != '\0' && _evoAvr.LoadNvram(nvramPath);
+        if (nvramPath[0] != '\0' && !loaded)
             MLOGINFO("PortDecoder_TSConf: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+        // No saved settings: the TS-BIOS settings that boot from the SD card
+        if (!loaded && _context->config.atm.ts_bios_sd_boot)
+            ApplyTsBiosSdBootNvram();
     }
 
     if (_screen)
@@ -491,7 +527,7 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
         {
             // #xxDF: A8 = 0 buttons + wheel, A8 = 1: A10 ? Y : X ([V] zkbdmus.v:107)
             const uint8_t reg = (port & 0x0100) ? ((port & 0x0400) ? 2 : 1) : 0;
-            result = (_mouse && _mouse->IsPresent()) ? _mouse->ReadRegister(reg) : 0xFF;
+            result = _evoAvr.Ps2Mouse().ReadRegister(reg);  // the AVR's PS/2 mouse registers; #FF with no mouse
             break;
         }
         case PortArm::SdConfig:
@@ -1080,7 +1116,7 @@ void PortDecoder_TSConf::ApplyVideoPage()
 std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
 {
     return {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard, ttd::PeripheralId::Ds12887,
-            ttd::PeripheralId::EvoPs2};
+            ttd::PeripheralId::EvoPs2, ttd::PeripheralId::EvoMouse};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTDSerializers() const
@@ -1091,6 +1127,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoPs2>(self->_evoAvr));
+    serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
     return serializers;
 }
 
@@ -1183,6 +1220,9 @@ PortDecoder_TSConf::SdSlot::SdSlot(PortDecoder_TSConf& owner) : _owner(owner)
     // a FAT16 image is refused (BUGS.md #1)
     _descriptor.defaultFs = FatType::Fat32;
     _descriptor.fsCompatibility = {FatType::Fat32};
+    // For the same reason a folder becomes a volume from sector 0, with no MBR:
+    // TS-BIOS then boots Wild Commander (boot.$C) from a dropped folder
+    _descriptor.folderMbr = false;
     _descriptor.hasCardDetect = true;          // AVR register C bit 3
     _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
     _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};

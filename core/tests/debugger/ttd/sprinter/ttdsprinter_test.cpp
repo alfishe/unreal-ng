@@ -924,6 +924,7 @@ TEST_F(TTDSprinterMachine_Test, SeekAnywhere_InsideFramesBackAndForth)
 TEST_F(TTDSprinterMachine_Test, ExactRestore_AcceleratorArmedAndInIntSuspendWindow)
 {
     PowerOn(true);
+    _context->config.sprinter.accel_int_suspend = 1;  // the option (default off since S6)
     Skip(150);  // BIOS POST and SETUP: the mode table places the frame INT
     ASSERT_FALSE(_decoder->GetIntSource().Positions().empty()) << "no frame INT to suspend the accelerator";
     ASSERT_NE(_decoder->GetAccelerator(), nullptr);

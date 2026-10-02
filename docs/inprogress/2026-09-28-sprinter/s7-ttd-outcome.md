@@ -92,7 +92,7 @@ configuration module that brings its own accelerator carries it in its module st
 
 | Id | Reserved for |
 |---|---|
-| 32 `SprinterCovoxBlaster` | S6: Covox / Covox-Blaster ring (256 x 16 bit), indices, rate phase, INT request, the 16-bit DAC, `#FE` bits 5 / 7 |
+| 32 `SprinterCovoxBlaster` | **taken in S6** (2026-10-02): v1, 545 bytes (`CovoxBlasterState`); the PLD blob keeps the control byte; the Sprinter fixture re-recorded ([s6-sound-outcome.md](s6-sound-outcome.md) §5) |
 | 33 `SprinterIsa` | S6b: ISA I/O window latches, the ZX-bus adapter |
 | 34 `SprinterPads` | input extras: the two extended pads and their select counters |
 

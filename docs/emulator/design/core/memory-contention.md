@@ -34,6 +34,7 @@ The research behind it, with every source, is in
 | Contention | The video logic owns the memory for a while, and a CPU access waits until it lets go. The wait depends on the T-state and follows a repeating pattern such as 6,5,4,3,2,1,0,0. |
 | Slot | A fixed share of memory time given to the CPU or to the video by a counter. |
 | Even M1 | The Scorpion's wait: an opcode fetch from RAM that would start on an odd T-state waits one T. |
+| Halted fetch | While halted, the Z80 repeats a 4 T opcode fetch of the byte **after** the `HALT` and discards it, until an interrupt. |
 | DRAM | Dynamic RAM. It is addressed in two steps (row strobe RAS, column strobe CAS), and its data is valid only inside that strobe sequence. |
 
 ## Why ROM can be read at any T-state and RAM cannot
@@ -105,7 +106,7 @@ start on an even T-state.
 | **Scorpion ZS-256** | **no** | **no** | **Even M1** on fetches from RAM (0 or 1 T), normal mode |
 | Scorpion Turbo+ at 7 MHz | a different kind: every RAM access, read or write, waits for the next CPU slot (every 4 T in the paper, every 2 T in the border); an opcode fetch 1 T more | no | every I/O cycle 2 T |
 | Profi | no | no | - |
-| ATM Turbo 2+ | no | no | `IN (#FE)` waits for the keyboard controller; at 7 MHz every RAM access (fetch, read, write) waits 2 T from an even clock, 3 from an odd one, for the CPU's slot (`Atm710TurboOverlay`); ROM and I/O none |
+| ATM Turbo 2+ | no | no | `IN (#FE)` waits for the keyboard controller; at 7 MHz every RAM access (fetch, read, write) waits 2 T from an even clock, 3 from an odd one, for the CPU's slot (`Atm710TurboOverlay`); ROM and I/O none, except the WD1793's ports (#1F / #3F / #5F / #7F): 1 T |
 | ZX-Evo BaseConf | no in the Pentagon raster; a 48K-style pattern in its 48K / 128K rasters at 3.5 MHz | same condition | 14 MHz: a RAM read that misses the DRAM's two one-word caches waits 2 or 3 T; external I/O 3 T |
 | ZX Spectrum Next | only in its 48K / 128K / +3 timing modes at 3.5 MHz | 48K / 128K modes | 1 wait per memory read at 28 MHz |
 
@@ -140,6 +141,20 @@ worked-out side effects on the rest of the engine; its README explains both. A S
 
 The same holds for demo code that synchronizes on `HALT` and counts T-states: on a Scorpion the T-state after
 `HALT` is always even, and odd-length sequences in RAM are rounded up.
+
+## The halted CPU
+
+`HALT` does not stop the bus. Every 4 T the halted Z80 fetches the byte after the `HALT` (its program counter
+already points there), throws it away and refreshes the memory. That fetch waits like any other: what decides is
+the byte after the `HALT`, not the `HALT` itself. Example on the 48K: a `HALT` at #7FFF (contended) fetches #8000
+(not contended) while it waits for the interrupt, so it does not wait; a `HALT` at #7FFE fetches #7FFF and does.
+The difference moves the T at which the interrupt is taken, which HALT2INT v3 measures on real machines
+(`Halt2Int_Test`).
+
+unreal-ng keeps PC on the `HALT` while halted (the interrupt acknowledge steps past it, the snapshot loaders and
+the debugger expect it) and sends the idle fetch to PC + 1 (`Z80::HaltedM1`; the same in unreal-z80's halted
+quantum and the Sprinter's Z84C15 core). Until 2026-10-02 it fetched the `HALT` itself, as FUSE, Xpeccy, ZXMAK2 and
+SkoolKit still do ([design](../../../inprogress/2026-10-02-halt-fetch-address/design.md)).
 
 ## Snow: when the refresh meets the ULA's fetch
 

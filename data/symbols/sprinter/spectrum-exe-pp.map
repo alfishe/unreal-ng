@@ -1,0 +1,23 @@
+; SPECTRUM.EXE (Peters Plus Spectrum launcher, 2002), loaded at #8100 under DSS
+; Source: docs/disasm/software/sprinter/spectrum-launcher-pp/spectrum-exe-pp.asm
+; Format: ADDR NAME (TYPE) ; comment  (LabelManager MAP format)
+8100  Start                        (CODE) ; entry: save the command line pointer (IX), print the banner, remember window 3
+8112  ErrorFile                    (CODE) ; "Error in file" + name, exit
+812A  PrintAndExit                 (CODE) ; restore window 3, print HL, DSS EXIT (#41)
+8139  ParseCmdLine                 (CODE) ; find the .ZX and the .TR? names on the command line, read the .ZX (or SPECTRUM.CFG) into page #41
+8160  FindFiles                    (CODE) ; split the command line into the configuration name and the TRD name
+81EC  Messages                     (DATA) ; text of the messages (CP866)
+849F  ReadCnfLines                 (CODE) ; cut the .ZX file into its lines
+84D3  LoadRomImages                (CODE) ; load lines 2-7 (BASIC 128, BASIC 48, TR-DOS, three extension ROMs) into RAM pages #42-#47
+8543  ParseOptions                 (CODE) ; parse the /option words of line 8
+85D0  LoadTrdIfGiven               (CODE) ; a TRD on the command line: LoadTrdToRamDisk, then enter the ZX mode unless /no-run
+85F3  SetCellViaPortTable          (CODE) ; A = internal code, B = value: patch the port-table entry of port #0000 (page #40, #C400/#C600) to A, OUT (#0000),B, restore the entry
+8624  LoadTrdToRamDisk             (CODE) ; open the TRD (DSS #11), size by seek-to-end (#15), BIOS #93 free RAM disk E, #92 get N pages for E, read 16 KB per page through window 3, BIOS #C7 next page, BIOS #CB A=0 B=0: RAM disk E -> TR-DOS drive A
+86D6  ReadFileToPage               (CODE) ; A = RAM page, HL = name: read up to 16 KB of the file into the page through window 3
+8703  ExitToDss                    (CODE) ; reset hook with /ret-fn: back to the DSS text mode and EXIT
+8731  InstallResetHook             (CODE) ; mark page #41 with "ZX" at #FFFE, store windows 0-3 and the return address at #FFF0-#FFF6 for the BIOS reset intercept
+8764  ResetHook                    (CODE) ; entered by the BIOS after a reset: /ret-zx -> EnterZxMode again, /ret-fn -> ExitToDss
+876E  EnterZxMode                  (CODE) ; cells #EE (vROM page), #FE, Covox off, #1FFD = #7FFD = 0, ALL_MODE (#204E) = #FA (/origin: Spectrum waits) or #FE, BIOS FN_SYNC, clear the screen, open the 32x24 window
+87E9  InitSpectrumPages            (CODE) ; Spectrum page n -> physical page n: for n = 0-7 OUT #7FFD,n then OUT (#E2),n (cell #F0+n); with #1FFD = #10 pages 8-15; copy the start stub to #FF00
+884B  StartStub                    (CODE) ; runs at #FF00: SYS/CNF port (#3C) = E (turbo, ports), window 1 = page 2, D = 0 -> JP 0 (BASIC 128), else #7FFD = #10 and JP #3D29 (TR-DOS, /to-trdos)
+8865  Variables                    (DATA) ; option flags, option words, file names, buffers

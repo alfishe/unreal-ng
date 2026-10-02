@@ -48,7 +48,8 @@ the ZXNETUSB card.
 
 Not network adapters, checked and excluded: NeoGS (no network logic), CH376
 (USB storage), the 2014 `zxinet_protocol.txt` (never built), the Sprinter
-RTL8019 (Sprinter only).
+RTL8019 (a generic NE2000 clone, not Sprinter-specific; the Sprinter's network cards are designed in
+[2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md)).
 
 ## 3. Order of work
 

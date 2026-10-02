@@ -188,3 +188,23 @@ TEST(Atm710TurboOverlayZxEvo_Test, TheZxEvoDoesNotGetThem)
     EXPECT_FALSE(decoder->AreTurboRamWaitsInstalled());
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// v7.10 at 7 MHz: the WD1793's select (/VGCS) adds one wait state through R1 / C9 (reference Q5)
+TEST_F(Atm710TurboOverlay_Test, FdcPortsWaitOneInTurbo)
+{
+    _context->emulatorState.flags |= CF_DOSPORTS;   // the shadow ports open, as inside TR-DOS
+    auto waitOf = [this](uint16_t port) {
+        const uint32_t before = _z80->t;
+        _z80->in(port);
+        return _z80->t - before;
+    };
+    Turbo(true);
+    EXPECT_EQ(waitOf(0x001F), 1u) << "#1F: the VG93 status";
+    EXPECT_EQ(waitOf(0x007F), 1u) << "#7F: the VG93 data";
+    EXPECT_EQ(waitOf(0x00FF), 0u) << "#FF: the system register, not /VGCS";
+    _core->SetContentionSwitch(false);
+    EXPECT_EQ(waitOf(0x001F), 0u);
+    _core->SetContentionSwitch(true);
+    Turbo(false);
+    EXPECT_EQ(waitOf(0x001F), 0u) << "3.5 MHz: no wait";
+}

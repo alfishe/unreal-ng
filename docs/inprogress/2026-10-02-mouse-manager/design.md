@@ -128,8 +128,12 @@ Source for the AVR behavior:
   Python) and TTD replay still reach the machine: the gate is about the host
   mouse only. The gate is remembered per window across emulator switches. View →
   Mouse gate is the same toggle as a menu item.
-- **When it releases:** Ctrl+Esc (configurable; plain Esc reaches the machine), focus
-  loss, switching or closing the emulator, opening a menu.
+- **When it releases:** Ctrl+Esc (the physical Control key on every platform, macOS
+  included; `[INPUT] MouseReleaseKey=` names physical keys; a plain Esc reaches the
+  machine), focus loss, leaving the application, switching or closing the emulator.
+  While captured, an application-wide event filter catches the release key in any
+  window, before shortcuts and the machine see it (unreal-qt-tests checks it with
+  real Qt key events).
 - **No `grabMouse()`.** Motion comes from the platform backend: macOS
   `CGAssociateMouseAndMouseCursorPosition(false)` + an NSEvent monitor (as now);
   elsewhere warp-to-center. The macOS dissociation is undone on every release
@@ -137,6 +141,15 @@ Source for the AVR behavior:
 - **What it posts:** relative motion in physical pixels (`MouseDeltaAccumulator`,
   `[INPUT] MouseScale`), buttons with `[INPUT] SwapMouse`, wheel steps
   (`MouseWheelAccumulator`), all to the shown emulator's manager.
+- **Speed matching (on by default, switchable at any time):** the travel is the
+  host pointer's own on every platform (macOS: NSEvent deltas of the dissociated
+  pointer; Windows / Linux: the offset from the center the pointer is warped back
+  to), so the system's pointer speed and acceleration are in it. Divided by the
+  size of one emulated pixel on screen (the drawn picture: the software widget,
+  or the GPU window's letterboxed quad), the guest moves as far as the pointer
+  would over the picture. Off (View → Mouse Follows Host Pointer Speed): one host
+  pixel = one count. Checked in `unreal-qt-tests` (2x / 1x, the carried fraction,
+  the warp backend).
 
 ### 3.4 Configuration
 
