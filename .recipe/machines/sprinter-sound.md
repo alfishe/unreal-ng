@@ -15,9 +15,10 @@ code `core/src/emulator/sound/sprinter/covoxblaster.{h,cpp}`.
 
 ## Before you start
 
-- **BIOS 3.06.** DSS 1.71 (the disk below) needs it: `[ROM] SPRINTER=rom/sprinter/sp2k-3.06-hf2.rom` in
-  `configs/sprinter/unreal.ini` beside the binary (macOS: `unreal-qt.app/Contents/Resources/configs/`), then
-  create a new instance ([sprinter-hdd.md](../media/sprinter-hdd.md)).
+- **BIOS 3.06 or 3.07.** DSS 1.71 (the disk below) needs it. Create the machine with it
+  (`{"model":"SPRINTER","sprinter":{"bios":"3.06"}}`, MCP `emulator_manage` `sprinter_bios`) or switch a running
+  one (`POST /sprinter/bios {"bios":"3.06","reset":true}`); `[ROM] SPRINTER=` in `configs/sprinter/unreal.ini`
+  still sets the default ([sprinter.md](sprinter.md) step 1).
 - **The disk.** The MAME pack's system disk `sp_hdd_sys.img` (raw, 1 GiB, DSS 1.71.57; not in the repository)
   has the players in `BIN\`: `PT3PLAY.EXE` (AY), `WAVPLAY.EXE` (Covox-Blaster), `PROPLAY.EXE` (MOD files
   through a General Sound card on the ISA bus: not emulated yet). Its `SYSTEM.BAT` starts Flex Navigator;
@@ -35,8 +36,9 @@ mcopy -o -i scratch/sp-wav.img@@32256 mission.wav ::MISSION.WAV       # any 8 / 
 printf '@echo off\r\nset PATH=%%BOOTDSK%%\\;%%BOOTDSK%%\\BIN\\;\r\nwavplay c:\\mission.wav\r\n' > scratch/SYSTEM.BAT
 mcopy -o -i scratch/sp-wav.img@@32256 scratch/SYSTEM.BAT ::
 
-# 2. The machine, the disk on the primary master (session: the copy is not written)
-EMU_ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"SPRINTER"}' | jq -r .id)
+# 2. The machine with BIOS 3.06, the disk on the primary master (session: the copy is not written)
+EMU_ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
+         -d '{"model":"SPRINTER","sprinter":{"bios":"3.06"}}' | jq -r .id)
 curl -s -X POST "$BASE/emulator/$EMU_ID/pause" > /dev/null
 curl -s -X POST "$BASE/emulator/$EMU_ID/media/ide0.master/insert" -H 'Content-Type: application/json' \
      -d "{\"path\":\"$PWD/scratch/sp-wav.img\",\"access\":\"session\"}" | jq -c '{ok}'
@@ -60,6 +62,21 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: applica
 curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 100}' > /dev/null
 curl -s "$BASE/emulator/$EMU_ID/audio/capture/result?wav=true" | jq -c '{duration_seconds, left: .left.rms, right: .right.rms, wav_path}'
 
+# 5a. One device instead of the master mix: the DAC's own buffer (before mute / volume), the ring, the mixer
+curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: application/json' \
+     -d '{"action":"start","seconds":1,"source":"covox"}' | jq -c '{armed, source}'
+#   {"armed":true,"source":"covox"}
+curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: application/json' -d '{"frames": 60}' > /dev/null
+curl -s "$BASE/emulator/$EMU_ID/audio/capture/result" | jq -c '{duration_seconds, left: .left.rms, dominant_hz}'
+#   a 440 Hz 8-bit mono 22 050 Hz WAV played at 21 875 Hz: {"duration_seconds":1.0,"left":0.2756,"dominant_hz":436.5}
+#   (source "ay1" at the same time: rms 0 - WAVPLAY does not touch the AY)
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter/sound/ring" | jq -c '{mode, play_index, write_index, playing_half, row: .rows[4]}'
+#   {"mode":"covox-blaster","play_index":"0xC8","write_index":"0x80","playing_half":"upper (#80-#FF)",
+#    "row":"40: 8400  9100  9D00  A800  B400  BE00  C700  CF00  D600  DC00  E000  E200  E300  E300  E100  DD00 "}
+curl -s -X PUT "$BASE/emulator/$EMU_ID/audio/mixer/covox" -H 'Content-Type: application/json' -d '{"gain_db":-6}' \
+     | jq -c '.devices[] | select(.source == "covox") | {name, volume, gain_db}'
+#   {"name":"Covox-Blaster","volume":0.501187...,"gain_db":-6.0}     (muted / solo the same way; GET /audio/mixer lists all)
+
 # 6. The same as an MP4 with an AAC track (video + audio of 150 frames = 3.072 s)
 curl -s -X POST "$BASE/emulator/$EMU_ID/video/record" -H 'Content-Type: application/json' \
      -d "{\"action\":\"start\",\"format\":\"h264\",\"audio\":\"aac\",\"filename\":\"$PWD/scratch/sprinter-wav.mp4\"}" | jq -c '{audio, audio_codec}'
@@ -81,7 +98,14 @@ print([round(f[np.argmax(np.abs(np.fft.rfft(d[:, c] * np.hanning(len(d)))))], 1)
 #   a WAV with 440 Hz left and 1000 Hz right at 44.1 kHz, played at 43.75 kHz: [436.4, 992.0]
 ```
 
-PT3 (AY): the same steps with `pt3play c:\gogin.pt3` in `SYSTEM.BAT`; the AY state is `GET /state/audio/ay`.
+PT3 (AY): the same steps with `pt3play c:\gogin.pt3` in `SYSTEM.BAT`; the AY state is `GET /state/audio/ay`,
+its own sound `{"source":"ay1"}`.
+
+The same on the other interfaces: CLI `state sprinter ring`, `mixer covox gain_db=-6`, `audiocapture start 1
+covox`; Lua `sprinter_sound_ring()`, `audio_mixer_set("covox", {gain_db=-6})`, `audio_capture_start(1, "covox")`;
+Python the same names (`audio_capture_start(1.0, source="covox")`); MCP `inspect_state` aspects
+`sprinter_sound_ring`, `audio_mixer`, `capture_media` `audio_capture` with `source`. The `sprinter` aspect's
+summary has a sound line (`sound: CBL 8-bit mono 21875 Hz, ring play 0xC8 / write 0x80, DAC ..., AY ABC`).
 
 ## The same on MAME
 

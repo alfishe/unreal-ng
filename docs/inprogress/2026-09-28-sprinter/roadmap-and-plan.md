@@ -483,3 +483,14 @@ the freed memory) decoders: not fixed here (TODO).
 - Code `#29` (drive address) reads `#FF`.
 - ACC-4's "a file written by the guest is in the image after Save": the guest's MKDIR goes to the image with the
   default WriteThrough access; Session + commit is the media manager's (tested there).
+
+## 10. Automation audit round (2026-10-02)
+
+Branch `sprinter-automation` (part of S7's "automation" column): every P1 / P2 gap of
+[automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) on all five surfaces - the mode table per
+square, palettes, the video RAM as a device memory region, the video change log (all machines), the digest and
+the OCR / `video_text` seeing native screens, raw framebuffer, accelerator / waits / Z84C15 detail, runtime BIOS
+selection, the Covox-Blaster ring, the per-device mixer and per-source capture, the stale texts. Outcome, live
+verification and deviations: [automation-outcome.md](automation-outcome.md) "Audit round"; follow-ups in
+[TODO.md](TODO.md). No TTD format change (the change log and the reports are read-only views; the BIOS reload
+happens inside `Emulator::Reset`, after TTD recording stopped, and invalidates the session like `LoadROM`).

@@ -106,9 +106,16 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**
-  1. Automation audit P1 + P2 ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md)): VRAM / palette /
-     per-square mode map, a video-change log for all machines, accelerator and wait-state state, runtime BIOS
-     selection, `video_text` / OCR fallback to the Sprinter text, outdated MCP resource / recipe / OpenAPI text.
+  1. ~~Automation audit P1 + P2~~ **done** (2026-10-02, branch `sprinter-automation`; status per gap in
+     [automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4, outcome in
+     [automation-outcome.md](automation-outcome.md) "Audit round"). Follow-ups from it:
+     - G16 / G17 remainder (P3): per-frame wait totals by kind (counters on the wait path: needs an A/B), the
+       Z84C15 power-on M1 counter and after-ED flag (a library accessor in `core/src/3rdparty/z84c15/`, carried
+       into unreal-z80);
+     - the video change log counts TS-Conf CRAM writes from the CPU's FM window only, not the DMA's (DMA time
+       base differs); a per-T table-write history (not only first / last) if a tool needs it;
+     - a Qt view of the mode map / palettes / video RAM (the debugger-model work; the data is all in the reports);
+     - G18-G21 (P3) unchanged.
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b

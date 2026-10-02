@@ -149,6 +149,19 @@ core source (`DeviceState::Sprinter` / `SprinterPaging` / `SprinterPortTable` / 
   Python `paging_state` / `ports_map`, `ROM::GetROMPageRole` and `PortDecoder::getPortMapEntries`.
 - **Media:** the existing `disk` / `media` verbs serve the floppies; IDE slots come with S3b.
 
+**Audit round (2026-10-02, branch `sprinter-automation`)**, as built
+([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4 status column): the state block gained
+`accelerator`, `clock.waits`, `z84c15.wait_generator` / `daisy_chain`, `sound.ay.stereo` from the AY config and a
+BIOS block naming the loaded image by CRC-32; new reports `SprinterVideo` (`/state/sprinter/video`, the mode table
+per square), `SprinterPalette` (`/palette`), `SprinterSoundRing` (`/sound/ring`), `SprinterBios` /
+`SprinterBiosSelect` (`/state/sprinter/bios`, `POST /sprinter/bios`, the create option `"sprinter": {...}`;
+`sprinterbios.{h,cpp}`); the video RAM is the device memory region `vram` (`emulator/memory/devicememory.h`,
+`PortDecoder::CollectMemoryRegions`, `sprintervramregion.h`). Generic pieces it brought: the video change log
+(`/video/changes`, `VideoLatches` family block, `Screen::CaptureFamilyLatches`, `NoteVideoTableWrite`), the
+screen digest in the core with `Screen::DigestSurface`, `Screen::IndexedFrame` + `/capture/framebuffer`, the
+per-device mixer (`audiomixer.h`) and the per-source audio capture, `DeviceState::AudioChannels`, the per-mode
+screen notes in `DeviceState::ScreenMode`, the GUI status-bar mode label.
+
 ## 4. Debugger (Qt)
 
 | View | Content |

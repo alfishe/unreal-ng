@@ -42,27 +42,30 @@ Outputs below are real, from a build of branch `sprinter-automation`
 emulator_manage {"action":"list_models"}
 #   → models[] has {"name":"SPRINTER","full_name":"Sprinter 2000","creatable":true,
 #     "available_ram_sizes_kb":[4096],"default_ram_kb":4096}
-emulator_manage {"action":"create","model":"SPRINTER"}
-inspect_state {"aspects":["sprinter"]}
-#   → structuredContent.sprinter.bios:
-#     {"rom_file":"rom/sprinter/sp2k-3.04.rom",
-#      "identified":{"page_8":"Sprinter BIOS 3.04 page 8 (BIOS proper, EXP)", ...},
-#      "images":[{"file":"rom/sprinter/sp2k-3.04.rom","version":"Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; the default)",
-#                 "crc32":"1729cb5c","present":true,"active":true},
-#                {"file":"rom/sprinter/sp2k-3.06-hf2.rom","version":"Firmware v3.06 Hotfix 2 (community build, 19.01.2026)", ...},
-#                {"file":"rom/sprinter/sp2k-3.07-beta1.rom","version":"Firmware v3.07 BETA 1 (community build, 24.09.2026)", ...}],
-#      "select":"[ROM] SPRINTER=rom/sprinter/<file> in configs/sprinter/unreal.ini beside the binary ..."}
+emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.04)
+emulator_manage {"action":"create","model":"SPRINTER","sprinter_bios":"3.07","sprinter_fast_start":true}
+#   → Created and started emulator 4ff43195-...            (sprinter_bios: 3.04 | 3.06 | 3.07 | a file in rom/sprinter)
+inspect_state {"aspects":["sprinter_bios"]}
+#   → [sprinter_bios] loaded sp2k-3.07-beta1.rom, configured rom/sprinter/sp2k-3.07-beta1.rom, fast_start on, accel_int_suspend off
+#       3.04 rom/sprinter/sp2k-3.04.rom
+#       3.06 rom/sprinter/sp2k-3.06-hf2.rom
+#       3.07 rom/sprinter/sp2k-3.07-beta1.rom [loaded]
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/sprinter/bios","body":{"bios":"3.06","fast_start":false,"reset":true}}
+#   → {"loaded":"sp2k-3.06-hf2.rom","previous_rom_file":"rom/sprinter/sp2k-3.07-beta1.rom","reset_done":true,
+#      "reload_pending":false,"options":{"fast_start":false,"accel_int_suspend":false}, ...}
 ```
 
-**Choosing the BIOS** is a config setting, not an API call: edit
-`[ROM] SPRINTER=` in the Sprinter config the binary reads
-(`<build>/bin/configs/sprinter/unreal.ini`; on macOS
-`<build>/bin/unreal-qt.app/Contents/Resources/configs/sprinter/unreal.ini`),
-then create the machine again. With `SPRINTER=rom/sprinter/sp2k-3.07-beta1.rom`
-the next machine reports `"identified":{"page_8":"Sprinter BIOS 3.07 BETA 1 page 8 (EXP)", ...}`
-and boots "Firmware v3.07 BETA 1". Background: [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md).
+**Choosing the BIOS** at runtime: at create (`sprinter_bios`; WebAPI body `"sprinter":{"bios":"3.06"}`, CLI
+`create SPRINTER --sprinter-bios 3.06`) or on a running machine (`POST /sprinter/bios`, CLI `state sprinter
+bios 3.06`, Lua / Python `sprinter_bios_select`). The selection goes into this instance's configuration and
+the flash is reread at the next reset (`reset: true`, the default, resets now; `reset: false` leaves
+`reload_pending: true` until the next reset). `loaded` names the image the flash holds (by CRC-32), so a
+mismatch with `rom_file` is visible. A reset stops a TTD recording and a new image invalidates its session.
+`[ROM] SPRINTER=` in `<build>/bin/configs/sprinter/unreal.ini` (macOS: `unreal-qt.app/Contents/Resources/configs/sprinter/unreal.ini`)
+remains the default for new machines. DSS 1.71 needs 3.06 or 3.07. Background:
+[bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md).
 
-**Full start vs fast start** (`[SPRINTER] FastStart=` in the same file):
+**Full start vs fast start** (`fast_start` of the selection above, default `[SPRINTER] FastStart=`):
 `0` (the default) runs the ROM's PLD loader first, as the real machine does -
 473 720 configuration writes, about 1.9 s of emulated time with a black
 screen; `1` starts with the PLD already configured (the tests use it). Either
@@ -75,8 +78,8 @@ SETUP boots the IDE master first, then the "alternative device", floppy B.
 With no hard disk both IDE units read an empty channel and SETUP prints
 "None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
 
-The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect
-(`screen_ocr` reads Spectrum mode only).
+The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect; `video_text` and
+`screen_ocr` read the same cells while most of the picture is text (Spectrum mode stays a ZX screen).
 
 ```text
 load_software {"path":"/abs/path/testdata/machines/sprinter/dss_1_62_92.img","drive":"B"}
@@ -241,11 +244,50 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `windows[4]` | `kind` (ROM, loader ROM, fast RAM, vROM, RAM, graphics, ISA, port table, RAM (reset page)), `page`, `writable`, `cell`, `note` |
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
 | `clock`, `frame` | turbo requested / front-panel switch, `ratio` 1 or 6, `mhz` 3.5 / 21; `lines` 320 / 312, `t_states` 71 680 / 69 888 |
-| `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places) |
-| `z84c15` | WCR / MWBR / CSBR / MCR, watchdog, CTC channels, SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
+| `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
+| `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
+| `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
+| `sound` | the AY (chips, clock, stereo from its config) and the Covox-Blaster (control, rate, indices, counters; the ring: `sprinter_sound_ring`) - [sprinter-sound.md](sprinter-sound.md) |
+| `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, CTC channels, SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
 | `fdc` | `density_latch` (720 KB code `#16` / 1.44 MB code `#17`), the WD1793 `clock` (1 / 2 MHz) and `data_rate` (250 / 500 kbit/s), `drive` |
 | `cmos`, `ide` | links: the CMOS report is `rtc`; `ide` shows the selected channel and data latch, the drives are in `state/ide` (see [sprinter-hdd.md](../media/sprinter-hdd.md)) |
-| `bios` | the ROM file, the pages identified by signature, the shipped images, how to choose |
+| `bios` | the configured ROM file, `loaded` (by CRC-32), the pages identified by signature, the shipped images, `options`, `reload_pending`, how to select (also `sprinter_bios`) |
+
+### 6. Video: the mode table, palettes, video RAM, the change log
+
+Verified on Flex Navigator 1.15 (DSS 1.71 from the HDD, BIOS 3.07) and on the BIOS 3.04 text screen:
+
+```text
+inspect_state {"aspects":["sprinter_video"]}         # one letter a square (squares[b][a] decoded: invoke_api GET /state/sprinter/video)
+#   → [sprinter_video] page 1, RGMOD 0x01, HOLD 0x77, 320 lines, PORT_Y 0xC0, palettes 4 5 6 7
+#       G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, . blank, * blank with the frame INT
+#       tttttttttttttttttttttttttttttttttttttttt          (the BIOS: 40 x 32 squares of 80-column text; FN: all "g")
+inspect_state {"aspects":["sprinter_palette"]}       # the palettes the picture uses, R G B as video RAM holds them
+#   → [sprinter_palette] used by the picture (R G B per pen)
+#       0 graphics 0: 000000 FF0000 008000 ...
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/video/pixel","query_params":{"x":"300","y":"150"}}
+#   → {"colour_index":9,"rgb":"#000080", sources: mode bytes at vram 0x7F40, pixel byte 0x2187E, palette_entry 0x27E0}
+inspect_state {"aspects":["memory_region"],"region":"vram","address":10208,"size":3}
+#   → [memory_region] vram 0x027E0, 3 bytes
+#       027E0: 00 00 80                                         (pen 9: R 00, G 00, B 80 - the blue background)
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/memory/region/vram","body":{"offset":"0x27E0","hex":"800000"}}
+#   → {"bytes_written":3,"region":"vram","success":true}      (the panels turn dark red: the pen follows at once)
+inspect_state {"aspects":["video_changes"]}          # every machine: latch changes with T / line / PC, table writes per frame
+#   → [video_changes] (running: the last completed frame)
+#       frame 8937: 28 latch changes, palette writes 0, mode table writes 0
+#         T 64737 (line 289, T 1) PC 0x0B3D: port_y 0xC0 -> 0x80          (FN's vertical copies step PORT_Y)
+#       paused right after the write above: frame 10037 (current): ..., palette writes 2 (first 0x027E0, last 0x027E2)
+inspect_state {"aspects":["screen_digest"]}          # hashes the 256 KB video RAM (+ RGMOD page, HOLD, frame height)
+#   → active_surface {"memory":"vram","bytes":262144, ...}; the palette write above made "changed": true
+capture_media {"action":"framebuffer","format":"index"}
+#   → Framebuffer 736 x 288 index (u16le pen per pixel ...), 423936 bytes; include_image:true for the base64 data
+```
+
+The square map reads the displayed mode page (`page=0|1` for the other, `all=1` for the whole 56 x 40
+table). Palette layout: pen `k x 256 + n` = bytes R, G, B at video RAM row `n`, column `#3E0 + 4k`;
+palettes 0-3 graphics, 4-7 text paper / ink / their flash phase (border and blank: palette 4). Video RAM
+writes go through the PLD's own path (pens refresh, the frame INT follows); RAM pages `#50-#5F` (the CPU's
+graphics copy) are not touched. `/video/address?space=vram&offset=` maps a video RAM byte to its pixels.
 
 ### Ports: the table and the codes
 
@@ -316,6 +358,16 @@ curl -s "$BASE/emulator/$EMU/state/memory/rom" | jq '.total_rom_pages'          
 curl -s "$BASE/emulator/$EMU/ports" | jq '.live.sprinter_port_table'                    # map, DOS, PN5 now
 curl -s "$BASE/emulator/$EMU/capture/screen?format=png&mode=full&path=$PWD/scratch/sprinter.png" | jq -c .
 #   {"file":".../scratch/sprinter.png","format":"png","height":288,"saved":true,"size":...,"status":"success","width":736}
+
+# Video (step 6), BIOS (step 1), raw pixels
+curl -s "$BASE/emulator/$EMU/state/sprinter/video?squares=0" | jq -c '{mode_page, counts, frame}'
+#   {"mode_page":0,"counts":{"blank":0,"border":0,"graphics_320":0,"graphics_640":1280,...},"frame":{"lines":320,...}}
+curl -s "$BASE/emulator/$EMU/state/sprinter/palette?k=0" | jq -c '.palettes[0].pens[9]'      # {"n":9,"rgb":"#000080","vram":"0x027E0"}
+curl -s "$BASE/emulator/$EMU/memory/region/vram?offset=0x27E0&length=3" | jq -c .            # {"hex":"000080",...}
+curl -s "$BASE/emulator/$EMU/video/changes?frames=1" | jq -c '.frames[0].writes[0]'
+#   {"changes":{"port_y":"0xC0 -> 0x80"},"line":289,"pc":"0x0B3D","t":64737,"t_in_line":1}
+curl -s -D - -o scratch/fb.idx "$BASE/emulator/$EMU/capture/framebuffer?format=index" | grep -i '^x-'   # X-Width: 736, X-Height: 288
+curl -s "$BASE/emulator/$EMU/state/sprinter/bios" | jq -c '{loaded, rom_file, reload_pending, options}'
 ```
 
 `/state/sprinter/text`, `/state/sprinter/ports[/lookup]` and `/state/sprinter`
@@ -336,6 +388,12 @@ state sprinter ports map=0 dos=1 rw=r   # one line per row:
 #   Unmapped (code #00, reads #FF): 375 of the address combinations
 state sprinter port 21BC rw=w           # index: 0x043C, code: 0x2B, name: IdePrimary
 state sprinter port 1F rw=r             # answered_by: Z84C15 (PIO B control) + the #0F operand-rewrite note
+state sprinter video                    # "Sprinter mode table: page 1 (displayed), RGMOD 0x01, ..." then one letter a square
+state sprinter palette 4                #   10: 0000A8 0000A8 ... (16 pens a line, R G B)
+state sprinter bios 3.06 reset=1        # select; plain "state sprinter bios" prints the report
+memory region read vram 0x17F0 6        # 0x17F0: 00 00 00 00 A8 00
+video changes 1                         # the change log as text
+digest                                  # "Mode: Sprinter, surface: vram (262144 bytes ...)"
 state memory                            # windows as "Sprinter Paging (PLD)"; state rom: the 16 ROM pages and their roles
 ```
 
@@ -344,6 +402,9 @@ local s = sprinter_state(); print(s.pld.state, s.decoder.map, s.windows[1].kind)
 local t = sprinter_ports({map = 0, dos = 1, rw = "w"}); print(#t.rows)          -- 41
 local l = sprinter_port(0x21BC, {rw = "w"}); print(l.results[1].code)          -- 0x2B
 for _, line in ipairs(sprinter_text().lines) do print(line.text) end
+print(sprinter_video{squares=false}.map[1])                                      -- tttttttt... (BIOS)
+print(region_read("vram", 0x17F0, 6)[5], sprinter_bios().loaded)                -- 168  sp2k-3.04.rom
+local fb = framebuffer("index"); print(fb.width, fb.height, #fb.data)           -- 736 288 423936
 ```
 
 ```python
@@ -353,7 +414,14 @@ s = emu.sprinter_state(); print(s["pld"]["state"], s["clock"]["mhz"])          #
 t = emu.sprinter_ports(map=0, dos=1, rw="w"); print(t["rows"][0]["name"])     # FdcCommand
 l = emu.sprinter_port(0x21BC, rw="w"); print(l["results"][0]["index"])        # 0x043C
 print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    # RAM
+v = emu.sprinter_video(squares=False); print(v["map"][0][:8])                  # tttttttt
+print(emu.region_read("vram", 0x17F0, 6).hex())                               # 00000000a800
+fb = emu.framebuffer("index"); print(fb["array"].shape)                        # (288, 736) with numpy
+emu.sprinter_bios_select(bios="3.06", reset=True)
 ```
+
+(The Python surface is in the build with `-DENABLE_PYTHON_AUTOMATION=ON`; the examples use the same names
+and core reports as Lua.)
 
 ## What works / what doesn't
 
@@ -365,18 +433,21 @@ print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    #
 | AT keyboard and serial mouse on the Z84C15 SIO; `type_input`, key taps and combos | implemented |
 | DS12887A CMOS (`[SPRINTER] CmosFile=` keeps it) | implemented |
 | Flex Navigator (DSS's `fn`): FN 1.10 from the DSS 1.62 floppy, FN 1.15 on DSS 1.71 (HDD, BIOS 3.06) | runs; keys and mouse work through the automation (step 3a). From the floppy the BIOS RESTORE is still too slow at 21 MHz (the S5 tests work around it) |
-| DSS 1.71 (`dss171u.img`) | **stops** with "Fatal error! Press RESET to restart." after the BIOS loaded it |
+| DSS 1.71 | runs from the hard disk with BIOS 3.06 / 3.07 (MAME pack `sp_hdd_sys.chd`: Flex Navigator 1.15, verified 2026-10-02); the floppy `dss171u.img` **stops** with "Fatal error! Press RESET to restart." on BIOS 3.04 |
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
 | Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
 | ISA cards (General Sound on the ZX-bus adapter, `PROPLAY.EXE` MODs) | not yet (S6b); the ISA view reads `#FF` |
-| TTD (time travel) | refuses to record this machine until phase S7 |
+| TTD (time travel) | implemented (S7, [analysis/sprinter-ttd.md](../analysis/sprinter-ttd.md)) |
+| Automation of video modes, palettes, video RAM, the change log, BIOS selection, mixer | implemented (automation audit 2026-10-02: step 1, step 6, [sprinter-sound.md](sprinter-sound.md)) |
 
 ## Pitfalls
 
-- **No text from `screen_ocr` outside Spectrum mode.** BIOS, SETUP and DSS
-  screens are Sprinter text squares: use `sprinter_text`
-  (`/state/sprinter/text`). Graphics squares read as spaces.
+- **Text from graphics screens.** BIOS, SETUP and DSS screens are Sprinter
+  text squares: `sprinter_text`, `video_text` and `screen_ocr` read them
+  (while most of the picture is text). Flex Navigator draws its text as
+  graphics: no text path; compare pictures with `screen_digest` or
+  `capture_media framebuffer`. Graphics squares read as spaces.
 - **F4 in the GUI** is the "speed 8x" shortcut (`unreal-qt` menu), so at the
   IDE wait F4 may not reach the machine there; the automation's
   `type_input` / `keyboard/tap` always does. On a Mac keyboard DEL is

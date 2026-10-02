@@ -238,7 +238,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B2 | PLD configuration load | 4 096 writes, then a reset (`:1157-1163`) | the whole stream, 473 720 writes, or the fast start (`portdecoder_sprinter.cpp:223-313`) | **ours better** | done |
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
 | B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
-| B5 | BIOS choice at run time | `-bios v3.06` | `[ROM] SPRINTER=` in the config (`core/src/emulator/config.cpp:337`) | **partial** | Audit |
+| B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
 
 ### 2.14 State, media, debugging
@@ -249,7 +249,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | D2 | Spectrum media: snapshots (`.sna`, `.z80`, ...), quickload `.scr`, cassette | inherited from `spec128` (`-listmedia`); whether a snapshot loads correctly on the Sprinter is untested | tape through the shared path; the snapshot loaders know nothing of the PLD | **partial** | new (low; capture 5.10) |
 | D3 | Z84C15 system registers in the debugger | WCR, MWBR, CSBR, MCR (`z84c015.cpp:106-109`) | `state/sprinter` on WebAPI, MCP, CLI, Lua, Python ([automation-outcome.md](automation-outcome.md)) | **ours better** | done |
 | D4 | Port trace | `LOGIO` lines only (`:679`, `:912`) | trace with internal codes and names (`portdecoder_sprinter.cpp:911-954`), port table decode and lookup | **ours better** | done |
-| D5 | Video RAM viewer | graphics / tilemap viewer fed by `gfxdecode` and the tilemap (`:1609-1647`; the tilemap is not used for drawing) | `SprinterVideoMapper` (the sources of a pixel), screen text; no GUI viewer | **partial** | S7 |
+| D5 | Video RAM viewer | graphics / tilemap viewer fed by `gfxdecode` and the tilemap (`:1609-1647`; the tilemap is not used for drawing) | `SprinterVideoMapper` (the sources of a pixel), screen text; on every automation surface the mode table per square, the 8 palettes, the video RAM as region `vram` (read / write / dump), the video change log, raw pens (audit G3-G6, G14); no GUI viewer yet | **partial** (GUI) | S7 |
 | D6 | Front-panel LEDs (turbo, drive A / B, NeoGS) | `layout/sprinter.lay`, `m_turbo_led` (`:386`) | the status bar shows the CPU frequency | **partial** | S7 |
 
 ## 3. Where MAME is wrong or simplified
