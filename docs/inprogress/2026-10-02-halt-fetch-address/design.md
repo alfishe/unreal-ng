@@ -1,6 +1,7 @@
 # The halted Z80's opcode fetches: the byte after the HALT
 
-Bug: [BUGS.md](../BUGS.md) 2026-10-02 #1. Plan: [PLAN.md](../PLAN.md) #81. Found by HALT2INT v3 through
+Bug: [BUGS.md](../BUGS.md) 2026-10-02 #1. Plan: [PLAN.md](../PLAN.md) #81. Every file the fix touches:
+[impact.md](impact.md). Found by HALT2INT v3 through
 `Halt2Int_Test` (contention backlog C9, [backlog.md](../2026-10-01-contention-backlog/backlog.md)).
 
 ## 1. The problem in plain words
