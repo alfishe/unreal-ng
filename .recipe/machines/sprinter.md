@@ -40,7 +40,7 @@ Outputs below are real, from a build of branch `sprinter-automation`
 
 ```text
 emulator_manage {"action":"list_models"}
-#   → models[] has {"name":"SPRINTER","full_name":"Sprinter Sp2000","creatable":true,
+#   → models[] has {"name":"SPRINTER","full_name":"Sprinter 2000","creatable":true,
 #     "available_ram_sizes_kb":[4096],"default_ram_kb":4096}
 emulator_manage {"action":"create","model":"SPRINTER"}
 inspect_state {"aspects":["sprinter"]}

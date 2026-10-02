@@ -68,7 +68,7 @@ private:
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
 		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
-		{ "Sprinter Sp2000", "SPRINTER",         MM_SPRINTER, 4096, RAM_4096 },
+		{ "Sprinter 2000", "SPRINTER",           MM_SPRINTER, 4096, RAM_4096 },
 	};
 
 	/// Other names accepted for a model wherever a short name is (config HIMEM,

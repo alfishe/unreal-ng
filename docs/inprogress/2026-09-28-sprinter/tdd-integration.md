@@ -12,7 +12,7 @@
 | Step | Where | Change |
 |---|---|---|
 | Enum | `core/src/emulator/platform.h:305-325` (`MEM_MODEL`) | append `MM_SPRINTER` before `N_MM_MODELS` (no renumbering of existing values) |
-| Model table | `core/src/emulator/config.h:47-68` (`Config::mem_model[]`) | `{ "Sprinter Sp2000", "SPRINTER", MM_SPRINTER, 4096, RAM_4096 }` |
+| Model table | `core/src/emulator/config.h:47-68` (`Config::mem_model[]`) | `{ "Sprinter 2000", "SPRINTER", MM_SPRINTER, 4096, RAM_4096 }` |
 | Creatable | `PortDecoder::IsModelSupported` + `GetPortDecoderForModel` (`core/src/emulator/ports/portdecoder.cpp:56-135`) | add `MM_SPRINTER` to both (they must stay in sync) |
 | Config folder | `Config::GetConfigFolderForModel` (`core/src/emulator/config.cpp:749`) | default rule (lowercased short name) → `data/configs/sprinter/unreal.ini` |
 | Memory subclass | `Core` factory (`core/src/emulator/cpu/core.cpp:105-108`, the `ScorpionMemory` precedent) | `new SprinterMemory(context)` for `MM_SPRINTER` |
