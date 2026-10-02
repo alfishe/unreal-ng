@@ -12,6 +12,7 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/sprinter/sprintervideorenderer.h"
 
 namespace
 {
@@ -40,6 +41,8 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
+    // A video RAM byte that changes the picture: the beam is drawn up to now with the old one first
+    _vram.SetBeforeChangeListener([this]() { CatchUpScreen(); });
 
     // The Z84C15's CTC counts the CPU clock: base T-states x the current ratio
     _z84.ctc.SetClock([this]() -> uint64_t {
@@ -96,7 +99,7 @@ void PortDecoder_Sprinter::PowerOn()
     _pld.allMode = 0;
     _pld.portY = 0;
     _pld.rgMod = 0;
-    _pld.hold = 0;
+    _pld.hold = 0x77;  // no picture offset (MAME machine_start m_hold = {0, 0})
     _pld.turbo = 0;
     _pld.configModule = 0;
     _pld.configState = SprinterConfigState::Unconfigured;
@@ -430,6 +433,20 @@ void PortDecoder_Sprinter::OnBanksChanged()
         _waits->SetSlotWaits(bank, _memory->GetMemoryBankMode(bank) == BANK_RAM);
 }
 
+const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
+{
+    const SprinterVideoRenderer* renderer = ActiveModule().VideoRenderer();
+    if (!renderer)
+        renderer = _registry.Standard().VideoRenderer();
+    return renderer ? *renderer : SprinterVideoRenderer::Standard();
+}
+
+void PortDecoder_Sprinter::CatchUpScreen()
+{
+    if (_context->pScreen && _context->pCore && _context->pCore->GetZ80())
+        _context->pScreen->UpdateScreen();
+}
+
 /// endregion </Hooks>
 
 /// region <Port table>
@@ -660,7 +677,8 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::Frame320:
         case SprinterCode::Frame312:
-            // The frame length itself follows with the renderer (phase S2); the INT list uses it now
+            // The INT list follows at once; the frame itself (ScreenSprinter: config.frame,
+            // the raster) from the next frame start
             _pld.frameLines = code & 1;
             _intSource.SetFrameLines(_pld.frameLines ? 312 : 320);
             return;
@@ -710,6 +728,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             _pld.allMode = value;
             return;
         case SprinterCode::Hold:
+            CatchUpScreen();
             _pld.hold = value;
             return;
         case SprinterCode::PortY:
@@ -718,6 +737,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::RgMod:
         case 0xCD:
+            CatchUpScreen();
             _pld.rgMod = value;
             _intSource.SetModePage(value & 1);
             return;

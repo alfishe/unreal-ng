@@ -34,6 +34,7 @@ void ScreenZX::SelectRangeRenderer()
     {
         case VideoFamily::None:
         case VideoFamily::TsConf:  // ScreenTSConf overrides DrawRange
+        case VideoFamily::Sprinter:  // ScreenSprinter is not a ScreenZX
             _rangeRenderer = &ScreenZX::DrawRangeNull;
             break;
         case VideoFamily::Atm:
