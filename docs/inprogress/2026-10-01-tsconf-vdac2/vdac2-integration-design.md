@@ -282,7 +282,7 @@ rest of the machine are unaffected.
 
 ## 10. The ROM image
 
-- `tools/vdac2/extract-ft81x-rom.py`: reads a `bt8xxemu.dll` (Bridgetek's or the one in
+- `tools/machines/tsconf/vdac2/extract-ft81x-rom.py`: reads a `bt8xxemu.dll` (Bridgetek's or the one in
   `tslabs/zx-evo-unreal` `Unreal/cfg/`), finds the FT81x font table by its known first
   metric block, checks all 19 blocks against the spec (formats L1 / L4, sizes, pointers
   inside the image), cuts 0x1E0000…0x2FFFFF (1152 KB) and writes it with a SHA-1. Run by
