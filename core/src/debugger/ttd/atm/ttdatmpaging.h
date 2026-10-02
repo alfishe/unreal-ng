@@ -13,7 +13,7 @@
 ///   - atmMemSwapped is the A5-A7 <-> A8-A10 address swap: not derivable from
 ///     any port value, and wrong in either direction silently corrupts every
 ///     subsequent access.
-///   - aFF77 / aFE / aFB are the ATM 4.50 and mode latches; pBD / pBE / pBF the
+///   - aFF77 / aFE / aFB / pFDFD are the ATM 4.50 and mode latches; pBD / pBE / pBF the
 ///     ATM3 (ZX-Evo) ports, with pBF.0 (shaden) also gating the FDC on the bus.
 ///   - the ZX-Evo AVR's volatile state (extension type, EEPROM page, flags).
 ///     The clock chip itself - cells, address latch, time base - is its own
@@ -45,7 +45,7 @@ struct AtmPagingState
     uint8_t  aFE;               ///< ATM 4.50 system port
     uint8_t  aFB;               ///< ATM 4.50 system port
     uint8_t  atmMemSwapped;     ///< A5-A7 <-> A8-A10 address swap active
-    uint8_t  reserved0;         ///< was the clock address latch (now in the Ds12887 blob), always 0
+    uint8_t  pFDFD;             ///< ATM 4.50 #FDFD system latch (was a zero filler: older blobs restore 0, the reset value)
     uint8_t  atmPaletteRegs[16];///< raw #FF palette bytes (ATM3 #BE.0D readback)
     uint8_t  atmBorderBright;   ///< 4th border bit (~A3 of the last border write)
     uint8_t  evoFddMask;        ///< ZX-Evo #13BD virtual-drive mask

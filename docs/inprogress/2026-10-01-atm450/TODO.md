@@ -1,25 +1,43 @@
 # TODO — ATM Turbo 2 v4.50 (ATM450)
 
-**Status 2026-10-01: research + design complete, zero implementation.**
-Everything needed to start is in this folder:
+**Status 2026-10-01: implemented on branch `atm450` (worktree `scratch/wt-atm450`),
+not yet merged.**
 
 - [README.md](README.md) — scope, deliverables, effort, how to start
-- [requirements.md](requirements.md) — R1-R8 + open questions OQ-1..OQ-4
+- [requirements.md](requirements.md) — R1-R8 + open questions OQ-1..OQ-9
 - [tdd-plan.md](tdd-plan.md) — phases 0-5, ordered test list
 - [cross-mapping.md](cross-mapping.md) — reference survey, variant comparison,
-  behavior→reference→our-code table, prewire inventory (§4)
+  behavior→reference→our-code table, reference divergences (§3.3), prewire
+  inventory (§4)
 
-## Remaining work (nothing started)
+## Design review 2026-10-01 (applied)
 
-- [ ] Phase 0: `data/configs/atm450/unreal.ini`, factory case, registry tests
-      (`emulatormanager_test.cpp:574-576` flip)
-- [ ] Phase 1: `portdecoder_atm450.{h,cpp}` + CUT suite T1.1-T1.10
-- [ ] Phase 2: video wiring checks (mostly green already)
-- [ ] Phase 3: boot tests (basic / TR-DOS / sys-ROM / game / RAM-at-0)
-      — resolves OQ-1 (ROM page order of `data/rom/atm1.rom`)
-- [ ] Phase 4: TTD paging audit (`pFDFD` in the blob), clock units, snapshots
-- [ ] Phase 5: surfaces, Qt menu, `.recipe`/AGENTS docs
-- [ ] Decide OQ-2 (palette on 450: unreal=no, ZXMAK2=`#7DFD`) before phase 1
-      palette-related negative tests
+- `aFE`/`aFB` latch the **low** address byte (both references), not the high one.
+- Palette exists on 450: `#7DFD` group, `--grbGRB` layout (OQ-2 resolved).
+- ROM page order sys/dos/128/sos verified from `atm1.rom` (OQ-1 resolved).
+- `#FDFD`/`#7DFD`/`#7FFD`/AY groups are disjoint on A15/A9 (OQ-3 resolved).
+- FDD decode same as Beta-128 (OQ-4 resolved).
+- Reset starts in the sys ROM except `RM_DOS` (`z80.cpp:123-133`).
+- `pFDFD` was missing from the TTD ATM paging blob — added (former zero filler).
+- Reference divergences recorded as OQ-5..OQ-7; UnrealSpeccy behavior ships.
 
-Tracked as row #79 in [../PLAN.md](../PLAN.md). Suggested branch: `atm450`.
+## Remaining work
+
+- [x] Phase 0: `data/configs/atm450/unreal.ini`, factory case, registry test flip
+- [x] Phase 1: `portdecoder_atm450.{h,cpp}` + `portdecoder_atm450_test.cpp` (18 tests,
+      on a real ATM450 machine - the `#FE` arms need tape / beeper / screen)
+- [x] Phase 2: DeviceState reports `afe` (not `ff77`) for 450; mode test in
+      `devicestate_test.cpp`; ROM page roles in `ROM::GetROMPageRole`
+- [x] Phase 3: `atm450_boot_test.cpp` - system ROM menu + Sinclair palette,
+      TR-DOS 48 / SPECTRUM 128 / SPECTRUM 48 entries, `RESET=DOS`
+- [ ] Phase 3 rest: an ATM 16-color program end-to-end (T3.4, needs a title in testdata),
+      CP/M boot from a disk (OQ-7 evidence)
+- [x] Phase 4: `pFDFD` in the TTD ATM blob (former zero filler, layout unchanged),
+      ATM450 seek test, `TtdClockUnits() == 1`
+- [ ] Phase 4 rest: snapshot / model switch away-and-back (T4.4)
+- [x] Phase 5: Qt menu, `.recipe/machines/atm.md`, `.recipe/_common/machines.md`, AGENTS.md
+- [x] Hardware documentation: MicroArt manual + schematic found (requirements.md header,
+      cross-mapping §3.5); no PLD dump / HDL exists
+- [ ] OQ-5 follow-up: keep or drop `RAM_1024` on the ATM450 model row
+
+Tracked as row #79 in [../PLAN.md](../PLAN.md).

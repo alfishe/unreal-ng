@@ -285,6 +285,7 @@ struct ScreenState
     bool flashInverted = false;          // FLASH phase (toggles every 16 frames)
     uint8_t framesUntilFlashToggle = 16;
     uint8_t p7FFD = 0, pEFF7 = 0, pDFFD = 0, pFF77 = 0;
+    uint8_t aFE = 0;                     // ATM 4.50 #FE address latch (video mode in bits 6-5)
 };
 
 /// Beam position described in the active mode's geometry (Screen::DescribeBeam).

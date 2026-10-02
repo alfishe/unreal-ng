@@ -66,6 +66,7 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.pBF = 0x78;
     src.aFE = 0x9A;
     src.aFB = 0xBC;
+    src.pFDFD = 0x0B;
     src.atmMemSwapped = 1;
     for (int i = 0; i < 16; ++i)
     {
@@ -107,6 +108,7 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     state.pBF = 0x01;   // shaden
     state.aFE = 0x20;
     state.aFB = 0x40;
+    state.pFDFD = 0x0B;
     state.atmMemSwapped = true;
 
     ttd::TTDAtmPaging serializer(context);
@@ -122,6 +124,7 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     state.pBF = 0;
     state.aFE = 0;
     state.aFB = 0;
+    state.pFDFD = 0;
     state.atmMemSwapped = false;
 
     serializer.TTDLoadState(blob);
@@ -135,6 +138,7 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     EXPECT_EQ(state.pBF, 0x01);
     EXPECT_EQ(state.aFE, 0x20);
     EXPECT_EQ(state.aFB, 0x40);
+    EXPECT_EQ(state.pFDFD, 0x0B) << "ATM 4.50 #FDFD latch";
     EXPECT_TRUE(state.atmMemSwapped);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
@@ -279,6 +283,10 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     EXPECT_NE(serializer.TTDHashState(), base) << "aFB not hashed";
     state.aFB ^= 0x01;
 
+    state.pFDFD ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), base) << "pFDFD not hashed";
+    state.pFDFD ^= 0x01;
+
     state.atmMemSwapped = !state.atmMemSwapped;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmMemSwapped not hashed";
     state.atmMemSwapped = !state.atmMemSwapped;
@@ -325,7 +333,7 @@ TEST(TtdAtmPaging_Test, RegistryCaptureAllRestoresMemoryMap)
 /// it, and a declaration without a serializer refuses recording by design.
 TEST(TtdAtmPaging_Test, AtmDecodersDeclareAndProvideTheSerializer)
 {
-    for (const char* model : {"ATM710", "ATM3"})
+    for (const char* model : {"ATM450", "ATM710", "ATM3"})
     {
         Emulator* emulator = MakeAtm(model);
         if (emulator == nullptr)
@@ -400,6 +408,54 @@ TEST(TtdAtmPaging_Test, SeekRestoresMemoryMapAndResultingBanks)
     EXPECT_TRUE(state.atmMemSwapped) << "address-swap flag not restored";
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0x8000), bankAtCapture)
         << "map restored but the paging decode was not rebuilt from it";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// ATM Turbo 2 v4.50: the paging lives in pFDFD and the aFE / aFB address
+/// latches, not in pFFF7. A seek must bring all three back and rebuild the
+/// banks from them: #C000 extension page, RAM at #0000 (CP/M user map)
+TEST(TtdAtmPaging_Test, Atm450SeekRestoresLatchesAndBanks)
+{
+    Emulator* emulator = MakeAtm("ATM450");
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    Memory* memory = context->pMemory;
+    PortDecoder* ports = context->pPortDecoder;
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+
+    EXPECT_EQ(ports->TtdClockUnits(), 1) << "no turbo states on the 4.50 board";
+
+    ASSERT_TRUE(ttd->StartRecording());
+
+    ports->DecodePortOut(0x7FFD, 0x05, 0x0000);
+    ports->DecodePortOut(0xFDFD, 0x03, 0x0000);  // #C000 = page 24 + 5
+    ports->DecodePortOut(0x003E, 0x00, 0x0000);  // aFE = #3E: RAM at #0000, hi-res mode
+    ASSERT_EQ(memory->GetRAMPageForBank3(), 29);
+    ASSERT_EQ(memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM);
+
+    ttd->OnFrameBoundary();
+    ASSERT_GE(ttd->GetCheckpointCount(), 1u);
+    const uint64_t frame = state.frame_counter;
+    ttd->StopRecording();
+
+    ports->DecodePortOut(0xFDFD, 0x00, 0x0000);
+    ports->DecodePortOut(0x00FE, 0x00, 0x0000);  // ROM back at #0000, ZX mode
+    ports->DecodePortIn(0x00FB, 0x0000);         // CPSYS on
+    ASSERT_EQ(memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM);
+
+    ttd::TTDTimePoint target;
+    target.frame = frame;
+    target.tInFrame = 0;
+    ASSERT_TRUE(ttd->SeekTo(target));
+
+    EXPECT_EQ(state.pFDFD, 0x03);
+    EXPECT_EQ(state.aFE, 0x3E);
+    EXPECT_EQ(memory->GetRAMPageForBank3(), 29) << "#C000 extension page not rebuilt";
+    EXPECT_EQ(memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM) << "RAM at #0000 not rebuilt";
+    EXPECT_EQ(memory->GetRAMPageForBank1(), 4);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

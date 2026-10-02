@@ -571,8 +571,16 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
         EXPECT_TRUE(Config::IsModelCreatable(*model));
     }
 
+    // ATM Turbo 2 v4.50 (docs/inprogress/2026-10-01-atm450)
+    {
+        EXPECT_TRUE(PortDecoder::IsModelSupported(MM_ATM450));
+        const TMemModel* model = Config::FindModelByShortName("ATM450");
+        ASSERT_NE(model, nullptr);
+        EXPECT_TRUE(Config::IsModelCreatable(*model));
+    }
+
     // Models without decoders (no factory case yet)
-    for (MEM_MODEL model : {MM_ATM450, MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
+    for (MEM_MODEL model : {MM_GMX, MM_KAY, MM_QUORUM, MM_LSY256, MM_PHOENIX})
         EXPECT_FALSE(PortDecoder::IsModelSupported(model)) << int(model);
 }
 

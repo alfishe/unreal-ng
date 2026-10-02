@@ -929,12 +929,13 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    const bool decoderOwnsMemoryManager = config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 ||
-                                          config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A;
+    const bool decoderOwnsMemoryManager = config.mem_model == MM_ATM450 || config.mem_model == MM_ATM710 ||
+                                          config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3 ||
+                                          config.mem_model == MM_PLUS2A;
     if (decoderOwnsMemoryManager)
     {
         // ATM models own their memory manager: the bank computation runs in the
-        // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
+        // port decoder (port of the original set_banks() MM_ATM450 / MM_ATM710 / MM_ATM3
         // branch; the +2A/+3 decoder maps its four ROMs and all-RAM modes from
         // #7FFD and #1FFD the same way)
         // branch). The session-flags tail below still applies to every model.

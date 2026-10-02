@@ -23,16 +23,18 @@ decoder class (red), then implement until green.
 
 | # | Behavior under test | Reference pin |
 |---|---|---|
-| T1.1 | `#FDFD` group write latches `pFDFD`; decode is the group `(port & 0x8202) == 0x8000`, so `#FDFD`, `#FDF5`, `#FCFD`-family members hit while `#7DFD` (A15=0) and `#F3FD` (A9=1) do not | io.cpp:577-582 |
-| T1.2 | RAM page at `#C000` = `(p7FFD & 7) \| (pFDFD & 7) << 3`, masked by RAM size: full 6 bits at 1024K, top bit(s) drop at 512K | memory.cpp:138-139 |
-| T1.3 | `aFE` latch: write `#xxFE` latches A15-A8 into `aFE`; writes to odd ports do not; `aFE.7` 1→0 switches window 0 to RAM page 0 and window 1 to RAM page **4** (not 5) | io.cpp:446-469, memory.cpp:140-145 |
-| T1.4 | ROM priority matrix (R2 arm 4), one test per row: 7FFD.5 clears CPSYS; TR-DOS+FDFD.3 forces CPSYS; CPSYS → sys ROM; TR-DOS → dos ROM; else 7FFD.4 → sos/128 | memory.cpp:148-161 |
-| T1.5 | `aFB` latch on reads with A2=0 (`#FB`, `#7B`, `#x0B`-family); a read with A2=1 does not latch; latching updates banks when CPSYS flips | io.cpp:1040-1055 |
-| T1.6 | `#FE` read bit 7: `atm450_z` zero windows at t=7200/7284/7326 (+40 T each), 0x80 elsewhere; pin three in-window and three out-of-window samples | atm.cpp:315-324 |
-| T1.7 | Bright border from A3 of the `#FE` write (`(port & 8) ^ 8`), reusing the family `atmBorderBright` state | io.cpp:461-463 |
-| T1.8 | Negative space: `#FF77`, `#xxFF7`, `#EFF7`, `#xxBF`, `#xxBE`, gluk `#DFF7/#BEF7`, SD `#77/#57` writes change nothing on ATM450 (state dumps identical) | io.cpp:231 gate |
-| T1.9 | `#FFFD` (AY data) write side effects on `pFDFD` — pins whatever OQ-3's reference-order research decides; the assertion is written after reading the reference, not guessed | io.cpp order |
-| T1.10 | `ApplyBootROMDefaults`: RM_128/RM_SOS/RM_SYS/RM_DOS table incl. the 450-specific `RM_DOS` keeps `p7FFD.4` set | memory.cpp:375-400 |
+| T1.1 | `#FDFD` group write latches `pFDFD`; decode is `(port & 0x8202) == 0x8000`, so `#FDFD`, `#FDF5`, `#FCFD` hit while `#7DFD` (A15=0 → palette) and `#F3FD`/`#FFFD` (A9=1 → AY) do not | io.cpp:577-582 |
+| T1.2 | RAM page at `#C000` = `((p7FFD & 7) \| (pFDFD & 7) << 3) & ramMask`: bit 2 of pFDFD drops at 512K, counts at 1024K | memory.cpp:138-139 |
+| T1.3 | `aFE` latch takes the **low** address byte of `#xxFE`-group writes (`OUT (#7E)` → aFE = #7E whatever the high byte); odd ports do not latch; A7=0 → window 0 = RAM page 0 (writable), window 1 = RAM page **4**; A7=1 restores ROM + page 5 | io.cpp:466, memory.cpp:140-145 |
+| T1.4 | ROM priority matrix (R2 arm 4), one test per row: 7FFD.5 clears CPSYS (sticky); TR-DOS+FDFD.3 sets CPSYS (sticky); CPSYS → sys ROM; TR-DOS → dos ROM even with 7FFD.4=0; else 7FFD.4 → sos/128. Each row asserts the signature bytes of the mapped `atm1.rom` page (pins R3 page order) | memory.cpp:148-161 |
+| T1.5 | `aFB` latch takes the **low** byte of an unclaimed A2=0 read (`IN (#FB)` → CPSYS on, `IN (#7B)` → off) and the read returns `#FF`; A2=1 reads do not latch; a GS `#BB` read with the card fitted does **not** latch (claimed first) | io.cpp:724, 1040-1055 |
+| T1.6 | `#FE` read bit 7: zero windows at t=7200/7284/7326 (+40 T each), 0x80 elsewhere; three in-window and three out-of-window samples incl. both window edges; bits 6-0 unchanged from the keyboard read | atm.cpp:315-324 |
+| T1.7 | Bright border from A3 of the `#FE` write (`#F6` → bright, `#FE` → not) into `atmBorderBright` | io.cpp:461-463 |
+| T1.8 | Palette: `#7DFD`-group write stores into the cell = current 4-bit border color; ATM1 bit layout `--grbGRB` (one test per channel: high bit alone, low bit alone); no DOS / pen2 gate; `#xxFF` writes do **not** touch the palette on 450 | io.cpp:533-537, draw.cpp:440-447 |
+| T1.9 | Negative space: `#FF77`, `#xxF7`, `#EFF7`, `#xxBF`, `#xxBE`, gluk `#DFF7/#BEF7`, SD `#77/#57` writes change nothing on ATM450 (paging state identical) | 450 arm list |
+| T1.10 | Reset / `ApplyBootROMDefaults`: RM_DOS → aFE=#E0, aFB=0, dos ROM at 0, 7FFD.4 kept set; RM_128/RM_SOS/RM_SYS → aFE=#80, aFB=#80, sys ROM at 0; pFDFD cleared | z80.cpp:91,123-133; memory.cpp:375-400 |
+| T1.11 | aFE bits 6-5 change → `Screen` re-detects the mode (`#9E` → M_ATM16, `#BE` → M_ATMHR, `#FE` → ZX) | screen.cpp:336 |
+| T1.12 | 48K lock: `p7FFD.5` blocks later `#7FFD` writes; `#FDFD` writes still land (UnrealSpeccy has no lock on FDFD) | io.cpp:545-558, 577 |
 
 ## Phase 2 — video wiring (mostly already green)
 
@@ -51,7 +53,7 @@ Mirror the ATM710 pair `core/tests/emulator/machines/atm710/`:
 |---|---|---|
 | T3.1 | `ATM450_BootToBasic_Test` | Reset → ROM page per boot mode → BASIC 128 banner pixel/OCR or PC-in-ROM assertion (turbo mode allowed) |
 | T3.2 | `ATM450_TrdosBoot_Test` | `#3D13` entry → dos ROM at `#0000`, TR-DOS 5.04T catalog of a scratch TRD |
-| T3.3 | `ATM450_CpmSysRom_Test` | CPSYS path: sys ROM visible at `#0000` (resolves OQ-1 — assert the signature of the page actually mapped, e.g. via the ROM signature helper) |
+| T3.3 | `ATM450_SysRomBoot_Test` | Default reset (`RM_128`) starts in the sys ROM (page 0) and reaches its own menu/next stage; record what it does with the FDC ports (first evidence for OQ-7) |
 | T3.4 | `ATM450_GameRepro_Test` | An ATM 16-color (aFE mode 0) title loads and renders — proves DetectModeATM1 + renderer end-to-end; assert on rendered pixels (no turbo mode here) |
 | T3.5 | `ATM450_RamAt0Mode_Test` | aFE.7=0 → code runs from RAM page 0 at `#0000` (poke a JP, run, assert PC) |
 
@@ -59,7 +61,7 @@ Mirror the ATM710 pair `core/tests/emulator/machines/atm710/`:
 
 | # | Test | Notes |
 |---|---|---|
-| T4.1 | `TTDAtmPaging` round-trip includes `aFE`, `aFB`, `pFDFD` (extend `ttdatmpaging_test.cpp` with an ATM450 case; add `pFDFD` to the blob if audit finds it missing) | ttdatmpaging.cpp:30 |
+| T4.1 | `TTDAtmPaging` round-trip includes `aFE`, `aFB`, `pFDFD` and the palette cells (`pFDFD` is not in the blob today — add it with a layout bump; an old-layout blob still loads with pFDFD = 0) | ttdatmpaging.cpp:30 |
 | T4.2 | TTD record → aFE mode switch → replay matches frame checksums; port journal attributes the `#FDFD`/`#FE`-group writes with the new decoder's port codes | portdecoder.cpp:571 pattern |
 | T4.3 | `TtdClockUnits() == 1` and top-clock time = frame time (guard for the R8 non-goal) | |
 | T4.4 | Snapshot (SNA/Z80 where applicable) + model switch away/back keeps the machine state (`modelswitch_test.cpp` pattern) | |
