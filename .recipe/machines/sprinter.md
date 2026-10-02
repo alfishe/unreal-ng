@@ -148,6 +148,34 @@ capture_media {"action":"screenshot","format":"png","mode":"full","filename":"/a
 `type_input {"action":"combo","keys":["lctrl","lalt","pc.delete"]}`. DEL on the
 BIOS logo opens SETUP.
 
+### 3a. Keys and mouse in Flex Navigator
+
+Flex Navigator reads keys through DSS (Tab switches panels, arrows, PgUp / PgDn,
+Home / End, Ins, F1-F10, Alt+F1 / Alt+F2 drives, Ctrl+F1-F12 views, Ctrl+U swap;
+the list is `FN\README.ENG` on the disk). Send them as PC keys:
+
+```text
+type_input {"action":"tap","key":"tab"}              # the other panel
+type_input {"action":"tap","key":"down"}
+type_input {"action":"combo","keys":["lalt","f1"]}   # drive menu of the left panel
+```
+
+The mouse goes through DSS's mouse driver, which reads the board's mouse in one
+of two views: DSS 1.62.9x the PLD's Kempston view (`#FADF` buttons, `#FBDF` X,
+`#FFDF` Y; port code `#58`), DSS 1.71 the Microsoft serial packets on SIO B
+(1 200 baud, 3 bytes synced on bit 6; no `M` identification is needed). Both
+come from the same counters, so `mouse_input` drives either, also with
+`[INPUT] Mouse=NONE` (the board's mouse is not the optional Kempston interface):
+
+```text
+mouse_input {"action":"move","dx":100,"dy":-20}      # + right, + up (Kempston axes)
+mouse_input {"action":"click","button":"left"}
+```
+
+After a panel switch FN 1.10 re-reads the floppy for about 0.6 s with
+interrupts off; keys sent in that time overrun the SIO's 3-byte FIFO
+(`sprinter.z84c15.keyboard.overruns`). Wait a moment between keys.
+
 ### 4. Spectrum mode and TR-DOS
 
 BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
@@ -336,7 +364,7 @@ print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    #
 | WD1793 at 720 KB and 1.44 MB (the `#BD` density latch), DSS 1.62 from floppy B, Spectrum mode, TR-DOS | implemented |
 | AT keyboard and serial mouse on the Z84C15 SIO; `type_input`, key taps and combos | implemented |
 | DS12887A CMOS (`[SPRINTER] CmosFile=` keeps it) | implemented |
-| Flex Navigator (DSS's `fn`) | **hangs** after its logo - boot a floppy without it |
+| Flex Navigator (DSS's `fn`): FN 1.10 from the DSS 1.62 floppy, FN 1.15 on DSS 1.71 (HDD, BIOS 3.06) | runs; keys and mouse work through the automation (step 3a). From the floppy the BIOS RESTORE is still too slow at 21 MHz (the S5 tests work around it) |
 | DSS 1.71 (`dss171u.img`) | **stops** with "Fatal error! Press RESET to restart." after the BIOS loaded it |
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Accelerator, Covox-Blaster, ISA cards | not yet (phases S5, S6); CBL control is only stored |
@@ -351,6 +379,11 @@ print(emu.paging_state()["sprinter"]["windows"][3]["kind"])                    #
   IDE wait F4 may not reach the machine there; the automation's
   `type_input` / `keyboard/tap` always does. On a Mac keyboard DEL is
   Fn+Delete.
+- **Tab in the GUI** reaches the machine on both screen renderers (it used
+  to move the Qt focus on the software renderer, so every other Tab was lost).
+- **The GUI mouse** does not reach the GPU screen yet (the GL window has no
+  mouse capture; a shared mouse manager is planned). Workaround: View -> GPU
+  Acceleration off, click the screen to capture, ESC releases.
 - **The generic `#7FFD` latch fields are not the Sprinter's.** `#7FFD` and
   `#1FFD` live in the PLD: read `sprinter.decoder.port_7ffd` /
   `port_1ffd` (and `/state/paging`'s `sprinter` block), not

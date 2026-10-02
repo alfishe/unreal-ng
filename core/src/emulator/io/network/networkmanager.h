@@ -25,6 +25,7 @@
 
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
+#include "emulator/io/network/atm2ioesp.h"
 #include "emulator/io/serial/comport.h"
 
 class EmulatorContext;
@@ -64,6 +65,8 @@ public:
         std::optional<uint8_t> espChip;        ///< 0 ESP32, 1 ESP8266
         std::optional<uint8_t> avrFirmware;    ///< ZX-Evo: Uart16550::AvrFirmware ([EVO] Avr=)
         std::optional<uint8_t> kbcFirmware;    ///< ATM Turbo 2+: Atm2Kbc::Firmware ([ATM] Kbc=)
+        std::optional<std::string> atm2IoEsp;  ///< Atm2IoEsp= value (ComPortSpec): the ATM2IOESP card's ESP
+        std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
     };
     bool RequestChange(const Change& change, std::string& error);
 
@@ -75,7 +78,9 @@ public:
     /// esp_chip (esp32 | esp8266), avr_firmware (ZX-Evo, [EVO] Avr= names:
     /// baseconf | base2010 .. base2023 | ts | ts2013 | ts2016-02 | ts2016-04),
     /// kbc_firmware (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names:
-    /// none | v22-7 .. v41).
+    /// none | v22-7 .. v41), atm2ioesp (ComPortSpec: what the ATM2IOESP card's
+    /// 16550 is wired to, default at), atm2ioesp_address (its bus address, a
+    /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0).
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
@@ -86,6 +91,7 @@ public:
     VirtualNetwork* Network() const { return _network.get(); }
     ZxNetUsb* Card() const { return _card.get(); }
     ComPort* Com() const { return _com.get(); }
+    Atm2IoEsp* Atm2IoEspCard() const { return _atm2IoEsp.get(); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -99,6 +105,7 @@ public:
         std::string cards;                ///< the ZX-Bus cards fitted: "ZXNETUSB,ZXWIFI" | "NONE"
         bool zxBus = true;                ///< the machine takes ZX-Bus cards
         std::string serialPort;           ///< the machine's own: none | evo-avr | zifi | atm2-kbc
+        bool internalIo = false;          ///< the ATM Turbo 2+ INTERNAL I/O connector (ATM2IOESP)
         std::vector<std::string> notes;   ///< configured devices not fitted, and why
 
         /// The settings in force (the machine config), in ParseChange's terms
@@ -110,6 +117,8 @@ public:
             std::string espChip;          ///< ESP32 | ESP8266
             std::string avrFirmware;      ///< [EVO] Avr= name
             std::string kbcFirmware;      ///< [ATM] Kbc= name; empty: no controller socket on this board
+            std::string atm2IoEsp;        ///< ComPortSpec text, AT when empty
+            unsigned atm2IoEspAddress = 0xF0;
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
@@ -159,6 +168,10 @@ public:
         /// The machine's own serial port when it is no 16550 on #xxEF (ATM
         /// Turbo 2+ keyboard controller): fitted beside a ZX-WiFi card's `com`
         Com machineSerial;
+
+        /// The ATM2IOESP card (a 16550 on the INTERNAL I/O connector)
+        Com atm2IoEsp;
+        unsigned atm2IoEspAddress = 0;
     };
     Status GetStatus() const;
 
@@ -172,11 +185,15 @@ private:
         std::string peer;                 ///< ComPortSpec of the serial port's peer
         bool machineSerial = false;       ///< the machine's own port is no 16550 (Atm2Kbc)
         std::string machinePeer;          ///< ComPortSpec of its peer
+        bool atm2IoEsp = false;           ///< the ATM2IOESP card on the INTERNAL I/O connector
+        std::string atm2IoEspPeer;        ///< ComPortSpec of its ESP
+        uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
         std::vector<std::string> notes;
         bool operator==(const Plan& o) const
         {
             return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer &&
-                   machineSerial == o.machineSerial && machinePeer == o.machinePeer;
+                   machineSerial == o.machineSerial && machinePeer == o.machinePeer && atm2IoEsp == o.atm2IoEsp &&
+                   atm2IoEspPeer == o.atm2IoEspPeer && atm2IoEspAddress == o.atm2IoEspAddress;
         }
     };
     Plan MakePlan() const;
@@ -189,6 +206,7 @@ private:
     std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText, uint32_t espBaud) const;
     /// Plug `_machinePeer` into the machine's own non-16550 port
     void FitMachineSerial(const Plan& plan);
+    void FitAtm2IoEsp(const Plan& plan);
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
     EmulatorContext* _context = nullptr;
@@ -196,6 +214,7 @@ private:
     std::unique_ptr<ZxNetUsb> _card;
     std::unique_ptr<ComPort> _com;
     std::unique_ptr<ISerialPeer> _machinePeer;   ///< on the machine's own non-16550 port (Atm2Kbc)
+    std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

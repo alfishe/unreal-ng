@@ -62,6 +62,8 @@ public:
 
     /// A save wrote the medium to `source` (a file): it now stands for that file
     void Rebase(MediaSource source);
+    /// ... in that file's format (a block medium saved as another format)
+    void SetFormat(std::string format) { _format = std::move(format); }
     /// How a folder medium was built, so it can be built again (rescan, a
     /// floppy's discard): the options the registry used
     struct OpenOptions

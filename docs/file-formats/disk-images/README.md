@@ -18,6 +18,12 @@ Unreal-NG supports loading and saving disk images in multiple formats. All forma
 | HFE | `.hfe` | — | — | Planned (flux-level) |
 | SCP | `.scp` | — | — | Planned (SuperCard Pro flux) |
 
+## Hard disks and SD cards
+
+Block media (IDE units, SD cards) take raw images (`.img`, `.hdd`, ...), HDF, HDI, fixed VHD and
+[CHD](chd.md) (MAME's compressed hard-disk format, read and written). They are not track images: a
+block medium is a list of 512-byte sectors.
+
 ## Detection
 
 Formats with magic signatures are detected automatically:

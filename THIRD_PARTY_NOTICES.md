@@ -14,19 +14,23 @@ sound rendering, `z80asm`) are a re-engineered port of **UnrealSpeccy 0.3x** by 
 Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original sources is being confirmed
 (see the audit, item P1); the affected files carry inline attribution comments.
 
+The CHD hard-disk format code (`core/src/emulator/io/storage/chd/`: container, Huffman and FLAC coding) is own code
+written from MAME's `chd.cpp`, `chdcodec.cpp`, `huffman.cpp` and `flac.cpp` (BSD-3-Clause, Aaron Giles and the MAME
+contributors) as the format reference; no MAME source is vendored.
+
 ## Components compiled into shipped binaries
 
 | Component | Location | License | Use |
 |-----------|----------|---------|-----|
 | zstd 1.5.7 | `core/src/3rdparty/zstd/` | BSD-3-Clause (dual BSD/GPL-2.0; BSD elected) | static |
-| LZMA SDK 19.00 | `core/src/3rdparty/liblzma/` | Public domain | static |
+| LZMA SDK 19.00 (also the CHD `lzma` codec) | `core/src/3rdparty/liblzma/` | Public domain | static |
 | miniaudio 0.11.21 | `core/src/3rdparty/miniaudio/` | Public domain / MIT-0 | header |
 | blip_buf (C++ port of Shay Green's blip_buf 1.1.0) | `core/src/3rdparty/blip_buf/` | LGPL-2.1-or-later | static |
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
 | z84c15, a fork of unreal-z80 0.5.0 @ a0433ec (the Sprinter's Zilog Z84C15 CPU; local changes in `README.md` there) | `core/src/3rdparty/z84c15/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
-| miniz 3.1.2 (zlib streams of SZX snapshots; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
+| miniz 3.1.2 (zlib streams of SZX snapshots, the CHD `zlib` codec; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
 | minimp3 (lieff) | `core/src/3rdparty/minimp3/` | CC0-1.0 | header (NeoGS MP3 decoder) |
 | tinywav | `core/src/3rdparty/tinywav/` | ISC | static |

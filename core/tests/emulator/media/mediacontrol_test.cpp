@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -466,4 +467,47 @@ TEST_F(MediaControl_Test, CreateProtectAndRescan)
     ASSERT_TRUE(reader.Open(*manager.GetMedium("sd.zc")->Block()));
     std::vector<uint8_t> data;
     EXPECT_TRUE(reader.ReadFile("/second.txt", data)) << "the new host file is on the volume";
+}
+
+/// A MAME CHD on every surface (docs/inprogress/2026-10-02-media-chd/): `targets` knows it by its header and offers
+/// the hard-disk units first and the SD card too; it goes into the ZX-Evo's SD slot like any image; `export` and
+/// `save` take `compression` (and `parent`) and write CHDs
+TEST_F(MediaControl_Test, ChdOnTheSharedVerbs)
+{
+    ScratchFolder folder("control-chd");
+    const std::filesystem::path copy = folder.Path() / "card.chd";
+    std::filesystem::copy_file(TestPathHelper::FindProjectRoot() / "testdata/media/chd/mixed-default.chd", copy);
+    const std::string card = Utf8(copy);
+
+    Create("ATM3");
+    MediaReply reply = Run(Request("targets", "", card));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    StateNode body = reply.ToValue();
+    EXPECT_EQ(body.find("file")->find("format")->s, "chd");
+    std::vector<std::string> slots;
+    for (const StateNode& target : body.find("targets")->items)
+        slots.push_back(target.find("slot")->s);
+    EXPECT_NE(std::find(slots.begin(), slots.end(), "ide0.master"), slots.end());
+    EXPECT_NE(std::find(slots.begin(), slots.end(), "sd.zc"), slots.end()) << "a CHD is an SD card too";
+
+    reply = Run(Request("insert", "sd.zc", card));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(_context->pMediaManager->Info("sd.zc")->format, "chd");
+    GuestWrite("sd.zc");
+
+    const std::string zstd = Utf8(folder.Path() / "card-zstd.chd");
+    reply = Run(Request("export", "sd.zc", zstd, {{"compression", "zstd"}}));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const std::string bytes = Slurp(zstd);
+    ASSERT_GE(bytes.size(), 20u);
+    EXPECT_EQ(bytes.substr(0, 8), "MComprHD");
+    EXPECT_EQ(bytes.substr(16, 4), "zstd") << "the first codec slot of the header";
+    EXPECT_EQ(Run(Request("export", "sd.zc", zstd, {{"compression", "rar"}})).result.error, MediaError::BadRequest);
+
+    const std::string before = Slurp(card);
+    reply = Run(Request("save", "sd.zc", "", {{"compression", "none"}}));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_NE(Slurp(card), before) << "save writes the CHD";
+    EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty);
+    EXPECT_EQ(Slurp(card).substr(16, 4), std::string(4, '\0')) << "saved uncompressed";
 }

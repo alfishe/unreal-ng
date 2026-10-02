@@ -75,7 +75,21 @@ NetworkManager::Plan NetworkManager::MakePlan() const
 
     if (!networkOn)
         return plan;
-    const uint8_t cards = net.card;
+
+    // ATM2IOESP: on the ATM Turbo 2+ INTERNAL I/O connector, not the ZX-Bus
+    if (net.card & networkspec::kCardAtm2IoEsp)
+    {
+        if (caps.internalIo)
+        {
+            plan.atm2IoEsp = true;
+            plan.atm2IoEspPeer = peerOf(net.atm2IoEsp, "AT");
+            plan.atm2IoEspAddress = net.atm2IoEspAddress;
+        }
+        else
+            plan.notes.push_back("ATM2IOESP: the machine has no ATM Turbo 2+ INTERNAL I/O connector");
+    }
+
+    const uint8_t cards = static_cast<uint8_t>(net.card & ~networkspec::kCardAtm2IoEsp);   // the ZX-Bus ones
     if (cards && !caps.zxBus)
     {
         plan.notes.push_back("Card: the machine has no ZX-Bus");
@@ -142,6 +156,18 @@ void NetworkManager::FitMachineSerial(const Plan& plan)
         return;   // nothing on the line: the firmware's UART still runs
     caps.attachSerialPeer(_machinePeer.get());
     _context->pMachineSerialPeer = _machinePeer.get();
+}
+
+void NetworkManager::FitAtm2IoEsp(const Plan& plan)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    if (!caps.internalIo)
+        return;
+    // The card's ESP32 ships with the AT firmware at 115200 (RTS / CTS)
+    _atm2IoEsp = std::make_unique<Atm2IoEsp>(_context, MakePeer(plan.atm2IoEspPeer, kDefaultEspBaud), plan.atm2IoEspAddress);
+    caps.internalIo(_atm2IoEsp.get(), true);
+    _context->pAtm2IoEsp = _atm2IoEsp.get();
 }
 
 void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
@@ -218,6 +244,10 @@ void NetworkManager::Refit()
             net.espChip = *change->espChip;
         if (change->avrFirmware)
             _context->config.atm.evo_avr = *change->avrFirmware;
+        if (change->atm2IoEsp)
+            copy(net.atm2IoEsp, sizeof(net.atm2IoEsp), *change->atm2IoEsp);
+        if (change->atm2IoEspAddress)
+            net.atm2IoEspAddress = *change->atm2IoEspAddress;
         if (change->kbcFirmware)
         {
             // A new controller chip in the socket: it boots afresh; its peer is plugged in again below
@@ -236,7 +266,8 @@ void NetworkManager::Refit()
     if (!_firmwareNote.empty())
         plan.notes.push_back(_firmwareNote);
     const bool same = plan == _plan && !_forceRefit &&
-                      (_network || _com || (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty()));
+                      (_network || _com || _atm2IoEsp ||
+                       (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty() && !plan.atm2IoEsp));
     _forceRefit = false;
     if (same)
     {
@@ -257,7 +288,7 @@ void NetworkManager::Refit()
     Unplug();
     _plan = plan;
 
-    if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty())
+    if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty() || !plan.atm2IoEspPeer.empty())
     {
         std::unique_ptr<IHostNet> host;
         if (_context->config.network.hostAccess)
@@ -280,6 +311,8 @@ void NetworkManager::Refit()
         FitCom(plan, keep ? &*keep : nullptr);
     if (plan.machineSerial)
         FitMachineSerial(plan);
+    if (plan.atm2IoEsp)
+        FitAtm2IoEsp(plan);
     UpdateStatus();
 }
 
@@ -287,12 +320,15 @@ void NetworkManager::Unplug()
 {
     if (_context)
     {
-        if (_machinePeer && _context->pPortDecoder)
+        if ((_machinePeer || _atm2IoEsp) && _context->pPortDecoder)
         {
             const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
-            if (caps.attachSerialPeer)
+            if (_machinePeer && caps.attachSerialPeer)
                 caps.attachSerialPeer(nullptr);
+            if (_atm2IoEsp && caps.internalIo)
+                caps.internalIo(_atm2IoEsp.get(), false);
         }
+        _context->pAtm2IoEsp = nullptr;
         _context->pZxNetUsb = nullptr;
         _context->pComPort = nullptr;
         _context->pMachineSerialPeer = nullptr;
@@ -300,6 +336,7 @@ void NetworkManager::Unplug()
     }
     // The adapters first: their sockets close through the virtual network
     _machinePeer.reset();
+    _atm2IoEsp.reset();
     _com.reset();
     _card.reset();
     _network.reset();
@@ -387,9 +424,11 @@ void NetworkManager::OnFrame()
             _com->OnFrame();
         if (_machinePeer)
             _machinePeer->OnFrame();
+        if (_atm2IoEsp)
+            _atm2IoEsp->OnFrame();
         UpdateStatus();
     }
-    else if ((_com || _plan.machineSerial) && _context && _context->emulatorState.frame_counter % 25 == 0)
+    else if ((_com || _plan.machineSerial || _atm2IoEsp) && _context && _context->emulatorState.frame_counter % 25 == 0)
     {
         // A serial port with nothing on its line (a ZX-Evo's AVR UART): no
         // peer to pump, the status copy twice a second is enough
@@ -432,6 +471,8 @@ void NetworkManager::UpdateStatus()
         s.card = networkspec::CardsToString(net.card);
         s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string("NONE");
         s.zxWifi = net.zxWifi[0] ? std::string(net.zxWifi) : std::string("AT");
+        s.atm2IoEsp = net.atm2IoEsp[0] ? std::string(net.atm2IoEsp) : std::string("AT");
+        s.atm2IoEspAddress = net.atm2IoEspAddress;
         s.espChip = net.espChip == 1 ? "ESP8266" : "ESP32";
         s.avrFirmware = Uart16550::AvrFirmwareName(static_cast<Uart16550::AvrFirmware>(_context->config.atm.evo_avr));
         s.dnsMode = net.dnsPass ? "PASS" : "HOST";
@@ -445,6 +486,8 @@ void NetworkManager::UpdateStatus()
         uint8_t cards = _card ? networkspec::kCardZxNetUsb : 0;
         if (_com && _plan.serial == Plan::Serial::ZxWifi)
             cards |= networkspec::kCardZxWifi;
+        if (_atm2IoEsp)
+            cards |= networkspec::kCardAtm2IoEsp;
         st.cards = networkspec::CardsToString(cards);
     }
     if (_context && _context->pPortDecoder)
@@ -452,6 +495,7 @@ void NetworkManager::UpdateStatus()
         const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
         using SerialPort = PortDecoder::NetworkCapabilities::SerialPort;
         st.zxBus = caps.zxBus;
+        st.internalIo = static_cast<bool>(caps.internalIo);
         if (caps.reloadFirmware)   // the board has the keyboard controller socket
             st.settings.kbcFirmware = Atm2Kbc::FirmwareName(static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware));
         st.serialPort = caps.serialPort == SerialPort::EvoAvr    ? "evo-avr"
@@ -524,6 +568,19 @@ void NetworkManager::UpdateStatus()
         c.baud = uart.Baud();
         c.frameBits = uart.FrameBits();
 
+    }
+    if (_atm2IoEsp)
+    {
+        auto& c = st.atm2IoEsp;
+        const Uart16550& uart = _atm2IoEsp->Com().Uart();
+        c.fitted = true;
+        c.flavor = "atm2ioesp";
+        FillPeerStatus(_atm2IoEsp->Com().Peer(), c);
+        c.modemLines = _context && _context->config.network.comModemLines != 0;
+        c.uart = uart.GetView();
+        c.baud = uart.Baud();
+        c.frameBits = uart.FrameBits();
+        st.atm2IoEspAddress = _atm2IoEsp->Address();
     }
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
@@ -683,6 +740,28 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
                 return false;
             }
             out.avrFirmware = static_cast<uint8_t>(firmware);
+        }
+        else if (key == "atm2ioesp" || key == "atm2_io_esp")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = "atm2ioesp: " + why;
+                return false;
+            }
+            out.atm2IoEsp = spec.ToString();
+        }
+        else if (key == "atm2ioesp_address")
+        {
+            char* end = nullptr;
+            const unsigned long address = std::strtoul(value.c_str(), &end, 0);
+            if (value.empty() || !end || *end || address > 0xF8 || (address & 0x07))
+            {
+                error = "atm2ioesp_address: a bus address 0x00..0xF8 in steps of 8 (0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0)";
+                return false;
+            }
+            out.atm2IoEspAddress = static_cast<uint8_t>(address);
         }
         else if (key == "kbc_firmware" || key == "kbc")
         {

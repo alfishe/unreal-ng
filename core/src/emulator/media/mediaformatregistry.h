@@ -3,7 +3,7 @@
 /// @file mediaformatregistry.h
 /// @brief The one place that knows formats (technical design §4): probes a
 /// source for a slot kind and builds the medium, access layer included.
-/// Block media: raw images, HDF / HDI / fixed VHD (IDE), and host folders as
+/// Block media: raw images, HDF / HDI / fixed VHD / CHD (IDE, SD), and host folders as
 /// FAT16 / FAT32 volumes (M1). Optical media: ISO 9660 images (CD drives).
 /// Floppies: every disk image format (FloppyFormats), and host folders built
 /// into a TR-DOS disk (M2). Tapes: every TapeLoaderRegistry format, and host

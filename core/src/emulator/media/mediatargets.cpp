@@ -204,6 +204,14 @@ FileClass MediaTargets::Classify(const std::string& path)
         return set({FileKind::Optical}, "iso", "CD001 at #8001 (ISO 9660)");
 
     const std::string hdd = HddImageFormats::Probe(path);
+    if (hdd == "chd")
+    {
+        // MAME keeps every hard disk and SD card as a CHD: either slot kind, a hard disk first
+        file.kinds = {FileKind::Hdd, FileKind::SdCard};
+        file.format = "chd";
+        file.evidence.push_back("MComprHD signature (MAME CHD)");
+        return file;
+    }
     if (hdd == "hdf" || hdd == "vhd")
         return set({FileKind::Hdd}, hdd, hdd + " header");
     if (hdd == "hdi")

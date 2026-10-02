@@ -1,4 +1,4 @@
-# Recipe: Media Slots — Floppies, SD Card, Folders, Swaps
+# Recipe: Media Slots — Floppies, SD Card, Hard Disks (CHD), Folders, Swaps
 
 Goal: see every media slot of the machine, put a file or a **host folder** into
 the right one (floppy drive, tape deck, SD card), swap multi-disk software without losing
@@ -22,6 +22,10 @@ media {"action":"insert","slot":"sd","path":"/home/me/zx/sdcard"}   # ZX-Evo: a 
 media {"action":"insert","slot":"tape","path":"/home/me/zx/tapefiles"}  # a folder as a tape (then LOAD "")
 media {"action":"swap","slot":"A","path":"/games/elite-2.trd","save":true}
 media {"action":"export","slot":"sd","path":"scratch/card-after.img"}
+media {"action":"insert","slot":"hd","path":"/mame/sp_hdd_sys.chd"}       # a MAME CHD: any IDE unit or SD card
+media {"action":"save","slot":"hd"}                                  # write the guest's changes into the CHD
+media {"action":"export","slot":"hd","path":"scratch/disk.chd","compression":"zstd"}
+media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/sp_hdd_sys.chd"}  # only the changes
 media {"action":"eject","slot":"B","discard":true}
 ```
 
@@ -46,6 +50,14 @@ curl -s "$BASE/emulator/$EMU_ID/media/targets?path=/discs/dna_nemo.iso" | jq '{f
 # A folder as the SD card, FAT32, room for 16 MiB of guest writes
 curl -s -X POST $BASE/emulator/$EMU_ID/media/sd/insert -H 'Content-Type: application/json' \
      -d '{"path":"/home/me/zx/sdcard","fs":"fat32","free":16777216}' | jq '{ok, slot, report}'
+
+# A MAME CHD (hard disk or SD card), then a zstd copy and a raw image of it
+curl -s -X POST $BASE/emulator/$EMU_ID/media/sd/insert -H 'Content-Type: application/json' \
+     -d '{"path":"/mame/neogs.chd"}' | jq '{ok, slot, report}'
+curl -s -X POST $BASE/emulator/$EMU_ID/media/sd/export -H 'Content-Type: application/json' \
+     -d '{"path":"/tmp/card-zstd.chd","compression":"zstd"}' | jq '{ok, error, message}'
+curl -s -X POST $BASE/emulator/$EMU_ID/media/sd/export -H 'Content-Type: application/json' \
+     -d '{"path":"/tmp/card.img"}' | jq '{ok}'
 
 # Two-disk game: disk 1 has a save on it
 curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: application/json' \
@@ -73,6 +85,11 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: applicatio
   them (a card image or a disk image) to keep them.
 - **`save` needs a file of its own**: a disk built from a folder, a blank disk
   or a Hobeta file answers `not-supported` — `save` with a `path`, or `export`.
+- **A CHD is never written in place**: guest writes stay in the session (an IDE unit's default
+  `writethrough` becomes `session`, said in `report`); `save` writes the CHD again (its codecs, or
+  `compression`: `none`, `default`, `lzma,zlib,huff,flac,zstd`), `export <x>.chd` writes a new one,
+  `export <x>.img` a raw image. A child CHD needs its parent `.chd` in the same folder. CD-ROM CHDs
+  are refused. Format: [chd.md](../../docs/file-formats/disk-images/chd.md).
 - **TTD recording fixes the media set**: `recording` (409) unless
   `"end_recording": true`.
 - **Drive letters follow the machine**: `C` on a +3 is `unknown-slot`.

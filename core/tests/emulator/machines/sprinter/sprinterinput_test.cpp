@@ -208,6 +208,36 @@ TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
     EXPECT_EQ(got, (std::vector<uint8_t>{0x4C, 0x05, 0x3D}));
 }
 
+// The board's mouse is always fitted: with no Kempston interface configured ([INPUT] Mouse=NONE) the host
+// counters still reach the guest, as SIO B packets (DSS 1.71) and through the PLD's Kempston view, code #58
+// (DSS 1.62.9x reads #FADF / #FBDF / #FFDF). Before the fix the view read the interface: #FF without it
+TEST_F(SprinterInput_Test, MouseWithoutAKempstonInterface)
+{
+    ASSERT_NE(_context->pMouse, nullptr);
+    _context->pMouse->SetPresent(false);
+    SetCodeAll(0xFADF, true, 0x58);
+    OpenDcp();
+
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    _context->pMouse->SetCounters(40, 90);
+    _context->pMouse->SetButtons(0xFE);  // left held
+    EXPECT_EQ(In(0xFADF), 0xFE) << "buttons: D0 left (active low), D7-D3 = 1";
+    EXPECT_EQ(In(0xFBDF), 40) << "X";
+    EXPECT_EQ(In(0xFFDF), 90) << "Y";
+
+    In(0x001B);  // the poll that starts the packet
+    _context->pMouse->Move(5, 3);
+    In(0x001B);
+    Wait(3 * 26250);
+    std::vector<uint8_t> got;
+    while (In(0x001B) & 0x01)
+        got.push_back(In(0x001A));
+    ASSERT_FALSE(got.empty()) << "no packet on SIO B";
+    EXPECT_EQ(got.front() & 0x60, 0x60) << "a packet with the left button";
+    _context->pMouse->SetPresent(true);
+}
+
 /// region <BIOS 3.04 with the host keyboard>
 
 // The real BIOS, keys through the automation keyboard (DebugKeyboardManager: what type_input and
