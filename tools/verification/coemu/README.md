@@ -6,8 +6,10 @@ It answers "which emulator gets this right, on which machine, and where do they 
 
 The first program it runs is the contention probe,
 [`../contention/ctprobe`](../contention/ctprobe/README.md). Any program with `START`, `PROBEEND`, `DONE` in its
-`.sym` and a `<program>-compare.py` runs the same way through `PROGRAM`; the Scorpion turbo test
-([`../contention/turbotest`](../contention/turbotest/README.md)) does, on the `scorpion` machine.
+`.sym` and a `<program>-compare.py` runs the same way through `PROGRAM`: the turbo test
+([`../contention/turbotest`](../contention/turbotest/README.md)) on the `scorpion` and `atm3` machines, and FUSE's
+fusetest through its wrapper ([`../contention/fusetest`](../contention/fusetest/README.md),
+`fusetest/fusetest-coemu`) on the 48K, 128K, +2, +2A and +3.
 
 ## Quick start
 
@@ -42,7 +44,8 @@ measured and expected rows. `matrix.py --md <file>` also writes the summary grid
 --out-dir <dir>` builds the matrix from the results of an earlier run.
 
 Reports kept in the repository, with each difference explained: [reports/](reports/) (latest:
-[2026-10-01](reports/2026-10-01-ctprobe-matrix.md), all eleven emulators on the same probe build, with P-02B).
+[2026-10-01](reports/2026-10-01-ctprobe-matrix.md), all eleven emulators on the same probe build, with P-02B;
+fusetest: [2026-10-02](reports/2026-10-02-fusetest-matrix.md)).
 
 ## Emulators
 
