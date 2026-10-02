@@ -26,6 +26,7 @@
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
+#include "emulator/io/network/zifi.h"
 #include "emulator/io/serial/comport.h"
 
 class EmulatorContext;
@@ -67,6 +68,7 @@ public:
         std::optional<uint8_t> kbcFirmware;    ///< ATM Turbo 2+: Atm2Kbc::Firmware ([ATM] Kbc=)
         std::optional<std::string> atm2IoEsp;  ///< Atm2IoEsp= value (ComPortSpec): the ATM2IOESP card's ESP
         std::optional<uint8_t> atm2IoEspAddress;   ///< Atm2IoEspAddress=: its bus address (#F0 / #F8)
+        std::optional<std::string> zifi;       ///< ZiFi= value (ComPortSpec): the TS AVR's ZiFi UART
     };
     bool RequestChange(const Change& change, std::string& error);
 
@@ -80,7 +82,9 @@ public:
     /// kbc_firmware (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names:
     /// none | v22-7 .. v41), atm2ioesp (ComPortSpec: what the ATM2IOESP card's
     /// 16550 is wired to, default at), atm2ioesp_address (its bus address, a
-    /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0).
+    /// multiple of 8: 0xF0 Rev 1.5 / 2.0, 0xF8 Rev 1.0), zifi (ComPortSpec:
+    /// what the TS AVR firmware's ZiFi UART is wired to, default none; at =
+    /// the original ZiFi board's ESP-01).
     /// Unknown keys and bad values are errors
     static bool ParseChange(const std::vector<std::pair<std::string, std::string>>& settings, Change& out,
                             std::string& error);
@@ -92,6 +96,7 @@ public:
     ZxNetUsb* Card() const { return _card.get(); }
     ComPort* Com() const { return _com.get(); }
     Atm2IoEsp* Atm2IoEspCard() const { return _atm2IoEsp.get(); }
+    ZiFi* ZiFiBlock() const { return _zifi.get(); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -119,6 +124,7 @@ public:
             std::string kbcFirmware;      ///< [ATM] Kbc= name; empty: no controller socket on this board
             std::string atm2IoEsp;        ///< ComPortSpec text, AT when empty
             unsigned atm2IoEspAddress = 0xF0;
+            std::string zifi;             ///< ComPortSpec text, NONE when empty
             std::string dnsMode;          ///< HOST | PASS
             std::string hosts;
             std::string forwards;
@@ -172,6 +178,12 @@ public:
         /// The ATM2IOESP card (a 16550 on the INTERNAL I/O connector)
         Com atm2IoEsp;
         unsigned atm2IoEspAddress = 0;
+
+        /// The TS AVR firmware's ZiFi: `zifi` is its UART to the ESP (USART0) and the peer, `zifiRegisters`
+        /// the API block (the rings: `zfRx` / `zfTx` ZiFi, `rsRx` / `rsTx` the 16550's)
+        Com zifi;
+        ZiFi::View zifiRegisters;
+        bool zifiMachine = false;         ///< the machine has the ZiFi block (TS-Conf, ZX-Evo + TS firmware)
     };
     Status GetStatus() const;
 
@@ -188,18 +200,28 @@ private:
         bool atm2IoEsp = false;           ///< the ATM2IOESP card on the INTERNAL I/O connector
         std::string atm2IoEspPeer;        ///< ComPortSpec of its ESP
         uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
+        bool zifi = false;                ///< the AVR firmware's ZiFi block (with the EvoAvr port)
+        std::string zifiPeer;             ///< ComPortSpec of its UART's peer
         std::vector<std::string> notes;
         bool operator==(const Plan& o) const
         {
             return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer &&
                    machineSerial == o.machineSerial && machinePeer == o.machinePeer && atm2IoEsp == o.atm2IoEsp &&
-                   atm2IoEspPeer == o.atm2IoEspPeer && atm2IoEspAddress == o.atm2IoEspAddress;
+                   atm2IoEspPeer == o.atm2IoEspPeer && atm2IoEspAddress == o.atm2IoEspAddress && zifi == o.zifi &&
+                   zifiPeer == o.zifiPeer;
         }
     };
     Plan MakePlan() const;
     void Refit();
     void Unplug();
-    void FitCom(const Plan& plan, const Uart16550::State* keep);
+    /// What a refit keeps of the AVR (the cable changes, not the chip): its UARTs' registers and the ZiFi block
+    struct AvrKeep
+    {
+        std::optional<Uart16550::State> com;
+        std::optional<Uart16550::State> zifiLine;
+        std::optional<ZiFi::State> zifi;
+    };
+    void FitCom(const Plan& plan, const AvrKeep* keep);
     /// The peer a ComPortSpec names (nullptr for NONE); an ESP module without
     /// its own ,<baud> ships at `espBaud` (the port's default)
     static constexpr uint32_t kDefaultEspBaud = 115200;
@@ -215,6 +237,7 @@ private:
     std::unique_ptr<ComPort> _com;
     std::unique_ptr<ISerialPeer> _machinePeer;   ///< on the machine's own non-16550 port (Atm2Kbc)
     std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
+    std::unique_ptr<ZiFi> _zifi;                 ///< the TS AVR firmware's ZiFi block (on `_com`'s #xxEF)
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

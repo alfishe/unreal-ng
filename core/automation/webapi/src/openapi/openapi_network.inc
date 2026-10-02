@@ -27,7 +27,12 @@
             "machine.serial_port atm2-kbc): fitted, flavor atm2kbc, kbc_firmware, the peer fields as in com_port, baud (as the "
             "firmware programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost (frames the MCU had no room for). "
             "atm2ioesp: the ATM2IOESP card (machine.internal_io says the machine has the connector): fitted, address (its bus "
-            "address), the peer fields and the 16550 registers as in com_port. card.kind is none when "
+            "address), the peer fields and the 16550 registers as in com_port. "
+            "zifi: the TS AVR firmware's ZiFi (machine.zifi: TS-Conf, a ZX-Evo with avr_firmware ts2016-02 / ts2016-04): "
+            "fitted, avr_firmware, api (0 off, 1 on), data_register (zifi | rs232: what #00EF..#BFEF reaches, the last "
+            "ZIFR / ZOFR or RIFR / ROFR read decides), er, imr, isr, zibtr, zitor_ms, ribtr, ritor_ms, zifi_rx / zifi_tx "
+            "and rs232_rx / rs232_tx (ring fill), the peer fields of its line to the ESP, bytes_in, bytes_out, dropped "
+            "(bytes the full ring lost). card.kind is none when "
             "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
@@ -59,7 +64,9 @@
             "\"baseconf\" | \"base2010\" | \"base2011-04\" | \"base2011-05\" | \"base2011-09\" | \"base2013\" | \"base2023\" | \"ts\" | "
             "\"ts2013\" | \"ts2016-02\" | \"ts2016-04\"; a change restarts the AVR's UART), kbc_firmware (ATM Turbo 2+, the keyboard "
             "controller's firmware: \"none\" | \"v22-7\" | \"v22-11\" | \"v22-12\" | \"v31-7\" | \"v31-11\" | \"v32-7\" | "
-            "\"v32-11\" | \"v40\" | \"v41\"; RS-232 from v31 on; a change fits a new controller, which boots afresh). The settings in force are \"settings\" in "
+            "\"v32-11\" | \"v40\" | \"v41\"; RS-232 from v31 on; a change fits a new controller, which boots afresh), zifi (TS-Conf, "
+            "a ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to, the com_port values, default \"none\" = "
+            "no ZiFi board; \"at\" = the original board's ESP-01 with Espressif's AT firmware). The settings in force are \"settings\" in "
             "GET /state/network, with the host's serial devices in \"host_serial_devices\". Unset keys keep their value. Applied "
             "at the next frame boundary (at once while paused): the devices are fitted again, so every connection closes. A "
             "device the machine cannot take (a ZX-WiFi card on a ZX-Evo: #xxEF is the AVR's; a com_port with a keyboard controller "

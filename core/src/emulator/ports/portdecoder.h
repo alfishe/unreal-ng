@@ -64,6 +64,20 @@ constexpr uint8_t PORT_7FFD_RAM_BANK_7          = 0b0000'0111;
 
 /// region <Types>
 
+/// A switch on the machine's front panel that the user (or automation) operates while it runs. The machine's port
+/// decoder owns it; the change is an outside input, so it travels through the TTD input journal
+/// (TTDInputKind::FrontPanelSwitch) and replays at the same T-state
+enum class FrontPanelSwitch : uint8_t
+{
+    Turbo = 0,   ///< the CPU clock's TURBO switch (Profi v3 / v5)
+    Cpm = 1,     ///< the Profi v5 CP/M switch: holds #DFFD at #00 while pressed
+};
+
+/// The switch's name on every automation surface ("turbo"); nullptr for an unknown id
+const char* FrontPanelSwitchName(FrontPanelSwitch sw);
+/// The switch for a name; false for an unknown one
+bool ParseFrontPanelSwitch(const std::string& name, FrontPanelSwitch& out);
+
 struct PortMatch
 {
     uint16_t mask;
@@ -699,6 +713,12 @@ public:
     };
     virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
 
+    /// Front-panel switches (FrontPanelSwitch). A machine without the switch answers false to all three; Set changes
+    /// the machine at once and is called on the emulation thread (Emulator::SetFrontPanelSwitch routes it there)
+    virtual bool HasFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
+    virtual bool GetFrontPanelSwitch(FrontPanelSwitch sw) const { (void)sw; return false; }
+    virtual bool SetFrontPanelSwitch(FrontPanelSwitch sw, bool on) { (void)sw; (void)on; return false; }
+
     /// The PC of the instruction doing the I/O in progress (the video change log notes it): the
     /// main CPU's M1 address; a machine whose CPU is a library (the Sprinter's Z84C15) overrides it
     virtual uint16_t IoPc() const;
@@ -815,7 +835,7 @@ public:
         {
             None,     ///< no serial port of its own (a ZX-WiFi card adds one)
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
-            ZiFi,     ///< TS-Conf: ZiFi + 16550 through the TS AVR (step N5, not emulated yet)
+            ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
         } serialPort = SerialPort::None;
 
@@ -844,6 +864,11 @@ public:
         /// Which register an #xxEF access reaches (ComPort::RegisterOf);
         /// nullptr = A10..A8
         std::function<int(uint16_t port)> serialRegister;
+
+        /// The TS-Labs AVR firmware's ZiFi block (TS-Conf; a ZX-Evo with a TS firmware from 2016-02)
+        bool zifi = false;
+        /// The TS-Conf wait-port interrupt (vector #F9, INTMASK bit 3); empty: none (BaseConf FPGA)
+        std::function<void()> waitPortInterrupt;
     };
     virtual NetworkCapabilities DescribeNetwork() { return NetworkCapabilities(); }
 

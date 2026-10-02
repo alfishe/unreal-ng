@@ -1,4 +1,4 @@
-// The CD drives under TTD (PLAN #83): the CdDrive blob (id 39) exists only on a
+// The CD drives under TTD (PLAN #83): the CdDrive blob (id 41) exists only on a
 // board with a CD unit, so every other machine's checkpoints are unchanged; it
 // carries the audio play state, the head and page 0Eh; a recording replays a
 // play mid-track exactly from a frame checkpoint and from a mid-frame seek

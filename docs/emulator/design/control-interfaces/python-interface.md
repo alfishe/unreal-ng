@@ -228,7 +228,8 @@ class Emulator:
         com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
         (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
-        atm2ioesp in network_state()). Applied at the next frame
+        atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
+        default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
     def rtc_state(self) -> dict:

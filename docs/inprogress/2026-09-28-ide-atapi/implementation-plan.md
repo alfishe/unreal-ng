@@ -106,5 +106,5 @@ Tests: `atadisk_test`, `atachannel_test`, `atapicdrom_test`, `ideadapter_test` (
 The drive grew from a data-only ISO reader into a full MMC CD-ROM drive with audio: discs are
 `CdImage`s (ISO, CUE/BIN, CD CHD) handed over by the media slot beside the block stack; the audio
 side is `CdAudioPlayer` (head on emulated time, page 0Eh, mixer output); the extra state is the
-CdDrive TTD blob (id 39), so the `AtaChannel` blob (id 17) is unchanged. Design and tests:
+CdDrive TTD blob (id 41), so the `AtaChannel` blob (id 17) is unchanged. Design and tests:
 [2026-10-02-cd-audio/README.md](../2026-10-02-cd-audio/README.md).

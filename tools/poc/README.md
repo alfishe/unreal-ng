@@ -61,6 +61,7 @@ NNN-name/
 | 020 | [nedoos-layer](020-nedoos-layer/) | NedoOS seen from outside: tasks, pages, pipes, sockets, files, kernel-busy report, kernel calls on behalf of a task, ending a stuck call (Python over the WebAPI) |
 | 018 | [tui-debuggers](018-tui-debuggers/) | Classic + TSConf debugger TUIs (FTXUI, golden-exact fork band, swappable mock/REST WebAPI backends) |
 | 019 | [zxdlss-gigascreen](019-zxdlss-gigascreen/) | ZX DLSS GigaScreen de-flicker: reference recording (Across the Edge), clip extraction/export from TTD, effect map, quality oracle; Python POC → C++ prototype → integration |
+| 021 | [eve-accel](021-eve-accel/) | FT812 (VDAC2) renderer acceleration: line-parallel CPU, Metal compute (bit-exact), per-line vs per-frame dispatch, 256-subpixel AA vs the distance table, three emulation profiles; summary in `docs/inprogress/2026-10-01-tsconf-vdac2/acceleration-experiments.md` |
 
 ---
 

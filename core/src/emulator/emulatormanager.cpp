@@ -697,12 +697,15 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
     auto it = _emulators.find(emulatorId);
     if (it != _emulators.end())
     {
-        // Stop the emulator if it's running
-        if (it->second->IsRunning())
-        {
-            LOGINFO("EmulatorManager::RemoveEmulator - Stopping running emulator with ID '%s'", emulatorId.c_str());
-            it->second->Stop();
-        }
+        // Always go through Stop(), even when IsRunning() already reads false:
+        // Stop() is a blocking barrier (it returns only once the emulation
+        // thread has actually joined), while IsRunning() alone can go false
+        // before that join completes if another caller is concurrently
+        // stopping the same instance. Gating this on IsRunning() let Release()
+        // free Core's Screen / SoundManager / TimeTravelManager while that
+        // thread was still mid-frame (2026-10-02 crash).
+        LOGINFO("EmulatorManager::RemoveEmulator - Stopping emulator with ID '%s'", emulatorId.c_str());
+        it->second->Stop();
 
         // Release resources
         it->second->Release();
@@ -1164,12 +1167,10 @@ void EmulatorManager::ShutdownAllEmulators()
 
     for (auto& [uuid, emulator] : _emulators)
     {
-        // Stop the emulator if it's running
-        if (emulator->IsRunning())
-        {
-            LOGINFO("EmulatorManager::ShutdownAllEmulators - Stopping emulator with UUID: %s", uuid.c_str());
-            emulator->Stop();
-        }
+        // Always go through Stop() - see RemoveEmulatorInstance() for why
+        // gating this on IsRunning() is unsafe
+        LOGINFO("EmulatorManager::ShutdownAllEmulators - Stopping emulator with UUID: %s", uuid.c_str());
+        emulator->Stop();
 
         // Release resources
         emulator->Release();

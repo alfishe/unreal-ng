@@ -139,6 +139,8 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::Wd1793Context: return "wd1793-context";
         case PeripheralId::AtmIoBus: return "atm-io-bus";
         case PeripheralId::Atm2IoEsp: return "atm2ioesp";
+        case PeripheralId::ZiFiLine: return "zifi-line";
+        case PeripheralId::ZiFi: return "zifi";
         case PeripheralId::CdDrive: return "cd-drive";
         case PeripheralId::Count: break;
     }

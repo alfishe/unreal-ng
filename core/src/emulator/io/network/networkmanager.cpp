@@ -50,12 +50,17 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     const std::string comPeer = peerOf(net.comPort, "NONE");
 
     // The machine's own serial port: mainboard hardware, there with the network off
-    if (caps.serialPort == SerialPort::EvoAvr)
+    const std::string zifiPeer = peerOf(net.zifi, "NONE");
+    if (caps.serialPort == SerialPort::EvoAvr || caps.serialPort == SerialPort::ZiFi)
     {
+        // The ZX-Evo's AVR (TS-Conf: the TS firmware): its 16550 and, with a TS-Labs firmware, ZiFi
         plan.serial = Plan::Serial::EvoAvr;
-        plan.avr = _context->config.atm.evo_avr;
+        plan.avr = static_cast<uint8_t>(caps.uart.avr);
         if (networkOn)
             plan.peer = comPeer;
+        plan.zifi = caps.zifi;
+        if (caps.zifi && networkOn)
+            plan.zifiPeer = zifiPeer;
     }
     else if (caps.serialPort == SerialPort::Atm2Kbc)
     {
@@ -64,14 +69,15 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (networkOn)
             plan.machinePeer = comPeer;
     }
-    else if (caps.serialPort == SerialPort::ZiFi && !comPeer.empty())
-        plan.notes.push_back("ComPort: the machine's serial port (ZiFi) is not emulated yet");
     else if (caps.serialPort == SerialPort::None && !comPeer.empty())
     {
         const bool atm = decoder && caps.reloadFirmware;
         plan.notes.push_back(atm ? "ComPort: the keyboard controller firmware has no RS-232 (V22-*: use V31-* or later)"
                                  : "ComPort: the machine has no serial port of its own - a ZX-WiFi card adds one (Card=ZXWIFI)");
     }
+
+    if (!caps.zifi && !zifiPeer.empty())
+        plan.notes.push_back("ZiFi: the machine has no ZiFi (TS-Conf, or a ZX-Evo with [EVO] Avr=TS2016-02 / TS2016-04)");
 
     if (!networkOn)
         return plan;
@@ -170,21 +176,35 @@ void NetworkManager::FitAtm2IoEsp(const Plan& plan)
     _context->pAtm2IoEsp = _atm2IoEsp.get();
 }
 
-void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
+void NetworkManager::FitCom(const Plan& plan, const AvrKeep* keep)
 {
     std::unique_ptr<ISerialPeer> peer = MakePeer(plan.peer, kDefaultEspBaud);
     PortDecoder* decoder = _context->pPortDecoder;
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
+    std::function<void()> waitPortInterrupt;
     if (plan.serial == Plan::Serial::EvoAvr && decoder)
     {
         PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
         params = caps.uart;
         registerOf = std::move(caps.serialRegister);
+        waitPortInterrupt = std::move(caps.waitPortInterrupt);
     }
     _com = std::make_unique<ComPort>(_context, params, std::move(peer), std::move(registerOf));
-    if (keep)
-        _com->Uart().LoadState(*keep);   // the same chip, a new cable: its registers stay
+    if (keep && keep->com)
+        _com->Uart().LoadState(*keep->com);   // the same chip, a new cable: its registers stay
+    if (plan.zifi)
+    {
+        // The ZiFi board's ESP ships at 115200, the only rate the AVR's USART0 runs
+        _zifi = std::make_unique<ZiFi>(_context, _com->Uart(), MakePeer(plan.zifiPeer, kDefaultEspBaud),
+                                       std::move(waitPortInterrupt));
+        if (keep && keep->zifiLine)
+            _zifi->Line().Uart().LoadState(*keep->zifiLine);
+        if (keep && keep->zifi)
+            _zifi->LoadState(*keep->zifi);
+        _com->SetZiFi(_zifi.get());
+        _context->pZiFi = _zifi.get();
+    }
     if (decoder)
         _com->AttachToPorts(decoder);
     _context->pComPort = _com.get();
@@ -248,6 +268,8 @@ void NetworkManager::Refit()
             copy(net.atm2IoEsp, sizeof(net.atm2IoEsp), *change->atm2IoEsp);
         if (change->atm2IoEspAddress)
             net.atm2IoEspAddress = *change->atm2IoEspAddress;
+        if (change->zifi)
+            copy(net.zifi, sizeof(net.zifi), *change->zifi);
         if (change->kbcFirmware)
         {
             // A new controller chip in the socket: it boots afresh; its peer is plugged in again below
@@ -278,17 +300,26 @@ void NetworkManager::Refit()
 
     // The machine's own serial port keeps its registers across a refit (the
     // cable changes, not the chip)
-    std::optional<Uart16550::State> keep;
+    std::optional<AvrKeep> keep;
     // (a new AVR firmware restarts the AVR: its UART starts afresh)
     if (_com && plan.serial == Plan::Serial::EvoAvr && _plan.serial == Plan::Serial::EvoAvr && plan.avr == _plan.avr)
     {
         keep.emplace();
-        _com->Uart().SaveState(*keep);
+        keep->com.emplace();
+        _com->Uart().SaveState(*keep->com);
+        if (_zifi && plan.zifi)
+        {
+            keep->zifiLine.emplace();
+            _zifi->Line().Uart().SaveState(*keep->zifiLine);
+            keep->zifi.emplace();
+            _zifi->SaveState(*keep->zifi);
+        }
     }
     Unplug();
     _plan = plan;
 
-    if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty() || !plan.atm2IoEspPeer.empty())
+    if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty() || !plan.atm2IoEspPeer.empty() ||
+        !plan.zifiPeer.empty())
     {
         std::unique_ptr<IHostNet> host;
         if (_context->config.network.hostAccess)
@@ -329,6 +360,7 @@ void NetworkManager::Unplug()
                 caps.internalIo(_atm2IoEsp.get(), false);
         }
         _context->pAtm2IoEsp = nullptr;
+        _context->pZiFi = nullptr;
         _context->pZxNetUsb = nullptr;
         _context->pComPort = nullptr;
         _context->pMachineSerialPeer = nullptr;
@@ -337,6 +369,9 @@ void NetworkManager::Unplug()
     // The adapters first: their sockets close through the virtual network
     _machinePeer.reset();
     _atm2IoEsp.reset();
+    if (_com)
+        _com->SetZiFi(nullptr);
+    _zifi.reset();   // before the COM port: it holds the 16550's rings
     _com.reset();
     _card.reset();
     _network.reset();
@@ -376,6 +411,20 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
         if (change.comPort->size() >= sizeof(_context->config.network.comPort))
         {
             error = "com_port: too long";
+            return false;
+        }
+    }
+    if (change.zifi)
+    {
+        ComPortSpec spec;
+        if (!ComPortSpec::Parse(*change.zifi, spec, error))
+        {
+            error = "zifi: " + error;
+            return false;
+        }
+        if (change.zifi->size() >= sizeof(_context->config.network.zifi))
+        {
+            error = "zifi: too long";
             return false;
         }
     }
@@ -426,6 +475,8 @@ void NetworkManager::OnFrame()
             _machinePeer->OnFrame();
         if (_atm2IoEsp)
             _atm2IoEsp->OnFrame();
+        if (_zifi)
+            _zifi->OnFrame();
         UpdateStatus();
     }
     else if ((_com || _plan.machineSerial || _atm2IoEsp) && _context && _context->emulatorState.frame_counter % 25 == 0)
@@ -473,6 +524,7 @@ void NetworkManager::UpdateStatus()
         s.zxWifi = net.zxWifi[0] ? std::string(net.zxWifi) : std::string("AT");
         s.atm2IoEsp = net.atm2IoEsp[0] ? std::string(net.atm2IoEsp) : std::string("AT");
         s.atm2IoEspAddress = net.atm2IoEspAddress;
+        s.zifi = net.zifi[0] ? std::string(net.zifi) : std::string("NONE");
         s.espChip = net.espChip == 1 ? "ESP8266" : "ESP32";
         s.avrFirmware = Uart16550::AvrFirmwareName(static_cast<Uart16550::AvrFirmware>(_context->config.atm.evo_avr));
         s.dnsMode = net.dnsPass ? "PASS" : "HOST";
@@ -498,6 +550,7 @@ void NetworkManager::UpdateStatus()
         st.internalIo = static_cast<bool>(caps.internalIo);
         if (caps.reloadFirmware)   // the board has the keyboard controller socket
             st.settings.kbcFirmware = Atm2Kbc::FirmwareName(static_cast<Atm2Kbc::Firmware>(_context->config.atm.kbc_firmware));
+        st.zifiMachine = caps.zifi;
         st.serialPort = caps.serialPort == SerialPort::EvoAvr    ? "evo-avr"
                         : caps.serialPort == SerialPort::ZiFi    ? "zifi"
                         : caps.serialPort == SerialPort::Atm2Kbc ? "atm2-kbc"
@@ -581,6 +634,20 @@ void NetworkManager::UpdateStatus()
         c.baud = uart.Baud();
         c.frameBits = uart.FrameBits();
         st.atm2IoEspAddress = _atm2IoEsp->Address();
+    }
+    if (_zifi)
+    {
+        auto& c = st.zifi;
+        const Uart16550& uart = _zifi->Line().Uart();
+        c.fitted = true;
+        c.flavor = "zifi";
+        if (_com)
+            c.firmware = Uart16550::AvrFirmwareName(_com->Uart().GetParams().avr);
+        FillPeerStatus(_zifi->Line().Peer(), c);
+        c.uart = uart.GetView();
+        c.baud = uart.Baud();
+        c.frameBits = uart.FrameBits();
+        st.zifiRegisters = _zifi->GetView();
     }
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
@@ -773,6 +840,17 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
             }
             out.kbcFirmware = static_cast<uint8_t>(firmware);
         }
+        else if (key == "zifi")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = "zifi: " + why;
+                return false;
+            }
+            out.zifi = spec.ToString();
+        }
         else if (key == "zx_wifi" || key == "zxwifi")
         {
             ComPortSpec spec;
@@ -799,7 +877,7 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
         {
             error = "unknown setting '" + rawKey +
                     "' (card, host_access, dns_mode, hosts, forwards, connect_timeout_ms, com_port, zx_wifi, "
-                    "com_modem_lines, esp_chip, avr_firmware)";
+                    "com_modem_lines, esp_chip, avr_firmware, kbc_firmware, atm2ioesp, atm2ioesp_address, zifi)";
             return false;
         }
     }

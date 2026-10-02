@@ -6,6 +6,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/memory/rom.h>
 #include <emulator/platform.h>
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/video/screen.h>
 
 #include <algorithm>
@@ -429,10 +430,10 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
                   : (memory.GetROMPage() == 1) ? "128 BASIC Syntax"
                   : (memory.GetROMPage() == 2) ? "+3DOS"
                                                : "48K BASIC";
-    else if (config.mem_model == MM_PROFI)
+    else if (IsProfiModel(config.mem_model))
         romMode = (memory.GetROMPage() == 0)   ? "SYS/Menu"
                   : (memory.GetROMPage() == 1) ? "TR-DOS"
-                  : (memory.GetROMPage() == 2) ? "128K Editor + STS Monitor"
+                  : (memory.GetROMPage() == 2) ? "128K"
                                                : "48K BASIC";
     else if (config.mem_model == MM_SPRINTER)
     {
@@ -467,8 +468,12 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
         ss << "  Screen:           " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
         ss << "  ROM Select:       " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
         ss << "  Paging Locked:    " << ((state.p7FFD & 0x20) ? "YES" : "NO") << NEWLINE;
-        if (config.mem_model == MM_PROFI)
+        if (IsProfiModel(config.mem_model))
         {
+            const ProfiSyncProm prom =
+                ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model);
+            ss << "  Profi board:      " << (config.mem_model == MM_PROFI3 ? "v3" : "v5") << " (sync PROM "
+               << ProfiSyncPromName(prom) << ")" << NEWLINE;
             ss << "  Port 0xDFFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.pDFFD
                << std::dec << NEWLINE;
             ss << "  RAM High Bits:    " << (int)(state.pDFFD & 0x07) << NEWLINE;
@@ -589,6 +594,7 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         case MM_ATM710:
         case MM_ATM450:
         case MM_PROFI:
+        case MM_PROFI3:
             totalROMPages = 4;
             break;
         case MM_SPRINTER:
@@ -629,11 +635,11 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "  Page 2: 128K Editor/Menu ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
-    else if (config.mem_model == MM_PROFI)
+    else if (IsProfiModel(config.mem_model))
     {
         ss << "  Page 0: SYS/Menu ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 1: TR-DOS ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
-        ss << "  Page 2: 128K Editor + STS Monitor ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 2: 128K ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
     else if (config.mem_model == MM_SPRINTER)

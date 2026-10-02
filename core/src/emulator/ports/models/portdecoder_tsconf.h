@@ -37,7 +37,7 @@ class Vdac2Card;
 ///   #xxF7     A8 = 1: #EFF7 and the Gluk CMOS (EvoAvr, the board's AVR) (§9)
 ///   #xxDF     Kempston mouse
 ///   #57/#77   SD card SPI: the Z-Controller registers (media slot "sd.zc")
-///   #xxEF     COM port / ZiFi (not emulated: reads #FF)
+///   #xxEF     the TS AVR firmware: 16550 COM port (#F8EF..#FFEF) and ZiFi (NetworkManager fits them)
 ///   Nemo IDE  checked first (TryIdePortIn / TryIdePortOut)
 ///
 /// M1 hook (IMachineM1Hook, installed only while needed): the DOS trap
@@ -92,16 +92,12 @@ public:
     /// #1F outside DOS answers Joystick::Read()
     bool HasKempstonJoystick() const override { return true; }
 
-    /// #xxEF belongs to ZiFi (network TDD step N5): no COM port there
+    /// #xxEF belongs to the AVR (its 16550 and ZiFi): a ZX-WiFi card does not fit
     bool ReservesLowByte(uint8_t lowByte) const override { return lowByte == 0xEF; }
 
-    /// ZX-Bus cards fit; the serial port is ZiFi (network TDD step N5)
-    NetworkCapabilities DescribeNetwork() override
-    {
-        NetworkCapabilities caps;
-        caps.serialPort = NetworkCapabilities::SerialPort::ZiFi;
-        return caps;
-    }
+    /// ZX-Bus cards fit; the serial port is the TS AVR firmware's 16550 + ZiFi
+    /// (docs/inprogress/2026-10-02-tsconf-zifi/tdd.md)
+    NetworkCapabilities DescribeNetwork() override;
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     /// The mouse ports read the AVR's PS/2 mouse registers

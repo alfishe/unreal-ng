@@ -1875,6 +1875,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " baud, rx " << ioEsp["rx_fifo"].asInt() << " / tx " << ioEsp["tx_fifo"].asInt() << " in FIFO, in "
                                             << ioEsp["bytes_in"].asUInt64() << " / out " << ioEsp["bytes_out"].asUInt64() << " bytes, overruns "
                                             << ioEsp["overruns"].asUInt64();
+                                    const Json::Value& zifi = value["zifi"];
+                                    if (zifi["fitted"].asBool())
+                                        out << "\n[zifi] " << zifi["avr_firmware"].asString() << " API " << zifi["api"].asInt() << ", data register "
+                                            << zifi["data_register"].asString() << ", ISR " << zifi["isr"].asString() << " IMR " << zifi["imr"].asString()
+                                            << ", rings zifi " << zifi["zifi_rx"].asInt() << " in / " << zifi["zifi_tx"].asInt() << " out, rs232 "
+                                            << zifi["rs232_rx"].asInt() << " / " << zifi["rs232_tx"].asInt() << "; line "
+                                            << (zifi.isMember("peer") ? zifi["peer"].asString() : std::string("none"))
+                                            << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
+                                            << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
+                                            << zifi["dropped"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
@@ -1882,7 +1892,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "\n[network] settings: card " << set["card"].asString() << ", com_port " << set["com_port"].asString()
                                             << ", zx_wifi " << set["zx_wifi"].asString() << ", esp_chip " << set["esp_chip"].asString()
                                             << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
-                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string());
+                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string())
+                                            << (value["machine"]["zifi"].asBool() ? ", zifi " + set["zifi"].asString() : std::string());
                                 }
                             }
                             else if (aspect == "rtc")

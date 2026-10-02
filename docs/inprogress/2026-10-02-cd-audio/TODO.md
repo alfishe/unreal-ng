@@ -12,7 +12,7 @@ results: [README.md](README.md).
   0 / 1 / 2, READ HEADER, MODE SENSE / SELECT 01h / 0Dh / 0Eh / 2Ah / 3Fh, READ CD, READ CD MSF)
 - [x] Playback on emulated time (exact integer head), the renderer, page 0Eh routing and volume
 - [x] Mixer row per drive, HUD "CD", recording source names, Qt mixer rows (follow the device list)
-- [x] TTD: the CdDrive blob (id 39), only with a CD unit; no fixture re-recorded
+- [x] TTD: the CdDrive blob (id 41), only with a CD unit; no fixture re-recorded
 - [x] Automation: `CdAudioControl` on WebAPI + OpenAPI, MCP, CLI, Lua, Python; docs of each surface,
   command-interface.md, recipe [cd-audio.md](../../../.recipe/media/cd-audio.md) verified on a live build
 - [x] Every IDE board: a test per board (Pentagon Nemo / Nemo A8 / DivIDE, ZX-Evo, ATM Turbo 2+,

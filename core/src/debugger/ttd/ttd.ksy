@@ -528,7 +528,7 @@ types:
         doc: |
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
-          8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette),
+          8 AtmPaging, 9 ProfiPaging (Profi: 16-entry palette, pDFFD latch, front-panel switches),
           10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
@@ -569,7 +569,10 @@ types:
           36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
           37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort),
           38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved),
-          39 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
+          39 ZiFiLine (the TS AVR's ZiFi UART and its peer: netstate::SerialPort, as SerialPort),
+          40 ZiFi (the TS AVR's ZiFi API block, 32 bytes: version 1, api, err, selectZf, imr, isr, zibtr, zitor,
+          ribtr, ritor, 5 reserved, u8 x 8 zfLastRx, u8 x 8 rsLastRx).
+          41 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
           with a CD unit, so the blobs of every other machine are unchanged).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
@@ -583,7 +586,7 @@ types:
 
   cd_drive_blob:
     doc: |
-      Payload of peripheral 39 CdDrive (ttdcddrive.cpp): the CD audio side and the READ CD
+      Payload of peripheral 41 CdDrive (ttdcddrive.cpp): the CD audio side and the READ CD
       staging of every unit of the IDE board (channel * 2 + position; 2 units, 4 on the
       Sprinter), zero for a unit that is no CD drive. Little-endian.
     seq:

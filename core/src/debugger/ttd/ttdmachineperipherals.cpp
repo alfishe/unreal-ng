@@ -6,7 +6,9 @@
 #include "emulator/io/network/atm2ioesp.h"
 #include "network/ttdmachineserialpeer.h"
 #include "network/ttdserialport.h"
+#include "network/ttdzifi.h"
 #include "network/ttdzxnetusb.h"
+#include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
@@ -118,6 +120,17 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             PeripheralId::Atm2IoEsp, "Atm2IoEsp");
         registry.Register(PeripheralId::Atm2IoEsp, card.get());
         ownedSerializers.push_back(std::move(card));
+    }
+    if (context->pZiFi)
+    {
+        auto line = std::make_unique<TTDSerialPort>(
+            context, [context]() { return context->pZiFi ? &context->pZiFi->Line() : nullptr; },
+            PeripheralId::ZiFiLine, "ZiFiLine");
+        registry.Register(PeripheralId::ZiFiLine, line.get());
+        ownedSerializers.push_back(std::move(line));
+        auto zifi = std::make_unique<TTDZiFi>(context);
+        registry.Register(PeripheralId::ZiFi, zifi.get());
+        ownedSerializers.push_back(std::move(zifi));
     }
     if (context->pMachineSerialPeer)
     {

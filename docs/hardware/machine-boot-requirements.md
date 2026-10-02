@@ -67,7 +67,7 @@ These account for most "it won't boot" reports. Check them before suspecting the
 | `PENTAGON` | Pentagon 128/512/1024 | `data/rom/pentagon.rom` (`ram_size` selects the 128/512/1024 decoder, not the ROM) | tape, TR-DOS floppy `fdd.a`–`fdd.d`; IDE hard disk `ide0.master`/`ide0.slave` (Nemo IDE, `[HDD] Scheme=NEMO`) | TR-DOS TRD for floppy; MBR+FAT for the Nemo IDE HDD (same rule as ATM, see pitfall 1) |
 | `SCORPION` | ZS Scorpion 256/1024 | `data/rom/scorpion.rom` (Shadow Monitor "SOS" ROM, not the Sinclair 48K ROM) | tape, built-in Beta-128 TR-DOS floppy `fdd.a`–`fdd.d` (no interface to insert) | TR-DOS TRD |
 | `PROFSCORP` | ZS Scorpion + ProfROM | `data/rom/scorpion.rom` + `data/rom/scorp_prof401.rom` (ProfROM, selected via `#7EFD`) | same as `SCORPION` | TR-DOS TRD |
-| `PROFI` | Profi 1024 | `data/rom/profi.rom` (SYS/menu ROM, boots there first) | tape, TR-DOS floppy `fdd.a`–`fdd.d`, IDE hard disk `ide0.master`/`ide0.slave` (`[HDD] Scheme=PROFI`) | TR-DOS TRD; hard disk: raw image, geometry from its ProfiHiDD header (16×16 default) — **not** MBR-dependent the way ATM/ZX-Evo is |
+| `PROFI` / `PROFI3` | Profi v5 / v3 | `data/rom/profi.rom` (v5) / `data/rom/profi/kramis-v02.rom` (v3); SYS/menu ROM, boots there first | tape, TR-DOS floppy `fdd.a`–`fdd.d`, IDE hard disk `ide0.master`/`ide0.slave` (`[HDD] Scheme=PROFI`) | TR-DOS TRD; hard disk: raw image, geometry from its ProfiHiDD header (16×16 default) — **not** MBR-dependent the way ATM/ZX-Evo is |
 | `ATM710` | ATM-Turbo 2+ v7.10 | `data/rom/atm2.rom` (`sos`/`dos`/`128`/`sys` pages) | tape, TR-DOS floppy, IDE hard disk `ide0.master`/`ide0.slave` (`[HDD] Scheme=ATM`) via xBIOS | TR-DOS TRD; HDD: **MBR + FAT partitions built by `hddfdisk`** |
 | `ATM3` | ZX-Evo (ATM Turbo 3, BaseConf) | `data/rom/zxevo-fe.rom` (official NedoPC BaseConf image; `[EVO] Fpga=legacy` switches to the older `data/rom/zxevo.rom`) | ERS menu: **Z.** TR-DOS floppy, **B.** IDE hard disk (NemoIDE, `[HDD] Scheme=NEMO-DIVIDE`), **D.** CD (`ide0.slave`, `CD1=1` by default), **5.** SD card (`sd.zc`, Z-Controller — NedoOS) | TR-DOS TRD; HDD: **MBR + FAT** (pitfall 1); CD: ISO 9660 with `AUTORUN.ZX` in the root; SD: **raw FAT16/FAT32, no MBR** (pitfall 1) |
 | `TSL` (alias `TSCONF`) | TS-Conf (ZX-Evo, TS-Labs configuration) | `data/rom/zxevo.rom` (TS-BIOS, page 0) | TS-BIOS boot menu: TR-DOS/Beta-128 (virtual drives), SD card `sd.zc` ("BD boot.$c"), Nemo IDE `ide0.master`/`ide0.slave` (`[HDD] Scheme=NEMO-DIVIDE`) | SD: **raw FAT16/FAT32, no MBR** (pitfall 1); a blank CMOS starts in TS-BIOS Setup, not the boot menu — see below |
@@ -137,8 +137,9 @@ Ground truth: [.recipe/machines/scorpion.md](../../.recipe/machines/scorpion.md)
 Ground truth: [.recipe/machines/profi.md](../../.recipe/machines/profi.md),
 [docs/hardware/profi-1024.md](profi-1024.md) (port-level reference).
 
-- **Firmware**: `data/rom/profi.rom`, a 4-page ROM (SYS/menu page 0, TR-DOS page 1, 128K editor
-  page 2, 48K BASIC page 3). The machine resets into the **SYS ROM with the DOS latch on**, not
+- **Firmware**: `data/rom/profi.rom` (v5, `PROFI`) or `data/rom/profi/kramis-v02.rom` (v3, `PROFI3`, the
+  factory BIOS V0.2 with TR-DOS 5.03), each a 4-page ROM (SYS/menu page 0, TR-DOS page 1, 128K page 2, 48K
+  BASIC page 3). The v3 board has no IDE, so it boots from tape or floppy only. The machine resets into the **SYS ROM with the DOS latch on**, not
   into 48K BASIC — this is a menu-driven boot, not straight-to-BASIC.
 - **Boot sources**: tape; TR-DOS floppy `fdd.a`–`fdd.d`; IDE hard disk `ide0.master`/`ide0.slave`
   (`[HDD] Scheme=PROFI`) — the SYS ROM boots straight from the hard disk when one is present.

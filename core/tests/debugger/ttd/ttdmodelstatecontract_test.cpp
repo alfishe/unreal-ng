@@ -239,7 +239,9 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::AtmIoBus, 36, "AtmIoBus"},
         {ttd::PeripheralId::Atm2IoEsp, 37, "Atm2IoEsp"},
         {ttd::PeripheralId::EvoMouse, 38, "EvoMouse"},
-        {ttd::PeripheralId::CdDrive, 39, "CdDrive"},
+        {ttd::PeripheralId::ZiFiLine, 39, "ZiFiLine"},
+        {ttd::PeripheralId::ZiFi, 40, "ZiFi"},
+        {ttd::PeripheralId::CdDrive, 41, "CdDrive"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 

@@ -85,6 +85,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"reset", &CLIProcessor::HandleReset},
                         {"nmi", &CLIProcessor::HandleNmi},    // Pulse the NMI line
                         {"mni", &CLIProcessor::HandleMni},    // Scorpion magic button (NMI + service monitor)
+                        {"switch", &CLIProcessor::HandleSwitch},  // Front-panel switches (Profi TURBO)
                         {"pause", &CLIProcessor::HandlePause},
                         {"resume", &CLIProcessor::HandleResume},
                         {"step", &CLIProcessor::HandleStepIn},        // Always one instruction
@@ -591,6 +592,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  switch [turbo|cpm [on|off]] - Front-panel switches (Profi TURBO, v5 CP/M; recorded by TTD like a key)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  step          - Execute single CPU instruction" << NEWLINE;
     oss << "  stepin        - Execute single CPU instruction (alias for step)" << NEWLINE;
@@ -642,6 +644,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;
+    oss << "                                 zifi=none|at|loopback|tcp:..|serial:.. (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP)" << NEWLINE;
     oss << NEWLINE;
     oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
     oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;

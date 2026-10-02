@@ -8,7 +8,11 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/profifixture.h"
 
@@ -42,6 +46,7 @@ TEST_F(TTDProfiPaging_Test, SaveLoadRoundTrip)
     ttd::TTDProfiPaging serializer(_context);
 
     State().pDFFD = 0xA5;
+    State().profi_turbo_switch = 1;
     for (uint8_t i = 0; i < 16; i++)
         State().profiPalette[i] = static_cast<uint8_t>(0x10 + i);
 
@@ -49,10 +54,12 @@ TEST_F(TTDProfiPaging_Test, SaveLoadRoundTrip)
     serializer.TTDSaveState(blob.data());
 
     State().pDFFD = 0;
+    State().profi_turbo_switch = 0;
     std::memset(State().profiPalette, 0, sizeof(State().profiPalette));
 
     serializer.TTDLoadState(blob.data());
 
+    EXPECT_EQ(State().profi_turbo_switch, 1) << "the TURBO switch";
     EXPECT_EQ(State().pDFFD, 0xA5);
     for (uint8_t i = 0; i < 16; i++)
         EXPECT_EQ(State().profiPalette[i], 0x10 + i) << "palette entry " << static_cast<int>(i);
@@ -67,6 +74,11 @@ TEST_F(TTDProfiPaging_Test, HashSensitiveToEveryField)
     State().pDFFD ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), baseline) << "pDFFD";
     State().pDFFD ^= 0x01;
+    EXPECT_EQ(serializer.TTDHashState(), baseline);
+
+    State().profi_turbo_switch ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), baseline) << "TURBO switch";
+    State().profi_turbo_switch ^= 0x01;
     EXPECT_EQ(serializer.TTDHashState(), baseline);
 
     for (uint8_t i = 0; i < 16; i++)
@@ -200,6 +212,52 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0x8000), bank2AtCapture);
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0xC000), bank3AtCapture)
         << "map restored but the paging decode was not rebuilt from #DFFD";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The TURBO switch is a recorded input: a flip in the middle of a frame is journaled once, and a seek before it
+/// runs at 3.5 MHz again, a seek past it at 7 MHz with the same CPU state as live
+TEST(TTDProfiTurboSwitch_Test, FlipIsJournaledAndReplayed)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PROFI3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ASSERT_TRUE(ttd->StartRecording());
+
+    emulator->RunNFrames(2);
+    emulator->RunTStates(20000);
+    const uint64_t flipFrame = context->emulatorState.frame_counter;
+    ASSERT_TRUE(emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
+    EXPECT_EQ(context->emulatorState.hw_turbo_ratio_applied, 2);
+    emulator->RunTStates(10000);
+    const ttd::TTDTimePoint afterFlip{flipFrame, context->pCore->GetZ80()->t};
+    const uint16_t livePc = context->pCore->GetZ80()->pc;
+
+    size_t flips = 0;
+    for (const ttd::TTDInputEvent& ev : ttd->GetInputJournal().Events())
+    {
+        if (ev.kind != ttd::TTDInputKind::FrontPanelSwitch)
+            continue;
+        flips++;
+        EXPECT_EQ(ev.key, static_cast<uint8_t>(FrontPanelSwitch::Turbo));
+        EXPECT_TRUE(ev.pressed);
+    }
+    EXPECT_EQ(flips, 1u);
+
+    emulator->RunNFrames(2);
+    ttd->StopRecording();
+
+    ASSERT_TRUE(ttd->SeekTo({flipFrame, 0}));
+    EXPECT_EQ(emulator->GetFrontPanelSwitch(FrontPanelSwitch::Turbo), 0);
+    EXPECT_EQ(context->emulatorState.hw_turbo_ratio_applied, 1);
+
+    ASSERT_TRUE(ttd->SeekTo(afterFlip));
+    EXPECT_EQ(emulator->GetFrontPanelSwitch(FrontPanelSwitch::Turbo), 1);
+    EXPECT_EQ(context->emulatorState.hw_turbo_ratio_applied, 2);
+    EXPECT_EQ(context->pCore->GetZ80()->pc, livePc);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

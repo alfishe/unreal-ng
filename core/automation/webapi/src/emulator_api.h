@@ -55,6 +55,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
     // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
     ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
+    // Front-panel switches (Profi TURBO): GET lists them, POST {"name": "turbo", "on": true} flips one
+    ADD_METHOD_TO(EmulatorAPI::getSwitches, "/api/v1/emulator/{id}/switches", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setSwitch, "/api/v1/emulator/{id}/switches", drogon::Post);
 
     // Switch machine model (stops current emulator, creates new one with different model)
     ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
@@ -602,6 +605,12 @@ public:
     // (Shadow Monitor paged before the NMI so #0066 executes monitor code)
     void requestNmi(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // The machine's front-panel switches (Profi TURBO); a flip goes through the TTD input journal like a key
+    void getSwitches(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void setSwitch(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     void switchModel(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

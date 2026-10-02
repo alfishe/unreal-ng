@@ -825,6 +825,12 @@ public:
         _selectedDrive = drive;
     }
 
+    /// The HLD output pin: the head is loaded (the Profi v3 board drops its turbo while it is high)
+    bool IsHeadLoaded() const
+    {
+        return (_extStatus & SIG_OUT_HLD) != 0;
+    }
+
     // Getters for WD1793 state and registers
     const WD93State& getState() const
     {

@@ -121,4 +121,5 @@ struct SerialGuests
     INetGuest* com = nullptr;
     INetGuest* machine = nullptr;
     INetGuest* atmIo = nullptr;   ///< the ATM2IOESP card's peer (guest 4)
+    INetGuest* zifi = nullptr;    ///< the ZiFi line's peer (guest 5)
 };

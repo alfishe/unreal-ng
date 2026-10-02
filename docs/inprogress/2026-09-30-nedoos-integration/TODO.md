@@ -31,7 +31,10 @@ Index: [README.md](README.md).
   says "ZXEvo 4M" 07.01.2026 whatever `Avr=` picks (the old releases' tags and CRCs are not
   in the sources); the ZiFi API under a TS firmware on BaseConf (N5). The Qt Network window
   (Tools > Network, Ctrl+5: settings built from the machine's capabilities, live state tree)
-  is on master 157bc4fae; settings changed there or by automation are not written back to the INI. Next: N4 ATM2 COM (research started 2026-10-01), N5-N6 the rest; debugging per
+  is on master 157bc4fae; settings changed there or by automation are not written back to the INI. N4 (ATM2 COM
+  through the keyboard controller, the ATM2IOESP card) done 2026-10-02; N5 ZiFi: the TS AVR side with
+  `ZiFi=AT` done 2026-10-02 ([2026-10-02-tsconf-zifi](../2026-10-02-tsconf-zifi/TODO.md)), the native
+  protocol, DMA and the ESP-AT 2.2.x dialect next; N6 AY-UART open; debugging per
   [tdd-network-debugging.md](tdd-network-debugging.md) later.
 - Answer the open questions in the requirements (§5), then a design for the layer.
 - Emulator prerequisites (NK-23): both ATM register sets in the paging state,

@@ -219,45 +219,81 @@ vs Sinclair 69888 (311 lines) — 2.27% faster frame; INT every 71680 T; no M1 w
 - Bank pages: invoke_api GET /api/v1/emulator/{id}/memory/page/ram/{n} (add ?filter=sparse to compress 0x00/0xFF runs).
 )md";
 
-const char* const kMachineProfi = R"md(# Profi 1024 (model PROFI)
+const char* const kMachineProfi = R"md(# Profi: v5 (model PROFI, alias PROFI5) and v3 (model PROFI3)
 
-Creatable via `emulator_manage action=create model=PROFI` (config `data/configs/profi/unreal.ini`, ROM `data/rom/profi.rom`).
+Two board families, one decoder (design: docs/inprogress/2026-10-01-profi-v3-v5):
+- `emulator_manage action=create model=PROFI`: v5 (Kondor 5.0x), 1024K, config `data/configs/profi`, ROM `data/rom/profi.rom`
+- `emulator_manage action=create model=PROFI3`: v3 (Kramis 3.x), 512K, config `data/configs/profi3`, ROM
+  `data/rom/profi/kramis-v02.rom` (the factory BIOS V0.2 + TR-DOS 5.03; other factory images in `data/rom/profi/`)
 
-## ROM pages (16K each)
+| | v3 (PROFI3) | v5 (PROFI) |
+|:--|:--|:--|
+| Hi-res 512x240 | monochrome (ink = border colour) | 16 colours from a 256-colour palette |
+| Palette `OUT #xx7E` | none | A7=0, A0=0, while DS80 is set |
+| `#FE` read bit 7 | always 1 | GX0 from the palette in DS80 |
+| Extended port map (CP/M + ROM14) | none: CP/M keeps #1F..#7F + #BF | FDC #83/#A3/#C3/#E3, system #3F, 8255/Covox #A7/#C7, IDE, RTC |
+| RTC, IDE | none | RTC #BF/#FF address, #9F/#DF data; Profi IDE (`[HDD] Scheme=PROFI`) |
+| Frame (default sync PROM) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
+
+`[PROFI] SyncProm=` picks the board's sync PROM: `0a1d` (69888 T, 12580 T), `samx6` (69888 T, 12592 T),
+`fb0579b6` (71680 T, INT 48 T before paper), `v503` (69888 T, 14368 T); empty = the board's own.
+
+## ROM pages (16K each, both boards)
 | Page | Content |
 |:--|:--|
 | 0 | SYS / menu ROM (BIOS) |
 | 1 | TR-DOS |
-| 2 | 128K editor + STS monitor |
+| 2 | 128K (the 128 editor; the STS monitor in `profi.rom`) |
 | 3 | 48K BASIC |
 
-## Paging ports (write decode)
+## Paging ports (write decode, both boards)
 | Port | Decode | Bits |
 |:--|:--|:--|
 | #7FFD | A15=0 and A1=0 | 2:0 RAM low bits, 3 screen select, 4 ROM14, 5 lock |
-| #DFFD | A15=1, A13=0, A1=0 | 2:0 RAM high bits (1024K), 3 SCO, 4 WOROM, 5 CPM, 6 SCR, 7 DS80 (512x240 hi-res) |
-| OUT #xx7E | A7=0, A0=0, only while DS80 is set | palette write (entry index from the previous #FE value, colour in A15:A8) |
+| #DFFD | A15=1, A13=0, A1=0 | 2:0 RAM high bits, 3 SCO, 4 WOROM, 5 CPM, 6 SCR, 7 DS80 (512x240 hi-res) |
+| AY #FFFD / #BFFD | A15=1, A13=1, A1=0 | the AY decodes A13, so IN #DFFD does not read it |
 
 The DOS latch is the CF_TRDOS flag. WD1793 ports (#1F/#3F/#5F/#7F, system #FF) answer only while the disk
-interface is on the bus (DOS latch or CP/M mode); in CP/M mode with ROM14 set the "modified" ports #83/#A3/#C3/#E3 apply.
+interface is on the bus (DOS latch or CP/M mode); in CP/M the system port is #BF.
 
 ## Video
 Standard mode `PROFI`: 256x192 in a 352x288 framebuffer. Hi-res mode `PROFIHR` (#DFFD bit 7): 512x240 in a 608x288
-framebuffer. Both use the 312-line x 224 T raster (69888 T per frame, INT-to-paper 12580 T).
+framebuffer. Both use the 312-line x 224 T raster; the frame length and INT position come from the sync PROM.
 `inspect_state aspects:["video"]` reports `video_mode` = PROFI or PROFIHR with resolution.
 
 ## State
-`inspect_state aspects:["paging"]` reports the tagged latches: p7FFD and pDFFD with decoded fields `extended_ram_bank`,
-`sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and palette as PeripheralId ProfiPaging (9).
+`inspect_state aspects:["paging"]` reports `profi_board` (v3 / v5), `profi_sync_prom` and the tagged latches: p7FFD and pDFFD with
+decoded fields `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and
+palette as PeripheralId ProfiPaging (9); v5 adds the clock (Ds12887).
 
 ## Peripherals
-RTC/CMOS (MC146818 / DS12887, 256 cells; inspect_state aspect rtc, cells via /rtc/cells): address #BF/#FF, data #9F/#DF, only in EXT mode (CPM and ROM14). Covox DAC: #5F left, #3F right
-while the disk interface is off the bus, #C7 left / #A7 right (CP/M-extended mode aliases) while it's on. #FE read
-bit 7 reports GX0 in DS80. NMI (magic button) raises the DOS latch while DS80 is off.
+Covox DAC (8255): #5F left, #3F right while the disk interface is off the bus; on v5, #C7 left / #A7 right in the
+extended map. Kempston joystick at #1F outside the DOS port set. NMI (magic button) raises the DOS latch while DS80
+is off. v5 only: the RTC (MC146818 / DS12887, 256 cells; inspect_state aspect rtc) and the Profi IDE.
+
+## TURBO switch (both boards)
+A front-panel switch, not a port: `invoke_api GET /api/v1/emulator/{id}/switches`, `POST .../switches`
+`{"name":"turbo","on":true}` (CLI `switch turbo on`, Lua/Python `set_switch("turbo", true)`; `[PROFI] Turbo=1` sets
+it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a loaded floppy head (WD1793 HLD) holds
+3.5 MHz. The status line shows the clock. The v5 also has the CP/M switch (`"name":"cpm"`, CLI `switch cpm on`,
+`[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
+the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
+`OUT (n),A`).
+
+## Wait states and the floating bus (feature `contention`)
+| Board, clock | Waits |
+|:--|:--|
+| v5, 3.5 MHz | RAM accesses: 1 on every other T of the paper fetch window (192 lines x 128 T), none in the border; `[PROFI] WaitPhase=0..3` (power-on phase; 1 = none), `WaitConfig=pentagon` (jumper SB8: none), `RomWait=1` (ROM reads +1) |
+| v5, 7 MHz | approximation: RAM 1 in the border, 2 in the paper; ROM reads 1 |
+| v3, 3.5 MHz | none |
+| v3, 7 MHz | RAM opcode fetch / read / write: 2 clocks from an even 7 MHz clock, 3 from an odd one; ROM none (RAM code runs ~1.33x, ROM 2x) |
+
+v3 floating bus: an unanswered `IN` with A0=1 reads the pixel byte the video latch holds (one 4-T tick ahead of the
+displayed byte, page 5 or 7 per #7FFD bit 3), `#FF` in the border; no attribute bytes. The v5 reads `#FF`.
 
 ## Known limitations
-IDE (#xx8B/AB/CB/EB), Kempston joystick and extended keyboard are not implemented. The BIOS boots to its main menu
-(with or without a disk); launching the menu entries (CP/M, TR-DOS, Sinclair) has not been verified yet.
+The 512x240 hi-res mode (DS80) has no waits, no floating bus and no 15 MHz third crystal. The v5 turbo waits are an
+approximation. The BIOS menu entries (TR-DOS, Sinclair, 128) are verified on both boards; CP/M boots from a disk.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)
@@ -371,7 +407,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://z80-isa", "z80-isa", "Z80 instruction set reference: load/arithmetic/rotate/control-flow blocks and T-state notes", "text/markdown", kZ80Isa},
     {"unreal://trdos-commands", "trdos-commands", "TR-DOS 5.03 commands, TRD file system layout, disk inspection via WebAPI", "text/markdown", kTrdosCommands},
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
-    {"unreal://machine/profi", "machine-profi", "Profi 1024 machine: ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res mode, timing, limitations", "text/markdown", kMachineProfi},
+    {"unreal://machine/profi", "machine-profi", "Profi v3 (PROFI3) and v5 (PROFI): board differences, ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res, sync PROM timing, limitations", "text/markdown", kMachineProfi},
     {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
     {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS selection and start, the PLD port table and codes, windows and video RAM, video modes, DSS from floppy / HDD, accelerator, sound, TTD, limitations", "text/markdown", kMachineSprinter},
 };
