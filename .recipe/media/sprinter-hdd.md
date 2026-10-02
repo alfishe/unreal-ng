@@ -26,8 +26,9 @@ media verbs in [use-media-slots.md](use-media-slots.md). Verified 2026-10-02 on 
 - **Which disk:**
   - a small bootable image you build (below): DSS 1.62.92 from the repo's floppy;
   - the owner's real disks are **not in the repository**: the MAME pack's `sp_hdd_sys.chd`
-    (DSS 1.71.57; convert with `chdman extractraw -i sp_hdd_sys.chd -o sp_hdd_sys.img`, 1 GiB)
-    and the ZXMAK2 bundle's `sp_disk1.vhd` (DSS 1.62.93, a fixed VHD, inserted as is).
+    (DSS 1.71.57) and `sp_hdd_media.chd`, **inserted as they are** (no extraction: a CHD is a
+    hard-disk format here, [chd.md](../../docs/file-formats/disk-images/chd.md)), and the ZXMAK2
+    bundle's `sp_disk1.vhd` (DSS 1.62.93, a fixed VHD, inserted as is).
 
 ## Build a small bootable disk (mtools)
 
@@ -53,7 +54,8 @@ The core tests build the same kind of image in C++ (`BuildDssHdd`, `sprinter_boo
 ```text
 emulator_manage {"action":"create","model":"SPRINTER"}
 media {"action":"insert","slot":"ide0.master","path":"<abs path>/scratch/dss-hdd.img"}
-media {"action":"insert","slot":"ide0.master","path":"<abs path>/sp_hdd_sys.img","access":"session"}  # a real disk: writes stay in memory
+media {"action":"insert","slot":"ide0.master","path":"<abs path>/sp_hdd_sys.chd"}  # MAME's CHD as is: writes stay in memory (session)
+media {"action":"save","slot":"ide0.master"}                                         # ...until you write them into the CHD
 emulator_manage {"action":"reset"}
 inspect_state {"aspects":["ide"]}
 #  -> [ide] SPRINTER, selected primary master, data latch #0
@@ -115,6 +117,9 @@ media list
 
 - **Images are written by default** (WriteThrough): a real disk you want to keep unchanged goes in
   with `"access":"session"` (or `readonly`).
+- **A CHD is never written by the guest**: it goes in as `session` whatever the default, and its
+  file changes only on `save` (the CHD written again, unchanged hunks kept as stored). BIOS 3.06
+  boots DSS 1.71 from `sp_hdd_sys.chd` directly (`RealHdd_Dss171BootsFromTheMamePackChd`).
 - **DSS 1.71 on BIOS 3.04 fails** with "Fatal error" after "Start from Hard disk...Ok": switch the
   BIOS to 3.06 Hotfix 2, not the disk.
 - **Long IDE waits are the hardware's**: an empty channel reads `#FF` (BSY), so SETUP waits 1 550

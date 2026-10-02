@@ -37,6 +37,7 @@ CD slots, on master (`f5fc5f05`): [../2026-09-28-ide-atapi/](../2026-09-28-ide-a
 - [x] M3 tape: slot, migration, folder as a tape: ACC-8 (see "M3 as built" below); the media verbs reach it without surface work
 - [x] M5 media across model switch: ACC-5 (see "M5 as built" below)
 - [x] M6 IDE / CD slots (with PLAN #13a): `ide0.master` / `ide0.slave`, disk (`block`) or CD drive (`optical`), done with the IDE + ATAPI scope, on master (`f5fc5f05`) ([implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md) §5)
+- [x] MAME CHD as a shared block format (read v3-v5, write v5, every hard-disk codec, parents; block `save` / `export` in the target's format): [../2026-10-02-media-chd/](../2026-10-02-media-chd/TODO.md), branch `media-chd`
 - [ ] H1-H5 media history: versioned change layer, spill, file views, tracking API, UNS / TTD v2
 
 ## M1 as built (2026-09-28)
