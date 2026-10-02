@@ -33,6 +33,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/memory/rom.cpp",          // the ROM path / size rows
     "emulator/ports/portdecoder.cpp",   // the decoder factory + IsModelSupported
     "emulator/cpu/core.cpp",            // the memory factory (SprinterMemory)
+    "emulator/video/videocontroller.cpp",  // the screen factory (ScreenSprinter, PLAN #60(e))
     "debugger/ttd/ttdserializable.h",   // the PeripheralId::SprinterPld row (serializer in phase S7)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
 };

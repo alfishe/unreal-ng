@@ -35,6 +35,7 @@
 
 class PortDecoder_Sprinter;
 class SprinterMemory;
+class SprinterVideoRenderer;
 struct SprinterPldState;
 
 /// Reset kinds a module reacts to (tdd-ports-memory §7)
@@ -85,6 +86,13 @@ public:
         return false;
     }
     /// endregion </Hook 2>
+
+    /// region <Hook 3: video>
+    /// The renderer of the module's picture (ScreenSprinter draws every span
+    /// through it); null = Standard's. The INT source stays Standard's
+    /// SprinterIntSource until a module needs its own rule (tdd-video §1)
+    virtual const SprinterVideoRenderer* VideoRenderer() const { return nullptr; }
+    /// endregion </Hook 3>
 
     /// region <Lifecycle and state>
     /// The module became active (after a load, always followed by a CPU reset)

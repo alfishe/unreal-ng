@@ -18,6 +18,7 @@ enum class VideoFamily : uint8_t
     Atm,    ///< ATM Turbo 2+ / ATM3 / ZX-Evo extended modes
     Profi,  ///< Profi 512x240 hi-res
     TsConf, ///< TS-Conf (ScreenTSConf draws every mode; TsConfVideoMapper maps its graphics layer)
+    Sprinter, ///< Sprinter Sp2000 (ScreenSprinter: per-square modes; SprinterVideoMapper)
 };
 
 constexpr VideoFamily FamilyOf(VideoModeEnum mode)
@@ -38,6 +39,8 @@ constexpr VideoFamily FamilyOf(VideoModeEnum mode)
         case M_TSTX:
         case M_TSZX:
             return VideoFamily::TsConf;
+        case M_SPRINTER:
+            return VideoFamily::Sprinter;
         case M_P16:
         case M_PMC:
             return VideoFamily::Alco;
@@ -50,8 +53,10 @@ constexpr VideoFamily FamilyOf(VideoModeEnum mode)
 /// kept at 2 px per dot wide (TXT pixels are 14 MHz) but one stored line per
 /// dot row, so the display scales the framebuffer 2x vertically to the true
 /// pixel aspect. Anything producing square-pixel output of what the user sees
-/// (a recording file) doubles each stored line - the same correction
+/// (a recording file) doubles each stored line - the same correction. The
+/// Sprinter's 736x288 framebuffer is the same kind: 14 MHz pixels, one stored
+/// line per TV line
 inline bool StoresHalfHeightLines(VideoModeEnum mode)
 {
-    return FamilyOf(mode) == VideoFamily::TsConf;
+    return FamilyOf(mode) == VideoFamily::TsConf || FamilyOf(mode) == VideoFamily::Sprinter;
 }

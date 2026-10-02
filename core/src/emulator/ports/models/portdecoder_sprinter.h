@@ -16,6 +16,7 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterMemory;
+class SprinterVideoRenderer;
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -101,6 +102,9 @@ public:
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The picture of the active module (hook 3), Standard's when it brings none
+    const SprinterVideoRenderer& VideoRenderer() const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -147,6 +151,8 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// The renderer draws the beam up to now before a change to the picture
+    void CatchUpScreen();
     void LoadFastRamImage();
 
     uint8_t FdcRead(uint8_t code);
