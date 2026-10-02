@@ -9,6 +9,7 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/video/screen.h"
@@ -57,6 +58,10 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 
     if (_context->pCore && _context->pCore->GetZ80())
         _waits = std::make_unique<SprinterWaits>(_context->pCore->GetZ80());
+
+    // The WD1793 has its own clock: the disk keeps 300 rpm when the CPU runs at 21 MHz
+    if (_context->pBetaDisk)
+        _context->pBetaDisk->SetBaseClockTimeBase(true);
 }
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
@@ -161,6 +166,10 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     if (kind != SprinterResetKind::SoftReset)
         _pld.turbo = 0;  // a new configuration starts at 3.5 MHz
     _pld.resetPending = 0;
+    // The density latch starts at 720 KB, the FDC codes on (ZXMAK2 SprinterFdd.cs:318; MAME enables the Beta interface)
+    _pld.fdcHd = 0;
+    _pld.fdcOff = 0;
+    ApplyFdcDensity();
     _cblControl = 0;
     _dcpOpenedFrame = -1;
 
@@ -469,9 +478,31 @@ void PortDecoder_Sprinter::UpdateBanks()
 
 /// region <Port access>
 
+uint16_t PortDecoder_Sprinter::RewriteIoOperand(uint16_t port) const
+{
+    // MAME check_accel (sprinter.cpp:1009-1015, :1323): after an unprefixed #D3 / #DB opcode fetch the
+    // operand read #1F becomes #0F when its window holds RAM (vROM included), not the system ROM or fast RAM.
+    // Done here at the I/O cycle, from the instruction's bytes: the CPU core stays generic, and the only
+    // CPU-visible trace of the operand (MEMPTR's high byte = A) is the same for #1F and #0F
+    if ((port & 0x00FF) != 0x001F)
+        return port;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return port;
+    const uint16_t start = z80->m1_pc;
+    const uint16_t operand = static_cast<uint16_t>(start + 1);
+    const uint8_t opcode = _memory->DirectReadFromZ80Memory(start);
+    if ((opcode & 0xF7) != 0xD3 || _memory->DirectReadFromZ80Memory(operand) != 0x1F)
+        return port;
+    if (_memory->GetMemoryBankMode(static_cast<uint8_t>(operand >> 14)) != BANK_RAM)
+        return port;
+    return static_cast<uint16_t>((port & 0xFF00) | 0x000F);
+}
+
 uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 {
     _pc = pc;
+    port = RewriteIoOperand(port);
     // The PLD answers every cycle: an unmapped port reads #FF, never the floating bus
     _lastPortDecoded = true;
 
@@ -520,6 +551,7 @@ uint8_t PortDecoder_Sprinter::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     _pc = pc;
+    port = RewriteIoOperand(port);
 
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -570,16 +602,30 @@ void PortDecoder_Sprinter::DecodePortOut(uint16_t port, uint8_t value, uint16_t 
     OnPortOutComplete(port, value, pc, disp);
 }
 
+/// Codes #10-#13: the WD1793 through its canonical Beta port (tdd-storage §2.1); the table decides
+/// when, so the chip's own TR-DOS gating is not consulted. Off after a density write with bit 1 set
 uint8_t PortDecoder_Sprinter::FdcRead(uint8_t code)
 {
     static constexpr uint16_t kFdcPorts[4] = {0x1F, 0x3F, 0x5F, 0x7F};
-    return PeripheralPortIn(kFdcPorts[code & 3]);
+    return _pld.fdcOff ? 0xFF : PeripheralPortIn(kFdcPorts[code & 3]);
 }
 
 void PortDecoder_Sprinter::FdcWrite(uint8_t code, uint8_t value)
 {
     static constexpr uint16_t kFdcPorts[4] = {0x1F, 0x3F, 0x5F, 0x7F};
-    PeripheralPortOut(kFdcPorts[code & 3], value);
+    if (!_pld.fdcOff)
+        PeripheralPortOut(kFdcPorts[code & 3], value);
+}
+
+void PortDecoder_Sprinter::ApplyFdcDensity()
+{
+    if (WD1793* fdc = _context->pBetaDisk)
+    {
+        if (_pld.fdcHd)
+            fdc->SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps);
+        else
+            fdc->SetLatchedClock(FdcClock::Clock1MHz, FdcDataRate::Rate250Kbps);
+    }
 }
 
 /// The standard configuration's reads (hardware-reference §4.3; MAME dcp_r)
@@ -593,7 +639,12 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
         case 0x10: case 0x11: case 0x12: case 0x13:
             return FdcRead(code);
         case SprinterCode::BetaState:
-            return PeripheralPortIn(0xFF);  // DRQ / INTRQ; the joystick bits come with phase S3a
+        {
+            // MAME: beta state_r() & joy_ctrl_r(1) - INTRQ / DRQ in bits 7-6, the Kempston bits below
+            // (also the DOS-off view of #1F / #0F). Off: the joystick alone
+            const uint8_t state = _pld.fdcOff ? 0x00 : static_cast<uint8_t>(PeripheralPortIn(0xFF) & 0xC0);
+            return static_cast<uint8_t>(state | (Default_Port_KempstonJoystick_In() & 0x3F));
+        }
 
         case SprinterCode::CmosRead:
             return _rtc.ReadData();
@@ -636,11 +687,18 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             FdcWrite(code, value);
             return;
         case SprinterCode::BetaSystem:
-            PeripheralPortOut(0xFF, value);
+            if (!_pld.fdcOff)
+                PeripheralPortOut(0xFF, value);
             return;
         case SprinterCode::DensityDD:
         case SprinterCode::DensityHD:
-            return;  // the #BD density latch is wired to the WD1793 in phase S3a
+            // OUT (#BD),A: A13 (#01BD / #21BD) picks the density, the data only switches the FDC off
+            // (bit 1, MAME sprinter.cpp:727-734; unverified in the PLD). The WD1793 clock and its data
+            // separator change together (tdd-storage §2.3)
+            _pld.fdcHd = code & 1;
+            _pld.fdcOff = (value & 0x02) ? 1 : 0;
+            ApplyFdcDensity();
+            return;
 
         case SprinterCode::IsaControl:
             _pld.isaAddrExt = value & 0x3F;

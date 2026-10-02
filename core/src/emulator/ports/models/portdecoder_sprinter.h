@@ -70,6 +70,11 @@ public:
     bool IsPagingLocked() const override { return false; }
     /// 3.5 or 21 MHz
     uint8_t TtdClockUnits() const override { return 6; }
+    /// The WD1793 clock and data separator follow the #BD density latch (codes #16 / #17)
+    /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
+    FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
+    /// Code #15 (port #FF in TR-DOS, #1F / #0F outside it) carries the Kempston bits
+    bool HasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
@@ -114,6 +119,9 @@ public:
 
     /// Re-derive window 3's cell and map the windows
     void UpdateBanks();
+
+    /// Density latch (codes #16 / #17): what the WD1793 runs at
+    bool IsFdcHighDensity() const { return _pld.fdcHd != 0; }
     /// Called by SprinterMemory after every remap: the wait-state slots
     void OnBanksChanged();
 
@@ -151,6 +159,11 @@ private:
 
     uint8_t FdcRead(uint8_t code);
     void FdcWrite(uint8_t code, uint8_t value);
+    /// The #BD density latch to the WD1793 (Latched policy): DD = 1 MHz + 250 kbit/s, HD = 2 MHz + 500 kbit/s
+    void ApplyFdcDensity();
+    /// The #1F operand rewrite (hardware-reference §4.4 "Fixed ports"): `IN A,(#1F)` / `OUT (#1F),A`
+    /// with the operand in RAM reach the bus as port #xx0F
+    uint16_t RewriteIoOperand(uint16_t port) const;
 
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
