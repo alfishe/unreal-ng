@@ -121,6 +121,22 @@ enum class TTDRecordMode : uint8_t
 /// Timings of the last capture and the last restore, in nanoseconds (the
 /// benchmark harness, PLAN #40 Phase 0, Step 2, BM-2 / BM-6). Two clock reads per frame
 /// while recording and a handful per restore - free next to a frame's work
+/// Work the last frame capture did, counted rather than timed. For a
+/// replayable workload the counts repeat exactly on every host and under any
+/// load, so the TTD CI gate (core/tests/debugger/ttd/bench) compares them
+/// against its baseline like byte counts: a capture path that starts walking,
+/// copying or compressing more shows up without a clock
+struct TTDCaptureWork
+{
+    uint64_t pagesVisited = 0;        ///< RAM pages the capture walked
+    uint64_t deltaBaseBytes = 0;      ///< bytes copied into the delta base (_prevPageCache)
+    uint64_t deviceBlobBytes = 0;     ///< device-state bytes stored
+    uint64_t bytesScanned = 0;        ///< page store: bytes XOR'd and zero-checked
+    uint64_t compressCalls = 0;       ///< page store: zstd calls
+    uint64_t compressInputBytes = 0;  ///< page store: bytes handed to zstd
+    uint64_t slotsDecoded = 0;        ///< page store: chain links decoded
+};
+
 struct TTDPerfCounters
 {
     uint64_t lastCaptureNs = 0;              ///< checkpoint capture of the last frame (incl. coverage seal)
@@ -130,6 +146,7 @@ struct TTDPerfCounters
     uint64_t lastRestoreScreenNs = 0;        ///< screen state resync
     uint64_t lastReplayNs = 0;               ///< intra-frame re-execution of the last seek (0 = frame-aligned)
     uint64_t lastPresentNs = 0;              ///< picture of the last seek's position (ComposeDisplay + publish)
+    TTDCaptureWork lastCaptureWork;          ///< counted work of the last capture (deterministic)
     uint64_t lastRestoreTotalNs() const
     {
         return lastRestoreCpuChipsetNs + lastRestoreDevicesNs + lastRestoreMemoryNs + lastRestoreScreenNs;
@@ -1808,6 +1825,7 @@ private:
     /// machine: it registers whatever the active model provides (see
     /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
     TTDPerfCounters _perf;
+    TTDCaptureWork _captureWork;   ///< filled while CaptureNow runs, published in _perf
     TTDPeripheralRegistry _peripherals;
 
     /// Serializers owned by this manager for the lifetime of a session. Held

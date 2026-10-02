@@ -980,6 +980,9 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
 {
     assert(_context && _memory && _dirtyTracker);
 
+    _captureWork = TTDCaptureWork{};
+    _pageStore.ResetWork();
+
     // --- Time coordinate ---
     const EmulatorState& st = _context->emulatorState;
     out.time.frame     = st.frame_counter;
@@ -1003,6 +1006,8 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // the registry.
     //
     _peripherals.CaptureAll(out.peripheralBlobs);
+    for (const auto& blob : out.peripheralBlobs)
+        _captureWork.deviceBlobBytes += blob.second.size();
 
     // --- Port-read journal position: the reads before it happened before
     // this point, so a replay from here starts handing out records at it ---
@@ -1053,6 +1058,13 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     // This caches current RAM content so we can compute XOR deltas without
     // decompressing the slots we just created.
     UpdatePrevPageCache();
+
+    const TTDCodecPageStore::Work& storeWork = _pageStore.GetWork();
+    _captureWork.bytesScanned = storeWork.bytesScanned;
+    _captureWork.compressCalls = storeWork.compressCalls;
+    _captureWork.compressInputBytes = storeWork.compressInputBytes;
+    _captureWork.slotsDecoded = storeWork.slotsDecoded;
+    _perf.lastCaptureWork = _captureWork;
 }
 
 void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamPages)
@@ -1064,6 +1076,7 @@ void TimeTravelManager::CaptureBaselineRamPages(std::vector<TTDPageRef>& outRamP
     outRamPages.resize(_modelRamPages);
     for (uint16_t p = 0; p < _modelRamPages; ++p)
     {
+        _captureWork.pagesVisited++;
         // Memory owns the RAM backing; RAMPageAddress returns a host pointer
         // to the 16 KB page. We split it into 4 × 4 KB sub-pages and intern
         // each one independently. Most baseline pages compress well with
@@ -1139,6 +1152,7 @@ void TimeTravelManager::UpdateRamPages(const std::vector<uint16_t>& dirtyPages,
     size_t dirtyCursor = 0;
     for (uint16_t p = 0; p < _modelRamPages; ++p)
     {
+        _captureWork.pagesVisited++;
         const bool dirty = (dirtyCursor < dirtyPages.size() && dirtyPages[dirtyCursor] == p);
         if (dirty)
             ++dirtyCursor;
@@ -1293,6 +1307,7 @@ void TimeTravelManager::UpdatePrevPageCache()
         {
             const size_t cacheOffset = static_cast<size_t>(p) * 4 * TTDCodecPageStore::kPageSize;
             std::memcpy(&_prevPageCache[cacheOffset], pageData, PAGE_SIZE);
+            _captureWork.deltaBaseBytes += PAGE_SIZE;
         }
     }
 
