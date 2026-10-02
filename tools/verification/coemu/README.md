@@ -38,7 +38,7 @@ measured and expected rows. `matrix.py --md <file>` also writes the summary grid
 --out-dir <dir>` builds the matrix from the results of an earlier run.
 
 Reports kept in the repository, with each difference explained: [reports/](reports/) (latest:
-[2026-09-30](reports/2026-09-30-ctprobe-matrix.md), all eleven emulators on the same probe build).
+[2026-10-01](reports/2026-10-01-ctprobe-matrix.md), all eleven emulators on the same probe build, with P-02B).
 
 ## Emulators
 

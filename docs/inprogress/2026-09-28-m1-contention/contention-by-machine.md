@@ -235,7 +235,8 @@ in RAM.
   cycle 2, ROM never. A RAM NOP stream runs at 8 T per NOP in the paper (3.5 MHz speed) and 6 in the border.
   The other original firmware, SC15.3, has the same slots without the extra fetch wait, +1 per I/O and no Even
   M1. Both drop the CPU to 3.5 MHz while /INT is active. Confidence: medium-high (fuse maps decoded and
-  simulated; no timing measurement found). unreal-ng models SC15.1 since 2026-09-29 (`ScorpionTurboOverlay`).
+  simulated; no timing measurement found). unreal-ng models SC15.1 since 2026-09-29 (`ScorpionTurboOverlay`), SC15.3
+  as the `[MISC] ScorpionTurboLogic` setting and the 3.5 MHz /INT stretch since 2026-10-01.
 - Not to be confused with the "TURBO" modification in Oberon #3 (1997, DR.DEATH), a cut on DD4 pin 15 that
   makes each line 228 T. It changes the frame, not the clock.
 
@@ -358,7 +359,7 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 | 128K, +2 | `ula128` | - | matches |
 | +2A, +3 | `gatearray`, MREQ only, 129 T window | - | matches |
 | Pentagon (128 / 512) | `none` | - | matches |
-| **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode; SC15.1 turbo slot waits (`ScorpionTurboOverlay`), both since 2026-09-29 | matches the SC15.1 equations; the 3.5 MHz drop while /INT is active is not modeled |
+| **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode; SC15.1 turbo slot waits (`ScorpionTurboOverlay`), both since 2026-09-29 | matches the SC15.1 equations; SC15.3 as a setting, the 3.5 MHz drop while /INT is active (both 2026-10-01) |
 | Profi | `none` | - | matches the original Profi. Karabas-Pro's "classic" mode is not modeled, and does not need to be |
 | ATM710 | `none` | turbo modeled as a clock rate only | matches at 3.5 / 7 MHz |
 | ATM3 (ZX-Evo BaseConf) | `none` | 14 MHz cache-miss waits and external I/O (`EvoTurboOverlay`, since 2026-09-29); the optional 48K / 128K raster contention not modeled (the rasters are not) | matches the default Pentagon raster |

@@ -1625,6 +1625,11 @@ StateNode Contention(EmulatorContext* context)
     ret["effective"] = effective;
     ret["memory_interface"] = core->GetMemoryInterfaceName();
     ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
+    // The Scorpion's waits outside the contention rule: Even M1 at 3.5 MHz, and the Turbo+ logic firmware
+    ret["even_m1"] = context->config.even_M1 != 0;
+    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
+        ret["scorpion_turbo_logic"] =
+            context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
 
     // The slots the CPU would wait on (none while contention is not in effect)
     Memory* memory = context->pMemory;

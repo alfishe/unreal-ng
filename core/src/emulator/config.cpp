@@ -768,6 +768,22 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [MISC] RAMPowerOn='%s' - using RANDOM (RANDOM | ZERO)", powerOn);
 	}
 	
+	// The Scorpion Turbo+ logic firmware: SC15.1 (default) or SC15.3. It also decides Even M1 (below)
+	{
+		const char* logic = inimanager.GetValue(misc, "ScorpionTurboLogic", "SC15.1");
+		const std::string v = logic ? logic : "SC15.1";
+		if (v == "SC15.3")
+			config.scorpionTurboLogic = ScorpionTurboLogic::SC153;
+		else
+		{
+			config.scorpionTurboLogic = ScorpionTurboLogic::SC151;
+			if (v != "SC15.1")
+				MLOGWARNING("Config: unknown [MISC] ScorpionTurboLogic='%s' - using SC15.1 (SC15.1 | SC15.3)", logic);
+		}
+	}
+	if (config.scorpionTurboLogic == ScorpionTurboLogic::SC153)
+		config.even_M1 = 0;  // the SC15.3 firmware has no Even M1 ([ULA] EvenM1 is read above)
+
 	// TS-Conf video DAC (the firmware build: STATUS VDAC_VER, the palette curve).
 	// NONE is the standard build (the IDE board, PWM colours); a video DAC sits
 	// on the IDE connector. TS_VDAC2=1 selects the VDAC2 (FT812) build
@@ -1248,8 +1264,10 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     // model. INI-driven runs (per-model config dirs) pass false and are untouched.
     if (canonicalGeometry)
     {
-        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there
-        config.even_M1 = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) ? 1 : 0;
+        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there, and only
+        // with the SC15.1 logic firmware ([MISC] ScorpionTurboLogic)
+        config.even_M1 = ((config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) &&
+                          config.scorpionTurboLogic == ScorpionTurboLogic::SC151) ? 1 : 0;
 
         switch (config.mem_model)
         {

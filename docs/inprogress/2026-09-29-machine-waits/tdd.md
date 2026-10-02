@@ -77,8 +77,18 @@ From [research-scorpion-turbo.md](research-scorpion-turbo.md), the SC15.1 firmwa
   the I/O cycle's 2 T when the cycle starts in turbo (the strobe that turns turbo off still pays them).
 - Even M1 is already off in turbo (`Z80Step` tests the hardware clock ratio); the turbo M1 wait replaces it, as in the
   equations.
-- Not modeled yet: the drop to 3.5 MHz while /INT is active (the length of /INT was not traced); SC15.3's rule
-  (same slots for M1, 1 T per I/O, no Even M1 in normal mode) as a configuration option.
+- 3.5 MHz while /INT is active (research 2.3, since 2026-10-01): while the turbo latch is on the decoder is the
+  Z80's machine step hook; inside the ULA's /INT pulse it sets `hw_turbo_ratio` 1 and applies it at once
+  (`Z80::ApplyHardwareTurboNow`), after the pulse 2 again. The switch is at instruction boundaries (the hardware
+  switches at the next safe clock edge); the acknowledge, which follows the instruction that saw the pulse, runs at
+  3.5 MHz with Even M1 (SC15.1). "Dropped" is not stored: it is the latch on with the ratio 1, so a TTD restore needs
+  nothing. The pulse length is the machine's `intlen` (32 T; the /INT source was not traced).
+- The logic firmware (since 2026-10-01): `[MISC] ScorpionTurboLogic=SC15.1` (default) or `SC15.3` - the slot rule for
+  opcode fetches too, 1 T per I/O cycle, no Even M1 at 3.5 MHz (`config.even_M1` cleared). The contention report shows
+  it (`scorpion_turbo_logic`, with `even_m1`).
+- The slot waits in closed form (since 2026-10-01): one division per access for the picture / border state and the
+  edges left in it, the wait from the pixel counter's phase; the edge-by-edge rule only when a wait crosses the
+  window's edge. A test compares both at every clock of a turbo frame.
 
 ## 5. Tests
 

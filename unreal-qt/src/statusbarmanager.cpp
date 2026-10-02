@@ -117,10 +117,10 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
     _statusBar->addPermanentWidget(_rzx);
     _statusBar->addPermanentWidget(_ttd);
+    _statusBar->addPermanentWidget(_joystick);  // leftmost of the device LEDs: before tape
     _statusBar->addPermanentWidget(_tape);
     _statusBar->addPermanentWidget(_hdd);
     _statusBar->addPermanentWidget(_disk);
-    _statusBar->addPermanentWidget(_joystick);
     _statusBar->addPermanentWidget(_sound);
     _statusBar->addPermanentWidget(separator);
     _statusBar->addPermanentWidget(_cpuFreq);

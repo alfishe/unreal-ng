@@ -388,7 +388,7 @@ ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machi
 ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- ZX-Bus cards: none | zxnetusb | zxwifi | "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
-con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], statistics (debug mode)
+con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
 mode = screen_mode()        -- picture format, memory_layout, active_ram_pages, eff7/dffd/ff77
