@@ -112,9 +112,18 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 - Configuration end, not visible in MAME (no PLD model): when CONF_DONE rises, the extra clocks
   before the PLD starts and the CPU reset (tdd-ports-memory §6). Needs the PLD sources or real
   hardware.
-- Owner decision: the default of the accelerator INT-suspend option (S0 proposes on, round 1 said
-  off before the PLD check).
-- BIOS 3.06 image (CRC `187f4382`): add when a copy is available (MAME set).
+- BIOS 3.06 image (CRC `187f4382`, MAME's): a copy exists in the owner's MAME pack (`roms/sprinter.zip`)
+  and inside the official updater `UP306.EXE` on the DSS 1.71 floppy; add it to `data/rom/sprinter/`
+  next to the community builds ([bios-versions.md](bios-versions.md)).
+- **Deferred (owner, 2026-10-02: secondary feature, plan only): BIOS flash emulation.** The 256 KB ROM
+  is a flash chip (write enable = ROM page port `#5C` bit 4). Model it with the JEDEC flash device that
+  already exists for NeoGS (`core/src/emulator/io/flash/flash29f040b.*`, a 256 KB 29F020-class variant
+  with the IDs the BIOS updater checks), so `UP306.EXE` (DSS 1.71 floppy) can update the BIOS: the
+  instance's ROM starts from the selected image (`[ROM] SPRINTER=`) and keeps every write until the
+  instance is destroyed (resets keep it); a "save ROM to file" dump on every automation surface and in
+  the GUI, an optional persistent flash file like `CmosFile=`; flash contents in the TTD state. End-to-end
+  test: boot 3.04, run `UP306.EXE`, reboot, ROM CRC = `187f4382`. First step when it is picked up:
+  identify the chip and IDs from the BIOS flash routines and `UP306.EXE`.
 - ACC-6 as written ("ESC at the boot menu → Spectrum mode") does not hold for BIOS 3.04: the Spectrum
   ROMs come from DSS `ZX\SPECTRUM.EXE` (or a later BIOS). Whether 3.06 carries them is open.
 - Settled in S2: palette byte order R, G, B in video RAM; 640 graphics high nibble first; blank
