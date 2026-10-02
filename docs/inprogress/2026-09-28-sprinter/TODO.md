@@ -117,8 +117,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
-     decisions Q1-Q3 recorded), network adapters (NE2000 ISA Ethernet confirmed; maximum reuse of the shared network
-     stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+     decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
+     confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
+  5. Recommendation from the developer-interest ranking ([peripherals-survey.md](peripherals-survey.md) §10,
+     2026-10-02), waiting for the owner. After the demo pass:
+     - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
+       and are the only new programs that need a card.
+     - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
+       the BIOS / DSS developer's main work since 2024-10.
 - **ZX mode, phase S8 (design 2026-10-02: [research-zx-mode.md](research-zx-mode.md),
   [tdd-zx-mode.md](tdd-zx-mode.md); roadmap §1 row S8).** The real machine loads TRD / SCL into a BIOS RAM disk
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
@@ -142,25 +148,35 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
     counter-mode inputs and ZC outputs (gap I7, C11) - S.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
-    as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
+    as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
+    media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
-- **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02; priority order,
-  functional items only):**
-  - P2 research: the community logic firmware of 2026 (`k30.acx` / `k50.acx` of 2026-09-24): accelerator control
-    codes `#80` / `#81`, 1 KB buffer, rectangle mode, X / Y clipping (Tolik-Trek's MAME fork), the `ACEX.SCALE` port;
-    if present, an option of the Standard configuration module - S research, M build (survey Q2).
+- **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
+  developer interest in §10; priority order, functional items only):**
+  - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT
+    `AUTOIDE`) - S. Raised from P3 (§10: CF fixes in BIOS-TT 2024-12 / 2025-05; CF is the usual disk).
+  - P2 research, changed focus (§10): first a runtime configuration reload, that is LDConf with the MAME-pack
+    `DEMOS/LDCONF` streams `STREAM.300-305` and back to Standard, plus the `ALL MODE` port restore (LDConf
+    2026-09-27). Then the community logic firmware of 2026 (`k30.acx` / `k50.acx` of 2026-09-24): accelerator
+    control codes `#80` / `#81`, 1 KB buffer, rectangle mode, X / Y clipping ("tmkonf", written by Andrei Holub in
+    MAME, carried by Tolik-Trek's fork), the `ACEX.SCALE` port (removed from the BIOS start-up 2026-08-26). Build
+    tmkonf only when a released bitstream and a program use it - S research, M build (survey Q2).
   - P2: correct the ISA research §7.1 row "Wild Sound XM player": the card is the ISA Wild Sound (Robus, STM32F405,
     AYX-32 compatible) - S, with the next ISA design edit.
-  - P3: Centronics printer port with a print-to-file printer: PIO A data and RDY strobe, PIO B bits 6 / 7, the SIO A /
-    B status lines (BUSY, ACK, SELECT, PAPER END); one connector slot shared with the LPT Sega pad (PLAN #82); DSS
-    `#5F PRINT` end to end, journaled for TTD, all five automation surfaces - S-M (survey Q1).
-  - P3: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT `AUTOIDE`) - S.
   - P3 research, P4 build: ISA Wild Sound card (protocol from its author first; one known program, `prosiak.exe`) - L
     (survey Q3).
+  - P4 (lowered from P3 by survey §10: no developer activity): Centronics printer port with a print-to-file
+    printer: PIO A data and RDY strobe, PIO B bits 6 / 7, the SIO A / B status lines (BUSY, ACK, SELECT, PAPER END); one connector slot shared with the LPT Sega pad (PLAN #82); DSS
+    `#5F PRINT` end to end, journaled for TTD, all five automation surfaces - S-M (survey Q1).
   - P4 on demand: SIO B as a COM port (the `MOUSE` connector holds the mouse or a `ComPort` peer) - S (survey Q4).
   - P4 on demand: sp2000-light board profile (no ISA slots, one IDE channel) - S (survey Q6).
   - P4 on evidence: 512 KB video RAM / 512 KB ROM of the sp2022d board - S-M (survey Q5).
+- Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
+  roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
+  SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
+  `UNETESP.DLL`, owner: must be supported) (M), SN4 modem / SprinterSerial (S-M, needs I4), SN5 3C509B (M), SN6
+  host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal

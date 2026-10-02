@@ -79,7 +79,7 @@ flowchart LR
     DEC -- "latch: A19-A14,<br/>AEN, RESET" --> BUS
     MEM -- "IsaRead / IsaWrite<br/>(space, slot, offset)" --> BUS["SprinterIsaBus<br/>(owned by the decoder)"]
     BUS -- "slot 1" --> ZXA["IsaZxBusAdapter"]
-    BUS -- "slot 2" --> C2["IsaRamCard / IsaUartCard /<br/>... (later phases)"]
+    BUS -- "slot 2" --> C2["IsaRamCard / network cards<br/>(network design SN1-SN6) / ..."]
     ZXA -- "PeripheralPortIn/Out<br/>(#xxB3, #xxBB, #xx33)" --> GS["GeneralSoundCard<br/>(GS / LW / NeoGS, shared,<br/>owned by SoundManager)"]
     GS -- "audio buffer" --> SM["SoundManager mixer"]
     BUS -. "IRQ / DRQ per slot<br/>(phase I4)" .-> PIO["Z84C15 PIO port B"]
@@ -211,11 +211,12 @@ Machine INI, Sprinter section (`data/configs/sprinter/unreal.ini`), read at inst
 
 ```ini
 [ISA]
-Slot1=ZXBUS        ; ISA slot 1 (J6): NONE | ZXBUS | RAM | UART | ESP  (later: ESS688, JOY, FT812)
+Slot1=ZXBUS        ; ISA slot 1 (J6): NONE | ZXBUS | RAM | NE2000 | SPRINTERESP | MODEM | DUAL16552 | EL3C509B  (later: ESS688, JOY, FT812)
 Slot1ZxBus=GS      ; cards on a ZX-bus adapter: GS (the [SOUND] GSType personality) | NONE
 Slot2=NONE         ; ISA slot 2 (J7)
 ; RAM card:   SlotNRamBase=#DC000  SlotNRamSize=16      (KB, 16..256)
-; UART card:  SlotNUartBase=#3E8   SlotNComPort=...    (the [NETWORK] ComPort= syntax, phase I4)
+; network cards (NE2000, EL3C509B, SPRINTERESP, MODEM, DUAL16552): SlotNChip / SlotNBase / SlotNMac / SlotNPeer,
+;   see docs/inprogress/2026-10-02-sprinter-network/tdd.md §12
 ```
 
 - **Default: slot 1 = ZX-bus adapter with the GS** ([open-questions.md](open-questions.md) Q2): what MAME fits by
@@ -288,7 +289,7 @@ refusal in `Core::AddBusOverlay` cannot express it - implementation picks the le
 |---|---|---|---|---|
 | 1 | ZX-bus adapter + GS / NeoGS | §6-7 | ProPlay, Neo Player Light, ISACHK | I1 + I2 (M + M) |
 | 2 | **ISA RAM** | `IsaRamCard`: a byte array at `RamBase`, `RamSize` KB, memory cycles only; contents start as `#FF` (Q11) | Shaos's TIMER (tests RAM, runs code from it) | I3 (S) |
-| 3 | **16550 UART** (SprinterESP Wi-Fi at `#3E8`, ISA modem / SprinterSerial at `#3F8` / `#2F8`) | `IsaUartCard`: the shared `Uart16550` (Evo flavor parameters) at a base address, its peer from the shared `ComPort` stack (`ESP` = `AtModule` on the virtual network, `TCP` / host serial = `StreamPeer`); IRQ to PIO port B; the network window lists "ISA slot N: 16550 @ #3E8" through `DescribeNetwork()` (slot-oriented, as the owner asked for network settings) | ESPT, wterm (AT firmware, Wi-Fi), BC-Term (modem) | I4 (M) |
+| 3 | **Network cards**: NE2000-class Ethernet (RTL8019AS, owner decision 2026-10-02), 16550 UART cards (SprinterESP Wi-Fi at `#3E8`, ISA modem / SprinterSerial at `#3F8` / `#2F8`), 3C509B | designed in [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): shared `PcSerialCard` built like `Atm2IoEsp` (a `ComPort` with `registerOf = port & 7`, no `AttachToPorts`) with **`Uart16550::DefaultParams(Chip16550)`** (a real 16550: interrupts, AFE, no access wait - *corrected: not the Evo AVR flavor*), shared `Dp8390` / `Ne2000Board`, `EtherLink3`, the Ethernet gateway on the virtual network; one Sprinter wrapper `IsaBusDeviceCard`; IRQ from `Uart16550::InterruptActive()` (`ComPort` drives none) to PIO port B | the 2026 RTL8019AS / Wi-Fi / 3C509B kits, ESPT, wterm, BC-Term | network phases SN1-SN6 (PIO lines stay in I4) |
 | 4 | ESS688 / Sound Blaster Pro | its own isolated device: ymfm OPL3 for FM, the SB DSP (reset, direct DAC `#10`, version), the ESS / SB Pro mixer; no ISA DMA (Sprinter has no DMA controller: a sample path needs a software-DMA model, research §5) | ESSMIXER (mixer only), maybe "Wild Sound" | I6 (L), deferred |
 | 5 | SprinterJoy (two Sega pads at `#250`) | needs the card's firmware / CPLD logic first (board "in development") | `TESTSD.C` | I7 (S-M), deferred |
 | 6 | Sprinter-FT (FT812 video) | eve-emu FT812 (shared with TS-Conf VDAC2) + a second video output | the Sprinter-FT tester | I8 (L), deferred |
@@ -359,7 +360,7 @@ flowchart LR
     I0["I0 references,<br/>MOD generator"] --> I2
     I1["I1 ISA bus core<br/>M"] --> I2["I2 ZX-bus adapter<br/>+ GS / NeoGS, ProPlay<br/>M"]
     I1 --> I3["I3 ISA RAM<br/>S"]
-    I1 --> I4["I4 UART cards +<br/>PIO IRQ, M"]
+    I1 --> I4["I4 PIO IRQ lines, S<br/>(cards: network SN1-SN6)"]
     I2 --> I5["I5 ZX-bus seam,<br/>MoonSound (optional)<br/>S-M"]
     I4 --> I6["I6 ESS688 / SB Pro<br/>L, deferred"]
     I1 --> I7["I7 SprinterJoy<br/>S-M, deferred"]
@@ -372,7 +373,7 @@ flowchart LR
 | **I1** | `SprinterIsaBus`, `IIsaCard`, window-3 routing (read / write / peek), full `#9FBD` latch, `[ISA]` config, empty slots, TTD blob 33, `state/isa` + `control/isa` on all five surfaces + OpenAPI, port trace dispositions, `ZxBusPresent()`; hardware-reference §11 corrected | T-ISA-1..5, 7, 9 (empty), 13-15 | M | S6 merged (CBL, `IModelAudioSource`, TTD id 32) |
 | **I2** | `IsaZxBusAdapter`, GS / NeoGS through it, peek via the mailbox snapshot, NeoGS ZX-DMA refusal, `DescribeNetwork().zxBus = false`, recipes (`sprinter-isa.md`, GS recipe), outcome doc with the MAME comparison | T-ISA-6, 8-12; ProPlay plays a MOD from the GUI | M | I1, I0 |
 | **I3** | `IsaRamCard` | TIMER runs; T-ISA-7 | S | I1 |
-| **I4** | PIO port B lines, `IsaUartCard` (16550 + ComPort peers + ESP AT), network window slot rows | ESPT reaches the virtual AP and a host; BC-Term talks to a TCP peer | M | I1; the network stack (on master) |
+| **I4** | PIO port B lines (card IRQ -> bits 0 / 1, DRQ / DACK bits), wired to `IIoBusDevice::Irq()` of the fitted cards. The UART cards, the network slot rows and every other network card moved to the network design ([phases SN1-SN6](../2026-10-02-sprinter-network/tdd.md#16-phased-plan)) | a UART card's receive interrupt reaches the Z84C15 PIO and raises a mode-2 interrupt (BC-Term, network phase SN4) | S | I1 |
 | **I5** | the ZX-bus as a real shared seam (cards register on "a ZX-bus" instead of the native funnel; the native funnel becomes one bus host, the adapter another); MoonSound on the adapter | MoonSound plays through the adapter; no change on other machines (A/B) | S-M | I2; owner go (Q1) |
 | **I6** | ESS688 / Sound Blaster Pro (isolated device) | ESSMIXER; an FM test | L | I4 (IRQ) |
 | **I7** | SprinterJoy | its test program | S-M | I1; card firmware analysis |
