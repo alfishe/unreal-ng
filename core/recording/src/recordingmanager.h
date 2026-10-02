@@ -372,6 +372,10 @@ protected:
     // Emulated time tracking
     uint64_t _emulatedFrameCount = 0;
     uint64_t _emulatedAudioSampleCount = 0;
+    /// Emulated seconds of the frames captured so far: the next frame's timestamp. A sum of each frame's own
+    /// duration, never count x the current duration - a machine that changes its frame length mid-recording
+    /// (Sprinter 320 / 312 lines) would otherwise step the timestamps backwards and fail the encoder
+    double _emulatedVideoTime = 0.0;
 
     // Wall clock tracking for real elapsed recording time
     using Clock = std::chrono::steady_clock;

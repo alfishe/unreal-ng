@@ -99,6 +99,9 @@ private:
     std::string _filename;
     std::string _lastError;
     double _baseAudioTimestamp = -1.0;
+    /// The last video frame's presentation time: AVAssetWriter fails the whole
+    /// file on a timestamp that does not grow, so such a frame is dropped
+    double _lastVideoTimestamp = -1.0;
 };
 
 #endif // __APPLE__

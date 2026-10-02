@@ -286,6 +286,7 @@ void RecordingManager::Reset()
     // Note: We could optionally preserve these across resets if needed
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
+    _emulatedVideoTime = 0.0;
 
     // Reset statistics
     _stats = RecordingStats();
@@ -454,6 +455,7 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     // Reset counters
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
+    _emulatedVideoTime = 0.0;
     _stats = RecordingStats();
     _frameTimestamps.clear();
     _frameTimestampIndex = 0;
@@ -553,6 +555,7 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
     // Reset counters
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
+    _emulatedVideoTime = 0.0;
     _stats = RecordingStats();
     _wallClockStart = Clock::now();
     _wallClockPausedTotal = Clock::duration::zero();
@@ -635,6 +638,7 @@ bool RecordingManager::StartRecordingWithEncoder(const std::string& filename, st
     // Reset counters
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
+    _emulatedVideoTime = 0.0;
     _stats = RecordingStats();
     _wallClockStart = Clock::now();
     _wallClockPausedTotal = Clock::duration::zero();
@@ -782,6 +786,7 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     // Calculate presentation timestamp based on real wall-clock elapsed time for VideoWall/real-time capture
     // or emulated frame count for cycle-accurate single-emulator capture
     double timestamp = 0.0;
+    double frameDuration = 0.0;
     if (_useRealTimeClock || !_context)
     {
         auto wallNow = Clock::now();
@@ -793,17 +798,15 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     {
         // Calculate timestamp from actual T-states per frame, not hardcoded frame rate
         // This ensures audio/video sync regardless of which machine model is emulated
-        // (Pentagon runs at ~48.83 fps, not 50 fps like ZX Spectrum 48K/128K)
+        // (Pentagon runs at ~48.83 fps, not 50 fps like ZX Spectrum 48K/128K).
+        // The frames are summed one by one: the frame length may change while
+        // recording (Sprinter codes #2C / #2D), and the timestamps must only grow
+        timestamp = _emulatedVideoTime;
         uint32_t tstatesPerFrame = _context->config.frame;
         if (tstatesPerFrame > 0)
-        {
-            double frameDurationSec = static_cast<double>(tstatesPerFrame) / static_cast<double>(CPU_CLOCK_RATE);
-            timestamp = static_cast<double>(_emulatedFrameCount) * frameDurationSec;
-        }
-        else
-        {
-            timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
-        }
+            frameDuration = static_cast<double>(tstatesPerFrame) / static_cast<double>(CPU_CLOCK_RATE);
+        else if (_videoFrameRate > 0)
+            frameDuration = 1.0 / _videoFrameRate;
     }
 
     // Crop framebuffer when requested (MainScreen or Viewport modes)
@@ -952,6 +955,7 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     }
 
     _emulatedFrameCount++;
+    _emulatedVideoTime += frameDuration;
 }
 
 void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
