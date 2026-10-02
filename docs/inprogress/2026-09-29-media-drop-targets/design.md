@@ -374,6 +374,16 @@ sets them.
   `QMetaObject::invokeMethod`; `MediaPanelWindow`'s destructor cancels and joins unconditionally
   before any member is torn down, so that queued call can never fire on a half-destroyed object
   (same contract `TapeExportAudioDialog` already relies on).
+- **A directory disappearing mid-walk fails the scan, not just that subtree**: `FolderSnapshot`'s
+  `Scanner` originally treated a `std::filesystem::directory_iterator` failure (the initial open, or
+  `increment` partway through) the same as a policy exclusion - `Skip()` the affected path and keep
+  going, so the final tree could silently stop wherever the host disk went away while still coming
+  back as an overall success. Developer call: no truncated image, ever - an I/O failure at that
+  level now sets `_ioError` (tracked and unwound through every recursion level exactly like
+  `_cancelled`) and `Scan()` returns false with the `ec.message()`-derived text, which
+  `OpenFolderVolume`/`BuildTrd` already map to `MediaError::UnreadableSource` with no further
+  change needed. Policy exclusions (symlinks, the manifest's `exclude`, service files, size/count
+  limits) are untouched - only a genuine filesystem error now fails the operation.
 
 **Not done here**: a true mid-scan cancellation only exists for the folder-scan and
 TR-DOS-file-read loops added above; nothing else in the insert path (`HostFolderFat::Build`'s
@@ -381,7 +391,8 @@ in-memory FAT layout math, `MediaFormatRegistry::WrapBlock`) has a cancellation 
 neither does any I/O - per `OpenFolderVolume`'s own trace (§3 of the research that fed this
 section), the scan is already the dominant cost for the SD/IDE block-volume path this bug names.
 Verification: `FolderSnapshot_Test` (progress counting incl. bytes, cancellation, nested-recursion
-unwind) and `FolderDiskBuilder_Test` (cancellation during the scan vs. during the file-read loop) in
+unwind, a directory disappearing mid-walk failing the whole scan) and `FolderDiskBuilder_Test`
+(cancellation during the scan vs. during the file-read loop) in
 `core/tests/`; the GUI wiring was also interactively verified (built and run in an isolated git
 worktree - the shared working tree had unrelated concurrent breakage at the time - no automation
 surface reaches `QFileDialog`/native file pickers, so this had to be a manual run), developer-
