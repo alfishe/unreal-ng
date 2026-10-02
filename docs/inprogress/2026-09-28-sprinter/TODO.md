@@ -33,7 +33,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     [docs/disasm/rom/sprinter/](../../disasm/rom/sprinter/README.md), names carried from BIOS-TT
     `0271ac3` and BIOS-PP `1273243`; symbol files in `data/symbols/sprinter/` (load with
     `LabelManager`)
-  - [x] port-table decoder `tools/sprinter/dcp-table.py`; the 3.04 table checked statically
+  - [x] port-table decoder `tools/machines/sprinter/dcp-table/dcp-table.py`; the 3.04 table checked statically
     ([hardware-reference.md](hardware-reference.md) §4.4: three differences to the BIOS-TT table)
   - [x] Q4: 473 720 writes, statically ([tdd-ports-memory.md](tdd-ports-memory.md) §6)
   - [x] Q3: the PLD has the INT-suspend; default on (owner decision 2026-10-01)
@@ -43,7 +43,7 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     500 kbit/s
   - [x] Sprinter sources added to the local corpus ([materials.md](materials.md))
   - [x] MAME reference captures (2026-10-01, branch `sprinter-mame`; MAME 0.289 subset build
-    `zxsp` with the `sprinter` driver, scripts in `tools/verification/sprinter/`) in
+    `zxsp` with the `sprinter` driver, scripts in `tools/machines/sprinter/mame-capture/`) in
     [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md): page `#40` after POST (equals the static table,
     CRC `b7f09600`), the logo frame (frame 60, 1.229 s) and the boot screen (frame 507, 10.383 s),
     INT positions for the FN_SYNC modes (Scorpion = 3.04 default, Pentagon +16 lines, Spectrum +8

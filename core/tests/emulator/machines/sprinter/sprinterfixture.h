@@ -130,7 +130,7 @@ public:
 
     /// The port table BIOS 3.04 writes (page 8 DcpInit #0CA1): the packed stream at
     /// page 8 #1400 - a flag byte, then per bit (MSB first) a literal or a zero - into
-    /// 16 KB, then map 3 = four copies of map 0's first KB (tools/sprinter/dcp-table.py)
+    /// 16 KB, then map 3 = four copies of map 0's first KB (tools/machines/sprinter/dcp-table/dcp-table.py)
     static std::vector<uint8_t> Table304(const std::vector<uint8_t>& rom)
     {
         std::vector<uint8_t> out;

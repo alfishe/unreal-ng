@@ -2480,7 +2480,7 @@ l0c8bh:
 ; Then map 3 (#F000-#FFFF) = 4 copies of map 0's first 1 KB, which is the
 ; "write/read, DOS on, PN5 = 0" quarter: map 3 decodes the floppy ports
 ; whatever the DOS signal says. Returns with JP (HL') after IN A,(#E2).
-; tools/sprinter/dcp-table.py does the same unpacking and prints the table.
+; tools/machines/sprinter/dcp-table/dcp-table.py does the same unpacking and prints the table.
 ;---------------------------------------------------------------------------
 DcpInit:
 	exx			;0ca1	d9		.
