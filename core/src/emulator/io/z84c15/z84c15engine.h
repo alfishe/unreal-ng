@@ -58,6 +58,9 @@ public:
     /// Give the CPU back to the native interpreter (only if this is installed)
     void Uninstall();
     bool IsInstalled() const;
+    /// The host's registers were replaced from outside (a TTD restore): its boundary is pushed to the
+    /// library at the next step even when it equals the one the library last reported
+    void InvalidateBoundary() { _boundarySeen = 0xFF; }
 
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }

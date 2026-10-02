@@ -18,6 +18,10 @@
 
 class SprinterMemory;
 class SprinterVideoRenderer;
+namespace ttd
+{
+class TTDSprinterPld;
+}
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -154,9 +158,26 @@ public:
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
     /// Code #89 (Covox-Blaster control, phase S6): the last value written (automation state block)
     uint8_t CblControl() const { return _cblControl; }
+    SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
 
+    /// region <TTD (phase S7; debugger/ttd/sprinter/ttdsprinter.h)>
+public:
+    /// A TTD serializer loaded part of the machine's state: re-derive what follows from it - the
+    /// engine's boundary hand-over, the turbo and its wait overlay, the bank windows, the step hook
+    void OnTtdStateLoaded();
+
+    /// The block accelerator's state, carried in the PLD blob (tdd-integration §2.1).
+    /// TODO(S5 accelerator): return sizeof the accelerator state and copy it here; a non-zero size changes
+    /// the PLD blob's size, so bump TTDSprinterPld::kVersion with it
+    size_t AccelStateSize() const { return 0; }
+    void SaveAccelState(uint8_t* dst) const { (void)dst; }
+    void LoadAccelState(const uint8_t* src) { (void)src; }
+    /// endregion </TTD>
+
 private:
+    friend class ttd::TTDSprinterPld;  ///< the PLD blob carries the decoder fields below SprinterPldState
+
     void PowerOn();
     /// The PLD's own reset of its registers (MAME machine_reset); `kind` says which reset
     void ResetPld(SprinterResetKind kind);

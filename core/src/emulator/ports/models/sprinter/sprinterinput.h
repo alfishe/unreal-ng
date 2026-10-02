@@ -91,6 +91,7 @@ public:
 
     /// Statistics: bytes the SIO refused (FIFO full)
     uint64_t KeyboardOverruns() const { return _keyboardOverruns; }
+    void SetKeyboardOverruns(uint64_t count) { _keyboardOverruns = count; }  ///< TTD restore
 
 private:
     uint64_t Now() const;

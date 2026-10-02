@@ -128,6 +128,14 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::SprinterPld: return "sprinter-pld";
         case PeripheralId::Atm2Kbc: return "atm2-kbc";
         case PeripheralId::MachineSerialPeer: return "machine-serial-peer";
+        case PeripheralId::SprinterVideoRam: return "sprinter-vram";
+        case PeripheralId::Z84C15: return "z84c15";
+        case PeripheralId::SprinterFastRam: return "sprinter-fast-ram";
+        case PeripheralId::SprinterInput: return "sprinter-input";
+        case PeripheralId::SprinterCovoxBlaster: return "sprinter-covox-blaster";
+        case PeripheralId::SprinterIsa: return "sprinter-isa";
+        case PeripheralId::SprinterPads: return "sprinter-pads";
+        case PeripheralId::Wd1793Context: return "wd1793-context";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

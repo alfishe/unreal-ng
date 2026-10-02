@@ -82,6 +82,10 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # its 16C frame with a DMA RAM copy every frame (TS-Conf blob 16, DMA live
     # counters, per-line DRAM budget)
     ("tsconf_sprites", "TSL", "testdata/machines/tsconf/spg/sprites.spg", 50),
+    # Sprinter Sp2000 (Sprinter S7): the cold full start of the shipped config - the ROM's loader feeds
+    # the PLD its bitstream (~94 frames at 3.5 MHz), then BIOS 3.04 POST and SETUP at 21 MHz: the PLD,
+    # Z84C15, video RAM, fast RAM, input and WD1793-context blobs (ids 25, 28-31, 35)
+    ("sprinter_boot", "SPRINTER", None, 0),
 ]
 CORPUS_DIR = "testdata/ttd"
 
@@ -92,6 +96,7 @@ CORPUS_DIR = "testdata/ttd"
 # fixture recorded with it cannot replay exactly; the classic card can
 FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
     "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
+    "sprinter_boot": {"out": "testdata/machines/sprinter/ttd/boot.ttd", "gs": "z80"},
     # The Pentagon corpus: TTD_Corpus_Test fits the classic card before loading, and a session loads only into the
     # card it was recorded with. The shipped configs fit NeoGS, so without this a re-record from the stock app
     # produced files the test refuses ("General Sound slot mismatch")

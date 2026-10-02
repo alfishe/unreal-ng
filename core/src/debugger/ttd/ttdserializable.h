@@ -68,9 +68,20 @@ enum class PeripheralId : uint8_t
     EvoFontRam = 22,      // ZX-Evo BaseConf text-mode font RAM (2 KB, #BF bit 2 loads it) and the glyph byte #0EBD reads
     KempstonJoystick = 23, // Kempston joystick state byte (core device; carried by machines whose decoder answers #1F)
     SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
-    SprinterPld = 25,     // Sprinter Sp2000 PLD state + configuration module (Sprinter tdd-integration §2.1; serializer in phase S7)
+    SprinterPld = 25,     // Sprinter Sp2000 PLD state, decoder latches, configuration module, INT source, accelerator slot (tdd-integration §2.1)
     Atm2Kbc = 26,         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard
     MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232)
+    SprinterVideoRam = 28,  // Sprinter video RAM, 256 KB whole (a TTD v2 memory region once those exist)
+    Z84C15 = 29,          // Zilog Z84C15 on-chip block: system registers, wait generator, watchdog, CTC, SIO (FIFOs), PIO, daisy chain
+    SprinterFastRam = 30, // Sprinter fast RAM (the four 16 KB cache pages), 64 KB whole (a TTD v2 memory region once those exist)
+    SprinterInput = 31,   // Sprinter AT keyboard byte stream (SIO A) and Microsoft serial mouse packet generator (SIO B)
+    // Reserved for Sprinter devices that do not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
+    // never declared. The device that lands takes its id, declares it and adds its blob - the existing Sprinter
+    // blobs keep their layout, so a checkpoint only gains a blob
+    SprinterCovoxBlaster = 32, // reserved (S6): Covox / Covox-Blaster ring, indices, rate phase, INT request, 16-bit DAC
+    SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
+    SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
+    Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     // Future: SAA1099, GS512, etc.
     Count
 };

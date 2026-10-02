@@ -6,7 +6,9 @@
 
 #include <cstring>
 
+#include "debugger/ttd/sprinter/ttdsprinter.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -481,6 +483,17 @@ void PortDecoder_Sprinter::OnBanksChanged()
         _waits->SetSlotWaits(bank, _memory->GetMemoryBankMode(bank) == BANK_RAM);
 }
 
+void PortDecoder_Sprinter::OnTtdStateLoaded()
+{
+    // The loaded registers become the library's at the next step, whatever boundary it reported last
+    if (_cpuEngine)
+        _cpuEngine->InvalidateBoundary();
+    // The windows first: the turbo's wait slots follow the bank modes
+    UpdateBanks();
+    ApplyTurbo();
+    RefreshStepHook();
+}
+
 const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
 {
     const SprinterVideoRenderer* renderer = ActiveModule().VideoRenderer();
@@ -905,15 +918,32 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
 
 std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
 {
-    // The PLD blob comes with phase S7: declaring it makes TTD refuse to record
-    // this machine until then instead of recording a state it cannot restore
-    return {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887};
+    // Everything of the machine the 128K chipset struct and the core devices do not carry (Sprinter S7,
+    // tdd-integration §2): the PLD and the decoder, the Z84C15 beside its register file, the keyboard and
+    // serial mouse streams, the video RAM and the fast RAM (whole-array blobs until TTD v2 memory regions)
+    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887,
+                                          ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
+                                          ttd::PeripheralId::SprinterInput};
+    if (_context->pBetaDisk)
+        ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
+    if (_sprinterMemory)
+        ids.push_back(ttd::PeripheralId::SprinterFastRam);
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateTTDSerializers() const
 {
+    auto& self = const_cast<PortDecoder_Sprinter&>(*this);
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
-    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(self._rtc));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterPld>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterZ84>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterInput>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
+    if (_sprinterMemory)
+        serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));
+    if (_context->pBetaDisk)
+        serializers.push_back(std::make_unique<ttd::TTDWd1793Context>(*_context->pBetaDisk));
     return serializers;
 }
 

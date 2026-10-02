@@ -56,6 +56,21 @@ public:
     /// INT start positions in base T-states of the frame, ascending
     const std::vector<uint32_t>& Positions();
 
+    /// region <State (TTD): the inputs of the INT list and the PLD's INT flip-flop; the list itself is rebuilt>
+    uint8_t ModePage() const { return _modePage; }
+    uint16_t FrameLines() const { return _frameLines; }
+    /// The pulse the last acknowledge ended (frame x length + start), -1 = none
+    int64_t AckedPulse() const { return _ackedPulse; }
+    void RestoreState(uint8_t modePage, uint16_t frameLines, int64_t ackedPulse, bool keyboardInt)
+    {
+        _modePage = modePage & 1;
+        _frameLines = frameLines;
+        _ackedPulse = ackedPulse;
+        _keyboardInt = keyboardInt;
+        _dirty = true;
+    }
+    /// endregion
+
     /// MAME's list for a given mode page and height (tests, the debugger)
     static std::vector<uint32_t> ComputePositions(const SprinterVideoRam& vram, uint8_t modePage, uint16_t frameLines);
 

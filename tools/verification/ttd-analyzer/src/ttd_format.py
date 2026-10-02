@@ -225,6 +225,18 @@ PERIPHERAL_ID_NAMES = {
     21: "EvoTurboCache",
     22: "EvoFontRam",
     23: "KempstonJoystick",
+    24: "SerialPort",
+    25: "SprinterPld",
+    26: "Atm2Kbc",
+    27: "MachineSerialPeer",
+    28: "SprinterVideoRam",
+    29: "Z84C15",
+    30: "SprinterFastRam",
+    31: "SprinterInput",
+    32: "SprinterCovoxBlaster",
+    33: "SprinterIsa",
+    34: "SprinterPads",
+    35: "Wd1793Context",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
