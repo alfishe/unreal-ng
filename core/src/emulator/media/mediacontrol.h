@@ -103,6 +103,7 @@ private:
     MediaReply List();
     MediaReply Info(const MediaRequest& request);
     MediaReply Formats(const MediaRequest& request);
+    MediaReply Targets(const MediaRequest& request);
     MediaReply Insert(const MediaRequest& request, bool swap);
     MediaReply Eject(const MediaRequest& request);
     MediaReply Save(const MediaRequest& request);

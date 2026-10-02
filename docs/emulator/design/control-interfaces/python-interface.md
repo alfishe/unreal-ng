@@ -316,6 +316,7 @@ emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs sa
 emu.media_eject("B", export="/tmp/b.trd")
 emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
+emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
 emu.media(verb, slot, path, **options)                   # any verb
 ```

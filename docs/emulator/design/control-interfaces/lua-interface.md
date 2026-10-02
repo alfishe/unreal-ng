@@ -182,12 +182,13 @@ media_insert("sd", "/home/me/zx/sdcard", {fs = "fat32"})
 media_swap("A", "/games/elite-2.trd", {save = true})    -- a dirty disk needs save / export / discard
 media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
+media_targets("/discs/dna_nemo.iso")                    -- where a file can go: file, targets, default, refusal
 media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
 media(verb, slot, path, opts)                           -- any verb
 ```
 
 Each returns the result table: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
-and the verb's fields (`slots`, `info`, `formats`, ...).
+and the verb's fields (`slots`, `info`, `formats`, `targets`, ...).
 
 ### Disk Operations
 

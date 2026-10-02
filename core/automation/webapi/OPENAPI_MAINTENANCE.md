@@ -36,8 +36,8 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_interpreter.inc` | Interpreter Control | Python/Lua exec, status, stop |
 | `openapi_lifecycle.inc` | Emulator Management | Create, start, stop, pause, resume, reset |
 | `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
-| `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}`, `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
-| `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium` |
+| `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}` (also `formats`, `targets?path=`), `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
+| `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |

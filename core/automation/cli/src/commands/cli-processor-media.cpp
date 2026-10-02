@@ -25,7 +25,7 @@ namespace
     /// Verbs that take a path after the slot
     bool TakesPath(const std::string& verb)
     {
-        return verb == "insert" || verb == "swap" || verb == "save" || verb == "export";
+        return verb == "insert" || verb == "swap" || verb == "save" || verb == "export" || verb == "targets";
     }
 
     std::string MediumText(const StateNode* medium)
@@ -111,7 +111,7 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         request.options[name] = value;
     }
 
-    const bool slotless = verb == "list" || verb == "formats";
+    const bool slotless = verb == "list" || verb == "formats" || verb == "targets";
     size_t next = 0;
     if (!slotless && next < positional.size())
         request.selector = positional[next++];
@@ -167,6 +167,40 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         for (const auto& [kind, extensions] : body.find("formats")->members)
             out << "  " << std::left << std::setw(9) << kind << Join(&extensions) << NEWLINE;
     }
+    else if (verb == "targets")
+    {
+        const StateNode* file = body.find("file");
+        out << "  file: " << (file->find("kinds")->items.empty() ? "unknown" : Join(file->find("kinds")));
+        if (!file->find("format")->s.empty())
+            out << " (" << file->find("format")->s << ")";
+        const StateNode* evidence = file->find("evidence");
+        if (evidence && !evidence->items.empty())
+            out << " - " << evidence->items.front().s;
+        out << NEWLINE;
+        const StateNode* refusal = body.find("refusal");
+        if (refusal && refusal->kind == StateNode::Kind::String)
+            out << "  refused: " << refusal->s << NEWLINE;
+        const StateNode* defaultTarget = body.find("default");
+        const int64_t chosen = defaultTarget && defaultTarget->kind == StateNode::Kind::Int ? defaultTarget->i : -1;
+        int64_t index = 0;
+        for (const StateNode& target : body.find("targets")->items)
+        {
+            const StateNode* slot = target.find("slot");
+            const std::string where = slot && slot->kind == StateNode::Kind::String ? slot->s : target.find("action")->s;
+            out << "  " << (index == chosen ? "* " : "  ") << std::left << std::setw(12) << where << std::setw(26)
+                << target.find("label")->s;
+            const StateNode* occupied = target.find("occupiedBy");
+            out << (occupied && occupied->kind == StateNode::Kind::String ? "replaces " + occupied->s : "empty");
+            if (target.find("dirty")->b)
+                out << "  unsaved writes!";
+            if (target.find("autostart")->b)
+                out << "  autostart";
+            out << NEWLINE;
+            index++;
+        }
+        if (chosen < 0 && index > 1)
+            out << "  several targets: name the slot (media insert <slot> <path>)" << NEWLINE;
+    }
     else
     {
         out << "ok: " << reply.slot;
@@ -189,6 +223,7 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  list                         - every slot and the detached media" << NEWLINE;
     out << "  info <slot>                  - one slot, its tags and medium" << NEWLINE;
     out << "  formats [--kind floppy]      - accepted formats per kind" << NEWLINE;
+    out << "  targets <path>               - the slots that take a file (* = used without asking)" << NEWLINE;
     out << "  insert <slot|auto> <path>    - a file or a folder; auto picks the slot" << NEWLINE;
     out << "  swap <slot> <path>           - eject + insert in one step" << NEWLINE;
     out << "  eject <slot>                 - take the medium out" << NEWLINE;
