@@ -803,3 +803,16 @@ the real coprocessor ROM; "card" = a real VDAC2.
 | V19 | Granularity of `REG_CMD_READ` inside a command: when the command's words are released, in what steps data words are | 7.2 | BT8XX: read `REG_CMD_READ` while feeding a long `CMD_INFLATE` slowly |
 
 The design's §12.1 references this table.
+
+Known limits of the BT8XX reference: its results here are not evidence of the chip.
+
+- `REG_CLOCK` right after boot: depends on the reference's own start-up timing.
+- `REG_DATESTAMP`: holds the reference's build string.
+- Audio: the reference does not play sound in this setup (`REG_PLAYBACK_READPTR` stays 0,
+  `REG_PLAYBACK_PLAY` is not cleared).
+- `REG_TAP_CRC`: not computed by the reference (reads 0).
+- `ROM_FONT` 0x1E0000…0x1FFFFF: host reads and `CMD_MEMCRC` see zeros there, while the
+  reference holds the full 1152 KB image and draws font 34 (from 0x1E1B5C) completely. The
+  datasheet maps `ROM_FONT` there; eve-emu follows the datasheet. No golden cases for font 34
+  are made from the reference.
+
