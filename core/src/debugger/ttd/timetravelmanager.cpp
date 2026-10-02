@@ -237,6 +237,7 @@ bool TimeTravelManager::StartRecording()
         for (auto& cp : _timeline)
             ReleaseCheckpointRefs(cp);
         _timeline.clear();
+        _blobBytes = 0;
         _pageStore.Reset();
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
@@ -310,6 +311,7 @@ bool TimeTravelManager::StartRecording()
     // up front (v1 strategy — see the header doc for the v2 fast-path plan).
     TTDCheckpoint baseline;
     CaptureNow(baseline);
+    _blobBytes += BlobBytes(baseline);
     _timeline.push_back(std::move(baseline));
 
     SetState(TTDSessionState::Recording);
@@ -452,6 +454,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
     _timeline.clear();
+    _blobBytes = 0;
     _pageStore.Reset();
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
@@ -720,6 +723,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.historyLimitFrames = _historyLimitFrames;
     info.historyLimitBytes = _historyLimitBytes;
     info.evictedCheckpoints = _evictedCheckpoints;
+    info.historyBytes = HistoryBytes();
 
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
     info.writeJournalComplete = _journalGapless && _writeJournal != nullptr;
@@ -948,6 +952,7 @@ void TimeTravelManager::OnFrameBoundary()
 
         TTDCheckpoint cp;
         CaptureNow(cp);
+        _blobBytes += BlobBytes(cp);
         _timeline.push_back(std::move(cp));
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
@@ -3108,13 +3113,17 @@ void TimeTravelManager::SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes)
         EnforceHistoryLimit();
 }
 
+uint64_t TimeTravelManager::BlobBytes(const TTDCheckpoint& cp)
+{
+    uint64_t bytes = 0;
+    for (const auto& blob : cp.peripheralBlobs)
+        bytes += blob.second.size();
+    return bytes;
+}
+
 uint64_t TimeTravelManager::HistoryBytes() const
 {
-    uint64_t bytes = _pageStore.GetUsedBytes();
-    for (const TTDCheckpoint& cp : _timeline)
-        for (const auto& blob : cp.peripheralBlobs)
-            bytes += blob.second.size();
-    return bytes;
+    return _pageStore.GetUsedBytes() + _blobBytes;
 }
 
 void TimeTravelManager::EnforceHistoryLimit()
@@ -3143,7 +3152,10 @@ void TimeTravelManager::EvictOldest(size_t count)
     // Each checkpoint decodes on its own: its delta pages hold references on
     // their base pages, so releasing the oldest ones never breaks a later one
     for (size_t i = 0; i < count; ++i)
+    {
         ReleaseCheckpointRefs(_timeline[i]);
+        _blobBytes -= BlobBytes(_timeline[i]);
+    }
     _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
     _evictedCheckpoints += count;
 
@@ -3187,7 +3199,10 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
     // refs are how the page store knows which slots are still in use by
     // some checkpoint; failing to release would leak slots.
     for (auto it = upperIt; it != _timeline.end(); ++it)
+    {
         ReleaseCheckpointRefs(*it);
+        _blobBytes -= BlobBytes(*it);
+    }
 
     _timeline.erase(upperIt, _timeline.end());
 
@@ -4637,6 +4652,9 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     // Nothing below can fail. The old session's slots go with its store, so
     // its checkpoints need no per-slot release.
     _timeline      = std::move(stagedTimeline);
+    _blobBytes     = 0;
+    for (const TTDCheckpoint& cp : _timeline)
+        _blobBytes += BlobBytes(cp);
     _pageStore     = std::move(stagedStore);
     _modelRamPages = modelRamPages;
     _inputJournal.Assign(std::move(stagedInputs), std::move(stagedNet), std::move(stagedNetPayload));

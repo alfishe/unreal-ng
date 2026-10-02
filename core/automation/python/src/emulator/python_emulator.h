@@ -3167,6 +3167,10 @@ namespace PythonBindings
                 info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
                 info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
                 info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
+                info["history_limit_frames"]     = py::cast(si.historyLimitFrames);
+                info["history_limit_bytes"]      = py::cast(si.historyLimitBytes);
+                info["history_bytes"]            = py::cast(si.historyBytes);
+                info["evicted_checkpoints"]      = py::cast(si.evictedCheckpoints);
                 // Provenance and section sizes: "is this something I recorded
                 // or something I opened, and what is inside it".
                 info["loaded_from_file"]         = py::cast(si.loadedFromFile);
@@ -3276,6 +3280,20 @@ namespace PythonBindings
                 return ctx->pTimeTravelManager->StartRecording();
             }, "Start TTD recording",
                py::arg("mode") = py::none(), py::arg("enable_write_journal") = py::none())
+
+            .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                    throw std::runtime_error("TTD not available");
+                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+                ctx->pTimeTravelManager->SetHistoryLimit(
+                    framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
+                    bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
+                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+                return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
+            }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
+               "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
+               py::arg("frames") = py::none(), py::arg("bytes") = py::none())
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();

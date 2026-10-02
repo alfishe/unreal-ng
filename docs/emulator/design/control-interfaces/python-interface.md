@@ -945,6 +945,8 @@ emu.ttd_start(mode='development')        # write journal on
 emu.ttd_start(mode='gaming')             # no write journal (smaller)
 emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
 emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
+emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
 emu.ttd_stop()                   # stop recording, keep history
 emu.ttd_invalidate()             # drop all history (reason defaults to 'python invalidate')

@@ -3205,6 +3205,10 @@ public:
             info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
             info["baseline_frames_captured"] = si.baselineFramesCaptured;
             info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
+            info["history_limit_frames"]     = si.historyLimitFrames;
+            info["history_limit_bytes"]      = si.historyLimitBytes;
+            info["history_bytes"]            = si.historyBytes;
+            info["evicted_checkpoints"]      = si.evictedCheckpoints;
             info["loaded_from_file"]      = si.loadedFromFile;
             info["source_path"]           = si.sourcePath;
             info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
@@ -3306,6 +3310,22 @@ public:
             if (modeOpt.has_value())
                 ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
             return ctx->pTimeTravelManager->StartRecording();
+        });
+
+        // ttd_set_history_limit(frames, bytes) - bound the recorded history: while
+        // recording, the oldest frames are released beyond either limit (0 = none;
+        // nil keeps the current value). Returns the limit now in force: frames, bytes
+        lua.set_function("ttd_set_history_limit",
+                         [this](sol::optional<uint64_t> frames, sol::optional<uint64_t> bytes) -> std::tuple<uint64_t, uint64_t> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {0, 0};
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
+            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+            ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
+                                                     bytes.value_or(si.historyLimitBytes));
+            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+            return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
         // ttd_set_journal_enabled(bool) - configure write journal capture

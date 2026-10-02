@@ -105,6 +105,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 | `checkpoint_count` | frames captured |
 | `page_store_used_bytes` | compressed dirty-page budget in use |
 | `write_journal_records` | journal entries (0 in gaming mode) |
+| `history_limit_frames` / `history_limit_bytes` | the history limit (0 = none), see below |
+| `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit |
 | `ttd_available` | `false` → build lacks TTD (treat status as capability probe) |
 
 MCP: `time_travel` `{"action":"status"}`.
@@ -118,6 +120,14 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" | jq '.state'
 
 # Drop everything, back to "idle" (live machine untouched)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate" | jq '.state'
+
+# Keep only the newest history while recording (long sessions, big machines
+# such as TSL-VDAC2 at ~0.6 MB per frame): the oldest frames are released,
+# the session start moves forward, a file saved later replays what is left.
+# 0 = no limit; a field left out is kept. MCP: time_travel action
+# "history_limit" with history_frames / history_bytes (also on "start").
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
+  -H 'Content-Type: application/json' -d '{"bytes": 4294967296}' | jq
 
 # From a past point (after a seek/step, state "detached"): truncate the
 # future there and continue recording. Refused (resumed:false) from "idle".

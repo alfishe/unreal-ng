@@ -70,6 +70,19 @@ A checkpoint also carries a **dense page reference table**: 4 × u32 per 16 KB
 page, every frame. 128 B/frame on Pentagon 128, but 4 KB/frame (~720 MB/hour)
 on a 256-page machine.
 
+**History limit (added 2026-10-02, `TimeTravelManager::SetHistoryLimit`).** Until then
+the history only grew. Now a limit in checkpoints and/or bytes (page-store slots plus
+device blobs, `HistoryBytes()`, kept as a running count) releases the oldest checkpoints
+after each capture. It relies on every checkpoint decoding alone (each XorPrev piece
+holds a reference on its base), keeps at least two checkpoints, and cuts the input,
+external-event and bookmark records and whole sealed port-journal blocks before the new
+start (`DropBefore`; port cursors stay absolute in memory and are rebased when saving), so
+a file saved after a release loads and replays its remaining frames exactly
+(`timetravelmanager_historylimit_test.cpp`, `TTDVdac2_Test.HistoryLimitKeepsTheChipRight`).
+Every automation surface and the Qt TTD panel set it; the default is no limit. The engine
+must keep this behavior at switchover (memory as a cache, decision 28, replaces it for the
+file-backed session).
+
 ## 4. Seek and reverse
 
 - **Seek**: binary search for the target frame's checkpoint (there is one per

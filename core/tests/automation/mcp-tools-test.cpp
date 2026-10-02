@@ -1730,6 +1730,55 @@ TEST_F(McpTools_Test, TimeTravel_Start_PostsModeAndReportsJournal)
     EXPECT_NE(result.text.find("write journal off"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, TimeTravel_HistoryLimit_PostsLimitsAndSummarizes)
+{
+    Json::Value reply;
+    reply["history_limit_frames"] = 0;
+    reply["history_limit_bytes"] = 1073741824;
+    reply["history_bytes"] = 524288000;
+    reply["evicted_checkpoints"] = 120;
+    reply["session_start_frame"] = 300;
+    reply["current_end_frame"] = 900;
+    reply["checkpoint_count"] = 601;
+    reply["state"] = "recording";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/history-limit"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "history_limit";
+    args["history_bytes"] = Json::UInt64(1073741824);
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/history-limit");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["bytes"].asUInt64(), 1073741824u);
+    EXPECT_FALSE(call->body.isMember("frames")) << "a missing limit is kept, not cleared";
+    EXPECT_NE(result.text.find("1073741824 bytes"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frames 300..900"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("120 oldest"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Start_PassesHistoryLimit)
+{
+    Json::Value reply;
+    reply["started"] = true;
+    reply["already_active"] = false;
+    reply["state"] = "recording";
+    reply["write_journal_enabled"] = true;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/start"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "start";
+    args["history_frames"] = 3000;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["history_limit_frames"].asUInt64(), 3000u);
+    EXPECT_FALSE(call->body.isMember("history_limit_bytes"));
+}
+
 TEST_F(McpTools_Test, TimeTravel_Start_BadMode_RejectsBeforeAnyCall)
 {
     Json::Value args;
