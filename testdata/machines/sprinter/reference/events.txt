@@ -1,0 +1,6 @@
+frame=1 time_s=0.020480000 t35=71680 MAME configuration shortcut done (m_conf_loading 1 -> 0)
+frame=33 time_s=0.677332000 t35=2370662 first port read: DCP open (port 00E2, PC 0CD8); page #40 saved as page40-open.bin
+frame=36 time_s=0.742400143 t35=2598400 port trace complete (10000 accesses)
+frame=60 time_s=1.228800000 t35=4300800 snapshot logo.png
+frame=507 time_s=10.383360000 t35=36341760 snapshot boot-screen.png
+frame=507 time_s=10.383360000 t35=36341760 page #40 dumped (cnf=05 pn=10 dos=1 starting=0)

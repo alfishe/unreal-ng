@@ -1,0 +1,11 @@
+writes_total=479864 (to the end of MAME's shortcut: 4 096 more after the release)
+writes_before_stream=0
+writes_stream=473720 (HL in #0100-#E84E)
+writes_after_stream=6144 (source past #E84E, until MAME ends the load)
+expected_stream=473720 (59 215 x 8)
+first_write: HL=0100 DE=FE00 PC=0089 t35=406
+last_stream_write_t35=6691665 (1.911904 s)
+write_address_range=FE00-FEFF, writes_outside_FExx=0
+rebuilt_bitstream_vs_rom=identical up to #3FFF, first difference at #4000 (MAME maps ROM page #C only at #0000-#3FFF while loading; real hardware has pages #C-#F)
+frame=93 time_s=1.911904286 t35=6691665 last bitstream write: write 473720, stream write 473720, HL=E84E DE=FE4E
+frame=93 time_s=1.920179714 t35=6720629 released MAME's write counter at write 475769 (HL=E94F)

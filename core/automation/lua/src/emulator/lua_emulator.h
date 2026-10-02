@@ -28,6 +28,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
+#include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
@@ -64,8 +65,32 @@
 #include <chrono>
 #include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
+
+/// Shared page-index validation for the page_* bindings: an invalid index
+/// must raise a Lua error instead of silently returning zeros or touching
+/// memory outside the page (a negative cache/misc page reads before the
+/// buffer)
+inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
+{
+    int maxPage;
+    if (type == "ram") maxPage = MAX_RAM_PAGES - 1;
+    else if (type == "rom") maxPage = MAX_ROM_PAGES - 1;
+    else if (type == "cache") maxPage = MAX_CACHE_PAGES - 1;
+    else if (type == "misc") maxPage = MAX_MISC_PAGES - 1;
+    else
+        throw std::invalid_argument(std::string(api) + ": unknown page type '" + type + "' (use ram, rom, cache, misc)");
+
+    if (page < 0 || page > maxPage)
+        throw std::invalid_argument(std::string(api) + ": page " + std::to_string(page) +
+                                    " out of range for '" + type + "' (0-" + std::to_string(maxPage) + ")");
+    if (offset < 0 || offset >= PAGE_SIZE)
+        throw std::invalid_argument(std::string(api) + ": offset " + std::to_string(offset) +
+                                    " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
+}
+
 
 /// StateNode -> Lua table (objects keep their keys, arrays become 1-based
 /// sequences). The one converter Lua needs for every DeviceState report.
@@ -279,6 +304,96 @@ protected:
         return std::nullopt;
     }
     /// endregion </Kempston Mouse helpers>
+
+    /// region <Kempston joystick helpers (joystick TDD §5)>
+protected:
+    DebugJoystickManager* joystickManager() const
+    {
+        Emulator* emu = effectiveEmulator();
+        EmulatorContext* ctx = emu ? emu->GetContext() : nullptr;
+        return (ctx && ctx->pDebugManager) ? ctx->pDebugManager->GetJoystickManager() : nullptr;
+    }
+
+    /// State table: same keys as the WebAPI state object
+    static sol::table joystickStateTable(sol::this_state s, const JoystickStateSnapshot& state,
+                                         const std::string& warning = "")
+    {
+        sol::state_view lua(s);
+        sol::table buttons = lua.create_table();
+        for (const std::string& name : DebugJoystickManager::GetAllButtonNames())
+            buttons[name] = false;
+        sol::table pressed = lua.create_table();
+        int index = 1;
+        for (const std::string& name : state.buttons)
+        {
+            buttons[name] = true;
+            pressed[index++] = name;
+        }
+        sol::table names = lua.create_table();
+        index = 1;
+        for (const std::string& name : DebugJoystickManager::GetAllButtonNames())
+            names[index++] = name;
+
+        sol::table t = lua.create_table();
+        t["available"] = state.available;
+        t["present"] = state.present;
+        t["wired"] = state.wired;
+        t["state"] = static_cast<int>(state.state);
+        t["port_value"] = static_cast<int>(state.portValue);
+        t["buttons"] = buttons;
+        t["pressed"] = pressed;
+        t["button_names"] = names;
+        t["keys"] = state.keys;
+        if (state.pendingTapMask != 0)
+        {
+            sol::table pending = lua.create_table();
+            pending["mask"] = static_cast<int>(state.pendingTapMask);
+            pending["frames_left"] = static_cast<int>(state.pendingTapFramesLeft);
+            t["pending_tap"] = pending;
+        }
+        if (!warning.empty())
+            t["warning"] = warning;
+        return t;
+    }
+
+    static sol::variadic_results joystickResult(sol::this_state s, DebugJoystickManager& mgr,
+                                                const JoystickInjectResult& result)
+    {
+        if (!result.ok())
+            return mouseError(s, result.message);
+        sol::variadic_results results;
+        results.push_back(sol::make_object(s, joystickStateTable(s, mgr.GetState(), result.warning)));
+        return results;
+    }
+
+    /// Button list: a string ("up+fire", "up,fire") or a table of names -> one list string
+    static bool joystickNamesArg(const sol::object& obj, std::string& names, std::string& error)
+    {
+        names.clear();
+        if (obj.get_type() == sol::type::string)
+        {
+            names = obj.as<std::string>();
+            return true;
+        }
+        if (obj.get_type() == sol::type::table)
+        {
+            sol::table table = obj.as<sol::table>();
+            for (size_t i = 1; i <= table.size(); i++)
+            {
+                sol::object item = table[i];
+                if (item.get_type() != sol::type::string)
+                {
+                    error = "buttons must be a string or a table of button names";
+                    return false;
+                }
+                names += (names.empty() ? "" : ",") + item.as<std::string>();
+            }
+            return true;
+        }
+        error = "buttons must be a string or a table of button names";
+        return false;
+    }
+    /// endregion </Kempston joystick helpers>
 
     /// region <Constructors / destructors>
 public:
@@ -649,16 +764,16 @@ public:
             if (!effectiveEmulator()) return 0;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return 0;
+            ValidatePageIndex("page_read", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return 0;
             return pagePtr[offset];
         });
 
@@ -666,22 +781,21 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
+            ValidatePageIndex("page_write", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
-                    pagePtr[offset] = value;
-                    if (type == "ram")
-                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
-                });
-            }
+            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+                pagePtr[offset] = value;
+                if (type == "ram")
+                    mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+            });
         });
 
         lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len) -> sol::table {
@@ -690,19 +804,19 @@ public:
             if (!effectiveEmulator()) return data;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return data;
+            ValidatePageIndex("page_read_block", type, page, offset);
+            if (len < 0)
+                throw std::invalid_argument("page_read_block: len must be >= 0");
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr) return data;
-            if (offset < 0) offset = 0;
-            if (offset >= PAGE_SIZE) return data;
-            if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+            if (len > PAGE_SIZE - offset) len = PAGE_SIZE - offset;
             for (int i = 0; i < len; i++) {
                 data[i + 1] = pagePtr[offset + i];
             }
@@ -713,16 +827,16 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
+            ValidatePageIndex("page_write_block", type, page, offset);
             uint8_t* pagePtr = nullptr;
-            if (type == "ram" && page < MAX_RAM_PAGES)
-                pagePtr = mem->RAMPageAddress(page);
-            else if (type == "rom" && page < MAX_ROM_PAGES)
-                pagePtr = mem->ROMPageHostAddress(page);
-            else if (type == "cache" && page < MAX_CACHE_PAGES)
+            if (type == "ram")
+                pagePtr = mem->RAMPageAddress(static_cast<uint16_t>(page));
+            else if (type == "rom")
+                pagePtr = mem->ROMPageHostAddress(static_cast<uint8_t>(page));
+            else if (type == "cache")
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
-            else if (type == "misc" && page < MAX_MISC_PAGES)
+            else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return;
             int maxLen = PAGE_SIZE - offset;
             effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
                 int idx = 0;
@@ -874,6 +988,10 @@ public:
                 opts = t;
             }
             return mediaCall(s, "formats", "", "", opts);
+        });
+        // Where a file can go: what it is, the slots that take it (in a chooser's order), the default, the refusal
+        lua.set_function("media_targets", [mediaCall](sol::this_state s, const std::string& path) {
+            return mediaCall(s, "targets", "", path, sol::nullopt);
         });
         for (const char* verb : {"insert", "swap"})
         {
@@ -1605,6 +1723,90 @@ public:
             return sol::as_table(DebugMouseManager::GetAllButtonNames());
         });
 
+        // Joystick injection (Kempston joystick, joystick TDD §5). Same contract as the mouse functions:
+        // success returns the state table (same keys as GET /joystick), failure returns nil, "message".
+        lua.set_function("joystick_press", [this](sol::this_state s, sol::object buttonsArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->Press(names));
+        });
+
+        lua.set_function("joystick_release", [this](sol::this_state s, sol::object buttonsArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->Release(names));
+        });
+
+        // joystick_set(0xE5) sets the raw byte; joystick_set({"up", "fire"}) / joystick_set("up+fire") the held set; {} releases all
+        lua.set_function("joystick_set", [this](sol::this_state s, sol::object stateArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string error;
+            if (stateArg.get_type() == sol::type::number)
+            {
+                long long state = 0;
+                if (!mouseIntArg(stateArg, "state", LLONG_MIN, LLONG_MAX, state, error))
+                    return mouseError(s, error);
+                return joystickResult(s, *mgr, mgr->SetStateChecked(state));
+            }
+            std::string names;
+            if (!joystickNamesArg(stateArg, names, error))
+                return mouseError(s, "state must be an integer, a string or a table of button names");
+            if (names.empty())
+                return joystickResult(s, *mgr, mgr->ReleaseAll());
+            const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
+            if (mask == 0)  // the manager words the unknown-name error
+                return joystickResult(s, *mgr, mgr->Press(names));
+            return joystickResult(s, *mgr, mgr->SetStateChecked(mask));
+        });
+
+        lua.set_function("joystick_tap", [this](sol::this_state s, sol::object buttonsArg, sol::object framesArg) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            std::string names;
+            std::string error;
+            if (!joystickNamesArg(buttonsArg, names, error))
+                return mouseError(s, error);
+            long long frames = DebugJoystickManager::DEFAULT_TAP_FRAMES;
+            if (framesArg.valid() && framesArg.get_type() != sol::type::lua_nil &&
+                !mouseIntArg(framesArg, "frames", LLONG_MIN, LLONG_MAX, frames, error))
+                return mouseError(s, error);
+            return joystickResult(s, *mgr, mgr->TapChecked(names, frames));
+        });
+
+        lua.set_function("joystick_state", [this](sol::this_state s) {
+            DebugJoystickManager* mgr = joystickManager();
+            if (!mgr)
+                return mouseError(s, "joystick manager not available");
+            const JoystickStateSnapshot state = mgr->GetState();
+            if (!state.available)
+                return mouseError(s, "Joystick device not available");
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, joystickStateTable(s, state)));
+            return results;
+        });
+
+        lua.set_function("joystick_tap_pending", [this]() -> bool {
+            DebugJoystickManager* mgr = joystickManager();
+            return mgr && mgr->IsTapPending();
+        });
+
+        lua.set_function("joystick_button_names", []() -> sol::as_table_t<std::vector<std::string>> {
+            return sol::as_table(DebugJoystickManager::GetAllButtonNames());
+        });
+
         // Snapshot operations
         // ok, reason, emulator_id: the reason is set when TTD refuses the load
         // (recording) or the load fails. A file that needs another model (an
@@ -2095,7 +2297,10 @@ public:
             LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
             
             bool isROM = (type == "rom");
-            uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
+            if (!isROM && type != "ram")
+                throw std::invalid_argument("disasm_page: unknown page type '" + type + "' (use ram, rom)");
+            ValidatePageIndex("disasm_page", type, page, 0);
+            uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page))
                                       : memory->RAMPageAddress(static_cast<uint16_t>(page));
             if (!pageBase) return result;
             

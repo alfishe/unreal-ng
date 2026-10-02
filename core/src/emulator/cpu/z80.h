@@ -722,6 +722,18 @@ public:
     unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier, wrapped into the frame when _intWraps
     bool _intWraps = false;     // INT window crosses the frame end: raised at frame start (BeginFrame)
 
+public:
+    /// The ULA's /INT pulse is active at frame clock `t` (current clock units): the window ProcessInterrupts uses
+    bool InIntPulse(uint32_t clock) const
+    {
+        return _intWraps ? (clock > _intStart || clock < _intEnd) : (clock > _intStart && clock < _intEnd);
+    }
+    /// The /INT pulse of this frame is over at frame clock `clock`
+    bool AfterIntPulse(uint32_t clock) const
+    {
+        return _intWraps ? (clock >= _intEnd && clock <= _intStart) : clock >= _intEnd;
+    }
+
     // Trigger updates
 public:
     void RequestMaskedInterrupt();

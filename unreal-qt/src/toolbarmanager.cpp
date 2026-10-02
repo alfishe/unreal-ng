@@ -106,6 +106,14 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
 #endif
     _toolBar->addAction(_ttdAction);
 
+    // ---- Media panel -------------------------------------------------------
+    QAction* mediaPanel = _menuManager->mediaPanelAction();
+    mediaPanel->setIcon(tintedSvgIcon(QStringLiteral("hdd")));
+    mediaPanel->setIconVisibleInMenu(false);
+    mediaPanel->setToolTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
+    _toolBar->addSeparator();
+    _toolBar->addAction(mediaPanel);
+
     // Breathing LED timer for active recording feedback (Apple-style breathing LED)
     _breathingTimer = new QTimer(this);
     _breathingTimer->setInterval(33); // ~30 FPS

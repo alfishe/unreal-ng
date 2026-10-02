@@ -70,6 +70,7 @@ public:
     // enabled / checked state is maintained by updateMenuStates()
     QAction* fullScreenAction() const { return _fullScreenAction; }
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
+    QAction* mediaPanelAction() const { return _mediaPanelAction; }
 #ifdef ENABLE_RECORDING
     QAction* videoRecordingAction() const { return _videoRecordingAction; }
 #endif

@@ -189,7 +189,7 @@ TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
 
 /// The PeripheralId table is part of the .ttd format: every id keeps its
 /// number, and ttd.ksy documents each one as "<number> <Name>" (TSConf
-/// INF-10; the unique-table rule of PLAN #40 V0). A new id appends here and
+/// INF-10; the unique-table rule of PLAN #40 Phase 0, Step 1). A new id appends here and
 /// in ttd.ksy in the same change.
 TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
 {
@@ -225,7 +225,8 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::EvoFontRam, 22, "EvoFontRam"},
         {ttd::PeripheralId::KempstonJoystick, 23, "KempstonJoystick"},
         {ttd::PeripheralId::SerialPort, 24, "SerialPort"},
-        {ttd::PeripheralId::Atm2Kbc, 25, "Atm2Kbc"},
+        {ttd::PeripheralId::SprinterPld, 25, "SprinterPld"},
+        {ttd::PeripheralId::Atm2Kbc, 26, "Atm2Kbc"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 

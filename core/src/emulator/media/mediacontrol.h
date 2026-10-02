@@ -23,6 +23,7 @@
 /// @endcode
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -44,6 +45,16 @@ struct MediaRequest
     /// `path` is a staged upload (WebAPI multipart): the manager deletes the
     /// file when the medium leaves
     bool upload = false;
+
+    /// Insert of a folder volume only (BUGS.md #3), set directly by an
+    /// in-process C++ caller - never serialized, so the wire protocols
+    /// (WebAPI/MCP's JSON, the CLI's strings) have no way to set these and
+    /// keep running Insert synchronously on their own calling thread, as
+    /// before. The GUI's async insert worker is the one caller that sets
+    /// them, to abort a large or slow/network folder scan off the UI thread
+    /// and report progress back to it
+    std::function<bool()> cancelRequested;
+    std::function<void(uint64_t entriesScanned, uint64_t bytesScanned)> onProgress;
 };
 
 struct MediaReply
@@ -92,6 +103,7 @@ private:
     MediaReply List();
     MediaReply Info(const MediaRequest& request);
     MediaReply Formats(const MediaRequest& request);
+    MediaReply Targets(const MediaRequest& request);
     MediaReply Insert(const MediaRequest& request, bool swap);
     MediaReply Eject(const MediaRequest& request);
     MediaReply Save(const MediaRequest& request);

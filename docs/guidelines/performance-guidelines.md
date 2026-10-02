@@ -136,7 +136,7 @@ Useful benchmarks:
 | `BM_HostFrame_Pentagon_Overlay_*`, `BM_HostFrame_NeoGS_*` | same | the overlay path |
 | `z80_overhead_attribution.cpp` | `core/benchmarks/emulator/` | isolated costs: member-pointer calls, `std::function` tests, dereferences |
 | `turbo_frame_benchmark.cpp`, `contention_benchmark.cpp` | `core/benchmarks/emulator/` | turbo mode, ULA contention |
-| `TTD_Capture_Cost_Gate_Test` | `core/tests/debugger/ttd/ttdcapturecostgate_test.cpp` | TTD capture share of frame time (a test with a budget; load-sensitive) |
+| `TTDBench_Test` (TTD CI gate) | `core/tests/debugger/ttd/bench/ttdbench_test.cpp` | TTD bytes per stream and counted capture work against `testdata/ttd/bench/v1-ci-gate.txt`; no clock, so host load cannot fail it ([`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md)) |
 
 ## 5. Worked example: the per-step work gate
 

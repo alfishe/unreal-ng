@@ -21,12 +21,13 @@ what create requests accept). `ram_size` is validated against the model's
 | `48K` | ZX-Spectrum 48k | 48 | creatable |
 | `128k` | ZX-Spectrum 128k | 128 | creatable |
 | `PLUS3` | ZX-Spectrum +3 | 128 | creatable |
+| `ATM450` | ATM-Turbo v4.50 | **512**, 1024 | creatable; boots the system ROM menu (CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48), see [machines/atm.md](../machines/atm.md) |
 | `ATM710` | ATM-Turbo 2+ v7.10 | 128, 256, 512, 1024 | creatable |
 | `ATM3` | ZX-Evo (ATM Turbo 3) | 4096 | creatable |
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
 | `PROFI` | Profi | 1024 | creatable; IDE hard disks on `ide0.master` / `ide0.slave` (see [machines/profi.md](../machines/profi.md)) |
-| `TSL`, `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
+| `TSL`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
 
 The runtime list is **authoritative over this table** — builds and branches
 differ (see "Branches" below):

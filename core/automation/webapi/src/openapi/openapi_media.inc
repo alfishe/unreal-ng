@@ -39,19 +39,28 @@
         replyRef(get);
 
         Json::Value& info = paths["/api/v1/emulator/{id}/media/{slot}"]["get"];
-        info["summary"] = "One slot; 'formats' lists the accepted formats";
+        info["summary"] = "One slot; 'formats' lists the accepted formats, 'targets' the slots that take a file";
         info["description"] =
             "GET /media/{slot}: the slot (reply field 'info') and the medium's report (skipped folder entries, notes). "
-            "GET /media/formats[?kind=floppy|tape|block|optical]: extensions per kind (reply field 'formats')";
+            "GET /media/formats[?kind=floppy|tape|block|optical]: extensions per kind (reply field 'formats'). "
+            "GET /media/targets?path=<file>: what the file is (reply field 'file': kinds, format, evidence) and where "
+            "it can go on this machine (field 'targets', in the order a chooser lists them; 'default': the index used "
+            "without asking, null when the caller should ask; 'refusal': why nothing takes it). A refusal is an answer: "
+            "ok stays true";
         info["tags"].append("Media");
         idParameter(info, 0);
         slotParameter(info, 1);
+        info["parameters"][2]["name"] = "path";
+        info["parameters"][2]["in"] = "query";
+        info["parameters"][2]["required"] = false;
+        info["parameters"][2]["schema"]["type"] = "string";
+        info["parameters"][2]["description"] = "targets: the file or folder to place";
         replyRef(info);
 
         std::string verbs;
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v == "list" || v == "info" || v == "formats")
+            if (v == "list" || v == "info" || v == "formats" || v == "targets")
                 continue;
             std::string options;
             for (const std::string& o : MediaControl::OptionsFor(v))
@@ -76,7 +85,7 @@
         post["parameters"][2]["schema"]["type"] = "string";
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v != "list" && v != "info" && v != "formats")
+            if (v != "list" && v != "info" && v != "formats" && v != "targets")
                 post["parameters"][2]["schema"]["enum"].append(v);
         }
         Json::Value& body = post["requestBody"]["content"]["application/json"]["schema"];

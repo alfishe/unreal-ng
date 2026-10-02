@@ -792,7 +792,9 @@ has a rule), `switch` (the `contention` feature, `on` / `off`), `effective`
 (both), `memory_interface` (`fast`, `debug`, `fast_contended`,
 `debug_contended`), `io_rule` (`none` on the +2A / +3 and on machines
 without contention), `slots[4]` (`range`, `mapping`, `contended` - the same
-flag every memory map reports), `floating_bus_latch` on the +2A / +3, and
+flag every memory map reports), `floating_bus_latch` on the +2A / +3,
+`even_m1` (opcode fetches from RAM wait for an even T-state: the Scorpion with the SC15.1 logic),
+`scorpion_turbo_logic` on the Scorpion (`SC15.1` / `SC15.3`, the `[MISC] ScorpionTurboLogic` setting), and
 `statistics` while debug mode is on: `current_frame`, `last_frame` and
 `total`, each with `fetch` / `read` / `write` / `io` (`accesses`,
 `wait_t`) and their sums. Without debug mode `statistics` is a string
@@ -3071,6 +3073,83 @@ rzx seek 5000                                 # back or forward to frame 5000 (1
 rzx stop
 ```
 
+### 13. Joystick Input Injection
+
+Drive the Kempston joystick of the selected emulator from a script, a remote tool or an AI agent
+(design: [tdd-kempston-joystick.md](../../../inprogress/2026-09-15-atm-baseconf-highres-ports/tdd-kempston-joystick.md)).
+
+**How the device works, in one paragraph.** The Kempston joystick is one byte, active high:
+a held button is a 1 bit. The program running on the machine reads it with `IN #1F` and
+tests the bits. Worked example: up and fire held reads `0x18` (up = bit 3 = 8, fire = bit 4 =
+16). Unlike the mouse it is not relative: the byte is the state, so `joystick set 0x18`
+means "exactly up and fire are held now". Machines that decode the port: ZX-Evo (ATM3, `IN #1F`
+outside shadow mode, where `#1F` is the floppy controller), Scorpion (`#FF1F`), TS-Conf (`#1F`).
+Other machines accept the input with a warning, because the program cannot see it.
+
+**Buttons and limits** (same in every interface):
+
+| Value | Meaning | Allowed |
+| :--- | :--- | :--- |
+| button | `right` 0x01, `left` 0x02, `down` 0x04, `up` 0x08, `fire` 0x10, `b5` 0x20, `b6` 0x40, `b7` 0x80; any case | several at once: `up+fire`, `up,fire`, or a list |
+| `state` (`set`) | the whole device byte, D5..D7 included | 0 ... 255 |
+| `frames` (`tap`) | how long the buttons are held, in emulated frames | 1 ... 65535, default 2 |
+
+Out-of-range values are rejected, not clamped, with the same wording everywhere
+(`state=300 out of range 0..255`, `frames=0 out of range 1..65535`, `unknown joystick button
+'jump' (up, down, left, right, fire, b5, b6, b7)`).
+
+**Timing.** The machine's own thread owns the input while the emulator loop lives, so the change
+is queued and applied at that thread's next instruction: at once on a running machine, and on the
+next executed instruction (`run_frames`, `step`, `resume`) on a paused one. The line the command
+prints (and the `state` of the WebAPI / Lua / Python reply) is the state at the time of the reply,
+so on a paused machine it still shows the state before the change; `run_frames 1` and `joystick
+status` show the result. The program reacts when it next reads the port, and for reproducible
+results you `pause`, inject, then `run_frames N`. `tap` presses and releases at the end of the
+N-th emulated frame. (The Kempston mouse queues the same way.)
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `joystick press` | | `<buttons>` | Press and hold buttons; the others stay as they are. | ✅ Implemented |
+| `joystick release` | | `<buttons>` | Release buttons (cancels a pending tap on them). | ✅ Implemented |
+| `joystick set` | | `<state\|buttons\|none>` | Exactly these buttons are held: a byte (`0x18`, `24`), a list, or `none`. Cancels a pending tap. | ✅ Implemented |
+| `joystick tap` | | `<buttons> [frames]` | Press, hold `frames` (default 2), release on its own. A new tap replaces a pending one. | ✅ Implemented |
+| `joystick clear` | `joystick release_all` | — | Release everything, cancel a pending tap. | ✅ Implemented |
+| `joystick status` | `joystick info` | — | State byte, held buttons, the `IN #1F` value, whether this machine decodes the port, host key bindings, pending tap. | ✅ Implemented |
+| `joystick list` | | — | The button names and their bits. | ✅ Implemented |
+| `joystick help` | | — | Subcommand help. | ✅ Implemented |
+
+**Warnings (the command still succeeds):**
+- *Not fitted* (`[INPUT] Joystick=NONE`, or feature `kempstonjoystick` off): `joystick not
+  present: the guest reads 0x00 on the joystick port`.
+- *Machine does not decode the port* (Pentagon, 48K, ...): `this machine does not decode a
+  Kempston joystick port: the guest cannot see the buttons`.
+
+**Errors:** no joystick device: `Joystick device not available`; TTD replay in progress
+(the journal owns the input): `TTD replay in progress (recorded input drives the machine); live
+joystick input refused`.
+
+**Host keys.** The keypad keys (`kp_8` up, `kp_2` down, `kp_4` left, `kp_6` right, `kp_0`
+fire by default; `[INPUT] JoystickKeys=`) drive the same byte through the core, so there is
+nothing to call for them. They do not go through these commands.
+
+**Worked example** (ATM3, nothing held):
+
+```bash
+pause
+joystick press up+fire  # Joystick pressed: up,fire -> state=0x18 buttons=up,fire (IN #1F=0x18)
+joystick release up     # Joystick released: up -> state=0x10 buttons=fire (IN #1F=0x10)
+joystick set 0xE5       # exactly bits 0, 2, 5, 6, 7
+joystick tap fire 5     # fire for 5 frames, then released by the machine's frame loop
+run_frames 6
+joystick set none
+```
+
+Every surface offers the same verbs: CLI (this section), WebAPI `GET /emulator/{id}/joystick`
+and `POST .../joystick/press|release|set|tap` ([webapi-interface.md](./webapi-interface.md)),
+MCP `joystick_input`, Lua `joystick_*` ([lua-interface.md](./lua-interface.md)), Python
+`emu.joystick_*` ([python-interface.md](./python-interface.md)); the Qt status bar shows a
+joystick LED while a button is held.
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.
@@ -3226,6 +3305,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media list` | every slot and the detached media |
 | `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
 | `media formats [--kind floppy]` | accepted formats |
+| `media targets <path>` | where a file can go: what it is, the slots that take it (`*` = used without asking), or why nothing does |
 | `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
 | `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |

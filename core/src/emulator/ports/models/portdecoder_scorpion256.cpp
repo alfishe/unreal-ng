@@ -68,6 +68,8 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
 {
+    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->GetMachineStepHook() == this)
+        _context->pCore->GetZ80()->SetMachineStepHook(nullptr);
     if (_turboWaitsInstalled && _context->pCore)
         _context->pCore->RemoveBusOverlay(_turboOverlay.get());
     MLOGDEBUG("PortDecoder_Scorpion256::~PortDecoder_Scorpion256()");
@@ -136,18 +138,28 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
     if (!core || !core->GetZ80() || !_context->pMemory)
         return;
 
-    const bool wanted = _state->hw_turbo_ratio == 2;
+    // While the turbo latch is on: the overlay stays through the 3.5 MHz /INT stretches (OnMachineStep), its waits
+    // follow the applied clock
+    const bool wanted = _state->scorpion_turbo != 0;
+    Z80* z80 = core->GetZ80();
+    if (wanted && z80->GetMachineStepHook() != this)
+        z80->SetMachineStepHook(this);
+    else if (!wanted && z80->GetMachineStepHook() == this)
+        z80->SetMachineStepHook(nullptr);
     if (wanted == _turboWaitsInstalled)
         return;
 
     if (wanted)
     {
+        // A new overlay when the configured logic changed since the last one (a test, a config reload)
+        if (_turboOverlay && _turboOverlay->Logic() != _context->config.scorpionTurboLogic)
+            _turboOverlay.reset();
         if (!_turboOverlay)
         {
             // The fetch window starts 14336 T after INT, which fires at intstart + 1 (research-scorpion-turbo.md 5)
             const uint32_t paperStartT = _context->config.intstart + 1 + 14336;
             _turboOverlay = std::make_unique<ScorpionTurboOverlay>(core, core->GetZ80(), _context->pMemory, _state,
-                                                                   paperStartT);
+                                                                   paperStartT, _context->config.scorpionTurboLogic);
         }
         _turboWaitsInstalled = core->AddBusOverlay(_turboOverlay.get());
         if (!_turboWaitsInstalled)
@@ -160,13 +172,31 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
     }
 }
 
+void PortDecoder_Scorpion256::OnMachineStep(uint32_t t)
+{
+    if (!_state->scorpion_turbo)
+        return;
+    Z80* z80 = _context->pCore->GetZ80();
+    // Dropped = the latch is on and the clock is 3.5 MHz: no state of its own, so a TTD restore needs nothing
+    // Back to turbo only once the pulse is over: the clock rescale at the drop may land on the pulse's first tick
+    const bool dropped = _state->hw_turbo_ratio == 1;
+    if (!dropped && z80->InIntPulse(t) && _context->pCore->IsContentionSwitchOn())
+        _state->hw_turbo_ratio = 1;
+    else if (dropped && (z80->AfterIntPulse(t) || !_context->pCore->IsContentionSwitchOn()))
+        _state->hw_turbo_ratio = 2;
+    else
+        return;
+    z80->ApplyHardwareTurboNow();
+}
+
 /// endregion </Turbo+ wait states>
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
-    // Turbo+ (SC15.1): every I/O cycle in turbo takes 2 clocks more (research-scorpion-turbo.md 4.1)
+    // Turbo+: every I/O cycle in turbo takes 2 clocks more with the SC15.1 logic, 1 with SC15.3
+    // (research-scorpion-turbo.md 4.1, 4.2)
     if (_turboWaitsInstalled && _turboOverlay->WaitsApply()) [[unlikely]]
-        _context->pCore->GetZ80()->AddWaitStates(2);
+        _context->pCore->GetZ80()->AddWaitStates(_turboOverlay->IoWaits());
 
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
@@ -307,7 +337,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         // In the Service Monitor, sub_0260h reads port #FF1F (LD BC,#FF1F; IN C,(C)).
         // Idle 0x00 keeps Fire released (D4=0), eliminating phantom autorepeat
         // clicks (0x80) that cause the active menu item highlight to continuously blink/redraw.
-        result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
+        result = Default_Port_KempstonJoystick_In();
         _lastPortDecoded = true;
         disp.decodedPort = 0x001F;
         disp.wasHandledInline = true;
@@ -409,7 +439,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     if (_turboWaitsInstalled && _turboOverlay->WaitsApply()) [[unlikely]]
-        _context->pCore->GetZ80()->AddWaitStates(2);
+        _context->pCore->GetZ80()->AddWaitStates(_turboOverlay->IoWaits());
 
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (TryIdePortOut(port, value, pc))

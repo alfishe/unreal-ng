@@ -467,6 +467,32 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
     }
 }
 
+/// TS-Conf VDAC2 build (vdac2-integration-design.md §3): the card occupies the
+/// IDE connector, so TS_VDAC2=1 leaves the machine without IDE whatever
+/// [HDD] Scheme says; other machines and the other TS-Conf builds keep theirs
+TEST_F(Config_Test, Vdac2TakesTheIdeConnector)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2_ide_config_test.ini");
+    auto load = [&](const std::string& text) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << text;
+        file.close();
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\nTS_VDAC2=1\n[HDD]\nScheme=nemo-divide\n"));
+    EXPECT_EQ(_context->config.ts_vdac, 7);
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NONE) << "VDAC2: no IDE";
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=TSL\nRamSize=4096\n[HDD]\nScheme=nemo-divide\n"));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NEMO_DIVIDE) << "standard TS-Conf build keeps the IDE";
+
+    ASSERT_TRUE(load("[MISC]\nHIMEM=PROFI\nRamSize=1024\nTS_VDAC2=1\n[HDD]\nScheme=profi\n"));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_PROFI) << "TS_VDAC2 means nothing outside TS-Conf";
+    std::remove(path.c_str());
+}
+
 /// endregion </[HDD] (IDE board)>
 
 /// TSConf model names (PLAN #41 INF-8, technical-design D3): the canonical
@@ -511,4 +537,30 @@ TEST_F(Config_Test, TsconfCanonicalTiming)
     EXPECT_EQ(config.frame, 71680u);
     EXPECT_EQ(config.frame / config.t_line, 320u);
     EXPECT_EQ(config.frame_duration_us, 20480u) << "48.83 frames per second";
+}
+
+/// [MISC] ScorpionTurboLogic: SC15.1 by default; SC15.3 has no Even M1, whatever [ULA] EvenM1 says
+/// (docs/inprogress/2026-09-29-machine-waits/research-scorpion-turbo.md section 4.2)
+TEST_F(Config_Test, ScorpionTurboLogicDecidesEvenM1)
+{
+    auto load = [this](const std::string& misc) {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath("scorpion_logic_config_test.ini");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file << "[MISC]\nHIMEM=SCORPION\nRAMSize=256\n" << misc << "[ULA]\nEvenM1=1\n";
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+
+    ASSERT_TRUE(load(""));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC151);
+    EXPECT_EQ(_context->config.even_M1, 1);
+
+    ASSERT_TRUE(load("ScorpionTurboLogic=SC15.3\n"));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC153);
+    EXPECT_EQ(_context->config.even_M1, 0) << "SC15.3 has no Even M1";
+
+    ASSERT_TRUE(load("ScorpionTurboLogic=SC15.2\n"));
+    EXPECT_EQ(_context->config.scorpionTurboLogic, ScorpionTurboLogic::SC151) << "unknown: the default";
 }

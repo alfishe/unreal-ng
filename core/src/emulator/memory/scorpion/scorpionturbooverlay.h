@@ -28,17 +28,25 @@
 #include <cstdint>
 
 #include "emulator/memory/hostbusoverlay.h"
+#include "emulator/platform.h"
 
 class Core;
 class Memory;
 class Z80;
-struct EmulatorState;
 
 class ScorpionTurboOverlay final : public HostBusOverlay
 {
 public:
-    /// `paperStartT`: the frame T-state (3.5 MHz) of the fetch window's first line
-    ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state, uint32_t paperStartT);
+    /// `paperStartT`: the frame T-state (3.5 MHz) of the fetch window's first line; `logic`: the logic chip's
+    /// firmware (SC15.1 adds a wait to every opcode fetch and two T to every I/O cycle, SC15.3 neither: fetches
+    /// wait for the slot like data, I/O takes one T more)
+    ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state, uint32_t paperStartT,
+                         ScorpionTurboLogic logic = ScorpionTurboLogic::SC151);
+
+    ScorpionTurboLogic Logic() const { return _logic; }
+
+    /// The I/O cycle's extra T in turbo (the port decoder adds them)
+    uint32_t IoWaits() const { return _logic == ScorpionTurboLogic::SC153 ? 1u : 2u; }
 
     /// The CPU runs at 7 MHz and the `contention` feature is on: the waits apply
     bool WaitsApply() const;
@@ -46,6 +54,9 @@ public:
     /// Wait clocks for an access whose T1 starts on 7 MHz clock `start` of the frame (the rule above)
     uint32_t DataWait(uint32_t start) const;
     uint32_t OpcodeFetchWait(uint32_t start) const;
+    /// The same rule edge by edge (the fallback when a wait crosses the window's edge, and the tests' reference)
+    uint32_t DataWaitByEdges(uint32_t start) const;
+    uint32_t OpcodeFetchWaitByEdges(uint32_t start) const;
 
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
     uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
@@ -54,11 +65,14 @@ public:
 private:
     /// Clock `e` is inside the fetch window
     bool InPicture(uint32_t e) const;
+    /// Whether clock `e` is inside the fetch window, and for how many clocks from `e` that stays so
+    uint32_t PictureRun(uint32_t e, bool& picture) const;
     void Wait(uint16_t addr, bool opcodeFetch);
 
     Core* _core = nullptr;
     Z80* _cpu = nullptr;
     Memory* _memory = nullptr;
     const EmulatorState* _state = nullptr;
-    uint32_t _windowStart = 0;  ///< the fetch window's first clock (7 MHz) in the frame: p = 0
+    uint32_t _windowStart = 0;
+    ScorpionTurboLogic _logic = ScorpionTurboLogic::SC151;  ///< the fetch window's first clock (7 MHz) in the frame: p = 0
 };

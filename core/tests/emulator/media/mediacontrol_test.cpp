@@ -389,6 +389,44 @@ TEST_F(MediaControl_Test, ReplyShape)
     EXPECT_NE(formats.ToJson().find(R"("floppy":["trd")"), std::string::npos) << formats.ToJson();
 }
 
+/// targets (media-drop-targets §4.4): the plan as data; a refusal is an answer, not an error
+TEST_F(MediaControl_Test, TargetsListWhereAFileCanGo)
+{
+    ScratchFolder folder("control-targets");
+    std::string iso(0x8000 + 2048, '\0');
+    iso.replace(0x8001, 5, "CD001");
+    const std::string disc = Utf8(folder.File("disc.iso", iso));
+
+    Create("ATM3");
+    MediaReply reply = Run(Request("targets", "", disc));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    StateNode body = reply.ToValue();
+    EXPECT_EQ(body.find("file")->find("kinds")->items.front().s, "optical");
+    EXPECT_EQ(body.find("file")->find("format")->s, "iso");
+    ASSERT_EQ(body.find("targets")->items.size(), 1u);
+    const StateNode& target = body.find("targets")->items.front();
+    EXPECT_EQ(target.find("action")->s, "insert");
+    EXPECT_EQ(target.find("slot")->s, "ide0.slave");
+    EXPECT_EQ(target.find("label")->s, "IDE slave (CD-ROM)");
+    EXPECT_EQ(target.find("occupiedBy")->kind, StateNode::Kind::Null);
+    EXPECT_EQ(body.find("default")->i, 0);
+    EXPECT_EQ(body.find("refusal")->kind, StateNode::Kind::Null);
+    EXPECT_EQ(reply.slot, "ide0.slave");
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.slave")->present) << "targets inserts nothing";
+
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
+    Create("PENTAGON");
+    reply = Run(Request("targets", "", disc));
+    ASSERT_TRUE(reply.result.Ok()) << "a refusal is an answer";
+    body = reply.ToValue();
+    EXPECT_TRUE(body.find("targets")->items.empty());
+    EXPECT_EQ(body.find("default")->kind, StateNode::Kind::Null);
+    EXPECT_NE(body.find("refusal")->s.find("no CD-ROM drive"), std::string::npos) << body.find("refusal")->s;
+
+    EXPECT_EQ(Run(Request("targets", "")).result.error, MediaError::BadRequest) << "targets needs a path";
+}
+
 TEST_F(MediaControl_Test, CreateProtectAndRescan)
 {
     Create("ATM3");

@@ -166,8 +166,21 @@ an RZX, a ZX-Poly file, a floppy image with the Pentagon default) and a refusal 
 
 `MediaTargets::Apply(context, Plan, targetIndex, options)` performs the choice through
 `MediaControl` (the insert with the slot's default access, the TTD guard, the dirty-medium
-disposition) so no entry point repeats that logic. `MediaControl::ChooseSlot` becomes
-`Plan` + `defaultTarget`; with several targets and no default it names them instead of guessing.
+disposition) so no entry point repeats that logic. It performs insert targets only: a `Load`
+target (snapshot, recording, ZX-Poly group, labels) and a `NewMachine` target (no machine yet)
+belong to the caller, which owns the model replacement and the machine start.
+`MediaControl::ChooseSlot` becomes `Plan` + `defaultTarget`; with several targets and no default
+it names them instead of guessing.
+
+**As built in M1 (2026-10-01):** `ChooseSlot` runs `Classify` + `Plan` and takes the chooser's
+first entry (an empty slot before an occupied one, the primary / boot slot first, an add-on's
+last), naming the alternatives in the reply's report ("several slots take it (sd.zc, sd.ngs,
+ide0.master): sd.zc chosen; name the slot to pick another"; not for floppy drives). The refusal
+of several targets waits for M2 + M3: the Qt window still sends `insert auto` for CD, hard-disk
+and card images until it asks through the chooser, and a refusal there would undo the M0 fix.
+The TR-DOS rule of the floppy probe (`FloppyFormats::Probe`) is capped at the largest TR-DOS
+image (2 x 86 x 16 x 256 bytes); sector 0 is read by `ClassifySectorZero`
+(`blockadvisory.h`), the rules the boot advisory of §10 uses.
 
 ### 4.4 Surfaces
 
@@ -175,6 +188,13 @@ Automation parity: `media targets <file>` (CLI), `GET /api/v1/emulator/{id}/medi
 (WebAPI + OpenAPI), MCP `media` action `targets`, Lua / Python `media_targets(path)`: the plan as
 data (targets, default, refusal). `media insert <file>` without a slot takes the single target (or the
 floppy shortcut); with several it names them, and it refuses what no slot takes.
+
+**As built in M2 (2026-10-01):** one verb, `targets`, in `MediaControl`, so every surface serves
+the same data: reply fields `file` (`kinds`, `format`, `evidence`), `targets` (`action`, `as`,
+`slot`, `label`, `occupiedBy`, `dirty`, `autostart`, `model` for a new machine), `default` (index
+or null) and `refusal` (or null); a refusal is an answer (`ok` true). WebAPI
+`GET /api/v1/emulator/{id}/media/targets?path=` (served by the `/media/{slot}` route, like
+`/media/formats`). Naming several targets in `media insert` waits for M3 (§4.3 "As built").
 
 ## 5. Qt: the drop overlay
 
@@ -287,6 +307,96 @@ tags or descriptor, not this analysis.
   advisory is deliberately post-insert, informational only. A future `Classify` could read sector 0
   too and fold the same signal into `evidence`/`kinds` before a target is even chosen, but that is
   M1 scope, not this slice.
+
+## 11. Async folder insert off the UI thread (BUGS.md #3, added 2026-10-01)
+
+`MediaManager::Insert`'s folder path (`FolderSnapshot::Scan`, then `HostFolderFat::Build` or
+`FolderDiskBuilder::BuildTrd`) is plain synchronous C++ - correct for every automation surface
+(WebAPI, CLI, MCP, Lua, Python all run it on their own request thread, which is fine, there is no
+UI to freeze), but `MediaPanelWindow::insertInto` called it inline on the Qt UI thread, so a large
+folder or a slow/network disk froze the whole window for the scan's duration: no repaints, no
+input, no cancel (confirmed live: the comment "File I/O and folder scans happen here, on the
+caller's thread" already sat in `mediamanager.cpp` next to the call).
+
+**Decision: keep `core/` synchronous, add the async wrapper only in the GUI.** `MediaManager`/
+`MediaControl`/`MediaFormatRegistry` gained two optional `std::function` fields threaded end to end
+(`MediaRequest` → `InsertOptions` → `OpenRequest` → `FolderScanOptions` /
+`FolderDiskBuilder::BuildTrd`'s new parameters):
+
+- `cancelRequested` - polled once per directory entry in `FolderSnapshot::Scan`'s walk and once per
+  file in `FolderDiskBuilder::BuildTrd`'s read loop. Returning true unwinds every recursion level
+  (not just the innermost one) and fails the whole operation with the new `MediaError::Cancelled`
+  (`FolderSnapshot::kCancelledError`, HTTP 499).
+- `onProgress(uint64_t entriesScanned)` - called after every entry visited (accepted or skipped),
+  off whatever thread calls `Scan`/`BuildTrd`. A monotonic counter, nothing else - no ETA, no
+  per-item name, kept deliberately minimal.
+
+Both are plain C++ callables, never serialized - `MediaRequest` carries them as struct fields
+alongside the existing string `options` map, so the wire protocols (WebAPI's JSON, the CLI's
+strings) have no way to set them and keep running `Insert` synchronously on their own calling
+thread exactly as before. Only `MediaPanelWindow` (the one caller with a UI thread to protect)
+sets them.
+
+**The GUI side** (`unreal-qt/src/media/mediapanelwindow.{h,cpp}`) follows the existing
+`std::thread` + `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` idiom already used by
+`TapeExportAudioDialog`/`TapeImportAudioDialog` - no `QThread` subclass, no `QtConcurrent`:
+
+- `insertInto` branches on `QFileInfo(path).isDir()`: a file insert stays exactly as it was
+  (synchronous, the existing disposition dialog applies); a folder insert goes through
+  `insertFolderAsync`, which starts one `std::thread`, disables every action button
+  (`updateButtons()` checks `_insertWorker.joinable()` first) and shows an indeterminate
+  `QProgressBar` (`setMaximum(0)`, the same pattern as `TapeImportAudioDialog`'s "busy" bar) plus a
+  `QLabel` status text updated once a second with the running entry count.
+- **Emulator lifetime across the worker**: the worker does not touch `EmulatorBinding`'s raw
+  `Emulator*` - it captures the emulator's id and does a fresh `EmulatorManager::GetEmulator(id)`
+  lookup on its own thread, taking its own `shared_ptr<Emulator>` for the scan's duration. This
+  keeps the `Emulator`/`EmulatorContext`/`MediaManager` alive even if the GUI unbinds or rebinds to
+  a different emulator while the scan is in flight (`EmulatorBinding::unbound` also best-effort
+  cancels the in-flight worker, since there is no reason to keep scanning for a panel that moved
+  on, but the worker is correct either way). If the emulator was removed outright, the lookup
+  returns null and the worker reports a plain failure instead of touching freed state.
+- **Watchdog, not a hard timeout**: `_scanWatchdog` (a 1 s `QTimer`) compares the progress counter
+  across ticks - a folder that is genuinely still being walked (the count keeps advancing) is never
+  aborted, however long it takes; only `_insertStallTimeoutSeconds` (30, a plain member field a
+  test can lower) consecutive ticks with **no** advancement trip `cancelRequested`. This
+  distinguishes "slow" from "stuck" per the bug's acceptance criteria - a naive "abort after 30 s
+  no matter what" would have cut off legitimately large folders.
+- **Progress display and row highlight**: `onProgress` carries both the entry count and the total
+  bytes of files accepted so far; the status label shows the slot (bold), the path, the entry count
+  and `QLocale::formattedDataSize(bytes)` (KB/MB/GB, not a raw byte count). `rebuildTable()` tints
+  the scanning slot's row with `QPalette::Accent` - deliberately not `QPalette::Highlight`, which
+  fades to a dull gray the moment the window is not key/focused, defeating the point of a "this one
+  is busy" indicator.
+- **Toolbar button**: the Tools menu's existing "Media" `QAction` (`MenuManager::mediaPanelAction()`,
+  already wired to show/hide the panel and already kept in sync by `visibilityChanged`) is also
+  added to the transport toolbar, with the `hdd` icon - no new action, no duplicated show/hide logic.
+- **Destructor safety**: the worker's completion lambda captures `this` and is marshaled back via
+  `QMetaObject::invokeMethod`; `MediaPanelWindow`'s destructor cancels and joins unconditionally
+  before any member is torn down, so that queued call can never fire on a half-destroyed object
+  (same contract `TapeExportAudioDialog` already relies on).
+- **A directory disappearing mid-walk fails the scan, not just that subtree**: `FolderSnapshot`'s
+  `Scanner` originally treated a `std::filesystem::directory_iterator` failure (the initial open, or
+  `increment` partway through) the same as a policy exclusion - `Skip()` the affected path and keep
+  going, so the final tree could silently stop wherever the host disk went away while still coming
+  back as an overall success. Developer call: no truncated image, ever - an I/O failure at that
+  level now sets `_ioError` (tracked and unwound through every recursion level exactly like
+  `_cancelled`) and `Scan()` returns false with the `ec.message()`-derived text, which
+  `OpenFolderVolume`/`BuildTrd` already map to `MediaError::UnreadableSource` with no further
+  change needed. Policy exclusions (symlinks, the manifest's `exclude`, service files, size/count
+  limits) are untouched - only a genuine filesystem error now fails the operation.
+
+**Not done here**: a true mid-scan cancellation only exists for the folder-scan and
+TR-DOS-file-read loops added above; nothing else in the insert path (`HostFolderFat::Build`'s
+in-memory FAT layout math, `MediaFormatRegistry::WrapBlock`) has a cancellation hook, because
+neither does any I/O - per `OpenFolderVolume`'s own trace (§3 of the research that fed this
+section), the scan is already the dominant cost for the SD/IDE block-volume path this bug names.
+Verification: `FolderSnapshot_Test` (progress counting incl. bytes, cancellation, nested-recursion
+unwind, a directory disappearing mid-walk failing the whole scan) and `FolderDiskBuilder_Test`
+(cancellation during the scan vs. during the file-read loop) in
+`core/tests/`; the GUI wiring was also interactively verified (built and run in an isolated git
+worktree - the shared working tree had unrelated concurrent breakage at the time - no automation
+surface reaches `QFileDialog`/native file pickers, so this had to be a manual run), developer-
+confirmed against a real folder insert, including the follow-up display/highlight/toolbar tweaks.
 
 ## 9. Decisions
 

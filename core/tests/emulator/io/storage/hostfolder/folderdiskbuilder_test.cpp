@@ -266,3 +266,40 @@ TEST_F(FolderDiskBuilder_Test, Acc7TrdosListsAndRunsAFolder)
                                     TRDOSTestHelper::MAX_EXECUTION_CYCLES, 10);
     EXPECT_TRUE(ran) << "RUN \"boot\" ran the program from the folder: " << trdos.screenText();
 }
+
+/// BUGS.md #3: a caller building off the UI thread needs to abort a
+/// slow/network folder - BuildTrd forwards cancelRequested to its own folder
+/// scan (FolderSnapshot_Test covers that in depth) and polls it once per file
+TEST_F(FolderDiskBuilder_Test, CancelRequestedDuringScanFailsAsCancelled)
+{
+    ScratchFolder folder("folder-disk-cancel-scan");
+    folder.File("a.bin", "a");
+    folder.File("b.bin", "b");
+
+    std::unique_ptr<DiskImage> disk;
+    MediaResult result = FolderDiskBuilder::BuildTrd(_emulator->GetContext(), folder.Path(), disk, [] { return true; });
+    EXPECT_EQ(result.error, MediaError::Cancelled);
+    EXPECT_EQ(disk, nullptr);
+}
+
+TEST_F(FolderDiskBuilder_Test, CancelRequestedDuringFileReadsFailsAsCancelled)
+{
+    ScratchFolder folder("folder-disk-cancel-reads");
+    folder.File("a.bin", "a");
+    folder.File("b.bin", "b");
+    folder.File("c.bin", "c");
+
+    // The same callback is forwarded to both the scan (FolderScanOptions,
+    // FolderSnapshot_Test covers it) and this builder's own file-read loop -
+    // 3 top-level entries call it 3 times during the scan alone, so the
+    // threshold must clear that before it can prove the READ loop also
+    // checks it: calls 1-3 (false) let the scan finish; call 4 (false) places
+    // the first file; call 5 (true) cancels before the second
+    int calls = 0;
+    std::unique_ptr<DiskImage> disk;
+    MediaResult result =
+        FolderDiskBuilder::BuildTrd(_emulator->GetContext(), folder.Path(), disk, [&calls] { return ++calls > 4; });
+    EXPECT_EQ(result.error, MediaError::Cancelled);
+    EXPECT_EQ(disk, nullptr);
+    EXPECT_EQ(calls, 5) << "scan (3) + one file placed (1) + the cancelling check (1)";
+}

@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 
+#include "emulator/io/joystick/joystick.h"
 #include "portdecoder_pentagon128.h"
 
 #include "common/collectionhelper.h"
@@ -143,7 +144,18 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     }
 
     uint8_t mouseReg = 0;
-    if (decodedPort == 0x0000 && !disp.wasFullDecodeClaimed && IsPort_KempstonMouse(port, mouseReg))
+    if (decodedPort == 0x0000 && !disp.wasFullDecodeClaimed && (port & 0x00FF) == 0x001F &&
+        IsKempstonJoystickFitted())
+    {
+        // Kempston joystick: the exact low byte #1F, only with the disk interface off the bus (a TR-DOS session
+        // keeps #1F for the FDC: betaGateTriggered cleared decodedPort only outside it). Checked before the mouse,
+        // whose standard decode also matches #xx1F when A9 is set
+        result = Default_Port_KempstonJoystick_In();
+        _lastPortDecoded = true;
+        decodedPort = 0x001F;
+        disp.wasHandledInline = true;
+    }
+    else if (decodedPort == 0x0000 && !disp.wasFullDecodeClaimed && IsPort_KempstonMouse(port, mouseReg))
     {
         // Kempston Mouse: only addresses no table rule claimed. The Beta128 #FF rule
         // needs the exact low byte 0xFF, so #xxDF always falls through to the mouse -

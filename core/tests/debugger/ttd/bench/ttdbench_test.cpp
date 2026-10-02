@@ -1,5 +1,5 @@
 /// @file ttdbench_test.cpp
-/// @brief The TTD CI gate (PLAN #40 V0b, TTD v2 requirements BR-7 / BR-8) and
+/// @brief The TTD CI gate (PLAN #40 Phase 0, Step 2, TTD v2 requirements BR-7 / BR-8) and
 /// checks of the benchmark harness itself (core/src/debugger/ttd/bench/).
 ///
 /// The gate runs the "ci" subset of the benchmark matrix through the same
@@ -13,11 +13,20 @@
 ///    coding, a new per-frame stream or a bigger checkpoint shows up here with
 ///    no clock involved. Capacity-based metrics carry a tolerance in the file
 ///    because allocators grow containers differently.
-///  - **Capture as a share of frame time**, median over the recorded frames.
-///    Both halves come from the same frames, so a slow or loaded runner moves
-///    them together; the budget sits far above the measured share and only
-///    catches a capture path that got several times slower without storing
-///    more (a scan gone quadratic).
+///  - **Capture work against the stored baseline**, the same way: per frame,
+///    the RAM pages the capture walked, the bytes it copied into the delta
+///    base, scanned, handed to zstd, the zstd calls, the chain links it
+///    decoded and the device-state bytes (`bm2_work_*`). A capture path that
+///    starts walking, copying or compressing more - a scan gone quadratic, a
+///    second full copy - changes these counts, and counts do not depend on the
+///    host or its load.
+///
+/// No assertion here reads a clock. The first version checked capture as a
+/// share of frame time (median); on a shared host at load ~150 the 4 MB
+/// copies of ZX-Evo capture slowed far more than emulation and the share
+/// crossed any sane budget (56% against 50%). Capture time stays a benchmark
+/// metric (bm2_capture_us_*, bm2_capture_share_pct), read with the host load
+/// in mind.
 ///  - **Seek and save / load work** on every case (the harness fails the case
 ///    otherwise).
 ///
@@ -59,11 +68,6 @@ void PrintTo(const Case& c, std::ostream* os)
 
 namespace
 {
-
-/// Capture share of the recorded frame (median capture / median frame), in
-/// percent. Measured on the ci cases: 3-16% in Release. 50% leaves room for a
-/// Debug build and a busy runner and still fires on a several-fold slowdown
-constexpr double kMaxCaptureSharePct = 50.0;
 
 /// case name -> metric -> {value, tolerance percent}
 struct Expected
@@ -169,11 +173,14 @@ TEST_P(TTDBench_Test, CiGate)
             << "has to update testdata/ttd/bench/v1-ci-gate.txt (see the header of this file).";
     }
 
-    const double share = result.metrics.at("bm2_capture_share_pct");
-    RecordProperty("capture_share_pct", std::to_string(share));
-    EXPECT_LT(share, kMaxCaptureSharePct)
-        << c.Name() << ": capture takes " << share << "% of the recorded frame (median), budget "
-        << kMaxCaptureSharePct << "%";
+    // The capture-cost check lives in the baseline: without the work metrics
+    // it would silently check nothing
+    for (const char* metric : {"bm2_work_pages_visited_opf", "bm2_work_delta_base_bpf", "bm2_work_compress_input_bpf"})
+        EXPECT_TRUE(expectedIt->second.count(metric))
+            << c.Name() << ": the gate baseline has no " << metric << " - re-export it (see the header of this file)";
+
+    // Informational only (a clock): visible in the test report, never asserted
+    RecordProperty("capture_share_pct", std::to_string(result.metrics.at("bm2_capture_share_pct")));
 }
 
 INSTANTIATE_TEST_SUITE_P(Ci, TTDBench_Test, ::testing::ValuesIn(ttd::bench::Matrix("ci")),
@@ -210,6 +217,7 @@ TEST(TTDBench_Matrix_Test, ByteMetricsAreTheDeterministicOnes)
     EXPECT_TRUE(ttd::bench::IsByteMetric("bm3_ram_payload_bpf"));
     EXPECT_TRUE(ttd::bench::IsByteMetric("bm7_file_bytes"));
     EXPECT_TRUE(ttd::bench::IsByteMetric("checkpoints"));
+    EXPECT_TRUE(ttd::bench::IsByteMetric("bm2_work_compress_calls_opf"));
     EXPECT_FALSE(ttd::bench::IsByteMetric("bm2_capture_us_p99"));
     EXPECT_FALSE(ttd::bench::IsByteMetric("bm2_capture_share_pct"));
 }

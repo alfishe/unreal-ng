@@ -312,6 +312,12 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
 
+	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
+	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
+	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
+
 	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
@@ -325,6 +331,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a
@@ -795,6 +802,22 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [MISC] RAMPowerOn='%s' - using RANDOM (RANDOM | ZERO)", powerOn);
 	}
 	
+	// The Scorpion Turbo+ logic firmware: SC15.1 (default) or SC15.3. It also decides Even M1 (below)
+	{
+		const char* logic = inimanager.GetValue(misc, "ScorpionTurboLogic", "SC15.1");
+		const std::string v = logic ? logic : "SC15.1";
+		if (v == "SC15.3")
+			config.scorpionTurboLogic = ScorpionTurboLogic::SC153;
+		else
+		{
+			config.scorpionTurboLogic = ScorpionTurboLogic::SC151;
+			if (v != "SC15.1")
+				MLOGWARNING("Config: unknown [MISC] ScorpionTurboLogic='%s' - using SC15.1 (SC15.1 | SC15.3)", logic);
+		}
+	}
+	if (config.scorpionTurboLogic == ScorpionTurboLogic::SC153)
+		config.even_M1 = 0;  // the SC15.3 firmware has no Even M1 ([ULA] EvenM1 is read above)
+
 	// TS-Conf video DAC (the firmware build: STATUS VDAC_VER, the palette curve).
 	// NONE is the standard build (the IDE board, PWM colours); a video DAC sits
 	// on the IDE connector. TS_VDAC2=1 selects the VDAC2 (FT812) build
@@ -878,6 +901,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 	{
 		// Apply hardware-accurate INT timing defaults based on the selected model
 		ApplyModelTimingDefaults(config);
+
+		// TS-Conf VDAC2 build: the card sits on the IDE connector and the
+		// firmware has no IDE controller (tune.v: IDE_VDAC2 instead of
+		// IDE_HDD), so the machine has no IDE whatever [HDD] Scheme says
+		// (vdac2-integration-design.md §3). With IDE_NONE no IDE slot exists
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7 && config.ide_scheme != IDE_NONE)
+		{
+			MLOGWARNING("Config: [HDD] Scheme=%s ignored: the VDAC2 card ([MISC] TS_VDAC2=1) occupies the IDE "
+			            "connector", IdeSchemeName(config.ide_scheme));
+			config.ide_scheme = IDE_NONE;
+		}
 
 		// The config is loaded and valid: the process-wide hook gets the last
 		// word before any device is created from it
@@ -1275,8 +1309,10 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     // model. INI-driven runs (per-model config dirs) pass false and are untouched.
     if (canonicalGeometry)
     {
-        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there
-        config.even_M1 = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) ? 1 : 0;
+        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there, and only
+        // with the SC15.1 logic firmware ([MISC] ScorpionTurboLogic)
+        config.even_M1 = ((config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) &&
+                          config.scorpionTurboLogic == ScorpionTurboLogic::SC151) ? 1 : 0;
 
         switch (config.mem_model)
         {
@@ -1323,6 +1359,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_TSL:
                 // TS-Conf: 320 lines x 224 T (the Pentagon raster, hardware-spec §4). INT comes from the
                 // machine's interrupt source (VS_INT / HS_INT), so intstart / intlen are not used
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            case MM_SPRINTER:
+                // Sprinter: 320 lines x 224 T after reset (Sprinter hardware-reference §6.1). INT comes from
+                // the mode table through the machine's interrupt source, so intstart / intlen are not used
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
                 break;

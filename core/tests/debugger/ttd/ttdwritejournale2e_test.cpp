@@ -204,7 +204,7 @@ TEST_F(TTD_WriteJournal_E2E_Test, GlobalT_AdvancesAcrossFrames)
 }
 
 // ---------------------------------------------------------------------------
-// Journal completeness (B3/B2, PLAN #40 V0)
+// Journal completeness (B3/B2, PLAN #40 Phase 0, Step 1)
 //
 // find-last answers from the journal only when it holds every write of the
 // session (the switch-off and empty-journal cases live in ttdmanager_test.cpp).

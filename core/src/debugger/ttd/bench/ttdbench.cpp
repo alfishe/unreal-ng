@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -215,7 +216,7 @@ uint32_t MeasuredFrames(const Case& c, const Options& options)
 /// Run the measured frames; per-frame wall time (and capture time when an
 /// engine records) in microseconds
 void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine* engine,
-               std::vector<double>& frameUs, std::vector<double>* captureUs)
+               std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr)
 {
     TimeTravelManager* ttd = emulator.GetContext()->pTimeTravelManager;
     const uint32_t frames = MeasuredFrames(c, options);
@@ -240,6 +241,8 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
         frameUs.push_back(ElapsedUs(start, Clock::now()));
         if (engine && captureUs)
             captureUs->push_back(static_cast<double>(engine->LastCaptureNs()) / 1000.0);
+        if (engine && work)
+            *work += engine->LastCaptureWork();
     }
 }
 
@@ -279,6 +282,22 @@ public:
     }
 
     uint64_t LastCaptureNs() const override { return _ttd ? _ttd->GetPerfCounters().lastCaptureNs : 0; }
+
+    CaptureWork LastCaptureWork() const override
+    {
+        CaptureWork w;
+        if (!_ttd)
+            return w;
+        const TTDCaptureWork& t = _ttd->GetPerfCounters().lastCaptureWork;
+        w.pagesVisited = t.pagesVisited;
+        w.deltaBaseBytes = t.deltaBaseBytes;
+        w.deviceBlobBytes = t.deviceBlobBytes;
+        w.bytesScanned = t.bytesScanned;
+        w.compressCalls = t.compressCalls;
+        w.compressInputBytes = t.compressInputBytes;
+        w.slotsDecoded = t.slotsDecoded;
+        return w;
+    }
     size_t Checkpoints() const override { return _ttd ? _ttd->GetCheckpointCount() : 0; }
 
     uint64_t FirstFrame() const override
@@ -430,6 +449,23 @@ bool Overhead(Engine& engine, const Case& c, const Options& options, Metrics& m,
 
 /// endregion </Measurements>
 
+/// BM-7's session file: moved to Options::keepSessionDir when set, else deleted
+void KeepOrRemove(const Options& options, const std::string& file)
+{
+    if (options.keepSessionDir.empty())
+    {
+        std::remove(file.c_str());
+        return;
+    }
+    std::error_code ec;
+    const std::filesystem::path from = FileHelper::ToFsPath(file);
+    const std::filesystem::path dir = FileHelper::ToFsPath(options.keepSessionDir);
+    std::filesystem::create_directories(dir, ec);
+    std::filesystem::rename(from, dir / from.filename(), ec);
+    if (ec)
+        std::remove(file.c_str());
+}
+
 std::string ScratchFile(const Options& options, const std::string& name)
 {
     std::string dir = options.scratchDir.empty() ? std::string(".") : options.scratchDir;
@@ -538,7 +574,7 @@ bool IsByteMetric(const std::string& name)
         const std::string s(suffix);
         return name.size() >= s.size() && name.compare(name.size() - s.size(), s.size(), s) == 0;
     };
-    return endsWith("_bytes") || endsWith("_bpf") || name == "frames" || name == "checkpoints";
+    return endsWith("_bytes") || endsWith("_bpf") || endsWith("_opf") || name == "frames" || name == "checkpoints";
 }
 
 Result RunCase(Engine& engine, const Case& c, const Options& options)
@@ -557,7 +593,8 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
 
         std::vector<double> frameUs;
         std::vector<double> captureUs;
-        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs);
+        CaptureWork work;
+        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work);
         engine.Stop();
 
         const double frames = static_cast<double>(MeasuredFrames(c, options));
@@ -568,10 +605,21 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         AddPercentiles(m, "bm2_capture_us", captureUs);
         const double p50 = Percentile(captureUs, 50);
         m["bm2_capture_p99_over_p50"] = p50 > 0 ? Percentile(captureUs, 99) / p50 : 0.0;
-        // Capture as a share of the recorded frame: both halves come from the
-        // same frames, so a slow or loaded host moves them together (CI gate)
+        // Capture as a share of the recorded frame. Informational: under heavy
+        // host load capture's large copies slow down more than emulation, so
+        // the share drifts up; the CI gate checks the counted work below
         const double frameP50 = Percentile(frameUs, 50);
         m["bm2_capture_share_pct"] = frameP50 > 0 ? p50 / frameP50 * 100.0 : 0.0;
+        // BM-2 work: what the captures did, counted (deterministic, the CI
+        // gate's check of capture cost); means per recorded frame
+        const double perFrame = 1.0 / std::max(1.0, frames);
+        m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
+        m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
+        m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
+        m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
+        m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
+        m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
+        m["bm2_work_decoded_opf"] = static_cast<double>(work.slotsDecoded) * perFrame;
 
         // BM-3 (bytes per recorded frame, split by stream) and BM-4
         const StreamBytes b = engine.Bytes();
@@ -687,7 +735,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             engine.Seek(engine.FirstFrame() + (engine.LastFrame() - engine.FirstFrame()) / 2, 0, t);
             m["bm7_load_s_per_gb"] = bytes ? loadS / (static_cast<double>(bytes) / 1e9) : 0.0;
             m["bm7_first_seek_ms"] = loadS * 1e3 + t.totalUs / 1e3;
-            std::remove(file.c_str());
+            KeepOrRemove(options, file);
         }
     }
 

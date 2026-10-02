@@ -433,22 +433,16 @@ TEST_F(KeyboardInjection_Integration_test, SequenceCompletes_NoHangingState)
     
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     
-    // Queue several operations
+    // Queue a single tap: ~4 frames of sequence work (press, 2-frame hold,
+    // release, debounce). Completing must be judged in the frame domain —
+    // a wall-clock budget races the unbounded turbo frame rate and measures
+    // test-thread scheduling, not sequence progress.
     keyMgr->TapKey("h", 2);
     
-    // Process until done. The running emulator's mainloop already pumps
-    // keyMgr->OnFrame() every frame — the test thread must only wait, never
-    // pump too, or the sequence state machine double-steps and truncates key
-    // holds. Wall time stands in for the frame count (1 frame = 20 ms at 50 Hz).
-    int elapsedMs = 0;
-    while (keyMgr->IsSequenceRunning() && elapsedMs < 2000)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        elapsedMs += 5;
-    }
+    // 20 frames is 5x the work a single tap needs; deadline-bounded poll
+    RunFrames(emulatorId, 20);
 
-    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete after " << elapsedMs << " ms";
-    EXPECT_LT(elapsedMs, 1000) << "Sequence took too long to complete";
+    EXPECT_FALSE(keyMgr->IsSequenceRunning()) << "Sequence did not complete within 20 frames";
     
     CleanupEmulator(emulatorId);
 }
@@ -522,25 +516,32 @@ TEST_F(KeyboardInjection_Integration_test, AbortSequence_StopsImmediately)
     
     auto keyMgr = context->pDebugManager->GetKeyboardManager();
     
-    // Start a long sequence
-    keyMgr->TypeText("THIS IS A VERY LONG TEXT THAT WOULD TAKE MANY FRAMES", 5);
+    // The sequence must be long in FRAMES, not in wall time: turbo mode runs
+    // at an unbounded, load-dependent frame rate, so a wall-clock "let it run
+    // a bit" sleep can outlast the whole sequence on a loaded machine and the
+    // "still running" precondition below turns flaky. A 60000-frame WAIT
+    // cannot complete before the abort (>= 30 s even at 2000 frames/s).
+    KeyboardSequence seq;
+    seq.name = "abort_test";
+    seq.events.push_back({KeyboardSequenceEvent::Action::TAP, ZXKEY_T, 2});
+    seq.events.push_back({KeyboardSequenceEvent::Action::WAIT, {}, 60000});
+    keyMgr->ExecuteSequence(seq);
     EXPECT_TRUE(keyMgr->IsSequenceRunning());
     
-    // Let the emulator thread advance the sequence for ~10 frames (its
-    // mainloop pumps OnFrame() every frame — never call it from the test thread)
-    for (int i = 0; i < 10; i++)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+    // Advance ~10 frames in the frame domain (deadline-bounded poll of
+    // frame_counter), never by wall-clock sleeps
+    RunFrames(emulatorId, 10);
     
-    // Should still be running
-    EXPECT_TRUE(keyMgr->IsSequenceRunning());
+    // Should still be running: ~59990 frames of WAIT remain
+    EXPECT_TRUE(keyMgr->IsSequenceRunning()) << "Sequence finished before abort";
     
     // Abort
     keyMgr->AbortSequence();
     
-    // Should be stopped
+    // Stopped synchronously: no pending events, no held keys, no sequence name
     EXPECT_FALSE(keyMgr->IsSequenceRunning());
+    EXPECT_EQ(keyMgr->GetCurrentSequenceName(), "");
+    EXPECT_TRUE(keyMgr->GetPressedKeys().empty());
     
     CleanupEmulator(emulatorId);
 }

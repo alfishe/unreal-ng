@@ -82,7 +82,7 @@ Every tool answers **dual content**: `content[]` (human/LLM summary) plus
 returns). Tool-level failures are `isError: true` results with remediation
 hints, not JSON-RPC errors.
 
-Tool catalog (13):
+Tool catalog (16):
 
 | Tool | Highlights |
 |:--|:--|
@@ -92,6 +92,7 @@ Tool catalog (13):
 | `inspect_state` | aspects: machine, registers, memory, disasm, stack, memory_banks, paging, ports, screen_ocr/image/digest, timing, rom, audio_ay/fm, fdc, mouse, ttd (TTD status + position) |
 | `type_input` | type (`tokenized`: a BASIC line typed into the ROM editor, every key verified, no ENTER; BASIC commands with ENTER and a result: `basic/run` via `invoke_api`), tap/press/release, combo, macro, release_all, list_keys |
 | `mouse_input` | Kempston move/press/click/wheel |
+| `joystick_input` | Kempston joystick press/release/set/tap/status |
 | `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |

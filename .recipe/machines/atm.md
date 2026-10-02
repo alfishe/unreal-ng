@@ -1,17 +1,20 @@
-# Recipe: ATM Turbo (ATM710, ATM3/ZX-Evo)
+# Recipe: ATM Turbo (ATM450, ATM710, ATM3/ZX-Evo)
 
-The ATM Turbo family — the most port-diverged clones in the tree. Two
+The ATM Turbo family — the most port-diverged clones in the tree. Three
 creatable model ids:
 
 | Model id | Full name | RAM (KB) | Character |
 |:--|:--|:--|:--|
+| `ATM450` (default 512) | ATM-Turbo v4.50 | 512, 1024 | address-bus latches (`#FE` writes, A2=0 reads) + `#FDFD`, no `#xx77` |
 | `ATM710` (default 1024) | ATM-Turbo 2+ v7.10 | 128, 256, 512, 1024 | full `#xx77` control-port decode |
 | `ATM3` (4096) | ZX-Evo (ATM Turbo 3) | 4096 | narrower `#FF77` decode, exact `#FF` FDC group, CMOS ports |
 
 Ground truth:
+[portdecoder_atm450.h](../../core/src/emulator/ports/models/portdecoder_atm450.h),
 [portdecoder_atm710.h](../../core/src/emulator/ports/models/portdecoder_atm710.h),
 [portdecoder_atm3.h](../../core/src/emulator/ports/models/portdecoder_atm3.h),
-configs [atm710](../../data/configs/atm710/unreal.ini) /
+configs [atm450](../../data/configs/atm450/unreal.ini) /
+[atm710](../../data/configs/atm710/unreal.ini) /
 [atm3](../../data/configs/atm3/unreal.ini).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
@@ -24,6 +27,7 @@ configs [atm710](../../data/configs/atm710/unreal.ini) /
 ## MCP (preferred)
 
 ```text
+emulator_manage {"action":"create","model":"ATM450"}        # 512K
 emulator_manage {"action":"create","model":"ATM710","ram_size":512}
 emulator_manage {"action":"create","model":"ATM3"}          # 4096K fixed
 
@@ -41,7 +45,31 @@ invoke_api {"method":"GET","path":"/emulator/{id}/state/paging"}
 inspect_state {"aspects":["registers","video","fdc"]}
 ```
 
-### The ATM port model (what software writes)
+### ATM450 (ATM Turbo 2 v4.50): what software writes
+
+The 4.50 board has none of the `#xx77` / `#xxF7` registers below. Its
+paging is driven by **which port address** an `OUT` / `IN` uses (design and
+sources: [docs/inprogress/2026-10-01-atm450](../../docs/inprogress/2026-10-01-atm450/requirements.md)):
+
+- `OUT (#xxFE)` latches the **low** address byte: A7 = ROM (1) or RAM pages
+  0 / 4 (0) at `#0000` / `#4000`; A6-A5 = video mode: `#FE` ZX, `#BE`
+  640x200 hi-res, `#9E` EGA 320x200x16 (`#7E` / `#3E` / `#1E` = same with
+  RAM at `#0000`). A3 = bright border, as on every ATM.
+- `IN A,(#FB)` / `IN A,(#7B)` (any read with A2 = 0 that no card claims):
+  A7 switches the **system ROM** (CP/M BIOS, boot menu) on / off.
+- `#FDFD` group (A15 = 1, A9 = 0, A1 = 0): bits 1-0 extend the `#C000` page
+  to 512K, bit 3 forces the system ROM inside TR-DOS.
+- `#7DFD` group (A15 = 0, A9 = 0, A1 = 0): palette, `--grbGRB`, cell = the
+  current border color.
+- `#FE` read bit 7 is the PAL marker (three short zero windows per frame).
+- Reset starts in the **system ROM** (except `RESET=DOS`), which shows the
+  boot menu in 640x200: CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48.
+  `CAPS SHIFT + 6` moves the bar, `ENTER` starts. The menu loop only scans
+  the keyboard in every other ~50-frame phase, so a press can be missed:
+  read the bar index (RAM page 0 offset `#01DD`) and press again until it
+  moves.
+
+### The ATM 7.10 / ZX-Evo port model (what software writes)
 
 - `#FF77` — **ATM control register**: video mode select, CPU turbo,
   memory swap, INT gate. Decoder bits worth knowing: bit 8 `PEN` enables
@@ -58,6 +86,8 @@ inspect_state {"aspects":["registers","video","fdc"]}
     The joystick reads the `Joystick` device (idle `0x00`, active high: D0 right, D1 left, D2 down, D3 up, D4 fire);
     the host keypad drives it by default (`kp8` up, `kp2` down, `kp4` left, `kp6` right, `kp0` fire; `[INPUT]
     JoystickKeys=` overrides, empty disables, `Joystick=NONE` unfits it) and the same keys still reach the PS/2 log.
+    To press buttons from automation (MCP `joystick_input`, WebAPI `/joystick/*`, CLI, Lua, Python) see
+    [input/joystick.md](../input/joystick.md). The ROM service menu is outside shadow about 60 frames after reset.
   - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
     only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
     `#EFF7` itself is ignored in shadow and cannot be read.
@@ -116,11 +146,16 @@ build older than that fix, that's it.
 
 **Reference emulator sources**, useful for cross-checking any future ATM
 video question against a second/third implementation rather than guessing:
-`/Volumes/TB4-4Tb/Projects/emulators/github/unreal-speccy/dxr_atm{0,2,6}.cpp`
-(EGA/HWMC/Text pixel decode), `.../ZXMAK2/src/ZXMAK2.Hardware/Atm/*.cs`
-(C#, very readable, has explicit named border-width constants),
-`.../Xpeccy/src/libxpeccy/video/video.c` (`vidDrawATM*` functions) and
-`.../Xpeccy/src/libxpeccy/hardware/atm2.c` (port-to-register wiring).
+UnrealSpeccy [`dxr_atm0.cpp`](https://github.com/alfishe/unreal-speccy/blob/master/dxr_atm0.cpp) /
+[`dxr_atm2.cpp`](https://github.com/alfishe/unreal-speccy/blob/master/dxr_atm2.cpp) /
+[`dxr_atm6.cpp`](https://github.com/alfishe/unreal-speccy/blob/master/dxr_atm6.cpp)
+(EGA/HWMC/Text pixel decode), ZXMAK2
+[`src/ZXMAK2.Hardware/Atm/`](https://github.com/zxmak/ZXMAK2/tree/master/src/ZXMAK2.Hardware/Atm)
+(C#, very readable, has explicit named border-width constants), Xpeccy
+[`src/libxpeccy/video/video.c`](https://github.com/samstyle/Xpeccy/blob/master/src/libxpeccy/video/video.c)
+(`vidDrawATM*` functions) and
+[`src/libxpeccy/hardware/atm2.c`](https://github.com/samstyle/Xpeccy/blob/master/src/libxpeccy/hardware/atm2.c)
+(port-to-register wiring).
 
 **Debugging a visual glitch**: use
 [ttd-visual-inspection.md](../analysis/ttd-visual-inspection.md) to get a

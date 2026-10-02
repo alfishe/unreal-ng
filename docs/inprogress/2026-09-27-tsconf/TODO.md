@@ -38,8 +38,8 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   ([implementation-plan.md](implementation-plan.md))
 - [x] ROM page layout resolved from `data/rom/zxevo.rom` (0 SYS, 1 DOS, 2 128, 3 48)
 - [x] Prerequisite: TTD RAM page 255 (vdos's page) is an ordinary page —
-  `3a6eabc6` on master, 2026-09-27 (PLAN #40 V0 item, tested on ATM3)
-- [x] Prerequisite: unique `PeripheralId` table (PLAN #40 V0) — done on master;
+  `3a6eabc6` on master, 2026-09-27 (PLAN #40 Phase 0, Step 1 item, tested on ATM3)
+- [x] Prerequisite: unique `PeripheralId` table (PLAN #40 Phase 0, Step 1) — done on master;
   TSConf appends id 16 (13/14 went to the +3, 15 to `EvoSdCard`, which TSConf
   reuses for its SD card)
 - [x] Prerequisite: TTD time at the model's top clock (B4, master 2026-09-28):
@@ -141,7 +141,7 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs
   ([media-control-design.md](../2026-09-28-storage-manager/media-control-design.md), #58 M4), not
-  from a TSConf-specific SD API; #40 V1 and #42
+  from a TSConf-specific SD API; #40 Phase 1 and #42
   (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
 - Open user decisions: none. D1-D7 in technical-design §3.2 record the

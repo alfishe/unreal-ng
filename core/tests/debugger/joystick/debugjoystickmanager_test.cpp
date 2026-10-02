@@ -160,6 +160,38 @@ TEST_F(DebugJoystickManager_Test, ReleaseAll_ClearsEverythingAndCancelsATap)
     EXPECT_FALSE(_manager->IsTapPending());
 }
 
+TEST_F(DebugJoystickManager_Test, SetStateChecked_RangeIsValidatedForEverySurface)
+{
+    // The automation surfaces parse their own number types and hand the raw integer over,
+    // so the range message is the same on every surface (JOY-13)
+    ASSERT_TRUE(_manager->SetStateChecked(0x15).ok());
+    EXPECT_EQ(_joystick->State(), 0x15);
+
+    JoystickInjectResult high = _manager->SetStateChecked(256);
+    EXPECT_EQ(high.status, JoystickInjectStatus::InvalidArgument);
+    EXPECT_EQ(high.message, "state=256 out of range 0..255");
+    JoystickInjectResult low = _manager->SetStateChecked(-1);
+    EXPECT_EQ(low.status, JoystickInjectStatus::InvalidArgument);
+    EXPECT_EQ(low.message, "state=-1 out of range 0..255");
+    EXPECT_EQ(_joystick->State(), 0x15) << "a rejected value leaves the state untouched";
+}
+
+TEST_F(DebugJoystickManager_Test, TapChecked_RangeIsValidatedForEverySurface)
+{
+    ASSERT_TRUE(_manager->TapChecked("fire", 3).ok());
+    EXPECT_TRUE(_manager->IsTapPending());
+    ASSERT_TRUE(_manager->ReleaseAll().ok());
+
+    JoystickInjectResult negative = _manager->TapChecked("fire", -4);
+    EXPECT_EQ(negative.status, JoystickInjectStatus::InvalidArgument);
+    EXPECT_EQ(negative.message, "frames=-4 out of range 1..65535");
+    JoystickInjectResult huge = _manager->TapChecked("fire", 5000000000LL);
+    EXPECT_EQ(huge.status, JoystickInjectStatus::InvalidArgument);
+    EXPECT_EQ(huge.message, "frames=5000000000 out of range 1..65535") << "no wrap to a small unsigned value";
+    EXPECT_EQ(_manager->TapChecked("jump", 2).status, JoystickInjectStatus::InvalidArgument);
+    EXPECT_EQ(_joystick->State(), 0x00);
+}
+
 /// endregion </Immediate operations (JOY-9)>
 
 /// region <Timed tap (JOY-9)>
@@ -255,7 +287,8 @@ TEST_F(DebugJoystickManager_Test, NotFitted_ReportsAbsentAndWarns)
 /// A machine whose decoder has no #1F joystick: accepted, with a warning that the guest cannot see it
 TEST(DebugJoystickManagerUnwired_Test, MachineWithoutTheArmWarns)
 {
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    // The 48K decoder has no #1F arm (the Pentagon family and Profi have one since 2026-10-01)
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     DebugJoystickManager* manager = emulator->GetContext()->pDebugManager->GetJoystickManager();
     ASSERT_NE(manager, nullptr);

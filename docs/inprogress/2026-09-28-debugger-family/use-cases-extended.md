@@ -506,7 +506,7 @@ needs; this section lists the essentials to deliver them.
 | X19-11 | **Test annotations in source**: assertions and budgets written next to the code (like DeZog's `ASSERTION`) and checked by the harness | tests that live with the code | **designed** (source triggers, devtools #51) |
 | X19-12 | **Integration tests**: boot a program, play a scripted input, reach a state, assert; run on a model matrix | the whole program, not only routines | **partial** (automation can do it by hand) |
 | X19-13 | **Coverage** of the tested code (executed / not executed, by source line with SLD) | knowing what the tests miss | **partial** (coverage exists by address) |
-| X19-14 | **Deterministic mode**: same inputs, same results, bit for bit, on every host | tests must not flake | **partial** (TTD determinism work, #40 V3) |
+| X19-14 | **Deterministic mode**: same inputs, same results, bit for bit, on every host | tests must not flake | **partial** (TTD determinism work, #40 Phase 3) |
 
 **CI / CD**
 

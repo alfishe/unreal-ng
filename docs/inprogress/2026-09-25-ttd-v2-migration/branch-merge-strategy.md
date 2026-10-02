@@ -52,7 +52,7 @@ These are cheap now and expensive after any merge.
    | 9 | ProfiPaging |
    | 10 | MoonSound |
    | 11 | GeneralSoundLightweight |
-   | 12 | NeoGS (reserved; may be released before V5 if NeoGS is dropped — ids become permanent only with the versioned format) |
+   | 12 | NeoGS (reserved; may be released before Phase 5 if NeoGS is dropped — ids become permanent only with the versioned format) |
 
    Each branch adopts the table when it merges master in. Update `ttd.ksy`,
    `PERIPHERAL_ID_NAMES` in the analyzer, and the contract test's fake
@@ -75,7 +75,7 @@ Before the merge (on the branch):
   the GS lightweight card with a deprecation warning once GS lands).
 - [ ] Decide RTC determinism: `ProfiCMOS` serves host time and has no TTD
   state. Minimum for the merge: declare it as known-nondeterministic in the
-  TODO; the fix is part of TTD v2 step V3 ([migration-trajectory.md](migration-trajectory.md)).
+  TODO; the fix is part of TTD v2 Phase 3 ([migration-trajectory.md](migration-trajectory.md)).
 - [ ] Refresh the stale `docs/inprogress/PLAN.md` row 13a (still lists Covox and
   RTC as open).
 - [ ] Build, `core-tests`, zero warnings; TTD contract, capture-cost and Profi
@@ -85,7 +85,7 @@ Remaining feature gaps (IDE, Kempston joystick, FE bit 7, Covox aliases,
 BIOS menu boot check, hi-res timing evidence) do **not** block the merge; they
 stay in the Profi TODO.
 
-### 3.2 `generalsound` — merge after TTD step V1 (memory regions)
+### 3.2 `generalsound` — merge after TTD Phase 1 (memory regions)
 
 Why not before: every Pentagon config ships `GSType=Z80` with `GSRamSize=512`,
 and the GS serializer copies all of that RAM into its blob at every checkpoint.
@@ -103,7 +103,7 @@ Before the merge (on the branch):
   - `porttrace_test.cpp`: renumber (GS rows 4–6, Beta128 7, total 8).
 - [ ] Adopt the id table (GS lightweight 10 → **11**, NeoGS 9 → **12**) and the
   notification enum.
-- [ ] **Move GS RAM to a TTD memory region** (V1 API); the blob keeps only the
+- [ ] **Move GS RAM to a TTD memory region** (Phase 1 API); the blob keeps only the
   95-byte fixed part. Move the lightweight card's upload store to a region as
   well, so its blob size stops changing.
 - [x] ~~Add the z80ex fields missing from the GS blob (`noint_once`,
@@ -116,7 +116,7 @@ Before the merge (on the branch):
   `soundchip_gslw.cpp:1026`): it still uses the rounded `frame_duration_us`
   that `ec66d3bc` replaced with exact T-state counting in the mixer.
 - [ ] Expose the TTD restore report (proposal §7.2 in the GS docs) — or rely on
-  V2, which does it for every device.
+  Phase 2, which does it for every device.
 - [ ] Existing `testdata/ttd` fixtures have no GS blob: re-record them after
   the merge ([testdata/ttd/README.md](../../../testdata/ttd/README.md)).
 - [ ] Build, tests, zero warnings; GS TTD switch test; capture-cost gate
@@ -156,7 +156,7 @@ Before the merge (on the branch):
   by whichever of GS/MS lands second.
 - [ ] **Automation (P2-2)**: state report and control on WebAPI / MCP / CLI /
   Lua / Python. PLAN.md #11 requires the design first.
-- [ ] **TTD Tier B**: wave SRAM as a memory region (V1 API), per its own TDD
+- [ ] **TTD Tier B**: wave SRAM as a memory region (Phase 1 API), per its own TDD
   (F2). Tier A blob gets id 10.
 - [ ] Re-verify the float mix bus + limiter against master's decimator,
   output-stage flush and TTD seek sample phase (`ec66d3bc`, `6ed6d4c0`).
@@ -166,7 +166,7 @@ Before the merge (on the branch):
 ## 4. Merge order and why
 
 ```
-step 0 (master) -> profi -> [TTD V0, V1 on master] -> generalsound -> moonsound -> [TTD V2..V6]
+step 0 (master) -> profi -> [TTD Phase 0, Step 1, Phase 1 on master] -> generalsound -> moonsound -> [TTD Phases 2–6]
 ```
 
 | Order considered | Conflicted files per step | Verdict |

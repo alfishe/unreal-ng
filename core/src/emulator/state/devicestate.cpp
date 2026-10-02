@@ -1474,7 +1474,17 @@ StateNode ScreenMode(EmulatorContext* context)
         dffd["scr"] = (s.pDFFD & 0x40) != 0;
         ret["dffd"] = dffd;
     }
-    if (s.model == MM_ATM710 || s.model == MM_ATM3 || s.model == MM_ATM450)
+    if (s.model == MM_ATM450)
+    {
+        // ATM 4.50 has no #FF77: the mode is the low address byte of the last #FE write
+        StateNode afe = StateNode::Object();
+        afe["value"] = int(s.aFE);
+        afe["value_hex"] = Hex8(s.aFE);
+        afe["video_mode_bits"] = int((s.aFE >> 5) & 0x03);
+        afe["rom_at_0000"] = (s.aFE & 0x80) != 0;
+        ret["afe"] = afe;
+    }
+    if (s.model == MM_ATM710 || s.model == MM_ATM3)
     {
         StateNode ff77 = StateNode::Object();
         ff77["value"] = int(s.pFF77);
@@ -1615,6 +1625,11 @@ StateNode Contention(EmulatorContext* context)
     ret["effective"] = effective;
     ret["memory_interface"] = core->GetMemoryInterfaceName();
     ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
+    // The Scorpion's waits outside the contention rule: Even M1 at 3.5 MHz, and the Turbo+ logic firmware
+    ret["even_m1"] = context->config.even_M1 != 0;
+    if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
+        ret["scorpion_turbo_logic"] =
+            context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
 
     // The slots the CPU would wait on (none while contention is not in effect)
     Memory* memory = context->pMemory;

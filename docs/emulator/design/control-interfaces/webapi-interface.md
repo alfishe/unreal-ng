@@ -1308,6 +1308,57 @@ curl -X POST http://localhost:8090/api/v1/emulator/$ID/tape/import \
 
 ## Planned Endpoints (Not Yet Implemented)
 
+### 11. Joystick Input Injection
+
+> **Status**: ✅ Implemented (2026-10). Source: `core/automation/webapi/src/api/joystick_api.cpp`;
+> the request parsing, status codes and JSON live in `src/common/joystickjson.h` (unit-tested without
+> a server) and every range check in the core `DebugJoystickManager`, so all interfaces answer the same.
+
+Drives the emulated Kempston joystick: one active-high byte the guest reads with `IN #1F`
+(ATM3 outside shadow mode, Scorpion `#FF1F`, TS-Conf). Semantics, units and a worked example:
+[command-interface.md §13](./command-interface.md#13-joystick-input-injection).
+
+```
+POST /api/v1/emulator/{id}/joystick/press     Hold buttons         {"buttons":"up+fire"}  or  {"buttons":["up","fire"]}
+POST /api/v1/emulator/{id}/joystick/release   Release buttons      {"buttons":"up"}
+POST /api/v1/emulator/{id}/joystick/set       Exactly this state   {"state":24}  or  {"buttons":["up","fire"]}  ([] = none)
+POST /api/v1/emulator/{id}/joystick/tap       Hold N frames        {"buttons":"fire","frames":2}
+GET  /api/v1/emulator/{id}/joystick           Current state
+```
+
+**Timing.** The machine's thread owns input while the loop lives: a running machine applies the change
+at its next instruction, a **paused** one on its next executed instruction (`run_frames`, step, resume), so the
+`state` in the POST reply is the state before the change (the Kempston mouse queues the same way). Pause,
+inject, `run_frames N`, then `GET /joystick`.
+
+`button` is accepted as an alias of `buttons`. A successful POST returns `success`, `message`,
+an echo of the input (`buttons`, `frames`, `requested_state`), the resulting `state` object and,
+when the guest cannot see the buttons, a `warning`. The state object (also the body of the GET, plus
+`emulator_id`): `available`, `present`, `wired` (this machine's port decoder answers the joystick),
+`state` (the byte), `port_value` (what `IN #1F` returns now), `buttons` (a boolean per name),
+`pressed` (the names), `button_names`, `keys` (host key bindings), `pending_tap`
+(`{mask, frames_left}` or `null`).
+
+**Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
+
+| Condition | Code | `message` example |
+|-----------|------|-------------------|
+| Unknown emulator id | 404 | `Emulator with specified ID not found` |
+| Joystick manager or device missing | 500 | `Joystick device not available` |
+| Missing body field | 400 | `Missing 'buttons' field in request body` |
+| Wrong JSON type | 400 | `'state' must be an integer` |
+| Out of range | 400 | `state=300 out of range 0..255`, `frames=0 out of range 1..65535` |
+| Unknown button | 400 | `unknown joystick button 'jump' (up, down, left, right, fire, b5, b6, b7)` |
+| TTD replay in progress | 409 | `TTD replay in progress (recorded input drives the machine); live joystick input refused` |
+
+```bash
+curl -X POST localhost:8090/api/v1/emulator/$ID/joystick/press -H 'Content-Type: application/json' -d '{"buttons":"up+fire"}'
+curl localhost:8090/api/v1/emulator/$ID/joystick | jq '.state, .port_value'     # 24, 24
+```
+
+MCP clients use the `joystick_input` tool (actions `press`, `release`, `set`, `tap`, `status`), which
+forwards to these routes.
+
 ### Media Operations (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/tape/*         ✅ Implemented — see [Tape Control](#tape-control)

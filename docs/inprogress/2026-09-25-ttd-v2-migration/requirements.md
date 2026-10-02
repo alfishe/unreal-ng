@@ -50,7 +50,7 @@ written justification; **MAY** = allowed, not required.
   that it cannot.
 - **FR-5 (MUST)** Memory regions of any size up to at least 4 MB machine RAM +
   1 MB device RAM per device, with no per-page-index limitation (the v1
-  page-255 case itself was fixed in V0, 2026-09-27).
+  page-255 case itself was fixed in Phase 0, Step 1, 2026-09-27).
 
 ### 2.2 Restore and seek
 
@@ -149,9 +149,9 @@ close the door on them:
 - **FR-22 (SHOULD)** The storage keeps sharing possible: a checkpoint may
   reference pieces and blobs of an earlier checkpoint that is not its
   predecessor (a branch's first checkpoint shares its fork point's). Reference
-  counts, chain caps and copy-on-write reference blocks (V1) already allow it;
-  nothing in V1-V4 may assume a strictly linear timeline.
-- **FR-23 (SHOULD)** The V5 container reserves stream ids for branch data
+  counts, chain caps and copy-on-write reference blocks (Phase 1) already allow it;
+  nothing in Phases 1–4 may assume a strictly linear timeline.
+- **FR-23 (SHOULD)** The Phase 5 container reserves stream ids for branch data
   (branch table, non-trunk checkpoints and events, the parent link of a forked
   session) and keeps the rule that readers skip unknown streams, so a reader
   without branch support opens a branched file as its trunk.
@@ -159,7 +159,7 @@ close the door on them:
   every route (QR-8) and starts a branch instead of deleting the future; history
   is discarded only by an explicit branch delete; stopping TTD leaves the
   machine free-running. Until branches land (PLAN #76 W1) v1 keeps truncating;
-  nothing in V1-V4 may add new truncating paths.
+  nothing in Phases 1–4 may add new truncating paths.
 
 ## 3. Performance requirements
 
@@ -196,7 +196,7 @@ Release build), reference workloads of §5.3.
   configurations where one frame of emulation alone approaches the budget
   (turbo models, heavy device sets) PR-5 may require checkpoints inside a frame.
   Whether that is needed is **measured first** (BM-5 on turbo configurations,
-  from the V0b harness); if PR-5 fails there, the conditional step V1b of the
+  from the Phase 0, Step 2 harness); if PR-5 fails there, the conditional step Phase 0, Step 4 of the
   trajectory adds them. Until then v2 keeps one checkpoint per frame.
 
 ### 3.3 Storage efficiency
@@ -328,20 +328,20 @@ folder's `DONE.md`:
 9. **Documentation**: parent TDD, `ttd.ksy`, analyzer, `testdata/ttd/README.md`
    and `.recipe/` updated (QR-5, QR-9).
 
-## 7. Traceability to the trajectory
+## 7. Traceability to the roadmap
 
-| Step ([migration-trajectory.md](migration-trajectory.md)) | Requirements it delivers |
+| Phase / step ([roadmap](README.md)) | Requirements it delivers |
 |---|---|
-| V0 make v1 honest | FR-3 (first version), FR-9, FR-18, QR-4 (current format) |
-| V0b benchmark harness | BR-1…BR-9 with v1 as first engine; PR-5 measured on turbo configurations |
-| V1b intra-frame checkpoints (conditional) | PR-5 on turbo configurations |
-| V1 memory regions, cost ∝ change | FR-5, PR-3, PR-4, part of PR-9/PR-10 |
-| GS / MoonSound / Profi merges | FR-1, FR-2, FR-4 for those devices |
-| V2 device state | FR-2, FR-4, FR-7, FR-19, PR-10 |
-| V3 determinism inputs | FR-10 (journals, fingerprint), FR-14, FR-20, FR-21 |
-| V4 memory budget | FR-15, FR-16, FR-17 |
-| V5 container + disk mode | FR-11, FR-12, FR-13, PR-8, PR-12, QR-2, QR-5 |
-| V6 cleanup | QR-9, acceptance |
+| Phase 0, Step 1 — Make v1 honest | FR-3 (first version), FR-9, FR-18, QR-4 (current format) |
+| Phase 0, Step 2 — Benchmark harness | BR-1…BR-9 with v1 as first engine; PR-5 measured on turbo configurations |
+| Phase 0, Step 3 — Merge the feature branches (GS, MoonSound, Profi) | FR-1, FR-2, FR-4 for those devices |
+| Phase 0, Step 4 — Checkpoints inside a frame (dropped) | PR-5 on turbo configurations (met without it) |
+| Phase 1 — Memory that costs only what changes | FR-5, FR-22, PR-3, PR-4, the memory part of PR-9/PR-10 |
+| Phase 2 — Device state with versions | FR-2, FR-4, FR-7, FR-19, PR-10 |
+| Phase 3 — Everything a replay needs, in the file | FR-10 (journals, fingerprint), FR-14, FR-20, FR-21 |
+| Phase 4 — Memory budget | FR-15, FR-16, FR-17 |
+| Phase 5 — Versioned file and disk mode | FR-11, FR-12, FR-13, FR-23, PR-8, PR-12, QR-2, QR-5 |
+| Phase 6 — Cleanup | QR-9, acceptance |
 
-The benchmark harness (§5) starts in V0b with v1 as its first engine, so every
+The benchmark harness (§5) starts in Phase 0, Step 2 with v1 as its first engine, so every
 later step is measured against the same baseline.

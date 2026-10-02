@@ -148,7 +148,7 @@ only, through `enNxtmmc.rom`). UnrealSpeccy, Xpeccy, Spectral, ZXMAK2: no.
 | `#E3` + memory | **nothing**. `Memory` maps in 16 KB windows (`_bank_read[4]`); DivIDE needs two 8 KB halves of window 0 from a foreign memory | see §5 |
 | Automap | `Z80::machineM1Hook` (`BeforeMachineM1` / `OnMachineM1`, master, built for ZX-Evo E3) gives both "instant" and "after the fetch" points | one hook per machine today: the DivIDE needs to chain with the machine's own hook (ZX-Evo, TR-DOS `#3Dxx` rules in `memory.cpp`) |
 | Persistent EEPROM | none | an 8 KB blob with session / persist access (storage-manager G11 "persistent blobs") |
-| TTD | nothing | `#E3`, automap state, toggle: a small POD blob; DivIDE RAM (32-512 KB): a TTD v2 memory region (PLAN #40-V1) or, before V1, the whole RAM in the blob (the NeoGS precedent, `PeripheralId::NeoGS = 12`) |
+| TTD | nothing | `#E3`, automap state, toggle: a small POD blob; DivIDE RAM (32-512 KB): a TTD v2 memory region (PLAN #40 Phase 1) or, before V1, the whole RAM in the blob (the NeoGS precedent, `PeripheralId::NeoGS = 12`) |
 
 ## 5. The cross-cutting piece: 8 KB paging in `#0000-#3FFF`
 

@@ -6,6 +6,11 @@ Research POC for TTD v2 format design decisions: page-granular capture, codec se
 > Core findings verified against benchmark output. Some claims removed pending measurement.  
 > See [AUDIT.md](AUDIT.md) for details.
 
+
+## TTD v2 Phase 1 experiments (2026-10-01)
+
+New experiments on real recordings, added next to this POC without changing it: [experiments/README.md](experiments/README.md). They settle the parameters of the [Phase 1 design](../../../docs/inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md): chain limit, encoder threshold, reference-table block size, and restoring only the pieces that differ.
+
 ---
 
 ## Background

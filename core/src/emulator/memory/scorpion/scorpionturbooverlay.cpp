@@ -16,8 +16,8 @@ namespace
 }  // namespace
 
 ScorpionTurboOverlay::ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state,
-                                           uint32_t paperStartT)
-    : _core(core), _cpu(cpu), _memory(memory), _state(state), _windowStart(2 * paperStartT + 1)
+                                           uint32_t paperStartT, ScorpionTurboLogic logic)
+    : _core(core), _cpu(cpu), _memory(memory), _state(state), _windowStart(2 * paperStartT + 1), _logic(logic)
 {
 }
 
@@ -34,9 +34,44 @@ bool ScorpionTurboOverlay::InPicture(uint32_t e) const
     return d / kLineClocks < kWindowLines && d % kLineClocks < kWindowClocks;
 }
 
+uint32_t ScorpionTurboOverlay::PictureRun(uint32_t e, bool& picture) const
+{
+    constexpr uint32_t kForever = 0xFFFFFFFFu;
+    if (e < _windowStart)
+    {
+        picture = false;
+        return _windowStart - e;
+    }
+    const uint32_t d = e - _windowStart;
+    const uint32_t line = d / kLineClocks;
+    const uint32_t x = d - line * kLineClocks;
+    if (line >= kWindowLines)
+    {
+        picture = false;
+        return kForever;
+    }
+    picture = x < kWindowClocks;
+    if (picture)
+        return kWindowClocks - x;
+    return line + 1 < kWindowLines ? kLineClocks - x : kForever;
+}
+
 uint32_t ScorpionTurboOverlay::DataWait(uint32_t start) const
 {
-    // The CPU slot: an even count, and in the picture only the pair the video leaves (count 0)
+    // The CPU slot: an even count, and in the picture only the pair the video leaves (count 0). Closed form when
+    // the picture / border state holds for the whole wait (it nearly always does): one division per access
+    const uint32_t e2 = start + 1;
+    const uint32_t p2 = Phase(e2);
+    bool picture = false;
+    const uint32_t run = PictureRun(e2, picture);
+    const uint32_t wait = picture ? ((4u - p2) & 3u) : (p2 & 1u);
+    if (wait < run)
+        return wait;
+    return DataWaitByEdges(start);  // the wait crosses the window's edge
+}
+
+uint32_t ScorpionTurboOverlay::DataWaitByEdges(uint32_t start) const
+{
     const uint32_t e2 = start + 1;
     for (uint32_t j = 0;; j++)
     {
@@ -48,7 +83,20 @@ uint32_t ScorpionTurboOverlay::DataWait(uint32_t start) const
 
 uint32_t ScorpionTurboOverlay::OpcodeFetchWait(uint32_t start) const
 {
-    // At least one forced wait, released on the slot's column count so T3 samples the latched byte
+    // At least one forced wait, released on the slot's column count so T3 samples the latched byte. Closed form
+    // as in DataWait: the first odd count after e2 (border) or the first count 1 (picture)
+    const uint32_t e2 = start + 1;
+    const uint32_t p2 = Phase(e2);
+    bool picture = false;
+    const uint32_t run = PictureRun(e2, picture);
+    const uint32_t wait = picture ? 1u + ((0u - p2) & 3u) : 1u + (p2 & 1u);
+    if (wait < run)
+        return wait;
+    return OpcodeFetchWaitByEdges(start);
+}
+
+uint32_t ScorpionTurboOverlay::OpcodeFetchWaitByEdges(uint32_t start) const
+{
     const uint32_t e2 = start + 1;
     for (uint32_t j = 1;; j++)
     {
@@ -64,7 +112,9 @@ void ScorpionTurboOverlay::Wait(uint16_t addr, bool opcodeFetch)
     if (_memory->IsWindowRom(static_cast<uint8_t>(addr >> 14)) || !WaitsApply())
         return;
     const uint32_t start = _cpu->AccessStartClock();
-    const uint32_t clocks = opcodeFetch ? OpcodeFetchWait(start) : DataWait(start);
+    // SC15.3 releases an opcode fetch on the slot like a data access (research-scorpion-turbo.md 4.2)
+    const uint32_t clocks =
+        opcodeFetch && _logic == ScorpionTurboLogic::SC151 ? OpcodeFetchWait(start) : DataWait(start);
     if (clocks)
         _cpu->AddWaitStates(clocks);
 }

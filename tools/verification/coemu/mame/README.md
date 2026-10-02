@@ -185,3 +185,32 @@ a99126f5) is removed or misses. The engine can also end in `RST 0` from `CtTest`
 Since commit 3952bdc8 the probe detects Even M1 and switches to `DELAYE`, which uses only instructions
 whose Even M1 lengths are known. The "503 values wrong" run in between (18:35, loaded at 36000) came from an
 unfinished build of that work, before its corrections were in.
+
+## Sprinter
+
+The coemu runner does not use the Sprinter, but the Sprinter reference captures
+([testdata/machines/sprinter/reference/](../../../../testdata/machines/sprinter/reference/README.md), scripts in
+[tools/verification/sprinter/](../../sprinter/mame-capture.sh)) need MAME's `sprinter` driver, which the `zx` build
+above leaves out. A build with it, under its own name so that it does not replace a `zx` binary, from a MAME 0.289
+checkout (`f43983b6`; a `git clone --shared` of a local MAME tree avoids the download):
+
+```
+make SUBTARGET=zxsp REGENIE=1 -j<cores> \
+  SOURCES=src/mame/sinclair/spectrum.cpp,src/mame/sinclair/spec128.cpp,src/mame/sinclair/specpls3.cpp,src/mame/sinclair/pentagon.cpp,src/mame/sinclair/scorpion.cpp,src/mame/sinclair/atm.cpp,src/mame/sinclair/evo/pentevo.cpp,src/mame/sinclair/sprinter.cpp
+```
+
+This leaves a binary named `zxsp` (58 drivers: the `zx` set plus `sprinter`); `zxsp -listfull sprinter` prints
+`sprinter "Sprinter Sp2000"`. `sprinter.cpp` needs no other source in the list: the devices it uses (ATA, ISA,
+PC keyboard, RS-232 mouse, Z84C15, DS12885, AY-3-8910, DAC) are found from its includes. On an M-series Mac
+with 10 jobs, a fresh build took 28 minutes, most of it the shared libraries.
+
+ROMs. `romset.py <zxsp> <rompath> data/rom -- sprinter` gives `sprinter ok bios=v3.04 placeholders=46`:
+`sp2k-3.04.rom` is unreal-ng's `data/rom/sprinter/sp2k-3.04.rom` (CRC `1729cb5c`), the 46 placeholders are the
+Beta Disk device's TR-DOS versions (the driver keeps it for its Spectrum mode). The other six BIOS versions are
+not needed with `-bios v3.04`. MAME's default PC keyboard, the Microsoft Natural (`kb_ms_natural`), is an MCU
+whose ROM `natural.bin` unreal-ng does not have; every keyboard option of the slot needs a ROM, so the runner
+empties the slot (`-kbd ""`) and `romset.py` skips that device for `sprinter` (`EMPTY_SLOT_DEVICES`). With that,
+`zxsp -verifyroms sprinter` still says "bad" (it checks every BIOS and the default keyboard), but
+`zxsp sprinter -bios v3.04 -kbd "" -rompath <rompath>` runs: BIOS 3.04 configures the PLD, shows the logo and
+stops at "PRESS <ENTER> TO REBOOT" with no media (frame 507, 10.4 s). The command line and the captures are in
+the reference folder's README.

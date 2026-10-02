@@ -36,13 +36,15 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_interpreter.inc` | Interpreter Control | Python/Lua exec, status, stop |
 | `openapi_lifecycle.inc` | Emulator Management | Create, start, stop, pause, resume, reset |
 | `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
-| `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}`, `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
-| `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium` |
+| `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}` (also `formats`, `targets?path=`), `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
+| `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
 | `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
 | `openapi_mouse.inc` | Mouse Injection | Kempston mouse move, press, release, click, buttons, wheel, counters, status |
+| `openapi_joystick.inc` | Joystick Injection | Kempston joystick press, release, set, tap, state |
+| `openapi_joystick_schemas.inc` | Joystick Injection (schemas) | `JoystickState`, `JoystickStatus`, `JoystickInjectResponse` |
 | `openapi_settings.inc` | Settings Management | Get/set emulator settings |
 | `openapi_features.inc` | Feature Management | Get/set runtime features |
 | `openapi_state.inc` | State Inspection | Memory, screen, audio state + memory read/write |
@@ -63,6 +65,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `basic_api.cpp` | BASIC program control |
 | `keyboard_api.cpp` | Keyboard injection |
 | `mouse_api.cpp` | Kempston mouse injection |
+| `joystick_api.cpp` | Kempston joystick injection (logic in `common/joystickjson.h`, unit-tested) |
 | `settings_api.cpp` | Settings management |
 | `features_api.cpp` | Feature management |
 | `state_memory_api.cpp` | Memory state inspection |

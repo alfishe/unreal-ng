@@ -659,6 +659,7 @@ void MenuManager::createMachineMenu()
         MM_PLUS2,         // ZX-Spectrum +2 (grey): 128K hardware, Amstrad ROM
         MM_PLUS2A,        // ZX-Spectrum +2A (black): +3 without the floppy controller
         MM_PLUS3,         // ZX-Spectrum +3 (uPD765A, design: docs/inprogress/2026-09-28-plus3-upd765)
+        MM_ATM450,        // ATM Turbo 2 v4.50 (design: docs/inprogress/2026-10-01-atm450)
         MM_ATM710,        // ATM Turbo 2+ v7.10
         MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
         MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
@@ -666,7 +667,8 @@ void MenuManager::createMachineMenu()
         MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
                           // quadrant switching + #7EFD window; same design doc)
         MM_PROFI,         // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
-        MM_TSL            // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
+        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
     };
 
     for (const auto& model : models)

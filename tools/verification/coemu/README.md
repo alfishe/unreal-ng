@@ -5,7 +5,9 @@ they have, the way a user would. It then takes the program's results from memory
 It answers "which emulator gets this right, on which machine, and where do they differ?".
 
 The first program it runs is the contention probe,
-[`../contention/ctprobe`](../contention/ctprobe/README.md).
+[`../contention/ctprobe`](../contention/ctprobe/README.md). Any program with `START`, `PROBEEND`, `DONE` in its
+`.sym` and a `<program>-compare.py` runs the same way through `PROGRAM`; the Scorpion turbo test
+([`../contention/turbotest`](../contention/turbotest/README.md)) does, on the `scorpion` machine.
 
 ## Quick start
 
@@ -13,6 +15,8 @@ The first program it runs is the contention probe,
 tools/verification/coemu/run-all.sh                  # every emulator found, every machine
 tools/verification/coemu/run-all.sh 48k plus3        # only these machines
 tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
+PROGRAM=$PWD/tools/verification/contention/turbotest/turbotest \
+  tools/verification/coemu/run-all.sh scorpion       # another program
 ```
 
 `run-all.sh` ends with a table like this (also written to `out/summary.md`):
@@ -38,7 +42,7 @@ measured and expected rows. `matrix.py --md <file>` also writes the summary grid
 --out-dir <dir>` builds the matrix from the results of an earlier run.
 
 Reports kept in the repository, with each difference explained: [reports/](reports/) (latest:
-[2026-09-30](reports/2026-09-30-ctprobe-matrix.md), all eleven emulators on the same probe build).
+[2026-10-01](reports/2026-10-01-ctprobe-matrix.md), all eleven emulators on the same probe build, with P-02B).
 
 ## Emulators
 

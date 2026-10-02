@@ -52,6 +52,9 @@ public:
     bool IsPort_FFFD(uint16_t port);
     bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;
 
+    /// #1F outside a TR-DOS session reads Joystick::Read() while a joystick is fitted
+    bool HasKempstonJoystick() const override { return true; }
+
     // IsBeta128Port() hoisted into the base PortDecoder (shared Beta-128 session gating)
 
     uint16_t decodePort(uint16_t port);

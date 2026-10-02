@@ -269,10 +269,14 @@ prints or compares tables (`--rom`, `--page`, `--records`). Results:
   and 572 bytes; map 2 additionally maps `#80A5-#E0A5` (DOS on) to `#18-#1B`. `dcp-table.py --map 1`
   prints them.
 
-**Needs a runtime capture.** This is the table the BIOS *writes* at start-up. Function `#F4`
-(`DCP_CONFIG`) and SETUP (`ApplyScreenPosition` patches offset `#0400` with `#CB` and restores it)
-change entries at run time, so the reference for the tests (R-1) stays a page `#40` dump taken after
-POST from MAME or, from S1 on, the emulator (deferred, see [TODO.md](TODO.md)).
+**Runtime capture (MAME 0.289, 2026-10-01).** The page `#40` dump taken from MAME's `sprinter` driver
+with BIOS 3.04 after POST (the boot screen with no media, 10.4 s after power-on), `page40.bin` in
+[testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md), is **byte for byte the statically unpacked table**
+(CRC `b7f09600`, `dcp-table.py --rom ROM --compare-page page40.bin`: 0 bytes differ). The table is the
+same at the first port read that opens the decoder (0.677 s) and at the boot screen: nothing changes it
+on that path. Function `#F4` (`DCP_CONFIG`) and SETUP (`ApplyScreenPosition` patches offset `#0400`
+with `#CB` and restores it) still change entries at run time, but only when a program or the user calls
+them, so the tests (R-1) can use either the dump or `dcp-table.py --rom`.
 
 **Fixed ports.** The Z84C15 decodes its own ports before the PLD sees them: `#10-#13` (CTC),
 `#18-#1B` (SIO A data, A control, B data, B control), `#1C-#1F` (PIO), `#EE/#EF` (system control:
@@ -319,7 +323,18 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
 - **INT** is not at a fixed position: it fires on the 8th line of a square whose mode byte says
   "blank + interrupt" (`Mode0` = `%1111 11x1`). The BIOS moves INT to the Pentagon, Scorpion or
   Spectrum position by rewriting those bytes (MAN §4.6; BIOS-TT `doc/changes.txt`, FN_SINC `#F2`;
-  MAME `sprinter.cpp:1278-1313`). Pulse length: 32 clocks of 3.5 MHz (MAME `:1736`).
+  MAME `sprinter.cpp:1278-1313`). **End of the pulse** (PLD `SP2_1K30.TDF:744`, `INT_X`): the INT
+  flip-flop is preset (INT off) by the **acknowledge** (`/IO` and `/M1` low together) or two rising
+  edges of `CTH2` after it went on. `CTH` counts the 56 squares of a line, one per 4 T, so `CTH2`
+  rises every 32 T and an unacknowledged pulse lasts 32-64 T depending on where it starts. MAME
+  keeps a fixed 32 T and ignores the acknowledge (`:1736`); unreal-ng ends the pulse at the
+  acknowledge (as the PLD) and keeps MAME's 32 T otherwise (which `CTH` value a MAME pixel x is
+  has not been tied down, so the 32-64 T rule is not modeled yet).
+- **Measured on MAME** (BIOS 3.04, `FN_SYNC` called at the boot screen, `int.csv` in
+  [testdata/machines/sprinter/reference/](../../../testdata/machines/sprinter/reference/README.md)): one INT per
+  320-line frame, at the same horizontal position (pixel 768 of 896, T 192 of the line) and on MAME
+  screen line 271 (Scorpion, also the cold-start default of 3.04), 287 (Pentagon, 16 lines later) or
+  295 (Spectrum, 8 lines after Pentagon); MAME's paper is lines 16-271.
 - HOLD register (`#CB`) shifts the picture by up to 7 squares horizontally (2-pixel steps) and 7 lines
   vertically (MAME `sprinter.cpp:850-852`).
 
@@ -404,7 +419,15 @@ register loaded from the CPU on writes and from the drive's high byte on reads (
 `SP2_1K30.TDF:181`, `:360-373`); MAME agrees (one `m_ata_data_latch`), ZXMAK2 keeps two bytes. On a
 write the latch holds the **low** byte (the reverse of the Nemo order). Reads of
 registers 1-7 with A8 = 1 and writes with A8 = 0 do nothing (MAME). The interrupt line is not
-connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). The channel select is a latch that
+connected (the BIOS polls BSY/DRQ, `EXTENDED/shared.asm:6-33`). **With no drive** the status reads `#FF` (BSY
+set): the IDE data lines reach the CPU side through two K555AP6 (74LS245) transceivers (U6, U9 on
+the Sp2000 schematic, `zxgit/2000` `pcad_import/PAGE1.pdf`) with no pull-down on DD7 at the
+connectors X6/X9, and LS-TTL inputs that nothing drives read high. SETUP's auto-detect then waits
+1 550 frames (#060E HALTs, ~31.7 s) per unit for BSY to clear, unless F4 is pressed (SETUP
+`#9663`-`#967E`). MAME does not show this: its default slots hold an IDE hard disk without an image
+(primary master: status `#52`, IDENTIFY aborted with `#51`, "None" at once) and an ATAPI CD
+(primary slave: status `#10`/`#11`, polled for 280 frames), so MAME reaches the no-media boot screen
+at frame 507 (10.38 s) and unreal-ng with no drives at frame 3 291 (67.4 s). The channel select is a latch that
 survives until changed; reset selects primary (MAME `:1582`).
 
 ### 9.2 Units and BIOS numbering
@@ -474,7 +497,8 @@ turbo (`#1B`), TR-DOS drive mapping (`#1E`) (INC `SP2000.inc:1013-1160`).
 power-on / RESET button
   │ PLD empty; CPU runs the loader in ROM (page #1C / 12) with only ROM and fast RAM visible
   │ loader: "ACEX_30K_LOADING" at fast RAM #FEF0? → bitstream from fast RAM, else from ROM
-  │ streams 59 215 bytes to the PLD, 8 writes per byte (one bit each) = 473 720 writes (S0, static)
+  │ streams 59 215 bytes to the PLD, 8 writes per byte (one bit each) = 473 720 writes (S0, static;
+  │ confirmed at run time on MAME: no other writes before the last bitstream byte)
   ▼ PLD configured → the small EPM7064 CPLD resets the CPU
 BIOS (ROM, system mode)
   │ POST, DCP_INIT fills page #40, IN A,(SLOT3) opens the port decoder

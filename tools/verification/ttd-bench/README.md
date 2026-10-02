@@ -1,6 +1,6 @@
 # TTD benchmark matrix
 
-This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 V0b, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
+This directory holds the tools for running, comparing and baselining the time-travel (TTD) benchmark matrix (PLAN #40 Phase 0, Step 2, [TTD v2 requirements §5](../../../docs/inprogress/2026-09-25-ttd-v2-migration/requirements.md)).
 
 The same emulation runs under every TTD engine (today only `v1`, the current `TimeTravelManager`), so the numbers compare engine against engine and commit against commit.
 
@@ -21,7 +21,7 @@ The same emulation runs under every TTD engine (today only `v1`, the current `Ti
   - it records a fixed number of frames, with scripted key presses at fixed frames;
   - the RTC clock is frozen, so the firmware never reads the host time;
   - every machine is created with zeroed RAM (`RAMPowerOn=ZERO`) instead of the default power-on noise from the process-wide `rand()`, so a case does not depend on the cases that ran before it.
-- **Byte metric**: a size, which is identical on every run. Names end in `_bytes` or `_bpf` (bytes per frame), plus `frames` and `checkpoints`.
+- **Byte metric** (deterministic metric): a size or a count, which is identical on every run. Names end in `_bytes`, `_bpf` (bytes per frame) or `_opf` (operations per frame), plus `frames` and `checkpoints`.
 - **Timing metric**: a duration. Timings vary with host load and are reported as percentiles.
 
 ## Running
@@ -56,6 +56,7 @@ The following environment variables control a run:
 | `UNREAL_TTD_BENCH_SEEKS` | the number of random seek positions (BM-5) | 40 for `ci`, 200 otherwise |
 | `UNREAL_TTD_BENCH_OVERHEAD` | `0` skips BM-1 (BM-1 costs four extra runs per case) | on |
 | `UNREAL_TTD_BENCH_DIRTY` | `1` adds BM-8 | off |
+| `UNREAL_TTD_BENCH_KEEP_SESSIONS` | a folder: keep each case's saved `.ttd` session there instead of deleting it (input data for the [TTD v2 experiments](../../poc/011-ttd-v2-capture-analysis/experiments/README.md)) | off |
 
 Other sessions running on the same machine inflate timings. Check `uptime` before running, and compare only runs made at a similar load.
 
@@ -65,6 +66,7 @@ Other sessions running on the same machine inflate timings. Check `uptime` befor
 |---|---|---|
 | BM-1 | `bm1_frame_off_us_p50`, `bm1_overhead_{nojournal,journal,journal_cov}_pct` | Median frame time with TTD off, and the extra time per frame in each recording mode |
 | BM-2 | `bm2_capture_us_{p50,p95,p99,max}`, `bm2_capture_p99_over_p50`, `bm2_capture_share_pct` | Time to capture one checkpoint at the end of a frame |
+| BM-2 work | `bm2_work_{pages_visited,compress_calls,decoded}_opf`, `bm2_work_{delta_base,device_blobs,scanned,compress_input}_bpf` | What the capture did, counted per frame: RAM pages walked, bytes copied into the delta base, device-state bytes, bytes XOR'd and zero-checked, zstd calls and their input, chain links decoded. Deterministic: the CI gate checks capture cost with these, not with a clock |
 | BM-3 | `bm3_{ram_payload,page_refs,device_blobs,checkpoint_core,write_journal,input_journal,coverage,total}_bpf` | Recording size per frame, split by stream |
 | BM-4 | `bm4_resident_bytes`, `bm4_resident_bpf` | Memory held by the whole session |
 | BM-5 | `bm5_{aligned,offset}_us_*`, `..._nopresent_us_*`, `..._present_us_*`, `bm5_offset_{restore,replay}_us_*` | Seek time, to a frame start (`aligned`) or to a point inside a frame (`offset`). `nopresent` is the time to reach the machine state; `present` is the extra time to build the picture of that position |

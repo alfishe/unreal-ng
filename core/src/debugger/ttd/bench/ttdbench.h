@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file ttdbench.h
-/// @brief TTD benchmark harness (PLAN #40 V0b, TTD v2 requirements §5).
+/// @brief TTD benchmark harness (PLAN #40 Phase 0, Step 2, TTD v2 requirements §5).
 ///
 /// One harness for every TTD engine version, so v1, v2 and later versions run
 /// exactly the same emulation and their numbers compare:
@@ -157,6 +157,32 @@ struct SeekTiming
     double screenUs = 0;
 };
 
+/// Counted work of a frame capture (BM-2 work). Unlike the capture time it
+/// repeats exactly for a replayable workload on any host and under any load,
+/// which makes it the CI gate's check of capture cost
+struct CaptureWork
+{
+    uint64_t pagesVisited = 0;
+    uint64_t deltaBaseBytes = 0;
+    uint64_t deviceBlobBytes = 0;
+    uint64_t bytesScanned = 0;
+    uint64_t compressCalls = 0;
+    uint64_t compressInputBytes = 0;
+    uint64_t slotsDecoded = 0;
+
+    CaptureWork& operator+=(const CaptureWork& o)
+    {
+        pagesVisited += o.pagesVisited;
+        deltaBaseBytes += o.deltaBaseBytes;
+        deviceBlobBytes += o.deviceBlobBytes;
+        bytesScanned += o.bytesScanned;
+        compressCalls += o.compressCalls;
+        compressInputBytes += o.compressInputBytes;
+        slotsDecoded += o.slotsDecoded;
+        return *this;
+    }
+};
+
 /// Recording modes (BM-1)
 enum class Mode : uint8_t
 {
@@ -179,6 +205,8 @@ public:
     virtual void Stop() = 0;
     /// Capture time of the frame that just ended, nanoseconds (BM-2)
     virtual uint64_t LastCaptureNs() const = 0;
+    /// Counted work of the capture of the frame that just ended
+    virtual CaptureWork LastCaptureWork() const = 0;
     virtual size_t Checkpoints() const = 0;
     virtual uint64_t FirstFrame() const = 0;
     virtual uint64_t LastFrame() const = 0;
@@ -215,12 +243,17 @@ struct Options
     bool saveLoad = true;            ///< BM-7
     bool dirtySweep = false;         ///< BM-8: 0 / 1 / 4 / 16 / 64 dirty 4 KB pieces
     std::string scratchDir;          ///< where BM-7 writes its session file
+    /// Non-empty: BM-7's session file is kept here as <engine>-<case>.ttd
+    /// instead of deleted - the recorded matrix workloads as input data for
+    /// offline experiments (tools/poc/011-ttd-v2-capture-analysis/experiments)
+    std::string keepSessionDir;
     /// testdata-relative path -> absolute path (the caller knows the tree)
     std::function<std::string(const std::string&)> resolveTestData;
 };
 
-/// Metric name -> value. Names: see RunCase(); byte metrics end in "_bytes"
-/// or "_bpf" (bytes per frame) and are deterministic, everything else is time
+/// Metric name -> value. Names: see RunCase(). Deterministic metrics end in
+/// "_bytes", "_bpf" (bytes per frame) or "_opf" (operations per frame), plus
+/// "frames" and "checkpoints"; everything else is time
 using Metrics = std::map<std::string, double>;
 
 struct Result
@@ -233,7 +266,7 @@ struct Result
 /// Run one case with one engine and return BM-1..BM-8
 Result RunCase(Engine& engine, const Case& c, const Options& options);
 
-/// True for a deterministic (byte) metric name
+/// True for a deterministic metric name (bytes, bytes or operations per frame)
 bool IsByteMetric(const std::string& name);
 
 /// endregion </Runner>

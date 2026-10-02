@@ -231,7 +231,7 @@ Notes:
 1. **Enumerate ranges** from `AddressSpec` (§2.1): if unset, enumerate every
    RAM page the machine exposes (reuse whatever page-enumeration API the
    `Memory`/banking model already has for the current machine; on machines
-   without page enumeration yet — pending PLAN #40 V1 — fall back to the
+   without page enumeration yet — pending PLAN #40 Phase 1 — fall back to the
    currently paged-in window only, and log/flag the fallback in the result
    metadata so a caller can tell it got a partial scan).
 2. **Exclude** the ROM window(s) always; exclude the bitmap screen area and
@@ -500,7 +500,7 @@ letter/number phase tags used elsewhere in `docs/inprogress/`.
   (V1). This is the bulk of the actual algorithm risk; get it right against
   V1 fixtures before touching any live-machine code.
 - **P1 — live-emulator scan**: `findFonts(emulatorId, ...)`, the
-  page-enumeration integration (F5, with the documented PLAN #40 V1
+  page-enumeration integration (F5, with the documented PLAN #40 Phase 1
   fallback), the F7 screen/attribute exclusion.
 - **P1.5 — signature catalog (Method B)**: `FontSignatureCatalog` (§2.4.1),
   wired into `findFonts`/`findFontsInBlob`'s optional `catalog` parameter.
@@ -617,14 +617,14 @@ letter/number phase tags used elsewhere in `docs/inprogress/`.
   it's checked into `testdata/` (consistent with how other real-software
   fixtures in this repo were sourced) — do not check in a commercial ROM/tape
   without confirming that first.
-- PLAN #40 V1 (per-region memory pages) is a soft dependency for full P1
+- PLAN #40 Phase 1 (per-region memory pages) is a soft dependency for full P1
   page enumeration on banked machines; P1 ships with the documented
   single-window fallback if V1 isn't ready first, and gets upgraded when it
   lands (no code needs to change shape, just the enumeration source).
 - **Corrected in light of [access-pattern-tracer-design.md](access-pattern-tracer-design.md) §7**:
   P1.8 (Method D) is *not* a hard dependency on TTD v2 — it builds on the
   existing `TTDWriteJournal` scan + `RestoreCheckpoint`/`RunTStates` silent
-  replay, both already in the TTD v1 engine. PLAN #40 V1 (per-region memory
+  replay, both already in the TTD v1 engine. PLAN #40 Phase 1 (per-region memory
   pages) still matters for extending Method D to banked-machine RAM, the
   same soft dependency Methods A/B already have (F5's fallback) — not a new
   blocker specific to Method D.

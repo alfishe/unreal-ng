@@ -59,6 +59,7 @@ enum class MediaError : uint8_t
     IoError,           ///< host I/O failed
     AmbiguousSlot,     ///< a selector names several slots
     BadRequest,        ///< an unknown verb or option, a malformed value
+    Cancelled,         ///< a folder scan/build was cancelled (caller request or a stall watchdog)
 };
 
 /// What an eject (or an insert over a medium) does with unsaved writes

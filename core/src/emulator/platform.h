@@ -254,7 +254,7 @@ enum PlatformRecordingSubmodulesEnum : uint16_t
 const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x4000 or 16384)
 
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
-const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
+const uint16_t MAX_CACHE_PAGES = 4;     // 64K cache (the Sprinter's fast RAM)
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
 const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
 const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
@@ -327,6 +327,7 @@ enum MEM_MODEL : uint8_t
 	MM_NEXT,                // ZX Next
 	MM_PLUS2,               // ZX Spectrum +2 (grey): 128K hardware, Amstrad ROM
 	MM_PLUS2A,              // ZX Spectrum +2A (black): +3 hardware without the floppy controller
+	MM_SPRINTER,            // Peters Plus Sprinter Sp2000 (PLD port table, Z84C15, 21 MHz turbo)
 	N_MM_MODELS             // <End of enumeration>
 };
 
@@ -424,6 +425,16 @@ enum class RamPowerOn : uint8_t
 {
 	Random,
 	Zero
+};
+
+/// The Scorpion Turbo+ board's logic chip firmware ([MISC] ScorpionTurboLogic). Both originals were posted for the
+/// green SC15 board and differ (docs/inprogress/2026-09-29-machine-waits/research-scorpion-turbo.md section 4):
+/// SC151 adds one wait to every opcode fetch from RAM in turbo, two to every I/O cycle, and has Even M1 at 3.5 MHz;
+/// SC153 waits only for the memory slot on fetches too, adds one T per I/O cycle and has no Even M1
+enum class ScorpionTurboLogic : uint8_t
+{
+	SC151,
+	SC153
 };
 
 /// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
@@ -579,6 +590,7 @@ struct CONFIG
 	uint32_t ramsize;
 	uint32_t romsize;
 	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
+	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
@@ -773,6 +785,17 @@ struct CONFIG
 	// for the session only
 	char profi_nvram_path[FILENAME_MAX];
 
+	// Sprinter Sp2000 ([SPRINTER] section, Sprinter tdd-integration §1.1)
+	struct
+	{
+		// 1 = skip the ROM's PLD loader (test default); 0 = full start (user default)
+		uint8_t fast_start;
+		// 1 = the front-panel turbo allows 21 MHz (MAME "turbo hard")
+		uint8_t turbo_allowed;
+		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
+		char cmos_path[FILENAME_MAX];
+	} sprinter;
+
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals
 	unsigned minres;             // min. screen x-resolution
@@ -811,6 +834,7 @@ struct CONFIG
 	char tsl_rom_path[FILENAME_MAX];
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
+	char sprinter_rom_path[FILENAME_MAX];
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];

@@ -105,6 +105,32 @@ TEST_F(ModelSwitch_Test, FloppyAndTapeFollowWithTheirWrites)
               switched.media.attached.end());
 }
 
+/// ATM Turbo 2 v4.50 (T4.4 of docs/inprogress/2026-10-01-atm450/tdd-plan.md):
+/// a switch to it and back keeps floppy A with its unsaved writes - the same
+/// live medium both ways
+TEST_F(ModelSwitch_Test, Atm450AwayAndBackKeepsFloppy)
+{
+    Emulator* old = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(old, nullptr);
+    DirtyFloppyA(*old);
+    const Medium* floppy = old->GetContext()->pMediaManager->GetMedium("fdd.a");
+
+    const ModelSwitchResult toAtm = Switch(old, "ATM450");
+    ASSERT_TRUE(toAtm.result.Ok()) << toAtm.result.message;
+    ASSERT_NE(toAtm.emulator, nullptr);
+    EXPECT_EQ(toAtm.emulator->GetContext()->config.mem_model, MM_ATM450);
+    EXPECT_EQ(toAtm.emulator->GetContext()->pMediaManager->GetMedium("fdd.a"), floppy);
+
+    const ModelSwitchResult back = Switch(toAtm.emulator.get(), "PENTAGON");
+    ASSERT_TRUE(back.result.Ok()) << back.result.message;
+    ASSERT_NE(back.emulator, nullptr);
+    MediaManager& media = *back.emulator->GetContext()->pMediaManager;
+    EXPECT_EQ(media.GetMedium("fdd.a"), floppy) << "the live medium came back";
+    const auto a = media.Info("fdd.a");
+    ASSERT_TRUE(a.has_value());
+    EXPECT_TRUE(a->dirty);
+}
+
 /// ZX-Evo -> Pentagon strands the SD card: with unsaved writes the switch is
 /// refused and nothing changes; keep puts it among the detached media of the
 /// new machine, discard closes it

@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/rtc/smucnvram.h"
 #include "emulator/memory/memory.h"
@@ -12,7 +13,7 @@
 /// See: https://worldofspectrum.org/faq/reference/128kreference.htm
 /// See: https://zx-pk.ru/threads/11490-paging-ports-of-zx-clones.html?langid=1
 /// See: http://zx.clan.su/forum/11-46-1
-class PortDecoder_Scorpion256 : public PortDecoder
+class PortDecoder_Scorpion256 : public PortDecoder, public IMachineStepHook
 {
     /// region <Fields>
 protected:
@@ -63,6 +64,12 @@ public:
     /// Install the turbo wait-state overlay while turbo is on, remove it otherwise (the turbo switch, reset, a
     /// TTD restore, whose chipset copy sets the clock without the decoder)
     void SyncTurboWaits();
+
+    /// Turbo+: while /INT is active the logic chip runs the CPU at 3.5 MHz (its TRB register only follows the
+    /// turbo latch while INT1 is high), so the interrupt acknowledge and the start of the handler run at normal
+    /// speed with the normal rules (Even M1 with SC15.1). Installed while the turbo latch is on; switches at
+    /// instruction boundaries (research-scorpion-turbo.md section 2.3)
+    void OnMachineStep(uint32_t t) override;
     bool AreTurboWaitsInstalled() const { return _turboWaitsInstalled; }
     /// endregion </Interface methods>
 

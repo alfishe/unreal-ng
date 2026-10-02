@@ -136,7 +136,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
-        "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
+        "SCORPION, PROFSCORP, SPRINTER, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
@@ -1711,6 +1711,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& slots = value["slots"];
                                     for (Json::ArrayIndex i = 0; i < slots.size(); ++i)
                                         out << " " << (slots[i]["contended"].asBool() ? "C" : "-");
+                                    if (value["even_m1"].asBool())
+                                        out << ", Even M1";
+                                    if (value.isMember("scorpion_turbo_logic"))
+                                        out << ", Turbo+ logic " << value["scorpion_turbo_logic"].asString();
                                     if (value["statistics"].isObject())
                                     {
                                         const Json::Value& last = value["statistics"]["last_frame"];
@@ -2414,6 +2418,108 @@ void RegisterMouseInput(ToolRegistry& registry)
 } // namespace
 
 /// endregion </mouse_input>
+
+/// region <joystick_input>
+
+namespace
+{
+
+void RegisterJoystickInput(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"press", "release", "set", "tap", "status"})
+    {
+        schema["properties"]["action"]["enum"].append(action);
+    }
+    schema["properties"]["action"]["description"] =
+        "Kempston joystick (reads at IN #1F on ATM3 / Scorpion / TS-Conf). 'press' holds buttons, 'release' lets them go, "
+        "'set' makes exactly the given buttons (or state byte) held, 'tap' presses for N frames then releases. Input is "
+        "applied immediately; call control_execution run_frames to let the program react.";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    Json::Value nameEnum(Json::arrayValue);
+    for (const char* button : {"up", "down", "left", "right", "fire", "b5", "b6", "b7"})
+    {
+        nameEnum.append(button);
+    }
+    schema["properties"]["buttons"]["oneOf"][0]["type"] = "string";
+    schema["properties"]["buttons"]["oneOf"][1]["type"] = "array";
+    schema["properties"]["buttons"]["oneOf"][1]["items"]["type"] = "string";
+    schema["properties"]["buttons"]["oneOf"][1]["items"]["enum"] = nameEnum;
+    schema["properties"]["buttons"]["description"] =
+        "Button names: one string ('up+fire', 'up,fire') or an array. Required for press / release / tap; for 'set' it is the "
+        "exact held set ([] = none)";
+    schema["properties"]["state"]["type"] = "integer";
+    schema["properties"]["state"]["minimum"] = 0;
+    schema["properties"]["state"]["maximum"] = 255;
+    schema["properties"]["state"]["description"] =
+        "Raw device byte for 'set' (active high: right 1, left 2, down 4, up 8, fire 0x10, D5..D7 free)";
+    schema["properties"]["frames"]["type"] = "integer";
+    schema["properties"]["frames"]["minimum"] = 1;
+    schema["properties"]["frames"]["default"] = 2;
+    schema["properties"]["frames"]["description"] = "Hold time for 'tap'";
+    schema["required"].append("action");
+
+    registry.Register(
+        "joystick_input",
+        "Send Kempston joystick input to the emulator: press / release buttons, set the exact held set or state byte, tap "
+        "for N frames, status (device byte, fitted / wired, host keys). Values are forwarded as-is; the WebAPI validates "
+        "names and ranges and warns when the machine does not decode the joystick.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            std::string action = args["action"].asString();
+
+            if (action == "status")
+            {
+                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", done);
+                return;
+            }
+            if (action == "press" || action == "release" || action == "tap")
+            {
+                if (!args.isMember("buttons"))
+                {
+                    done(ToolResult::Error(action + " requires 'buttons'"));
+                    return;
+                }
+                Json::Value body;
+                body["buttons"] = args["buttons"];
+                if (action == "tap" && args.isMember("frames"))
+                {
+                    body["frames"] = args["frames"];
+                }
+                ResolveAndForward(args, "POST", "/joystick/" + action, &body, caller, "Joystick " + action, done);
+                return;
+            }
+            if (action == "set")
+            {
+                if (!args.isMember("state") && !args.isMember("buttons"))
+                {
+                    done(ToolResult::Error("set requires 'state' or 'buttons'"));
+                    return;
+                }
+                Json::Value body;
+                if (args.isMember("state"))
+                {
+                    body["state"] = args["state"];
+                }
+                else
+                {
+                    body["buttons"] = args["buttons"];
+                }
+                ResolveAndForward(args, "POST", "/joystick/set", &body, caller, "Joystick state set", done);
+                return;
+            }
+
+            done(ToolResult::Error("Unknown action '" + action + "'"));
+        });
+}
+
+} // namespace
+
+/// endregion </joystick_input>
 
 /// region <time_travel>
 
@@ -3383,6 +3489,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterInspectState(*registry);
     RegisterTypeInput(*registry);
     RegisterMouseInput(*registry);
+    RegisterJoystickInput(*registry);
 
     // TD-1 — time_travel: the full TTD surface (session, navigation, reverse
     // search, .ttd files, TD-4 bookmarks, TD-7 coverage index)

@@ -12,10 +12,14 @@ namespace ttd
 
 namespace
 {
-    // Layout: [0] version, [1] Z-Controller /CS, [2] receive latch, [3] reserved,
-    // [4...] SdCardSpi::saveState (SdCardSpi::STATE_SIZE bytes)
+    // Layout: [0] version, [1] Z-Controller config byte, [2] receive latch,
+    // [3] reserved, [4...] SdCardSpi::saveState (SdCardSpi::STATE_SIZE bytes).
+    // Version 1 stored the SD /CS bit in [1] (1 = deselected); version 2 the
+    // whole config byte, so the further chip selects of the TS-Conf VDAC2 build
+    // (D2 = FT812) restore too. Same size, version 1 blobs still load
     constexpr size_t kHeader = 4;
-    constexpr uint8_t kVersion = 1;
+    constexpr uint8_t kVersion = 2;
+    constexpr uint8_t kVersionCsN = 1;
 }  // namespace
 
 size_t TTDEvoSdCard::TTDStateSize() const
@@ -27,7 +31,7 @@ void TTDEvoSdCard::TTDSaveState(uint8_t* dst) const
 {
     const ZControllerSpi::State& zc = _controller.GetState();
     dst[0] = kVersion;
-    dst[1] = zc.csN;
+    dst[1] = zc.config;
     dst[2] = zc.rxLatch;
     dst[3] = 0;
     _card.saveState(dst + kHeader);
@@ -35,12 +39,12 @@ void TTDEvoSdCard::TTDSaveState(uint8_t* dst) const
 
 void TTDEvoSdCard::TTDLoadState(const uint8_t* src)
 {
-    if (src[0] != kVersion)
+    if (src[0] != kVersion && src[0] != kVersionCsN)
         return;
     // The card first: SetState re-announces the chip select to it
     _card.loadState(src + kHeader);
     ZControllerSpi::State zc;
-    zc.csN = src[1];
+    zc.config = src[0] == kVersion ? src[1] : static_cast<uint8_t>(src[1] ? ZControllerSpi::kResetConfig : 0x00);
     zc.rxLatch = src[2];
     _controller.SetState(zc);
 }
