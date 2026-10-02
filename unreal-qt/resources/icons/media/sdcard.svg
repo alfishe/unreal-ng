@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- SD card: chamfered body, gold contacts, label -->
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#339af0"/>
+      <stop offset="1" stop-color="#1864ab"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="1" stop-color="#e67700"/>
+    </linearGradient>
+  </defs>
+  <path d="M24 4 H50 a4 4 0 0 1 4 4 V56 a4 4 0 0 1 -4 4 H14 a4 4 0 0 1 -4 -4 V18 z" fill="url(#card)" stroke="#0b3d6b" stroke-width="1.4"/>
+  <rect x="24" y="8" width="4" height="10" rx="1" fill="url(#gold)"/>
+  <rect x="30" y="8" width="4" height="10" rx="1" fill="url(#gold)"/>
+  <rect x="36" y="8" width="4" height="10" rx="1" fill="url(#gold)"/>
+  <rect x="42" y="8" width="4" height="10" rx="1" fill="url(#gold)"/>
+  <rect x="18" y="13" width="4" height="9" rx="1" fill="url(#gold)"/>
+  <rect x="16" y="28" width="32" height="24" rx="2.5" fill="#f8f9fa"/>
+  <path d="M22 36 q0 -3 4 -3 h4 v3 h-4 q-1 0 -1 1 q0 1 1 1 h2 q4 0 4 4 q0 4 -4 4 h-6 v-3 h6 q1 0 1 -1 q0 -1 -1 -1 h-2 q-4 0 -4 -5 z" fill="#1864ab"/>
+  <path d="M35 33 h5 q6 0 6 6.5 q0 6.5 -6 6.5 h-5 z M38 36 v7 h2 q3 0 3 -3.5 q0 -3.5 -3 -3.5 z" fill="#1864ab"/>
+  <rect x="52" y="30" width="3" height="10" rx="1" fill="#f8f9fa"/>
+</svg>

@@ -152,3 +152,19 @@ Ultra, Release:
 
 A 50 Hz frame is 20 ms. Stages (1 thread): translation + masks 1.5 ms, pixel
 stage 1.2 ms, two-page render 2.4 ms, the rest < 1 ms.
+
+Intel i7-11850H (8 cores, Linux, gcc, SSE2 kernels), `zxdlss-render --ttd
+testdata/ttd/demo_across-the-edge-second.ttd --alg mod-tpgwafsd` (field render on
+~30 % of frames), and two recordings without flicker (`demo_7threality`,
+`active_demo`), ms/frame of the algorithm:
+
+| Build | Across the Edge, 1 thread | 8 threads | no flicker, 8 threads |
+|---|---|---|---|
+| before 2026-10-02 | 9.9 | 3.8 | 2.2 |
+| psadbw counts (no libgcc popcount), candidate-tile motion search | 4.8 | 3.0 | 1.1 |
+| + vector scene stage, 4 ranges per thread, cheaper `push()`, more stages on threads | 3.6 | 1.6 | 0.5 |
+
+The x86 build targets baseline x86-64, which has no POPCNT: `std::popcount` is
+a libgcc call there, so the kernels count with `psadbw` instead. Every step is
+bit-exact: all six `mod-tpgw*` variants give byte-identical output before and
+after, normal and `--overscan`, 1 and 8 threads.

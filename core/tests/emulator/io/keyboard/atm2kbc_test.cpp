@@ -9,6 +9,7 @@
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/network/ttdmachineserialpeer.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
@@ -19,6 +20,9 @@
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/io/network/networkmanager.h"
+#include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
 
 class Atm2Kbc_Test : public ::testing::Test
@@ -277,4 +281,197 @@ TEST_F(Atm2Kbc_Test, TtdSeekReplaysTheControllerExactly)
     EXPECT_EQ(replayed->cpu.pc, recorded->cpu.pc);
     EXPECT_EQ(std::memcmp(replayed->cpu.ram, recorded->cpu.ram, sizeof(recorded->cpu.ram)), 0);
     EXPECT_EQ(std::memcmp(replayed.get(), recorded.get(), sizeof(Atm2Kbc::State)), 0) << "the whole controller as recorded";
+}
+
+// --- RS-232: the controller's UART is the machine's serial port (tdd-atm2-kbc.md §7) ---
+
+class Atm2KbcSerial_Test : public Atm2Kbc_Test
+{
+protected:
+    /// The board with V41 booted and `settings` applied through the network manager
+    void CreateWith(const std::vector<std::pair<std::string, std::string>>& settings)
+    {
+        Create("ATM710", 1024);
+        _emulator->RunNFrames(9);   // v4.x: 120 ms power-on delay
+        NetworkManager::Change change;
+        std::string error;
+        ASSERT_TRUE(NetworkManager::ParseChange(settings, change, error)) << error;
+        ASSERT_TRUE(_context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+    }
+
+    /// An IN #FE as a driver loop issues it: ~40 T of its own code first. Back
+    /// to back reads (no gap) keep INT1 pending at every RETI, and INT1 comes
+    /// before the UART in the 8051 polling order: received frames would be
+    /// lost, on the real board too (reference-atm2-kbc.md §2.5)
+    uint8_t DriverIn(uint16_t port)
+    {
+        _context->pCore->GetZ80()->t += 40;
+        return In(port);
+    }
+
+    /// `#55`, command, and the argument byte of a 2-stage command
+    void Command(uint8_t command, int argument = -1)
+    {
+        ASSERT_EQ(DriverIn(0x55FE), 0xAA);
+        const uint8_t answer = DriverIn(static_cast<uint16_t>(command << 8 | 0xFE));
+        if (argument >= 0)
+        {
+            EXPECT_EQ(answer, 0xFF);
+            EXPECT_EQ(DriverIn(static_cast<uint16_t>(argument << 8 | 0xFE)), 0xFF);
+        }
+    }
+    uint8_t Query(uint8_t command)
+    {
+        EXPECT_EQ(DriverIn(0x55FE), 0xAA);
+        return DriverIn(static_cast<uint16_t>(command << 8 | 0xFE));
+    }
+};
+
+TEST_F(Atm2KbcSerial_Test, ComPortPlugsIntoTheController)
+{
+    CreateWith({{"com_port", "loopback"}});
+    ASSERT_NE(_context->pMachineSerialPeer, nullptr);
+    EXPECT_EQ(Kbc()->SerialPeer(), _context->pMachineSerialPeer);
+    EXPECT_STREQ(_context->pMachineSerialPeer->Kind(), "loopback");
+    EXPECT_EQ(_context->pComPort, nullptr) << "no 16550 on #xxEF: the line is the MCU's UART";
+
+    const NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.serialPort, "atm2-kbc");
+    EXPECT_TRUE(st.machineSerial.fitted);
+    EXPECT_EQ(st.machineSerial.firmware, "V41");
+    EXPECT_EQ(st.machineSerial.peer, "loopback");
+}
+
+TEST_F(Atm2KbcSerial_Test, AByteGoesOutAndComesBack)
+{
+    CreateWith({{"com_port", "loopback"}});
+    Command(0xC3, 1);      // divisor 1: 115200 baud (v4.x, timer 2)
+    Command(0x43, 0x03);   // DTR + RTS asserted: the peer may send
+    EXPECT_EQ(Kbc()->SerialBaud(), 115200u);
+    EXPECT_TRUE(Kbc()->Rts());
+    EXPECT_TRUE(Kbc()->Dtr());
+
+    Command(0x03, 0x5A);   // TX data
+    _emulator->RunNFrames(1);   // 2 frames on the wire (~174 us): well inside one 20 ms frame
+
+    EXPECT_EQ(Kbc()->GetSerialLine().bytesOut, 1u);
+    EXPECT_EQ(Kbc()->GetSerialLine().bytesIn, 1u);
+    EXPECT_EQ(Query(0xC2), 1) << "RX count";
+    EXPECT_EQ(Query(0x02), 0x5A) << "RX data: the loopback echo";
+    EXPECT_EQ(Query(0xC2), 0);
+}
+
+TEST_F(Atm2KbcSerial_Test, RtsOffHoldsThePeer)
+{
+    CreateWith({{"com_port", "loopback"}});
+    Command(0xC3, 1);
+    Command(0x43, 0x01);   // DTR only
+    Command(0x03, 0x33);
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Kbc()->GetSerialLine().bytesIn, 0u) << "RTS deasserted: the peer waits";
+    EXPECT_EQ(_context->pMachineSerialPeer->Pending(), 1u);
+
+    Command(0x43, 0x03);
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Query(0x02), 0x33);
+}
+
+TEST_F(Atm2KbcSerial_Test, ZxWifiFitsBeside)
+{
+    CreateWith({{"com_port", "loopback"}, {"card", "zxwifi"}});
+    EXPECT_NE(_context->pMachineSerialPeer, nullptr);
+    ASSERT_NE(_context->pComPort, nullptr) << "the controller is not on #xxEF: the card's 16550 fits";
+}
+
+TEST_F(Atm2KbcSerial_Test, AFirmwareWithoutRs232HasNoPort)
+{
+    CreateWith({{"com_port", "loopback"}, {"kbc_firmware", "v22-11"}});
+    ASSERT_NE(Kbc(), nullptr);
+    EXPECT_EQ(Kbc()->GetFirmware(), Atm2Kbc::Firmware::V22At11);
+    EXPECT_EQ(_context->pMachineSerialPeer, nullptr);
+    EXPECT_EQ(Kbc()->SerialPeer(), nullptr);
+    const NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    ASSERT_FALSE(st.notes.empty());
+    EXPECT_NE(st.notes.front().find("RS-232"), std::string::npos) << st.notes.front();
+
+    // Back to a firmware with the port: the peer is plugged in again
+    NetworkManager::Change change;
+    std::string error;
+    ASSERT_TRUE(NetworkManager::ParseChange({{"kbc_firmware", "v41"}}, change, error)) << error;
+    ASSERT_TRUE(_context->pCore->GetNetworkManager()->RequestChange(change, error)) << error;
+    EXPECT_EQ(Kbc()->GetFirmware(), Atm2Kbc::Firmware::V41);
+    EXPECT_NE(_context->pMachineSerialPeer, nullptr);
+    EXPECT_EQ(Kbc()->SerialPeer(), _context->pMachineSerialPeer);
+}
+
+TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsThePeer)
+{
+    CreateWith({{"com_port", "loopback"}});
+    Command(0xC3, 1);
+    Command(0x43, 0x01);   // RTS off: the echo stays in the peer
+    Command(0x03, 0x77);
+    _emulator->RunNFrames(1);
+    auto* loop = dynamic_cast<LoopbackPeer*>(_context->pMachineSerialPeer);
+    ASSERT_NE(loop, nullptr);
+    ASSERT_EQ(loop->Queue().size(), 1u);
+
+    ttd::TTDMachineSerialPeer serializer(_context);
+    std::vector<uint8_t> blob(serializer.TTDStateSize());
+    serializer.TTDSaveState(blob.data());
+    loop->Reset();
+    serializer.TTDLoadState(blob.data());
+    ASSERT_EQ(loop->Queue().size(), 1u);
+    EXPECT_EQ(loop->Queue().front(), 0x77);
+}
+
+TEST_F(Atm2KbcSerial_Test, AnEspModuleRateCanBeGiven)
+{
+    // A module built for another rate: ComPort=ESPNET,115200
+    CreateWith({{"com_port", "espnet,115200"}});
+    auto* module = dynamic_cast<EspModule*>(_context->pMachineSerialPeer);
+    ASSERT_NE(module, nullptr);
+    EXPECT_EQ(module->Baud(), 115200u);
+    const NetworkManager::Status st = _context->pCore->GetNetworkManager()->GetStatus();
+    EXPECT_EQ(st.machineSerial.peerBaud, 115200u);
+    EXPECT_EQ(st.settings.comPort, "ESPNET,115200");
+}
+
+TEST_F(Atm2KbcSerial_Test, AnEspModuleAnswersThroughTheController)
+{
+    // The emulated ESP (AT firmware) on the controller's RS-232: "AT" -> "OK".
+    // Paced as the drivers do it (reference-atm2-kbc.md §2.5: reading the
+    // buffer out is slower than 115200 baud): the command goes out with RTS
+    // off, then RTS is on while the driver waits a frame and off while the
+    // buffer is read out. The Z80 waits in a loop of its own: a program that
+    // polls the keyboard meanwhile can cost a byte at 115200 (an INT1 answer
+    // of up to 83 cycles plus the 36-cycle timer 0 tick outlast one 80-cycle
+    // frame; both come before the UART in the 8051 polling order)
+    CreateWith({{"com_port", "at"}});
+    ASSERT_NE(_context->pMachineSerialPeer, nullptr);
+    auto* module = dynamic_cast<EspModule*>(_context->pMachineSerialPeer);
+    ASSERT_NE(module, nullptr);
+    EXPECT_EQ(module->Baud(), 38400u) << "the ATM2 COM build: the port's default rate";
+    Z80* z80 = _context->pCore->GetZ80();
+    _context->pMemory->DirectWriteToZ80Memory(0x8000, 0xF3);   // DI
+    _context->pMemory->DirectWriteToZ80Memory(0x8001, 0x18);   // JR $
+    _context->pMemory->DirectWriteToZ80Memory(0x8002, 0xFE);
+    z80->pc = 0x8000;
+
+    Command(0xC3, 3);      // divisor 3: 38400 baud, the module's rate on this port
+    Command(0x43, 0x01);   // DTR only
+    for (char c : std::string("AT\r\n"))
+        Command(0x03, static_cast<uint8_t>(c));   // the firmware queues them (64-byte TX ring on v4)
+
+    std::string reply;
+    for (int frame = 0; frame < 10 && reply.find("OK") == std::string::npos; ++frame)
+    {
+        Command(0x43, 0x03);   // RTS on: the module may talk
+        _emulator->RunNFrames(1);
+        Command(0x43, 0x01);   // RTS off while reading out
+        for (uint8_t n = Query(0xC2); n > 0; --n)
+            reply.push_back(static_cast<char>(Query(0x02)));
+    }
+    EXPECT_NE(reply.find("OK"), std::string::npos) << "reply: " << reply;
+    EXPECT_EQ(Kbc()->GetSerialLine().lost, 0u) << "reply: " << reply;
+    EXPECT_EQ(Kbc()->GetSerialLine().bytesOut, 4u);
 }

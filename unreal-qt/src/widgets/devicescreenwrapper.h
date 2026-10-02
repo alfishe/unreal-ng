@@ -23,7 +23,7 @@ class DeviceScreenWrapper : public QObject
 
 signals:
     void screenInitialized();
-    void fileDropped(const QString& filePath);
+    void filesDropped(const QStringList& paths);
     void dragEntered(const QString& filePath);
     void dragLeft();
 

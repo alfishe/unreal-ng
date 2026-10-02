@@ -57,5 +57,13 @@ Commits `64756638` (model) and `f304dde1` (TTD fixture corpus and CI gate re-rec
 7. FDC time under CPU turbo: whether the FDC's T-state timebase stays in 3.5 MHz units when the CPU
    runs faster was not checked. It decides whether "HD works at 7 MHz, fails at 3.5 MHz" is modeled
    correctly; check it when the Sprinter (21 MHz) floppy path is built (S3a).
+   **Answered in Sprinter S3a (2026-10-01): it did not.** The time source is `t_states` (base frame per
+   frame end) plus the frame's `Z80::t`, which holds N CPU clocks per base T-state under a hardware turbo:
+   the FDC ran N times fast inside a frame and stepped back at the frame end. `WD1793::SetBaseClockTimeBase`
+   scales the frame part back; opt-in, set by the Sprinter only, because the generic switch moves the ATM3
+   CI-gate figures (the other turbo machines are a follow-up in the Sprinter
+   [TODO.md](../2026-09-28-sprinter/TODO.md); details in
+   [WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md) §4.6). S3a also made a
+   separator-rate change re-run a pending ID search (§4.5 there) and the Beta drive bits select the drive.
 8. The Sprinter's VG93 clock is derived from the PLD equations and MAME only; no primary document
    states it.

@@ -93,6 +93,7 @@ Notes from the survey:
 | `aFB` latch | Fall-through read arm, returns `#FF`, earlier arms (GS, AY, DOS ports) win | Side effect on every A2=0 read, other devices still answer | Differs only for device ports with A2=0 (GS `#BB`/`#B3`) | OQ-6 |
 | FDC port gate | TR-DOS session (`CF_DOSPORTS`) | `DOSEN \|\| SYSEN` (sys ROM mapped opens it) | Differs while the sys ROM runs outside a TR-DOS session | OQ-7 |
 | Turbo | none | separate `[turbo]` machine | none (R8 non-goal) | — |
+| Frame | 69 888 (`PRESET.ATM1_2_3.5MHz`) | 69 888 (`UlaAtm450`) | **both** trip the ROM's frame-timing protection (corrupted keys); unreal-ng uses 308 × 224 = 68 992 - [frame-timing-protection.md](frame-timing-protection.md) | OQ-11 |
 
 The board manual (§3.5) settled OQ-5 (ROM A16, shipped) and identified the
 A2=0 read as the printer-port read (OQ-6); OQ-7 and the PAL marker timing

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include "network/core/networkpanelmodel.h"
 
@@ -77,6 +78,42 @@ TEST(NetworkPanelModel_Test, TheZxEvoOffersItsOwnPortAndTheAvr)
     EXPECT_NE(a.zxWifiWhy.find("AVR"), std::string::npos);
 }
 
+TEST(NetworkPanelModel_Test, TheAtm2OffersItsControllersPort)
+{
+    StateNode state = State("atm2-kbc", true, "NONE", "LOOPBACK", "AT");
+    state["settings"]["kbc_firmware"] = "V41";
+    NetworkForm form = NetworkFormFromState(state);
+    EXPECT_EQ(form.kbcFirmware, "V41");
+    NetworkAvailability a = NetworkFormAvailability(form);
+    EXPECT_TRUE(a.comPort) << a.comPortWhy;
+    EXPECT_TRUE(a.kbcFirmware);
+    EXPECT_TRUE(a.zxWifi) << "the controller is not on #xxEF: a ZX-WiFi card fits beside it";
+    EXPECT_FALSE(a.avrFirmware);
+
+    // A firmware without RS-232 chosen in the window: the port goes grey with the reason
+    NetworkForm edited = form;
+    edited.kbcFirmware = "V22-11";
+    a = NetworkFormAvailability(edited);
+    EXPECT_FALSE(a.comPort);
+    EXPECT_NE(a.comPortWhy.find("RS-232"), std::string::npos) << a.comPortWhy;
+    const auto changes = NetworkFormChanges(form, edited);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, "kbc_firmware");
+    EXPECT_EQ(changes[0].second, "V22-11");
+}
+
+TEST(NetworkPanelModel_Test, EveryKbcPresetParses)
+{
+    const auto choices = NetworkKbcFirmwareChoices();
+    ASSERT_EQ(choices.size(), 10u);
+    for (const auto& [name, text] : choices)
+    {
+        Atm2Kbc::Firmware firmware = Atm2Kbc::Firmware::V41;
+        EXPECT_TRUE(Atm2Kbc::ParseFirmware(name.c_str(), firmware)) << name;
+        EXPECT_FALSE(text.empty()) << name;
+    }
+}
+
 TEST(NetworkPanelModel_Test, APentagonTakesCardsOnly)
 {
     const NetworkAvailability a = NetworkFormAvailability(NetworkFormFromState(State("none", true, "NONE", "NONE", "AT")));
@@ -115,4 +152,18 @@ TEST(NetworkPanelModel_Test, EveryAvrPresetParses)
         EXPECT_TRUE(Uart16550::ParseAvrFirmware(name.c_str(), f)) << name;
         EXPECT_FALSE(text.empty());
     }
+}
+
+TEST(NetworkPanelModel_Test, AnEspModuleKeepsItsRate)
+{
+    const NetworkForm form = NetworkFormFromState(State("atm2-kbc", true, "NONE", "ESPNET,38400", "AT"));
+    EXPECT_EQ(form.comPort.kind, ComPortSpec::Kind::Espnet);
+    EXPECT_EQ(form.comPort.baud, 38400u);
+
+    NetworkForm edited = form;
+    edited.comPort.baud = 0;   // back to the port's default
+    const auto changes = NetworkFormChanges(form, edited);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, "com_port");
+    EXPECT_EQ(changes[0].second, "ESPNET");
 }

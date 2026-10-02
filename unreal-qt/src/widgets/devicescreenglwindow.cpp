@@ -670,12 +670,16 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             const QMimeData* mimeData = dropEvent->mimeData();
             if (mimeData->hasUrls())
             {
-                QList<QUrl> urls = mimeData->urls();
-                if (!urls.isEmpty())
+                QStringList paths;
+                for (const QUrl& url : mimeData->urls())
                 {
-                    QString filePath = urls.first().toLocalFile();
-                    qDebug() << "DeviceScreenGLWindow: File dropped:" << filePath;
-                    emit fileDropped(filePath);
+                    if (url.isLocalFile())
+                        paths << url.toLocalFile();
+                }
+                if (!paths.isEmpty())
+                {
+                    qDebug() << "DeviceScreenGLWindow: files dropped:" << paths;
+                    emit filesDropped(paths);
                 }
                 emit dragLeft();
                 return true;

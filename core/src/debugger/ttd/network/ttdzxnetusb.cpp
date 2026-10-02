@@ -20,11 +20,10 @@ TTDZxNetUsb::TTDZxNetUsb(EmulatorContext* context)
 void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
 {
     netstate::Adapters& state = *_scratch;
-    ComPort* com = _context ? _context->pComPort : nullptr;
-    INetGuest* comGuest = com ? com->NetGuest() : nullptr;
+    const SerialGuests serial = ComPort::SerialNetGuests(_context);
     bool complete = true;
     if (_context && _context->pZxNetUsb)
-        complete = _context->pZxNetUsb->SaveState(state, comGuest);
+        complete = _context->pZxNetUsb->SaveState(state, serial);
     else
     {
         std::memset(&state, 0, sizeof(state));   // no card fitted at this frame
@@ -32,7 +31,7 @@ void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
         if (_context && _context->pVirtualNetwork)
         {
             state.networkPresent = 1;
-            complete = _context->pVirtualNetwork->SaveState(state.network, comGuest);
+            complete = _context->pVirtualNetwork->SaveState(state.network, serial);
         }
     }
     if (!complete)
@@ -65,13 +64,12 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
         return true;
     };
 
-    ComPort* com = _context->pComPort;
-    INetGuest* comGuest = com ? com->NetGuest() : nullptr;
+    const SerialGuests serial = ComPort::SerialNetGuests(_context);
     bool complete = true;
     if (_context->pZxNetUsb && state.present)
-        complete = _context->pZxNetUsb->LoadState(state, bytes, comGuest);
+        complete = _context->pZxNetUsb->LoadState(state, bytes, serial);
     else if (_context->pVirtualNetwork && state.networkPresent)
-        _context->pVirtualNetwork->LoadState(state.network, nullptr, comGuest);
+        _context->pVirtualNetwork->LoadState(state.network, nullptr, serial);
 
     if ((!complete || state.incomplete) && _context->pModuleLogger)
     {

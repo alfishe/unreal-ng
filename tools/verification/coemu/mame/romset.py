@@ -43,7 +43,7 @@ UNREAD_REGIONS = {
 
 # Devices whose slot the runner leaves empty, so MAME never loads their ROMs. The Sprinter's default keyboard,
 # the Microsoft Natural (kb_ms_natural, an i8051 with natural.bin), has no ROM in unreal-ng; the Sprinter runner
-# (tools/verification/sprinter/mame-capture.sh) starts MAME with -kbd "" (no PC keyboard)
+# (tools/machines/sprinter/mame-capture/mame-capture.sh) starts MAME with -kbd "" (no PC keyboard)
 EMPTY_SLOT_DEVICES = {
     ('sprinter', 'kb_ms_natural'),
 }

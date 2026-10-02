@@ -126,31 +126,25 @@ protected:
         return _context->emulatorState.aFE != 0xBE;
     }
 
-    /// Type a CP/M command line and ENTER the way a user does: a key that did not echo is pressed again,
-    /// a key that echoed the wrong character is erased (CAPS SHIFT + 0) and typed again. The ROM's
-    /// keyboard handler sometimes turns a key into scan code + 1 - the next matrix row ("DIR" -> "DKR",
-    /// "R" -> "4", " " -> "Z"). Probed: every row read returns the current matrix and the scan runs
-    /// once per frame, so the slip is in the ROM's shift-state machine (#5F40, l141d..l14c3); whether
-    /// the real board shows it with this key timing is open (docs/inprogress/2026-10-01-atm450/TODO.md)
+    /// Type a CP/M command line and ENTER. A key that did not echo (pressed while the ROM was not
+    /// scanning) is pressed again; a key that echoed a different character is a failure - with the
+    /// 308-line frame the ROM's frame-timing protection must leave every key alone
+    /// (docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
     static constexpr int kTypeHold = 12;
+
     void TypeAtPrompt(const CpmConsoleHook& console, const std::string& line)
     {
         for (char c : line)
         {
-            for (int tries = 0; tries < 6; tries++)
+            const size_t before = console.text.size();
+            for (int tries = 0; tries < 4 && console.text.size() == before; tries++)
             {
-                const size_t before = console.text.size();
                 TapChar(c);
                 EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != before; }, 60, 1);
-                if (console.text.size() == before)
-                    continue;  // missed in a deaf phase: press again
-                if (console.text.back() == c)
-                    break;
-                // Mistranslated (see kTypeHold): erase it like a user would and type it again
-                const size_t echoed = console.text.size();
-                Tap({ZXKEY_CAPS_SHIFT, ZXKEY_0}, kTypeHold);
-                EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return console.text.size() != echoed; }, 60, 1);
             }
+            ASSERT_GT(console.text.size(), before) << "'" << c << "' never echoed";
+            ASSERT_EQ(console.text[before], c) << "typed '" << c << "', CP/M got '" << console.text[before]
+                                               << "' - the ROM's key corruption (frame measure outside its window?)";
         }
         Tap({ZXKEY_ENTER}, kTypeHold);
     }
@@ -306,6 +300,14 @@ TEST_F(ATM450Boot_Test, CpmBootsFromSystemDiskAndListsIt)
     EXPECT_NE(console.text.find("CP/M  V2.2"), std::string::npos) << console.text;
     EXPECT_NE(console.text.find("BIOS  V1.03"), std::string::npos) << console.text;
     EXPECT_NE(console.text.find("B:XC?"), std::string::npos) << "the ROM's default autostart" << console.text;
+
+    // The ROM measured the frame before CP/M started (l1fff -> #5F74): its keyboard handler leaves keys
+    // alone only when the low byte is in #E6..#EC (+8 when bit 12 is set). 312 lines give #0F1C
+    // (docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
+    const uint16_t measure = static_cast<uint16_t>(_context->pMemory->DirectReadFromZ80Memory(0x5F74) |
+                                                   (_context->pMemory->DirectReadFromZ80Memory(0x5F75) << 8));
+    const uint8_t windowed = static_cast<uint8_t>((measure & 0xFF) + ((measure & 0x1000) ? 8 : 0) - 0xE6);
+    EXPECT_LT(windowed, 7) << "ROM frame measure #" << std::hex << measure << " is outside the protection window";
 
     // B: is the floppy (A: is the BIOS's electronic disk, empty after a cold boot)
     size_t before = console.text.size();

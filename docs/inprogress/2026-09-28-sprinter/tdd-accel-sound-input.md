@@ -127,6 +127,37 @@ the BIOS waiting, the encoder answers `#FA` to every command byte.
 | Kempston mouse view | code `#58`: `#FADF` buttons, `#FBDF` X, `#FFDF` Y from the existing Kempston mouse device (`PeripheralId::KempstonMouse`, "every model") |
 | Joystick | code `#15` (and the DOS-off `#1F`/`#0F` view) returns Kempston bits from the existing joystick input |
 
+### 3.3 As implemented (S4 input, 2026-10-02)
+
+Outcome and evidence: [s4-input-outcome.md](s4-input-outcome.md).
+
+```text
+host key (Qt / automation) -> KeyboardEvent (ZX key) + PcKeyEvent (PC key), journaled
+  ZX key -> Keyboard matrix -> code #40 (#FE)                        Spectrum mode
+  PC key -> Keyboard::ApplyPcKey -> SprinterInput (the PS/2 sink)
+              Ctrl+Alt+Del -> CPU reset (PLD stays configured); F12 -> turbo switch
+              -> Ps2KeyboardStream: set 2 bytes, one per 917 us, typematic 500 ms / 10.9 per s
+              -> Z84C15 SIO A receive (3-byte FIFO, overrun = RR1 bit 5)
+              -> ALL_MODE & #09 == #09: SprinterIntSource keyboard INT (vector #FF)
+host mouse -> Mouse (Kempston counters, journaled) -> code #58 view
+                                                   -> MsSerialMouse -> SIO B (1 200 baud)
+```
+
+- **Who reads the keys.** BIOS 3.04 SETUP and DSS poll SIO A from their frame INT handler
+  (SETUP `KEYSCAN`, DSS `keyinter.asm` `RESCAN`): RR0 bit 0, then the data port, set 2 codes with
+  `#E0` / `#F0` / `#E1` prefixes, translated in software. No SIO interrupt is enabled (WR1 = 0 in
+  both `KINIT`s). SETUP runs with ALL_MODE = `#FF`, so the PLD's keyboard INT is on there and every
+  received byte runs the same handler once more.
+- **Delivery.** Lazy: the bytes due by now go into the SIO before every access to `#18-#1B`. Only
+  while the keyboard INT is on and a byte is on its way does the decoder's step hook run, so the INT
+  comes at the byte's arrival; an idle keyboard costs nothing per instruction.
+- **Mouse.** DSS 1.62's driver (`intmouse.asm` `READ_M`) reads the Kempston view, not SIO B; the
+  serial packets are there for software that reads the raw mouse. A packet starts when software
+  polls SIO B and the counters changed since the last packet.
+- **Not modeled.** Commands to the keyboard (BIOS function `#EA` bit-bangs them through WR5; nothing
+  waits for `#FA`), the mouse's `M` identification byte on DTR, the PLD's own scan-code-to-matrix
+  decoder (the matrix comes from the host's ZX key instead).
+
 ## 4. Where the `#1F` rewrite and DOS live
 
 The M1 hook (`IMachineM1Hook`, `core/src/emulator/cpu/z80.h:290-295`) of the Sprinter does three

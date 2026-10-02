@@ -1,0 +1,125 @@
+#include "stdafx.h"
+
+#include "sprinterinput.h"
+
+#include "3rdparty/z84c15/z84c15.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/mouse/mouse.h"
+#include "emulator/ports/models/sprinter/sprinterpldstate.h"
+#include "emulator/video/sprinter/sprinterintsource.h"
+
+SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, SprinterIntSource& intSource,
+                             const SprinterPldState& pld)
+    : _context(context), _chip(chip), _intSource(intSource), _pld(pld)
+{
+    const uint32_t baseHz = _context && _context->emulatorState.base_z80_frequency ? _context->emulatorState.base_z80_frequency : 3500000u;
+    _keyboard.SetBaseClock(baseHz);
+    _mouse.SetBaseClock(baseHz);
+    _keyboard.SetClock([this]() { return Now(); });
+
+    // The keyboard's clock and data reach SIO A; with ALL_MODE bits 0 and 3 the PLD raises an INT per byte
+    _keyboard.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) {
+        if (!_chip.sio.Receive(0, value))
+            _keyboardOverruns++;
+        if (KeyboardIntEnabled())
+            _intSource.LatchKeyboardInt();
+    });
+
+    _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) {
+        const ::Mouse* mouse = _context ? _context->pMouse : nullptr;
+        if (!mouse)
+        {
+            x = y = 0;
+            buttons = 0xFF;
+            return;
+        }
+        x = mouse->GetX();
+        y = mouse->GetY();
+        buttons = mouse->GetButtons();
+    });
+    _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) { _chip.sio.Receive(1, value); });
+}
+
+uint64_t SprinterInput::Now() const
+{
+    if (!_context)
+        return 0;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier ? _context->emulatorState.current_z80_frequency_multiplier : 1u;
+    return _context->emulatorState.t_states + (z80 ? z80->t / multiplier : 0);
+}
+
+void SprinterInput::OnPcKey(PcKey key, bool pressed)
+{
+    // The PLD watches the same stream: Ctrl + Alt + Del resets the CPU, a bare F12 flips the turbo switch.
+    // Both act on the press, before the key's own bytes (the PLD decodes the make code)
+    if (pressed && !_keyboard.IsHeld(key))
+    {
+        const bool ctrl = _keyboard.IsHeld(PcKey::LeftCtrl) || _keyboard.IsHeld(PcKey::RightCtrl);
+        const bool alt = _keyboard.IsHeld(PcKey::LeftAlt) || _keyboard.IsHeld(PcKey::RightAlt);
+        const bool shift = _keyboard.IsHeld(PcKey::LeftShift) || _keyboard.IsHeld(PcKey::RightShift);
+        if ((key == PcKey::Delete || key == PcKey::KeypadDecimal) && ctrl && alt && _onReset)
+            _onReset();
+        else if (key == PcKey::Function12 && !ctrl && !alt && !shift && _onTurboSwitch)
+            _onTurboSwitch();
+    }
+
+    _keyboard.OnPcKey(key, pressed);
+    if (_onStepHookChange)
+        _onStepHookChange();
+}
+
+void SprinterInput::ReleaseAllPcKeys()
+{
+    _keyboard.ReleaseAllPcKeys();
+    if (_onStepHookChange)
+        _onStepHookChange();
+}
+
+bool SprinterInput::KeyboardIntEnabled() const
+{
+    return (_pld.allMode & 0x09) == 0x09;
+}
+
+void SprinterInput::BeforeAllModeWrite()
+{
+    _keyboard.Advance(Now());
+}
+
+void SprinterInput::BeforeChipAccess(uint8_t lowByte)
+{
+    switch (lowByte)
+    {
+        case 0x18:
+        case 0x19:
+            _keyboard.Advance(Now());
+            break;
+        case 0x1A:
+        case 0x1B:
+            _mouse.Advance(Now());
+            break;
+        default:
+            break;
+    }
+}
+
+void SprinterInput::Advance()
+{
+    const uint64_t now = Now();
+    _keyboard.Advance(now);
+}
+
+void SprinterInput::Rebase()
+{
+    const uint64_t now = Now();
+    _keyboard.Rebase(now);
+    _mouse.Rebase(now);
+}
+
+void SprinterInput::Clear()
+{
+    _keyboard.Clear();
+    _mouse.Clear();
+    _keyboardOverruns = 0;
+}

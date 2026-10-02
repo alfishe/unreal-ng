@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <cstring>
 #include <deque>
 #include <initializer_list>
@@ -61,6 +62,8 @@ constexpr int kWholeHold = 12;
 constexpr int span(int p) { return std::max({2 * p, 6, 3 * p}); }
 inline int floorDiv2(int v) { return v >= 0 ? v / 2 : -((-v + 1) / 2); }
 inline int wrap(int v, int m) { v %= m; return v < 0 ? v + m : v; }
+/// wrap() for v in [-m, 2m) (a row moved by a search radius): no division in the hot loops
+inline int wrapNear(int v, int m) { return v < 0 ? v + m : (v >= m ? v - m : v); }
 
 /// dst[x] = src[(x - shift) mod w] for a row of w bytes: two memcpy segments.
 inline void copyShifted(uint8_t* dst, const uint8_t* src, int w, int shift)
@@ -108,7 +111,7 @@ public:
                 }
             }
         }
-        _p5.assign(1u << 20, 0);
+        _p5 = std::make_unique<std::atomic<uint32_t>[]>(1u << 20);   // value-initialized: 0 = not built
     }
 
     uint32_t raw(int a) const { return _raw[a]; }
@@ -116,12 +119,18 @@ public:
     uint32_t p3(int a, int b, int c) const { return _p3[(a * 16 + b) * 16 + c]; }
     uint32_t p4(int a, int b, int c, int d) const { return _p4[((a * 16 + b) * 16 + c) * 16 + d]; }
     uint32_t twoPage(int t, int fp, int fn) const { return _tp[(t * 16 + fp) * 16 + fn]; }
-    uint32_t p5(int a, int b, int c, int d, int e)
+    /// Built on first use (2^20 entries). Render threads may build the same
+    /// entry at once: both store the same value, relaxed atomics keep that defined
+    uint32_t p5(int a, int b, int c, int d, int e) const
     {
         const uint32_t i = static_cast<uint32_t>((((a * 16 + b) * 16 + c) * 16 + d) * 16 + e);
-        if (!_p5[i])
-            _p5[i] = pack(sum(_pal, {a, b, c, d, e}, 0.2));
-        return _p5[i];
+        uint32_t v = _p5[i].load(std::memory_order_relaxed);
+        if (!v)
+        {
+            v = pack(sum(_pal, {a, b, c, d, e}, 0.2));
+            _p5[i].store(v, std::memory_order_relaxed);
+        }
+        return v;
     }
 
 private:
@@ -134,7 +143,7 @@ private:
     std::array<uint32_t, 256> _p2{};
     std::array<uint32_t, 4096> _p3{}, _tp{};
     std::vector<uint32_t> _p4 = std::vector<uint32_t>(65536);
-    std::vector<uint32_t> _p5;
+    std::unique_ptr<std::atomic<uint32_t>[]> _p5;
 
     static Acc sum(const Palette& pal, std::initializer_list<int> colors, double w)
     {
@@ -351,6 +360,11 @@ private:
     std::vector<uint32_t> _mot;              // rolling: bit i = translation(i)
     std::vector<uint32_t> _c1;               // rolling: bit j = key(j) == key(j + 1)
     int _threads = defaultThreads();
+    // ranges per parallel stage: 4 per thread, claimed by whoever is free. The
+    // work is uneven (flicker sits in parts of the frame), and one range per
+    // thread left most threads waiting for the busiest (i7-11850H, 8 threads:
+    // 2.0 -> 1.6 ms/frame). No stage's result depends on the split
+    int _chunks = _threads > 1 ? _threads * 4 : 1;
     // Worker threads that live as long as the algorithm (the caller is the
     // extra one): starting threads for every stage, several times a frame, cost
     // a large share of the frame on a loaded machine. The UI's priority, not more
@@ -366,6 +380,7 @@ private:
     }
     std::vector<uint8_t> _shifted, _motion;
     std::vector<int> _cost;
+    std::vector<int> _active;                // translation(): tiles that need the shift search
 
     std::vector<uint8_t> _period, _start, _explained;
 
@@ -388,31 +403,29 @@ private:
         const uint8_t* s[7];
         for (int k = 0; k < 7; ++k)
             s[k] = _ring[L - 3 + k]->plane.data();
-        const uint8_t* t = s[3];
-        const uint8_t* next = s[2];                  // ring L - 1 = t+1
-        const uint8_t* prev = s[4];                  // ring L + 1 = t-1
-        // tile rows are independent: each thread owns whole rows of tiles
-        // SIMD-CANDIDATE(O-18): 16-byte compares for const / period 2 / dyn
-        parallelFor(_th, _threads, [&](int ty0, int ty1) {
-            for (int y = ty0 * kFieldTile; y < ty1 * kFieldTile; ++y)
-                for (int x = 0; x < _tw * kFieldTile; ++x)
+        // tile rows are independent: each thread owns whole rows of tiles, and
+        // every tile's counts are written once (no shared per-pixel counters)
+        static_assert(kFieldTile == 16, "sceneTile16 counts 16 x 16 tiles");
+        parallelFor(_th, _chunks, [&](int ty0, int ty1) {
+            for (int ty = ty0; ty < ty1; ++ty)
+                for (int tx = 0; tx < _tw; ++tx)
                 {
-                    const size_t p = static_cast<size_t>(y) * _w + x;
-                    bool cst = true, p2 = true;
-                    uint16_t c = 0;
+                    const int ti = ty * _tw + tx;
+                    const simd::SceneCounts c =
+                        simd::sceneTile16(s, static_cast<size_t>(ty) * kFieldTile * _w + tx * kFieldTile, _w,
+                                          (tx + 1) * kFieldTile < _w);
+                    nStatic[ti] = c.stat;
+                    nDyn[ti] = c.dyn;
+                    nEdge[ti] = c.edge;
+                    // the colors of the 7 frames: their tile histograms
+                    uint16_t set = 0;
                     for (int k = 0; k < 7; ++k)
                     {
-                        cst &= s[k][p] == s[0][p];
-                        if (k < 5)
-                            p2 &= s[k][p] == s[k + 2][p];
-                        c |= static_cast<uint16_t>(1u << s[k][p]);
+                        const uint16_t* h = &_ring[L - 3 + k]->hist[static_cast<size_t>(ti) * 16];
+                        for (int v = 0; v < 16; ++v)
+                            set |= static_cast<uint16_t>(h[v] != 0) << v;
                     }
-                    const bool stat = cst || p2;
-                    const int ti = (y / kFieldTile) * _tw + x / kFieldTile;
-                    nStatic[ti] += stat;
-                    nDyn[ti] += !stat && t[p] != prev[p] && t[p] != next[p];
-                    nEdge[ti] += x + 1 < _w && t[p] != t[p + 1];      // horizontal color change
-                    colors[ti] |= c;
+                    colors[ti] = set;
                 }
         });
         const double area = static_cast<double>(kFieldTile * kFieldTile);
@@ -452,7 +465,7 @@ private:
         const uint8_t* t = _ring[L]->plane.data();
         const uint8_t* prev = _ring[L + 1]->plane.data();
         const uint8_t* next = _ring[L - 1]->plane.data();
-        parallelFor(_h, _threads, [&](int y0, int y1) {
+        parallelFor(_h, _chunks, [&](int y0, int y1) {
             for (size_t p = static_cast<size_t>(y0) * _w; p < static_cast<size_t>(y1) * _w && p < px; ++p)
                 unpack(_mix->twoPage(t[p], prev[p], next[p]), &out[p * 3]);
         });
@@ -509,14 +522,32 @@ private:
         }
         const bool field = fieldRan && _anyFieldPixel;
         uint64_t n[5] = {};
+        const bool explained = _explained.size() == static_cast<size_t>(_w) * _h;
+        // by 16-pixel tile segments: a field segment counts whole, a segment
+        // without any period (most of the frame) is skipped
         for (int y = 0; y < _h; ++y)
-            for (int x = 0; x < _w; ++x)
+            for (int x0 = 0; x0 < _w; x0 += kFieldTile)
             {
-                const size_t p = static_cast<size_t>(y) * _w + x;
-                if (field && _field[static_cast<size_t>(y / kFieldTile) * _tw + x / kFieldTile])
-                    ++n[4];
-                else if (_explained.size() == static_cast<size_t>(_w) * _h && _explained[p] && _period[p] >= 2)
-                    ++n[_period[p] - 2];
+                const int x1 = std::min(_w, x0 + kFieldTile);
+                if (field && _field[static_cast<size_t>(y / kFieldTile) * _tw + x0 / kFieldTile])
+                {
+                    n[4] += static_cast<uint64_t>(x1 - x0);
+                    continue;
+                }
+                if (!explained)
+                    continue;
+                const size_t row = static_cast<size_t>(y) * _w;
+                if (x1 - x0 == kFieldTile)
+                {
+                    uint64_t a, b;
+                    std::memcpy(&a, &_period[row + x0], 8);
+                    std::memcpy(&b, &_period[row + x0 + 8], 8);
+                    if ((a | b) == 0)
+                        continue;
+                }
+                for (int x = x0; x < x1; ++x)
+                    if (_explained[row + x] && _period[row + x] >= 2)
+                        ++n[_period[row + x] - 2];
             }
         for (int k = 0; k < 5; ++k)
         {
@@ -578,12 +609,6 @@ private:
             f = std::make_unique<Frame>();
         const size_t px = static_cast<size_t>(_w) * _h;
         f->plane.assign(in.plane, in.plane + px);
-        {
-            size_t count[16] = {};
-            for (size_t i = 0; i < px; ++i)
-                ++count[in.plane[i] & 15];
-            f->flat = static_cast<double>(*std::max_element(count, count + 16)) >= 0.99 * static_cast<double>(px);
-        }
         f->key.resize(px);
         for (int y = 0; y < _h; ++y)
         {
@@ -601,14 +626,39 @@ private:
                     f->key[row + x0 + k] = (1u << 20) | (byte << 8) | in.attr[row + x0 + k];
             }
         }
-        f->hist.assign(static_cast<size_t>(_th) * _tw * 16, 0);
-        for (int y = 0; y < _th * kFieldTile; ++y)
+        // Tile color histograms. Runs of one color are the common case, so each
+        // tile counts into four sub-histograms (x mod 4): consecutive increments
+        // never wait for each other
+        f->hist.resize(static_cast<size_t>(_th) * _tw * 16);
+        size_t count[16] = {};                    // whole frame, for the flash test
+        for (int ty = 0; ty < _th; ++ty)
+            for (int tx = 0; tx < _tw; ++tx)
+            {
+                uint16_t sub[4][16] = {};
+                const uint8_t* r = &f->plane[static_cast<size_t>(ty) * kFieldTile * _w + tx * kFieldTile];
+                for (int y = 0; y < kFieldTile; ++y, r += _w)
+                    for (int x = 0; x < kFieldTile; x += 4)
+                    {
+                        ++sub[0][r[x]];
+                        ++sub[1][r[x + 1]];
+                        ++sub[2][r[x + 2]];
+                        ++sub[3][r[x + 3]];
+                    }
+                uint16_t* h = &f->hist[(static_cast<size_t>(ty) * _tw + tx) * 16];
+                for (int v = 0; v < 16; ++v)
+                {
+                    h[v] = static_cast<uint16_t>(sub[0][v] + sub[1][v] + sub[2][v] + sub[3][v]);
+                    count[v] += h[v];
+                }
+            }
+        // pixels outside the tile grid (right and bottom remainders)
+        for (int y = 0; y < _h; ++y)
         {
             const uint8_t* r = &f->plane[static_cast<size_t>(y) * _w];
-            uint16_t* hrow = &f->hist[static_cast<size_t>(y / kFieldTile) * _tw * 16];
-            for (int x = 0; x < _tw * kFieldTile; ++x)
-                ++hrow[(x / kFieldTile) * 16 + r[x]];
+            for (int x = y < _th * kFieldTile ? _tw * kFieldTile : 0; x < _w; ++x)
+                ++count[r[x] & 15];
         }
+        f->flat = static_cast<double>(*std::max_element(count, count + 16)) >= 0.99 * static_cast<double>(px);
         _ring.push_front(std::move(f));
     }
 
@@ -617,40 +667,41 @@ private:
     {
         const size_t px = static_cast<size_t>(_w) * _h;
         const uint32_t* k0 = _ring[0]->key.data();
-        for (int P = 2; P <= 5; ++P)
-        {
-            uint32_t* e = _eq[P - 2].data();
-            if (n > P)
-            {
-                const uint32_t* kp = _ring[P]->key.data();
-                for (size_t p = 0; p < px; ++p)
-                    e[p] = (e[p] << 1) | static_cast<uint32_t>(k0[p] == kp[p]);
-            }
-            else
-                for (size_t p = 0; p < px; ++p)
-                    e[p] <<= 1;
-        }
-        {
-            uint32_t* c = _c1.data();
-            if (n > 1)
-            {
-                const uint32_t* k1 = _ring[1]->key.data();
-                for (size_t p = 0; p < px; ++p)
-                    c[p] = (c[p] << 1) | static_cast<uint32_t>(k0[p] == k1[p]);
-            }
-            else
-                for (size_t p = 0; p < px; ++p)
-                    c[p] <<= 1;
-        }
+        // key(0) == key(P) for P = 1..5 (bit 0 of each rolling mask); a frame
+        // that is not there yet compares as "different"
+        const uint32_t* kp[6] = {};
+        for (int P = 1; P <= 5; ++P)
+            kp[P] = n > P ? _ring[P]->key.data() : nullptr;
         if (n >= 2)
-        {
             translation(_ring[0]->plane.data(), _ring[1]->plane.data());
-            for (size_t p = 0; p < px; ++p)
-                _mot[p] = (_mot[p] << 1) | _motion[p];
-        }
-        else
-            for (size_t p = 0; p < px; ++p)
-                _mot[p] <<= 1;
+        const bool mot = n >= 2;
+        // one pass over all masks, rows split across the threads
+        parallelFor(_h, _chunks, [&](int y0, int y1) {
+            const size_t p0 = static_cast<size_t>(y0) * _w, p1 = std::min(px, static_cast<size_t>(y1) * _w);
+            for (int P = 2; P <= 5; ++P)
+            {
+                uint32_t* e = _eq[P - 2].data();
+                if (kp[P])
+                    for (size_t p = p0; p < p1; ++p)
+                        e[p] = (e[p] << 1) | static_cast<uint32_t>(k0[p] == kp[P][p]);
+                else
+                    for (size_t p = p0; p < p1; ++p)
+                        e[p] <<= 1;
+            }
+            uint32_t* c = _c1.data();
+            if (kp[1])
+                for (size_t p = p0; p < p1; ++p)
+                    c[p] = (c[p] << 1) | static_cast<uint32_t>(k0[p] == kp[1][p]);
+            else
+                for (size_t p = p0; p < p1; ++p)
+                    c[p] <<= 1;
+            if (mot)
+                for (size_t p = p0; p < p1; ++p)
+                    _mot[p] = (_mot[p] << 1) | _motion[p];
+            else
+                for (size_t p = p0; p < p1; ++p)
+                    _mot[p] <<= 1;
+        });
     }
 
     /// section 4.3: _motion = pixels of `cur` changed by a translation from `prev`
@@ -660,66 +711,92 @@ private:
         const int th = _h / T, tw = _w / T;
         const size_t px = static_cast<size_t>(_w) * _h;
         const int nshift = (2 * R + 1) * (2 * R + 1);
+        const int zero = (2 * R + 1) * R + R;
+        _motion.assign(px, 0);
+        // A tile is a candidate only when the unshifted difference exceeds 2 % of
+        // it (the c0 test below). That cost is cheap; the 288-shift search runs
+        // for candidate tiles only, so static or barely changing frames skip it
+        // and the result is the same as searching every tile
+        _cost.assign(static_cast<size_t>(nshift) * th * tw, 0);
+        int* c0s = &_cost[static_cast<size_t>(zero) * th * tw];
+        for (int y = 0; y < th * T; ++y)
+        {
+            const uint8_t* a = cur + static_cast<size_t>(y) * _w;
+            const uint8_t* b = prev + static_cast<size_t>(y) * _w;
+            int* ct = c0s + (y / T) * tw;
+            for (int tx = 0; tx < tw; ++tx)
+                ct[tx] += simd::diff32(a + tx * T, b + tx * T);
+        }
+        _active.clear();
+        for (int t = 0; t < th * tw; ++t)
+            if (c0s[t] > 0.02 * T * T)
+                _active.push_back(t);
+        if (_active.empty())
+            return;
         // shifted[dx + R][y][x] = prev[y][(x - dx) mod W]
         _shifted.resize(static_cast<size_t>(2 * R + 1) * px);
-        for (int dx = -R; dx <= R; ++dx)
-        {
-            uint8_t* dst = &_shifted[static_cast<size_t>(dx + R) * px];
-            for (int y = 0; y < _h; ++y)
-                copyShifted(dst + static_cast<size_t>(y) * _w, prev + static_cast<size_t>(y) * _w, _w, dx);
-        }
-        _cost.assign(static_cast<size_t>(nshift) * th * tw, 0);
-        // SIMD-CANDIDATE(O-2): compare + count per tile, 289 shifts (vectorized byte loop, threads)
-        parallelFor(nshift, _threads, [&](int s0, int s1) {
-            for (int s = s0; s < s1; ++s)
+        parallelFor(2 * R + 1, _chunks, [&](int i0, int i1) {
+            for (int dx = i0 - R; dx < i1 - R; ++dx)
             {
-                const int dy = s / (2 * R + 1) - R, dx = s % (2 * R + 1) - R;
+                uint8_t* dst = &_shifted[static_cast<size_t>(dx + R) * px];
+                for (int y = 0; y < _h; ++y)
+                    copyShifted(dst + static_cast<size_t>(y) * _w, prev + static_cast<size_t>(y) * _w, _w, dx);
+            }
+        });
+        // SIMD(SSE2,NEON; scalar fallback): compare + count per tile column, 288 shifts, threads
+        // walked dx-major: a thread's range of shifts reads 2-3 of the 17 shifted
+        // planes (cache), not all of them; the costs are stored per shift as before
+        parallelFor(nshift, _chunks, [&](int o0, int o1) {
+            std::vector<const uint8_t*> rows(static_cast<size_t>(th) * T);   // shifted row of each line
+            for (int o = o0; o < o1; ++o)
+            {
+                const int dx = o / (2 * R + 1) - R, dy = o % (2 * R + 1) - R;
+                const int s = (dy + R) * (2 * R + 1) + dx + R;
+                if (s == zero)
+                    continue;
                 const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
                 int* cs = &_cost[static_cast<size_t>(s) * th * tw];
                 for (int y = 0; y < th * T; ++y)
+                    rows[y] = sh + static_cast<size_t>(wrapNear(y - dy, _h)) * _w;
+                static_assert(kMotionTile == 32, "diff32Rows counts 32-pixel tile columns");
+                for (const int t : _active)
                 {
-                    const uint8_t* a = cur + static_cast<size_t>(y) * _w;
-                    const uint8_t* b = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
-                    int* ct = cs + (y / T) * tw;
-                    static_assert(kMotionTile == 32, "diff32 counts one 32-pixel tile row");
-                    for (int tx = 0; tx < tw; ++tx)
-                        ct[tx] += simd::diff32(a + tx * T, b + tx * T);
+                    const int ty = t / tw, tx = t % tw;
+                    cs[t] = simd::diff32Rows(cur + static_cast<size_t>(ty) * T * _w + tx * T, _w, rows.data() + ty * T,
+                                             static_cast<size_t>(tx) * T, T);
                 }
             }
         });
-        _motion.assign(px, 0);
-        const int zero = (2 * R + 1) * R + R;
-        for (int ty = 0; ty < th; ++ty)
-            for (int tx = 0; tx < tw; ++tx)
+        for (const int t : _active)
+        {
+            const int ty = t / tw, tx = t % tw;
+            int best = -1, bestCost = 0;
+            for (int k = 0; k < nshift; ++k)
             {
-                const size_t t = static_cast<size_t>(ty) * tw + tx;
-                int best = -1, bestCost = 0;
-                for (int k = 0; k < nshift; ++k)
-                {
-                    if (k == zero)
-                        continue;
-                    const int c = _cost[static_cast<size_t>(k) * th * tw + t];
-                    if (best < 0 || c < bestCost)
-                    {
-                        best = k;
-                        bestCost = c;
-                    }
-                }
-                const int c0 = _cost[static_cast<size_t>(zero) * th * tw + t];
-                if (!(bestCost < 0.25 * c0 && c0 > 0.02 * T * T))
+                if (k == zero)
                     continue;
-                const int dy = best / (2 * R + 1) - R, dx = best % (2 * R + 1) - R;
-                const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
-                for (int y = ty * T; y < (ty + 1) * T; ++y)
+                const int c = _cost[static_cast<size_t>(k) * th * tw + t];
+                if (best < 0 || c < bestCost)
                 {
-                    const uint8_t* srow = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
-                    for (int x = tx * T; x < (tx + 1) * T; ++x)
-                    {
-                        const size_t p = static_cast<size_t>(y) * _w + x;
-                        _motion[p] = cur[p] == srow[x] && cur[p] != prev[p];
-                    }
+                    best = k;
+                    bestCost = c;
                 }
             }
+            const int c0 = c0s[t];
+            if (!(bestCost < 0.25 * c0))
+                continue;
+            const int dy = best / (2 * R + 1) - R, dx = best % (2 * R + 1) - R;
+            const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
+            for (int y = ty * T; y < (ty + 1) * T; ++y)
+            {
+                const uint8_t* srow = sh + static_cast<size_t>(wrapNear(y - dy, _h)) * _w;
+                for (int x = tx * T; x < (tx + 1) * T; ++x)
+                {
+                    const size_t p = static_cast<size_t>(y) * _w + x;
+                    _motion[p] = cur[p] == srow[x] && cur[p] != prev[p];
+                }
+            }
+        }
     }
 
     // ---- section 5 ----------------------------------------------------------
@@ -728,7 +805,7 @@ private:
         const size_t px = static_cast<size_t>(_w) * _h;
         _period.assign(px, 0);
         _start.assign(px, 0);
-        const uint8_t* pl[kDepth];
+        const uint8_t* pl[kDepth] = {};
         for (int i = 0; i < n; ++i)
             pl[i] = _ring[i]->plane.data();
         struct Run
@@ -736,7 +813,7 @@ private:
             int a, b;
             uint32_t eqMask, motMask, constMask;
         };
-        Run runs[4][kMaxSpan];
+        Run runs[4][kMaxSpan] = {};
         int nruns[4];
         for (int P = 2; P <= 5; ++P)
         {
@@ -760,33 +837,49 @@ private:
         // a pixel equal to its neighbor frame across the whole ring has no non-constant run
         const uint32_t staticMask = n >= 2 ? (1u << (n - 1)) - 1 : 0;
         // SIMD-CANDIDATE(O-1): the run tests are mask tests; the rest is rare
-        parallelFor(_h, _threads, [&](int y0, int y1) {
-        for (size_t p = static_cast<size_t>(y0) * _w; p < static_cast<size_t>(y1) * _w; ++p)
+        parallelFor(_h, _chunks, [&](int y0, int y1) {
+        // locals: the byte stores to _period / _start may alias any member or capture
+        const uint32_t* const c1s = _c1.data();
+        const uint32_t* const eqs[4] = {_eq[0].data(), _eq[1].data(), _eq[2].data(), _eq[3].data()};
+        const uint32_t* const mots = _mot.data();
+        const float* const luma = _pal.luma.data();
+        uint8_t* const period = _period.data();
+        uint8_t* const start = _start.data();
+        const int maxPeriod = _maxPeriod;
+        const uint32_t smask = staticMask;
+        const uint8_t* pls[kDepth];
+        std::copy(pl, pl + kDepth, pls);
+        Run rs[4][kMaxSpan];
+        int nr[4];
+        std::copy(&runs[0][0], &runs[0][0] + 4 * kMaxSpan, &rs[0][0]);
+        std::copy(nruns, nruns + 4, nr);
+        const size_t end = static_cast<size_t>(y1) * _w;
+        for (size_t p = static_cast<size_t>(y0) * _w; p < end; ++p)
         {
-            const uint32_t c1 = _c1[p];
-            if ((c1 & staticMask) == staticMask)
+            const uint32_t c1 = c1s[p];
+            if ((c1 & smask) == smask)
                 continue;
-            for (int P = 2; P <= _maxPeriod; ++P)
+            for (int P = 2; P <= maxPeriod; ++P)
             {
-                const uint32_t eq = _eq[P - 2][p];
+                const uint32_t eq = eqs[P - 2][p];
                 bool found = false;
-                for (int r = 0; r < nruns[P - 2]; ++r)
+                for (int r = 0; r < nr[P - 2]; ++r)
                 {
-                    const Run& run = runs[P - 2][r];
+                    const Run& run = rs[P - 2][r];
                     if ((eq & run.eqMask) != run.eqMask)
                         continue;
                     if ((c1 & run.constMask) == run.constMask)     // key(a) == ... == key(a + P - 1)
                         continue;
-                    const float l0 = _pal.luma[pl[run.b][p]];
+                    const float l0 = luma[pls[run.b][p]];
                     bool lumaOk = false;
                     for (int j = 1; j < P; ++j)
-                        lumaOk |= _pal.luma[pl[run.b + j][p]] != l0;
+                        lumaOk |= luma[pls[run.b + j][p]] != l0;
                     if (!lumaOk)
                         continue;
-                    if (P > 2 && (_mot[p] & run.motMask))
+                    if (P > 2 && (mots[p] & run.motMask))
                         continue;
-                    _period[p] = static_cast<uint8_t>(P);
-                    _start[p] = static_cast<uint8_t>(run.b);
+                    period[p] = static_cast<uint8_t>(P);
+                    start[p] = static_cast<uint8_t>(run.b);
                     found = true;
                     break;
                 }
@@ -817,32 +910,56 @@ private:
     {
         const size_t px = static_cast<size_t>(_w) * _h;
         _explained.assign(px, 0);
+        // locals: the byte stores to `out` may alias any member, which would
+        // reload every one of them per pixel
         const uint8_t* t = _ring[L]->plane.data();
-        // SIMD-CANDIDATE(O-3): table lookups
-        for (size_t p = 0; p < px; ++p)
-        {
-            const int P = _period[p];
-            const uint32_t raw = _mix->raw(t[p]);
-            uint32_t v = raw;
-            if (P)
+        const uint8_t* period = _period.data();
+        const uint8_t* start = _start.data();
+        uint8_t* explained = _explained.data();
+        uint8_t* dst = out.data();
+        const MixTables& mix = *_mix;
+        const uint8_t* planes[kDepth] = {};
+        for (int i = 0; i < static_cast<int>(_ring.size()); ++i)
+            planes[i] = _ring[i]->plane.data();
+        // SIMD-CANDIDATE(O-3): table lookups; pixels are independent: rows split across the threads
+        const int w = _w;
+        parallelFor(_h, _chunks, [&](int y0, int y1) {
+            // copies in the body: captured values live in the closure, which the stores may alias too
+            const uint8_t* const tl = t;
+            const uint8_t* const per = period;
+            const uint8_t* const st = start;
+            uint8_t* const ex = explained;
+            uint8_t* const out3 = dst;
+            const MixTables& mx = mix;
+            const uint8_t* pl[kDepth];
+            std::copy(planes, planes + kDepth, pl);
+            const int Ll = L;
+            const size_t end = std::min(px, static_cast<size_t>(y1) * w);
+            for (size_t p = static_cast<size_t>(y0) * w; p < end; ++p)
             {
-                // term order: t first, then the other series frames by ascending ring index
-                int o[4], k = 0;
-                const int b = _start[p];
-                for (int j = 0; j < P; ++j)
-                    if (b + j != L)
-                        o[k++] = _ring[b + j]->plane[p];
-                switch (P)
+                const int P = per[p];
+                const uint32_t raw = mx.raw(tl[p]);
+                uint32_t v = raw;
+                if (P)
                 {
-                case 2: v = _mix->p2(t[p], o[0]); break;
-                case 3: v = _mix->p3(t[p], o[0], o[1]); break;
-                case 4: v = _mix->p4(t[p], o[0], o[1], o[2]); break;
-                default: v = _mix->p5(t[p], o[0], o[1], o[2], o[3]); break;
+                    // term order: t first, then the other series frames by ascending ring index
+                    int o[4], k = 0;
+                    const int b = st[p];
+                    for (int j = 0; j < P; ++j)
+                        if (b + j != Ll)
+                            o[k++] = pl[b + j][p];
+                    switch (P)
+                    {
+                    case 2: v = mx.p2(tl[p], o[0]); break;
+                    case 3: v = mx.p3(tl[p], o[0], o[1]); break;
+                    case 4: v = mx.p4(tl[p], o[0], o[1], o[2]); break;
+                    default: v = mx.p5(tl[p], o[0], o[1], o[2], o[3]); break;
+                    }
+                    ex[p] = (v & 0xFFFFFF) != (raw & 0xFFFFFF);
                 }
-                _explained[p] = (v & 0xFFFFFF) != (raw & 0xFFFFFF);
+                unpack(v, &out3[p * 3]);
             }
-            unpack(v, &out[p * 3]);
-        }
+        });
     }
 
     // ---- section 7 ----------------------------------------------------------
@@ -1097,7 +1214,7 @@ private:
         const size_t blocks = static_cast<size_t>(bh) * bw;
         const int nshift = (2 * R + 1) * (2 * R + 1);
         // per thread chunk of shifts: the first strict minimum in shift order
-        const int chunks = std::max(1, std::min(_threads, nshift));
+        const int chunks = std::max(1, std::min(_chunks, nshift));
         std::vector<double> cbest(static_cast<size_t>(chunks) * blocks, 1e300);
         std::vector<int16_t> cshift(static_cast<size_t>(chunks) * blocks, 0);
         const int per = (nshift + chunks - 1) / chunks;
@@ -1117,8 +1234,8 @@ private:
                     std::fill(cnt.begin(), cnt.end(), 0);
                     for (int y = 0; y < bh * kBlock; ++y)
                     {
-                        const uint8_t* ar = A + static_cast<size_t>(wrap(y - ay, _h)) * _w;
-                        const uint8_t* br = B + static_cast<size_t>(wrap(y + by, _h)) * _w;
+                        const uint8_t* ar = A + static_cast<size_t>(wrapNear(y - ay, _h)) * _w;
+                        const uint8_t* br = B + static_cast<size_t>(wrapNear(y + by, _h)) * _w;
                         static_assert(kBlock == 8, "addDiffBlocks8 counts 8-pixel blocks");
                         simd::addDiffBlocks8(ar, br, bw, &cnt[static_cast<size_t>(y / kBlock) * bw]);
                     }
@@ -1165,8 +1282,8 @@ private:
                 const size_t p = static_cast<size_t>(y) * _w + x;
                 const size_t s = static_cast<size_t>(std::min(y / kBlock, bh - 1)) * bw + std::min(x / kBlock, bw - 1);
                 const int ay = floorDiv2(vy[s]), ax = floorDiv2(vx[s]), by = vy[s] - ay, bx = vx[s] - ax;
-                uint8_t fp = prevSh[static_cast<size_t>(ax + H) * px + static_cast<size_t>(wrap(y - ay, _h)) * _w + x];
-                uint8_t fn = nextSh[static_cast<size_t>(bx + H) * px + static_cast<size_t>(wrap(y + by, _h)) * _w + x];
+                uint8_t fp = prevSh[static_cast<size_t>(ax + H) * px + static_cast<size_t>(wrapNear(y - ay, _h)) * _w + x];
+                uint8_t fn = nextSh[static_cast<size_t>(bx + H) * px + static_cast<size_t>(wrapNear(y + by, _h)) * _w + x];
                 if (wholeFrameSteps && y < bh * kBlock && x < bw * kBlock)
                 {
                     const size_t bi = static_cast<size_t>(y / kBlock) * bw + x / kBlock;

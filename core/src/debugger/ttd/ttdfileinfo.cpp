@@ -127,6 +127,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::SerialPort: return "serial-port";
         case PeripheralId::SprinterPld: return "sprinter-pld";
         case PeripheralId::Atm2Kbc: return "atm2-kbc";
+        case PeripheralId::MachineSerialPeer: return "machine-serial-peer";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);

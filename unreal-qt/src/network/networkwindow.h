@@ -59,6 +59,8 @@ private:
     QComboBox* _baud = nullptr;
     QWidget* _tcpRow = nullptr;
     QWidget* _serialRow = nullptr;
+    QComboBox* _espBaud = nullptr;
+    QWidget* _espRow = nullptr;
     QStringList _devices;
 };
 
@@ -110,6 +112,8 @@ private:
     SerialPeerEditor* _comPort = nullptr;
     QComboBox* _avrFirmware = nullptr;
     QLabel* _avrWhy = nullptr;
+    QComboBox* _kbcFirmware = nullptr;
+    QLabel* _kbcWhy = nullptr;
     QComboBox* _espChip = nullptr;
     QCheckBox* _modemLines = nullptr;
     QCheckBox* _hostAccess = nullptr;

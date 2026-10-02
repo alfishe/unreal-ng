@@ -190,7 +190,7 @@ unfinished build of that work, before its corrections were in.
 
 The coemu runner does not use the Sprinter, but the Sprinter reference captures
 ([testdata/machines/sprinter/reference/](../../../../testdata/machines/sprinter/reference/README.md), scripts in
-[tools/verification/sprinter/](../../sprinter/mame-capture.sh)) need MAME's `sprinter` driver, which the `zx` build
+[tools/machines/sprinter/mame-capture/](../../../machines/sprinter/mame-capture/mame-capture.sh)) need MAME's `sprinter` driver, which the `zx` build
 above leaves out. A build with it, under its own name so that it does not replace a `zx` binary, from a MAME 0.289
 checkout (`f43983b6`; a `git clone --shared` of a local MAME tree avoids the download):
 

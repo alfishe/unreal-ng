@@ -71,7 +71,25 @@ TEST(ComPortSpec_Test, EspModules)
     ASSERT_TRUE(ComPortSpec::Parse("espnet", s, error));
     EXPECT_EQ(s.kind, ComPortSpec::Kind::Espnet);
     EXPECT_EQ(s.ToString(), "ESPNET");
+    EXPECT_EQ(s.baud, 0u) << "no rate: the port's default";
     ASSERT_TRUE(ComPortSpec::Parse("AT", s, error));
     EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
     EXPECT_FALSE(ComPortSpec::Parse("modem", s, error));
+}
+
+TEST(ComPortSpec_Test, EspModuleRates)
+{
+    ComPortSpec s;
+    std::string error;
+    ASSERT_TRUE(ComPortSpec::Parse("espnet, 38400", s, error)) << error;
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::Espnet);
+    EXPECT_EQ(s.baud, 38400u);
+    EXPECT_EQ(s.ToString(), "ESPNET,38400");
+    ASSERT_TRUE(ComPortSpec::Parse("at,115200", s, error)) << error;
+    EXPECT_EQ(s.kind, ComPortSpec::Kind::At);
+    EXPECT_EQ(s.ToString(), "AT,115200");
+    EXPECT_FALSE(ComPortSpec::Parse("ESPNET,", s, error));
+    EXPECT_FALSE(ComPortSpec::Parse("AT,fast", s, error));
+    EXPECT_NE(error.find("AT[,<baud>]"), std::string::npos) << error;
+    EXPECT_FALSE(ComPortSpec::Parse("ESPNET,0", s, error));
 }

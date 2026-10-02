@@ -78,6 +78,8 @@ public:
     const std::array<uint8_t, 6>& Mac() const { return _mac; }
     const std::string& Ssid() const { return _ssid; }
     uint32_t Baud() const { return _baud; }
+    /// The rate the module's firmware was built for (before the ZX changes it)
+    void SetFactoryBaud(uint32_t baud) { _baud = baud ? baud : 115200; }
     /// The ZX's UART does not run at the module's line (bytes are lost both ways)
     bool LineMismatch() const { return _lineMismatch; }
     EspStack& Stack() { return *_stack; }
