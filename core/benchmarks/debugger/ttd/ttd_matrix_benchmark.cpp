@@ -13,6 +13,8 @@
 ///   UNREAL_TTD_BENCH_SEEKS        random seek positions for BM-5 (default 200)
 ///   UNREAL_TTD_BENCH_OVERHEAD     0 skips BM-1 (four more runs per case)
 ///   UNREAL_TTD_BENCH_DIRTY        1 adds BM-8 (capture vs dirty 4 KB pieces)
+///   UNREAL_TTD_BENCH_KEEP_SESSIONS <dir>: keep each case's saved .ttd session there
+///                                 (input data for tools/poc/011-ttd-v2-capture-analysis/experiments)
 ///
 /// Results: add --benchmark_format=json --benchmark_out=<file>; the JSON context
 /// carries the engine set, git commit and build type. Compare runs with
@@ -63,6 +65,7 @@ ttd::bench::Options MakeOptions(const std::string& set)
     std::error_code ec;
     std::filesystem::create_directories(scratch, ec);
     o.scratchDir = scratch.string();
+    o.keepSessionDir = Env("UNREAL_TTD_BENCH_KEEP_SESSIONS", "");
     return o;
 }
 
