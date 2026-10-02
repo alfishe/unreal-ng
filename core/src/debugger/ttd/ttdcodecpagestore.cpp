@@ -52,7 +52,7 @@ uint32_t TTDCodecPageStore::InternFull(const uint8_t* pageData)
         s.refcount = 1;
         s.prevSlot = 0;
         s.crc32c = codec::Crc32C(pageData, kPageSize);  // CRC of zero page
-        s.payload.clear();
+        std::vector<uint8_t>().swap(s.payload);  // a reused slot gives its old payload back
         _usedSlots++;
         return idx;
     }
@@ -236,9 +236,11 @@ void TTDCodecPageStore::Release(uint32_t idx)
         if (--s.refcount > 0)
             return;  // Still referenced externally - done.
 
-        // Refcount hit zero: free this slot.
+        // Refcount hit zero: free this slot, and its payload with it (a slot on
+        // the free list holds no memory until it is reused)
         const Encoding enc = s.encoding;
         const uint32_t prev = s.prevSlot;
+        std::vector<uint8_t>().swap(s.payload);
         _freeList.push_back(cur);
         _usedSlots--;
 

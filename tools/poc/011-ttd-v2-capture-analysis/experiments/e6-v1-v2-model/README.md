@@ -100,7 +100,7 @@ v1's journal ring is full after 0.8–3.2 minutes on the active sessions. From t
 
 ## Conclusions
 
-1. **Fix the v1 allocation first.** Exact-size payloads release half or more of a recording's memory today, independent of v2. It is a small core change with its own tests (noted in E5).
+1. **Fix the v1 allocation first.** Exact-size payloads release half or more of a recording's memory today, independent of v2. Done: 15–68% less memory on every benchmark case, bytes unchanged ([E5, Follow-up](../e5-heap-split/README.md#follow-up-the-fix)). The v1 column above is the memory before that fix.
 2. **v2 Phase 1 then removes most of what remains of memory pieces and reference tables.** The numbers support its design as is: K = 50, T = 128, 8-page blocks.
 3. **The write journal is the next design decision, before Phase 4.** It is the largest stream in memory and in the file on any active session. Next experiment: what keeping the journal only for a window around the current position, and regenerating the rest by replay, would cost.
 4. **Phase 2 has to treat free-running device counters as derived from time.** Otherwise idle cards cost 2 MB per minute forever.
