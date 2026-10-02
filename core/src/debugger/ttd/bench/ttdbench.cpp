@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -430,6 +431,23 @@ bool Overhead(Engine& engine, const Case& c, const Options& options, Metrics& m,
 
 /// endregion </Measurements>
 
+/// BM-7's session file: moved to Options::keepSessionDir when set, else deleted
+void KeepOrRemove(const Options& options, const std::string& file)
+{
+    if (options.keepSessionDir.empty())
+    {
+        std::remove(file.c_str());
+        return;
+    }
+    std::error_code ec;
+    const std::filesystem::path from = FileHelper::ToFsPath(file);
+    const std::filesystem::path dir = FileHelper::ToFsPath(options.keepSessionDir);
+    std::filesystem::create_directories(dir, ec);
+    std::filesystem::rename(from, dir / from.filename(), ec);
+    if (ec)
+        std::remove(file.c_str());
+}
+
 std::string ScratchFile(const Options& options, const std::string& name)
 {
     std::string dir = options.scratchDir.empty() ? std::string(".") : options.scratchDir;
@@ -687,7 +705,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             engine.Seek(engine.FirstFrame() + (engine.LastFrame() - engine.FirstFrame()) / 2, 0, t);
             m["bm7_load_s_per_gb"] = bytes ? loadS / (static_cast<double>(bytes) / 1e9) : 0.0;
             m["bm7_first_seek_ms"] = loadS * 1e3 + t.totalUs / 1e3;
-            std::remove(file.c_str());
+            KeepOrRemove(options, file);
         }
     }
 

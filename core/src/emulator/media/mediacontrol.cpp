@@ -674,6 +674,8 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
         reply.result = r;
         return reply;
     }
+    options.cancelRequested = request.cancelRequested;
+    options.onProgress = request.onProgress;
     reply.result = _manager->Insert(reply.slot, source, options);
     reply.result.report.insert(reply.result.report.begin(), choice.begin(), choice.end());
     Finish(reply, o);
