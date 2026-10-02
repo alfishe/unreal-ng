@@ -193,3 +193,25 @@ Live check (headless `unreal-qt`, ATM3): CLI over the CLI socket, WebAPI, MCP `t
 - The Qt LED could only be built and run headless (`QT_QPA_PLATFORM=offscreen`, status-bar refresh ran without trouble); it was not seen on a screen.
 - The Python bindings are not built in `cmake-build-agent-release` (`ENABLE_PYTHON_AUTOMATION=OFF`): the new methods were checked with `-fsyntax-only` against pybind11 and Python 3.12 (no new warnings), not executed.
 - Host-key presses (keypad) were not exercised live; they are covered by the core tests (JOY-7, JOY-8, JOY-11).
+
+### 10.x Pentagon family and Profi (2026-10-01)
+
+The arms PLAN #13a asked for are in: `PortDecoder_Pentagon128` (and so 512 and 1024) answers the exact low byte
+`#1F` outside a TR-DOS session, `PortDecoder_Profi` in the NORMAL port set (no DOS latch, no CP/M; the Karabas Pro
+board decodes `dos_act = 0, cpm = 0`, `profi/rtl/karabas_pro.vhd:1790, 1822`). Both go ahead of the mouse arm (the
+mouse's standard decode also matches `#xx1F` when A9 is set) and only while a joystick is fitted: not fitted, the
+read stays undecoded, i.e. the floating bus as before. Default fitted, as Unreal Speccy (`KJoystick` default 1) and
+xpeccy (`joyCreate` = Kempston) do. Tests JOY-P1..P5. Corpus effect: the five Pentagon `.ttd` fixtures carry the
+joystick blob now and were re-recorded (the recorder switches the General Sound slot to the classic card itself
+now, a footgun of the earlier procedure); four Pentagon CI-gate rows moved by the blob (14 bytes per capture).
+`tools/verification/ttd-analyzer` learned the peripheral ids 21-23 (the validator rejected id 23).
+
+### 10.y Why the stick is not a registered port handler (2026-10-01)
+
+Asked why the joystick's port is decoded in the machine decoders instead of being registered by the device like
+the WD1793 or the AY. The real reason: `RegisterPortHandler` keys are exact and unique per decoder, and `#1F`
+already belongs to the WD1793; the two are told apart by the machine's gating (shadow, TR-DOS session, CP/M), which
+is exactly what the arms decide. The full-decode low-byte registry (ComPort's) is for bus cards and fires *in
+addition to* the machine decode, without that gating. So the arms stay, but the duplication is gone:
+`PortDecoder::IsKempstonJoystickFitted()` and `Default_Port_KempstonJoystick_In()` (like the mouse's
+`Default_Port_KempstonMouse_In`) answer for all five decoders (ATM3, Scorpion, TS-Conf, Pentagon, Profi).

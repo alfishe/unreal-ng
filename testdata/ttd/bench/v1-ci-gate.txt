@@ -8,6 +8,7 @@
 # Tolerance 0 = exact; heap metrics follow the allocator's growth policy.
 # ATM3/idle exact rows updated 2026-09-30 (not-modeled-waits): the EvoTurboCache blob and the 14 MHz waits.
 # ATM3/idle blob and file rows updated 2026-10-01 (E8): the EvoFontRam blob (2050 bytes per capture).
+# PENTAGON rows updated 2026-10-01 (joystick arm): the KempstonJoystick blob, 14 bytes per capture (2 bytes and the 12-byte header).
 # ATM3/idle rows nudged 2026-10-01 (E8b): the clock select now switches at the next M1 refresh, so the idle run differs slightly.
 # ATM3/idle blob and file rows updated 2026-10-01 (Kempston joystick): the KempstonJoystick blob (id 23, 14 bytes per capture, 854 over 61); nothing else moved.
 # ATM3/idle blob and file rows updated 2026-10-01 (esp-modules): the SerialPort blob (id 24) - the ZX-Evo AVR's UART is always there (~48 compressed bytes per checkpoint).
@@ -58,12 +59,12 @@ PENTAGON/game bm2_work_compress_calls_opf 8.100000 0
 PENTAGON/game bm2_work_compress_input_bpf 33177.600000 0
 PENTAGON/game bm2_work_decoded_opf 0.000000 0
 PENTAGON/game bm2_work_delta_base_bpf 131072.000000 0
-PENTAGON/game bm2_work_device_blobs_bpf 871.500000 0
+PENTAGON/game bm2_work_device_blobs_bpf 885.500000 0
 PENTAGON/game bm2_work_pages_visited_opf 8.000000 0
 PENTAGON/game bm2_work_scanned_bpf 35771.733333 0
 PENTAGON/game bm3_checkpoint_core_bpf 170.800000 0
 PENTAGON/game bm3_coverage_bpf 78869.533333 25
-PENTAGON/game bm3_device_blobs_bpf 884.383333 0
+PENTAGON/game bm3_device_blobs_bpf 898.616667 0
 PENTAGON/game bm3_input_journal_bpf 2.133333 0
 PENTAGON/game bm3_page_refs_bpf 130.133333 0
 PENTAGON/game bm3_ram_payload_bpf 2514.583333 0
@@ -71,20 +72,20 @@ PENTAGON/game bm3_total_bpf 108928.566667 25
 PENTAGON/game bm3_write_journal_bpf 26357.000000 0
 PENTAGON/game bm4_resident_bpf 139685.616667 25
 PENTAGON/game bm4_resident_bytes 8381137.000000 25
-PENTAGON/game bm7_file_bpf 10035.950000 0
-PENTAGON/game bm7_file_bytes 602157.000000 0
+PENTAGON/game bm7_file_bpf 10055.266667 0
+PENTAGON/game bm7_file_bytes 603316.000000 0
 PENTAGON/game checkpoints 61.000000 0
 PENTAGON/game frames 60.000000 0
 PENTAGON/idle bm2_work_compress_calls_opf 2.050000 0
 PENTAGON/idle bm2_work_compress_input_bpf 8396.800000 0
 PENTAGON/idle bm2_work_decoded_opf 0.000000 0
 PENTAGON/idle bm2_work_delta_base_bpf 131072.000000 0
-PENTAGON/idle bm2_work_device_blobs_bpf 863.116667 0
+PENTAGON/idle bm2_work_device_blobs_bpf 877.116667 0
 PENTAGON/idle bm2_work_pages_visited_opf 8.000000 0
 PENTAGON/idle bm2_work_scanned_bpf 16930.133333 0
 PENTAGON/idle bm3_checkpoint_core_bpf 170.800000 0
 PENTAGON/idle bm3_coverage_bpf 53064.100000 25
-PENTAGON/idle bm3_device_blobs_bpf 876.583333 0
+PENTAGON/idle bm3_device_blobs_bpf 890.816667 0
 PENTAGON/idle bm3_input_journal_bpf 0.000000 0
 PENTAGON/idle bm3_page_refs_bpf 130.133333 0
 PENTAGON/idle bm3_ram_payload_bpf 67.416667 0
@@ -92,7 +93,7 @@ PENTAGON/idle bm3_total_bpf 54961.033333 25
 PENTAGON/idle bm3_write_journal_bpf 652.000000 0
 PENTAGON/idle bm4_resident_bpf 72373.350000 25
 PENTAGON/idle bm4_resident_bytes 4342401.000000 25
-PENTAGON/idle bm7_file_bpf 1383.800000 0
-PENTAGON/idle bm7_file_bytes 83028.000000 0
+PENTAGON/idle bm7_file_bpf 1403.116667 0
+PENTAGON/idle bm7_file_bytes 84187.000000 0
 PENTAGON/idle checkpoints 61.000000 0
 PENTAGON/idle frames 60.000000 0
