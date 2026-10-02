@@ -58,6 +58,7 @@ matches; it names the recipe(s) for that action.
 | Making loaded software actually run (autostart/`RUN`/tape play) | the matching [run/](run/) file for the load path you used | machines/peripherals, unless the model itself matters |
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
+| Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | everything else |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
@@ -108,6 +109,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [input/joystick.md](input/joystick.md) | Kempston joystick: press / release / set / tap / status on MCP, WebAPI, CLI, Lua and Python; which models decode `IN #1F`; the paused-machine queueing; reading the byte from a guest loop |
+| [input/mouse.md](input/mouse.md) | Mouse: move / press / release / click / buttons / wheel / counters / status on MCP, WebAPI, CLI, Lua and Python; which mouse each machine has (Kempston interface, ZX-Evo / TS-Conf AVR PS/2 mouse, Sprinter board mouse); host capture and the toolbar gate |
 
 ### `analysis/` — instrumenting the machine
 

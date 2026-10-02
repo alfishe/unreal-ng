@@ -1,9 +1,13 @@
 #include "devicescreenglwindow.h"
+#include "emulator/mousecapturecontroller.h"
 #include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
 #include <QPainter>
 #include <QDragEnterEvent>
+#include <QFocusEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QDropEvent>
 #include <QEvent>
 #include <QKeyEvent>
@@ -604,6 +608,10 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
     event->accept();
 
+    // The mouse release key never reaches the machine
+    if (_mouseCapture && _mouseCapture->handleKeyPress(event))
+        return;
+
     if (!event->isAutoRepeat())
     {
         // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
@@ -622,6 +630,9 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
     event->accept();
 
+    if (_mouseCapture && _mouseCapture->handleKeyRelease(event))
+        return;
+
     if (!event->isAutoRepeat())
     {
         // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
@@ -632,7 +643,64 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 {
-    Q_UNUSED(event);
+    if (_mouseCapture && _mouseCapture->handleMousePress(event))
+        event->accept();
+    else
+        QOpenGLWindow::mousePressEvent(event);
+}
+
+void DeviceScreenGLWindow::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (_mouseCapture && _mouseCapture->handleMouseRelease(event))
+        event->accept();
+    else
+        QOpenGLWindow::mouseReleaseEvent(event);
+}
+
+void DeviceScreenGLWindow::mouseMoveEvent(QMouseEvent* event)
+{
+    if (_mouseCapture && _mouseCapture->handleMouseMove(event))
+        event->accept();
+    else
+        QOpenGLWindow::mouseMoveEvent(event);
+}
+
+void DeviceScreenGLWindow::wheelEvent(QWheelEvent* event)
+{
+    if (_mouseCapture && _mouseCapture->handleWheel(event))
+        event->accept();
+    else
+        QOpenGLWindow::wheelEvent(event);
+}
+
+void DeviceScreenGLWindow::focusOutEvent(QFocusEvent* event)
+{
+    if (_mouseCapture)
+        _mouseCapture->handleFocusOut();
+    // Keys held while the focus left never send their release here: let a PS/2 machine see them go up
+    KeyboardManager::postHeldKeyReleases(_emulator ? _emulator->GetUUID().toString() : std::string());
+    QOpenGLWindow::focusOutEvent(event);
+}
+
+QRectF DeviceScreenGLWindow::displaySourceRect() const
+{
+    if (!_hasViewport)
+        return _devicePixelsRect;
+    return QRectF(_displayViewport.cropLeft, _displayViewport.cropTop,
+                  _devicePixelsRect.width() - _displayViewport.cropLeft - _displayViewport.cropRight,
+                  _devicePixelsRect.height() - _displayViewport.cropTop - _displayViewport.cropBottom);
+}
+
+QSize DeviceScreenGLWindow::drawnPictureSize() const
+{
+    // The same fit paintGL draws: the native ratio, pillarboxed or letterboxed
+    const double windowW = width();
+    const double windowH = height();
+    if (windowW <= 0 || windowH <= 0)
+        return QSize();
+    if (windowW / windowH > ratio)
+        return QSize(static_cast<int>(windowH * ratio), static_cast<int>(windowH));
+    return QSize(static_cast<int>(windowW), static_cast<int>(windowW / ratio));
 }
 
 bool DeviceScreenGLWindow::event(QEvent* event)

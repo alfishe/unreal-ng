@@ -34,8 +34,8 @@ the plain matrix port.
 
 | Signal | MCU pin | Model |
 |---|---|---|
-| Z80 `IN #FE` (A0=0, A1=A2=1) | INT1 (P3.3, falling edge) | each read: latch A15..A8 (D23), set the WAIT flip-flop D71 (if W_ON = 0), pulse INT1 |
-| A15..A8 latch D23 | `MOVX A,@DPTR` with P2.0 = 0 | the latched high byte |
+| Z80 `IN #FE` (A0=0, A1=A2=1) | INT1 (P3.3, falling edge) | each read: buffer A15..A8 (D108), set the WAIT flip-flop D71 (if W_ON = 0), pulse INT1 |
+| A15..A8 buffer D108 (D23 drives the mechanical matrix) | `MOVX A,@DPTR` with P2.0 = 0 | the high byte, while the Z80 waits |
 | Native port D45 (matrix AND, tape, joystick) | `MOVX A,@DPTR` with P2.0 = 1 | host ZX matrix for the latched high byte, tape-in bit D6, D5 |
 | Data to the Z80 (D102) | `MOVX @DPTR,A` with P2.0 = 1 (/VWR) | the byte the Z80 reads; /VWR clears the WAIT flip-flop |
 | VE1 (`#FF77` bit 6) | P3.4 | 1 = controller off: the firmware answers `#FF` once and parks |
@@ -125,8 +125,13 @@ A PS/2 (AT, scan code set 2) keyboard on the clock / data lines:
   main loop is busy. A person never presses two keys within a millisecond;
   automation presses the PC keys of a chord one frame apart.
 - Typematic: the last key made repeats while held (500 ms, 10.9 / s).
-- Ctrl+Alt+Del (reset), Pause (WAIT mode), Ctrl+Alt+Home / Ins (v4.x block /
-  unblock) are firmware behavior: nothing special in the emulator.
+- Ctrl+Alt+Del (reset), Pause (WAIT mode), Ctrl+Alt+Ins / Home (v4.x block /
+  unblock - the code, not the release notes, which have them the other way
+  round; keypad 0 and 7) are firmware behavior. The board's part: a blocked
+  controller (W_ON = 1) holds no read, so its INT1 handler runs after the
+  Z80's cycle and its MOVX reads of the address buffer and the native port
+  see the floating bus (#FF): a `#55` poll cannot arm the command mode
+  (`Atm2Kbc::MovxRead`, reference (b) item 8).
 
 ## 7. The UART and its peer
 
@@ -283,11 +288,46 @@ idle loop is an idea for the backlog, not v1.
 
 ## 12. Open questions
 
-1. The data bus value of an `IN #FE` that is not served (VE1 = 1 after the
-   parked answer, W_ON = 1): native port assumed; confirm on `cp7_2`.
-2. Does the front-panel reset also reset the MCU (pin 9 RST on net "RS")?
-   It decides whether a Z80 reset flushes the COM buffers.
-3. Real-hardware wait timing: none measured; the model's timing is the
-   firmware's own cycle count (exact under D1).
-4. XT-keyboard images (MAME `rf2ve3.rom`, MicroART 1.0x) are not in the
-   collection; AT only for now.
+Second pass 2026-10-02; evidence in [reference §(b)](reference-atm2-kbc.md#b-open-questions-sources-do-not-answer).
+
+1. **The data bus value of an unserved `IN #FE`** (VE1 = 1 after the parked
+   answer, W_ON = 1, v4.x block, MCU cold start) - **answered**: the native
+   port. D45 is enabled by `/KRD` = NAND(KEYRD, /VWR) on every `IN #FE`.
+   It drives D0-D4 = KD1-KD5 for the read's own A15..A8 (D23 is always
+   enabled), D5 = Z and D6 = tape in, and does not drive D7 [inferred: idle
+   bus]. No WAIT. D102 (the MCU's answer) reaches the bus only while /VWR = 0,
+   VA8 = 1 and /KEYRD = 0, so a late answer is lost. Correction to §3: the MCU
+   reads A15..A8 through the buffer D108 (555AP5, /ACS), not a latch, and /ACS
+   also needs /KEYRD = 0. A handler that runs after the Z80 cycle has ended
+   reads #FF (the floating VD bus with its 1 kOhm pull-ups). **K2 follow-up:**
+   in the `waitOff` branch `Atm2Kbc::ReadPort` must give the MCU #FF for the
+   high byte and the native port, not `port >> 8`.
+2. **Does the front-panel reset also reset the MCU** - **answered: yes on
+   v7.10** (and 7.18 by its PCB strings): `/RS` -> D80 -> R85 / C11 -> D100
+   pin 9 RST. The MCU's own P1.6 pull of `/RS` resets the MCU too (2.2 / 3.1
+   wait for exactly that). So any reset is a cold start: COM buffers flushed,
+   divisor 6, mode 0, `stat_rs` 0, DTR / RTS off; v4.1 keeps the clock. The
+   current model (`BoardReset()`, P1.6 -> `RequestReset`) is right. v8.01
+   decouples it (jumper X5); not needed for ATM710.
+3. **Real-hardware wait timing** - **partly**: circuit and Karimov's numbers
+   (WAIT release -> end of read 0.4-0.7 us at 3.5 MHz; MOVX /VWR 0.54 us at
+   11.0592 MHz; a hand strobe 1.1 us). No scope trace was found. The model
+   (wait until the firmware's /VWR, plus the answer always delivered) stays.
+   Known deviation: MOVX images (2.2, 3.2m, 4.0) are marginal on hardware.
+4. **XT-keyboard images** - **answered: already in the collection**.
+   `keyboard-controller/xt-keyboard-v1.06/extracted/RF2VE31.rom` (1408 bytes,
+   v1.06, with `RFXT710.asm`) has SHA-1
+   `adcf14758fab8472cfa0167af7e8326c66416416`, which equals MAME's `rf2ve3.rom`.
+   `at-keyboard-v1.00/extracted/RFAT710.rom` (SHA-1
+   `6cb6311727fad9bc4ccb18919c3c39b37529b8e6`) equals MAME's `rfat710.rom`
+   ([atm.cpp](https://raw.githubusercontent.com/mamedev/mame/master/src/mame/sinclair/atm.cpp)
+   :568-570). These are the MicroART 1.0x images
+   ([Rf2ve31.zip](http://atmturbo.nedopc.com/download/shems/roms/Rf2ve31.zip),
+   [Rfat710.zip](http://atmturbo.nedopc.com/download/shems/roms/Rfat710.zip)).
+   The [schemes page](http://atmturbo.nedopc.com/atmshem.htm) lists no other
+   XT image. An XT preset needs an XT keyboard model (a different serial
+   protocol from PS/2 set 2) and has no COM port (RS-232 starts at v3.0), so
+   it stays out of N4.
+5. **v4.x block keys** (new) - the code is the reverse of `at40.txt`:
+   **Ctrl+Alt+Ins blocks, Ctrl+Alt+Home unblocks** (`atm_at41.asm`
+   :523-549). §6 and every surface's docs must say so.

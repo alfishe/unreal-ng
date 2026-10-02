@@ -142,10 +142,16 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
     // follow the applied clock
     const bool wanted = _state->scorpion_turbo != 0;
     Z80* z80 = core->GetZ80();
-    if (wanted && z80->GetMachineStepHook() != this)
-        z80->SetMachineStepHook(this);
-    else if (!wanted && z80->GetMachineStepHook() == this)
+    if (wanted)
+    {
+        if (z80->GetMachineStepHook() != this)
+            z80->SetMachineStepHook(this);
+        z80->SetMachineStepWork(true);  // the hook turns itself off once this frame's pulse is over
+    }
+    else if (z80->GetMachineStepHook() == this)
+    {
         z80->SetMachineStepHook(nullptr);
+    }
     if (wanted == _turboWaitsInstalled)
         return;
 
@@ -181,12 +187,27 @@ void PortDecoder_Scorpion256::OnMachineStep(uint32_t t)
     // Back to turbo only once the pulse is over: the clock rescale at the drop may land on the pulse's first tick
     const bool dropped = _state->hw_turbo_ratio == 1;
     if (!dropped && z80->InIntPulse(t) && _context->pCore->IsContentionSwitchOn())
+    {
         _state->hw_turbo_ratio = 1;
+        z80->ApplyHardwareTurboNow();
+    }
     else if (dropped && (z80->AfterIntPulse(t) || !_context->pCore->IsContentionSwitchOn()))
+    {
         _state->hw_turbo_ratio = 2;
-    else
-        return;
-    z80->ApplyHardwareTurboNow();
+        z80->ApplyHardwareTurboNow();
+        z80->SetMachineStepWork(false);  // nothing more to do until the next frame's pulse
+    }
+    else if (!dropped && z80->AfterIntPulse(t))
+    {
+        z80->SetMachineStepWork(false);  // the pulse passed without a drop (the contention feature off)
+    }
+}
+
+void PortDecoder_Scorpion256::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
+{
+    // A new frame: watch for its pulse again
+    if (_state->scorpion_turbo)
+        _context->pCore->GetZ80()->SetMachineStepWork(true);
 }
 
 /// endregion </Turbo+ wait states>

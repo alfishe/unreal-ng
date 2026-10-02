@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QObject>
+#include <QPointer>
 #include <QToolBar>
 #include <chrono>
 #include <memory>
@@ -9,6 +10,7 @@
 class Emulator;
 class MainWindow;
 class MenuManager;
+class MouseCaptureController;
 
 /// @brief ToolBarManager - the transport toolbar under the menu bar.
 ///
@@ -42,6 +44,10 @@ public:
     QAction* recordAction() const { return _recordAction; }
 #endif
 
+    /// The screen's host mouse capture (replaced with the screen wrapper): the
+    /// mouse button shows its state and drives its gate
+    void setMouseCapture(MouseCaptureController* capture);
+
     void setVideoRecordingActive(bool active);
     void setTtdRecordingActive(bool active);
     void updateRecordingStates();
@@ -60,6 +66,8 @@ signals:
 
 private slots:
     void onBreathingTick();
+    void onMouseActionTriggered();
+    void refreshMouseAction();
 
 private:
     void startBreathingAnimationIfNeeded();
@@ -80,6 +88,13 @@ private:
     QAction* _pauseAction = nullptr;
     QAction* _restartAction = nullptr;
     QAction* _ttdAction = nullptr;
+    QAction* _mouseAction = nullptr;          // indicator + gate (mouse-manager design §3.3)
+    QAction* _mouseGateMenuAction = nullptr;  // View -> Host Mouse: the same gate as a menu item
+    QAction* _mouseMatchMenuAction = nullptr; // View -> the captured mouse follows the host pointer's speed
+    bool _mouseMatchHostPointer = true;       // persisted; applied to every new capture controller
+    QString _mouseStatusMessage;              // the status bar hint shown while captured (cleared on release)
+    QPointer<MouseCaptureController> _mouseCapture;
+    bool _mouseGateOpen = true;               // persisted; applied to every new capture controller
 #ifdef ENABLE_RECORDING
     QAction* _recordAction = nullptr;
 #endif

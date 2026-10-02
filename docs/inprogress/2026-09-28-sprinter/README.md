@@ -21,6 +21,7 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 | [tdd-ports-memory.md](tdd-ports-memory.md) | port decoder, PLD state, memory windows, graphics pages, configuration loader, PLD configuration modules, resets |
 | [tdd-video.md](tdd-video.md) | video RAM, renderer, palettes, INT from the mode table |
 | [tdd-storage.md](tdd-storage.md) | floppy (density, PC images), IDE adapter (two channels, A8 latch), CMOS, media slots, the DSS boot profile for folder volumes |
+| [research-zx-mode.md](research-zx-mode.md), [tdd-zx-mode.md](tdd-zx-mode.md) | the ZX (Spectrum) mode: how the real machine runs TRD / SCL / tape (RAM disk + TR-DOS 7.0x, no PLD trap), MAME runs, the design and phase S8 |
 | [tdd-accel-sound-input.md](tdd-accel-sound-input.md) | accelerator, Covox-Blaster, keyboard (matrix + AT codes), mouse, Z84C15 SIO/CTC/PIO |
 | [tdd-integration.md](tdd-integration.md) | model registration, config, ROM, TTD ids, snapshots, automation, Qt debugger |
 | [unreal-ng-mapping.md](unreal-ng-mapping.md) | reused as-is / extended / new; how it plugs into the media manager, IDE core, TSConf hooks, ZX-Evo E2b |

@@ -12,11 +12,12 @@ class TTDTsConfState_Test : public TsConfFixture
 TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
 {
     const auto ids = _decoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 4u);
+    ASSERT_EQ(ids.size(), 5u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::TsConfPaging);
     EXPECT_EQ(ids[1], ttd::PeripheralId::EvoSdCard) << "the Z-Controller SD slot, shared with ATM3";
     EXPECT_EQ(ids[2], ttd::PeripheralId::Ds12887);
     EXPECT_EQ(ids[3], ttd::PeripheralId::EvoPs2) << "the AVR's PS/2 keyboard log, shared with ATM3";
+    EXPECT_EQ(ids[4], ttd::PeripheralId::EvoMouse) << "the AVR's PS/2 mouse, shared with ATM3";
 
     Reg(TsConfReg::MemConfig, 0x40);
     Out(0x7FFD, 0x23);                  // 128K rule, lock48

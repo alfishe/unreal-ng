@@ -60,7 +60,7 @@ struct MouseStateSnapshot
 /// Single funnel for Kempston Mouse input (Kempston Mouse design §5.7, automation-interfaces §4.1).
 ///
 /// Every source goes through here: automation (WebAPI, CLI, Lua, Python, MCP), the
-/// desktop front end (via Mouse::OnMouse* on the MessageCenter thread) and tests.
+/// desktop front end (via MouseManager::OnMouse* on the MessageCenter thread) and tests.
 /// That makes it the one place that refuses live input during TTD replay and that
 /// journals input while TTD records - BEFORE the device is changed, same as
 /// DebugKeyboardManager.
@@ -71,7 +71,9 @@ struct MouseStateSnapshot
 ///
 /// Delivery is a direct call on the caller's thread (design Q1 option B): the change is
 /// visible before the call returns, so pause -> inject -> run_frames is deterministic.
-/// Mouse counters are atomic, so host and automation input compose without loss.
+/// Mouse counters are atomic, so host and automation input compose without loss; the
+/// held buttons of each source are kept apart in the emulator's MouseManager and the
+/// machine gets their union (mouse-manager design §3.1).
 class DebugMouseManager
 {
 public:
@@ -132,6 +134,9 @@ private:
     void ApplyButtons(Mouse& mouse, uint8_t activeLowMask);
     void ApplyWheel(Mouse& mouse, int steps);
     void ApplyCounters(Mouse& mouse, uint8_t x, uint8_t y);
+    /// Automation's held buttons (bit set = held) and their submission joined with the host's
+    uint8_t AutomationPressed() const;
+    void SubmitAutomationButtons(Mouse& mouse, uint8_t pressedBits);
     bool IsReplaying() const;
 
     void CancelPendingLocked();

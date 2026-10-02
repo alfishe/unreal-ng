@@ -342,6 +342,17 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     kbd["sio_a_fifo"] = HexRow(chip.sio.GetChannel(0).fifo, chip.sio.GetChannel(0).fifoCount);
     z["keyboard"] = kbd;
 
+    // The board mouse: its counters (both views read them) and the serial packet on SIO B
+    const SprinterInput::BoardMouse board = input.GetBoardMouse();
+    const MsSerialMouse::State& serial = input.SerialMouse().GetState();
+    StateNode mouse = StateNode::Object();
+    mouse["x"] = int(board.x);
+    mouse["y"] = int(board.y);
+    mouse["buttons"] = Hex8(board.buttons);
+    mouse["packet_in_flight"] = serial.sent < 3;
+    mouse["sio_b_fifo"] = HexRow(chip.sio.GetChannel(1).fifo, chip.sio.GetChannel(1).fifoCount);
+    z["mouse"] = mouse;
+
     StateNode pio = StateNode::Array();
     static const char* const kPioModes[4] = {"output", "input", "bidirectional", "bit control"};
     for (uint8_t p = 0; p < 2; p++)

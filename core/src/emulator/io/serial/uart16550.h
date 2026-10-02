@@ -79,6 +79,9 @@ public:
         uint32_t uartClockHz = 1843200;  ///< baud = clock / (16 * divisor)
         uint8_t mcrMask = 0x3F;          ///< MCR bits that exist (AVR: & #1F, no auto flow control)
         bool interrupts = true;          ///< IER / IIR work (AVR: none)
+        /// Only CTS reaches the chip; DSR' and DCD' are tied asserted, RI' tied inactive (the ATM2IOESP card:
+        /// reference-atm2ioesp.md open question 5). The peer's DSR / DCD / RI are not seen
+        bool ctsOnly = false;
 
         // AVR firmware behavior
         bool dataPath = true;            ///< false: the 2010 register file (no byte moves)

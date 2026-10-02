@@ -408,6 +408,12 @@ void Uart16550::UpdateModemStatus()
         if (_mcr & kMcrOut1) lines |= kMsrRi;
         if (_mcr & kMcrOut2) lines |= kMsrDcd;
     }
+    else if (_params.ctsOnly)
+    {
+        lines = kMsrDsr | kMsrDcd;
+        if (_peer && _peer->Cts())
+            lines |= kMsrCts;
+    }
     else if (_peer)
     {
         if (_peer->Cts()) lines |= kMsrCts;

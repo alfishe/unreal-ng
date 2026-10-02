@@ -72,7 +72,7 @@ As built in phase S7 (2026-10-02, branch `sprinter-ttd`; outcome and tests:
 | 28 | `SprinterVideoRam` | the 256 KB video RAM; on load the pen cache and the INT list are rebuilt | 1 + 262 144 |
 | 29 | `Z84C15` | `Z84C15::SaveState`: system registers, the wait generator with its power-on M1 counter and the RETI rule's after-ED flag, the watchdog, CTC, SIO (receive FIFOs), PIO, IP / IUS of every daisy-chain source | 1 + 171 |
 | 30 | `SprinterFastRam` | the 64 KB fast RAM (Memory's cache pages are not RAM pages) | 1 + 65 536 |
-| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter | 85 |
+| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter, the board mouse counters (v2) | 88 |
 | 35 | `Wd1793Context` | the WD1793 command in flight beyond the 254-byte BetaDisk blob: queued steps as tags, transfer pointers as (drive, track, offset), byte cell, rotational delay, rate-retry search | 1 + 112 |
 | 32 | `SprinterCovoxBlaster` | the Covox / Covox-Blaster (S6, 2026-10-02): `CovoxBlasterState`, v1, 545 bytes | |
 | 33-34 | `SprinterIsa`, `SprinterPads` | **reserved** for S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |

@@ -167,13 +167,36 @@ The mouse goes through DSS's mouse driver, which reads the board's mouse in one
 of two views: DSS 1.62.9x the PLD's Kempston view (`#FADF` buttons, `#FBDF` X,
 `#FFDF` Y; port code `#58`), DSS 1.71 the Microsoft serial packets on SIO B
 (1 200 baud, 3 bytes synced on bit 6; no `M` identification is needed). Both
-come from the same counters, so `mouse_input` drives either, also with
-`[INPUT] Mouse=NONE` (the board's mouse is not the optional Kempston interface):
+views read one set of board mouse counters, a device of the emulator's mouse
+manager like the Kempston interface: `mouse_input`, the GUI's captured host
+mouse and TTD replay all reach it, also with `[INPUT] Mouse=NONE` (the board's
+mouse is part of the machine, not the optional Kempston interface; with `NONE`
+`/mouse/status` reports `"present":false` for the interface and no warning):
 
 ```text
-mouse_input {"action":"move","dx":100,"dy":-20}      # + right, + up (Kempston axes)
-mouse_input {"action":"click","button":"left"}
+mouse_input {"action":"move","dx":100,"dy":-20}      # + right, + up (Kempston axes); FN: 1 pixel per count
+mouse_input {"action":"click","button":"left"}       # inactive panel: activates it; on a row: the bar goes there
+mouse_input {"action":"click","button":"right"}      # marks the file under the bar, the bar moves down
+inspect_state {"aspects":["sprinter"]}
+#   → sprinter.z84c15.mouse: {"buttons":"0xFF","packet_in_flight":false,"sio_b_fifo":"","x":43,"y":67}
 ```
+
+Buttons: D0 left, D1 right, D2 middle (active low). The Kempston view shows all
+three; the serial packet has left and right only; FN ignores the middle button.
+
+WebAPI equivalent:
+
+```bash
+curl -s -X POST $BASE/emulator/$EMU_ID/mouse/move  -H 'Content-Type: application/json' -d '{"dx":38,"dy":-10}'
+curl -s -X POST $BASE/emulator/$EMU_ID/mouse/click -H 'Content-Type: application/json' -d '{"button":"left","frames":10}'
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c .z84c15.mouse
+```
+
+**In the GUI** the toolbar's mouse button is live for the Sprinter with any
+`Mouse=` setting: click the screen to capture (that click is not passed on),
+Cmd+Esc (Ctrl+Esc elsewhere) releases; the button switched off keeps the host
+mouse away from the machine (automation still works). Checked on the GPU
+renderer with FN 1.15 (BIOS 3.07 beta 1, `sp_hdd_sys.chd`), 2026-10-02.
 
 After a panel switch FN 1.10 re-reads the floppy for about 0.6 s with
 interrupts off; keys sent in that time overrun the SIO's 3-byte FIFO
@@ -454,9 +477,9 @@ and core reports as Lua.)
   Fn+Delete.
 - **Tab in the GUI** reaches the machine on both screen renderers (it used
   to move the Qt focus on the software renderer, so every other Tab was lost).
-- **The GUI mouse** does not reach the GPU screen yet (the GL window has no
-  mouse capture; a shared mouse manager is planned). Workaround: View -> GPU
-  Acceleration off, click the screen to capture, ESC releases.
+- **The GUI mouse** works on both screen renderers through the shared mouse
+  manager (step 3a); a plain Esc reaches the machine, Cmd+Esc / Ctrl+Esc
+  releases the capture.
 - **The generic `#7FFD` latch fields are not the Sprinter's.** `#7FFD` and
   `#1FFD` live in the PLD: read `sprinter.decoder.port_7ffd` /
   `port_1ffd` (and `/state/paging`'s `sprinter` block), not

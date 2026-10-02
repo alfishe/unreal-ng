@@ -648,6 +648,12 @@ public:
     /// (Scorpion TR-DOS / Shadow Monitor gating) are honored.
     void GetMouseRoutingState(bool& decoded, std::string& note) const;
 
+    /// What a read of the mouse register `reg` (0 buttons, 1 X, 2 Y) returns on a
+    /// machine whose mouse ports are not the Kempston interface (the ZX-Evo AVR's
+    /// PS/2 mouse, the Sprinter board mouse); no side effects. False: the
+    /// Kempston device answers (Mouse::ReadRegister)
+    virtual bool PeekMouseRegister([[maybe_unused]] uint8_t reg, [[maybe_unused]] uint8_t& value) const { return false; }
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///
