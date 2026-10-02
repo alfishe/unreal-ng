@@ -188,7 +188,7 @@ void ZxNetUsb::portDeviceOutMethod(uint16_t port, uint8_t value)
     }
 }
 
-bool ZxNetUsb::SaveState(netstate::Adapters& out, const INetGuest* comGuest) const
+bool ZxNetUsb::SaveState(netstate::Adapters& out, const SerialGuests& serial) const
 {
     std::memset(&out, 0, sizeof(out));
     out.version = netstate::kVersion;
@@ -200,13 +200,13 @@ bool ZxNetUsb::SaveState(netstate::Adapters& out, const INetGuest* comGuest) con
     if (_network)
     {
         out.networkPresent = 1;
-        complete = _network->SaveState(out.network, comGuest) && complete;
+        complete = _network->SaveState(out.network, serial) && complete;
     }
     out.incomplete = complete ? 0 : 1;
     return complete;
 }
 
-bool ZxNetUsb::LoadState(const netstate::Adapters& in, const W5300::ByteSource& bytes, INetGuest* comGuest)
+bool ZxNetUsb::LoadState(const netstate::Adapters& in, const W5300::ByteSource& bytes, const SerialGuests& serial)
 {
     if (in.version != netstate::kVersion || !in.present)
         return false;
@@ -215,7 +215,7 @@ bool ZxNetUsb::LoadState(const netstate::Adapters& in, const W5300::ByteSource& 
     _p81 = in.p81;
     UpdateWindow();
     if (_network)
-        _network->LoadState(in.network, &_chip, comGuest);
+        _network->LoadState(in.network, &_chip, serial);
     const bool complete = _chip.LoadState(in, bytes);
     UpdateIntLine();
     return complete;

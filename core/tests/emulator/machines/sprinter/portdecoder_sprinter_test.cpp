@@ -4,6 +4,7 @@
 
 #include "sprinterfixture.h"
 
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/rtc/ds12887.h"
 
 class PortDecoderSprinter_Test : public SprinterFixture
@@ -267,6 +268,145 @@ TEST_F(PortDecoderSprinter_Test, Turbo_SysBit1SelectsRatio6)
 }
 
 /// endregion </T-MEM-1 / T-MEM-2>
+
+/// region <T-FDD: the floppy controller behind the port table (phase S3a)>
+
+// T-FDD-4: the board's #BD latch owns the WD1793 clock; a reset starts at 720 KB (1 MHz, 250 kbit/s)
+TEST_F(PortDecoderSprinter_Test, Fdc_LatchedClockPolicy_DdAfterReset)
+{
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_NE(fdc, nullptr);
+    EXPECT_EQ(_decoder->DefaultFdcClockPolicy(), FdcClockPolicy::Latched);
+    EXPECT_EQ(fdc->GetClockPolicy(), FdcClockPolicy::Latched);
+    EXPECT_TRUE(fdc->IsBaseClockTimeBase()) << "the disk keeps 300 rpm at 21 MHz";
+    EXPECT_EQ(WD1793::ResolveClockPolicy(_decoder->DefaultFdcClockPolicy(), 1), FdcClockPolicy::Latched)
+        << "[Beta128] TurboVG=1 does not override the latch";
+    EXPECT_EQ(fdc->GetClock(), FdcClock::Clock1MHz);
+    EXPECT_EQ(fdc->GetDataRate(), FdcDataRate::Rate250Kbps);
+    EXPECT_FALSE(_decoder->IsFdcHighDensity());
+
+    ASSERT_TRUE(fdc->SetLatchedClock(FdcClock::Clock2MHz, FdcDataRate::Rate500Kbps));
+    Pld().fdcHd = 1;
+    _core->Reset();
+    EXPECT_EQ(fdc->GetClock(), FdcClock::Clock1MHz) << "RESET: the latch is back at 720 KB";
+    EXPECT_EQ(fdc->GetDataRate(), FdcDataRate::Rate250Kbps);
+    EXPECT_FALSE(_decoder->IsFdcHighDensity());
+}
+
+// T-FDD-5: OUT (#BD),A - A13 of the address (A on A15-A8: #01 / #21) picks codes #16 / #17 in the BIOS 3.04 table;
+// the data bit 1 switches the FDC codes off (MAME)
+TEST_F(PortDecoderSprinter_Test, Fdc_DensityLatch_CodesSixteenAndSeventeen)
+{
+    if (!LoadTable304())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_NE(fdc, nullptr);
+    OpenDcp();
+    Pld().dos = 0;  // TR-DOS on: the BIOS switches the density with the DOS ports open
+    ASSERT_EQ(_decoder->LookupCode(0x21BD, false), 0x17);
+    ASSERT_EQ(_decoder->LookupCode(0x01BD, false), 0x16);
+
+    Out(0x21BD, 0x21);  // FddSetDensityHD (ROM page 0 #097C)
+    EXPECT_TRUE(_decoder->IsFdcHighDensity());
+    EXPECT_EQ(fdc->GetClock(), FdcClock::Clock2MHz);
+    EXPECT_EQ(fdc->GetDataRate(), FdcDataRate::Rate500Kbps);
+
+    Out(0x01BD, 0x01);  // FddSetDensityDD (#0977)
+    EXPECT_FALSE(_decoder->IsFdcHighDensity());
+    EXPECT_EQ(fdc->GetClock(), FdcClock::Clock1MHz);
+    EXPECT_EQ(fdc->GetDataRate(), FdcDataRate::Rate250Kbps);
+
+    // The data byte does not choose the density, the address does
+    Out(0x21BD, 0x01);
+    EXPECT_TRUE(_decoder->IsFdcHighDensity());
+
+    // Bit 1 of the data: the FDC codes read #FF and drop writes until the next density write without it
+    Out(0x007F, 0x5A);  // WD1793 data register (code #13)
+    ASSERT_EQ(In(0x007F), 0x5A);
+    Out(0x21BD, 0x23);
+    EXPECT_EQ(In(0x007F), 0xFF);
+    Out(0x007F, 0x11);
+    Out(0x21BD, 0x21);
+    EXPECT_EQ(In(0x007F), 0x5A) << "the write while off never reached the chip";
+}
+
+// Code #15: WD1793 INTRQ / DRQ in bits 7-6 and the Kempston joystick below (MAME state_r() & joy_ctrl_r(1))
+TEST_F(PortDecoderSprinter_Test, Fdc_Code15_IntrqDrqAndJoystick)
+{
+    OpenDcp();
+    SetCodeAll(0x00FF, true, 0x15);
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_NE(fdc, nullptr);
+    const uint8_t beta = static_cast<uint8_t>(_decoder->PeripheralPortIn(0xFF));
+    EXPECT_EQ(In(0x00FF), static_cast<uint8_t>((beta & 0xC0) | (_decoder->Default_Port_KempstonJoystick_In() & 0x3F)));
+    EXPECT_EQ(In(0x00FF) & 0x3F, 0x00) << "no joystick fitted: the low bits read 0";
+    EXPECT_TRUE(_decoder->HasKempstonJoystick());
+}
+
+// T-FDD-6: the #1F operand rewrite. OUT (#1F),A from RAM reaches the table as port #xx0F (here code #10, the
+// WD1793 command register); the same instruction in the system ROM, and OUT (C),A with C = #1F anywhere, reach
+// the Z84C15 PIO port B control (8-bit decoded #1F)
+TEST_F(PortDecoderSprinter_Test, Fdc_OperandRewrite_RamOnly_UnprefixedOnly)
+{
+    OpenDcp();
+    SetCodeAll(0xD00F, false, 0x10);  // A4 is not decoded: #D01F has the same table entry, the Z84C15 takes it first
+    WD1793* fdc = _context->pBetaDisk;
+    ASSERT_NE(fdc, nullptr);
+    ASSERT_TRUE(IsRam(0x8000));
+
+    // LD A,#D0 : OUT (#1F),A from RAM -> code #10: FORCE INTERRUPT reaches the WD1793, the PIO keeps its vector
+    RunCode({0x3E, 0xD0, 0xD3, 0x1F});
+    EXPECT_EQ(static_cast<const WD1793*>(fdc)->getCommandRegister(), 0xD0);
+    EXPECT_NE(_decoder->GetZ84().pio.GetPort(1).vector, 0xD0);
+
+    // LD BC,#D01F : LD A,#D0 : OUT (C),A - no rewrite: the PIO port B takes #D0 as its interrupt vector
+    RunCode({0x01, 0x1F, 0xD0, 0x3E, 0xD0, 0xED, 0x79});
+    EXPECT_EQ(_decoder->GetZ84().pio.GetPort(1).vector, 0xD0);
+
+    // The same OUT (#1F),A in the system ROM (window 0): not rewritten, the PIO again
+    _decoder->GetZ84().pio.Reset();
+    ASSERT_FALSE(IsRam(0x0000));
+    const uint8_t romPage = static_cast<uint8_t>(Tag(0x0000) - kRomTagBase);
+    uint8_t* rom = _memory->ROMPageHostAddress(romPage);
+    const uint8_t code[] = {0x3E, 0xD0, 0xD3, 0x1F};
+    std::memcpy(rom + 0x0100, code, sizeof(code));
+    _z80->pc = 0x0100;
+    for (int i = 0; i < 2; i++)
+        _z80->Z80Step();
+    ASSERT_EQ(_z80->pc, 0x0104);
+    EXPECT_EQ(_decoder->GetZ84().pio.GetPort(1).vector, 0xD0) << "system ROM: no rewrite";
+}
+
+// T-FDD-7: the TR-DOS signal follows the opcode fetches (MAME map_fetch): on at #3Dxx while #7FFD bit 4 selects
+// the 48 BASIC vROM, off from #4000 up; the floppy ports exist only while it is on (BIOS 3.04 table, map 0)
+TEST_F(PortDecoderSprinter_Test, Dos_M1HookOpensAndClosesTheFloppyPorts)
+{
+    if (!LoadTable304())
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
+    OpenDcp();
+    Pld().cnf = 0;
+    Pld().pn = 0x10;  // 48 BASIC
+    Pld().dos = 1;
+
+    _decoder->BeforeMachineM1(0x3D2F);
+    EXPECT_EQ(Pld().dos, 0) << "fetch at #3Dxx: DOS on";
+    EXPECT_EQ(_decoder->LookupIndex(0x001F, true) & 0x0400, 0) << "index bit 10 (/DOS) low";
+    EXPECT_EQ(_decoder->LookupCode(0x001F, true), 0x10) << "WD1793 status";
+    EXPECT_EQ(_decoder->LookupCode(0x00FF, true), 0x15);
+
+    _decoder->BeforeMachineM1(0x1234);
+    EXPECT_EQ(Pld().dos, 0) << "below #4000 the signal stays";
+    _decoder->BeforeMachineM1(0x4000);
+    EXPECT_EQ(Pld().dos, 1) << "fetch from #4000 up: DOS off";
+    EXPECT_EQ(_decoder->LookupCode(0x001F, true), 0x15) << "#1F / #0F read: the Kempston view";
+    EXPECT_EQ(_decoder->LookupCode(0x003F, true), 0x00) << "the WD1793 track register is gone";
+
+    Pld().pn = 0x00;  // 128 BASIC in window 0: #3Dxx is not TR-DOS's entry
+    _decoder->BeforeMachineM1(0x3D2F);
+    EXPECT_EQ(Pld().dos, 1);
+}
+
+/// endregion </T-FDD>
 
 /// region <T-RTC: the DS12887A behind codes #1C / #1D / #1E>
 

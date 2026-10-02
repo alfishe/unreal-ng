@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Hard disk, cover off: casing, platter, actuator arm -->
+  <defs>
+    <linearGradient id="case" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ced4da"/>
+      <stop offset="1" stop-color="#868e96"/>
+    </linearGradient>
+    <radialGradient id="platter" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#c5cbd3"/>
+      <stop offset="0.8" stop-color="#7d8794"/>
+      <stop offset="1" stop-color="#a5adb8"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="4" width="48" height="56" rx="4" fill="url(#case)" stroke="#495057" stroke-width="1.4"/>
+  <circle cx="30" cy="26" r="18" fill="url(#platter)" stroke="#495057" stroke-width="1"/>
+  <circle cx="30" cy="26" r="4" fill="#495057"/>
+  <circle cx="30" cy="26" r="1.6" fill="#ced4da"/>
+  <path d="M48 50 L34 30" stroke="#343a40" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="48" cy="50" r="4" fill="#343a40"/>
+  <circle cx="48" cy="50" r="1.5" fill="#adb5bd"/>
+  <rect x="31.5" y="27" width="4" height="5" rx="1" fill="#e03131" transform="rotate(-35 33.5 29.5)"/>
+  <circle cx="12" cy="8" r="1.3" fill="#495057"/>
+  <circle cx="52" cy="8" r="1.3" fill="#495057"/>
+  <circle cx="12" cy="56" r="1.3" fill="#495057"/>
+  <rect x="14" y="51" width="16" height="4" rx="1" fill="#2f9e44"/>
+</svg>

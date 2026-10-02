@@ -143,6 +143,79 @@ A PS/2 (AT, scan code set 2) keyboard on the clock / data lines:
 - The peers are the existing ones: `NONE`, `LOOPBACK`, `TCP:`, `SERIAL:`,
   `ESPNET`, `AT` (network TDD §7.2).
 
+As built (K4):
+
+- The controller does not own the peer: `NetworkManager` builds it from
+  `ComPort=` (the same factory as for the #xxEF port) and plugs it in through
+  `NetworkCapabilities::attachSerialPeer`; `EmulatorContext::pMachineSerialPeer`
+  points at it. A V22-* firmware has no RS-232: the port is not offered and
+  `not_fitted` says why.
+- Receive: when the peer has a byte (and RTS is asserted, for a peer that
+  honors it) the frame starts on RXD; `SerialIn` hands it to the MCU when the
+  middle of its stop bit is sampled (one frame time later, at the bit rate of
+  the receiving timer). The next frame cannot start before the stop bit ends.
+  A frame that arrives while RI is still set is counted as `lost`.
+- Transmit: the MCU's `serialOut` (at the end of the frame on TXD) hands the
+  byte to the peer and ends the MCU's run slice, so an echo or a module's
+  answer starts at once; so does a change of RTS / DTR.
+- Modem inputs: CD, CTS, RI from the peer on P1.0..P1.2 (asserted = 0); with
+  nothing plugged in they read deasserted.
+- The peer's clock is the machine's (`SetClock` with the emulated T-state
+  counter); a byte from outside makes the controller catch up to its arrival
+  time first (`onReceive`).
+- On the virtual network the peer is guest 3 (`SerialGuests::machine`; the
+  card's chip is 1, the #xxEF port's peer 2): its sockets survive a ZX-Bus
+  reset and come back to it after a TTD seek.
+- Measured on V41 (2026-10-01, the emulated MCU): the INT1 answer takes 34..83
+  machine cycles, the timer 0 tick 36, the serial ISR 24; one frame at
+  115200 baud is 80 cycles. INT1 and TF0 come before the UART in the polling
+  order, so a Z80 that reads `#FE` while RTS is on (a program polling the
+  keyboard, a driver reading the buffer out) loses a received frame now and
+  then (`lost` in the state), and reads back to back with no gap starve the
+  UART completely. That is the firmware on the real chip, not an emulation
+  artifact; it is why the drivers pulse RTS (reference §2.5). The tests pace
+  their reads like a driver (`DriverIn`, RTS off while reading out).
+- An ESP module on this port ships at 38400 (`ComPort=ESPNET` / `AT` without
+  `,<baud>`; `NetworkCapabilities::espBaud`): NedoOS's ESPNET firmware is
+  built for 38400 on the ATM2 COM (`src/kapps/common/espnet/pins.h`
+  "ATM2COM - 38400", `release/ini/espcom.ini` "1 ATM2 COM 38400").
+
+### 7.1 NedoOS over the ATM2 COM (checked 2026-10-02)
+
+NedoOS `osatm2esp.trd` on ATM710 with `ComPort=ESPNET`, `wget example.com/`,
+the model unchanged (Z80 released at the /VWR strobe):
+
+| Z80 | Line | received / sent / lost | Result |
+|---|---|---|---|
+| 7 MHz (NedoOS turns turbo on) | 115200 | 4 / 16 / 14 | stops after SOCKET |
+| 7 MHz | 38400 | 6 / 16 / 12 | stops after SOCKET |
+| 3.5 MHz | 115200 | 10 / 16 / 8 | stops after SOCKET |
+| 3.5 MHz | 38400 | 1274 / 334 / 0 | DNS, CONNECT, HTTP request, 1027-byte reply |
+
+Why (from the v4.1 source and the v7.10 schematic `cp7_2`):
+
+- The Z80 is released by the asynchronous preset of D71 on the falling edge
+  of /VWR; D102 drives the data bus only while /VWR is low. A later release
+  cannot be: the model matches the board within about 1 us per read.
+- INT1 answers take 27..60 machine cycles to /VWR plus 9 to RETI (no loops),
+  timer 0 ticks every 8.89 ms (39-40 cycles), INT0 (PS/2) is the only high
+  priority. The serial interrupt runs only when the poll after RETI finds no
+  new /KEYRD edge: the Z80 needs a gap of more than about 10 machine cycles
+  (38 T at 3.5 MHz, 76 T at 7 MHz) after a read.
+- The NedoOS receive loop (`_sdk/espnet.asm` `esp_fill1`) reads `#FE` with
+  20..58 T gaps. At 7 MHz the empty poll leaves no serial window at all; at
+  3.5 MHz it leaves one per iteration, enough for 38400 (240 cycles a frame,
+  one byte per ~167 us RTS pulse) and not for 115200.
+- So the floppy as shipped cannot work on the real board either: it runs
+  `wizcfg` (W5300), not `espcfg`, and the kernel's default is divisor 1
+  (115200). A working setup sets `/ini/espcom.ini` `comType = 1`,
+  `divider = 3` and runs at 3.5 MHz while it polls (or with I/O waits in
+  turbo - WAIT_H not traced yet).
+
+Open: whether the real ATM2 holds 3.5 MHz (or adds I/O waits) during the
+NedoOS network loop; an end-to-end fixture needs a NedoOS image with an
+`espcom.ini` for the ATM2 COM.
+
 ## 8. Configuration and surfaces
 
 ```ini
@@ -159,8 +232,9 @@ ComPort=NONE       ; what is plugged into the controller's RS-232 port (ATM710)
 - State: `GET /state/atm2kbc` (and the MCP aspect, CLI `atm2kbc`, Lua / Python
   `atm2kbc_state()`): firmware, crystal, mode, VE1, W_ON, command state,
   keyboard registers and LEDs, clock, RX / TX counts, baud, modem lines, and
-  the MCU (PC, registers, timers) for debugging. The network state's
-  `com_port` shows the controller as the serial port (`flavor` `atm2kbc`).
+  the MCU (PC, registers, timers) for debugging. The network state shows the
+  controller's port as `machine_serial` (`flavor` `atm2kbc`, beside a ZX-WiFi
+  card's `com_port`); `machine.serial_port` is `atm2-kbc`.
 - Qt: the Network window offers the controller firmware where the machine has
   it, like the AVR firmware on the ZX-Evo.
 
@@ -169,7 +243,11 @@ ComPort=NONE       ; what is plugged into the controller's RS-232 port (ATM710)
 A new blob `PeripheralId::Atm2Kbc` (next free id): the MCU state (internal
 RAM, SFRs, PC, oscillator clock, interrupt state), the board latches (A15..A8,
 D102, WAIT flip-flop), the PS/2 keyboard model (queue, bit position, LEDs) and
-the UART line state. The peer stays in the SerialPort blob. Host input is
+the UART line state (`SerialLineState`: the frame on RXD, counters). The peer
+has its own blob, `PeripheralId::MachineSerialPeer` (27): the peer part of
+`netstate::Com` (loopback queue, stream link with its received bytes as
+journal references, ESP module), shared code with the SerialPort blob
+(`ComPort::SavePeer` / `LoadPeer`). Host input is
 already journaled (`PcKey` events, NetEvents). Contract-test row and
 `ttd.ksy`.
 

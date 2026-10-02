@@ -67,6 +67,8 @@ zx-evo-unreal, Zero, ZXSpeculator, zxsp, Spectral) mentions Sprinter (`grep -ril
 
 ## 5. ROM provisioning (S0)
 
+Every known BIOS build (2.13-3.07 beta), the community builds kept in `data/rom/sprinter/` and how to track new ones: [bios-versions.md](bios-versions.md).
+
 | File | Size | CRC32 (MAME) | Notes |
 |---|---|---|---|
 | `sp2k-3.04.rom` (default) | 262 144 | `1729cb5c` | BIOS 3.04, 17.06.2003, the last Peters Plus build; **the default** (review round 1, Q1); tests run on 3.04 and 3.06 |

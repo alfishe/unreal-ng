@@ -621,12 +621,6 @@ void Core::Release()
         _ulaContention = nullptr;
     }
 
-    if (_z80 != nullptr)
-    {
-        delete _z80;
-        _z80 = nullptr;
-    }
-
     // The PortDecoder must outlive every device that registered port handlers: the devices keep
     // their own PortDecoder pointer and their detachFromPorts() (SoundManager, WD1793, ...) calls
     // UnregisterPortHandler(), which mutates the decoder's handler map. Deleting it earlier made
@@ -635,6 +629,15 @@ void Core::Release()
     {
         delete _portDecoder;
         _portDecoder = nullptr;
+    }
+
+    // The Z80 goes after the PortDecoder: a decoder may own a CPU engine (the
+    // Sprinter's Z84C15Engine) that detaches itself from the Z80 in its destructor.
+    // Deleting the Z80 first made that a heap-use-after-free on every Sprinter teardown
+    if (_z80 != nullptr)
+    {
+        delete _z80;
+        _z80 = nullptr;
     }
 
     if (_ports != nullptr)

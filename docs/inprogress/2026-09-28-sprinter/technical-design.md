@@ -145,6 +145,6 @@ A `sprinterisolation_test.cpp` (the TSConf precedent, TSConf technical design §
 | BIOS 3.04 depends on PLD behavior nobody documented (e.g. a status bit during POST) | hangs before the logo | trace the BIOS in MAME and in unreal-ng side by side (port trace with codes); the PLD sources are the tie-breaker |
 | The loader's bitstream sink ends at the wrong moment | no boot or wrong config | the end is the real bitstream length (write count traced in S0) plus a watchdog timeout; fast start as the default for tests; the full path tested once per ROM version (tdd-ports-memory §6) |
 | Accelerator timing interacts with INT and the turbo waits | wrong demo speed | S5 differential tests against MAME frame counts |
-| Palette byte order wrong in one source | wrong colors everywhere | settled in S2 by the BIOS setup screen (§4.5 of HW) |
+| Palette byte order wrong in one source | wrong colors everywhere | **settled in S2**: R, G, B in video RAM (the PLD's bank wiring, BIOS function `#A4`, the logo against MAME; §4.5 of HW) |
 | The media manager (#58) or the IDE core (#13a) slip | S3/S4 blocked | the floppy path (ACC-3) needs neither; the IDE adapter can be written against the IDE design's interfaces and a `MemoryDisk` |
 | Performance at 21 MHz with per-access waits and intercepts | not real time | benchmarks from S1; intercept flags only on banks that need them |

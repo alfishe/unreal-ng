@@ -233,10 +233,14 @@ int Z84C15::Order(Source* out) const
     uint8_t priority = static_cast<uint8_t>(system.irqPriority & 0x07);
     if (priority > 5)
         priority &= 0x03;
+    static_assert(kSourcesPerDevice[0] + kSourcesPerDevice[1] + kSourcesPerDevice[2] == kMaxSources,
+                  "every priority order lists all sources: callers pass kMaxSources entries");
     int n = 0;
     for (uint8_t device : kPriority[priority])
     {
-        for (uint8_t i = 0; i < kSourcesPerDevice[device]; i++)
+        // n < kMaxSources never cuts anything off (static_assert above); it is the
+        // bound gcc cannot derive through the tables (-Wstringop-overflow)
+        for (uint8_t i = 0; i < kSourcesPerDevice[device] && n < kMaxSources; i++)
             out[n++] = Source{device, i};
     }
     return n;

@@ -45,7 +45,7 @@ import sys
 import zlib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_ROM = ROOT / "data/rom/sprinter/sp2k-3.04.rom"
 PAGE_SIZE = 0x4000
 MAP_SIZE = 0x1000

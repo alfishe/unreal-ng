@@ -9,6 +9,7 @@
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
+#include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -16,6 +17,7 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 class SprinterMemory;
+class SprinterVideoRenderer;
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -43,6 +45,8 @@ class SprinterMemory;
 ///     chip's on-chip ports and registers, and the engine adapter that runs the
 ///     CPU on it (Z84C15Engine, installed with the INT source behind the chip's
 ///     daisy chain);
+///   - the keyboard and the serial mouse on the chip's SIO (SprinterInput: the
+///     host's PS/2 sink, the keyboard INT, Ctrl+Alt+Del, the F12 turbo switch);
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
 ///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
@@ -74,6 +78,11 @@ public:
     bool IsPagingLocked() const override { return false; }
     /// 3.5 or 21 MHz
     uint8_t TtdClockUnits() const override { return 6; }
+    /// The WD1793 clock and data separator follow the #BD density latch (codes #16 / #17)
+    /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
+    FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
+    /// Code #15 (port #FF in TR-DOS, #1F / #0F outside it) carries the Kempston bits
+    bool HasKempstonJoystick() const override { return true; }
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
@@ -102,9 +111,13 @@ public:
     SprinterVideoRam& GetVideoRam() { return _vram; }
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
+    SprinterInput& GetInput() { return _input; }
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The picture of the active module (hook 3), Standard's when it brings none
+    const SprinterVideoRenderer& VideoRenderer() const;
 
     /// Port table index and code (§3.1)
     uint16_t LookupIndex(uint16_t port, bool isRead) const;
@@ -118,6 +131,9 @@ public:
 
     /// Re-derive window 3's cell and map the windows
     void UpdateBanks();
+
+    /// Density latch (codes #16 / #17): what the WD1793 runs at
+    bool IsFdcHighDensity() const { return _pld.fdcHd != 0; }
     /// Called by SprinterMemory after every remap: the wait-state slots
     void OnBanksChanged();
 
@@ -151,16 +167,25 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// The renderer draws the beam up to now before a change to the picture
+    void CatchUpScreen();
     void LoadFastRamImage();
 
     uint8_t FdcRead(uint8_t code);
     void FdcWrite(uint8_t code, uint8_t value);
+    /// The #BD density latch to the WD1793 (Latched policy): DD = 1 MHz + 250 kbit/s, HD = 2 MHz + 500 kbit/s
+    void ApplyFdcDensity();
+    /// The #1F operand rewrite (hardware-reference §4.4 "Fixed ports"): `IN A,(#1F)` / `OUT (#1F),A`
+    /// with the operand in RAM reach the bus as port #xx0F
+    uint16_t RewriteIoOperand(uint16_t port) const;
 
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
     Z84Lib::Z84C15 _z84;
+    /// The keyboard (SIO A) and the serial mouse (SIO B)
+    SprinterInput _input{_context, _z84, _intSource, _pld};
     /// The Z84C15 as the CPU's engine (created once the Z80 exists, installed by InstallHooks)
     std::unique_ptr<Z84C15Engine> _cpuEngine;
     SprinterMemory* _sprinterMemory = nullptr;

@@ -439,12 +439,12 @@ void VirtualNetwork::ReplaceHost(std::unique_ptr<IHostNet> host)
     _host = std::move(host);
 }
 
-void VirtualNetwork::Reset(const INetGuest* keep)
+void VirtualNetwork::Reset(const SerialGuests& keep)
 {
     std::map<uint16_t, Socket> kept;
     for (const auto& [id, s] : _sockets)
     {
-        if (keep && s.guest == keep)
+        if (s.guest && (s.guest == keep.com || s.guest == keep.machine))
             kept[id] = s;
     }
     if (_host)
@@ -659,7 +659,7 @@ std::vector<VirtualNetwork::ListenerInfo> VirtualNetwork::Listeners() const
 // TTD state
 // ---------------------------------------------------------------------------
 
-bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const INetGuest* comGuest) const
+bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests& serial) const
 {
     bool complete = true;
     out.nextId = _nextId;
@@ -677,7 +677,7 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const INetGuest* c
         o.hostId = s.hostId;
         o.proto = static_cast<uint8_t>(s.proto);
         o.connected = s.connected ? 1 : 0;
-        o.hasGuest = s.guest ? (s.guest == comGuest && comGuest ? 2 : 1) : 0;
+        o.hasGuest = !s.guest ? 0 : (s.guest == serial.com ? 2 : (s.guest == serial.machine ? 3 : 1));
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
         o.remotePort = s.remote.port;
@@ -751,7 +751,7 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const INetGuest* c
     return complete;
 }
 
-void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, INetGuest* comGuest)
+void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, const SerialGuests& serial)
 {
     _sockets.clear();
     _listeners.clear();
@@ -766,7 +766,7 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
         s.hostId = o.hostId;
         s.proto = static_cast<NetProto>(o.proto);
         s.connected = o.connected != 0;
-        s.guest = o.hasGuest == 2 ? comGuest : (o.hasGuest ? guest : nullptr);
+        s.guest = o.hasGuest == 2 ? serial.com : (o.hasGuest == 3 ? serial.machine : (o.hasGuest ? guest : nullptr));
         s.cookie = o.cookie;
         s.remote = {o.remoteAddr, o.remotePort};
         s.listenPort = o.listenPort;

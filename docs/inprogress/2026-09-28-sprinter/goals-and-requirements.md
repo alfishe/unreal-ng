@@ -119,11 +119,11 @@ D1-D4 are the minimum for calling the machine "supported"; D5-D7 complete it.
 | ID | Scenario | Pass condition |
 |---|---|---|
 | ACC-1 | Cold start with BIOS 3.04, no media | within 10 emulated seconds the logo, then the "no boot device" menu (DEL/ESC/ENTER) appears; the port table in page `#40` equals the reference table decoded from BIOS-TT (`DCP.ASM`) for the entries that BIOS 3.04 shares |
-| ACC-2 | BIOS setup (DEL): change the date, save, restart | the new date shows; the CMOS file holds it; checksum `#3F` valid |
-| ACC-3 | `fdd.a` = `dss_1_62_92.img` (1.44 MB), cold start | "Starting DOS..." then the DSS prompt; `DIR` output matches the image's root directory; the density port was set to 1.44 MB |
+| ACC-2 | BIOS setup (DEL): change the date, save, restart | the new date shows; the CMOS file holds it; checksum `#3F` valid. **As built (S2):** SETUP 1.58 of BIOS 3.04 has no date page, so the test changes "Memory Test" (CMOS `#0E`), saves with F10 and checks the restart, `#3F` and the file (roadmap §7) |
+| ACC-3 | `fdd.a` = `dss_1_62_92.img` (1.44 MB), cold start | "Starting DOS..." then the DSS prompt; `DIR` output matches the image's root directory; the density port was set to 1.44 MB. **S3a (2026-10-01):** met up to the prompt with the image in `fdd.b` (a blank CMOS boots the IDE master, then floppy B: SETUP default CMOS `#10` = `#12`); `DIR` needs DSS keyboard input (S4) |
 | ACC-4 | `ide0.master` = a built FAT16 image (MBR entry 0 type `#06`, DSS loader at LBA 1-3, `SYSTEM.DOS/EXE/BAT` from DSS 1.62), boot drive = IDE | DSS prompt on drive C:; a file written by the guest is in the image after Save |
 | ACC-5 | `ide0.master` = a host folder with the same files | same as ACC-4; the folder is unchanged (session writes) until commit |
-| ACC-6 | ESC at the boot menu → Spectrum mode; `RANDOMIZE USR 15616`; `LOAD "…"` from a `.trd` in drive A | TR-DOS catalog lists the files; the program runs |
+| ACC-6 | ESC at the boot menu → Spectrum mode; `RANDOMIZE USR 15616`; `LOAD "…"` from a `.trd` in drive A | TR-DOS catalog lists the files; the program runs. **S3a (2026-10-01):** BIOS 3.04 has no Spectrum ROMs (ESC: "Spectrum ROM not installed. Use spectrum.exe"); met through DSS `A:\ZX\SPECTRUM.EXE PENT128.ZX` → 128 menu → TR-DOS 7.01: `LIST` shows the catalog, `LOAD "…" CODE` loads byte-exact ([roadmap-and-plan.md](roadmap-and-plan.md) §8) |
 | ACC-7 | DSS: run a 256-color graphics demo (SPRINTEM `disk/FLAMES.EXE` or `256COLOR.EXE`) | screenshot matches a reference captured from MAME (palette order settled by hardware-reference §4.5) |
 | ACC-8 | DSS: run Flex Navigator (`FN.EXE`) | 80×32 text UI renders; keyboard navigation works |
 | ACC-9 | an accelerator + CBL program (pick from app.sprinter.ru during S5) | frame-time and audio match MAME within tolerance |

@@ -14,5 +14,10 @@
         <file>icons/joystick.svg</file>
         <file>icons/timetravel.svg</file>
         <file>icons/close.svg</file>
+        <file>icons/media/floppy.svg</file>
+        <file>icons/media/tape.svg</file>
+        <file>icons/media/hdd.svg</file>
+        <file>icons/media/cdrom.svg</file>
+        <file>icons/media/sdcard.svg</file>
     </qresource>
 </RCC>

@@ -10,6 +10,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/serial/serialpeer.h"
 
 namespace
 {
@@ -103,6 +104,7 @@ Atm2Kbc::Atm2Kbc(EmulatorContext* context) : _context(context)
 
 Atm2Kbc::~Atm2Kbc()
 {
+    SetSerialPeer(nullptr);
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntAtm2Kbc, false);
 }
@@ -136,6 +138,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
     bus.movxRead = [this](uint16_t address) { return MovxRead(address); };
     bus.movxWrite = [this](uint16_t address, uint8_t value) { MovxWrite(address, value); };
     bus.portOut = [this](int port, uint8_t latch) { OnPortOut(port, latch); };
+    bus.serialOut = [this](uint8_t byte, bool) { SerialOut(byte); };
     _cpu->SetBus(bus);
     _cpu->Reset();
     // Idle lines: PS/2 clock and data high, RXD high (mark), VE1 per #FF77
@@ -147,6 +150,7 @@ bool Atm2Kbc::Load(Firmware firmware, const std::string& romPath, std::string& e
     _resetLow = false;
     _p3 = 0xFF;
     _kbd = PcKeyboard{};
+    _line = SerialLineState{};
     _reads = 0;
     _lastWaitMcu = 0;
     _tBase = NowBase();
@@ -206,13 +210,130 @@ void Atm2Kbc::RunTo(uint64_t target, bool untilAnswer)
     while (_cpu->Clock() < target)
     {
         KeyboardProcess(_cpu->Clock());
-        const uint64_t next = std::min(target, std::max(KeyboardNextEvent(), _cpu->Clock() + 1));
+        SerialProcess(_cpu->Clock());
+        const uint64_t event = std::min(KeyboardNextEvent(), SerialNextEvent());
+        const uint64_t next = std::min(target, std::max(event, _cpu->Clock() + 1));
         _cpu->Run(next);
         if (untilAnswer && _board.answered)
             break;
     }
     KeyboardProcess(_cpu->Clock());
+    SerialProcess(_cpu->Clock());
 }
+
+/// region <RS-232>
+
+void Atm2Kbc::SetSerialPeer(ISerialPeer* peer)
+{
+    if (Present())
+        CatchUp(NowBase());
+    if (_peer && _peer != peer)
+    {
+        _peer->onReceive = nullptr;
+        _peer->SetClock(nullptr, 0);
+    }
+    _peer = peer;
+    _line = SerialLineState{};
+    if (_cpu)
+    {
+        // Nothing on the connector: the receivers read every input deasserted (P1 high)
+        for (int bit = 0; bit < 3; ++bit)
+            _cpu->SetPin(1, bit, true);
+    }
+    if (!_peer || !_cpu)
+        return;
+    const uint32_t baseHz = (_context && _context->emulatorState.base_z80_frequency) ? _context->emulatorState.base_z80_frequency
+                                                                                     : 3500000u;
+    _peer->SetClock([this]() { return NowBase(); }, baseHz);
+    // A byte from outside arrives at its emulated time: the controller runs up to it first
+    _peer->onReceive = [this]() {
+        if (Present())
+            CatchUp(NowBase());
+    };
+    _line.rts = Rts() ? 1 : 0;
+    _line.dtr = Dtr() ? 1 : 0;
+    _peer->OnModemLines(_line.rts != 0, _line.dtr != 0);
+    TellLine();
+}
+
+uint32_t Atm2Kbc::SerialBaud() const
+{
+    if (!_cpu)
+        return 0;
+    const uint64_t bit = _cpu->SerialBitClocks(false);
+    return bit ? static_cast<uint32_t>((_crystalHz + bit / 2) / bit) : 0;
+}
+
+void Atm2Kbc::TellLine()
+{
+    // The firmware runs the UART in mode 1: 8 data bits, no parity, 1 stop bit
+    const uint32_t baud = SerialBaud();
+    if (!_peer || baud == _line.baud)
+        return;
+    _line.baud = baud;
+    SerialLine line;
+    line.baud = baud;
+    line.dataBits = 8;
+    line.parity = 'N';
+    line.stopBits = 1;
+    _peer->OnLineSettings(line);
+}
+
+void Atm2Kbc::SerialOut(uint8_t byte)
+{
+    ++_line.bytesOut;
+    if (!_peer)
+        return;
+    TellLine();
+    _peer->Transmit(byte);
+    // The peer may answer at once (an echo, a module's reply): the run loop looks at the line again
+    _cpu->RequestStop();
+}
+
+uint64_t Atm2Kbc::SerialNextEvent() const
+{
+    if (!_peer)
+        return UINT64_MAX;
+    if (_line.rxBusy)
+        return _line.rxDoneAt;
+    // Idle: the next frame can start once the peer has a byte and RTS lets it
+    if (_peer->HasByte() && (_line.rts || !_peer->HonorsRts()))
+        return std::max(_line.rxNextAt, _cpu->Clock());
+    return UINT64_MAX;
+}
+
+void Atm2Kbc::SerialProcess(uint64_t clock)
+{
+    if (!_peer || !_cpu)
+        return;
+    // Modem inputs through the 170UP2 receivers: an asserted line reads 0 on P1
+    _cpu->SetPin(1, 0, !_peer->Dcd());
+    _cpu->SetPin(1, 1, !_peer->Cts());
+    _cpu->SetPin(1, 2, !_peer->Ri());
+    TellLine();
+
+    if (_line.rxBusy && clock >= _line.rxDoneAt)
+    {
+        // The stop bit is sampled: SBUF and RI, or the frame is lost (RI still set, REN off)
+        _line.rxBusy = 0;
+        if (_cpu->SerialIn(_line.rxByte, true))
+            ++_line.bytesIn;
+        else
+            ++_line.lost;
+    }
+    if (_line.rxBusy || clock < _line.rxNextAt || !_peer->HasByte() || (!_line.rts && _peer->HonorsRts()))
+        return;
+    const uint64_t bit = _cpu->SerialBitClocks(true);
+    if (!bit)
+        return;   // the receiver's timer does not run
+    _line.rxByte = _peer->TakeByte();
+    _line.rxBusy = 1;
+    const uint64_t frame = bit * static_cast<uint64_t>(_cpu->SerialFrameBits());
+    _line.rxDoneAt = clock + frame - bit / 2;   // the middle of the stop bit
+    _line.rxNextAt = clock + frame;             // back to back after the stop bit
+}
+
+/// endregion </RS-232>
 
 /// region <PC keyboard>
 
@@ -503,6 +624,17 @@ void Atm2Kbc::OnPortOut(int port, uint8_t latch)
     if (z80)
         z80->SetDeviceIntLine(Z80::kDeviceIntAtm2Kbc, (latch & kP1IntT) == 0);
 
+    // RTS (P1.4) and DTR (P1.3) through the inverting 170AP2 drivers: 0 = asserted
+    const uint8_t rts = (latch & 0x10) ? 0 : 1;
+    const uint8_t dtr = (latch & 0x08) ? 0 : 1;
+    if (_peer && (rts != _line.rts || dtr != _line.dtr))
+    {
+        _peer->OnModemLines(rts != 0, dtr != 0);
+        _cpu->RequestStop();   // RTS may release a byte the peer holds
+    }
+    _line.rts = rts;
+    _line.dtr = dtr;
+
     // P1.6 low drives the board's reset line, which also feeds the MCU's own
     // RST: the Z80 and the controller reset together (RAM kept). Firmware 2.2 /
     // 3.1 depend on it: at power-on they write the 'ATM' signature, pull /RES
@@ -555,6 +687,7 @@ void Atm2Kbc::SaveState(State& out) const
     if (_cpu)
         _cpu->SaveState(out.cpu);
     out.keyboard = _kbd;
+    out.line = _line;
 }
 
 bool Atm2Kbc::LoadState(const State& in)
@@ -579,6 +712,7 @@ bool Atm2Kbc::LoadState(const State& in)
     _lastWaitMcu = in.lastWaitMcu;
     _cpu->LoadState(in.cpu);
     _kbd = in.keyboard;
+    _line = in.line;
     // The Z80 /INT the controller drives follows its restored P1.5
     if (_context && _context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntAtm2Kbc, (_cpu->Latch(1) & kP1IntT) == 0);
