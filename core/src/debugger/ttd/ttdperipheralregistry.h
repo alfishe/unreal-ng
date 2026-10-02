@@ -61,6 +61,8 @@ struct TTDRestoreReport
 };
 
 /// @brief Registry for managing connected peripherals and their TTD state.
+class ITTDRegionSource;
+
 class TTDPeripheralRegistry
 {
 public:
@@ -102,6 +104,15 @@ public:
     /// Count of registered peripherals.
     size_t Count() const { return _devices.size(); }
 
+    /// Devices whose memory the time-travel engine records as regions
+    /// (Phase 1, Step 6); v1 does not use them
+    void RegisterRegionSource(ITTDRegionSource* source)
+    {
+        if (source)
+            _regionSources.push_back(source);
+    }
+    const std::vector<ITTDRegionSource*>& RegionSources() const { return _regionSources; }
+
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
 
@@ -125,6 +136,7 @@ public:
 
 private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
+    std::vector<ITTDRegionSource*> _regionSources;
 
     /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
     /// payload when that actually makes it smaller.

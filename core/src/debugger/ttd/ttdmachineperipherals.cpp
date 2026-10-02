@@ -1,5 +1,7 @@
 #include "ttdmachineperipherals.h"
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
+
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
 #include "ide/ttdcddrive.h"
@@ -66,12 +68,17 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         // different slots, so state saved on one personality cannot silently
         // restore into another.
         if (GeneralSoundCard* gs = context->pSoundManager->getGeneralSound())
+        {
             registry.Register(gs->TTDPeripheralId(), gs);
+            // Card memory recorded as engine regions (NeoGS RAM and flash)
+            registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(gs));
+        }
 #ifdef UNREALNG_HAVE_OPL4
         // MoonSound registers only when the config flag built it; a null
         // pointer leaves no entry, so state from a MoonSound machine meets a
         // MoonSound-less one as a visible missing blob (R7).
         registry.Register(PeripheralId::MoonSound, context->pSoundManager->getMoonSound());
+        registry.RegisterRegionSource(context->pSoundManager->getMoonSound());   // wave RAM as an engine region
 #endif
     }
     registry.Register(PeripheralId::Tape, context->pTape);

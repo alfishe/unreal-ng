@@ -66,6 +66,7 @@
 #include "ttdportjournal.h"
 #include "ttdportsearch.h"
 #include "timetravelframecache.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
 // (EmulatorContext, Memory, Z80State, EmulatorState are all classes/structs
@@ -1899,6 +1900,11 @@ private:
 
     /// Shadow engine (see SetShadowEngine); not owned
     TimeTravelEngine* _shadowEngine = nullptr;
+    /// Device memory the shadow engine records as regions 1.. (region 0 is RAM)
+    std::vector<TTDDeviceRegion> _shadowDeviceRegions;
+    bool _shadowArmed = false;
+    /// Start or stop the devices marking their memory writes for the shadow engine
+    void ArmShadowRegions(bool on);
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
     void FeedShadow(const TTDCheckpoint& out, bool baseline);

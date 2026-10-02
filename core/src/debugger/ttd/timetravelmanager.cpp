@@ -12,6 +12,7 @@
 
 
 #include <algorithm>
+#include <deque>
 #include <cassert>
 #include <chrono>
 #include <cstring>
@@ -3188,14 +3189,27 @@ void TimeTravelManager::EvictOldest(size_t count)
 void TimeTravelManager::SetShadowEngine(TimeTravelEngine* engine)
 {
     // Detaching keeps what the engine recorded (a benchmark reads it after the run)
+    if (!engine)
+        ArmShadowRegions(false);
     _shadowEngine = engine;
     _shadowRescan = true;
 }
 
 void TimeTravelManager::ResetShadow()
 {
+    ArmShadowRegions(false);
+    _shadowDeviceRegions.clear();
     if (_shadowEngine)
         _shadowEngine->EndSession();
+}
+
+void TimeTravelManager::ArmShadowRegions(bool on)
+{
+    if (_shadowArmed == on)
+        return;
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDArmRegions(on);
+    _shadowArmed = on;
 }
 
 void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
@@ -3212,11 +3226,23 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         ram.bytes = pieces * kTTDPieceSize;
         ram.dirtyGranularity = kTTDPieceSize * 4;
         ram.memory = _memory->RAMPageAddress(0);   // machine RAM is one contiguous block
-        if (!engine.BeginSession({ram}, error))
+
+        // Device memory as further regions (NeoGS RAM and flash, ...)
+        ArmShadowRegions(false);
+        _shadowDeviceRegions.clear();
+        for (ITTDRegionSource* source : _peripherals.RegionSources())
+            source->TTDRegions(_shadowDeviceRegions);
+        std::vector<TTDRegionDesc> regions = {ram};
+        for (const TTDDeviceRegion& r : _shadowDeviceRegions)
+            regions.push_back(r.desc);
+
+        if (!engine.BeginSession(regions, error))
         {
             MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());
+            _shadowDeviceRegions.clear();
             return;
         }
+        ArmShadowRegions(true);
         _shadowRescan = true;
     }
 
@@ -3233,16 +3259,48 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         for (uint32_t sub = 0; sub < 4; ++sub)
             in.changed.push_back({0, uint32_t(page) * 4 + sub, bytes + sub * kTTDPieceSize});
     };
+    // Device regions: the pieces their devices marked (all of them on a rescan).
+    // A partial last piece is handed over padded to 4 KB
+    std::deque<std::vector<uint8_t>> padded;   // stable addresses while it grows
+    std::vector<uint32_t> written;
+    auto addDevicePieces = [&](uint32_t region, const TTDDeviceRegion& r, bool all) {
+        written.clear();
+        r.tracker->CollectAndClear(written);
+        if (all)
+        {
+            written.clear();
+            for (uint32_t p = 0; p < r.tracker->Pieces(); ++p)
+                written.push_back(p);
+        }
+        for (const uint32_t p : written)
+        {
+            const size_t offset = size_t(p) * kTTDPieceSize;
+            const uint8_t* bytes = r.tracker->Memory() + offset;
+            if (offset + kTTDPieceSize > r.tracker->Bytes())
+            {
+                padded.emplace_back(kTTDPieceSize, 0);
+                std::memcpy(padded.back().data(), bytes, r.tracker->Bytes() - offset);
+                bytes = padded.back().data();
+            }
+            in.changed.push_back({region, p, bytes});
+        }
+    };
+
+    for (ITTDRegionSource* source : _peripherals.RegionSources())
+        source->TTDBeforeCapture();
+
     if (_shadowRescan)
     {
         in.changed.reserve(pieces);
         for (uint16_t p = 0; p < _modelRamPages; ++p)
             addPage(p);
-        _shadowRescan = false;
     }
     else
         for (const uint16_t p : _dirtyScratch)
             addPage(p);
+    for (size_t i = 0; i < _shadowDeviceRegions.size(); ++i)
+        addDevicePieces(static_cast<uint32_t>(i + 1), _shadowDeviceRegions[i], _shadowRescan);
+    _shadowRescan = false;
 
     if (!engine.CaptureFrame(in, error))
     {

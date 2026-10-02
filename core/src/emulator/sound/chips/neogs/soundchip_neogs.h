@@ -52,7 +52,8 @@ namespace ttd
 enum class TTDExternalEventKind : uint8_t;
 }
 
-class SoundChip_NeoGS : public GeneralSoundCard, private NeoGSDma::Host, private NeoGSZxDma::Host
+class SoundChip_NeoGS : public GeneralSoundCard, public ttd::ITTDRegionSource, private NeoGSDma::Host,
+                        private NeoGSZxDma::Host
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -169,6 +170,11 @@ public:
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::NeoGS; }
+
+    /// Time-travel engine regions (Phase 1, Step 6): the card RAM (2-4 MB) and
+    /// the flash (512 KB), recorded as changed 4 KB pieces
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override;
     std::string TTDDeviceName() const override { return "NeoGS"; }
     /// Hashes the machine-visible state: registers, devices, not RAM, flash
     /// or decoded audio
@@ -375,6 +381,8 @@ private:
     Z80CPU* _cpu = nullptr;
     Flash29F040B _flash;
     NeoGSMemory _mem;
+    ttd::TTDRegionTracker _ramTracker;
+    ttd::TTDRegionTracker _flashTracker;
     NeoGSInterrupts _irq;
     NeoGSSound _snd;
     NeoGSSpi _spi;

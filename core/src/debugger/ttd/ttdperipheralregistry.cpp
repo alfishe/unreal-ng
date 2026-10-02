@@ -24,6 +24,7 @@ void TTDPeripheralRegistry::Unregister(PeripheralId id)
 void TTDPeripheralRegistry::Clear()
 {
     _devices.clear();
+    _regionSources.clear();
 }
 
 bool TTDPeripheralRegistry::IsRegistered(PeripheralId id) const

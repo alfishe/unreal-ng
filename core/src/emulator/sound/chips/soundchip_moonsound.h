@@ -11,6 +11,7 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/audio.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 class EmulatorContext;
 
@@ -79,7 +80,7 @@ static_assert(offsetof(MoonSoundTTDHeader, romHash) + sizeof(MoonSoundTTDHeader:
 ///   _tstateOrigin + AudioTstate(z80->t) * HostSpeedMultiplier()
 /// and every value handed to the library is clamped monotonic - a machine
 /// switch or hard reset mid-session must never move chip time backwards.
-class SoundChip_Moonsound : public PortDevice, public ttd::TTDSerializable
+class SoundChip_Moonsound : public PortDevice, public ttd::TTDSerializable, public ttd::ITTDRegionSource
 {
 public:
     // The card's fixed I/O addresses (2.1). CPLD decodes A0..A7 only; the two
@@ -184,6 +185,13 @@ public:
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::MoonSound; }
     uint64_t TTDHashState() const override;
 
+    /// Time-travel engine region (Phase 1, Step 6): the wave RAM (up to
+    /// 1 MiB, after the ROM in the wave memory), its writes taken from the
+    /// wave memory's own dirty bitmap before each capture
+    void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
+    void TTDArmRegions(bool on) override;
+    void TTDBeforeCapture() override;
+
 private:
     /// This frame's duration on the 3.5 MHz T-state axis, in audio time
     /// units (config.frame * HostSpeedMultiplier - the same budget the
@@ -216,6 +224,8 @@ private:
     // configured image at construction; a missing image leaves the
     // zero-filled region in place, which is the documented behaviour (D10).
     opl4::WaveMemory _waveMemory;
+    ttd::TTDRegionTracker _ramTracker;
+    bool _regionsArmed = false;
     opl4::Opl4 _opl4;
 
     // Wave ROM bytes actually loaded (diagnostics / tests)
