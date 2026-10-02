@@ -15,6 +15,9 @@
 //   audio_result   → GET /audio/capture/result?wav=
 //   temporal_status → GET /video/temporal (ZX DLSS de-flicker status, one-line summary)
 //   temporal_set    → PUT /video/temporal {algorithm} ("off" / "" switches it off)
+//   vdac2_capture_start  → POST /vdac2/capture/start {path} (TS-Conf VDAC2 card: FT812 bus to an .evr stream)
+//   vdac2_capture_stop   → POST /vdac2/capture/stop
+//   vdac2_capture_status → GET  /vdac2/capture/status
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -107,13 +110,14 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
                                "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set"})
+                               "temporal_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Media operation: still capture, digest, video recording session, audio capture, or the ZX DLSS de-flicker "
-        "(temporal_status / temporal_set).";
+        "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
+        "(temporal_status / temporal_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
+        "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
@@ -132,6 +136,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["fps"]["description"] = "Recording fps (1-100). With every_nth:Q the default is 50/Q so playback is real-time";
     schema["properties"]["scale"]["type"] = "integer";
     schema["properties"]["scale"]["description"] = "Integer upscale for recording (1-4, default 1)";
+    schema["properties"]["audio"]["type"] = "string";
+    schema["properties"]["audio"]["description"] =
+        "record_start: audio codec for the emulated sound track (aac, mp3, opus, vorbis, flac, pcm_s16le). Omit "
+        "for video only (default). Must fit the container: h264/hevc + aac in .mp4/.mov is native on macOS; "
+        "gif has no audio (refused)";
+    schema["properties"]["video_bitrate"]["type"] = "integer";
+    schema["properties"]["video_bitrate"]["description"] = "record_start: video bitrate kbps (0 = default, 100-200000)";
+    schema["properties"]["audio_bitrate"]["type"] = "integer";
+    schema["properties"]["audio_bitrate"]["description"] = "record_start: audio bitrate kbps (0 = default, 32-512)";
     schema["properties"]["region"]["type"] = "string";
     schema["properties"]["region"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["region"]["enum"].append("full");
@@ -139,7 +152,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["region"]["enum"].append("main");
     schema["properties"]["region"]["description"] = "Recording capture region (default full)";
     schema["properties"]["filename"]["type"] = "string";
-    schema["properties"]["filename"]["description"] = "Output file for recording or screenshot (e.g. scratch/screen.png). Saves binary directly to disk on server side.";
+    schema["properties"]["filename"]["description"] = "Output file for recording, screenshot (e.g. scratch/screen.png) or vdac2_capture_start (an .evr stream). Saves binary directly to disk on server side.";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] = "Alias for filename.";
     schema["properties"]["every_nth"]["description"] =
@@ -163,9 +176,11 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     registry.Register(
         "capture_media",
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
-        "(GIF native) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
+        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac') with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
-        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing).",
+        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), and the "
+        "TS-Conf VDAC2 card's FT812 bus capture (vdac2_capture_start / _stop / _status: every chip select and byte "
+        "with FT812 clocks and per-frame picture hashes, an .evr stream that replays the chip alone).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             std::string action = args["action"].asString();
@@ -317,7 +332,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             if (fps < 1) fps = 1;
                             (*body)["fps"] = fps;
                         }
-                        for (const char* field : {"format", "fps", "scale", "region", "filename"})
+                        for (const char* field : {"format", "fps", "scale", "region", "filename", "audio",
+                                                  "video_bitrate", "audio_bitrate"})
                         {
                             if (args.isMember(field) && !args[field].isNull())
                             {
@@ -336,6 +352,22 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             {
                                 done(ToolResult::Error("Recording start failed (HTTP " + std::to_string(status) + "): " +
                                                        DescribeErrorBody(startResponse)));
+                                return;
+                            }
+
+                            // Unbounded (no 'frames'): the session stays open until record_stop
+                            if (frames == 0)
+                            {
+                                std::ostringstream out;
+                                out << "Recording started → " << startResponse.get("output", "").asString() << " ("
+                                    << startResponse.get("format", "").asString();
+                                if (startResponse.get("audio", false).asBool())
+                                {
+                                    out << " + " << startResponse.get("audio_codec", "").asString() << " audio "
+                                        << startResponse.get("audio_sample_rate", 0).asUInt() << " Hz";
+                                }
+                                out << "); run the emulator, then record_stop [target " << id << "]";
+                                done(ToolResult::Ok(out.str(), std::move(startResponse)));
                                 return;
                             }
 
@@ -362,8 +394,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                             return;
                                         }
                                         std::ostringstream out;
-                                        out << "Recorded " << stopResponse["stats"].get("framesRecorded", frames).asUInt()
+                                        out << "Recorded " << stopResponse.get("frames_recorded", frames).asUInt()
                                             << " frame(s)";
+                                        if (stopResponse.get("audio", false).asBool())
+                                        {
+                                            out << " + " << stopResponse.get("audio_duration", 0.0).asDouble() << " s of "
+                                                << stopResponse.get("audio_codec", "").asString() << " audio";
+                                        }
                                         if (quantum > 1)
                                         {
                                             out << " (every_nth=" << quantum << " → ~" << (50.0 / quantum) << " Hz updates)";
@@ -633,10 +670,37 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "vdac2_capture_start")
+            {
+                const std::string path = args.isMember("filename") ? args["filename"].asString()
+                                                                   : (args.isMember("path") ? args["path"].asString() : "");
+                if (path.empty())
+                {
+                    done(ToolResult::Error("vdac2_capture_start needs 'filename': the .evr file to write (server side)"));
+                    return;
+                }
+                Json::Value body;
+                body["path"] = path;
+                ResolveAndForward(args, "POST", "/vdac2/capture/start", &body, caller, "VDAC2 capture started", done);
+                return;
+            }
+            if (action == "vdac2_capture_stop")
+            {
+                Json::Value body(Json::objectValue);
+                ResolveAndForward(args, "POST", "/vdac2/capture/stop", &body, caller, "VDAC2 capture stopped", done);
+                return;
+            }
+            if (action == "vdac2_capture_status")
+            {
+                ResolveAndForward(args, "GET", "/vdac2/capture/status", nullptr, caller, "VDAC2 capture status", done);
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set"));
+                                            "temporal_status, temporal_set, vdac2_capture_start, vdac2_capture_stop, "
+                                            "vdac2_capture_status"));
         });
 }
 

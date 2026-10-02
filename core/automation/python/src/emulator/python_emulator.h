@@ -52,6 +52,7 @@
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "recordingrequest.h"
 #include <atomic>
 #include <ctime>
 #include <filesystem>
@@ -73,6 +74,7 @@
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
+#include "../bindings/python_vdac2.h"
 
 namespace py = pybind11;
 
@@ -2018,7 +2020,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'zxnetusb,zxwifi', host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -4653,18 +4655,38 @@ namespace PythonBindings
                 float fps = 50.0f;
                 int scale = 1;
                 std::string region = "full";
+                std::string audio;
+                long videoBitrate = 0;
+                long audioBitrate = 0;
                 if (py::isinstance<py::dict>(optsValue))
                 {
                     py::dict opts = optsValue;
-                    if (opts.contains("format") && py::isinstance<std::string>(opts["format"]))
+                    // Optional sound track: "aac" (or True = aac); None/False = video only
+                    if (opts.contains("audio") && !opts["audio"].is_none())
+                    {
+                        if (py::isinstance<py::bool_>(opts["audio"]))
+                            audio = opts["audio"].cast<bool>() ? "aac" : "";
+                        else if (py::isinstance<py::str>(opts["audio"]))
+                            audio = RecordingRequest::NormalizeAudioCodec(opts["audio"].cast<std::string>());
+                        else
+                        {
+                            d["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a bool";
+                            return d;
+                        }
+                    }
+                    if (opts.contains("video_bitrate"))
+                        videoBitrate = opts["video_bitrate"].cast<long>();
+                    if (opts.contains("audio_bitrate"))
+                        audioBitrate = opts["audio_bitrate"].cast<long>();
+                    if (opts.contains("format") && py::isinstance<py::str>(opts["format"]))
                         format = opts["format"].cast<std::string>();
-                    if (opts.contains("filename") && py::isinstance<std::string>(opts["filename"]))
+                    if (opts.contains("filename") && py::isinstance<py::str>(opts["filename"]))
                         filename = opts["filename"].cast<std::string>();
                     if (opts.contains("fps"))
                         fps = opts["fps"].cast<float>();
                     if (opts.contains("scale"))
                         scale = opts["scale"].cast<int>();
-                    if (opts.contains("region") && py::isinstance<std::string>(opts["region"]))
+                    if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
                         region = opts["region"].cast<std::string>();
                 }
 
@@ -4683,6 +4705,24 @@ namespace PythonBindings
                     const long long stamp =
                         static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
                     filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
+                }
+
+                // Same rules as the WebAPI/CLI/Lua (RecordingRequest): the codec must fit the container
+                if (videoBitrate < 0 || audioBitrate < 0 || videoBitrate > 1000000 || audioBitrate > 1000000)
+                {
+                    d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
+                    return d;
+                }
+                {
+                    std::string codecError = RecordingRequest::ValidateAudio(format, filename, audio);
+                    if (codecError.empty())
+                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
+                                                                        static_cast<uint32_t>(audioBitrate), audio);
+                    if (!codecError.empty())
+                    {
+                        d["error"] = codecError;
+                        return d;
+                    }
                 }
 
                 if (fps < 1.0f) fps = 1.0f;
@@ -4704,7 +4744,8 @@ namespace PythonBindings
                 const bool wasRunning = self.IsRunning() && !self.IsPaused();
                 if (wasRunning) self.Pause();
 
-                const bool started = rm->StartRecording(filename, format, "");
+                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                        static_cast<uint32_t>(audioBitrate));
 
                 if (wasRunning) self.Resume();
 
@@ -4721,6 +4762,10 @@ namespace PythonBindings
                 d["fps"] = fps;
                 d["scale"] = scale;
                 d["region"] = region;
+                d["audio"] = rm->HasAudio();
+                d["audio_codec"] = audio;
+                d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+                d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
                 d["feature_auto_enabled"] = featureWasOff;
                 d["output"] = filename;
                 return d;
@@ -4768,6 +4813,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else
@@ -4802,6 +4854,13 @@ namespace PythonBindings
             d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
             d["average_frame_time_ms"] = stats.averageFrameTime;
             d["recent_fps"] = stats.recentFps;
+            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
+            d["video_codec"] = rm->GetVideoCodec();
+            d["audio"] = rm->HasAudio();
+            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
+            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
             d["output"] = rm->GetOutputFilename();
             return d;
 #else
@@ -5088,5 +5147,8 @@ namespace PythonBindings
 
         // Port trace (PDR) bindings — runtime feature "porttrace"
         registerPortTraceBindings(emulatorClass);
+
+        // TS-Conf VDAC2 card (FT812): bus capture
+        registerVdac2Bindings(emulatorClass);
     }
 }

@@ -8,6 +8,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
@@ -18,6 +19,10 @@
 
 class SprinterMemory;
 class SprinterVideoRenderer;
+namespace ttd
+{
+class TTDSprinterPld;
+}
 
 /// Peters Plus Sprinter Sp2000 port decoder: owns the PLD state
 /// (docs/inprogress/2026-09-28-sprinter/tdd-ports-memory.md).
@@ -116,6 +121,12 @@ public:
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
     const SprinterPldConfiguration& ActiveModule() const { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
+    /// The standard configuration's accelerator (owned here, supplied by SprinterPldStandard, hook 4)
+    SprinterAccelerator& StandardAccelerator() { return _accelerator; }
+    /// The accelerator in use: the active module's, Standard's when it brings none; null while the
+    /// PLD is not configured. Its state (mode, length, function, buffer, INT block) is what the
+    /// debugger and automation show (SprinterAccelerator::State, ModeName, FunctionName)
+    SprinterAccelerator* GetAccelerator() const { return _activeAccelerator; }
     /// The picture of the active module (hook 3), Standard's when it brings none
     const SprinterVideoRenderer& VideoRenderer() const;
 
@@ -154,9 +165,27 @@ public:
     uint16_t DcpOpenedPc() const { return _dcpOpenedPc; }
     /// Code #89 (Covox-Blaster control, phase S6): the last value written (automation state block)
     uint8_t CblControl() const { return _cblControl; }
+    SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
 
+    /// region <TTD (phase S7; debugger/ttd/sprinter/ttdsprinter.h)>
+public:
+    /// A TTD serializer loaded part of the machine's state: re-derive what follows from it - the
+    /// engine's boundary hand-over, the turbo and its wait overlay, the bank windows, the step hook
+    void OnTtdStateLoaded();
+
+    /// The standard block accelerator's state (SprinterAccelState: mode, length, function, the INT block,
+    /// the alternate addressing, the 256-byte buffer, the counters), carried in the PLD blob
+    /// (tdd-integration §2.1). A module's own accelerator travels in its module state. The write
+    /// in progress between BeforeWrite and AfterWrite is inside one bus cycle, never at a boundary
+    size_t AccelStateSize() const { return sizeof(SprinterAccelState); }
+    void SaveAccelState(uint8_t* dst) const;
+    void LoadAccelState(const uint8_t* src);
+    /// endregion </TTD>
+
 private:
+    friend class ttd::TTDSprinterPld;  ///< the PLD blob carries the decoder fields below SprinterPldState
+
     void PowerOn();
     /// The PLD's own reset of its registers (MAME machine_reset); `kind` says which reset
     void ResetPld(SprinterResetKind kind);
@@ -169,6 +198,8 @@ private:
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
+    /// Ask the active module for its accelerator (hook 4) and make it the CPU's bus agent
+    void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
     void LoadFastRamImage();
@@ -185,6 +216,9 @@ private:
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
     SprinterIntSource _intSource{_context, _vram};
+    /// The standard accelerator and the one in use (hook 4)
+    SprinterAccelerator _accelerator{_context, _pld};
+    SprinterAccelerator* _activeAccelerator = nullptr;
     Z84Lib::Z84C15 _z84;
     /// The keyboard (SIO A) and the serial mouse (SIO B)
     SprinterInput _input{_context, _z84, _intSource, _pld};

@@ -26,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Emulator;
@@ -137,6 +138,9 @@ struct StreamBytes
     uint64_t writeJournal = 0;
     uint64_t inputJournal = 0;
     uint64_t coverage = 0;
+    /// Memory writes recorded since the session started, including those the
+    /// write journal's ring has already dropped (not part of Total())
+    uint64_t journalWritesTotal = 0;
     uint64_t Total() const
     {
         return ramPayload + pageRefs + deviceBlobs + checkpointCore + writeJournal + inputJournal + coverage;
@@ -213,6 +217,10 @@ public:
     virtual uint32_t FrameSpan() const = 0;       ///< TTD time units per frame
     virtual StreamBytes Bytes() const = 0;
     virtual uint64_t ResidentBytes() const = 0;   ///< heap of the whole session (BM-4)
+    /// ResidentBytes() by part, (name, bytes). The parts sum to ResidentBytes(),
+    /// except the "*_slack" ones other than "ram_payload_slack": those are the
+    /// unused allocation inside another part (TTDHeapBreakdown)
+    virtual std::vector<std::pair<std::string, uint64_t>> HeapParts() const = 0;
     /// Seek to (frame, tInFrame); false when the engine refused
     virtual bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) = 0;
     /// Write the session to @p path; bytes written

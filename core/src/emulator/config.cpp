@@ -310,6 +310,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	{
+		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
+		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
+		if (preset == "SETUP" || preset == "setup")
+			config.atm.ts_bios_sd_boot = 0;
+		else
+		{
+			config.atm.ts_bios_sd_boot = 1;
+			if (preset != "SDBOOT" && preset != "sdboot")
+				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
 
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
@@ -318,6 +330,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
 	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
 	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 1) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
 
@@ -844,6 +857,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
 	}
+	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
+	// Resolved by the card like the other ROMs (working dir, executable, resources);
+	// a missing file only leaves the ROM fonts blank
+	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
+	                sizeof config.vdac2_rom_path);
+	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
+	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
+	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
+	                sizeof config.vdac2_capture_path);
 
 	// NETWORK section (network adapters TDD §8). Card= fits a card on the
 	// ZX-Bus; the runtime feature "network" can still unplug it.
@@ -897,6 +919,25 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.zxWifi[0] = '\0';
 		}
 	}
+	config.network.atm2IoEsp[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "Atm2IoEsp", nullptr), config.network.atm2IoEsp, sizeof config.network.atm2IoEsp);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.atm2IoEsp, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] Atm2IoEsp=%s: %s - the card's ESP runs AT", config.network.atm2IoEsp, error.c_str());
+			config.network.atm2IoEsp[0] = '\0';
+		}
+	}
+	{
+		// The card's bus address: a multiple of 8 (CT2..CT0 pick the register)
+		const long address = inimanager.GetLongValue(network, "Atm2IoEspAddress", 0xF0);
+		config.network.atm2IoEspAddress = static_cast<uint8_t>(address & 0xF8);
+		if (address < 0 || address > 0xFF || (address & 0x07))
+			MLOGWARNING("Config: [NETWORK] Atm2IoEspAddress=%ld: a bus address 0x00..0xF8 in steps of 8 (0xF0 or 0xF8); 0x%02X used",
+			            address, config.network.atm2IoEspAddress);
+	}
 	if (inimanager.GetValue(network, "ComFlavor", nullptr))
 		MLOGWARNING("Config: [NETWORK] ComFlavor= is no longer read: the machine decides its serial port "
 		            "(ZX-Evo: [EVO] Avr=); a ZX-WiFi card is Card=ZXWIFI");
@@ -924,6 +965,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			hook(config);
 
 		result = true;
+#ifndef ENABLE_VDAC2
+		// A build without the FT812 library cannot fit the card: refuse the
+		// machine instead of running it without its video output
+		// (vdac2-integration-design.md §2)
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7)
+		{
+			MLOGERROR("Config: [MISC] TS_VDAC2=1, but this build has no VDAC2 support (CMake ENABLE_VDAC2=OFF)");
+			result = false;
+		}
+#endif
 	}
 	else
 	{

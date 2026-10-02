@@ -161,12 +161,14 @@ TEST_F(PortDecoder_ATM710_Test, IsPort_EFF7)
 
 TEST_F(PortDecoder_ATM710_Test, IsPort_FE)
 {
-    // Port: #FE (A0 = 0)
+    // Port: #FE = A2..A0 = 110 (the ATM 7.10 ports doc "#FE = %nnnnnnnn1111x110"; Xpeccy, MAME)
 
     EXPECT_TRUE(_portDecoder->IsPort_FE(0x00FE));
     EXPECT_TRUE(_portDecoder->IsPort_FE(0xFFFE));
-    EXPECT_TRUE(_portDecoder->IsPort_FE(0x1234));  // Any even port
+    EXPECT_TRUE(_portDecoder->IsPort_FE(0x1236));  // A2..A0 = 110, the open decode
 
+    EXPECT_FALSE(_portDecoder->IsPort_FE(0x1234));  // even, but A2..A0 = 100
+    EXPECT_FALSE(_portDecoder->IsPort_FE(0x00FA));  // #FA: the INTERNAL I/O data port
     EXPECT_FALSE(_portDecoder->IsPort_FE(0x00FF));  // A0 = 1
     EXPECT_FALSE(_portDecoder->IsPort_FE(0x0001));
 }

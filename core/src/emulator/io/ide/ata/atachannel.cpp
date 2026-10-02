@@ -30,7 +30,7 @@ uint8_t AtaChannel::ReadRegister(uint8_t reg)
 
     AtaDevice* other = Present(_selected ^ 1);
     if (!other)
-        return 0xFF;  // nothing drives the bus
+        return static_cast<uint8_t>(_emptyBus & 0xFF);  // nothing drives the bus
     // Device 1 absent: device 0 answers for it, with status 0 (ATA)
     if (reg == StatusCommand || reg == Control)
         return 0x00;
@@ -71,7 +71,7 @@ void AtaChannel::WriteRegister(uint8_t reg, uint8_t value)
 uint16_t AtaChannel::ReadData()
 {
     AtaDevice* selected = Present(_selected);
-    return selected ? selected->ReadData() : 0xFFFF;
+    return selected ? selected->ReadData() : _emptyBus;  // the other unit never drives data for it
 }
 
 void AtaChannel::WriteData(uint16_t word)

@@ -21,9 +21,13 @@
 ///   - Ctrl + Alt + Del pulls the CPU's /RESET (KBD.TDF KB_RESET; the PLD keeps
 ///     its configuration); F12 without Shift / Ctrl / Alt toggles the hardware
 ///     turbo switch (KB_F12 -> TEST_SWITCH -> TURBO_HAND; MAME F12 "TURBO");
-///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol),
-///     sampled from the Kempston counters - the PLD's Kempston view (code #58)
-///     reads the same mouse.
+///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol;
+///     DSS 1.71 reads it, INTMOUSE READ_M: three bytes synced on bit 6, no 'M'
+///     identification) and the PLD's Kempston view of the same mouse (code #58,
+///     #FADF / #FBDF / #FFDF; DSS 1.62.9x reads that). Both come from one set of
+///     counters, the host mouse's (Mouse: X, Y, buttons), read whether or not a
+///     Kempston interface is configured ([INPUT] Mouse=): the board's mouse is
+///     always there.
 ///
 /// Time: base T-states (3.5 MHz) from the machine's cumulative counter. Bytes
 /// are delivered lazily before every access to the SIO ports, and after every
@@ -86,14 +90,21 @@ public:
     /// Called when NeedsStepHook may have changed (a key queued)
     void SetStepHookListener(std::function<void()> listener) { _onStepHookChange = std::move(listener); }
 
+    /// The PLD's Kempston view of the board's mouse (code #58): A8 = 0 buttons
+    /// (active low, D0 left, D1 right, D2 middle, D7-D3 = 1), else A10 = 0 X, else Y
+    uint8_t ReadMouseView(uint16_t port) const;
+
     Ps2KeyboardStream& KeyboardStream() { return _keyboard; }
     MsSerialMouse& SerialMouse() { return _mouse; }
 
     /// Statistics: bytes the SIO refused (FIFO full)
     uint64_t KeyboardOverruns() const { return _keyboardOverruns; }
+    void SetKeyboardOverruns(uint64_t count) { _keyboardOverruns = count; }  ///< TTD restore
 
 private:
     uint64_t Now() const;
+    /// The board's mouse counters (one source for the serial and the Kempston view)
+    void SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const;
 
     EmulatorContext* _context;
     Z84Lib::Z84C15& _chip;

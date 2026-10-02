@@ -112,19 +112,67 @@ with the library's results in L-G.
 
 ## 4. Replay streams
 
-- **Format** (`.evr`, little-endian): header (magic `EVR1`, chip model, external clock,
-  ROM image SHA-1, initial state: power-on), then events: `{clock (u64 FT812 system
-  clocks since start), kind (select / deselect / byte), mosi, expected miso}`, plus
-  checkpoints `{clock, SHA-1 of RAM_G, RAM_DL, REG, frame hash}`.
-- **Capture source:** the patched TS-Labs Unreal (§3.2), converting its T-states to
-  FT812 clocks with the mode's clock; one stream per program, the first N seconds after
-  boot.
-- **Replay:** the library is driven by the events with `EveAdvance` to each event's clock;
-  every `expected miso` is compared byte for byte, every checkpoint's memory hashes
-  exactly. Frame hashes at checkpoints are compared with a tolerance only where a pixel
-  rule is still TO VERIFY (the test says which V-item).
-- **Later:** once unreal-ng hosts the card (D-C I1-I2), the same format is written by a
-  debug capture in `Vdac2Card`, so new streams can come from our own runs.
+A replay stream is everything that crossed the FT812's bus, with the chip's clock: replayed
+into the library alone it reproduces the chip's whole run, with no machine around it. It is
+the reference workload for the library's tests (L-P) and for its performance work.
+
+### 4.1 Format `.evr` v1 (little-endian)
+
+Header, 64 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `EVR1` |
+| 4 | 4 | header size (64) |
+| 8 | 4 | chip model (812) |
+| 12 | 4 | external clock in Hz (VDAC2: 8 000 000) |
+| 16 | 20 | SHA-1 of the ROM image the chip ran with (zeros: no ROM) |
+| 36 | 4 | ROM image size in bytes |
+| 40 | 4 | flags: bit 0 = the stream starts at the chip's power-on |
+| 44 | 8 | the clock the stream starts at (0 from power-on) |
+| 52 | 12 | reserved, zero |
+
+Then records, each `kind (u8)`, `clocks since the previous record (unsigned LEB128)`,
+payload. The clock is the chip's system clock count since its creation
+(`EveTotalClocks`):
+
+| Kind | Payload | Replay |
+|---|---|---|
+| 1 select | u8 level (1 = selected) | advance to the clock, `EveSelect` |
+| 2 byte | u8 mosi, u8 miso | advance, `EveExchange(mosi)`; the result must equal miso |
+| 3 frame | u64 completed frames, u8 drawn, u16 width, u16 height, u64 FNV-1a 64 of the ARGB8888 picture (bytes of each pixel, low byte first) | advance; `EveCompletedFrames` must equal the count; when drawn and the replay draws at the same size, the hashes must be equal |
+| 4 power-on | - | advance, `EveReset` |
+| 5 end | - | advance to the clock: the end of the capture |
+| 6 state | u32 size, state blob, u32 regions, per region: u8 name length, name, u32 size, bytes | the first record of a capture started on a running chip: `EveLoadState`, the regions written back, `EveMemoryRestored` |
+
+A replay draws every frame (`EveSetOutput` with drawing on, a buffer of the mode's
+`HSIZE × VSIZE`, resized after a frame when the mode changed: the capture does the same),
+so its frame hashes are comparable. A difference in miso or in a frame hash is a behavior
+change; the clock of the record says where.
+
+### 4.2 Capture
+
+- **unreal-ng:** start and stop at any moment on every automation surface (WebAPI
+  `/vdac2/capture/start|stop|status`, CLI `vdac2 capture`, MCP `capture_media`
+  `vdac2_capture_*`, Lua / Python `vdac2_capture_*`; recipe
+  `.recipe/machines/tsconf-vdac2.md`), or from the card's creation with
+  `[VDAC2] CaptureFile=<path>`. Started on a running chip, the stream begins with a
+  **state record** (kind 6: u32 size + the `EveSaveState` blob, u32 region count, then per
+  region u8 name length, name, u32 size, bytes); the header's flags bit 0 is then clear and
+  its bytes 44-51 hold the clock the stream starts at. Replay: `EveLoadState`, write the
+  regions back, `EveMemoryRestored`; the chip's clock then equals the record's. While
+  capturing, the chip draws every frame, also while the Evo is shown, so every frame record
+  carries a hash (`vdac2capture.{h,cpp}`).
+- **TS-Labs Unreal (§3.2):** the same format from its logging patches, converting its
+  T-states to FT812 clocks with the mode's clock.
+
+### 4.3 Uses
+
+- **L-P replay tests** in the library: every miso byte-exact, every frame count and drawn
+  hash exact; pixel rules still TO VERIFY are named in the test.
+- **Performance:** the library's benchmark replays a stream (R-Type gameplay first) as fast
+  as it can and reports clocks per second against the real-time rate; optimizations keep
+  every hash.
 
 ## 5. Files the corpus needs
 

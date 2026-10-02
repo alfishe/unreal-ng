@@ -394,7 +394,7 @@ GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette f
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity); 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|zxnetusb,zxwifi", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41"} (com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41"} (com_port: the machine's own serial port, the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's RS-232 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
@@ -452,8 +452,11 @@ GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offse
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
-POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
-GET  /api/v1/emulator/{id}/video/record/status    Recording state
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
+                                               "format", "filename", "fps", "scale", "region",
+                                               "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate"})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
+                                               audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration)
 ```
 
 #### Disassembly Response

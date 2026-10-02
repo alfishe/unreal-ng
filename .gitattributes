@@ -34,6 +34,7 @@
 *.hdf binary
 *.hdi binary
 *.vhd binary
+*.chd binary
 *.ttd binary
 *.rbf binary
 *.wav binary

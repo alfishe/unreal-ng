@@ -331,6 +331,9 @@ TEST(TsConfMedia_Test, SdSlotIsFat32Only)
     const auto info = context->pMediaManager->Info("sd.zc");
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->format, "folder-fat32") << "TS-BIOS and Wild Commander read FAT32";
+    for (const std::string& line : inserted.report)
+        EXPECT_EQ(line.find("MBR"), std::string::npos)
+            << "a folder is a volume from sector 0, the layout TS-BIOS boots: " << line;
 
     InsertOptions fat16;
     fat16.fs = FatType::Fat16;

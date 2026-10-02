@@ -194,7 +194,8 @@ PixelSources VideoMapService::SourcesAt(const VideoState& s, size_t layerIndex, 
     const VideoLayout layout = mapper.Layout(s);
     if (screen && screen->GetVideoMode() == s.mode)
     {
-        FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
+        // The machine's raster, also while the monitor shows an external picture
+        FramebufferDescriptor& fb = screen->GetNativeFramebufferDescriptor();
         const LayerDesc* layer = layerIndex < layout.layers.size() ? &layout.layers[layerIndex] : nullptr;
         const bool own = layer && layer->ownFramebufferOrigin;
         const uint32_t fx = (own ? layer->fbLeft : layout.fb.surfaceLeft) + x;

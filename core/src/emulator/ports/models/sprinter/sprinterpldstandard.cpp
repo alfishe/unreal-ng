@@ -29,6 +29,11 @@ bool SprinterPldStandard::UpdateBanks(SprinterMemory& memory, const SprinterPldS
     return true;
 }
 
+SprinterAccelerator* SprinterPldStandard::Accelerator(PortDecoder_Sprinter& decoder)
+{
+    return &decoder.StandardAccelerator();
+}
+
 const SprinterVideoRenderer* SprinterPldStandard::VideoRenderer() const
 {
     return &SprinterVideoRenderer::Standard();

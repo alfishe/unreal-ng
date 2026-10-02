@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Review round 1 done (2026-09-28): full start is the user default, `ide0.slave` empty, configuration module in the TTD blob |
+| **Status** | Review round 1 done (2026-09-28): full start is the user default, `ide0.slave` empty, configuration module in the TTD blob. §2 TTD as built in S7 (2026-10-02) |
 | **Index** | [technical-design.md](technical-design.md) |
 | **Mapping** | [unreal-ng-mapping.md](unreal-ng-mapping.md) |
 
@@ -55,43 +55,52 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 
 ## 2. TTD and snapshots
 
-### 2.1 New peripheral ids
+As built in phase S7 (2026-10-02, branch `sprinter-ttd`; outcome and tests:
+[s7-ttd-outcome.md](s7-ttd-outcome.md)). Serializers: `core/src/debugger/ttd/sprinter/ttdsprinter.h`,
+`core/src/debugger/ttd/ttdwd1793context.h`; `PortDecoder_Sprinter::GetTTDModelStateIds()` declares and
+`CreateTTDSerializers()` supplies them, the Profi / TSConf pattern.
 
-`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h`). Taken since this table was
-written: 15 `EvoSdCard`, 16 reserved for `TsConfPaging`, 17 `AtaChannel` (the IDE boards), 18 `Ds12887` (the shared clock, already built -
-the Sprinter reuses it and needs no id of its own). The Sprinter ids below therefore shift up when
-they are appended; the order stays. **S1 (2026-10-01):** ids 19-24 are taken as well, so
-`SprinterPld` is **25** (declared in S1 without a serializer: TTD refuses to record the machine
-until S7); `SprinterVideo`, `Z84C15`, `SprinterCbl` follow from 26:
+### 2.1 Peripheral ids
 
-| Id | Name | Blob contents |
-|---|---|---|
-| 15 | `SprinterPld` | `SprinterPldState` (cells, CNF, ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, flags, config state, sink count and hashes), the active configuration module's **name** and its opaque **state blob** ([tdd-ports-memory.md](tdd-ports-memory.md) §6.1), `SprinterAccelState`, IDE channel latch + data latch |
-| 16 | `SprinterVideo` | video RAM (256 KB) as a TTD memory region (PLAN #40 Phase 1 "device RAM in the page store"); until Phase 1 lands, a whole-array blob with a CRC short-cut |
-| 17 | `Z84C15` | SIO (both channels, FIFOs, registers), CTC, PIO, system registers |
-| 18 | `SprinterCbl` | Covox-Blaster ring, indices, control, tick phase |
-| ~~19~~ | `Ds12887` | shared id 18, already built (PLAN #60(c)): cells + address latch + time base |
+`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h`). The ids planned here at
+15-18 were taken by other devices before S7; the Sprinter's are:
 
-`TimeTravelManager::RegisterModelPeripherals` (`core/src/debugger/ttd/timetravelmanager.cpp:1141`,
-`:1192-1213`) picks them up through `PortDecoder_Sprinter::CreateTTDSerializers()` /
-`GetTTDModelStateIds()`, the Profi pattern (`portdecoder_profi.cpp:378-388`).
+| Id | Name | Blob (v1, a version byte first) | Size |
+|---|---|---|---|
+| 25 | `SprinterPld` | `SprinterPldState` (112 bytes, padding-free), the decoder's own fields (Covox-Blaster control, powered-on flag, DCP-opened frame and PC), the INT source (mode page, frame lines, the acknowledged pulse, the keyboard INT flip-flop), the frame height the raster runs with, the active configuration module **by name** with its state (room for the largest registered module), the block accelerator's state (u16 size + bytes) | 177 + module + accelerator |
+| 18 | `Ds12887` | shared serializer (cells, address latch, time base) | |
+| 28 | `SprinterVideoRam` | the 256 KB video RAM; on load the pen cache and the INT list are rebuilt | 1 + 262 144 |
+| 29 | `Z84C15` | `Z84C15::SaveState`: system registers, the wait generator with its power-on M1 counter and the RETI rule's after-ED flag, the watchdog, CTC, SIO (receive FIFOs), PIO, IP / IUS of every daisy-chain source | 1 + 171 |
+| 30 | `SprinterFastRam` | the 64 KB fast RAM (Memory's cache pages are not RAM pages) | 1 + 65 536 |
+| 31 | `SprinterInput` | `Ps2KeyboardStream::State` (bytes on the wire, typematic, held keys) and `MsSerialMouse::State` (the packet in flight, the last sample), the overrun counter | 85 |
+| 35 | `Wd1793Context` | the WD1793 command in flight beyond the 254-byte BetaDisk blob: queued steps as tags, transfer pointers as (drive, track, offset), byte cell, rotational delay, rate-retry search | 1 + 112 |
+| 32-34 | `SprinterCovoxBlaster`, `SprinterIsa`, `SprinterPads` | **reserved** for S6 (Covox-Blaster ring, DAC), S6b (ISA I/O window) and the extended pads: no serializer yet; the device that lands declares its id and adds a blob, the other blobs keep their layout | |
+
+The CPU registers are `TTDCpuState`: the Z84C15 engine executes on the `Z80State` register file
+(zero copy), and the library's boundary state is mirrored into `Z80State::boundary`; a restore makes
+the engine push it back (`Z84C15Engine::InvalidateBoundary`). Blobs are restored in ascending id
+order, so `Wd1793Context` (35) completes the BetaDisk blob (1) after it.
+
+After a load the decoder re-derives what follows from the state (`OnTtdStateLoaded`): the windows,
+the turbo and its wait overlay, the accelerator as the CPU's bus agent, the step hook.
 
 ### 2.2 Memory
 
-- 256 RAM pages: exactly `MAX_RAM_PAGES`; page 255 is an ordinary page since `3a6eabc6`.
-  `ResolveModelRamPages` (`timetravelmanager.cpp:1064-1086`) returns 256 for `MM_SPRINTER`.
-- The port table (page `#40`) and the graphics area (`#50-#5F`) are ordinary pages: journaled like
-  all RAM. A write to page `#40` changes decoding at the next port access; replay reproduces it
-  because the page contents are restored before execution resumes.
-- Fast RAM (4 cache pages) must be journaled too (today's cache pages are unused, so check that the
-  dirty tracker covers them).
-- Video RAM is device memory (above).
+- 256 RAM pages: `ResolveModelRamPages` returns 256 for `MM_SPRINTER`; the port table (page `#40`) and
+  the graphics area (`#50-#5F`) are ordinary pages, restored before execution resumes.
+- Video RAM and fast RAM: whole-array blobs (TTD v2 memory regions, migration-trajectory Phase 1, are
+  not on master). Measured: the video RAM blob compresses to ~7 KB at the BIOS screen; a 4 MB machine's
+  recording costs ~3.6 ms per frame over a plain 21 MHz frame (~10.8 ms with the full renderer), most of
+  it the 4 MB key frame every 50 frames, not the Sprinter blobs (0.17 ms per capture of all of them).
 
 ### 2.3 Inputs
 
-Keyboard events are journaled once (the E2b event with ZX + PC key). Mouse deltas already go
-through the TTD input gateway. The CMOS in host-time mode records its time offset at the start of a
-recording; replay uses it (NFR-3).
+Keyboard: the host key is journaled once as a ZX key (`Key`, the matrix of code `#40`) and a PC key
+(`PcKey`, the PS/2 stream on SIO A). Mouse: the Kempston counters and buttons (`MouseMove` /
+`MouseButtons` ...); the serial mouse on SIO B samples them when SIO B is accessed. The streams'
+state (bytes on the wire, the packet in flight) and the SIO FIFOs are machine state in the
+checkpoint, so a restore in the middle of a PS/2 byte or a mouse packet resumes on the same bit.
+The CMOS switches to emulated time when a recording starts.
 
 ### 2.4 Snapshots
 

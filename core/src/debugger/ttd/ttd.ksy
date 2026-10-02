@@ -546,12 +546,28 @@ types:
           machines whose decoder answers #1F - ATM3, Scorpion, TS-Conf),
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
           netstate::SerialPort; without a peer only the header and the UART registers and FIFOs),
-          25 SprinterPld (Sprinter Sp2000 PLD state + configuration module; reserved: no blob is
-          written before its serializer, Sprinter phase S7 - the machine refuses to record until then),
+          25 SprinterPld (Sprinter Sp2000 PLD and decoder, sprinter_pld_blob below),
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232: netstate::Com, the peer part only).
+          keyboard controller's RS-232: netstate::Com, the peer part only),
+          28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
+          memory regions), 29 Z84C15 (u1 version 1, then the Z84C15's on-chip block, 171 bytes: z84c15_blob below),
+          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
+          31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
+          32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
+          S6 sound, S6b ISA, the extended pads: no blob is written under them yet; the device that lands adds
+          its blob and the other Sprinter blobs keep their layout),
+          35 Wd1793Context (u1 version 1, then 112 bytes: the WD1793 command in flight beyond the BetaDisk
+          blob - rate-retry search, byte cell, rotational delay, the sector and tracks in use and the transfer
+          pointers as (drive, track, offset), the read-track noise seed, up to 4 queued command steps as tags;
+          layout in wd1793.cpp SaveTransferContext. Declared by the Sprinter; restored after BetaDisk).
+          Blobs are restored in ascending id order.
+          Every Sprinter blob (25, 28-31, 35) starts with its version byte; a blob of another version is not
+          loaded. The Sprinter also carries 18 Ds12887, 17 AtaChannel (two channels), 1 BetaDisk, 7 KempstonMouse,
+          23 KempstonJoystick.
+          36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
+          37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
@@ -561,6 +577,131 @@ types:
           mismatch and does not restore.
       - id: state
         type: peripheral_blob
+
+  sprinter_pld_blob:
+    doc: |
+      Payload of peripheral 25 SprinterPld (ttdsprinter.cpp). Little-endian.
+      The accelerator section is empty (size 0) until Sprinter phase S5, which
+      bumps the version when it fills it.
+    seq:
+      - id: version
+        type: u1
+        doc: 1
+      - id: pld_state
+        size: 112
+        doc: SprinterPldState (sprinterpldstate.h) - cells #C0-#FF, SC, PN, CNF, ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, flags, configuration state, bitstream count and hashes, load watchdog.
+      - id: cbl_control
+        type: u1
+      - id: powered_on
+        type: u1
+      - id: dcp_opened_frame
+        type: s8
+      - id: dcp_opened_pc
+        type: u2
+      - id: int_mode_page
+        type: u1
+      - id: int_frame_lines
+        type: u2
+      - id: int_acked_pulse
+        type: s8
+      - id: int_keyboard_latched
+        type: u1
+      - id: screen_frame_lines
+        type: u2
+        doc: Frame height the raster runs with (320 / 312; 0 = no Sprinter screen).
+      - id: module_name
+        size: 32
+        type: strz
+        encoding: ASCII
+        doc: Active PLD configuration module, looked up by name on load.
+      - id: module_state_room
+        type: u2
+        doc: Room for the largest module state the build registers (Standard: 0).
+      - id: module_state_used
+        type: u2
+        doc: The first module_state_used bytes of module_state are the active module's.
+      - id: module_state
+        size: module_state_room
+      - id: accel_size
+        type: u2
+      - id: accel_state
+        size: accel_size
+
+  z84c15_blob:
+    doc: |
+      Payload of peripheral 29 Z84C15 after its version byte (Z84C15::SaveState).
+    seq:
+      - id: system
+        size: 8
+        doc: SCRP, WCR, MWBR, CSBR, MCR, WDTMR, WDTCR, interrupt priority (#F4).
+      - id: wait_generator
+        size: 6
+        doc: WCR as written, effective WCR, MWBR, M1 cycles left in the power-on window, after-ED flag, active.
+      - id: watchdog_running
+        type: u1
+      - id: watchdog_fired
+        type: u1
+      - id: watchdog_start
+        type: u8
+      - id: ctc_vector
+        type: u1
+      - id: ctc_channels
+        size: 22
+        repeat: expr
+        repeat-expr: 4
+        doc: control, time constant, awaiting constant, running, load clock u8, zero counts u8, IP, IUS.
+      - id: sio_channels
+        size: 18
+        repeat: expr
+        repeat-expr: 2
+        doc: WR0-WR7, pointer, receive FIFO[3], FIFO count, last data, overrun, Rx-first armed, Rx-first IP, Rx IUS.
+      - id: pio_ports
+        size: 11
+        repeat: expr
+        repeat-expr: 2
+        doc: mode, direction, output, vector, interrupt control, mask, next, inputs, condition, IP, IUS.
+
+  sprinter_input_blob:
+    doc: |
+      Payload of peripheral 31 SprinterInput (85 bytes). Times are base (3.5 MHz) T-states of the
+      machine's cumulative clock.
+    seq:
+      - id: version
+        type: u1
+      - id: kbd_queue
+        size: 16
+      - id: kbd_head
+        type: u1
+      - id: kbd_count
+        type: u1
+      - id: kbd_overflow
+        type: u1
+      - id: kbd_repeat_key
+        type: u1
+      - id: kbd_held
+        size: 16
+      - id: kbd_next_byte_at
+        type: u8
+      - id: kbd_last_byte_at
+        type: u8
+      - id: kbd_repeat_at
+        type: u8
+      - id: mouse_packet
+        size: 3
+      - id: mouse_sent
+        type: u1
+      - id: mouse_last_x
+        type: u1
+      - id: mouse_last_y
+        type: u1
+      - id: mouse_last_buttons
+        type: u1
+      - id: mouse_synced
+        type: u1
+      - id: mouse_next_byte_at
+        type: u8
+      - id: kbd_overruns
+        type: u8
 
   peripheral_blob:
     doc: |

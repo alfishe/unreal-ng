@@ -18,6 +18,8 @@ They share the input data and two small modules in [`common/`](common/).
 | [E2 — Encode once](e2-encode-once/README.md) | When is the second (full) compression of a changed piece worth it? | The full piece wins in 5% of changes. Skipping it when the XOR is ≤ 128 B makes encoding 3.5× faster for +0.07% bytes |
 | [E3 — Reference blocks](e3-reference-blocks/README.md) | Block size of the copy-on-write reference table; one or two levels? | 8-page blocks; table bytes 0.21 of v1 (ZX-Evo: 4,096 → 520 B per frame). Two levels are needed for idle device memory (PR-10) |
 | [E4 — Restore differences](e4-restore-differences/README.md) | What does restoring only differing pieces save on a seek? | ZX-Evo memory restore from ~760 to ~145 µs. Most of a full restore writes zeros into untouched memory |
+| [E5 — Heap split](e5-heap-split/README.md) | Where does v1's recording memory go? | Mostly unused allocation: every stored piece holds ~4 KB of heap whatever it compressed to (`ZSTD_compressBound`). Then the write journal |
+| [E6 — v1 / v2 data model](e6-v1-v2-model/README.md) | How much memory and file will a recording take with v2, on real use, and why? | Memory 3–14× smaller. The model matches measured v1 within 0.6% (ZX-Evo 2%). The write journal becomes the largest stream; idle cards cost 2 MB per minute |
 
 ## What changes in the design
 
@@ -27,6 +29,9 @@ They share the input data and two small modules in [`common/`](common/).
 | Step 7, full-compression threshold | 1 KB, to be tuned | **128 B** (E2) |
 | Step 4, block size | 16 pages | **8 pages**, two levels (E3) |
 | Step 6, why | seek decodes all memory | a full restore mostly **writes zeros** into untouched memory; ~5× faster memory restore on ZX-Evo (E4) |
+| Before Phase 1 | — | **exact-size payloads** in v1: half or more of a recording's memory (E5) |
+| Phase 2 | device blobs versioned | counters that advance with time are **derived from time**, not stored (E6) |
+| Before Phase 4 | journal ring | decide what to keep of the **write journal**: the largest stream on active content (E6) |
 
 ## Data
 
@@ -39,6 +44,7 @@ Every experiment reads the same 17 sessions:
 
 - The matrix cases come from the [TTD benchmark harness](../../../../tools/verification/ttd-bench/README.md). The workloads are replayable — fixed start state, scripted input, frozen RTC, zeroed power-on RAM — so a re-recording gives byte-identical files.
 - `record-datasets.sh` keeps their saved sessions, through `UNREAL_TTD_BENCH_KEEP_SESSIONS`, in `<repo>/scratch/ttd-experiments/sessions/`. That folder is git-ignored and takes about 1.5 minutes to fill.
+- **Real-use sessions (E5, E6):** [`common/record-real-sessions.sh`](common/record-real-sessions.sh) records six sessions, 1 and 5 minutes each, into `<repo>/scratch/ttd-experiments/real/` with the benchmark's metrics: Pentagon 128 at the BASIC prompt, a game, 7th Reality, Across the Edge, Eye Ache, and ZX-Evo at the BASIC prompt (about 15 minutes, 1 GB).
 - **Regions analyzed:** machine RAM, and the classic General Sound RAM, which v1 keeps inside the GS device blob. MoonSound wave memory, NeoGS memory and the EEPROMs are not recorded by v1 and so cannot be analyzed.
 
 ## Common code
@@ -64,6 +70,8 @@ common/record-datasets.sh
 (cd e2-encode-once && python3 run.py)          # E4 needs its timing.json
 (cd e3-reference-blocks && python3 run.py)
 (cd e4-restore-differences && python3 run.py)
+common/record-real-sessions.sh                # E5 (its bench.json) and E6
+(cd e6-v1-v2-model && python3 run.py)
 ```
 
 Byte counts and chain statistics repeat exactly. Times depend on the host (E2 keeps the minimum of 15 runs per call).

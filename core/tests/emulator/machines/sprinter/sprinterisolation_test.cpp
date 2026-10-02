@@ -23,6 +23,7 @@ const std::vector<std::string> kSprinterPaths = {
     "emulator/memory/sprinter/",
     "emulator/video/sprinter/",
     "emulator/io/z84c15/",  // the Z84C15 engine adapter (machine neutral): names no Sprinter type
+    "debugger/ttd/sprinter/",  // the TTD serializers (phase S7)
 };
 
 /// Files that may name the model id or construct a Sprinter type: the registration surface
@@ -35,7 +36,7 @@ const std::vector<std::string> kRegistrationFiles = {
     "emulator/cpu/core.cpp",            // the memory factory (SprinterMemory)
     "emulator/video/videocontroller.cpp",  // the screen factory (ScreenSprinter, PLAN #60(e))
     "emulator/io/ide/idecontroller.cpp",   // [HDD] Scheme=SPRINTER fits MM_SPRINTER only (IdeController::SchemeFits, S3b)
-    "debugger/ttd/ttdserializable.h",   // the PeripheralId::SprinterPld row (serializer in phase S7)
+    "debugger/ttd/ttdserializable.h",   // the PeripheralId Sprinter rows (serializers in debugger/ttd/sprinter/)
     "debugger/ttd/ttdfileinfo.cpp",     // its name
 };
 

@@ -177,7 +177,8 @@ Alternative Boot from Diskette fail
 PRESS <ENTER> TO REBOOT, <DEL> TO ENTER SETUP OR <ESC> TO ZX-MODE . . .
 ```
 
-- No IDE yet (phase S3b): each of the four units waits for BSY until F4 is pressed (the tests
+- (Before S3b; since 2026-10-02 an empty channel reads `#7F` and each unit is "None" at once, tdd-storage
+  §3.4.) No IDE yet: each of the four units waits for BSY until F4 is pressed (the tests
   send it, as the 3.04 test does); with no floppy (S3a) both boot attempts fail. Nothing in the
   community builds needs a feature the emulator lacks to reach this point.
 - ESC at the prompt starts the ZX mode: the Spectrum 128 menu titled "Sprinter" (TR-DOS,

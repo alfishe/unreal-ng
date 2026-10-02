@@ -26,8 +26,9 @@ media verbs in [use-media-slots.md](use-media-slots.md). Verified 2026-10-02 on 
 - **Which disk:**
   - a small bootable image you build (below): DSS 1.62.92 from the repo's floppy;
   - the owner's real disks are **not in the repository**: the MAME pack's `sp_hdd_sys.chd`
-    (DSS 1.71.57; convert with `chdman extractraw -i sp_hdd_sys.chd -o sp_hdd_sys.img`, 1 GiB)
-    and the ZXMAK2 bundle's `sp_disk1.vhd` (DSS 1.62.93, a fixed VHD, inserted as is).
+    (DSS 1.71.57) and `sp_hdd_media.chd`, **inserted as they are** (no extraction: a CHD is a
+    hard-disk format here, [chd.md](../../docs/file-formats/disk-images/chd.md)), and the ZXMAK2
+    bundle's `sp_disk1.vhd` (DSS 1.62.93, a fixed VHD, inserted as is).
 
 ## Build a small bootable disk (mtools)
 
@@ -53,7 +54,8 @@ The core tests build the same kind of image in C++ (`BuildDssHdd`, `sprinter_boo
 ```text
 emulator_manage {"action":"create","model":"SPRINTER"}
 media {"action":"insert","slot":"ide0.master","path":"<abs path>/scratch/dss-hdd.img"}
-media {"action":"insert","slot":"ide0.master","path":"<abs path>/sp_hdd_sys.img","access":"session"}  # a real disk: writes stay in memory
+media {"action":"insert","slot":"ide0.master","path":"<abs path>/sp_hdd_sys.chd"}  # MAME's CHD as is: writes stay in memory (session)
+media {"action":"save","slot":"ide0.master"}                                         # ...until you write them into the CHD
 emulator_manage {"action":"reset"}
 inspect_state {"aspects":["ide"]}
 #  -> [ide] SPRINTER, selected primary master, data latch #0
@@ -90,7 +92,8 @@ curl -s $BASE/emulator/$EMU_ID/state/ide | jq -c '{scheme, channels, selected_ch
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/type -H 'Content-Type: application/json' -d '{"text":"dir"}'
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap  -H 'Content-Type: application/json' -d '{"key":"enter","frames":3}'
 
-# An empty channel floats: the BIOS waits ~31 s per unit with "[Press F4 to skip]" - skip it
+# An empty channel needs no key ("None" at once); F4 skips the one wait left: BIOS 3.04's
+# absent slave next to a master (280 frames, "[Press F4 to skip]")
 curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"F4","frames":3}'
 ```
 
@@ -115,10 +118,14 @@ media list
 
 - **Images are written by default** (WriteThrough): a real disk you want to keep unchanged goes in
   with `"access":"session"` (or `readonly`).
+- **A CHD is never written by the guest**: it goes in as `session` whatever the default, and its
+  file changes only on `save` (the CHD written again, unchanged hunks kept as stored). BIOS 3.06
+  boots DSS 1.71 from `sp_hdd_sys.chd` directly (`RealHdd_Dss171BootsFromTheMamePackChd`).
 - **DSS 1.71 on BIOS 3.04 fails** with "Fatal error" after "Start from Hard disk...Ok": switch the
   BIOS to 3.06 Hotfix 2, not the disk.
-- **Long IDE waits are the hardware's**: an empty channel reads `#FF` (BSY), so SETUP waits 1 550
-  frames per unit; with a master on the channel an absent slave takes 280 frames. Tap F4 at a
+- **No IDE wait for an empty channel**: it reads `#7F` (the ATA DD7 pull-down, BSY = 0), so every
+  BIOS prints "None" for its units at once - no F4 for the secondary channel of 3.06 / 3.07. The one
+  wait left is BIOS 3.04's absent slave next to a master (280 frames); tap F4 at its
   "[Press F4 to skip]" line. In the Qt GUI F4 reaches the machine while the screen has focus (the
   menu's F-key shortcuts give way on PC-keyboard machines, [keyboard.md](../../docs/features/keyboard.md)).
 - **TTD does not record the Sprinter yet** (phase S7).

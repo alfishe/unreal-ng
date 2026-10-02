@@ -106,7 +106,7 @@ start on an even T-state.
 | **Scorpion ZS-256** | **no** | **no** | **Even M1** on fetches from RAM (0 or 1 T), normal mode |
 | Scorpion Turbo+ at 7 MHz | a different kind: every RAM access, read or write, waits for the next CPU slot (every 4 T in the paper, every 2 T in the border); an opcode fetch 1 T more | no | every I/O cycle 2 T |
 | Profi | no | no | - |
-| ATM Turbo 2+ | no | no | `IN (#FE)` waits for the keyboard controller |
+| ATM Turbo 2+ | no | no | `IN (#FE)` waits for the keyboard controller; at 7 MHz every RAM access (fetch, read, write) waits 2 T from an even clock, 3 from an odd one, for the CPU's slot (`Atm710TurboOverlay`); ROM and I/O none |
 | ZX-Evo BaseConf | no in the Pentagon raster; a 48K-style pattern in its 48K / 128K rasters at 3.5 MHz | same condition | 14 MHz: a RAM read that misses the DRAM's two one-word caches waits 2 or 3 T; external I/O 3 T |
 | ZX Spectrum Next | only in its 48K / 128K / +3 timing modes at 3.5 MHz | 48K / 128K modes | 1 wait per memory read at 28 MHz |
 

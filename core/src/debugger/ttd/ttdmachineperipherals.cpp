@@ -2,6 +2,7 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "emulator/io/network/atm2ioesp.h"
 #include "network/ttdmachineserialpeer.h"
 #include "network/ttdserialport.h"
 #include "network/ttdzxnetusb.h"
@@ -101,6 +102,14 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto serial = std::make_unique<TTDSerialPort>(context);
         registry.Register(PeripheralId::SerialPort, serial.get());
         ownedSerializers.push_back(std::move(serial));
+    }
+    if (context->pAtm2IoEsp)
+    {
+        auto card = std::make_unique<TTDSerialPort>(
+            context, [context]() { return context->pAtm2IoEsp ? &context->pAtm2IoEsp->Com() : nullptr; },
+            PeripheralId::Atm2IoEsp, "Atm2IoEsp");
+        registry.Register(PeripheralId::Atm2IoEsp, card.get());
+        ownedSerializers.push_back(std::move(card));
     }
     if (context->pMachineSerialPeer)
     {

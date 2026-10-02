@@ -133,8 +133,11 @@ TEST(TsConfEngineRender_Test, ENG4_SameStateRenderedOrDecimated)
     ASSERT_NE(manager, nullptr);
 
     auto run = [&](bool turbo, TsConfState& out, uint16_t& pc) {
+        // Both boots from the same RAM: the screen pages power up random, and a
+        // cache line that read them keeps the word after it is invalidated
         auto emulator = manager->CreateEmulatorWithModelAndRAM(turbo ? "tsconf-eng4-t" : "tsconf-eng4-r", "TSL", 4096,
-                                                               LoggerLevel::LogError);
+                                                               LoggerLevel::LogError, nullptr,
+                                                               [](CONFIG& config) { config.ramPowerOn = RamPowerOn::Zero; });
         ASSERT_NE(emulator, nullptr);
         EmulatorContext* context = emulator->GetContext();
         auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);

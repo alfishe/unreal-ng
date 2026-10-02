@@ -596,6 +596,8 @@ struct CONFIG
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
+	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
+	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;
@@ -713,6 +715,12 @@ struct CONFIG
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];
+		/// What the ATM2IOESP card's 16550 is wired to (ATM Turbo 2+ INTERNAL I/O
+		/// connector, Card=ATM2IOESP): ComPortSpec, empty = AT (its shipped firmware)
+		char atm2IoEsp[256];
+		/// The card's bus address (#FB latch): #F0 (Rev 1.5 / 2.0 default) or #F8
+		/// (Rev 1.0); its 16550 answers base .. base + 7
+		uint8_t atm2IoEspAddress;
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;
@@ -780,6 +788,11 @@ struct CONFIG
 		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
+		// TS-Conf: the TS-BIOS settings a machine starts with when no NVRAM file
+		// gives them ([EVO] TsBiosNvram=): 1 = SDBOOT, "Reset to: BD boot.$c" (the
+		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
+		// BIOS opens its Setup Utility)
+		uint8_t ts_bios_sd_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
@@ -793,6 +806,9 @@ struct CONFIG
 		uint8_t fast_start;
 		// 1 = the front-panel turbo allows 21 MHz (MAME "turbo hard")
 		uint8_t turbo_allowed;
+		// 1 = an INT acknowledge suspends the accelerator until the M1 after RETI (the PLD's ACC_BLK,
+		// default); 0 = MAME's behavior ([SPRINTER] AccelIntSuspend=, tdd-accel-sound-input §1.3)
+		uint8_t accel_int_suspend = 1;
 		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
 		char cmos_path[FILENAME_MAX];
 	} sprinter;

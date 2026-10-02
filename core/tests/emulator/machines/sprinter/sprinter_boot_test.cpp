@@ -16,14 +16,22 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
+#include <emulator/memory/sprinter/sprinteraccelerator.h>
 #include <emulator/ports/models/portdecoder_sprinter.h>
+#include <emulator/video/screen.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -34,123 +42,15 @@
 #include "debugger/analyzers/rom-print/screenocr.h"
 #include "pch.h"
 #include "stdafx.h"
+#include "sprinterdssmedia.h"
 #include "sprinterfixture.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/state/devicestate.h"
-
-namespace
-{
-/// A file from the DSS 1.62.92 floppy's root (FAT12: one FAT at LBA 10, the root at LBA 19, cluster 2 at
-/// LBA 33, one sector per cluster; testdata/machines/sprinter/README.md "Layout"); empty when not found
-std::vector<uint8_t> FloppyRootFile(const std::vector<uint8_t>& floppy, const char name[11])
-{
-    const uint8_t* root = floppy.data() + 19 * 512;
-    for (int i = 0; i < 224; i++)
-    {
-        const uint8_t* e = root + i * 32;
-        if (std::memcmp(e, name, 11) != 0)
-            continue;
-        const uint32_t size = e[28] | e[29] << 8 | e[30] << 16 | static_cast<uint32_t>(e[31]) << 24;
-        std::vector<uint8_t> data;
-        uint16_t cluster = static_cast<uint16_t>(e[26] | e[27] << 8);
-        const uint8_t* fat = floppy.data() + 10 * 512;
-        while (cluster >= 2 && cluster < 0xFF8 && data.size() < size)
-        {
-            const uint8_t* sector = floppy.data() + (33 + cluster - 2) * 512;
-            data.insert(data.end(), sector, sector + 512);
-            const uint16_t pair = static_cast<uint16_t>(fat[cluster * 3 / 2] | fat[cluster * 3 / 2 + 1] << 8);
-            cluster = (cluster & 1) ? static_cast<uint16_t>(pair >> 4) : static_cast<uint16_t>(pair & 0xFFF);
-        }
-        data.resize(size);
-        return data;
-    }
-    return {};
-}
-
-/// A bootable DSS hard disk, built the way DSS's BOOT.EXE leaves one (hardware-reference §9.3,
-/// materials.md "A reference HDD image"): 16 MiB, an MBR whose entry 0 is a FAT16 partition (type #06) at
-/// LBA 63, the 3-sector DSS loader at LBA 1-3, and a FAT16 volume (4 sectors per cluster, 2 FATs, 512 root
-/// entries) holding `files` in its root, in order
-struct DssHddFile
-{
-    const char* name;  ///< 8.3 directory form, 11 characters
-    std::vector<uint8_t> data;
-};
-
-constexpr uint32_t kDssHddStart = 63, kDssHddFatSize = 32;
-constexpr uint32_t kDssHddRootLba = kDssHddStart + 1 + 2 * kDssHddFatSize;  ///< 128
-
-std::vector<uint8_t> BuildDssHdd(const std::vector<uint8_t>& loader, const std::vector<DssHddFile>& files)
-{
-    constexpr uint32_t kTotal = 32768, kStart = kDssHddStart, kSectors = kTotal - kStart;
-    constexpr uint32_t kSpc = 4, kReserved = 1, kFatSize = kDssHddFatSize, kRootEntries = 512;
-    constexpr uint32_t kRootLba = kDssHddRootLba, kDataLba = kRootLba + kRootEntries * 32 / 512;
-    std::vector<uint8_t> disk(static_cast<size_t>(kTotal) * 512);
-    auto put16 = [&](size_t at, uint32_t v) { disk[at] = static_cast<uint8_t>(v); disk[at + 1] = static_cast<uint8_t>(v >> 8); };
-    auto put32 = [&](size_t at, uint32_t v) { put16(at, v & 0xFFFF); put16(at + 2, v >> 16); };
-
-    // MBR: entry 0 = active FAT16 (#06) from LBA 63; the DSS loader checks entry 0 only
-    disk[446] = 0x80;
-    disk[446 + 4] = 0x06;
-    put32(446 + 8, kStart);
-    put32(446 + 12, kSectors);
-    put16(510, 0xAA55);
-    std::memcpy(disk.data() + 512, loader.data(), std::min<size_t>(loader.size(), 3 * 512));
-
-    // Partition boot sector with the BPB (DOSBOOT4: "FAT16   " at +#36, media #F8)
-    const size_t bs = static_cast<size_t>(kStart) * 512;
-    const uint8_t jump[3] = {0xEB, 0x3C, 0x90};
-    std::memcpy(&disk[bs], jump, 3);
-    std::memcpy(&disk[bs + 3], "DSS 1.62", 8);
-    put16(bs + 11, 512);
-    disk[bs + 13] = kSpc;
-    put16(bs + 14, kReserved);
-    disk[bs + 16] = 2;
-    put16(bs + 17, kRootEntries);
-    put16(bs + 19, kSectors);
-    disk[bs + 21] = 0xF8;
-    put16(bs + 22, kFatSize);
-    put16(bs + 24, 32);  // sectors per track
-    put16(bs + 26, 16);  // heads
-    put32(bs + 28, kStart);
-    disk[bs + 36] = 0x80;
-    disk[bs + 38] = 0x29;
-    put32(bs + 39, 0x53334200);
-    std::memcpy(&disk[bs + 43], "NO NAME    ", 11);
-    std::memcpy(&disk[bs + 0x36], "FAT16   ", 8);
-    put16(bs + 510, 0xAA55);
-
-    // Files: consecutive clusters from 2, a chain in both FATs, an entry in the root (2026-10-02 12:00)
-    std::vector<uint16_t> fat(kFatSize * 256);
-    fat[0] = 0xFFF8;
-    fat[1] = 0xFFFF;
-    uint16_t next = 2;
-    for (size_t i = 0; i < files.size(); i++)
-    {
-        const DssHddFile& file = files[i];
-        const uint16_t first = file.data.empty() ? 0 : next;
-        const uint32_t clusters = static_cast<uint32_t>((file.data.size() + kSpc * 512 - 1) / (kSpc * 512));
-        for (uint32_t c = 0; c < clusters; c++, next++)
-            fat[next] = c + 1 < clusters ? static_cast<uint16_t>(next + 1) : 0xFFFF;
-        if (!file.data.empty())
-            std::memcpy(&disk[(kDataLba + (first - 2) * kSpc) * 512], file.data.data(), file.data.size());
-        const size_t e = kRootLba * 512 + i * 32;
-        std::memcpy(&disk[e], file.name, 11);
-        disk[e + 11] = 0x20;
-        put16(e + 22, 12 << 11);
-        put16(e + 24, (2026 - 1980) << 9 | 10 << 5 | 2);
-        put16(e + 26, first);
-        put32(e + 28, static_cast<uint32_t>(file.data.size()));
-    }
-    for (uint32_t copy = 0; copy < 2; copy++)
-    {
-        for (size_t i = 0; i < fat.size(); i++)
-            put16((kStart + kReserved + copy * kFatSize) * 512 + i * 2, fat[i]);
-    }
-    return disk;
-}
-}  // namespace
+#include "emulator/io/storage/chd/chdfile.h"
+#include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/chd/chdwriter.h"
+#include "emulator/io/storage/rawimage.h"
 
 class SprinterBoot_Test : public ::testing::Test
 {
@@ -222,17 +122,103 @@ protected:
 
     bool ScreenHas(const std::string& needle) { return ScreenText().find(needle) != std::string::npos; }
 
-    /// SETUP's IDE detection waits ~31 s per empty unit (no IDE adapter before S3b): press F4 for both, as a
-    /// user does. Set 2 scan codes through the Z84C15 SIO channel A, which SETUP's interrupt handler reads
+    /// SETUP's IDE detection with no drive: an empty channel reads #7F (the DD7 pull-down, BSY = 0), so BIOS 3.04
+    /// reports both primary units "None" at once, without the F4 a user pressed while the bus floated at #FF
     void SkipIdeDetection()
     {
-        for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Primary Slave") == "None"; }, 400, 1);
+        ASSERT_EQ(DetectResult("Primary Master"), "None") << ScreenText();
+        ASSERT_EQ(DetectResult("Primary Slave"), "None") << ScreenText();
+    }
+
+    /// What SETUP printed after "Detecting IDE <unit> ... ": "None", "Skipped" or the drive's model; empty while the
+    /// unit is still probed ("[Press F4 to skip]") or not reached yet
+    std::string DetectResult(const std::string& unit)
+    {
+        const std::string text = ScreenText();
+        const size_t at = text.find("Detecting IDE " + unit);
+        if (at == std::string::npos)
+            return {};
+        const size_t eol = text.find('\n', at);
+        const size_t dots = text.find("... ", at);
+        if (dots == std::string::npos || dots > eol)
+            return {};
+        std::string result = text.substr(dots + 4, eol - dots - 4);
+        result.erase(result.find_last_not_of(' ') + 1);
+        return result.rfind("[Press F4", 0) == 0 ? std::string() : result;
+    }
+
+    /// A blank hard disk image (1 MiB) in the scratch folder: enough for IDENTIFY
+    static std::string BlankHddFile(const std::string& leaf)
+    {
+        std::vector<uint8_t> disk(1024 * 1024, 0);
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(leaf);
+        return FileHelper::SaveBufferToFile(path, disk.data(), disk.size()) ? path : std::string();
+    }
+
+    struct UnitProbe
+    {
+        std::string unit;
+        std::string result;
+        uint64_t frames = 0;  ///< from the previous unit's result (the first: from "Detecting IDE" on the screen)
+    };
+
+    /// SETUP's IDE scan, unit by unit: each unit's result and the frames its probe took
+    std::vector<UnitProbe> RunIdeDetection(const std::vector<std::string>& units, int maxFramesPerUnit)
+    {
+        std::vector<UnitProbe> probes;
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Detecting IDE " + units[0]); }, 800, 1);
+        uint64_t last = Frame();
+        for (const std::string& unit : units)
         {
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(unit); }, 400, 5);
-            ASSERT_TRUE(ScreenHas(unit)) << ScreenText();
-            for (uint8_t code : {0x0C, 0xF0, 0x0C})
-                _decoder->GetZ84().sio.Receive(0, code);
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !DetectResult(unit).empty(); }, maxFramesPerUnit, 1);
+            probes.push_back({unit, DetectResult(unit), Frame() - last});
+            last = Frame();
+        }
+        return probes;
+    }
+
+    /// The kept BIOS images and the units their SETUP scans (3.04: the primary channel; 3.06 / 3.07: both)
+    static const std::vector<std::pair<std::string, std::vector<std::string>>>& DetectingBioses()
+    {
+        static const std::vector<std::string> two = {"Primary Master", "Primary Slave"};
+        static const std::vector<std::string> four = {"Primary Master", "Primary Slave", "Secondary Master", "Secondary Slave"};
+        static const std::vector<std::pair<std::string, std::vector<std::string>>> bioses = {
+            {"sp2k-3.04.rom", two}, {"sp2k-3.06-hf2.rom", four}, {"sp2k-3.07-beta1.rom", four}};
+        return bioses;
+    }
+
+    /// Each kept BIOS on a fresh machine (a blank CMOS and RAM: what one image leaves there changes the next one's
+    /// scan) with `insertMedia` through its IDE scan: every unit's result is `expected(unit)`; a unit on a channel
+    /// without a drive takes at most `kEmptyProbeFrames`
+    void ExpectIdeDetection(const std::function<void()>& insertMedia, const std::function<std::string(const std::string&)>& expected,
+                            const std::function<bool(const std::string&)>& channelEmpty)
+    {
+        constexpr uint64_t kEmptyProbeFrames = 10;  // ~0.2 s; a floating #FF bus kept BSY set for ~31 s
+        for (const auto& [bios, units] : DetectingBioses())
+        {
+            if (bios != DetectingBioses().front().first)
+            {
+                TearDown();
+                SetUp();
+            }
+            insertMedia();
+            if (!UseBios(bios))
+            {
+                ADD_FAILURE() << "data/rom/sprinter/" << bios << " not loaded";
+                continue;
+            }
+            for (const UnitProbe& probe : RunIdeDetection(units, 2000))
+            {
+                EXPECT_EQ(probe.result, expected(probe.unit)) << bios << " " << probe.unit << "\n" << ScreenText();
+                if (channelEmpty(probe.unit))
+                    EXPECT_LE(probe.frames, kEmptyProbeFrames) << bios << " " << probe.unit;
+                std::string key = bios + "-" + probe.unit;
+                std::replace(key.begin(), key.end(), ' ', '-');
+                RecordProperty(key, std::to_string(probe.frames) + " frames, " + probe.result);
+                std::printf("[ IDE probe ] %-20s %-17s %5llu frames  %s\n", bios.c_str(), probe.unit.c_str(),
+                            static_cast<unsigned long long>(probe.frames), probe.result.c_str());
+            }
         }
     }
 
@@ -343,17 +329,6 @@ protected:
         return true;
     }
 
-    /// F4 at SETUP's "Detecting IDE <unit> ... [Press F4 to skip]" (an empty channel floats: BSY never drops)
-    void PressF4At(const std::string& unit, int maxFrames = 2000)
-    {
-        const std::string waiting = unit + " ... [Press F4";
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(waiting); }, maxFrames, 1);
-        ASSERT_TRUE(ScreenHas(waiting)) << ScreenText();
-        for (uint8_t code : {0x0C, 0xF0, 0x0C})
-            _decoder->GetZ84().sio.Receive(0, code);
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(waiting); }, 300, 1);
-    }
-
     /// The DSS 1.62.92 system on a built hard disk (BuildDssHdd): the floppy's loader (LBA 1-3) and its SYSTEM.DOS /
     /// SYSTEM.EXE, with `bat` as SYSTEM.BAT; saved as a unique scratch file. Empty when the floppy is missing
     std::string DssHddFile(const std::string& leaf, const std::string& bat)
@@ -448,17 +423,9 @@ TEST_F(SprinterBoot_Test, Bios304_ReachesTheBootMenu)
     EXPECT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
     EXPECT_TRUE(ScreenHas("Memory    : 4096K")) << ScreenText();
 
-    // IDE auto-detect: no drive answers (the IDE adapter comes in S3b), so each unit waits ~31 s
-    // for BSY to drop. A user presses F4, as the screen says: the AT scan code arrives on
-    // the Z84C15 SIO channel A, which SETUP's interrupt handler polls (set 2: F4 = #0C)
-    for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
-    {
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(unit); }, 300, 5);
-        ASSERT_TRUE(ScreenHas(unit)) << ScreenText();
-        for (uint8_t code : {0x0C, 0xF0, 0x0C})
-            _decoder->GetZ84().sio.Receive(0, code);
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
-    }
+    // IDE auto-detect with no drive: the empty channel reads #7F (DD7 pulled down, BSY = 0) and the sector count
+    // does not echo, so both units are "None" at once (a floating #FF kept BSY set: ~31 s per unit until F4)
+    SkipIdeDetection();
 
     // No boot device: the floppy and the hard disk fail, the BIOS offers ENTER / ESC
     const char* prompt = "PRESS <ENTER> TO REBOOT, <ESC> TO CANCEL";
@@ -827,10 +794,43 @@ TEST_F(SprinterBoot_Test, Bios306_DssUsesBothChannels)
     std::remove(data.c_str());
 }
 
+// Empty channels (tdd-storage §3.4): the Sprinter's AT board pulls DD7 down as the ATA standard asks, so a channel
+// with no drive reads #7F - BSY = 0 - and every BIOS rejects its units at once:
+//   3.04 (two units, AUTOIDE MASTER): status without BSY, then the sector count written with 5 reads back #7F;
+//   3.06 / 3.07 (four units, AUTOIDE.asm AUTODETECTING): CheckChanel's floating-bus signature (#78 #68 #ED, the
+//   opcode bytes a bus-holding board returns) does not match, Bug31SecCheck / Clear_BUSY see BSY = 0 at once, and
+//   DETECTORS.Counter reads #7F instead of 5.
+// A floating #FF (the S3b model) kept BSY set: ~1650 frames on a master (the 2 s Bug31 wait, then 31 s) and ~1550 on
+// a slave, until F4. An absent slave next to a master is unchanged: the master answers with status #00 (3.04's NOP
+// check waits #118 HALTs for DRDY, 3.06 / 3.07 see status 0 at once).
+// Boot-bound (BIOS POST, SETUP and the IDE scan of three BIOS images per test, ~300-500 frames each), turbo mode on
+TEST_F(SprinterBoot_Test, EmptyChannels_DiskOnThePrimaryMasterOnly)
+{
+    const std::string image = BlankHddFile("ide-empty-pm.img");
+    ASSERT_FALSE(image.empty());
+    ExpectIdeDetection([&] { InsertHdd(image, "ide0.master"); }, [](const std::string& unit) { return unit == "Primary Master" ? "UNREAL-NG HDD" : "None"; },
+                       [](const std::string& unit) { return unit.rfind("Secondary", 0) == 0; });
+    std::remove(image.c_str());
+}
+
+TEST_F(SprinterBoot_Test, EmptyChannels_NoDrives)
+{
+    ExpectIdeDetection([] {}, [](const std::string&) { return "None"; }, [](const std::string&) { return true; });
+}
+
+TEST_F(SprinterBoot_Test, EmptyChannels_DiskOnTheSecondaryMasterOnly)
+{
+    const std::string image = BlankHddFile("ide-empty-sm.img");
+    ASSERT_FALSE(image.empty());
+    ExpectIdeDetection([&] { InsertHdd(image, "ide1.master"); }, [](const std::string& unit) { return unit == "Secondary Master" ? "UNREAL-NG HDD" : "None"; },
+                       [](const std::string& unit) { return unit.rfind("Primary", 0) == 0; });
+    std::remove(image.c_str());
+}
+
 // The owner's real system disk (the MAME pack's sp_hdd_sys.chd as a raw 1 GiB image, not in the repo; path in
 // UNREAL_SPRINTER_HDD): DSS 1.71.57 on BIOS 3.06, the firmware the pack runs it with (BIOS 3.04 loads the DSS loader
 // and SYSTEM.DOS, then DSS 1.71 stops in its own start-up with "Fatal error", as it does from the DSS 1.71 floppy).
-// Guest writes stay in memory (Session). The empty secondary units float and are skipped with F4; MAME reaches the
+// Guest writes stay in memory (Session). The empty secondary channel reads #7F (DD7 pull-down): "None" at once; MAME reaches the
 // banner at frame 385 with its CD unit on the primary slave (testdata/machines/sprinter/reference/README.md).
 // Boot-bound (BIOS POST, SETUP, DSS 1.71 from the hard disk), the turbo mode on
 TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackImage)
@@ -842,8 +842,9 @@ TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackImage)
         GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
     InsertHdd(path);
 
-    PressF4At("Secondary Master ");
-    PressF4At("Secondary Slave  ");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Secondary Slave") == "None"; }, 800, 1);
+    EXPECT_EQ(DetectResult("Secondary Master"), "None") << ScreenText();
+    EXPECT_EQ(DetectResult("Secondary Slave"), "None") << ScreenText();
     EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG HDD")) << ScreenText();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 400, 1);
     EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
@@ -865,6 +866,90 @@ TEST_F(SprinterBoot_Test, RealHdd_Dss16293BootsFromTheZxmak2Vhd)
     EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.93")) << ScreenText();
     ASSERT_TRUE(ScreenHas("C:\\>fn")) << ScreenText();
     RecordProperty("prompt_frame", std::to_string(Frame()));
+}
+
+// A MAME CHD on the IDE (docs/inprogress/2026-10-02-media-chd/): the ACC-4 disk compressed with chdman's default
+// codecs (lzma, zlib, huff, flac) boots DSS 1.62 like the raw image. The IDE default (WriteThrough) turns into session
+// access for a CHD: the guest's MKDIR stays in the change layer and the file is not touched until `save`, which writes
+// the CHD again with the directory in it.
+// Boot-bound (BIOS POST, SETUP, the slave probe, DSS from the hard disk), the turbo mode on
+TEST_F(SprinterBoot_Test, Dss162_BootsFromAChdAndSavesTheGuestWrites)
+{
+    const std::string image = DssHddFile("dss-hdd-for-chd.img", "ver\r\nmkdir c:\\chd\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    const std::string chdPath = TestPathHelper::GetUniqueTestScratchPath("dss-hdd.chd");
+    {
+        auto raw = RawImage::Open(image, RawImage::Access::ReadOnly);
+        ASSERT_NE(raw, nullptr);
+        chd::WriteOptions options;
+        options.codecs = chd::kDefaultHardDiskCodecs;
+        options.metadata = {chd::HardDiskMetadata(*chd::GuessGeometry(raw->SectorCount()))};
+        std::string error;
+        ASSERT_TRUE(chd::WriteChd(chdPath, *raw, options, &error)) << error;
+    }
+    std::remove(image.c_str());
+    const std::vector<uint8_t> before = ReadAll(chdPath);
+
+    InsertHddWriteThrough(chdPath, "ide0.master");
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->access, AccessMode::Session);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenCount("C:\\>") >= 3; }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master   ... UNREAL-NG HDD")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\chd")) << ScreenText();
+    ASSERT_EQ(ScreenCount("C:\\>"), 3u) << ScreenText();
+
+    EXPECT_TRUE(_context->pMediaManager->Info("ide0.master")->dirty);
+    EXPECT_TRUE(ReadAll(chdPath) == before) << "the CHD is untouched until a save";
+
+
+    SaveOutcome outcome;
+    const MediaResult saved = _context->pMediaManager->Save("ide0.master", {}, &outcome);
+    ASSERT_TRUE(saved.Ok()) << saved.message;
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.master")->dirty);
+
+    // The saved CHD, read on its own, has the directory in the root
+    std::string error;
+    auto chd = ChdImage::Open(chdPath, &error);
+    ASSERT_NE(chd, nullptr) << error;
+    EXPECT_TRUE(chd->File().Verify(&error)) << error;
+    std::vector<uint8_t> disk(static_cast<size_t>(chd->SectorCount()) * 512);
+    for (uint64_t lba = 0; lba < chd->SectorCount(); lba++)
+        ASSERT_TRUE(chd->ReadSector(lba, disk.data() + lba * 512));
+    EXPECT_TRUE(RootHasDirectory(disk, "CHD        ")) << "C:\\CHD in the saved CHD";
+    chd.reset();
+    DestroyEmulator();
+    std::remove(chdPath.c_str());
+}
+
+// The owner's real system disk as MAME ships it (the pack's sp_hdd_sys.chd, an uncompressed 1 GiB CHD of 96 MB,
+// not in the repo; path in UNREAL_SPRINTER_HDD_CHD): inserted as is, no extraction. DSS 1.71.57 on BIOS 3.06, as
+// RealHdd_Dss171BootsFromTheMamePackImage does with the extracted raw image. The file is not written.
+// Boot-bound (BIOS POST, SETUP, DSS 1.71 from the hard disk), the turbo mode on
+TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackChd)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD_CHD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD_CHD (the MAME pack's sp_hdd_sys.chd) not set";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    const uint64_t size = FileHelper::GetFileSize(path);
+    std::error_code ec;
+    const auto modified = std::filesystem::last_write_time(FileHelper::ToFsPath(path), ec);
+    InsertHdd(path);
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "chd");
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Secondary Slave") == "None"; }, 800, 1);
+    EXPECT_EQ(DetectResult("Secondary Master"), "None") << ScreenText();
+    EXPECT_EQ(DetectResult("Secondary Slave"), "None") << ScreenText();
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG HDD")) << ScreenText();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 400, 1);
+    EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Estex DSS version 1.71.57. Shell version 1.2.522.")) << ScreenText();
+    RecordProperty("banner_frame", std::to_string(Frame()));
+    DestroyEmulator();
+    EXPECT_EQ(FileHelper::GetFileSize(path), size);
+    EXPECT_TRUE(std::filesystem::last_write_time(FileHelper::ToFsPath(path), ec) == modified) << "the CHD was written";
 }
 
 /// endregion </S3b>
@@ -891,3 +976,308 @@ TEST_F(SprinterBoot_Test, InstancesCanBeRemovedAndCreatedAgain)
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Memory    : 4096K"); }, 300, 5);
     EXPECT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
 }
+
+/// region <The accelerator in real software (phase S5, tdd-accel-sound-input §1)>
+
+namespace
+{
+/// The DSS 1.62 floppy's FAT12 (one FAT at LBA 10, the root at LBA 19, cluster n at LBA 31 + n, one sector per
+/// cluster; testdata/machines/sprinter/README.md): put `data` into the root as `name11` ("NAME    EXT"),
+/// replacing the file of that name
+bool PutRootFile(std::vector<uint8_t>& disk, const std::string& name11, const std::vector<uint8_t>& data)
+{
+    uint8_t* fat = disk.data() + 10 * 512;
+    const auto get = [fat](uint32_t n) -> uint32_t {
+        const uint32_t pair = fat[n * 3 / 2] | fat[n * 3 / 2 + 1] << 8;
+        return (n & 1) ? pair >> 4 : pair & 0xFFF;
+    };
+    const auto set = [fat](uint32_t n, uint32_t v) {
+        uint8_t* p = fat + n * 3 / 2;
+        if (n & 1)
+        {
+            p[0] = static_cast<uint8_t>((p[0] & 0x0F) | (v << 4));
+            p[1] = static_cast<uint8_t>(v >> 4);
+        }
+        else
+        {
+            p[0] = static_cast<uint8_t>(v);
+            p[1] = static_cast<uint8_t>((p[1] & 0xF0) | (v >> 8));
+        }
+    };
+    constexpr uint32_t kClusters = 2880 - 33 + 2;
+
+    uint8_t* entry = nullptr;
+    for (uint32_t i = 0; i < 224 && !entry; i++)
+    {
+        uint8_t* e = disk.data() + 19 * 512 + i * 32;
+        if (std::memcmp(e, name11.data(), 11) == 0)
+        {
+            for (uint32_t c = e[26] | e[27] << 8; c >= 2 && c < 0xFF8;)
+            {
+                const uint32_t next = get(c);
+                set(c, 0);
+                c = next;
+            }
+            entry = e;
+        }
+    }
+    for (uint32_t i = 0; i < 224 && !entry; i++)
+    {
+        uint8_t* e = disk.data() + 19 * 512 + i * 32;
+        if (e[0] == 0x00 || e[0] == 0xE5)
+            entry = e;
+    }
+    if (!entry)
+        return false;
+
+    uint32_t first = 0, previous = 0;
+    for (size_t at = 0; at < data.size(); at += 512)
+    {
+        uint32_t c = 2;
+        while (c < kClusters && get(c) != 0)
+            c++;
+        if (c >= kClusters)
+            return false;
+        set(c, 0xFFF);
+        if (previous)
+            set(previous, c);
+        else
+            first = c;
+        previous = c;
+        std::memcpy(disk.data() + (31 + c) * 512, data.data() + at, std::min<size_t>(512, data.size() - at));
+    }
+    std::memset(entry, 0, 32);
+    std::memcpy(entry, name11.data(), 11);
+    entry[11] = 0x20;  // archive
+    entry[26] = static_cast<uint8_t>(first);
+    entry[27] = static_cast<uint8_t>(first >> 8);
+    for (int b = 0; b < 4; b++)
+        entry[28 + b] = static_cast<uint8_t>(data.size() >> (8 * b));
+    return true;
+}
+}  // namespace
+
+// ACC-9 (part): the accelerator test program of the HDD system disk (TESTS\ACCTEST.EXE, testdata/machines/sprinter/
+// software) copies a 64 x 64 picture into the graphics screen one row at a time: LD D,D : LD A,#40 (length 64)
+// : LD L,L : LD A,(HL) (64 bytes into the buffer) : LD (DE),A (64 bytes into row PORT_Y) : LD B,B. The video RAM
+// rows 0-63, columns 0-63 then hold the file's picture (load address #8100, picture at #8300).
+// Boot-bound (BIOS, DSS from the floppy, the program): ~3 s host time with the turbo mode
+TEST_F(SprinterBoot_Test, Dss162_AccTestCopiesItsPictureWithTheAccelerator)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    const std::string program = TestPathHelper::GetTestDataPath("machines/sprinter/software/acctest.exe");
+    if (!FileHelper::FileExists(image) || !FileHelper::FileExists(program))
+        GTEST_SKIP() << "the DSS floppy or ACCTEST.EXE is missing";
+
+    std::vector<uint8_t> disk = ReadAll(image);
+    const std::vector<uint8_t> exe = ReadAll(program);
+    ASSERT_EQ(disk.size(), 1474560u);
+    ASSERT_EQ(exe.size(), 4632u);
+    const std::string bat = "@echo off\r\nacctest\r\n";
+    ASSERT_TRUE(PutRootFile(disk, "ACCTEST EXE", exe));
+    ASSERT_TRUE(PutRootFile(disk, "SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())));
+    const std::string copy = TestPathHelper::GetUniqueTestScratchPath("dss-acctest.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(copy, disk.data(), disk.size()));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(copy, 1, &error)) << error;
+
+    // The picture: file offset #16 is load address #8100, so #8300 is offset #216
+    constexpr size_t kPicture = 0x216;
+    const SprinterVideoRam& vram = _decoder->GetVideoRam();
+    const auto mismatches = [&]() {
+        int count = 0;
+        for (uint32_t y = 0; y < 64; y++)
+            for (uint32_t x = 0; x < 64; x++)
+                count += vram.Read(y * 1024 + x) != exe[kPicture + y * 64 + x];
+        return count;
+    };
+
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return mismatches() == 0; }, 3000, 5);
+    EXPECT_EQ(mismatches(), 0) << StringHelper::Format("PC=%04X frame=%llu", _context->pCore->GetZ80()->pc,
+                                                       static_cast<unsigned long long>(_context->emulatorState.frame_counter));
+    const SprinterAccelerator* accelerator = _decoder->GetAccelerator();
+    ASSERT_NE(accelerator, nullptr);
+    EXPECT_GE(accelerator->State().operations, 128u) << "64 block reads and 64 block writes";
+    EXPECT_EQ(accelerator->State().length, 0x40);
+    EXPECT_EQ(vram.Read(64 * 1024), 0x00) << "row 64 is not drawn";
+
+    // The screen against MAME's (ScreenSprinter's render; reviewed against MAME's capture, s5-accelerator-outcome.md)
+    ExpectScreenMatchesGolden("acctest.png");
+}
+
+// Flex Navigator (SYSTEM.BAT's "fn") clears its graphics screen with the accelerator (#86CB: OUT (#A2),#50 puts the
+// video RAM into window 1, then LD D,D : LD A,0 sets the length 256 and every column of 320 runs LD E,E : LD (HL),E
+// : LD B,B: a vertical fill of 256 rows), then draws its panels: the text glyphs through the accelerator's copies.
+// The floppy RESTORE of the BIOS RESETD is too slow for its poll loop at 21 MHz (roadmap §8, the open wait-state
+// question): until that is fixed the test puts the head on track 20 when RESETD starts, so the RESTORE ends in time.
+// Boot-bound (BIOS, DSS, Flex Navigator loading from the floppy): ~6 s host time with the turbo mode
+TEST_F(SprinterBoot_Test, Dss162_FlexNavigatorDrawsWithTheAccelerator)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(image, 1, &error)) << error;
+
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->busTraceHook = [this, z80](char type, uint16_t addr, uint8_t) {
+        // ROM page 0 RESETD (#0609) fetched: the head from FN's last read (track 71) to track 20
+        FDD* drive = _context->pBetaDisk->getDrive();
+        if (type == 'R' && addr == 0x0609 && (z80->pc == 0x0609 || z80->pc == 0x060A) && drive && drive->getTrack() > 20)
+            drive->setTrack(20);
+    };
+
+    const SprinterVideoRam& vram = _decoder->GetVideoRam();
+    const auto cleared = [&]() {
+        const uint8_t v = vram.Read(0);
+        for (uint32_t y = 0; y < 256; y++)
+            for (uint32_t x = 0; x < 320; x++)
+                if (vram.Read(y * 1024 + x) != v)
+                    return false;
+        return true;
+    };
+
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("B:\\>"); }, 3000, 5);
+    EmulatorTestHelper::RunUntil(_emulator.get(), cleared, 1000, 1);
+    ASSERT_TRUE(cleared()) << "320 columns x 256 rows of one value";
+    EXPECT_EQ(_decoder->GetAccelerator()->State().operations, 320u) << "one vertical fill per column";
+
+    // The panels with the file list of B:\FN (the RTC is fixed: the clock shows the same time every run)
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 600);
+    z80->busTraceHook = nullptr;
+    ExpectScreenMatchesGolden("fn-panels.png");
+}
+
+/// endregion </The accelerator in real software>
+
+/// region <Flex Navigator input>
+
+// Flex Navigator reads its keys through DSS (WAITKEY / SCANKEY: DSS's KEYSCAN reads the set 2 codes from SIO A in the
+// frame INT; Tab = #0D -> position #0F) and its mouse through the DSS mouse driver (INTMOUSE: DSS 1.62.9x reads the
+// PLD's Kempston view #FADF / #FBDF / #FFDF, DSS 1.71 the Microsoft serial packets on SIO B). These tests drive both
+// through the automation (the same journaled path the GUI posts to) and read the active panel from the picture: the
+// file cursor bar on the first row of the active panel.
+class SprinterFlexNavigator_Test : public SprinterBoot_Test
+{
+protected:
+    /// The picture rendered in full (two frames without the turbo mode), one pixel of it (0x00RRGGBB)
+    uint32_t Pixel(uint32_t x, uint32_t y)
+    {
+        _emulator->DisableTurboMode();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 2);
+        _emulator->EnableTurboMode();
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+        const uint32_t p = pixels[y * fb.width + x];
+        return (p & 0xFF) << 16 | (p & 0xFF00) | (p >> 16 & 0xFF);
+    }
+
+    /// Which panel shows the cursor bar on row `y` (the left list at x = 100, the right one at x = 420): 'L', 'R', '?'
+    char ActivePanel(uint32_t barColor, uint32_t y = 82)
+    {
+        const bool left = Pixel(100, y) == barColor;
+        const bool right = Pixel(420, y) == barColor;
+        return left == right ? '?' : (left ? 'L' : 'R');
+    }
+
+    /// A key through the automation keyboard, then `frames` for Flex Navigator to act on it
+    void Tap(const std::string& key, uint16_t frames = 20)
+    {
+        _emulator->GetDebugManager()->GetKeyboardManager()->TapKey(key);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), frames);
+    }
+};
+
+// FN 1.10 from the DSS 1.62.92 floppy (the S5 RESTORE workaround of Dss162_FlexNavigatorDrawsWithTheAccelerator):
+// Tab switches the panels and back, Down moves the cursor, the mouse (with no Kempston interface configured: the
+// board's mouse) moves the pointer onto the right panel and a left click makes that panel active.
+// Boot-bound (BIOS, DSS, Flex Navigator loading from the floppy, its disk reads per panel switch): ~9 s host time
+// with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, Dss162_Fn110KeysAndMouse)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(image, 1, &error)) << error;
+    _context->pMouse->SetPresent(false);  // [INPUT] Mouse=NONE: the Sprinter's mouse is still there
+
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->busTraceHook = [this, z80](char type, uint16_t addr, uint8_t) {
+        FDD* drive = _context->pBetaDisk->getDrive();
+        if (type == 'R' && addr == 0x0609 && (z80->pc == 0x0609 || z80->pc == 0x060A) && drive && drive->getTrack() > 20)
+            drive->setTrack(20);
+    };
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("B:\\>"); }, 3000, 5);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 600);
+
+    // A panel switch reads the floppy (~30 frames with interrupts off, SIO A unread): the next key waits for it
+    constexpr uint16_t kSettle = 60;
+    constexpr uint32_t kBar = 0x000000;  // FN 1.10: a black bar on grey panels
+    ASSERT_EQ(ActivePanel(kBar), 'L') << "FN starts on the left panel";
+    Tap("tab", kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "Tab: the right panel";
+    Tap("tab", kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "Tab again: the left panel";
+    Tap("down", kSettle);
+    EXPECT_EQ(ActivePanel(kBar, 90), 'L') << "Down: the bar on the second row";
+    EXPECT_NE(Pixel(100, 82), kBar) << "Down: the first row is no longer marked";
+    Tap("up", kSettle);
+    EXPECT_EQ(_decoder->GetInput().KeyboardOverruns(), 0u);
+
+    // The pointer from the top of the screen into the right panel's list, then a left click
+    for (int i = 0; i < 21; i++)
+    {
+        _context->pMouse->Move(10, -2);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
+    }
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "moving does not click";
+    _context->pMouse->SetButtons(0xFE);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFF);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), kSettle);
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "the click activates the right panel";
+    z80->busTraceHook = nullptr;
+    _context->pMouse->SetPresent(true);
+}
+
+// FN 1.15 on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img; not in the repo): Tab
+// switches the panels, and the serial mouse (DSS 1.71 reads SIO B) moves the pointer onto the right panel, where a
+// click activates it. Boot-bound (BIOS 3.06, DSS 1.71 and FN from the hard disk): ~8 s host time with the turbo mode
+TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    InsertHdd(path);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+    ASSERT_TRUE(ScreenHas("Shell version")) << ScreenText();
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);
+
+    constexpr uint32_t kBar = 0x00FFFF;  // FN 1.15: a cyan bar on blue panels
+    ASSERT_EQ(ActivePanel(kBar), 'L') << "FN starts on the left panel";
+    Tap("tab");
+    EXPECT_EQ(ActivePanel(kBar), 'R') << "Tab: the right panel";
+    Tap("tab");
+    EXPECT_EQ(ActivePanel(kBar), 'L') << "Tab again: the left panel";
+
+    for (int i = 0; i < 20; i++)
+    {
+        _context->pMouse->Move(10, -1);
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 3);
+    }
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFE);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 10);
+    _context->pMouse->SetButtons(0xFF);
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 30);
+    EXPECT_NE(ActivePanel(kBar), 'L') << "the click on the right panel moved the focus there";
+}
+
+/// endregion </Flex Navigator input>

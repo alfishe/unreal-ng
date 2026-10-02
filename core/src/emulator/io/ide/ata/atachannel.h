@@ -10,8 +10,13 @@
 /// | EXECUTE DEVICE DIAGNOSTIC | both units run it |
 /// | register read, selected unit present | it answers |
 /// | selected unit absent, the other present | the other answers the task file; status and alternate status read #00 |
-/// | no unit present | #FF (floating bus) |
-/// | data to / from an absent unit | ignored / #FFFF |
+/// | no unit present | the board's empty-bus value: #FF (floating bus) by default, #7F with a DD7 pull-down |
+/// | data to / from an absent unit | ignored / the empty-bus word (#FFFF, #FF7F with the pull-down) |
+///
+/// The ATA standard asks the host for a 10 kOhm pull-down on DD7 so that an
+/// empty channel reads BSY = 0 and the firmware sees "no device" at once
+/// instead of waiting for BSY to drop; the other lines float high (#7F). Which
+/// boards fit it is the board's choice (IdeController): the Sprinter does.
 ///
 /// A unit is configured as a disk or a CD drive (the machine's config); its
 /// medium comes and goes through the media manager's slot.
@@ -44,6 +49,14 @@ public:
     /// The machine's reset line: both units back to power-on
     void HardReset();
 
+    /// What the bus reads when no unit drives it (registers: the low byte)
+    void SetEmptyBus(uint16_t word) { _emptyBus = word; }
+    uint16_t EmptyBus() const { return _emptyBus; }
+    /// The empty-bus word of a host with the ATA DD7 pull-down
+    static constexpr uint16_t kEmptyBusDd7PullDown = 0xFF7F;
+    /// The empty-bus word of a host without it: every line floats high
+    static constexpr uint16_t kEmptyBusFloating = 0xFFFF;
+
     /// The unit the device register selects
     int Selected() const { return _selected; }
     bool AnyPresent() const;
@@ -57,4 +70,5 @@ private:
 
     std::array<std::unique_ptr<AtaDevice>, kUnits> _units;
     uint8_t _selected = 0;
+    uint16_t _emptyBus = kEmptyBusFloating;
 };

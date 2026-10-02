@@ -48,13 +48,14 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     }
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
-        session.SendResponse("Usage: network [state] | network set card=none|zxnetusb|zxwifi|zxnetusb,zxwifi host_access=on|off "
+        session.SendResponse("Usage: network [state] | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,baud] (the machine's serial port; "
                              "an ESP module's baud defaults to the port's: 38400 on the ATM Turbo 2+ controller, 115200 elsewhere) "
                              "zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266 "
                              "avr_firmware=baseconf|base2010|base2011-04|base2011-05|base2011-09|base2013|base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) "
-                             "kbc_firmware=none|v22-7|v22-11|v22-12|v31-7|v31-11|v32-7|v32-11|v40|v41 (ATM Turbo 2+ keyboard controller)" +
+                             "kbc_firmware=none|v22-7|v22-11|v22-12|v31-7|v31-11|v32-7|v32-11|v40|v41 (ATM Turbo 2+ keyboard controller) "
+                             "atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector)" +
                              std::string(NEWLINE));
         return;
     }

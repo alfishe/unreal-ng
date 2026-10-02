@@ -444,7 +444,7 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     std::map<uint16_t, Socket> kept;
     for (const auto& [id, s] : _sockets)
     {
-        if (s.guest && (s.guest == keep.com || s.guest == keep.machine))
+        if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo))
             kept[id] = s;
     }
     if (_host)
@@ -677,7 +677,11 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
         o.hostId = s.hostId;
         o.proto = static_cast<uint8_t>(s.proto);
         o.connected = s.connected ? 1 : 0;
-        o.hasGuest = !s.guest ? 0 : (s.guest == serial.com ? 2 : (s.guest == serial.machine ? 3 : 1));
+        o.hasGuest = !s.guest                        ? 0
+                     : s.guest == serial.com     ? 2
+                     : s.guest == serial.machine ? 3
+                     : s.guest == serial.atmIo   ? 4
+                                                 : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
         o.remotePort = s.remote.port;
@@ -766,7 +770,11 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
         s.hostId = o.hostId;
         s.proto = static_cast<NetProto>(o.proto);
         s.connected = o.connected != 0;
-        s.guest = o.hasGuest == 2 ? serial.com : (o.hasGuest == 3 ? serial.machine : (o.hasGuest ? guest : nullptr));
+        s.guest = o.hasGuest == 2   ? serial.com
+                  : o.hasGuest == 3 ? serial.machine
+                  : o.hasGuest == 4 ? serial.atmIo
+                  : o.hasGuest      ? guest
+                                    : nullptr;
         s.cookie = o.cookie;
         s.remote = {o.remoteAddr, o.remotePort};
         s.listenPort = o.listenPort;

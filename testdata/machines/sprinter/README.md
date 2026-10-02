@@ -12,6 +12,9 @@ standard PC-format FAT12 floppy.
 | `dss160r/` | five files of the official DSS 1.60R binary release (February 2003) |
 | `golden/setup-menu.png` | BIOS 3.04 SETUP 1.58 menu as `ScreenSprinter` renders it (736x288; reviewed by eye, phase S2): the golden image of `SprinterBoot_Test.Bios304_SetupSavesSettingToCmos`. The MAME captures are in `reference/` |
 | `golden/dss-prompt.png` | DSS 1.62.92 at its `B:\>` prompt after the floppy boot, as `ScreenSprinter` renders it (736x288; reviewed by eye, phase S3a): the golden image of `SprinterBoot_Test.Dss162_BootsFromTheHdFloppyToThePrompt`, compared pixel for pixel |
+| `golden/acctest.png` | the accelerator test `ACCTEST.EXE` (below) after it drew its picture, run from the DSS floppy with BIOS 3.04 (phase S5): the golden image of `SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator`; its picture area equals MAME's (`reference/mame-acctest-306.png`) |
+| `golden/fn-panels.png` | Flex Navigator 1.10 (the floppy's `fn`) with both panels on `B:\FN`, phase S5: the golden image of `SprinterBoot_Test.Dss162_FlexNavigatorDrawsWithTheAccelerator` |
+| `software/acctest.exe` | the accelerator test program (below) |
 
 ## `dss_1_62_92.img` - the DSS 1.62.92 boot floppy
 
@@ -118,6 +121,22 @@ The tests skip when the image is missing.
 Not used by a test yet; they are the input for building a DSS 1.60R boot disk
 once the Sprinter machine runs.
 
+## `software/acctest.exe` - the accelerator test
+
+- **Source:** `TESTS/ACCTEST.EXE` of the HDD system disk in the owner's MAME pack
+  (`mame_release_v306_25.05.2025/IMG/sp_hdd_sys.chd`, raw image `sp_hdd_sys.img`, FAT16 at LBA 63; the
+  same folder holds the accelerator description `DOCS/ACCEL_R.TXT`). Author and date unknown (the
+  disk's files are all dated 2019-01-01).
+- **Size:** 4 632 bytes. **CRC32:** `BCE4E9A4`. **SHA-256:**
+  `9c5f77e8b299aa423171b2b83fe8a7e5f1cd58e8c4649dcb36b54f19c8866466`.
+- **What it does:** a DSS `EXE` (code from offset `#16`, loaded at `#8100`): sets the 320 x 256 mode
+  and a palette (from `#8200`), puts graphics page `#50` into window 3 and copies the 64 x 64 picture at
+  `#8300` (offset `#216`) into rows 0-63 with the accelerator (`LD D,D : LD A,#40`, `LD L,L : LD A,(HL)`,
+  `LD (DE),A`, `LD B,B` per row), then waits for ESC.
+- **Used by:** `SprinterBoot_Test.Dss162_AccTestCopiesItsPictureWithTheAccelerator` (copied with a new
+  `SYSTEM.BAT` onto a scratch copy of `dss_1_62_92.img`), and
+  [.recipe/machines/sprinter-accelerator.md](../../../.recipe/machines/sprinter-accelerator.md).
+
 ## License
 
 - **DSS 1.60R** (`dss160r/`): the repository README states the source code was
@@ -125,3 +144,4 @@ once the Sprinter machine runs.
   DOMAIN terms".
 - **DSS 1.62.92 floppy:** no license stated on the download page; used as test
   material only (see [testdata/NOTICE.md](../../NOTICE.md)).
+- **ACCTEST.EXE** (`software/`): no license stated; used as test material only (same notice).

@@ -6,7 +6,9 @@
 
 #include <cstring>
 
+#include "debugger/ttd/sprinter/ttdsprinter.h"
 #include "debugger/ttd/ttdds12887.h"
+#include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -72,6 +74,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         _sprinterMemory->AttachDecoder(this);
     else
         MLOGWARNING("PortDecoder_Sprinter: the memory subsystem is not SprinterMemory - windows stay at the loader layout");
+    _accelerator.AttachMemory(_sprinterMemory);
 
     if (_context->pCore && _context->pCore->GetZ80())
     {
@@ -206,6 +209,7 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 
     _intSource.Reset();
     _intSource.SetFrameLines(320);
+    _accelerator.Reset();  // the PLD's /RESET (MAME machine_reset: m_acc_dir = 0, m_alt_acc = 0)
 
     ActiveModule().OnReset(kind, _pld);
 }
@@ -231,6 +235,7 @@ void PortDecoder_Sprinter::BeginLoading()
     _pld.turbo = 0;
     ApplyTurbo();
     RefreshStepHook();
+    RefreshAccelerator();
     UpdateBanks();
 }
 
@@ -355,6 +360,7 @@ void PortDecoder_Sprinter::PerformPendingReset()
             UpdateBanks();
             break;
     }
+    RefreshAccelerator();
     RefreshStepHook();
 }
 
@@ -378,8 +384,23 @@ void PortDecoder_Sprinter::InstallHooks()
     z80->machineM1Hook = this;
     if (_sprinterMemory)
         core->AddBusOverlay(&_sprinterMemory->GetWriteIntercept());
+    RefreshAccelerator();
     if (!_waits)
         _waits = std::make_unique<SprinterWaits>(z80);
+}
+
+void PortDecoder_Sprinter::RefreshAccelerator()
+{
+    SprinterAccelerator* accelerator = nullptr;
+    if (_pld.configState == SprinterConfigState::Configured)
+    {
+        accelerator = ActiveModule().Accelerator(*this);
+        if (!accelerator)
+            accelerator = _registry.Standard().Accelerator(*this);
+    }
+    _activeAccelerator = accelerator;
+    if (_cpuEngine)
+        _cpuEngine->SetBusAgent(accelerator);
 }
 
 /// The step hook runs only while a load is in progress (the watchdog) or a CPU
@@ -479,6 +500,29 @@ void PortDecoder_Sprinter::OnBanksChanged()
     // Main RAM waits; ROM and fast RAM do not (MAME: only ram_r / ram_w / isa_r / isa_w call do_mem_wait)
     for (uint8_t bank = 0; bank < 4; bank++)
         _waits->SetSlotWaits(bank, _memory->GetMemoryBankMode(bank) == BANK_RAM);
+}
+
+void PortDecoder_Sprinter::OnTtdStateLoaded()
+{
+    // The loaded registers become the library's at the next step, whatever boundary it reported last
+    if (_cpuEngine)
+        _cpuEngine->InvalidateBoundary();
+    // The windows first: the turbo's wait slots follow the bank modes
+    UpdateBanks();
+    ApplyTurbo();
+    RefreshAccelerator();  // the configured module's accelerator as the CPU's bus agent (none while loading)
+    RefreshStepHook();
+}
+
+void PortDecoder_Sprinter::SaveAccelState(uint8_t* dst) const
+{
+    std::memcpy(dst, &_accelerator.State(), sizeof(SprinterAccelState));
+}
+
+void PortDecoder_Sprinter::LoadAccelState(const uint8_t* src)
+{
+    std::memcpy(&_accelerator.State(), src, sizeof(SprinterAccelState));
+    _accelerator.watchData = _accelerator.State().dir != 0;  // the engine watches data accesses while a mode is on
 }
 
 const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const
@@ -709,7 +753,8 @@ uint8_t PortDecoder_Sprinter::StandardReadCode(uint8_t code, uint16_t port)
             return PeripheralPortIn(0xFFFD);
 
         case SprinterCode::KempstonMouse:
-            return Default_Port_KempstonMouse_In(port, _pc);
+            // The PLD's view of the board's own mouse, not an optional Kempston interface
+            return _input.ReadMouseView(port);
 
         case SprinterCode::CovoxBlaster:
             return _cblControl;
@@ -865,7 +910,9 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::Scale:
         case 0xCF:
-            return;  // accelerator alternate addressing: phase S5
+            if (_activeAccelerator)
+                _activeAccelerator->OnScaleWrite(port, value);  // the alternate buffer addressing
+            return;
         default:
             break;
     }
@@ -905,15 +952,32 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
 
 std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
 {
-    // The PLD blob comes with phase S7: declaring it makes TTD refuse to record
-    // this machine until then instead of recording a state it cannot restore
-    return {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887};
+    // Everything of the machine the 128K chipset struct and the core devices do not carry (Sprinter S7,
+    // tdd-integration §2): the PLD and the decoder, the Z84C15 beside its register file, the keyboard and
+    // serial mouse streams, the video RAM and the fast RAM (whole-array blobs until TTD v2 memory regions)
+    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887,
+                                          ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
+                                          ttd::PeripheralId::SprinterInput};
+    if (_context->pBetaDisk)
+        ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
+    if (_sprinterMemory)
+        ids.push_back(ttd::PeripheralId::SprinterFastRam);
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateTTDSerializers() const
 {
+    auto& self = const_cast<PortDecoder_Sprinter&>(*this);
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
-    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(self._rtc));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterPld>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterZ84>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterInput>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
+    if (_sprinterMemory)
+        serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));
+    if (_context->pBetaDisk)
+        serializers.push_back(std::make_unique<ttd::TTDWd1793Context>(*_context->pBetaDisk));
     return serializers;
 }
 
