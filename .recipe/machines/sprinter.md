@@ -268,6 +268,8 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
 | `clock`, `frame` | turbo requested / front-panel switch, `ratio` 1 or 6, `mhz` 3.5 / 21; `lines` 320 / 312, `t_states` 71 680 / 69 888 |
 | `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
+| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `phase_t` (a placeholder until a board is measured), `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
+| `tape` | `time_base`: `base_clock` - the tape input counts real time, so load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX); at 21 MHz the ROM loader fails, as on the board |
 | `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
 | `sound` | the AY (chips, clock, stereo from its config) and the Covox-Blaster (control, rate, indices, counters; the ring: `sprinter_sound_ring`) - [sprinter-sound.md](sprinter-sound.md) |
@@ -491,3 +493,33 @@ and core reports as Lua.)
   both floppies before the boot.
 - **Uploads**: MCP `load_software` uploads a file that exists on the MCP host;
   floppies up to 4 MB are accepted (1.44 MB PC images included).
+
+### ZX-mode timing: the zxtime program
+
+Verified 2026-10-02 on a GUI build (WebAPI on a spare port, BIOS 3.06 HF2, the MAME-pack disk as a CHD with
+`ZXTIME.TRD` in `C:\TRD`): `spectrum origin.zx zxtime.trd`, the standard 128 menu down to TR-DOS, `R` ENTER.
+ORIGIN.ZX's TR-DOS 5.04Em reads only the real floppy: with no disk in `fdd.a` it says "Disc Error" (the launcher's
+RAM disk is for the Sprinter TR-DOS 7.03 of SP / P128 / P512); insert the same TRD as `fdd.a` and `R` ENTER again.
+
+```bash
+BASE=http://localhost:8090/api/v1
+tap() { curl -s -X POST $BASE/emulator/$EMU/keyboard/tap -H 'Content-Type: application/json' -d "{\"key\":\"$1\",\"frames\":3}"; sleep 1; }
+curl -s -X POST $BASE/emulator/$EMU/keyboard/type -H 'Content-Type: application/json' -d '{"text":"spectrum origin.zx zxtime.trd"}'; tap enter
+tap down; tap down; tap down; tap down; tap enter       # Tape Loader, 128 BASIC, Calculator, 48 BASIC, TR-DOS
+curl -s -X POST $BASE/emulator/$EMU/media/fdd.a/insert -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/zxtime.trd\"}"
+tap r; tap enter                                        # RUN: about 5 s later the report
+curl -s "$BASE/emulator/$EMU/state/sprinter" | jq -c '.clock.original_waits | {active, windows_waiting}, .tape.time_base'
+#   → {"active":true,"windows_waiting":[false,true,false,false]}  "base_clock"
+```
+
+The screen then reads `FRAME 69888 T`, `RATE 50.08 frames/s`, `INT 50 in 50 frames`, `REPEAT 0`, and the screen
+reads `#4000 996`, `#C000 page 5 996`, `#C000 page 1 0` (thousandths of a T: the original waits, MAME prints 0).
+The same block on the other surfaces: MCP `inspect_state {"aspects":["sprinter"]}` adds the lines "original waits
+(ALL_MODE bit 2 = 0) ..." and "tape in real time ...", CLI `state sprinter` prints `original_waits:` and `tape:`,
+Lua `sprinter_state().clock.original_waits.active`, Python `emulator.sprinter_state()["clock"]["original_waits"]`
+(the Python surface needs a build with `ENABLE_PYTHON_AUTOMATION=ON`). What each line means and the numbers of every
+launcher mode: [testdata/machines/sprinter/zx-timing/README.md](../../testdata/machines/sprinter/zx-timing/README.md),
+[tdd-zx-mode.md](../../docs/inprogress/2026-09-28-sprinter/tdd-zx-mode.md) §4.1.
+
+After Ctrl+Alt+Del from any mode started with `/ret-fn` the machine is back in DSS at 21 MHz (the PLD presets its
+turbo bit on the reset); `/state/sprinter` shows `registers.all_mode.value` `0xFF` and `clock.mhz` `21`.

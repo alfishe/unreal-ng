@@ -1956,6 +1956,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& waits = value["clock"]["waits"];
                                     if (waits["active"].asBool())
                                         out << "\n  21 MHz waits on main RAM windows";
+                                    if (value["clock"]["original_waits"]["active"].asBool())
+                                        out << "\n  original waits (ALL_MODE bit 2 = 0): screen memory waits on the 4-T CT5 period";
+                                    if (value["tape"]["time_base"].asString() == "base_clock")
+                                        out << "\n  tape in real time (load in a 3.5 MHz mode)";
                                 }
                             }
                             else if (aspect == "audio_mixer")

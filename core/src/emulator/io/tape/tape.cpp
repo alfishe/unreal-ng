@@ -565,6 +565,19 @@ void Tape::reset()
 
 };
 
+/// region <Time base>
+
+uint64_t Tape::ClockCount() const
+{
+    const EmulatorState& state = _context->emulatorState;
+    uint64_t inFrame = _context->pCore->GetZ80()->t;
+    if (_baseClockTimeBase && state.hw_turbo_ratio_applied > 1)
+        inFrame /= state.hw_turbo_ratio_applied;
+    return state.t_states + inFrame;
+}
+
+/// endregion </Time base>
+
 /// region <Port events>
 
 uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
@@ -582,8 +595,8 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
     [[maybe_unused]] uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
     [[maybe_unused]] uint32_t scaledTState = tState * speedMultiplier;
 
-    // Use monotonic counter for tape timing (t_states + t)
-    const uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
+    // Monotonic counter for tape timing (t_states + t, in the time base: ClockCount)
+    const uint64_t clockCount = ClockCount();
 
     // Is a loader listening? Keyboard, joystick and menu reads never count,
     // however often they come (loader-follow design §4)
@@ -672,8 +685,8 @@ void Tape::handleFrameStart()
     // Listening reads are counted per frame
     _listenReadsThisFrame = 0;
 
-    // Use monotonic counter for tape timing (t_states + t)
-    uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
+    // Monotonic counter for tape timing (t_states + t, in the time base: ClockCount)
+    uint64_t clockCount = ClockCount();
 
     if (_tapeStarted && !_tapeBlocks.empty())
     {
@@ -736,7 +749,7 @@ void Tape::handleStep()
 
     Z80& cpu = *_context->pCore->GetZ80();
     const uint32_t tState = cpu.t;
-    uint64_t clockCount = _context->emulatorState.t_states + tState;
+    uint64_t clockCount = ClockCount();
 
     bool tapeBit = getTapeStreamBit(clockCount);
 

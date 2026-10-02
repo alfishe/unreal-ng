@@ -14,7 +14,10 @@ protected:
     {
         SprinterFixture::SetUp();
         OpenDcp();
-        Pld().allMode = 0x01;  // ALL_MODE bit 0: accelerator on (also turns the Spectrum shadow off)
+        // ALL_MODE bit 0: accelerator on (also turns the Spectrum shadow off); bit 2: no original waits (the
+        // BIOS's Sprinter mode is #FF)
+        Pld().allMode = 0x05;
+        _decoder->ApplyOrigWaits();
         ASSERT_NE(Acc(), nullptr);
         ASSERT_TRUE(IsRam(0x4000));
         ASSERT_TRUE(IsRam(0x8000));

@@ -21,6 +21,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
@@ -507,6 +508,27 @@ StateNode WaitsSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     return w;
 }
 
+/// The ZX mode's "original waits" (SprinterOrigWaits, PLD WAIT_ORIG; tdd-zx-mode.md §3.3): ALL_MODE bit 2 = 0 at 3.5 MHz
+StateNode OrigWaitsSummary(PortDecoder_Sprinter& decoder)
+{
+    StateNode w = StateNode::Object();
+    const SprinterPldState& pld = decoder.GetPldState();
+    const bool active = decoder.OrigWaitsActive();
+    w["active"] = active;
+    w["all_mode_bit2"] = (pld.allMode & 0x04) != 0;
+    w["rule"] = "ALL_MODE bit 2 = 0 at 3.5 MHz: a memory access to #4000-#7FFF, or to #C000-#FFFF while #7FFD bit 2 is set, "
+                "waits while CT5 = 0 - 2 T when its T2 falls on the first low T of the 4-T CT5 period, 1 T on the second, "
+                "none on the high half (PLD WAIT_ORIG; ORIGIN.ZX)";
+    w["period_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPeriod);
+    w["phase_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPhase);
+    w["phase_note"] = "placeholder until measured on a real board (testdata/machines/sprinter/zx-timing, tdd-zx-mode Q1)";
+    StateNode windows = StateNode::Array();
+    for (uint8_t window = 0; window < 4; window++)
+        windows.push(active && SprinterOrigWaits::WindowWaits(window, pld.pn));
+    w["windows_waiting"] = windows;
+    return w;
+}
+
 StateNode Bios(EmulatorContext* context)
 {
     StateNode b = StateNode::Object();
@@ -829,7 +851,16 @@ StateNode Sprinter(EmulatorContext* context)
         c["ratio"] = ratio;
         c["mhz"] = ratio >= 6 ? "21" : "3.5";
         c["waits"] = WaitsSummary(*decoder, context);
+        c["original_waits"] = OrigWaitsSummary(*decoder);
         ret["clock"] = c;
+
+        // The tape input (KMPS, #FE bit 6) counts real time: base 3.5 MHz T-states whatever the CPU runs at
+        StateNode t = StateNode::Object();
+        const bool baseClock = context->pTape && context->pTape->IsBaseClockTimeBase();
+        t["time_base"] = baseClock ? "base_clock" : "cpu_clock";
+        t["note"] = "base_clock: a tape plays in real time, so at 21 MHz the ROM loader times its pulses six times too "
+                    "long and fails, as on the board; load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX)";
+        ret["tape"] = t;
 
         auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
         StateNode f = StateNode::Object();

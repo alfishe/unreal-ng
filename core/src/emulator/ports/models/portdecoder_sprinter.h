@@ -59,7 +59,8 @@ class TTDSprinterPld;
 ///     codes #90 / #91 / #52;
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
-///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
+///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits), and the ZX mode's
+///     "original waits" at 3.5 MHz (SprinterOrigWaits).
 class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook
 {
 public:
@@ -184,6 +185,13 @@ public:
     /// The turbo wait overlay (SprinterWaits; null until the CPU exists): the windows it marks
     /// (SlotWaits) are the ones whose accesses wait at 21 MHz - automation reports it
     const SprinterWaits* GetWaits() const { return _waits.get(); }
+    /// The "original waits" overlay (SprinterOrigWaits): installed while ALL_MODE bit 2 = 0 and the CPU runs
+    /// at 3.5 MHz on the configured PLD; automation reports whether it is (OrigWaitsActive)
+    const SprinterOrigWaits* GetOrigWaits() const { return _origWaits.get(); }
+    bool OrigWaitsActive() const;
+    /// The original waits follow ALL_MODE bit 2, the clock and #7FFD bit 2 (window 3): install or remove the
+    /// overlay, mark its windows. Called on every change of those; public for a PLD state set directly (tests)
+    void ApplyOrigWaits();
     /// The Covox / Covox-Blaster DAC (S6, tdd-accel-sound-input §2)
     CovoxBlaster& GetCovoxBlaster() { return _cbl; }
     const CovoxBlaster& GetCovoxBlaster() const { return _cbl; }
@@ -256,6 +264,7 @@ private:
     std::unique_ptr<Z84C15Engine> _cpuEngine;
     SprinterMemory* _sprinterMemory = nullptr;
     std::unique_ptr<SprinterWaits> _waits;
+    std::unique_ptr<SprinterOrigWaits> _origWaits;
 
     /// DS12887A: 128 cells, century register #32; battery-backed through
     /// [SPRINTER] CmosFile, so it lives with the decoder and survives resets

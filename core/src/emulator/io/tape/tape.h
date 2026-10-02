@@ -200,6 +200,7 @@ protected:
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
     uint64_t _currentClockCount;        // Store clock count for next iteration
+    bool _baseClockTimeBase = false;    // ClockCount() in base T-states (SetBaseClockTimeBase), else CPU clocks
     bool _lastTapeBit = false;          // Last tape bit state for band-limited step edge detection
     bool _tapeBitState = false;         // Digital signal output level of current tape pulse
 
@@ -339,6 +340,25 @@ public:
     /// callers pick StartPlaybackAtCursor() for the not-paused case.
     void ResumePlaybackFromPause();
     /// endregion </Playback state, position and seek>
+
+    /// region <Time base>
+public:
+    /// The tape's clock: machine time in base (3.5 MHz) T-states, or in CPU clocks (the default).
+    /// A tape plays in real time; a machine whose CPU runs N times faster through a hardware clock switch
+    /// (hw_turbo_ratio: the Sprinter at 21 MHz) counts N CPU clocks per base T-state inside the frame, and
+    /// the plain sum t_states + t makes the tape run N times faster with the CPU (and step back at the frame
+    /// boundary, where t_states grows by one base frame only). With the base-clock time base the in-frame
+    /// part is scaled back, as the WD1793 does (FDC::SetBaseClockTimeBase): a 2 168-T pilot pulse lasts
+    /// 2 168 base T = 13 008 CPU clocks at 21 MHz, the ROM loader's edge loop times it six times too long
+    /// and rejects it - what the real board does (tdd-zx-mode.md §3.4). Opt-in per model: the Sprinter
+    /// turns it on; other turbo machines keep the CPU-clock time base (a separate change, it moves their
+    /// TTD fixtures - tdd-zx-mode Q2)
+    void SetBaseClockTimeBase(bool on) { _baseClockTimeBase = on; }
+    bool IsBaseClockTimeBase() const { return _baseClockTimeBase; }
+
+    /// The tape clock now (t_states + the in-frame position, scaled per the time base)
+    uint64_t ClockCount() const;
+    /// endregion </Time base>
 
     /// region <Port events>
 public:

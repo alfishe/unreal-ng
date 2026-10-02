@@ -7,7 +7,10 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/video/screen.h"
 
 /// Sprinter frame cost (Sprinter tdd-video §3, the naive v1 renderer): BIOS 3.04
@@ -64,3 +67,36 @@ static void BM_SprinterFrame_Logo(benchmark::State& state)
 
 BENCHMARK(BM_SprinterRender_Logo)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_SprinterFrame_Logo)->Iterations(100)->Unit(benchmark::kMicrosecond);
+
+/// The ZX mode's "original waits" (tdd-zx-mode.md §3.3, T-ZX-10): a frame of LD A,(#4000) / JP loops at
+/// 3.5 MHz from window 2 with ALL_MODE bit 2 set (/0: the overlay is not installed - what every other mode pays)
+/// and clear (/1: every read of #4000 goes through SprinterOrigWaits)
+static void BM_SprinterFrame_ScreenReads(benchmark::State& state)
+{
+    auto emulator = BootSprinterToLogo(state);
+    if (!emulator)
+        return;
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    Z80* z80 = context->pCore->GetZ80();
+    const uint8_t loop[] = {0x3A, 0x00, 0x40, 0xC3, 0x00, 0x80};  // LD A,(#4000) : JP #8000
+    for (uint16_t i = 0; i < sizeof(loop); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), loop[i]);
+    z80->pc = 0x8000;
+    z80->iff1 = z80->iff2 = 0;
+    SprinterPldState& pld = decoder->GetPldState();
+    pld.turbo = 0;
+    pld.allMode = state.range(0) ? 0xFA : 0xFE;
+    decoder->OnTtdStateLoaded();  // the clock and both wait overlays follow the PLD state
+    if (decoder->OrigWaitsActive() != (state.range(0) != 0))
+    {
+        state.SkipWithError("the original waits did not follow ALL_MODE");
+        return;
+    }
+    MainLoopCUT* mainLoop = reinterpret_cast<MainLoopCUT*>(context->pMainLoop);
+    for (auto _ : state)
+        mainLoop->RunFramePublic();
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
+BENCHMARK(BM_SprinterFrame_ScreenReads)->Arg(0)->Arg(1)->Iterations(100)->Unit(benchmark::kMicrosecond);
