@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QWidget>
 #include <gtest/gtest.h>
 
@@ -169,6 +170,75 @@ TEST_F(MouseCaptureController_Test, GateAndDevice)
     ASSERT_TRUE(_controller->isCaptured());
     _controller->handleFocusOut();
     EXPECT_FALSE(_controller->isCaptured()) << "focus loss releases";
+}
+
+/// Speed matching: host travel over a picture drawn at 2x moves the guest half as many pixels,
+/// so the guest cursor keeps up with where the host pointer would be; at 1x one for one.
+/// Off: one host pixel = one count whatever the zoom. The same arithmetic serves the
+/// macOS native deltas and the Windows / Linux warp deltas (both are the host pointer's
+/// own travel, with the system's speed and acceleration)
+TEST_F(MouseCaptureController_Test, SpeedFollowsTheHostPointer)
+{
+    int sumX = 0, sumY = 0;
+    MouseCaptureController::Poster poster;
+    poster.move = [&](int dx, int dy) {
+        sumX += dx;
+        sumY += dy;
+    };
+    _controller->setPoster(poster);
+    _controller->setSourceSizeProvider([] { return QSizeF(320, 240); });
+
+    _screen.resize(640, 480);  // the picture at 2x
+    _controller->capture();
+    _controller->applyHostMotion(100, 40);
+    EXPECT_EQ(sumX, 50) << "100 host pixels over a 2x picture = 50 emulated pixels";
+    EXPECT_EQ(sumY, -20) << "screen Y down = mouse Y up";
+
+    sumX = sumY = 0;
+    _controller->applyHostMotion(1, 0);
+    EXPECT_EQ(sumX, 0) << "half a pixel is carried";
+    _controller->applyHostMotion(1, 0);
+    EXPECT_EQ(sumX, 1);
+
+    sumX = sumY = 0;
+    _controller->setMatchHostPointer(false);  // switched while captured
+    _controller->applyHostMotion(100, 40);
+    EXPECT_EQ(sumX, 100) << "off: one host pixel = one count";
+    EXPECT_EQ(sumY, -40);
+
+    sumX = sumY = 0;
+    _controller->setMatchHostPointer(true);
+    _screen.resize(320, 240);  // 1x
+    _controller->applyHostMotion(37, 0);
+    EXPECT_EQ(sumX, 37);
+}
+
+/// The Windows / Linux backend: the pointer is warped back to the center after
+/// every move and the offset from the center is the travel (macOS native is off here)
+TEST_F(MouseCaptureController_Test, WarpBackendMeasuresTravelFromTheCenter)
+{
+    int sumX = 0, sumY = 0;
+    MouseCaptureController::Poster poster;
+    poster.move = [&](int dx, int dy) {
+        sumX += dx;
+        sumY += dy;
+    };
+    _controller->setPoster(poster);
+    _screen.resize(640, 480);
+    _controller->setSourceSizeProvider([] { return QSizeF(320, 240); });
+    _controller->capture();
+    ASSERT_TRUE(_controller->isCaptured());
+
+    const QPoint center = _screen.mapToGlobal(_screen.rect().center());
+    {
+        QMouseEvent warpEcho(QEvent::MouseMove, QPointF(0, 0), QPointF(center), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        _controller->handleMouseMove(&warpEcho);  // the move the capture's own warp generates
+    }
+    QMouseEvent move(QEvent::MouseMove, QPointF(0, 0), QPointF(center + QPoint(20, -10)), Qt::NoButton, Qt::NoButton,
+                     Qt::NoModifier);
+    EXPECT_TRUE(_controller->handleMouseMove(&move));
+    EXPECT_EQ(sumX, 10) << "20 host pixels at 2x";
+    EXPECT_EQ(sumY, 5) << "10 up on screen = 5 up for the mouse";
 }
 
 int main(int argc, char** argv)

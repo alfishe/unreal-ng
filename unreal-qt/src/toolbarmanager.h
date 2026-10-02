@@ -90,6 +90,8 @@ private:
     QAction* _ttdAction = nullptr;
     QAction* _mouseAction = nullptr;          // indicator + gate (mouse-manager design §3.3)
     QAction* _mouseGateMenuAction = nullptr;  // View -> Host Mouse: the same gate as a menu item
+    QAction* _mouseMatchMenuAction = nullptr; // View -> the captured mouse follows the host pointer's speed
+    bool _mouseMatchHostPointer = true;       // persisted; applied to every new capture controller
     QPointer<MouseCaptureController> _mouseCapture;
     bool _mouseGateOpen = true;               // persisted; applied to every new capture controller
 #ifdef ENABLE_RECORDING

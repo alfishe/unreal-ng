@@ -117,6 +117,13 @@ emu.mouse_release_all()
   mouse device). Clicking it turns the host mouse off or on; View → Host Mouse
   Enabled is the same switch. Off: the host mouse never reaches the machine.
   Automation input is not affected.
+- Speed: by default the captured mouse moves the guest as far as the host
+  pointer would move over the picture, at any window size, zoom or DPI, with the
+  host's own pointer speed and acceleration (macOS, Windows and Linux alike; the
+  guest software's own acceleration comes on top). View → Mouse Follows Host
+  Pointer Speed off: one host pixel of travel is one mouse count, whatever the
+  window. Switchable at any time; `[INPUT] MouseScale=` (2^-3..2^3) applies in
+  both modes.
 
 ## Pitfalls
 
