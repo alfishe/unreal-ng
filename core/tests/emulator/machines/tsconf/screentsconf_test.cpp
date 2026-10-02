@@ -383,6 +383,27 @@ TEST_F(ScreenTSConf_Test, VDAC_CurvesStatusAndRender)
     _context->config.ts_vdac = 0;
 }
 
+/// D6 (vdac2-tdd.md §2.1): the VDAC2 build (STATUS 7) shows the Evo colors
+/// through the card's CPLD table exactly: PAL_SEL = 1 is level << 3 (top 248),
+/// PAL_SEL = 0 is the card's linear table, round(v * 255 / 24), full from 24
+TEST_F(ScreenTSConf_Test, VDAC2_CardTable)
+{
+    static constexpr uint8_t kCard[25] = {0,   10,  21,  31,  42,  53,  63,  74,  85,  95,  106, 117, 127,
+                                          138, 149, 159, 170, 181, 191, 202, 213, 223, 234, 245, 255};
+    for (uint32_t v = 0; v < 32; v++)
+    {
+        const uint32_t linear = v < 25 ? kCard[v] : 255u;
+        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(v), 7), 0xFF000000u | (linear << 16))
+            << "linear blue " << v;
+        EXPECT_EQ(ScreenTSConf::CramToRgba(static_cast<uint16_t>(0x8000 | (v << 10)), 7), 0xFF000000u | (v << 3))
+            << "direct red " << v;
+    }
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0x7FFF, 7), 0xFFFFFFFFu) << "linear saturates";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(0xFFFF, 7), 0xFFF8F8F8u) << "direct white is 248";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 7), 0xFF007500u) << "117 where the truncating curve gives 116";
+    EXPECT_EQ(ScreenTSConf::CramToRgba(11 << 5, 3), 0xFF007400u) << "the 5-bit VDAC build keeps its curve";
+}
+
 /// TIM-5: a DMA CRAM write lands at its dot. A RAM -> CRAM transfer of 200
 /// words (all blue) starts at line 99; the picture uses CRAM 150, written
 /// about 300 DRAM accesses later - inside line 99. The dots of line 99 before
