@@ -3,6 +3,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
 
 #include <cstring>
 
@@ -84,6 +85,9 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     state.atmMemSwapped = blob.atmMemSwapped != 0;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
         atm3->GetEvoAvr().SetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
+    // The v7.10 board's 7 MHz RAM waits follow #FF77 bit 3, restored with the core state (no-op on the ZX-Evo)
+    if (auto* atm710 = dynamic_cast<PortDecoder_ATM710*>(_context->pPortDecoder))
+        atm710->SyncTurboRamWaits();
 
     for (size_t i = 0; i < 16; ++i)
     {

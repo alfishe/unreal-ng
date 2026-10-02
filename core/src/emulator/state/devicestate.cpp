@@ -25,6 +25,7 @@
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
@@ -1630,6 +1631,13 @@ StateNode Contention(EmulatorContext* context)
     if (context->config.mem_model == MM_SCORP || context->config.mem_model == MM_PROFSCORP)
         ret["scorpion_turbo_logic"] =
             context->config.scorpionTurboLogic == ScorpionTurboLogic::SC153 ? "SC15.3" : "SC15.1";
+    // The ATM Turbo 2+ v7.10's RAM waits at 7 MHz (Atm710TurboOverlay): active, off (3.5 MHz) or contention_off
+    if (context->config.mem_model == MM_ATM710)
+    {
+        const auto* atm = dynamic_cast<const PortDecoder_ATM710*>(context->pPortDecoder);
+        const bool turbo = atm && atm->AreTurboRamWaitsInstalled() && context->emulatorState.hw_turbo_ratio_applied == 2;
+        ret["atm710_turbo_waits"] = !turbo ? "off" : (core->IsContentionSwitchOn() ? "active" : "contention_off");
+    }
 
     // The slots the CPU would wait on (none while contention is not in effect)
     Memory* memory = context->pMemory;

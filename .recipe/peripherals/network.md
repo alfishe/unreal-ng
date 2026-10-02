@@ -96,10 +96,11 @@ An ESP module on this port ships at **38400** (`ESPNET` / `AT` without
 and the controller's receive does not keep up with 115200. NedoOS selects
 the port with `/ini/espcom.ini` `comType = 1`, `divider = 3` and `espcfg`
 (the floppy `osatm2esp.trd` runs `wizcfg` instead and stays at the kernel's
-115200: the line then reads garbage). The NedoOS driver also needs the Z80
-at 3.5 MHz while it polls: at 7 MHz its back-to-back `IN #FE` reads leave
-the 8051 no time for its serial interrupt, and received bytes are lost
-(`lost` in `machine_serial`; measured, tdd-atm2-kbc.md §7). Details:
+115200: the line then reads garbage). In 7 MHz turbo the board's RAM waits
+(`atm710_turbo_waits` in the contention report) stretch the driver's
+polling loop enough for the 8051's serial interrupt; with the `contention`
+feature off they are gone and received bytes are lost (`lost` in
+`machine_serial`; tdd-atm2-kbc.md §7.1). Details:
 [tdd-atm2-kbc.md](../../docs/inprogress/2026-10-01-atm2-keyboard-controller/tdd-atm2-kbc.md).
 
 ```json

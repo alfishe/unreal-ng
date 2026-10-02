@@ -7,6 +7,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/atm/atm710turbooverlay.h"
 #include "emulator/memory/memory.h"
 #include "emulator/video/screen.h"
 #include "emulator/sound/soundmanager.h"
@@ -17,7 +18,8 @@ PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder_A
 {
 }
 
-PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool keyboardController) : PortDecoder(context)
+PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool v710Board)
+    : PortDecoder(context), _v710Board(v710Board)
 {
     _context = context;
     _state = &context->emulatorState;
@@ -25,7 +27,7 @@ PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool keyboardCo
     _screen = context->pScreen;
     _keyboard = context->pKeyboard;
 
-    if (keyboardController)
+    if (v710Board)
     {
         // The v7.xx board's keyboard controller socket: its real firmware answers IN #FE
         _kbc = std::make_unique<Atm2Kbc>(context);
@@ -95,6 +97,8 @@ PortDecoder_ATM710::~PortDecoder_ATM710()
 {
     if (_kbc && _keyboard && _keyboard->GetPs2Sink() == _kbc.get())
         _keyboard->SetPs2Sink(nullptr);
+    if (_turboRamWaitsInstalled && _context->pCore)
+        _context->pCore->RemoveBusOverlay(_turboRamOverlay.get());
     MLOGDEBUG("PortDecoder_ATM710::~PortDecoder_ATM710()");
 }
 
@@ -903,8 +907,33 @@ void PortDecoder_ATM710::updateTurboMode()
     // The change is queued: Z80FrameCycle applies it at the next frame
     // boundary, and SoundManager::handleFrameStart re-clocks the synths.
     _state->hw_turbo_ratio = (_state->pFF77 & ATM_FF77_TURBO) ? 2 : 1;
+    SyncTurboRamWaits();
 
     MLOGDEBUG("updateTurboMode: hw_turbo_ratio=%d (pFF77=0x%02X)", _state->hw_turbo_ratio, _state->pFF77);
+}
+
+void PortDecoder_ATM710::SyncTurboRamWaits()
+{
+    Core* core = _context->pCore;
+    if (!_v710Board || !core || !core->GetZ80() || !_context->pMemory)
+        return;
+    // While the turbo bit is set; the overlay's waits follow the applied clock (the switch lands at the next frame)
+    const bool wanted = (_state->pFF77 & ATM_FF77_TURBO) != 0;
+    if (wanted == _turboRamWaitsInstalled)
+        return;
+    if (wanted)
+    {
+        if (!_turboRamOverlay)
+            _turboRamOverlay = std::make_unique<Atm710TurboOverlay>(core, core->GetZ80(), _context->pMemory, _state);
+        _turboRamWaitsInstalled = core->AddBusOverlay(_turboRamOverlay.get());
+        if (!_turboRamWaitsInstalled)
+            MLOGWARNING("PortDecoder_ATM710: no room for the turbo RAM wait overlay; turbo runs without waits");
+    }
+    else
+    {
+        core->RemoveBusOverlay(_turboRamOverlay.get());
+        _turboRamWaitsInstalled = false;
+    }
 }
 
 /// endregion </Port handlers>

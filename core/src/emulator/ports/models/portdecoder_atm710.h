@@ -30,6 +30,8 @@
 ///
 /// See: Unreal Speccy atm.cpp, io.cpp, memory.cpp
 
+class Atm710TurboOverlay;
+
 class PortDecoder_ATM710 : public PortDecoder
 {
     /// region <Constants>
@@ -58,10 +60,11 @@ public:
     PortDecoder_ATM710() = delete;
     PortDecoder_ATM710(EmulatorContext* context);
 protected:
-    /// `keyboardController`: fit the v7.xx board's keyboard controller ([ATM]
-    /// Kbc=). The ZX-Evo (ATM3) derives from this decoder without it: its
-    /// keyboard is the AVR
-    PortDecoder_ATM710(EmulatorContext* context, bool keyboardController);
+    /// `v710Board`: the ATM Turbo 2+ v7.xx board itself - its keyboard
+    /// controller ([ATM] Kbc=) and its RAM waits at 7 MHz. The ZX-Evo (ATM3)
+    /// derives from this decoder without them: its keyboard is the AVR, its
+    /// turbo waits are the FPGA's (EvoTurboOverlay)
+    PortDecoder_ATM710(EmulatorContext* context, bool v710Board);
 public:
     virtual ~PortDecoder_ATM710();
     /// endregion </Constructors / Destructors>
@@ -80,6 +83,12 @@ public:
 
     /// The keyboard controller (nullptr when [ATM] Kbc=NONE or on the ZX-Evo)
     Atm2Kbc* GetKeyboardController() const { return _kbc && _kbc->Present() ? _kbc.get() : nullptr; }
+
+    /// Install the 7 MHz RAM wait overlay (Atm710TurboOverlay) while #FF77 bit 3
+    /// selects turbo, remove it otherwise (updateTurboMode, reset, a TTD
+    /// restore). Nothing on the ZX-Evo
+    void SyncTurboRamWaits();
+    bool AreTurboRamWaitsInstalled() const { return _turboRamWaitsInstalled; }
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
@@ -164,4 +173,7 @@ protected:
 
     /// The v7.xx keyboard controller behind IN #FE (Atm2Kbc), when fitted
     std::unique_ptr<Atm2Kbc> _kbc;
+    bool _v710Board = false;
+    std::unique_ptr<Atm710TurboOverlay> _turboRamOverlay;   ///< created on the first switch to turbo
+    bool _turboRamWaitsInstalled = false;
 };

@@ -794,7 +794,9 @@ has a rule), `switch` (the `contention` feature, `on` / `off`), `effective`
 without contention), `slots[4]` (`range`, `mapping`, `contended` - the same
 flag every memory map reports), `floating_bus_latch` on the +2A / +3,
 `even_m1` (opcode fetches from RAM wait for an even T-state: the Scorpion with the SC15.1 logic),
-`scorpion_turbo_logic` on the Scorpion (`SC15.1` / `SC15.3`, the `[MISC] ScorpionTurboLogic` setting), and
+`scorpion_turbo_logic` on the Scorpion (`SC15.1` / `SC15.3`, the `[MISC] ScorpionTurboLogic` setting),
+`atm710_turbo_waits` on the ATM Turbo 2+ v7.10 (`active`: 7 MHz, every RAM access waits 2-3 T for the CPU's
+slot; `off`: 3.5 MHz; `contention_off`: turbo with the `contention` feature off), and
 `statistics` while debug mode is on: `current_frame`, `last_frame` and
 `total`, each with `fetch` / `read` / `write` / `io` (`accesses`,
 `wait_t`) and their sums. Without debug mode `statistics` is a string

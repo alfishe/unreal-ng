@@ -191,7 +191,7 @@ class Emulator:
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
         effective, memory_interface, io_rule, slots[4] (mapping, contended), the +2A/+3
-        floating_bus_latch, even_m1, scorpion_turbo_logic (Scorpion: SC15.1 / SC15.3), statistics
+        floating_bus_latch, even_m1, scorpion_turbo_logic (Scorpion: SC15.1 / SC15.3), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics
         per kind while debug mode is on"""
 
     # Screen reports - same fields as every other module (command-interface.md section 6.6)

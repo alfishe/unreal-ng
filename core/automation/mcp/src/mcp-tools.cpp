@@ -1718,6 +1718,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << ", Even M1";
                                     if (value.isMember("scorpion_turbo_logic"))
                                         out << ", Turbo+ logic " << value["scorpion_turbo_logic"].asString();
+                                    if (value.isMember("atm710_turbo_waits"))
+                                        out << ", 7 MHz RAM waits " << value["atm710_turbo_waits"].asString();
                                     if (value["statistics"].isObject())
                                     {
                                         const Json::Value& last = value["statistics"]["last_frame"];
