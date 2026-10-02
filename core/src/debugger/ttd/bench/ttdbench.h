@@ -159,6 +159,7 @@ struct SeekTiming
     double devicesUs = 0;
     double memoryUs = 0;
     double screenUs = 0;
+    double piecesDecoded = 0;     ///< 4 KB pieces written by the memory restore (engines that count them)
 };
 
 /// Counted work of a frame capture (BM-2 work). Unlike the capture time it
@@ -207,6 +208,7 @@ public:
     {
         bool liveCapture = true;   ///< BM-1 / BM-2 / BM-8 measure this engine's own capture
         bool seek = true;          ///< BM-5 / BM-6
+        bool seekMemory = false;   ///< without full seeks: BM-6 memory restore alone (frame-aligned)
         bool saveLoad = true;      ///< BM-7
     };
 

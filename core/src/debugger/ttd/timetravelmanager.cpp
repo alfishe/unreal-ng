@@ -1457,6 +1457,8 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
 {
     assert(_context && _memory);
     _shadowRescan = true;   // live memory now differs from the shadow engine's delta base
+    if (_shadowEngine)
+        _shadowEngine->ForgetMemory();
 
     MLOGINFO("TimeTravelManager::RestoreCheckpoint — frame=%llu, globalT=%llu, ramPages=%zu",
              static_cast<unsigned long long>(cp.time.frame),
@@ -3209,6 +3211,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         ram.pieces = pieces;
         ram.bytes = pieces * kTTDPieceSize;
         ram.dirtyGranularity = kTTDPieceSize * 4;
+        ram.memory = _memory->RAMPageAddress(0);   // machine RAM is one contiguous block
         if (!engine.BeginSession({ram}, error))
         {
             MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());

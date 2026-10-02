@@ -277,6 +277,19 @@ The engine can also run alone (no v1) for benchmarks and for tests that restore 
 - A restore decodes a piece only if its target version differs from the live map, or the piece was written since. E4: on ZX-Evo memory restore drops from ~760 to ~145 µs (most of v1's restore writes zeros into untouched memory), on Pentagon 1024 from 188 to 34 µs.
 - The oracle restores everything into a buffer, so a wrongly skipped piece fails it. A debug-build mode decodes everything and compares.
 
+**As built (2026-10-02).** `RestoreToMemory(index, written, stats)` builds the target's map from the nearest full table and the change records, and decodes a piece only when the version in live memory differs from the target's or `written(region, piece)` says it was written since; `ForgetMemory()` marks everything unknown (a v1 restore in shadow mode calls it). The test restores a recorded game to a sequence of positions and checks both the memory (against v1) and that the decoded count equals the number of versions that differ between the two positions; a mutation treating every piece as equal fails it. Measured (200 frame-aligned seeks over 600 frames, load ~12), memory restore:
+
+| Case | v1 p50, µs | Engine p50 | Engine p99 | Pieces decoded per seek |
+|---|---|---|---|---|
+| ZX-Evo, BASIC | 731 | 125 | 233 | 4 |
+| Pentagon 1024, BASIC | 174 | 27 | 55 | 1 |
+| Pentagon 128, BASIC | 55 | 27 | 55 | 1 |
+| 48K, BASIC | 73 | 54 | 111 | 2 |
+| Across the Edge | 315 | 180 | 417 | 7.5 |
+| Pentagon 128, game | 311 | 337 | 568 | 8.3 |
+
+The game is the one case slower than v1 (+8%): the pieces that differ between two positions are the busy ones, with chains of up to 49 links (the K = 50 trade-off of E1); p99 stays far inside PR-5's 5 ms. K is a parameter of the piece store if Phase 1's matrix run shows a case beyond D33's bound.
+
 ### 4.7 Step 6 — Device memory as regions, large memories first
 
 | Order | Device | Region(s) | Size | Dirty marking (write path) | Restore |

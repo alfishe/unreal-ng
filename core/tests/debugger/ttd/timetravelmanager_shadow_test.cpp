@@ -135,3 +135,64 @@ TEST_F(TimeTravelManager_Shadow_Test, DetachedEngineRecordsNothing)
     EXPECT_FALSE(_engine.IsSessionOpen());
     EXPECT_EQ(_engine.CheckpointCount(), 0u);
 }
+
+TEST_F(TimeTravelManager_Shadow_Test, RestoreToMemoryWritesOnlyWhatDiffers_AndMatchesV1)
+{
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(200, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    const size_t count = _engine.CheckpointCount();
+    ASSERT_GE(count, 150u);
+    const uint32_t pieces = _engine.Regions()[0].pieces;
+    uint8_t* live = _context->pMemory->RAMPageAddress(0);
+
+    // Pieces whose version differs between two checkpoints
+    auto differing = [&](size_t a, size_t b) {
+        uint64_t n = 0;
+        for (uint32_t p = 0; p < pieces; ++p)
+            n += _engine.VersionAt(a, 0, p) != _engine.VersionAt(b, 0, p) ? 1 : 0;
+        return n;
+    };
+    auto expectLiveIs = [&](size_t index) {
+        std::vector<uint8_t> ram, present;
+        std::string err;
+        const int64_t v = V1IndexOf(_engine.Checkpoint(index)->position.frame);
+        ASSERT_GE(v, 0);
+        ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, static_cast<size_t>(v), ram, present, err)) << err;
+        for (uint32_t p = 0; p < pieces; ++p)
+            if (present[p])
+                ASSERT_EQ(std::memcmp(live + size_t(p) * ttd::kTTDPieceSize, ram.data() + size_t(p) * ttd::kTTDPieceSize,
+                                      ttd::kTTDPieceSize),
+                          0)
+                    << "piece " << p << " after restoring checkpoint " << index;
+    };
+
+    // Live memory holds the last frame: one frame back decodes what that frame changed
+    ttd::TTDRestoreStats stats;
+    size_t at = count - 1;
+    for (const size_t target : {count - 2, count - 3, size_t(17), count / 2, size_t(0), count - 1, size_t(99)})
+    {
+        ASSERT_TRUE(_engine.RestoreToMemory(target, nullptr, &stats).Ok());
+        EXPECT_EQ(stats.piecesDecoded, differing(at, target)) << "seek " << at << " -> " << target;
+        ASSERT_NO_FATAL_FAILURE(expectLiveIs(target));
+        at = target;
+    }
+
+    // The same position again: nothing to write
+    ASSERT_TRUE(_engine.RestoreToMemory(at, nullptr, &stats).Ok());
+    EXPECT_EQ(stats.piecesDecoded, 0u);
+
+    // A piece written since is restored even though its version matches
+    live[5 * ttd::kTTDPieceSize + 7] ^= 0xFF;
+    ASSERT_TRUE(_engine.RestoreToMemory(at, [](uint32_t, uint32_t p) { return p == 5; }, &stats).Ok());
+    EXPECT_EQ(stats.piecesDecoded, 1u);
+    ASSERT_NO_FATAL_FAILURE(expectLiveIs(at));
+
+    // Memory changed behind the engine's back: everything is written
+    _engine.ForgetMemory();
+    ASSERT_TRUE(_engine.RestoreToMemory(at, nullptr, &stats).Ok());
+    EXPECT_GT(stats.piecesDecoded, 0u);
+    EXPECT_EQ(stats.piecesSkipped, 0u);
+}

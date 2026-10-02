@@ -17,6 +17,7 @@
 /// from the nearest full table and applies the recorded changes forward.
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -89,6 +90,18 @@ struct TTDEngineHeapBreakdown
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
                frameTable;
     }
+};
+
+/// Whether piece @p piece of region @p region was written since the engine last
+/// knew its content (a capture or a restore); used by RestoreToMemory
+using TTDWrittenFn = std::function<bool(uint32_t region, uint32_t piece)>;
+
+/// Work of one RestoreToMemory (deterministic)
+struct TTDRestoreStats
+{
+    uint64_t piecesDecoded = 0;   ///< written into live memory
+    uint64_t piecesSkipped = 0;   ///< already held the target's content
+    uint64_t linksDecoded = 0;    ///< difference versions applied while decoding
 };
 
 /// Counted work of one capture (deterministic; the CI gate compares it with v1's, D33)
@@ -164,6 +177,18 @@ public:
     /// The stored version of @p piece of @p region at checkpoint @p index, or kAbsent
     uint32_t VersionAt(size_t index, uint32_t region, uint32_t piece) const;
 
+    /// Restore every region with live memory to checkpoint @p index, writing
+    /// only the pieces whose content differs (Step 5): a piece is decoded when
+    /// the version in live memory is not the target's, or when @p written says
+    /// it was written since (null = nothing written). Pieces the session had
+    /// not seen at that point are left alone, as v1 does
+    TTDRestoreResult RestoreToMemory(size_t index, const TTDWrittenFn& written = nullptr,
+                                     TTDRestoreStats* stats = nullptr);
+
+    /// Live memory changed behind the engine's back: the next RestoreToMemory
+    /// writes every piece
+    void ForgetMemory();
+
     /// endregion </Restore>
 
     TTDEngineHeapBreakdown HeapBreakdown() const;
@@ -192,6 +217,9 @@ private:
     /// Per region: the current version of every piece, and the pieces changed
     /// since the last full table
     std::vector<std::vector<TTDPieceId>> _live;
+    /// Per region: the version whose content is in live memory now, or kUnknown
+    std::vector<std::vector<TTDPieceId>> _inMemory;
+    static constexpr TTDPieceId kUnknown = 0xFFFFFFFEu;
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;

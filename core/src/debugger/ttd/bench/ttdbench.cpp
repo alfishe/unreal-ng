@@ -433,6 +433,7 @@ public:
         Capabilities c;
         c.liveCapture = true;
         c.seek = false;
+        c.seekMemory = true;
         c.saveLoad = false;
         return c;
     }
@@ -506,7 +507,23 @@ public:
         };
     }
 
-    bool Seek(uint64_t, uint32_t, SeekTiming&) override { return false; }
+    /// Frame-aligned memory restore only (Phase 1, Step 5): CPU, devices and
+    /// the picture come with the switch to the engine
+    bool Seek(uint64_t frame, uint32_t tInFrame, SeekTiming& out) override
+    {
+        const int64_t index = _engine.CheckpointIndexOf({0, frame, 0});
+        if (tInFrame != 0 || index < 0)
+            return false;
+        TTDRestoreStats stats;
+        const auto start = std::chrono::steady_clock::now();
+        const bool ok = _engine.RestoreToMemory(static_cast<size_t>(index), nullptr, &stats).Ok();
+        out = SeekTiming{};
+        out.memoryUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+        out.restoreUs = out.memoryUs;
+        out.totalUs = out.memoryUs;
+        out.piecesDecoded = static_cast<double>(stats.piecesDecoded);
+        return ok;
+    }
     bool Save(const std::string&, uint64_t&, std::string& error) override
     {
         error = "the engine has no file before Phase 4";
@@ -866,6 +883,32 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             m["bm6_restore_devices_us_p50"] = Percentile(devices, 50);
             m["bm6_restore_memory_us_p50"] = Percentile(memory, 50);
             m["bm6_restore_screen_us_p50"] = Percentile(screen, 50);
+        }
+
+        // BM-6 memory restore alone, for an engine that cannot do full seeks yet
+        if (!caps.seek && caps.seekMemory && last > first && options.seekSamples)
+        {
+            std::mt19937 rng(options.seekSeed);
+            std::uniform_int_distribution<uint64_t> pickFrame(first, last - 1);
+            std::uniform_int_distribution<uint32_t> pickT(1, std::max<uint32_t>(2, span) - 1);
+            std::vector<double> memory;
+            double decoded = 0;
+            for (uint32_t i = 0; i < options.seekSamples; i++)
+            {
+                const uint64_t frame = pickFrame(rng);
+                (void)pickT(rng);   // same random sequence as the full-seek loop
+                SeekTiming t;
+                if (!engine.Seek(frame, 0, t))
+                {
+                    r.error = "memory restore of frame " + std::to_string(frame) + " refused";
+                    return r;
+                }
+                memory.push_back(t.memoryUs);
+                decoded += t.piecesDecoded;
+            }
+            m["bm6_restore_memory_us_p50"] = Percentile(memory, 50);
+            m["bm6_restore_memory_us_p99"] = Percentile(memory, 99);
+            m["bm6_pieces_decoded_mean"] = decoded / options.seekSamples;
         }
 
         // BM-7: save, then load into a fresh machine and seek once

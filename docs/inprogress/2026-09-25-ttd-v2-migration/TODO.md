@@ -23,7 +23,7 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 - [x] Step 2 — Piece store: change stored once, encoded once (T = 128 B), chain limit per piece (K = 50), arena with exact sizes, dependencies, shareable by sessions — RAM payload already below v1 on every `ci` case (up to −28%)
 - [x] Step 3 — Regions and the reference table: per-checkpoint change records (8 B per changed piece) + a full copy-on-write table every 64 checkpoints; parent link — references below v1 on every measured case (ZX-Evo 4,103 → 78 B per frame, Pentagon game 128 → 62); copy-on-write blocks alone lost to v1 on small busy machines (TDD §4.4)
 - [x] Step 4 — Live capture next to v1 (`TimeTravelManager::SetShadowEngine`), delta base for changed pieces only — capture p50 v1 → engine: ZX-Evo 355 → 18.5 µs, Pentagon game 426 → 64 µs; counted work below v1 on every measured case; `TimeTravelManager_Shadow_Test` checks every live frame against v1
-- [ ] Step 5 — Restore only the pieces that differ
+- [x] Step 5 — Restore only the pieces that differ (`TimeTravelEngine::RestoreToMemory`) — memory restore p50 v1 → engine: ZX-Evo 731 → 125 µs, Pentagon 1024 174 → 27; Pentagon game 311 → 337 µs (+8%, hot pieces with long chains; p99 568 µs, within PR-5)
 - [ ] Step 6 — Device memory as regions, large memories first: NeoGS RAM and flash, MoonSound wave memory, General Sound RAM and upload store, Sprinter video RAM, VDAC2 graphics memory; then the ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model
 

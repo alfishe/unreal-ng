@@ -1,5 +1,6 @@
 #include "timetravelengine.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <unordered_set>
@@ -55,11 +56,13 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
     _regions = regions;
     _deltaBase.assign(_regions.size(), {});
     _live.resize(_regions.size());
+    _inMemory.resize(_regions.size());
     _sinceSnapshot.assign(_regions.size(), {});
     _sinceSnapshotFlag.resize(_regions.size());
     for (size_t r = 0; r < _regions.size(); ++r)
     {
         _live[r].assign(_regions[r].pieces, TTDPieceStore::kNone);
+        _inMemory[r].assign(_regions[r].pieces, kUnknown);
         _sinceSnapshotFlag[r].assign(_regions[r].pieces, 0);
     }
     _lastSnapshot.assign(_regions.size(), nullptr);
@@ -84,6 +87,7 @@ void TimeTravelEngine::EndSession()
     _changes.clear();
     _changes.shrink_to_fit();
     _live.clear();
+    _inMemory.clear();
     _sinceSnapshot.clear();
     _sinceSnapshotFlag.clear();
     _lastSnapshot.clear();
@@ -158,6 +162,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                                                                      : _store->Intern(previous, previousBytes, c.bytes);
             std::memcpy(previousBytes, c.bytes, kTTDPieceSize);
             _lastWork.deltaBaseBytes += kTTDPieceSize;
+            _inMemory[r][c.piece] = next;   // live memory holds this version's content now
             if (next == previous)
             {
                 _store->Release(next);   // unchanged content: no record
@@ -287,6 +292,63 @@ uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t pie
         if (refs.snapshot)
             return _tables->Get(refs.snapshot, piece);
     }
+}
+
+TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWrittenFn& written, TTDRestoreStats* stats)
+{
+    TTDRestoreResult result;
+    if (index >= _checkpoints.size())
+    {
+        result.status = TTDRestoreStatus::Damaged;
+        result.message = "no such checkpoint";
+        return result;
+    }
+    TTDRestoreStats local;
+    const uint64_t linksBefore = _store->GetWork().linksDecoded;
+    std::vector<TTDPieceId> map;
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+    {
+        const TTDRegionDesc& desc = _regions[r];
+        if (!desc.memory && !desc.restorePiece)
+            continue;
+        BuildMap(index, r, map);
+        uint8_t piece[kTTDPieceSize];
+        for (uint32_t p = 0; p < map.size(); ++p)
+        {
+            const TTDPieceId target = map[p];
+            if (target == TTDPieceStore::kNone)
+                continue;
+            if (_inMemory[r][p] == target && !(written && written(r, p)))
+            {
+                local.piecesSkipped++;
+                continue;
+            }
+            uint8_t* dst = desc.restorePiece ? piece : desc.memory + size_t(p) * kTTDPieceSize;
+            if (!_store->Decode(target, dst))
+            {
+                result.status = TTDRestoreStatus::Damaged;
+                result.message = "piece " + std::to_string(p) + " of region '" + desc.name + "' failed its integrity check";
+                _inMemory[r][p] = kUnknown;
+                continue;
+            }
+            if (desc.restorePiece)
+                desc.restorePiece(p, piece);
+            _inMemory[r][p] = target;
+            local.piecesDecoded++;
+        }
+        if (desc.onRestored)
+            desc.onRestored();
+    }
+    local.linksDecoded = _store->GetWork().linksDecoded - linksBefore;
+    if (stats)
+        *stats = local;
+    return result;
+}
+
+void TimeTravelEngine::ForgetMemory()
+{
+    for (auto& m : _inMemory)
+        std::fill(m.begin(), m.end(), kUnknown);
 }
 
 /// endregion </Restore>
