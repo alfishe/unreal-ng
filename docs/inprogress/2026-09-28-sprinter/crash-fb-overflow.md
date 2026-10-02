@@ -72,3 +72,81 @@ during a recording could do the same.
 Side note, out of scope: under ASan, `TsConfAspect_Test.EveryTsConfMode...` reports a
 heap-use-after-free in `~PortDecoder_TSConf` (`TsConfMemory::SetCacheActive`) at emulator
 teardown.
+
+## Stability verification
+
+Run on 2026-10-02 at commit `28f0c306e` plus the recording-audio changes on this branch, in the
+GUI (`unreal-qt`, Release, macOS arm64), driven through the WebAPI on a private port. Recordings
+through `POST /video/record`, checked with `ffprobe` / `ffmpeg astats`. The recordings stay in
+`scratch/verify/` (not in the repository).
+
+**Sprinter run.** BIOS `sp2k-3.07-beta1.rom` (`[ROM] SPRINTER=` in the app bundle's
+`configs/sprinter/unreal.ini`), `sp_hdd_sys.img` (DSS 1.71) on `ide0.master` with
+`access: session`, reset, F4 taps until Flex Navigator. Then 190 s of emulated time recorded at
+2x, full frame, while keys (Tab, arrows, Enter: opening `C:\DEV`, `C:\BIN`, `C:\DEMOS` and back)
+and mouse moves went in every 0.7 s. Flex Navigator makes no sound and the Sprinter's own DAC
+(Covox-Blaster) is not emulated yet, so a short routine injected through the memory and register
+API switched an AY tone (441 Hz, channel A) on and off every 20 s of emulated time, to have a
+sound track worth measuring. A frame length switch (codes `#2C` / `#2D`) could not be triggered
+from the automation; it is covered by `RecordingManager_Test.SprinterFrameCodes_*`.
+
+**Other machines.** One minute each: Pentagon (128K BASIC: `BORDER 2: BEEP 1,12: BORDER 0:
+PAUSE 40`, a sync marker), TS-Conf, Profi and ATM3 (boot screen, key taps, the same AY tone
+switched every 10 s).
+
+| Machine | Format | Size | fps | Frames | Audio | RMS dB | Audio - video | Crash |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| Sprinter (FN, 190 s) | H.264 + AAC, mp4 | 1472x1152 | 48.83 | 9297 (190.40 s) | 48 kHz, 2 ch | -21.9 | +0.9 ms | no |
+| Sprinter (FN, 60 s) | H.264, video only | 1472x1152 | 48.83 | 2959 (60.60 s) | none | - | - | no |
+| Sprinter (FN, 30 s) | GIF | 736x576 | 50 (*) | 1497 | none | - | - | no |
+| Pentagon (70 s) | H.264 + AAC | 704x576 | 48.83 | 3466 (70.98 s) | 48 kHz, 2 ch | -15.8 | +0.4 ms | no |
+| TS-Conf (65 s) | H.264 + AAC | 1440x1152 | 48.83 | 3190 (65.33 s) | 48 kHz, 2 ch | -17.9 | +1.2 ms | no |
+| Profi (65 s) | H.264 + AAC | 1216x576 | 50.08 | 3272 (65.34 s) | 48 kHz, 2 ch | -20.2 | +0.3 ms | no |
+| ATM3 (65 s) | H.264 + AAC | 704x576 | 50.08 | 3269 (65.28 s) | 48 kHz, 2 ch | -21.3 | +0.4 ms | no |
+| Sprinter (FN, 70 s), ASan + UBSan GUI | H.264 + AAC | 1472x1152 | 48.83 | 3420 (70.04 s) | 48 kHz, 2 ch | -22.4 | -1.8 ms | no |
+
+- Sizes are the framebuffer x 2: Sprinter 736x288 and TS-Conf 720x288 are stored at half height,
+  so their lines are doubled (1472x1152, 1440x1152); Pentagon / ATM3 352x288, Profi 608x288.
+- Frames = emulated time / frame length in every file (20.48 ms for Pentagon, Sprinter, TS-Conf;
+  19.968 ms for Profi and ATM3). Presentation times are unique and grow; the steps read 20.0 /
+  21.7 ms because AVAssetWriter keeps the video track in 1/600 s units (mean 20.48 ms).
+- The AAC track is converted from the core's 44.1 kHz to 48 kHz by AVAssetWriter.
+- "Audio - video" is the difference of the two stream durations. On the Pentagon the BEEP onsets
+  sit 3-5 ms after the red border frames over all 31 beeps (the interpreter's time between
+  `BORDER` and the first speaker edge); no drift over the recording.
+- (*) A GIF stores delays in 1/100 s: 20.48 ms frames are written as 20 ms, so a GIF plays 2%
+  fast. GIF has no audio track; `gif` + `audio` is refused on every surface.
+- ASan + UBSan: a separate RelWithDebInfo build (`-fsanitize=address,undefined`), the same
+  Sprinter session for 70 s of emulated time (about 5 frames per second of wall time; a Debug ASan
+  build managed 0.05 and was dropped). ASan reported nothing. UBSan reported one signed overflow
+  outside the recording path: `opcodes-callback.cpp:64` (`Z80M1AtT`, `int` T-state counter at
+  `INT_MAX + 1`) on the NeoGS card's Z80 (`GSCardRunner::runTo` from `SoundChip_NeoGS::handleFrameEnd`).
+- No `unreal-qt` crash report appeared in `~/Library/Logs/DiagnosticReports/` during the runs
+  (the newest stays `unreal-qt-2026-10-02-041615.ips`, from before them).
+
+### Found and fixed during the verification
+
+1. **The sound track was 44 ms late.** AVAssetWriter's AAC input was marked real-time
+   (`expectsMediaDataInRealTime = YES`). A real-time input keeps the AAC encoder delay (2112
+   priming frames at 48 kHz) as sound instead of trimming it with an edit list, so every
+   recording on macOS played its sound 44 ms (over two frames) after the picture: measured
+   47-49 ms on the Pentagon BEEP / BORDER marker, 44.0 ms on a synthetic file. The audio input is
+   no longer real-time: the edit list skips the priming (`afinfo`: "192000 valid frames + 2112
+   priming"), and the offset is 0 on the synthetic file and 3-5 ms (the BASIC interpreter) on
+   the Pentagon. Test: `VideoToolboxEncoder_Test.AacPrimingIsTrimmed_SoundStartsWithThePicture`
+   reads the sound track's edit list (media time 0 before, 2112 after).
+2. **A dropped audio chunk shortened the sound track.** When the writer did not accept an audio
+   chunk at once it was dropped, and the next chunk was stamped from the count of samples
+   written, so the rest of the track moved earlier. The audio input now waits briefly (at most
+   20 ms, like the 100 ms video wait), and each chunk is stamped with its own emulated time, so a
+   chunk that is still dropped leaves a gap instead of a shift. Test:
+   `RecordingManager_Test.AacAudioTrack_SamplesFollowTheFramesAndVideoOnlyStaysDefault` (25
+   frames of a running Pentagon, the sound track within one frame of the picture; before: 3-7
+   frames short in a fast run).
+
+Side notes, out of scope: `POST /basic/inject` stores numbers without their hidden 5-byte form,
+so `BORDER 2` stops with "C Nonsense in BASIC" (typing the line through `basic/run` works); the
+Python bindings test `py::isinstance<std::string>` in four more places (always false, so a
+string argument there is ignored); the CLI `videorecord` does not enable the `recording` feature
+by itself as the WebAPI, Lua and Python do; the mouse tests in
+`tools/verification/webapi/src/test_api_interpreter.py` fail on this branch.

@@ -59,6 +59,7 @@ public:
 
     uint64_t GetFramesEncoded() const override { return _framesEncoded; }
     uint64_t GetAudioSamplesEncoded() const override { return _audioSamplesEncoded; }
+    uint64_t GetAudioChunksDropped() const { return _audioChunksDropped; }
     uint64_t GetOutputFileSize() const override;
 
     /// endregion </Statistics>
@@ -94,6 +95,7 @@ private:
     // Statistics
     uint64_t _framesEncoded = 0;
     uint64_t _audioSamplesEncoded = 0;
+    uint64_t _audioChunksDropped = 0;  ///< audio chunks the writer did not accept within the bounded wait
 
     // State
     std::string _filename;

@@ -149,3 +149,54 @@ TEST(RecordingManager_Test, SprinterFrameCodes_TimestampsFollowEachFrame)
     emulator.reset();
     manager->RemoveEmulator(id);
 }
+
+#ifdef __APPLE__
+/// The automation surfaces' "audio":"aac" reaches the recorder: a native h264 + aac recording of a running
+/// machine carries the emulated sound (every frame's samples), and the next video-only session has no audio
+/// track again (the default every surface keeps). The writer holds the audio input back until the picture
+/// catches up; an audio chunk dropped there used to shorten the sound track (and pull it ahead of the picture).
+/// ~0.7 s: two real AVAssetWriter sessions, one with an AAC track
+TEST(RecordingManager_Test, AacAudioTrack_SamplesFollowTheFramesAndVideoOnlyStaysDefault)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    RecordingManager* rm = context->pRecordingManager;
+    ASSERT_NE(rm, nullptr);
+    context->pFeatureManager->setFeature(Features::kRecording, true);
+    rm->SetEncoderBackend(EncoderBackend::Native);
+
+    const std::string file = TestPathHelper::GetUniqueTestScratchPath("rm-aac") + ".mp4";
+    ASSERT_TRUE(rm->StartRecording(file, "h264", "aac", 0, 128)) << rm->GetLastRecordingError();
+    EXPECT_TRUE(rm->HasAudio());
+    EXPECT_EQ(rm->GetAudioCodec(), "aac");
+    EXPECT_EQ(rm->GetAudioChannels(), 2u);
+    EXPECT_GT(rm->GetAudioSampleRate(), 0u);
+
+    constexpr int kFrames = 25;
+    emulator->RunNFrames(kFrames);
+    const RecordingManager::RecordingStats live = rm->GetStats();
+    rm->StopRecording();
+
+    const double expectedSeconds = kFrames * static_cast<double>(context->config.frame) / CPU_CLOCK_RATE;
+    EXPECT_GE(live.framesRecorded, static_cast<uint64_t>(kFrames));
+    EXPECT_NEAR(rm->GetAudioDuration(), expectedSeconds, 0.021)  // within one frame
+        << rm->GetStats().audioSamplesRecorded << " samples at " << rm->GetAudioSampleRate() << " Hz";
+    std::error_code ec;
+    EXPECT_GT(std::filesystem::file_size(file, ec), 0u) << file;
+
+    // Video only again: no audio codec, no audio track
+    const std::string videoOnly = TestPathHelper::GetUniqueTestScratchPath("rm-video-only") + ".mp4";
+    ASSERT_TRUE(rm->StartRecording(videoOnly, "h264", "")) << rm->GetLastRecordingError();
+    EXPECT_FALSE(rm->HasAudio());
+    EXPECT_EQ(rm->GetAudioChannels(), 0u);
+    emulator->RunNFrames(2);
+    rm->StopRecording();
+    EXPECT_EQ(rm->GetStats().audioSamplesRecorded, 0u);
+    EXPECT_EQ(rm->GetAudioDuration(), 0.0);
+
+    std::filesystem::remove(file, ec);
+    std::filesystem::remove(videoOnly, ec);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+#endif  // __APPLE__
