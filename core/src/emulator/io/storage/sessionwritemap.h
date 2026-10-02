@@ -43,6 +43,21 @@ public:
     /// Forget every change: reads show the medium again
     void Discard() { _sectors.clear(); }
 
+    /// Is any sector in [first, first + count) changed
+    bool ChangedIn(uint64_t first, uint64_t count) const
+    {
+        const auto it = _sectors.lower_bound(first);
+        return it != _sectors.end() && it->first < first + count;
+    }
+    /// The changed sectors by number (a save writes them back)
+    const std::map<uint64_t, std::array<uint8_t, kSectorSize>>& Changes() const { return _sectors; }
+
+    /// A save replaced the medium's file: close the old medium first (a file
+    /// open on Windows cannot be replaced), then put the new one under the
+    /// changes. The layer has no medium in between: no reads then
+    std::unique_ptr<IBlockDevice> ReleaseBase() { return std::move(_base); }
+    void SetBase(std::unique_ptr<IBlockDevice> base) { _base = std::move(base); }
+
     /// Write the whole disk as the guest sees it (medium plus changes) to a
     /// plain image file. False on a host I/O error or an unreadable sector
     bool ExportTo(const std::string& path, std::string* error = nullptr);

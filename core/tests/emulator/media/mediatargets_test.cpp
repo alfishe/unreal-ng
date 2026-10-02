@@ -131,6 +131,7 @@ TEST_F(MediaTargets_Test, ClassifyByContentThenExtension)
         {File("card.hdd", FatCard()), {FileKind::Hdd, FileKind::SdCard}, "fat"},
         {File("disk.img", PartitionedDisk()), {FileKind::SdCard, FileKind::Hdd}, "mbr"},
         {File("system.hdf", Hdf()), {FileKind::Hdd}, "hdf"},
+        {Fixture("testdata/media/chd/mixed-default.chd"), {FileKind::Hdd, FileKind::SdCard}, "chd"},
         {File("blank.sd", std::string(64 * 1024, '\0')), {FileKind::SdCard, FileKind::Hdd}, "raw"},
         {File("big.img", bigImage), {FileKind::SdCard, FileKind::Hdd}, "raw"},
         {File("pc.img", std::string(737280, '\0')), {FileKind::Floppy}, "rawpc"},

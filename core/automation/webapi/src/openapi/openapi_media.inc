@@ -121,6 +121,12 @@
         body["properties"]["on"]["description"] = "protect: the slot's write-protect switch";
         body["properties"]["retarget"]["type"] = "boolean";
         body["properties"]["retarget"]["description"] = "save: write <stem>.udi when the format cannot hold the disk (default true)";
+        body["properties"]["compression"]["type"] = "string";
+        body["properties"]["compression"]["description"] =
+            "save / export of a block medium to a .chd: none, default (lzma,zlib,huff,flac), or up to four of zlib, lzma, huff, "
+            "flac, zstd (default: the source CHD's codecs, else chdman's)";
+        body["properties"]["parent"]["type"] = "string";
+        body["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD (only differing hunks are stored)";
         body["properties"]["end_recording"]["type"] = "boolean";
         body["properties"]["async"]["type"] = "boolean";
         body["properties"]["device"]["type"] = "string";

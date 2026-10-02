@@ -23,7 +23,9 @@
 #include <emulator/ports/models/portdecoder_sprinter.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,10 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/state/devicestate.h"
+#include "emulator/io/storage/chd/chdfile.h"
+#include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/chd/chdwriter.h"
+#include "emulator/io/storage/rawimage.h"
 
 namespace
 {
@@ -865,6 +871,89 @@ TEST_F(SprinterBoot_Test, RealHdd_Dss16293BootsFromTheZxmak2Vhd)
     EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.93")) << ScreenText();
     ASSERT_TRUE(ScreenHas("C:\\>fn")) << ScreenText();
     RecordProperty("prompt_frame", std::to_string(Frame()));
+}
+
+// A MAME CHD on the IDE (docs/inprogress/2026-10-02-media-chd/): the ACC-4 disk compressed with chdman's default
+// codecs (lzma, zlib, huff, flac) boots DSS 1.62 like the raw image. The IDE default (WriteThrough) turns into session
+// access for a CHD: the guest's MKDIR stays in the change layer and the file is not touched until `save`, which writes
+// the CHD again with the directory in it.
+// Boot-bound (BIOS POST, SETUP, the slave probe, DSS from the hard disk), the turbo mode on
+TEST_F(SprinterBoot_Test, Dss162_BootsFromAChdAndSavesTheGuestWrites)
+{
+    const std::string image = DssHddFile("dss-hdd-for-chd.img", "ver\r\nmkdir c:\\chd\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    const std::string chdPath = TestPathHelper::GetUniqueTestScratchPath("dss-hdd.chd");
+    {
+        auto raw = RawImage::Open(image, RawImage::Access::ReadOnly);
+        ASSERT_NE(raw, nullptr);
+        chd::WriteOptions options;
+        options.codecs = chd::kDefaultHardDiskCodecs;
+        options.metadata = {chd::HardDiskMetadata(*chd::GuessGeometry(raw->SectorCount()))};
+        std::string error;
+        ASSERT_TRUE(chd::WriteChd(chdPath, *raw, options, &error)) << error;
+    }
+    std::remove(image.c_str());
+    const std::vector<uint8_t> before = ReadAll(chdPath);
+
+    InsertHddWriteThrough(chdPath, "ide0.master");
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->access, AccessMode::Session);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenCount("C:\\>") >= 3; }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master   ... UNREAL-NG HDD")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\chd")) << ScreenText();
+    ASSERT_EQ(ScreenCount("C:\\>"), 3u) << ScreenText();
+
+    EXPECT_TRUE(_context->pMediaManager->Info("ide0.master")->dirty);
+    EXPECT_TRUE(ReadAll(chdPath) == before) << "the CHD is untouched until a save";
+
+
+    SaveOutcome outcome;
+    const MediaResult saved = _context->pMediaManager->Save("ide0.master", {}, &outcome);
+    ASSERT_TRUE(saved.Ok()) << saved.message;
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.master")->dirty);
+
+    // The saved CHD, read on its own, has the directory in the root
+    std::string error;
+    auto chd = ChdImage::Open(chdPath, &error);
+    ASSERT_NE(chd, nullptr) << error;
+    EXPECT_TRUE(chd->File().Verify(&error)) << error;
+    std::vector<uint8_t> disk(static_cast<size_t>(chd->SectorCount()) * 512);
+    for (uint64_t lba = 0; lba < chd->SectorCount(); lba++)
+        ASSERT_TRUE(chd->ReadSector(lba, disk.data() + lba * 512));
+    EXPECT_TRUE(RootHasDirectory(disk, "CHD        ")) << "C:\\CHD in the saved CHD";
+    chd.reset();
+    DestroyEmulator();
+    std::remove(chdPath.c_str());
+}
+
+// The owner's real system disk as MAME ships it (the pack's sp_hdd_sys.chd, an uncompressed 1 GiB CHD of 96 MB,
+// not in the repo; path in UNREAL_SPRINTER_HDD_CHD): inserted as is, no extraction. DSS 1.71.57 on BIOS 3.06, as
+// RealHdd_Dss171BootsFromTheMamePackImage does with the extracted raw image. The file is not written.
+// Boot-bound (BIOS POST, SETUP, DSS 1.71 from the hard disk), the turbo mode on
+TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackChd)
+{
+    const char* path = std::getenv("UNREAL_SPRINTER_HDD_CHD");
+    if (!path || !FileHelper::FileExists(path))
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD_CHD (the MAME pack's sp_hdd_sys.chd) not set";
+    if (!UseBios("sp2k-3.06-hf2.rom"))
+        GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
+    const uint64_t size = FileHelper::GetFileSize(path);
+    std::error_code ec;
+    const auto modified = std::filesystem::last_write_time(FileHelper::ToFsPath(path), ec);
+    InsertHdd(path);
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "chd");
+
+    PressF4At("Secondary Master ");
+    PressF4At("Secondary Slave  ");
+    EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG HDD")) << ScreenText();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 400, 1);
+    EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("Estex DSS version 1.71.57. Shell version 1.2.522.")) << ScreenText();
+    RecordProperty("banner_frame", std::to_string(Frame()));
+    DestroyEmulator();
+    EXPECT_EQ(FileHelper::GetFileSize(path), size);
+    EXPECT_TRUE(std::filesystem::last_write_time(FileHelper::ToFsPath(path), ec) == modified) << "the CHD was written";
 }
 
 /// endregion </S3b>

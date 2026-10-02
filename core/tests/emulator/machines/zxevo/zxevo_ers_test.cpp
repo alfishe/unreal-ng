@@ -37,6 +37,7 @@
 #include "_helpers/scratchfolder.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/media/mediamanager.h"
@@ -549,6 +550,47 @@ TEST_F(ZXEvoErs_Test, SdCardBootFromAHostFolder)
     Z80* z80 = _context->pCore->GetZ80();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x800B; }, 300);
     ASSERT_EQ(z80->pc, 0x800B) << "SD_BOOT.$C from the folder not reached";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9000), 0xDE);
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9001), 0xC0);
+}
+
+/// The same SD card as a MAME CHD (docs/inprogress/2026-10-02-media-chd/): MAME keeps every disk and card as a
+/// CHD, and the format is shared - the card that boots from a raw image boots from its CHD through the same SD slot,
+/// compressed with chdman's default codecs
+/// Real-ROM boot plus a FAT file load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, SdCardBootFromAChd)
+{
+    const std::vector<uint8_t> code = {0xF3, 0x3E, 0x04, 0xD3, 0xFE, 0x21, 0xDE, 0xC0, 0x22, 0x00, 0x90, 0x18, 0xFE};
+    FatImageSpec spec;
+    spec.label = "ZXEVO CHD";
+    spec.files = {{"SD_BOOT.$C", MakeHobeta("sd_boot ", 0x8000, code)}};
+    ScratchFatImage image("zxevo-sdboot-chd.img", spec);
+    ASSERT_TRUE(image.ok()) << image.error();
+    ScratchFolder folder("zxevo-sd-chd");
+    const auto u8 = (folder.Path() / "card.chd").u8string();
+    const std::string chdPath(u8.begin(), u8.end());
+    {
+        auto raw = RawImage::Open(image.path(), RawImage::Access::ReadOnly);
+        ASSERT_NE(raw, nullptr);
+        chd::WriteOptions options;
+        options.codecs = chd::kDefaultHardDiskCodecs;
+        std::string error;
+        ASSERT_TRUE(chd::WriteChd(chdPath, *raw, options, &error)) << error;
+    }
+
+    Create();
+    MediaManager& manager = *_context->pMediaManager;
+    MediaSource source;
+    source.path = chdPath;
+    const MediaResult inserted = manager.Insert("sd.zc", source);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_EQ(manager.Info("sd.zc")->format, "chd");
+    ASSERT_TRUE(RunToMainMenu());
+
+    Tap(ZXKEY_5);  // "5. SDcard boot"
+    Z80* z80 = _context->pCore->GetZ80();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x800B; }, 300);
+    ASSERT_EQ(z80->pc, 0x800B) << "SD_BOOT.$C from the CHD not reached";
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9000), 0xDE);
     EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9001), 0xC0);
 }
