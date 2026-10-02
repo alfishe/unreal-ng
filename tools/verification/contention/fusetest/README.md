@@ -92,16 +92,26 @@ On the Pentagon unreal-ng prints the same report as FUSE (see the known problem 
 
 ## Running it under the co-emulation harness
 
-Not as it is. The harness ([`../../coemu/README.md`](../../coemu/README.md), "The program's side") waits for a
-byte labeled `DONE` to become 1 and then compares a memory dump between `START` and `PROBEEND` with a
-`<name>-compare.py`. fusetest has none of that: it keeps its verdicts only on the screen and returns to BASIC.
-To run it there it would need:
+The harness ([`../../coemu/README.md`](../../coemu/README.md), "The program's side") waits for a byte labeled
+`DONE` to become 1 and then reads a memory dump between `START` and `PROBEEND`. fusetest keeps its verdicts only on
+the screen and returns to BASIC, so it runs there inside a small wrapper, `fusetest-coemu`:
 
-- a small wrapper source that `INCLUDE`s the program, calls `main`, then sets a `DONE` byte, with `START` /
-  `PROBEEND` around the screen memory (#4000-#5AFF), and a `.sym` file (pasmo writes its symbol table to a
-  third file named on its command line, `NAME EQU value` per line, close to the harness's format);
-- a `fusetest-compare.py` that reads the text off the dumped screen (the harness's FUSE runner already has a
-  screen-to-text converter, `../../coemu/fuse/screen-text.py`) and checks each line.
+| File | Content |
+|:--|:--|
+| `fusetest-coemu.asm` | the wrapper, at #9000: points the output routine of the channels K and S at a hook that keeps a copy of every printed character in a buffer (#9000-#9FFF), calls fusetest at #A000, restores the channels and sets `DONE` |
+| `fusetest-coemu.tap`, `.trd` | one code block from #9000: the wrapper, then fusetest's code from `fusetest.tap`; loads and starts at 36864 |
+| `fusetest-coemu.sym` | `START`, `DONE`, `BUFFER`, `PROBEEND`, ... |
+| `fusetest-coemu-compare.py` | reads the buffer out of a dump and checks every line: right when each says `passed` or `skipped` |
 
-The FUSE results above were taken that way by hand: the harness's patched FUSE binary run with `COEMU_DONE_ADDR`
-pointing at a byte that never becomes 1, so it stops after a fixed number of frames and saves the screen.
+```
+PROGRAM=$PWD/tools/verification/contention/fusetest/fusetest-coemu tools/verification/coemu/run-all.sh 48k 128k plus2 plus2a plus3
+```
+
+The files are built by unreal-ng's test suite (`core/tests/emulator/video/fusetest_test.cpp`,
+`FuseTestCoemuFiles_Test`; `UNREAL_FUSETEST_EXPORT=1` writes them), which also checks that the buffer holds the
+report the screen shows (`FuseTestCoemu_Test`). fusetest itself is unchanged.
+
+Results on eight emulators: [reports/2026-10-02-fusetest-matrix.md](../../coemu/reports/2026-10-02-fusetest-matrix.md).
+FUSE and unreal-ng pass on the 48K, 128K, +2, +2A and +3. fusetest cannot test the clones: it takes the Pentagon
+for a TS2068 (and, started from TR-DOS, its paging tests switch the ROM under BASIC), cannot measure a Scorpion's
+frame, and takes a contention-free 48K frame for a 48K.

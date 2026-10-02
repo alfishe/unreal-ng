@@ -142,6 +142,12 @@ void MenuManager::createFileMenu()
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
+    // Insert Medium: a file, then the slot chooser with every slot that takes it
+    _insertMediumAction = _fileMenu->addAction(tr("&Insert Medium..."));
+    _insertMediumAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
+    _insertMediumAction->setStatusTip(tr("Put a disk, tape, CD, hard-disk or card image into a slot you choose"));
+    connect(_insertMediumAction, &QAction::triggered, this, &MenuManager::insertMediumRequested);
+
     // Open ZX-Poly: a four-CPU ZX-Poly machine from a .zxp snapshot or a multiloader disk
     _openZXPolyAction = _fileMenu->addAction(tr("Open &ZX-Poly..."));
     _openZXPolyAction->setStatusTip(tr("Run a ZX-Poly edition (.zxp snapshot or .trd/.scl multiloader disk) on four synchronized machines"));

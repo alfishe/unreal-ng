@@ -14,6 +14,7 @@
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
 #include "emulator/video/screendigest.h"
+#include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -1321,6 +1322,18 @@ const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
                                 _context != nullptr && _context->config.mem_model == MM_ATM3;
     if (mode == M_P384)
         return rasterDescriptors[M_PENTAGON128K];
+
+    // ATM Turbo 2 v4.50: 308-line raster, the 4 missing lines are vertical blank before the
+    // visible area (frame and window placement unchanged). Inferred from the system ROM's
+    // frame-timing protection: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+    if (_context != nullptr && _context->config.mem_model == MM_ATM450 && mode != M_NUL)
+    {
+        _atm450Timing = rasterDescriptors[mode];
+        _atm450Timing.vBlankLines =
+            static_cast<uint16_t>(_atm450Timing.vBlankLines - AtmGeometry::kAtm450DroppedBlankLines);
+        return _atm450Timing;
+    }
+
     return atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[mode];
 }
 

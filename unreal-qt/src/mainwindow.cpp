@@ -2,11 +2,10 @@
 
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
+#include "media/droptargetoverlay.h"
 #include "emulator/media/modelswitch.h"
 
 #include <QCursor>
-#include <QMenu>
-#include <QStatusBar>
 #include <QWindow>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -158,16 +157,51 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
 
     // Forward drag/drop from GPU window to main window
+    // The slot chooser, drop zones and refusal over the screen (media-drop-targets M4)
+    _dropOverlay = new DropTargetOverlay(this);
+    _dropHoldTimer.setSingleShot(true);
+    _dropHoldTimer.setInterval(1500);
+    connect(&_dropHoldTimer, &QTimer::timeout, this, [this]() {
+        if (!_dragActive || _dragPath.isEmpty() || !_emulator)
+            return;
+        const MediaPlan plan = MediaTargets::Plan(_emulator->GetContext(), MediaTargets::Classify(_dragPath.toStdString()));
+        if (plan.targets.size() < 2)
+            return;
+        _pendingPlacement = {_dragPath, false, LoadOrigin::Drop, true};
+        _dropOverlay->showZones(dropArea(), QFileInfo(_dragPath).fileName(), plan);
+    });
+    connect(_dropOverlay, &DropTargetOverlay::targetChosen, this, [this](int index) {
+        clearDropVerdict();
+        if (!_pendingPlacement.active || index < 0 || index >= static_cast<int>(_dropOverlay->plan().targets.size()))
+            return;
+        const PendingPlacement request = _pendingPlacement;
+        _pendingPlacement.active = false;
+        const std::string slot = _dropOverlay->plan().targets[static_cast<size_t>(index)].slotId;
+        const bool mountOnly = request.mountOnly || QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+        QTimer::singleShot(0, this, [this, request, slot, mountOnly]() {
+            placeMedium(request.path, MediaTargets::Classify(request.path.toStdString()), mountOnly, request.origin, slot);
+        });
+    });
+    connect(_dropOverlay, &DropTargetOverlay::droppedOutside, this, [this]() {
+        // Released away from the zones: the same slots, picked by a click
+        clearDropVerdict();
+        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), _dropOverlay->plan());
+    });
+    connect(_dropOverlay, &DropTargetOverlay::cancelled, this, [this]() {
+        _pendingPlacement.active = false;
+        clearDropVerdict();
+    });
+
     connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
         showDropVerdict(filePath);
     });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { clearDropVerdict(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
-        qDebug() << "File dropped via GPU window:" << filePath;
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
+    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
+        qDebug() << "Files dropped via GPU window:" << paths;
         clearDropVerdict();
-        // After the drop event returns: the slot chooser may open a menu
+        // After the drop event returns: the slot chooser may open
         const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, filePath, mountOnly]() { loadFile(filePath, mountOnly, LoadOrigin::Drop); });
+        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
     });
 
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
@@ -267,6 +301,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
+    connect(_menuManager, &MenuManager::insertMediumRequested, this, &MainWindow::insertMediumDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::stopRzxRequested, this, &MainWindow::handleStopRzxRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
@@ -1113,7 +1148,7 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 void MainWindow::dragLeaveEvent(QDragLeaveEvent* event)
 {
     Q_UNUSED(event);
-    clearDropVerdict();
+    onDropDragLeft();
 }
 
 void MainWindow::dropEvent(QDropEvent* event)
@@ -1134,11 +1169,10 @@ void MainWindow::dropEvent(QDropEvent* event)
         qDebug() << pathList.size() << "files dropped";
         qDebug() << pathList.join(",");
 
-        // Load the first dropped file (Shift held while dropping = mount a disk without autostart),
-        // after the drop event returns: the slot chooser may open a menu
-        const QString filePath = pathList.first();
+        // Shift held while dropping = mount a disk without autostart. After the drop event
+        // returns: the slot chooser may open
         const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, filePath, mountOnly]() { loadFile(filePath, mountOnly, LoadOrigin::Drop); });
+        QTimer::singleShot(0, this, [this, pathList, mountOnly]() { dropFiles(pathList, mountOnly); });
     }
 
     clearDropVerdict();
@@ -2295,7 +2329,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
     };
 }
 
-void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin)
+void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
+                             const std::string& slot)
 {
     const std::string file = filePath.toStdString();
     MediaPlan plan = MediaTargets::Plan(_emulator ? _emulator->GetContext() : nullptr, fileClass);
@@ -2328,9 +2363,37 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
         }
     }
 
-    const int index = chooseTarget(plan, filePath, origin);
-    if (index < 0)
+    // The slot: the user's pick, the plan's default, else ask (the chooser calls back with the pick)
+    int index = -1;
+    if (!slot.empty())
+    {
+        for (size_t i = 0; i < plan.targets.size(); i++)
+        {
+            if (plan.targets[i].slotId == slot)
+                index = static_cast<int>(i);
+        }
+        if (index < 0)
+        {
+            refuseFile(filePath, tr("%1 does not take it any more").arg(QString::fromStdString(slot)), origin);
+            return;
+        }
+    }
+    else if (plan.defaultTarget >= 0)
+    {
+        index = plan.defaultTarget;
+    }
+    else if (origin == LoadOrigin::Unattended)
+    {
+        qInfo() << "Several slots take" << filePath << "(" << QString::fromStdString(plan.SlotList())
+                << "): no one to ask, the first one -" << QString::fromStdString(plan.targets.front().slotId);
+        index = 0;
+    }
+    else
+    {
+        _pendingPlacement = {filePath, mountOnly, origin, true};
+        _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
         return;
+    }
     const MediaTarget& target = plan.targets[static_cast<size_t>(index)];
 
     switch (target.as)
@@ -2384,50 +2447,63 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
     }
 }
 
-int MainWindow::chooseTarget(const MediaPlan& plan, const QString& filePath, LoadOrigin origin)
-{
-    if (plan.defaultTarget >= 0)
-        return plan.defaultTarget;
-    if (origin == LoadOrigin::Unattended)
-    {
-        qInfo() << "Several slots take" << filePath << "(" << QString::fromStdString(plan.SlotList())
-                << "): no one to ask, the first one -" << QString::fromStdString(plan.targets.front().slotId);
-        return 0;
-    }
-
-    // The slot chooser (M4 adds device icons, drop zones on a 1.5 s hold and a dialog)
-    QMenu menu(this);
-    menu.addSection(tr("Insert %1 into").arg(QFileInfo(filePath).fileName()));
-    for (size_t i = 0; i < plan.targets.size(); i++)
-    {
-        const MediaTarget& target = plan.targets[i];
-        QString text = QString::fromStdString(target.label);
-        text += target.occupiedBy.empty()
-                    ? tr("  -  empty")
-                    : tr("  -  replaces %1").arg(QFileInfo(QString::fromStdString(target.occupiedBy)).fileName());
-        if (target.dirty)
-            text += tr(" (unsaved writes!)");
-        if (target.autostart)
-            text += tr(", autostart");
-        QAction* action = menu.addAction(text);
-        action->setData(static_cast<int>(i));
-    }
-    QAction* chosen = menu.exec(QCursor::pos());
-    return chosen ? chosen->data().toInt() : -1;
-}
-
 void MainWindow::refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin)
 {
-    const QString text = tr("%1: %2").arg(QFileInfo(filePath).fileName(), reason);
-    qWarning() << "Not opened:" << text;
+    const QString name = QFileInfo(filePath).fileName();
+    qWarning() << "Not opened:" << name << "-" << reason;
     if (origin == LoadOrigin::Drop)
-        statusBar()->showMessage(text, 8000);
+        _dropOverlay->showRefusal(dropArea(), name, reason, 2500);
     else if (origin == LoadOrigin::Interactive)
-        QMessageBox::information(this, tr("Open File"), text);
+        QMessageBox::information(this, tr("Open File"), tr("%1: %2").arg(name, reason));
+}
+
+void MainWindow::dropFiles(const QStringList& paths, bool mountOnly)
+{
+    if (paths.isEmpty())
+        return;
+    if (paths.size() == 1 || !_emulator)
+    {
+        loadFile(paths.first(), mountOnly, LoadOrigin::Drop);
+        return;
+    }
+
+    // A set of floppy images: drive A, B, C, D in order
+    std::vector<FileClass> classes;
+    for (const QString& path : paths)
+    {
+        classes.push_back(MediaTargets::Classify(path.toStdString()));
+        if (classes.back().folder || classes.back().kinds.empty() || classes.back().kinds.front() != FileKind::Floppy)
+        {
+            loadFile(paths.first(), mountOnly, LoadOrigin::Drop);  // not a disk set: the first file only
+            return;
+        }
+    }
+    std::vector<std::string> drives;
+    for (const MediaTarget& target : MediaTargets::Plan(_emulator->GetContext(), classes.front()).targets)
+    {
+        if (target.as == FileKind::Floppy)
+            drives.push_back(target.slotId);
+    }
+    std::sort(drives.begin(), drives.end());
+    const int placed = std::min(static_cast<int>(paths.size()), static_cast<int>(drives.size()));
+    for (int i = placed - 1; i >= 0; i--)  // drive A last: its autostart boots the whole set
+        placeMedium(paths[i], classes[static_cast<size_t>(i)], mountOnly, LoadOrigin::Drop, drives[static_cast<size_t>(i)]);
+    if (paths.size() > drives.size())
+        refuseFile(paths[placed], tr("this machine has %n floppy drive(s)", nullptr, static_cast<int>(drives.size())),
+                   LoadOrigin::Drop);
+}
+
+QRect MainWindow::dropArea() const
+{
+    QWidget* area = ui->contentFrame;
+    return QRect(area->mapToGlobal(QPoint(0, 0)), area->size());
 }
 
 void MainWindow::showDropVerdict(const QString& filePath)
 {
+    _dragActive = true;
+    _dragPath = filePath;
+    _dropHoldTimer.stop();
     if (filePath.isEmpty())
     {
         ui->contentFrame->setStyleSheet("border: 2px solid #3daee9;");
@@ -2435,24 +2511,60 @@ void MainWindow::showDropVerdict(const QString& filePath)
     }
     const MediaPlan plan =
         MediaTargets::Plan(_emulator ? _emulator->GetContext() : nullptr, MediaTargets::Classify(filePath.toStdString()));
-    const QString name = QFileInfo(filePath).fileName();
     if (plan.Refused())
     {
+        // Nothing takes the file: say so at once, over the screen
         ui->contentFrame->setStyleSheet("border: 2px solid red;");
-        statusBar()->showMessage(tr("%1: %2").arg(name, QString::fromStdString(plan.refusal)));
+        _dropOverlay->showRefusal(dropArea(), QFileInfo(filePath).fileName(), QString::fromStdString(plan.refusal));
         return;
     }
     ui->contentFrame->setStyleSheet("border: 2px solid #3daee9;");
-    if (plan.defaultTarget >= 0)
-        statusBar()->showMessage(tr("%1 -> %2").arg(name, QString::fromStdString(plan.targets[static_cast<size_t>(plan.defaultTarget)].label)));
-    else
-        statusBar()->showMessage(tr("%1: choose a slot (%2)").arg(name, QString::fromStdString(plan.SlotList())));
+    // One target: nothing to choose. Several: the drop zones after a 1.5 s hold (Alt / Option: at once)
+    if (plan.targets.size() > 1 && plan.targets.front().action == MediaTarget::Action::Insert)
+        _dropHoldTimer.start(QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier) ? 1 : 1500);
 }
 
 void MainWindow::clearDropVerdict()
 {
     ui->contentFrame->setStyleSheet("border: none;");
-    statusBar()->clearMessage();
+    _dropHoldTimer.stop();
+    _dragActive = false;
+}
+
+void MainWindow::onDropDragLeft()
+{
+    // The overlay appearing under the cursor takes the drag from the window: that is no leave
+    if (_dropOverlay && _dropOverlay->isVisible() && _dropOverlay->geometry().contains(QCursor::pos()))
+    {
+        _dropHoldTimer.stop();
+        return;
+    }
+    if (_dropOverlay && _dropOverlay->mode() == DropTargetOverlay::Mode::Refusal)
+        _dropOverlay->dismiss();
+    clearDropVerdict();
+}
+
+void MainWindow::insertMediumDialog()
+{
+    const QString filePath = QFileDialog::getOpenFileName(this, tr("Insert Medium"), _lastDirectory, tr("All Files (*)"));
+    if (filePath.isEmpty())
+        return;
+    saveLastDirectory(filePath);
+    const FileClass fileClass = MediaTargets::Classify(filePath.toStdString());
+    if (!_emulator || fileClass.kinds.empty() || !MediaTargets::IsMedium(fileClass.kinds.front()))
+    {
+        loadFile(filePath, false, LoadOrigin::Interactive);  // a snapshot, a refusal, or a machine to start
+        return;
+    }
+    const MediaPlan plan = MediaTargets::Plan(_emulator->GetContext(), fileClass);
+    if (plan.Refused())
+    {
+        refuseFile(filePath, QString::fromStdString(plan.refusal), LoadOrigin::Interactive);
+        return;
+    }
+    // The dialog's point is the choice: every target, even with a default
+    _pendingPlacement = {filePath, false, LoadOrigin::Interactive, true};
+    _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
 }
 
 void MainWindow::saveFileDialog()
@@ -3699,13 +3811,13 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
         showDropVerdict(filePath);
     });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { clearDropVerdict(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::fileDropped, this, [this](const QString& filePath) {
-        qDebug() << "File dropped via GPU window:" << filePath;
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
+    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
+        qDebug() << "Files dropped via GPU window:" << paths;
         clearDropVerdict();
-        // After the drop event returns: the slot chooser may open a menu
+        // After the drop event returns: the slot chooser may open
         const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, filePath, mountOnly]() { loadFile(filePath, mountOnly, LoadOrigin::Drop); });
+        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
     });
 
     // Restore state

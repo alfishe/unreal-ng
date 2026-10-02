@@ -11,6 +11,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/video/atm/atmgeometry.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/keyboard/atm2kbc.h"
@@ -1317,9 +1318,18 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
         }
 
         case MM_ATM450:
+            // ATM Turbo 2 v4.50: 308 x 224 T = 68992 T, inferred from the system ROM's
+            // frame-timing protection (it corrupts typed keys unless its frame measure
+            // lands in a window that 312 lines miss). The 4 lines come out of the
+            // vertical blank, so INT moves 4 lines earlier and INT-to-paper stays 14395T.
+            // See docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+            config.intstart = AtmGeometry::kAtm450IntStart;
+            config.intlen   = 32;
+            break;
+
         case MM_ATM710:
         case MM_ATM3:
-            // ATM Turbo 1/2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
+            // ATM Turbo 2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
             // clock in every video mode; the FF77.3 turbo multiplies the CPU only.
             // INT-to-first-ZX-paper distance 14395T (UnrealSpeccy
             // PRESET.ATM1_2_3.5MHz, "thanks to DDp"; Xpeccy ULA.ATM2: 14384T).
@@ -1392,6 +1402,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 break;
             }
             case MM_ATM450:
+                // 308 lines: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md
+                config.frame = AtmGeometry::kAtm450Frame;   // 224 * 308
+                config.t_line = 224;
+                config.intstart = AtmGeometry::kAtm450IntStart;
+                config.intlen = 32;
+                break;
             case MM_ATM710:
             case MM_ATM3:
                 config.frame = 69888;   // 224 * 312

@@ -2028,6 +2028,8 @@ StateNode Network(EmulatorContext* context)
         node["baud"] = c.baud;
         node["frame_bits"] = c.frameBits;
         node["peer_pending"] = uint64_t(c.pending);
+        if (c.peerBaud)
+            node["peer_baud"] = c.peerBaud;   // an ESP module's own rate: a mismatch with "baud" garbles both sides
     };
 
     // The machine's own serial port when it is no 16550 (ATM Turbo 2+

@@ -93,6 +93,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void insertMediumRequested();
     void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void stopRzxRequested();          // stop RZX playback, the machine runs live
@@ -203,6 +204,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _insertMediumAction;
     QAction* _openZXPolyAction;
     QAction* _importAudioTapeAction;
     QAction* _stopRzxAction = nullptr;  ///< enabled while an RZX recording plays

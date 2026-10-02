@@ -151,6 +151,7 @@ public:
             bool rts = false, dtr = false;
             uint64_t bytesIn = 0, bytesOut = 0, lost = 0;
             size_t pending = 0;           ///< bytes the peer holds for the ZX
+            uint32_t peerBaud = 0;        ///< ESP module: its firmware's rate (0: not an ESP module)
             std::vector<std::pair<std::string, std::string>> exchanges;   ///< ESP module: recent requests / replies
             uint64_t requests = 0;
         } com;
@@ -182,8 +183,10 @@ private:
     void Refit();
     void Unplug();
     void FitCom(const Plan& plan, const Uart16550::State* keep);
-    /// The peer a ComPortSpec names (nullptr for NONE)
-    std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText) const;
+    /// The peer a ComPortSpec names (nullptr for NONE); an ESP module without
+    /// its own ,<baud> ships at `espBaud` (the port's default)
+    static constexpr uint32_t kDefaultEspBaud = 115200;
+    std::unique_ptr<ISerialPeer> MakePeer(const std::string& specText, uint32_t espBaud) const;
     /// Plug `_machinePeer` into the machine's own non-16550 port
     void FitMachineSerial(const Plan& plan);
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;

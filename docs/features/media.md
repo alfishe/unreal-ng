@@ -341,7 +341,24 @@ Each method returns the result as a dict.
 
 **Tools → Media** (Ctrl+4) shows the slots in a table. Insert a file or a folder into the
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
-medium. When a dirty medium would leave, the panel asks Save / Export / Discard.
+medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
+cannot take the dropped file says why and inserts nothing.
+
+**Drag and drop on the main window** uses the same analysis as `targets`:
+
+- a file only one slot takes goes there at once (a CD image on a ZX-Evo: its CD-ROM drive);
+- a floppy image goes to drive A and boots (Shift: mount only); several floppy images go to A, B,
+  C, D in order;
+- a file several slots take (a card image on a ZX-Evo with NeoGS) opens the **slot chooser** over
+  the screen after the drop: one tile per slot with the device's icon, its name and what it holds
+  now; click one, press its number, or Esc;
+- **holding** the file over the window for 1.5 s (or pressing Alt / Option) shows the same tiles
+  while dragging - drop on the slot you want, e.g. a disk into drive B;
+- a file no slot takes turns the screen red with the reason at once, and a drop does nothing; a CD,
+  hard-disk or card image never starts a machine (which one would be a guess).
+
+**File → Insert Medium...** (Ctrl+Shift+I) picks a file, then opens the slot chooser with every
+slot that takes it.
 
 ## Older calls
 

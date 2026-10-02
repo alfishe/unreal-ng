@@ -102,13 +102,14 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     return plan;
 }
 
-std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specText) const
+std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specText, uint32_t espBaud) const
 {
     ComPortSpec spec;
     std::string error;
     ComPortSpec::Parse(specText.empty() ? "NONE" : specText, spec, error);
     const EspModule::Chip chip =
         _context->config.network.espChip == 1 ? EspModule::Chip::Esp8266 : EspModule::Chip::Esp32;
+    std::unique_ptr<EspModule> esp;
     switch (spec.kind)
     {
         case ComPortSpec::Kind::Loopback:
@@ -117,12 +118,17 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);
         case ComPortSpec::Kind::At:
-            return std::make_unique<AtModule>(_network.get(), chip);
+            esp = std::make_unique<AtModule>(_network.get(), chip);
+            break;
         case ComPortSpec::Kind::Espnet:
-            return std::make_unique<EspnetModule>(_network.get(), chip);
+            esp = std::make_unique<EspnetModule>(_network.get(), chip);
+            break;
         default:
             return nullptr;   // nothing on the line
     }
+    // The firmware's own rate: as written, else the port's
+    esp->SetFactoryBaud(spec.baud ? spec.baud : espBaud);
+    return esp;
 }
 
 void NetworkManager::FitMachineSerial(const Plan& plan)
@@ -131,7 +137,7 @@ void NetworkManager::FitMachineSerial(const Plan& plan)
     const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
     if (!caps.attachSerialPeer)
         return;
-    _machinePeer = MakePeer(plan.machinePeer);
+    _machinePeer = MakePeer(plan.machinePeer, caps.espBaud);
     if (!_machinePeer)
         return;   // nothing on the line: the firmware's UART still runs
     caps.attachSerialPeer(_machinePeer.get());
@@ -140,7 +146,7 @@ void NetworkManager::FitMachineSerial(const Plan& plan)
 
 void NetworkManager::FitCom(const Plan& plan, const Uart16550::State* keep)
 {
-    std::unique_ptr<ISerialPeer> peer = MakePeer(plan.peer);
+    std::unique_ptr<ISerialPeer> peer = MakePeer(plan.peer, kDefaultEspBaud);
     PortDecoder* decoder = _context->pPortDecoder;
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
@@ -401,6 +407,7 @@ void NetworkManager::FillPeerStatus(const ISerialPeer* peer, Status::Com& c) con
     c.pending = peer->Pending();
     if (const auto* esp = dynamic_cast<const EspModule*>(peer))
     {
+        c.peerBaud = esp->Baud();
         c.requests = esp->RequestsServed();
         for (const EspModule::Exchange& e : esp->RecentExchanges())
             c.exchanges.emplace_back(e.request, e.reply);

@@ -8,6 +8,37 @@
 
 ---
 
+2026-10-02
+## 🟠 [Confirmed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
+* **Date Opened:** 2026-10-02
+* **Date Fixed:** -
+* **Commit ID:** -
+
+### Description
+While halted, the Z80 makes an idle opcode fetch every 4 T at the address **after** the `HALT` (its program
+counter already points there) and discards the byte. unreal-ng (and unreal-z80) re-execute the `HALT` itself, so the
+idle fetches go to the `HALT`'s own address. When the two addresses differ in contention, the interrupt is taken at
+another T: HALT2INT v3 on the 48K, `HALT` at #7FFF (contended; the byte after it, #8000, is not), interrupt at 14335 /
+14336 / 14562: the real early 48K shows R = #43 / #43 / #0B, unreal-ng #44 / #44 / #1C, and the program's header
+reads "HALT: Unknown" instead of "Early".
+
+### Root cause
+`op_76` (`core/src/emulator/cpu/op_noprefix.cpp`) steps PC back, and every following step runs the full opcode
+fetch (`Z80::m1_cycle`) at PC, the `HALT` address. The same in unreal-z80 (`op_76`, `Z80HaltT` reports the M1 at PC).
+References: the hardware (HALT2INT photos and published screens) and MAME fetch HALT + 1; FUSE, Xpeccy, ZXMAK2 and
+SkoolKit fetch the HALT, like unreal-ng.
+
+### Requirements / Acceptance Criteria
+- [ ] The halted idle fetch goes to PC + 1 on the bus (contention, the +2A / +3 latch, ULA snow, the machine M1 hooks)
+      while PC, the instruction-start work, R and the acknowledge stay as today
+      ([design](2026-10-02-halt-fetch-address/design.md) §3-4).
+- [ ] `Halt2Int_Test` passes with no known deviation; a host test pins the idle fetch address on the 48K, 128K, +3.
+- [ ] No cost on the non-halted path (A/B); unreal-z80 carries the same fix with every suite green.
+
+Design: [2026-10-02-halt-fetch-address](2026-10-02-halt-fetch-address/design.md). Plan: [PLAN.md](PLAN.md) #81.
+
+---
+
 2026-09-30
 ## 🟢 [Fixed] #1: TSConf Z-Controller FAT32 Compatibility Matrix
 * **Date Opened:** 2026-09-30

@@ -30,8 +30,12 @@ place where the two references disagree is listed in cross-mapping §3.3.
   short name).
 - Default RAM 512 KiB; `RAM_512 | RAM_1024` selectable (already in
   `config.h:60` — do not change).
-- Frame timing already correct and shared with 710/ATM3
-  (`config.cpp` `intstart=1756`, `intlen=32`, frame 69888, line 224). No change.
+- Frame timing: **308 lines × 224 T = 68 992 T**, not the 312 lines of 710/ATM3 and of
+  every reference emulator. The system ROM measures the frame before CP/M starts and
+  corrupts typed keys (and random memory) when the measure misses its calibration
+  window; 312 lines miss it. The 4 lines are taken from the vertical blank, INT moves
+  with them (`intstart` 860), INT-to-paper stays 14 395 T. Evidence, the ROM code and
+  what is still unknown: [frame-timing-protection.md](frame-timing-protection.md).
 - `data/configs/atm450/unreal.ini` derives from `data/configs/atm710/unreal.ini`
   with: `HIMEM=ATM450`, `RAMSize=512`, `[ROM] ATM1=rom/atm1.rom` +
   a `ROMSET=ROM.ATM1` whose labels match the verified page order of R3
@@ -254,7 +258,7 @@ mechanism our `Z80Step` already implements — nothing model-specific to port.
 | OQ-8 | Palette intensity order (`bgrBGR` in the manual) | **Resolved empirically**: the system ROM's Sinclair palette is right with the emulators' `--grbGRB` layout (R4) |
 | OQ-9 | `#FE` read bit 7 (Z, the PAL marker): the manual confirms the bit (keyboard buffer D45, from the protected 1556ХЛ8 PLM) but not the timing | **Resolved by the ROM**: the UnrealSpeccy windows, measured from INT, produce the key that decrypts the system ROM's CP/M loader (boot test `MenuCpmLoaderReachesTheDisk`). The PLM has no public dump |
 | OQ-10 | CP/M system disk for the 4.50 | **Resolved**: none needed - CCP and BDOS are in the ROM; the loader reads the CP/M directory (cylinder 1). `testdata/machines/atm450/cpm/sys.trd` (NedoPC "SYSTEM" disk for ATM1/2/2+) boots to `A>` and `DIR B:` lists it (boot test `CpmBootsFromSystemDiskAndListsIt`). B: is the floppy, A: the electronic disk |
-| OQ-11 | Keys typed in CP/M sometimes arrive as scan code + 1 (next matrix row: `DIR` → `DKR`, `R` → `4`) | Open. Probed: each row read returns the current matrix, the keyboard interrupt runs once per frame - the slip happens in the ROM's shift-state machine (`#5F40`, `l141d`..`l14c3` in the BIOS 1.03 disassembly). Unknown whether the real board shows it with the same key timing; the test types like a user (erase + retype) |
+| OQ-11 | Keys typed in CP/M sometimes arrive as scan code + 1 | **Resolved**: the ROM's frame-timing protection (`l1500`: `inc (hl)` on the key buffer when the frame measure `#5F74` is outside `#E6..#EC`); fixed with a 308-line frame - [frame-timing-protection.md](frame-timing-protection.md) |
 
 ## Definition of done
 

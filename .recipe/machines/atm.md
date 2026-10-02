@@ -69,6 +69,9 @@ sources: [docs/inprogress/2026-10-01-atm450](../../docs/inprogress/2026-10-01-at
   **B:** (`DIR B:`), A: is the electronic disk. All console output goes through
   the BIOS vector `#F809` (character in C) - a cheap way to read the 640x200
   console from automation.
+- The 4.50 frame is **308 lines x 224 T = 68 992 T** (INT at T 861), not 312: the system
+  ROM measures the frame and corrupts typed keys when it is wrong
+  ([frame-timing-protection.md](../../docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)).
 - Reset starts in the **system ROM** (except `RESET=DOS`), which shows the
   boot menu in 640x200: CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48.
   `CAPS SHIFT + 6` moves the bar, `ENTER` starts. The menu loop only scans

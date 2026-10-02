@@ -44,7 +44,11 @@ VideoLayout AtmVideoMapper::Layout(const VideoState& s) const
     layout.family = Family();
     layout.mode = s.mode;
     layout.tstatesPerLine = kTStatesPerLine;
-    layout.lines = static_cast<uint16_t>(kVSyncVBlankLines + kVisibleLines);
+    // Lines before the visible area from the timing descriptor: 24 on ATM 7.10 / ATM3, 20 on ATM450
+    // (docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
+    const uint16_t timingBlank = static_cast<uint16_t>(s.timingDesc.vSyncLines + s.timingDesc.vBlankLines);
+    const uint16_t blankLines = timingBlank ? timingBlank : static_cast<uint16_t>(kVSyncVBlankLines);
+    layout.lines = static_cast<uint16_t>(blankLines + kVisibleLines);
 
     LayerDesc layer;
     layer.id = LayerId(s.mode);
@@ -56,7 +60,7 @@ VideoLayout AtmVideoMapper::Layout(const VideoState& s) const
         layer.surface.textColumns = kTextColumns;
         layer.surface.textRows = kTextRows;
     }
-    layer.window.firstLine = static_cast<uint16_t>(kVSyncVBlankLines + l.screenOffsetTop);
+    layer.window.firstLine = static_cast<uint16_t>(blankLines + l.screenOffsetTop);
     layer.window.lineCount = static_cast<uint16_t>(kScreenLines);
     layer.window.firstT = static_cast<uint16_t>(kScreenStartT);
     layer.window.tCount = static_cast<uint16_t>(kScreenEndT - kScreenStartT);

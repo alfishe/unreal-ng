@@ -73,13 +73,15 @@ std::map<std::pair<int, std::string>, ButlerResult> ParseButlerScreen(const std:
     return results;
 }
 
-/// A 48K running the Butler suite; frames are counted, keys typed by holding them for a few frames
+/// A machine running a Butler suite (the 48K one by default); frames are counted, keys typed by holding them for a
+/// few frames
 class ButlerRunner
 {
 public:
-    explicit ButlerRunner(bool contention)
+    explicit ButlerRunner(bool contention, const std::string& model = "48K",
+                          const std::string& snapshot = "loaders/sna/Timing_Tests-48k_v1.0.sna")
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (!_emulator)
             return;
         _emulator->GetFeatureManager()->setFeature(Features::kContention, contention);
@@ -87,7 +89,7 @@ public:
         // (#xx1F with A9 set) answer test 35's IN r,(C) with the mouse counters - a byte that sends the next
         // port into the contended high-byte range
         _emulator->GetFeatureManager()->setFeature(Features::kKempstonMouse, false);
-        _loaded = _emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna"));
+        _loaded = _emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(snapshot));
     }
 
     ~ButlerRunner()
@@ -128,6 +130,44 @@ public:
         keyboard->ReleaseKey(key);
         for (int i = 0; i < 6; i++)
             _emulator->RunFrame(true);
+    }
+
+    /// From "choose test", runs test `only` (empty: all) and collects every result until `count` are in. The
+    /// results scroll up the screen: the ROM asks "scroll?" when it is full, and the program waits for a key after
+    /// a failing test. ENTER answers both (SPACE is BREAK at "scroll?"); a key the program was not scanning for is
+    /// lost, so it is pressed again while the page stays unchanged
+    std::map<std::pair<int, std::string>, ButlerResult> RunSuite(const std::string& only, size_t count, int maxFrames)
+    {
+        for (char c : only)
+            Type(static_cast<ZXKeysEnum>(ZXKEY_0 + (c - '0')));
+        Type(ZXKEY_ENTER);
+        std::map<std::pair<int, std::string>, ButlerResult> all;
+        std::string previous;
+        int lastPress = 0;
+        for (int frame = 0; frame < maxFrames && all.size() < count; frame += 2)
+        {
+            RunFrames(2);  // a passing test's lines scroll away within a few frames
+            const std::string screen = Screen();
+            if (screen.find("scroll?") != std::string::npos)
+            {
+                Type(ZXKEY_ENTER);
+                continue;
+            }
+            for (const auto& [key, result] : ParseButlerScreen(screen))
+                all.emplace(key, result);  // every poll: passing tests do not stop, their lines scroll on
+            if (screen != previous && screen.find("ress any") != std::string::npos)
+            {
+                previous = screen;
+                Type(ZXKEY_ENTER);
+                lastPress = frame;
+            }
+            else if (screen == previous && frame - lastPress > 200)
+            {
+                Type(ZXKEY_ENTER);
+                lastPress = frame;
+            }
+        }
+        return all;
     }
 
 private:
@@ -181,37 +221,7 @@ TEST_P(ContentionProbeSweep_Test, ButlerFullSuite)
     ButlerRunner runner(contention);
     ASSERT_TRUE(runner.Loaded());
     ASSERT_TRUE(runner.RunUntilScreenShows("choose test", 2000));
-    runner.Type(ZXKEY_ENTER);
-
-    // The results scroll up the screen: the ROM asks "scroll?" when it is full, and the program waits for a
-    // key after every test. ENTER answers both (SPACE is BREAK at "scroll?")
-    // A key the program was not scanning for is lost: pressed again while the page stays unchanged
-    std::map<std::pair<int, std::string>, ButlerResult> all;
-    std::string previous;
-    int lastPress = 0;
-    for (int frame = 0; frame < 60000 && all.size() < kButlerResults; frame += 2)
-    {
-        runner.RunFrames(2);  // a passing test's lines scroll away within a few frames
-        const std::string screen = runner.Screen();
-        if (screen.find("scroll?") != std::string::npos)
-        {
-            runner.Type(ZXKEY_ENTER);
-            continue;
-        }
-        for (const auto& [key, result] : ParseButlerScreen(screen))
-            all.emplace(key, result);  // every poll: passing tests do not stop, their lines scroll on
-        if (screen != previous && screen.find("ress any") != std::string::npos)
-        {
-            previous = screen;
-            runner.Type(ZXKEY_ENTER);
-            lastPress = frame;
-        }
-        else if (screen == previous && frame - lastPress > 200)
-        {
-            runner.Type(ZXKEY_ENTER);
-            lastPress = frame;
-        }
-    }
+    const auto all = runner.RunSuite("", kButlerResults, 60000);
     EXPECT_EQ(all.size(), kButlerResults) << "last screen:\n" << runner.Screen();
 
     int passed = 0;
@@ -236,6 +246,75 @@ INSTANTIATE_TEST_SUITE_P(Opt, ContentionProbeSweep_Test,
                          ::testing::ValuesIn(std::getenv("UNREAL_TIMING_SUITES") ? std::vector<bool>{ true, false }
                                                                                  : std::vector<bool>{}));
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ContentionProbeSweep_Test);
+
+/// ZX Spectrum Timing Tests 128K v1.0 (Richard and Tim Butler, 2015; testdata/contention/butler, the SpecEmu .szx
+/// from the authors' site, the same bytes as the zxe.io depot copy). Tests 1-34 of the 48K suite with the values of
+/// the late-timing +2 it was written on ("MUST RUN IN 48k MODE": the 48K ROM paged in; no test 35, the program
+/// stops after 34). An early-timing 128K fails tests 4, 17, 18, 26 and 33 from contended RAM, with the values
+/// photographed on two real Toastracks (Issue 6K and 6U, Brendon Alford, the ZX Spectrum tests wiki
+/// "ZX-Spectrum-Timing-Tests-128K"); unreal-ng's 128K has the early timings
+namespace
+{
+constexpr size_t kButler128Results = 68;
+
+/// The early 128K's results that differ from the suite's own: test -> R, loop, SP (contended)
+const std::map<int, ButlerResult>& Early128KFailures()
+{
+    static const std::map<int, ButlerResult> failures = {
+        { 4, { 6, 174, 23305, false } },    { 17, { 22, 203, 23335, false } }, { 18, { 22, 203, 23335, false } },
+        { 26, { 75, 147, 23345, false } }, { 33, { 119, 196, 23315, false } },
+    };
+    return failures;
+}
+}  // namespace
+
+/// Test 4 alone, the first one where an early 128K differs from the suite's +2 values. About 700 frames of a 128K
+/// (the program's own loop counting), well over the 50 ms budget: the default run's end-to-end check of the 128K
+/// timing against a hardware photograph
+TEST(ContentionProbe_Test, Butler128KTest4MatchesTheEarlyHardware)
+{
+    ButlerRunner runner(true, "128k", "contention/butler/Timing_Tests-128k_v1.0.szx");
+    ASSERT_TRUE(runner.Loaded()) << "Timing_Tests-128k_v1.0.szx";
+    ASSERT_TRUE(runner.RunUntilScreenShows("choose test", 2000)) << runner.Screen();
+    const auto results = runner.RunSuite("4", 2, 6000);
+    ASSERT_TRUE(results.count({ 4, "Uncontended" }) && results.count({ 4, "Contended" })) << runner.Screen();
+    EXPECT_TRUE(results.at({ 4, "Uncontended" }).pass);
+    const ButlerResult& contended = results.at({ 4, "Contended" });
+    const ButlerResult& hardware = Early128KFailures().at(4);
+    EXPECT_EQ(contended.r, hardware.r);
+    EXPECT_EQ(contended.loop, hardware.loop);
+    EXPECT_EQ(contended.sp, hardware.sp);
+    EXPECT_FALSE(contended.pass) << "the suite's values are a late +2's";
+}
+
+/// The whole 128K suite: ~7 s - opt-in with UNREAL_TIMING_SUITES=1. Every result as on the early hardware: the
+/// five above fail with the photographed values, all others pass
+TEST(ContentionProbe_Test, Butler128KFullSuiteMatchesTheEarlyHardware)
+{
+    if (!std::getenv("UNREAL_TIMING_SUITES"))
+        GTEST_SKIP() << "opt-in: UNREAL_TIMING_SUITES=1";
+    ButlerRunner runner(true, "128k", "contention/butler/Timing_Tests-128k_v1.0.szx");
+    ASSERT_TRUE(runner.Loaded());
+    ASSERT_TRUE(runner.RunUntilScreenShows("choose test", 2000)) << runner.Screen();
+    const auto all = runner.RunSuite("", kButler128Results, 60000);
+    EXPECT_EQ(all.size(), kButler128Results) << "last screen:\n" << runner.Screen();
+    for (const auto& [key, result] : all)
+    {
+        auto failure = Early128KFailures().find(key.first);
+        if (key.second == "Contended" && failure != Early128KFailures().end())
+        {
+            EXPECT_FALSE(result.pass) << "test " << key.first;
+            EXPECT_EQ(result.r, failure->second.r) << "test " << key.first;
+            EXPECT_EQ(result.loop, failure->second.loop) << "test " << key.first;
+            EXPECT_EQ(result.sp, failure->second.sp) << "test " << key.first;
+        }
+        else
+        {
+            EXPECT_TRUE(result.pass) << "test " << key.first << " " << key.second << ": R=" << result.r
+                                     << " loop=" << result.loop << " sp=" << result.sp;
+        }
+    }
+}
 
 /// region <Patrik Rak's Timing Test v0.3>
 
@@ -403,3 +482,84 @@ INSTANTIATE_TEST_SUITE_P(Opt, RakTimingTestSweep_Test,
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(RakTimingTestSweep_Test);
 
 /// endregion </Patrik Rak's Timing Test v0.3>
+
+/// region <HALT2INT v3 (Mark Woodmass)>
+
+/// HALT2INT v3 (testdata/contention/halt2int-v3, GPL v2): when the Z80 accepts the frame interrupt after a HALT, read
+/// as the R its handler sees, for a HALT at the start and the end of each 16K bank and five interrupt points (the
+/// top border, the first contended T of an early and a late 48K, line 2, the last contended run); the first column
+/// does the same for the floating bus. It covers what ctprobe's engine cannot: the contended HALT fetches (M1-10)
+/// and the interrupt acknowledge (D-05). Expected: the published screen for an early 48K, the same values as the
+/// photo of a real early 48K in the release zip
+namespace
+{
+const std::vector<std::string>& Halt2Int48KEarly()
+{
+    static const std::vector<std::string> lines = {
+        "Float: Early    HALT: Early",
+        "16384/12000:0C  32767/12000:0C", "32768/12000:0C  49151/12000:0C", "49152/12000:0C  65535/12000:0C",
+        "16384/14335:44  32767/14335:43", "32768/14335:45  49151/14335:45", "49152/14335:45  65535/14335:45",
+        "16384/14336:44  32767/14336:43", "32768/14336:44  49151/14336:44", "49152/14336:44  65535/14336:44",
+        "16384/14562:1C  32767/14562:0B", "32768/14562:0C  49151/14562:0C", "49152/14562:0C  65535/14562:0C",
+        "16384/57239:5D  32767/57239:5D", "32768/57239:5F  49151/57239:5F", "49152/57239:5F  65535/57239:5F",
+    };
+    return lines;
+}
+
+/// Where unreal-ng prints something else today (contention backlog C9): during HALT the Z80 fetches the byte AFTER
+/// the HALT and ignores it (the program counter already points past it); unreal-ng re-fetches the HALT itself
+/// (op_76 steps PC back). With the HALT at #7FFF the hardware's halt fetches go to #8000, uncontended, while
+/// unreal-ng's wait on #7FFF, so the interrupt is taken later; #BFFF / #FFFF are followed by uncontended bytes
+/// either way. The header follows from the values. Each entry: the line and what unreal-ng prints there now -
+/// when the core is fixed this test fails, and the entry goes
+const std::map<size_t, std::string>& Halt2IntKnownDeviations()
+{
+    static const std::map<size_t, std::string> lines = {
+        { 0, "Float: Early    HALT: Unknown" },
+        { 4, "16384/14335:44  32767/14335:44" },
+        { 7, "16384/14336:44  32767/14336:44" },
+        { 10, "16384/14562:1C  32767/14562:1C" },
+    };
+    return lines;
+}
+}  // namespace
+
+class Halt2Int_Test : public RomEditorFixture
+{
+};
+
+/// Boots the 48K ROM, loads the tape and runs the program to "0 OK" (~1 s: the ROM boot and the tape). Every
+/// line as on the hardware but the known deviations above
+TEST_F(Halt2Int_Test, EarlyMatchesTheHardware)
+{
+    Boot("48K", RM_SOS, "1982 Sinclair");
+    ASSERT_FALSE(HasFatalFailure());
+    _context->pFeatureManager->setFeature(Features::kFastTape, true);
+    _context->coreState.tapeFilePath = TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap");
+    CommandTyper* typer = _context->pDebugManager->GetCommandTyper();
+    ASSERT_TRUE(typer->Request("LOAD \"\"", CommandTyper::Options{}));
+    RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000);
+    ASSERT_TRUE(RunUntil([&] { return Screen().find("0 OK") != std::string::npos; }, 3000)) << Screen();
+
+    // The rows without their padding; the blank rows between the groups dropped
+    std::vector<std::string> shown;
+    std::istringstream rows(Screen());
+    std::string row;
+    while (std::getline(rows, row))
+    {
+        const size_t end = row.find_last_not_of(' ');
+        if (end == std::string::npos)
+            continue;
+        row.resize(end + 1);
+        if (row.find(':') != std::string::npos && row.find("OK") == std::string::npos)
+            shown.push_back(row);
+    }
+    std::vector<std::string> expected = Halt2Int48KEarly();
+    for (const auto& [line, printed] : Halt2IntKnownDeviations())
+        expected[line] = printed;
+    EXPECT_EQ(shown, expected) << "a known deviation changed: if unreal-ng now prints the hardware's line, drop its "
+                                  "entry in Halt2IntKnownDeviations\n"
+                               << Screen();
+}
+
+/// endregion </HALT2INT v3 (Mark Woodmass)>
