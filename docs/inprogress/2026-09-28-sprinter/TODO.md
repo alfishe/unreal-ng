@@ -127,6 +127,22 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83.
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+- **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02; priority order,
+  functional items only):**
+  - P2 research: the community logic firmware of 2026 (`k30.acx` / `k50.acx` of 2026-09-24): accelerator control
+    codes `#80` / `#81`, 1 KB buffer, rectangle mode, X / Y clipping (Tolik-Trek's MAME fork), the `ACEX.SCALE` port;
+    if present, an option of the Standard configuration module - S research, M build (survey Q2).
+  - P2: correct the ISA research §7.1 row "Wild Sound XM player": the card is the ISA Wild Sound (Robus, STM32F405,
+    AYX-32 compatible) - S, with the next ISA design edit.
+  - P3: Centronics printer port with a print-to-file printer: PIO A data and RDY strobe, PIO B bits 6 / 7, the SIO A /
+    B status lines (BUSY, ACK, SELECT, PAPER END); one connector slot shared with the LPT Sega pad (PLAN #82); DSS
+    `#5F PRINT` end to end, journaled for TTD, all five automation surfaces - S-M (survey Q1).
+  - P3: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT `AUTOIDE`) - S.
+  - P3 research, P4 build: ISA Wild Sound card (protocol from its author first; one known program, `prosiak.exe`) - L
+    (survey Q3).
+  - P4 on demand: SIO B as a COM port (the `MOUSE` connector holds the mouse or a `ComPort` peer) - S (survey Q4).
+  - P4 on demand: sp2000-light board profile (no ISA slots, one IDE channel) - S (survey Q6).
+  - P4 on evidence: 512 KB video RAM / 512 KB ROM of the sp2022d board - S-M (survey Q5).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal
