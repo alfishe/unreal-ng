@@ -197,6 +197,7 @@ def crc32c(data: bytes, seed: int = 0) -> int:
 MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT = 64
 
 # PeripheralId enum (ttdserializable.h), for readable reporting of peripheral_blobs.
+# tests/test_peripheral_ids.py keeps it equal to the C++ enum.
 # Was missing 7/8 (only went up to 6) - fixed 2026-09-23 while auditing this
 # module against the real enum; unlabelled ids used to print as bare integers
 # (e.g. KempstonMouse showed as "7" in `info` output).

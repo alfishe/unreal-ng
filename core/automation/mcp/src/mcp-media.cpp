@@ -15,6 +15,9 @@
 //   audio_result   → GET /audio/capture/result?wav=
 //   temporal_status → GET /video/temporal (ZX DLSS de-flicker status, one-line summary)
 //   temporal_set    → PUT /video/temporal {algorithm} ("off" / "" switches it off)
+//   vdac2_capture_start  → POST /vdac2/capture/start {path} (TS-Conf VDAC2 card: FT812 bus to an .evr stream)
+//   vdac2_capture_stop   → POST /vdac2/capture/stop
+//   vdac2_capture_status → GET  /vdac2/capture/status
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -107,13 +110,14 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
                                "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set"})
+                               "temporal_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Media operation: still capture, digest, video recording session, audio capture, or the ZX DLSS de-flicker "
-        "(temporal_status / temporal_set).";
+        "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
+        "(temporal_status / temporal_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
+        "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
@@ -139,7 +143,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["region"]["enum"].append("main");
     schema["properties"]["region"]["description"] = "Recording capture region (default full)";
     schema["properties"]["filename"]["type"] = "string";
-    schema["properties"]["filename"]["description"] = "Output file for recording or screenshot (e.g. scratch/screen.png). Saves binary directly to disk on server side.";
+    schema["properties"]["filename"]["description"] = "Output file for recording, screenshot (e.g. scratch/screen.png) or vdac2_capture_start (an .evr stream). Saves binary directly to disk on server side.";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] = "Alias for filename.";
     schema["properties"]["every_nth"]["description"] =
@@ -165,7 +169,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
         "(GIF native) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
-        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing).",
+        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), and the "
+        "TS-Conf VDAC2 card's FT812 bus capture (vdac2_capture_start / _stop / _status: every chip select and byte "
+        "with FT812 clocks and per-frame picture hashes, an .evr stream that replays the chip alone).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             std::string action = args["action"].asString();
@@ -633,10 +639,37 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "vdac2_capture_start")
+            {
+                const std::string path = args.isMember("filename") ? args["filename"].asString()
+                                                                   : (args.isMember("path") ? args["path"].asString() : "");
+                if (path.empty())
+                {
+                    done(ToolResult::Error("vdac2_capture_start needs 'filename': the .evr file to write (server side)"));
+                    return;
+                }
+                Json::Value body;
+                body["path"] = path;
+                ResolveAndForward(args, "POST", "/vdac2/capture/start", &body, caller, "VDAC2 capture started", done);
+                return;
+            }
+            if (action == "vdac2_capture_stop")
+            {
+                Json::Value body(Json::objectValue);
+                ResolveAndForward(args, "POST", "/vdac2/capture/stop", &body, caller, "VDAC2 capture stopped", done);
+                return;
+            }
+            if (action == "vdac2_capture_status")
+            {
+                ResolveAndForward(args, "GET", "/vdac2/capture/status", nullptr, caller, "VDAC2 capture status", done);
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set"));
+                                            "temporal_status, temporal_set, vdac2_capture_start, vdac2_capture_stop, "
+                                            "vdac2_capture_status"));
         });
 }
 

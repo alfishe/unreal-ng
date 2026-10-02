@@ -179,6 +179,21 @@ TEST_P(TTDBench_Test, CiGate)
         EXPECT_TRUE(expectedIt->second.count(metric))
             << c.Name() << ": the gate baseline has no " << metric << " - re-export it (see the header of this file)";
 
+    // The BM-4 split accounts for the whole session heap: the parts sum to
+    // bm4_resident_bpf. The piece payloads are split into content and unused
+    // allocation (both summed); every other slack part is inside its parent
+    double partsSum = 0.0;
+    for (const auto& [metric, value] : result.metrics)
+        if (metric.rfind("bm4_heap_", 0) == 0 &&
+            (metric.find("_slack_") == std::string::npos || metric == "bm4_heap_ram_payload_slack_bpf"))
+            partsSum += value;
+    EXPECT_NEAR(partsSum, result.metrics.at("bm4_resident_bpf"), 1e-6 * result.metrics.at("bm4_resident_bpf"))
+        << c.Name() << ": the bm4_heap_* parts do not add up to the session heap";
+    EXPECT_LE(result.metrics.at("bm4_heap_write_journal_slack_bpf"), result.metrics.at("bm4_heap_write_journal_bpf"));
+    EXPECT_LE(result.metrics.at("bm4_heap_coverage_slack_bpf"), result.metrics.at("bm4_heap_coverage_bpf"));
+    EXPECT_LE(result.metrics.at("bm4_heap_port_journal_slack_bpf"),
+              result.metrics.at("bm4_heap_port_reads_bpf") + result.metrics.at("bm4_heap_port_writes_bpf"));
+
     // Informational only (a clock): visible in the test report, never asserted
     RecordProperty("capture_share_pct", std::to_string(result.metrics.at("bm2_capture_share_pct")));
 }

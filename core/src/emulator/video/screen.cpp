@@ -622,12 +622,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // dimensions has CopyPresentedFramebuffer rejecting every copy (dst too
     // small) and freezes on the last frame. Consumers must re-attach.
     // Skipped during construction (pEmulator not wired yet).
-    if (_context && _context->pEmulator)
-    {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_VIDEO_MODE_CHANGED,
-                           new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
-    }
+    PostVideoModeChanged();
 
 #ifdef _DEBUG
     MLOGINFO("%s", DumpRasterState().c_str());
@@ -905,6 +900,9 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
             _framebuffer.height = rd.fullFrameHeight;
             ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
 
+            // The present queue holds the external picture while one is shown
+            if (IsExternalPictureActive())
+                return;
             std::lock_guard<std::mutex> lock(_presentMutex);
             for (size_t i = 0; i < PRESENT_SLOTS; i++)
             {
@@ -971,16 +969,11 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // and changes only together with the buffer, under the mutex - readers
         // must never trust _framebuffer.memoryBufferSize, which is published
         // outside the lock during mode switches.
+        // (not while an external picture is shown: the queue is sized for it)
+        if (!IsExternalPictureActive())
         {
             std::lock_guard<std::mutex> lock(_presentMutex);
-            for (size_t i = 0; i < PRESENT_SLOTS; i++)
-            {
-                delete[] _presentSlots[i];
-                _presentSlots[i] = new uint8_t[_framebuffer.memoryBufferSize];
-                ClearFramebufferOpaque(_presentSlots[i], _framebuffer.memoryBufferSize);
-            }
-            _presentBufferSize = _framebuffer.memoryBufferSize;
-            _presentLatchCounter = 0;
+            ResizePresentSlotsLocked(_framebuffer.memoryBufferSize);
         }
 
 #ifdef _DEBUG
@@ -1020,11 +1013,107 @@ void Screen::DeallocateFramebuffer()
     }
 }
 
+void Screen::ResizePresentSlotsLocked(size_t size)
+{
+    for (size_t i = 0; i < PRESENT_SLOTS; i++)
+    {
+        delete[] _presentSlots[i];
+        _presentSlots[i] = size ? new uint8_t[size] : nullptr;
+        if (_presentSlots[i])
+            ClearFramebufferOpaque(_presentSlots[i], size);
+        _presentPlaneB[i].clear();
+        _presentSlotProcessed[i] = false;
+        _presentSlotShown[i] = false;
+        _presentSlotReport[i] = zxdlss::FrameReport{};
+    }
+    _presentBufferSize = size;
+    _presentLatchCounter = 0;
+}
+
+void Screen::PostVideoModeChanged()
+{
+    // Skipped during construction (pEmulator not wired yet)
+    if (_context && _context->pEmulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_MODE_CHANGED, new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
+    }
+}
+
+void Screen::SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height, uint32_t framePeriodUs)
+{
+    const size_t size = static_cast<size_t>(width) * height * RGBA_SIZE;
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        changed = !IsExternalPictureActive() || _external.memoryBuffer != buffer || _external.width != width ||
+                  _external.height != height;
+        _external.videoMode = M_NUL;  // no raster descriptor of the machine: consumers take the whole picture
+        _external.width = width;
+        _external.height = height;
+        _external.memoryBuffer = buffer;
+        _external.memoryBufferSize = size;
+        _externalFramePeriodUs = framePeriodUs;
+        if (changed)
+            ResizePresentSlotsLocked(size);
+        _externalActive.store(true, std::memory_order_release);
+    }
+    if (changed)
+        PostVideoModeChanged();
+}
+
+void Screen::ClearExternalPicture()
+{
+    if (!IsExternalPictureActive())
+        return;
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        _externalActive.store(false, std::memory_order_release);
+        _external = FramebufferDescriptor{};
+        ResizePresentSlotsLocked(_framebuffer.memoryBufferSize);
+    }
+    PostVideoModeChanged();
+}
+
+uint8_t Screen::ExternalDelayFrames(uint8_t nativeFrames) const
+{
+    if (_externalFramePeriodUs == 0)
+        return nativeFrames;
+    const uint64_t us = static_cast<uint64_t>(nativeFrames) * NativeFramePeriodUs();
+    const uint64_t frames = (us + _externalFramePeriodUs / 2) / _externalFramePeriodUs;
+    return static_cast<uint8_t>(std::min<uint64_t>(frames, PRESENT_SLOTS - 1));
+}
+
+void Screen::LatchExternalFrame()
+{
+    if (!IsExternalPictureActive() || _external.memoryBuffer == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _presentBufferSize != _external.memoryBufferSize)
+        return;
+    const size_t index = _presentLatchCounter % PRESENT_SLOTS;
+    VideoUtils::CopyFrameBuffer(_presentSlots[index], _external.memoryBuffer, _presentBufferSize);
+    _presentPlaneB[index].clear();  // plane B belongs to the ZX raster
+    _presentSlotSerial[index] = ++_presentSerial;
+    _presentSlotProcessed[index] = false;
+    _presentSlotShown[index] = false;
+    _presentSlotReport[index] = zxdlss::FrameReport{};
+    _presentLatchCounter++;
+    _lastLatchTimestampUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count(),
+                                std::memory_order_release);
+}
+
 void Screen::LatchFramebuffer()
 {
     // Runs on the emulation thread, which is also the only mutator of
     // _framebuffer - those fields are stable here
     if (_framebuffer.memoryBuffer == nullptr)
+        return;
+    // The monitor shows an external picture: its owner latches its frames
+    if (IsExternalPictureActive())
         return;
 
     std::lock_guard<std::mutex> lock(_presentMutex);
@@ -1265,15 +1354,16 @@ void Screen::UpdateAudioDelay()
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
 {
-    return _framebuffer;
+    return IsExternalPictureActive() ? _external : _framebuffer;
 }
 
 void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
 {
-    if (buffer && size && _framebuffer.memoryBuffer && _framebuffer.memoryBufferSize)
+    const FramebufferDescriptor& shown = GetFramebufferDescriptor();
+    if (buffer && size && shown.memoryBuffer && shown.memoryBufferSize)
     {
-        *buffer = (uint32_t*)_framebuffer.memoryBuffer;
-        *size = _framebuffer.memoryBufferSize;
+        *buffer = (uint32_t*)shown.memoryBuffer;
+        *size = shown.memoryBufferSize;
     }
 }
 

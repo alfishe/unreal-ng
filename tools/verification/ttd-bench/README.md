@@ -40,7 +40,7 @@ ninja -C cmake-build-agent-release core-benchmarks
 UNREAL_TTD_BENCH_SET=turbo ./cmake-build-agent-release/bin/core-benchmarks \
     --benchmark_filter='TTDMatrix/' --benchmark_format=json --benchmark_out=scratch/ttd-turbo.json
 
-# Everything: 13 base models, 8 workloads, 9 peripheral sets on two models
+# Everything: 13 base models, 9 workloads, 9 peripheral sets on two models
 UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_DIRTY=1 ./cmake-build-agent-release/bin/core-benchmarks \
     --benchmark_filter='TTDMatrix/' --benchmark_format=json --benchmark_out=scratch/ttd-full.json
 ```
@@ -68,7 +68,9 @@ Other sessions running on the same machine inflate timings. Check `uptime` befor
 | BM-2 | `bm2_capture_us_{p50,p95,p99,max}`, `bm2_capture_p99_over_p50`, `bm2_capture_share_pct` | Time to capture one checkpoint at the end of a frame |
 | BM-2 work | `bm2_work_{pages_visited,compress_calls,decoded}_opf`, `bm2_work_{delta_base,device_blobs,scanned,compress_input}_bpf` | What the capture did, counted per frame: RAM pages walked, bytes copied into the delta base, device-state bytes, bytes XOR'd and zero-checked, zstd calls and their input, chain links decoded. Deterministic: the CI gate checks capture cost with these, not with a clock |
 | BM-3 | `bm3_{ram_payload,page_refs,device_blobs,checkpoint_core,write_journal,input_journal,coverage,total}_bpf` | Recording size per frame, split by stream |
+| BM-3 writes | `bm3_journal_writes_opf` | Memory writes per frame over the whole session. `bm3_write_journal_bpf` stops growing once the journal's ring is full; this count does not |
 | BM-4 | `bm4_resident_bytes`, `bm4_resident_bpf` | Memory held by the whole session |
+| BM-4 split | `bm4_heap_<part>_bpf`: `page_store_table`, `ram_payload`, `checkpoints`, `page_refs`, `device_blobs`, `input_journals`, `write_journal`, `coverage`, `port_reads`, `port_writes`, `frame_cache`, and the unused allocation inside them, `ram_payload_slack`, `write_journal_slack`, `coverage_slack`, `port_journal_slack` | Where the session memory goes. The parts without `_slack`, plus `ram_payload_slack`, sum to `bm4_resident_bpf`; the other `_slack` parts are the unused allocation inside the part they name. Allocator-dependent, so compared with the heap tolerance and not stored in the CI gate baseline |
 | BM-5 | `bm5_{aligned,offset}_us_*`, `..._nopresent_us_*`, `..._present_us_*`, `bm5_offset_{restore,replay}_us_*` | Seek time, to a frame start (`aligned`) or to a point inside a frame (`offset`). `nopresent` is the time to reach the machine state; `present` is the extra time to build the picture of that position |
 | BM-6 | `bm6_restore_{cpu_chipset,devices,memory,screen}_us_p50` | Checkpoint restore time, split by component |
 | BM-7 | `bm7_file_bytes`, `bm7_file_bpf`, `bm7_{save,load}_s_per_gb`, `bm7_first_seek_ms` | Session file size, save and load speed, and time to the first seek after loading |

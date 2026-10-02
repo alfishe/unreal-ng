@@ -421,6 +421,14 @@ size_t TTDCodecPageStore::HeapBytes() const
     return total;
 }
 
+size_t TTDCodecPageStore::PayloadCapacityBytes() const
+{
+    size_t total = 0;
+    for (const auto& s : _slots)
+        total += s.payload.capacity();
+    return total;
+}
+
 double TTDCodecPageStore::GetCompressionRatio() const
 {
     if (_usedSlots == 0) return 1.0;
