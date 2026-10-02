@@ -111,6 +111,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
      selection, `video_text` / OCR fallback to the Sprinter text, outdated MCP resource / recipe / OpenAPI text.
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
+     Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
+     GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
+     Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
