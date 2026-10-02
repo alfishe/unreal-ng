@@ -939,8 +939,9 @@ TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackChd)
     InsertHdd(path);
     EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "chd");
 
-    PressF4At("Secondary Master ");
-    PressF4At("Secondary Slave  ");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Secondary Slave") == "None"; }, 800, 1);
+    EXPECT_EQ(DetectResult("Secondary Master"), "None") << ScreenText();
+    EXPECT_EQ(DetectResult("Secondary Slave"), "None") << ScreenText();
     EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG HDD")) << ScreenText();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 400, 1);
     EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
