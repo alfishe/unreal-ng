@@ -939,6 +939,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_TS256:
         case M_TSTX:
         case M_TSZX:
+        case M_SPRINTER:  // Sprinter (ScreenSprinter)
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -1395,6 +1396,11 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
         case M_TSZX:
             return {0, 180, 180, 4};
 
+        // Sprinter: the mode table covers the whole 736-pixel visible line (184 T at
+        // 4 px/T), border squares included; ScreenSprinter draws all of it
+        case M_SPRINTER:
+            return {0, 184, 184, 4};
+
         // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
         case M_PROFIHR:
         {
@@ -1420,6 +1426,8 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
     static const VideoModeInfo atm16{"4 bpp (16 colors per pixel)", 16, 4, "per pixel pair (bit-planar)", 0, 0, 4, 16000, 0, 16000};
     static const VideoModeInfo atmHr{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
     static const VideoModeInfo atmText{"text, 16-color ink/paper per character cell", 16, 0, "8x8 pixels (1 character cell)", 80, 25, 0, 0, 0, 0};
+    static const VideoModeInfo sprinter{"per 8x8 square: 256 / 16 colors (8 palettes of 256) or text", 256, 8,
+                                        "8x8 pixels (1 mode-table square)", 0, 0, 0, 0, 0, 0};
     static const VideoModeInfo none{"", 0, 0, nullptr, 0, 0, 0, 0, 0, 0};
 
     switch (mode)
@@ -1434,6 +1442,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
         case M_ATMHR:   return atmHr;
         case M_ATMTX:
         case M_ATMTL:   return atmText;
+        case M_SPRINTER: return sprinter;
         // ZX-layout modes; TSConf / GMX / Timex are not emulated yet and report
         // the ZX format until their renderers define one
         default:        return zx;
@@ -1610,6 +1619,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_TSZX:
             result = "TSZX";
+            break;
+        case M_SPRINTER:
+            result = "Sprinter";
             break;
         default:
             result = "Unknown";
@@ -2142,6 +2154,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "Scorpion 256k",        // M_SCORPION
         "Profi 512x240",        // M_PROFIHR
         "TSConf ZX",            // M_TSZX
+        "Sprinter",             // M_SPRINTER
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 

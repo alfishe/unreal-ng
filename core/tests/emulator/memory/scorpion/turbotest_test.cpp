@@ -19,13 +19,13 @@
 #include "emulator/platform.h"
 
 /// turbotest (tools/verification/contention/turbotest): how many times five bodies run in one frame, at 3.5 MHz
-/// and in turbo, on a Scorpion ZS-256 Turbo+. This suite
-/// - builds it with the in-tree assembler and fills in its two expected tables with what unreal-ng counts under
-///   each logic firmware (SC15.1, SC15.3);
+/// and in turbo, on a Scorpion ZS-256 Turbo+ (7 MHz) and a ZX-Evo (14 MHz). This suite
+/// - builds it with the in-tree assembler and fills in its expected tables with what unreal-ng counts: the
+///   Scorpion under each logic firmware (SC15.1, SC15.3), the ZX-Evo;
 /// - checks those counts against the research's per-instruction figures (an independent estimate:
-///   research-scorpion-turbo.md section 4.3, the steady costs in the picture and the border);
-/// - runs the finished program on a Scorpion with each firmware and checks it names the firmware, and on
-///   machines without the Scorpion's turbo that it leaves them alone;
+///   research-scorpion-turbo.md section 4.3, research-zxevo.md section A);
+/// - runs the finished program on a Scorpion with each firmware and checks it names the firmware, on the ZX-Evo
+///   that it matches, and on machines without either turbo that it leaves them alone;
 /// - keeps the committed .tap / .trd / .sym in step with the source.
 
 namespace
@@ -127,6 +127,19 @@ protected:
         SetUp();
         return c;
     }
+
+    /// The counts unreal-ng gives on the ZX-Evo, and its frame length at 3.5 MHz
+    Counts MeasureEvo(uint32_t* frame = nullptr)
+    {
+        const TurboProgram plain = Assemble();
+        Run("ATM3-TRDOS", plain, nullptr, false);
+        const Counts c = HasFatalFailure() ? Counts{} : Read(plain.Sym("COUNTS"));
+        if (frame && _context)
+            *frame = _context->config.frame;
+        TearDown();
+        SetUp();
+        return c;
+    }
 };
 
 namespace
@@ -136,11 +149,12 @@ class Generator : public TurboTest_Test
 {
 public:
     void TestBody() override {}
-    TurboProgram Build(Counts* sc151 = nullptr, Counts* sc153 = nullptr)
+    TurboProgram Build(Counts* sc151, Counts* sc153, Counts* evo, uint32_t* evoFrame)
     {
         SetUp();
         const Counts a = Measure(ScorpionTurboLogic::SC151);
         const Counts b = Measure(ScorpionTurboLogic::SC153);
+        const Counts e = MeasureEvo(evoFrame);
         TearDown();
         TurboProgram p = Assemble();
         auto fill = [&](const char* table, const Counts& c) {
@@ -151,28 +165,33 @@ public:
         };
         fill("EXP151", a);
         fill("EXP153", b);
-        if (sc151)
-            *sc151 = a;
-        if (sc153)
-            *sc153 = b;
+        fill("EXPEVO", e);
+        *sc151 = a;
+        *sc153 = b;
+        *evo = e;
         return p;
     }
 };
 
-/// Built once per process: the tables take two machine boots
-TurboProgram BuildTurboTest(Counts* sc151 = nullptr, Counts* sc153 = nullptr)
+/// The counts behind the tables
+struct Tables
+{
+    Counts sc151, sc153, evo;
+    uint32_t evoFrame = 0;  ///< the ZX-Evo's frame at 3.5 MHz
+};
+
+/// Built once per process: the tables take three machine boots
+TurboProgram BuildTurboTest(Tables* tables = nullptr)
 {
     static TurboProgram program;
-    static Counts counts151, counts153;
+    static Tables made;
     if (program.bytes.empty())
     {
         Generator g;
-        program = g.Build(&counts151, &counts153);
+        program = g.Build(&made.sc151, &made.sc153, &made.evo, &made.evoFrame);
     }
-    if (sc151)
-        *sc151 = counts151;
-    if (sc153)
-        *sc153 = counts153;
+    if (tables)
+        *tables = made;
     return program;
 }
 
@@ -189,19 +208,28 @@ double EstimatedTurboCount(double paperCost, double borderCost, double tailPaper
 
 /// At 3.5 MHz: a pass is 32 bodies of `cost` T and the 16 T tail; with Even M1 every instruction from RAM is
 /// rounded up to an even length
-double EstimatedNormalCount(double cost, bool evenM1)
+double EstimatedNormalCount(double cost, bool evenM1, double frame = 69888)
 {
     if (evenM1)
         cost += static_cast<int>(cost) & 1;
-    return 69888.0 * 32 / (32 * cost + 16);
+    return frame * 32 / (32 * cost + 16);
+}
+
+/// The ZX-Evo at 14 MHz (research-zxevo.md A.2-A.5): a pass of 32 bodies of `cost` and the tail, in 14 MHz T, a
+/// frame of 4 x `frame` of them (no picture / border difference)
+double EstimatedEvoCount(double cost, double tail, uint32_t frame)
+{
+    return 4.0 * frame * 32 / (32 * cost + tail);
 }
 }  // namespace
 
 /// unreal-ng's counts under each firmware agree with the research's per-instruction figures
 TEST_F(TurboTest_Test, CountsAgreeWithTheResearchFigures)
 {
-    Counts sc151, sc153;
-    BuildTurboTest(&sc151, &sc153);
+    Tables t;
+    BuildTurboTest(&t);
+    const Counts& sc151 = t.sc151;
+    const Counts& sc153 = t.sc153;
     ASSERT_EQ(sc151.size(), 2 * kBodies);
     ASSERT_EQ(sc153.size(), 2 * kBodies);
     auto near = [](uint32_t got, double estimate) { return got > 0.97 * estimate && got < 1.03 * estimate; };
@@ -239,6 +267,32 @@ TEST_F(TurboTest_Test, CountsAgreeWithTheResearchFigures)
     // SC15.3 the fetch's wait already puts the read on its slot, so it is no slower
     EXPECT_GT(sc151[5], sc151[3]) << Describe(sc151);
     EXPECT_GE(sc153[5], sc153[3]) << Describe(sc153);
+
+    // The ZX-Evo. 3.5 MHz: no waits. 14 MHz: a RAM read (M1 or data) that misses both one-word caches waits
+    // 2 or 3 T by the T-state's parity; ROM never waits but empties both caches, as does any I/O.
+    // - NOP: the fetch misses on every even address (a new word): 4 + 2 or 3, then 4: 5 on average;
+    // - LD A,(RAM) / LD (RAM),A: the fetches as the NOPs (a miss starts on an odd T after the 3 T access: 7),
+    //   the data read hits (the same word every time), the write waits never: 8 to 8.5;
+    // - LD A,(ROM): every fetch misses (the ROM read empties the caches) and starts on an odd T: 7 + 3 = 10;
+    // - OUT (FE),A: the fetch misses (the I/O empties the caches), the operand hits (the opcode's word),
+    //   the I/O cycle 4: 7 + 3 + 4 = 14 (13 when the fetch starts on an even T).
+    // The tail: INC DE misses (8 or 9), JP hits and its operand misses once (12 or 13): 20 to 22
+    const Counts& evo = t.evo;
+    ASSERT_EQ(evo.size(), 2 * kBodies);
+    ASSERT_GT(t.evoFrame, 0u);
+    EXPECT_TRUE(near(evo[0], EstimatedNormalCount(4, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(near(evo[2], EstimatedNormalCount(7, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(near(evo[8], EstimatedNormalCount(11, false, t.evoFrame))) << Describe(evo);
+    EXPECT_TRUE(within(evo[1], EstimatedEvoCount(5, 22, t.evoFrame), EstimatedEvoCount(5, 20, t.evoFrame)))
+        << Describe(evo);
+    EXPECT_TRUE(within(evo[3], EstimatedEvoCount(8.5, 22, t.evoFrame), EstimatedEvoCount(8, 20, t.evoFrame)))
+        << Describe(evo);
+    EXPECT_TRUE(within(evo[5], EstimatedEvoCount(10, 22, t.evoFrame), EstimatedEvoCount(10, 20, t.evoFrame)))
+        << Describe(evo);
+    EXPECT_TRUE(within(evo[7], EstimatedEvoCount(8.5, 22, t.evoFrame), EstimatedEvoCount(8, 20, t.evoFrame)))
+        << Describe(evo);
+    EXPECT_TRUE(within(evo[9], EstimatedEvoCount(14, 22, t.evoFrame), EstimatedEvoCount(13, 20, t.evoFrame)))
+        << Describe(evo);
 }
 
 /// The finished program names the firmware the Scorpion has, starting from the turbo its ROM leaves on
@@ -252,7 +306,7 @@ TEST_F(TurboTest_Test, NamesTheScorpionFirmware)
         Run("Scorpion-48BASIC", p, &logic, false);
         ASSERT_FALSE(HasFatalFailure());
         const uint8_t want = logic == ScorpionTurboLogic::SC151 ? 1 : 2;
-        EXPECT_EQ(Peek(p.Sym("MATCH")), want) << Screen();
+        EXPECT_EQ(Peek(p.Sym("MATCH")), want) << Describe(Read(p.Sym("COUNTS"))) << "\n" << Screen();
         EXPECT_EQ(Peek(p.Sym("FAILS")) | (Peek(p.Sym("FAILS") + 1) << 8), 0) << Screen();
         EXPECT_TRUE(ScreenHas(want == 1 ? "Turbo+ logic: SC15.1" : "Turbo+ logic: SC15.3")) << Screen();
         if (std::getenv("TURBOTEST_SCREEN"))
@@ -262,8 +316,25 @@ TEST_F(TurboTest_Test, NamesTheScorpionFirmware)
     }
 }
 
-/// Machines without the Scorpion's turbo: the 128K and the Pentagon are not touched (no read of #7FFD / #1FFD,
-/// which can page memory on a 128K), the 48K's frame passes the check but turbo changes nothing
+/// The finished program on the ZX-Evo: as modeled, and back at 3.5 MHz at the end
+TEST_F(TurboTest_Test, MatchesOnTheZxEvo)
+{
+    const TurboProgram p = BuildTurboTest();
+    ASSERT_FALSE(p.bytes.empty());
+    SetUp();
+    Run("ATM3-TRDOS", p, nullptr, false);
+    ASSERT_FALSE(HasFatalFailure());
+    EXPECT_EQ(Peek(p.Sym("EVO")), 1) << Screen();
+    EXPECT_EQ(Peek(p.Sym("MATCH")), 3) << Describe(Read(p.Sym("COUNTS"))) << "\n" << Screen();
+    EXPECT_TRUE(ScreenHas("ZX-Evo 14 MHz: as modeled")) << Screen();
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 1) << "3.5 MHz again";
+    if (std::getenv("TURBOTEST_SCREEN"))
+        std::printf("%s\n", Screen().c_str());
+}
+
+/// Machines without either turbo: the 128K and the Pentagon are not touched (no read of #7FFD / #1FFD, which can
+/// page memory on a 128K); the 48K and unreal-ng's ATM Turbo 2+ have the Scorpion's frame and pass its check, the
+/// reads change nothing there; nothing is written to #xx77, the ATM's system port
 TEST_F(TurboTest_Test, LeavesOtherMachinesAlone)
 {
     const TurboProgram p = BuildTurboTest();
@@ -273,12 +344,21 @@ TEST_F(TurboTest_Test, LeavesOtherMachinesAlone)
     {
         const char* editor;
         uint8_t match;
-    } machines[] = { { "128K-48BASIC", 0xFE }, { "Pentagon-48BASIC", 0xFE }, { "48K", 0xFF } };
+    } machines[] = { { "128K-48BASIC", 0xFE }, { "Pentagon-48BASIC", 0xFE }, { "ATM710-TRDOS", 0xFF }, { "48K", 0xFF } };
     for (const auto& m : machines)
     {
+        BootEditor(m.editor);
+        ASSERT_FALSE(HasFatalFailure()) << m.editor;
+        const uint8_t value77 = _context->emulatorState.pFF77;
+        const unsigned port77 = _context->emulatorState.aFF77;
+        TearDown();
+        SetUp();
         Run(m.editor, p, nullptr, false);
         ASSERT_FALSE(HasFatalFailure()) << m.editor;
+        EXPECT_EQ(_context->emulatorState.pFF77, value77) << m.editor << ": #xx77 written";
+        EXPECT_EQ(_context->emulatorState.aFF77, port77) << m.editor << ": #xx77 written";
         EXPECT_EQ(Peek(p.Sym("MATCH")), m.match) << m.editor << Describe(Read(p.Sym("COUNTS"))) << "\n" << Screen();
+        EXPECT_EQ(Peek(p.Sym("EVO")), 0) << m.editor;
         TearDown();
         SetUp();
     }

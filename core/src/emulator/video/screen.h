@@ -66,6 +66,8 @@ enum VideoModeEnum : uint8_t
 
     M_TSZX,  // TS ZX mode (TS-Conf's ZX-layout graphics in its own raster and palette)
 
+    M_SPRINTER,  // Sprinter Sp2000: per-square modes from the video RAM mode table (ScreenSprinter)
+
     M_MAX
 };
 
@@ -77,6 +79,7 @@ enum RasterModeEnum
     R_360_288 = 3,  // TS
     R_384_304 = 4,  // AlCo
     R_512_240 = 5,  // Profi
+    R_736_288 = 6,  // Sprinter (640x256 at 14 MHz + 48 / 16 pixels of border, MAME's visible area)
 
     R_MAX
 };
@@ -444,6 +447,7 @@ public:
         {R_360_288, 32, 320, 44, 224},
         {R_384_304, 16, 320, 32, 224},
         {R_512_240, 56, 296, 70, 198},
+        {R_736_288, 16, 272, 12, 172},  // Sprinter: T 0 / line 0 = the first visible pixel (ScreenSprinter)
     };
 
     /// Raster descriptors for each video mode
@@ -517,6 +521,13 @@ public:
         // the beam: 48 px side borders at 2 px/T.
         {608, 288, 512, 240, 48, 24, 448, 64, 32, 8, 16},  // M_PROFIHR
         {720, 288, 720, 288, 0, 0, 448, 64, 24, 16, 16},   // M_TSZX (see M_TS16)
+        // M_SPRINTER (ScreenSprinter; Sprinter tdd-video §2): 736x288 visible pixels at 14 MHz
+        // (4 per T) of the 896-pixel x 320 / 312-line raster, the 640x256 picture at (48, 16).
+        // Unlike the ZX rasters, line 0 / T 0 is the first VISIBLE pixel (MAME's frame origin,
+        // where the mode table's INT positions are measured); lines 288..319 are blanking.
+        // vSync + vBlank only make maxFrameTiming 320 x 224; ScreenSprinter sets the zones
+        // and the 312-line frame itself
+        {736, 288, 640, 256, 48, 16, 448, 64, 16, 16, 16},  // M_SPRINTER
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -993,7 +1004,8 @@ public:
     const RasterDescriptor& GetTimingDescriptor(VideoModeEnum mode) const;
 
     /// Beam position, zones and the mode pixel under the beam for a frame T
-    BeamPosition DescribeBeam(uint32_t tInFrame) const;
+    /// Virtual: a family whose raster is not blank-first (the Sprinter) describes its own zones
+    virtual BeamPosition DescribeBeam(uint32_t tInFrame) const;
 
 
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)

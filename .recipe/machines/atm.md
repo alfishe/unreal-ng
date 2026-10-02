@@ -61,7 +61,14 @@ sources: [docs/inprogress/2026-10-01-atm450](../../docs/inprogress/2026-10-01-at
   to 512K, bit 3 forces the system ROM inside TR-DOS.
 - `#7DFD` group (A15 = 0, A9 = 0, A1 = 0): palette, `--grbGRB`, cell = the
   current border color.
-- `#FE` read bit 7 is the PAL marker (three short zero windows per frame).
+- `#FE` read bit 7 is the PAL marker (three short zero windows per frame,
+  counted from INT). The system ROM uses it as a copy-protection key: the
+  CP/M entry decrypts its loader with 16 samples of it. CCP and BDOS are in the
+  ROM; with an ATM CP/M disk in drive A (e.g. `testdata/machines/atm450/cpm/sys.trd`)
+  it signs on, tries the autostart `B:XC /R` and stops at `A>`. The floppy is
+  **B:** (`DIR B:`), A: is the electronic disk. All console output goes through
+  the BIOS vector `#F809` (character in C) - a cheap way to read the 640x200
+  console from automation.
 - Reset starts in the **system ROM** (except `RESET=DOS`), which shows the
   boot menu in 640x200: CP/M, TR-DOS 48, SPECTRUM 128, SPECTRUM 48.
   `CAPS SHIFT + 6` moves the bar, `ENTER` starts. The menu loop only scans

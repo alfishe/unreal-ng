@@ -1,4 +1,4 @@
-// Z84Sio: register pointer, RR0/RR1, the 3-byte receive FIFO (Sprinter test-plan §2.10 T-Z84).
+// Z84Sio: register pointer, RR0/RR1, the 3-byte receive FIFO (Sprinter test-plan §2.10 T-Z84; moved with the model into the z84c15 library).
 
 #include "stdafx.h"
 #include "pch.h"
@@ -7,7 +7,9 @@
 
 #include <vector>
 
-#include "emulator/io/z84c15/z84sio.h"
+#include <3rdparty/z84c15/z84c15.h>
+
+using Z84Lib::Z84Sio;
 
 // BIOS 3.04 SETUP KeyboardInit (#A373): WR1 = 0, WR3 = #C1, WR4 = #07, WR5 = #62 on channel A
 TEST(Z84Sio_Test, KeyboardInitSequence_LeavesTheRegisters)

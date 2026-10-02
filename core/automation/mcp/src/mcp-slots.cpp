@@ -256,7 +256,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
                                                reply.get("message", DescribeErrorBody(reply)).asString()));
                         return;
                     }
-                    done(ToolResult::Ok(Summary(action, reply), std::move(reply)));
+                    // the text first: argument order is unspecified, and gcc moves `reply` out before reading it
+                    const std::string text = Summary(action, reply);
+                    done(ToolResult::Ok(text, std::move(reply)));
                 });
             });
         });

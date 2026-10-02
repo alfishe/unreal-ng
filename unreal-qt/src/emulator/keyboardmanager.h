@@ -32,10 +32,12 @@ public:
     /// Layout-dependent fallback: Qt key -> physical key (US layout)
     static PcKey mapQtKeyToPcKey(int qtKey);
 
-    /// One host key event for the emulator: the ZX key and the physical key.
-    /// nullptr when the key is neither. Tracks the physical keys held down
-    /// (see postHeldKeyReleases). An empty targetId broadcasts
-    static KeyboardEvent* createKeyboardEvent(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId);
+    /// One host key for the emulator, as two messages: the ZX key (MC_KEY_*,
+    /// the matrix) and the physical key (MC_PCKEY_*, a PS/2 keyboard, joystick
+    /// bindings); each goes to its own handler, the machine's route gates them.
+    /// Tracks the physical keys held down (see postHeldKeyReleases). An empty
+    /// targetId broadcasts
+    static void postHostKey(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId);
 
     /// Post releases of the physical keys still held (the window lost the key
     /// events: focus change, full screen toggle), so a PS/2 machine sees them go up

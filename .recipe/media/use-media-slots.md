@@ -30,7 +30,9 @@ media {"action":"eject","slot":"B","discard":true}
 - The reply's `slot` is the canonical id; `revision` grows with every change.
 - **Unsure which slot?** Ask `targets` first. `default` is the index to use without asking
   (`null`: several slots fit - pick one, or ask the user); `refusal` says why nothing takes the
-  file (a CD image on a machine without a CD-ROM drive). `insert auto` takes the first target.
+  file (a CD image on a machine without a CD-ROM drive). `insert auto` works when one slot takes
+  the file (or for floppies: the first empty drive); with several it answers `ambiguous-slot`
+  and names them.
 
 ## WebAPI
 

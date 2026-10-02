@@ -259,9 +259,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
-                        done(ToolResult::Ok("Created and started emulator " + response["id"].asString() + " (model " +
-                                                response.get("symbolic_id", Json::Value("")).asString() + ")",
-                                            std::move(response)));
+                        // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
+                                                 response.get("symbolic_id", Json::Value("")).asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }
                     done(ToolResult::Error("Create failed (HTTP " + std::to_string(status) + "): " + DescribeErrorBody(response)));
@@ -767,7 +768,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                         caller.Call("GET", Endpoint(id, "/registers"), nullptr, [body, done](int regStatus, Json::Value registers) mutable {
                             if (regStatus == 200)
                             {
-                                done(ToolResult::Ok("Paused. " + FormatRegisters(registers), std::move(registers)));
+                                // the text first: argument order is unspecified (gcc moves `registers` out first)
+                                const std::string text = "Paused. " + FormatRegisters(registers);
+                                done(ToolResult::Ok(text, std::move(registers)));
                             }
                             else
                             {
@@ -2078,12 +2081,19 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys"})
+    for (const char* action : {"type", "tap", "press", "release", "combo", "macro", "release_all", "status", "list_keys", "route"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once.";
+        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
+        "ATM Turbo 2+, both); 'status' shows it.";
+    schema["properties"]["route"]["type"] = "string";
+    schema["properties"]["route"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* route : {"auto", "matrix", "ps2", "both"})
+        schema["properties"]["route"]["enum"].append(route);
+    schema["properties"]["route"]["description"] = "For 'route': where host and injected keys go";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["text"]["type"] = "string";
@@ -2119,6 +2129,18 @@ void RegisterTypeInput(ToolRegistry& registry)
             if (action == "status")
             {
                 ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", done);
+                return;
+            }
+            if (action == "route")
+            {
+                if (!args.isMember("route"))
+                {
+                    done(ToolResult::Error("route requires 'route' (auto | matrix | ps2 | both)"));
+                    return;
+                }
+                Json::Value body;
+                body["route"] = args["route"].asString();
+                ResolveAndForward(args, "POST", "/keyboard/route", &body, caller, "Keyboard route set", done);
                 return;
             }
             if (action == "list_keys")

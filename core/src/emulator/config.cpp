@@ -13,6 +13,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include <cassert>
 #include <array>
@@ -291,6 +292,20 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unknown [EVO] Avr=%s, BASECONF (the latest NedoPC firmware) used", avr);
 		config.atm.evo_avr = static_cast<uint8_t>(firmware);
 	}
+	{
+		// [ATM] Kbc=: the keyboard controller of ATM Turbo 2+ boards (its real firmware on an MCS-51 core)
+		const char* kbc = inimanager.GetValue("ATM", "Kbc", nullptr);
+		Atm2Kbc::Firmware firmware = Atm2Kbc::kDefaultFirmware;
+		// The Unreal Speccy key [INPUT] ATMKBD=0 (no controller) counts when Kbc= is not given
+		if (!kbc && inimanager.GetValue(input, "ATMKBD", nullptr) && inimanager.GetLongValue(input, "ATMKBD", 1) == 0)
+			firmware = Atm2Kbc::Firmware::None;
+		else if (!Atm2Kbc::ParseFirmware(kbc, firmware))
+			MLOGWARNING("Config: unknown [ATM] Kbc=%s, V41 used (NONE | V22-7 | V22-11 | V22-12 | V31-7 | V31-11 | V32-7 | "
+			            "V32-11 | V40 | V41)", kbc);
+		config.atm.kbc_firmware = static_cast<uint8_t>(firmware);
+		config.atm.kbc_rom_path[0] = '\0';
+		CopyStringValue(inimanager.GetValue(rom, "ATM2KBC", nullptr), config.atm.kbc_rom_path, sizeof config.atm.kbc_rom_path);
+	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
@@ -377,6 +392,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.trdos_interleave = 0;
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
 	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr), config.appendboot, sizeof config.appendboot);
+
+	// [INPUT] HostKeyboard=: where the host keyboard goes (the ZX matrix, the PS/2 controller, both)
+	{
+		config.input.hostKeyboard[0] = '\0';
+		CopyStringValue(inimanager.GetValue(input, "HostKeyboard", nullptr), config.input.hostKeyboard, sizeof config.input.hostKeyboard);
+		HostKeyboardRoute route;
+		if (!Keyboard::ParseHostRoute(config.input.hostKeyboard, route))
+		{
+			MLOGWARNING("Config: unknown [INPUT] HostKeyboard=%s, AUTO used (AUTO | MATRIX | PS2 | BOTH)", config.input.hostKeyboard);
+			config.input.hostKeyboard[0] = '\0';
+		}
+	}
 
 	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
 	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3

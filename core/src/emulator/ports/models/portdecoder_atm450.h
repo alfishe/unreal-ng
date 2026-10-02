@@ -78,8 +78,10 @@ public:
     /// aFB latch candidate: a read with A2 = 0
     bool IsPort_FB(uint16_t port) const { return (port & 0x0004) == 0; }
 
-    /// Port #FE bit 7 at frame T-state t
-    static uint8_t PalMarker(uint32_t frameT);
+    /// Port #FE bit 7, `sinceInt` T-states after the INT edge (UnrealSpeccy atm450_z coordinates)
+    static uint8_t PalMarker(uint32_t sinceInt);
+    /// Z80 frame T-state -> T-states since the INT edge of this frame
+    uint32_t TStatesSinceInt(uint32_t z80T) const;
     /// endregion </Port detection>
 
     /// region <Port handlers>

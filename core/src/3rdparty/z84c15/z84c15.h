@@ -1,0 +1,317 @@
+// z84c15.h - the Zilog Z84C15's on-chip block (C++), around the CPU core of
+// z84cpu.h.
+//
+// The chip (Zilog PS0182, "Z84C13/C15 IPC/EIPC"; research-cpu-z84c15.md
+// section 4) adds to its Z84C00 core:
+//  - the wait-state generator (WCR, MWBR): programmed waits on the core's own
+//    bus cycles, with the power-on window (WCR reads #FF and acts as #FF for
+//    the first 15 M1 cycles unless written);
+//  - two chip selects (CSBR, MCR D0/D1), MCR's clock-divider / reset-output /
+//    CRC bits, the watchdog (WDTMR, WDTCR);
+//  - a CTC, an SIO and a PIO on an internal interrupt daisy chain whose order
+//    register #F4 sets (MAME tmpz84c015.cpp:144-150).
+// The fixed ports are decoded by A7-A0 only and have no image (PS0182
+// p. 310): #10-#13 CTC, #18-#1B SIO, #1C-#1F PIO, #EE/#EF system control,
+// #F0/#F1 watchdog, #F4 interrupt priority.
+//
+// The host routes those ports to Read / Write from its own port path (so its
+// tracing and journals see them), asks IntPending / AcknowledgeInterrupt at an
+// instruction boundary (the chain comes before the board's own /INT), and
+// supplies the CPU clock the CTC and the watchdog count.
+//
+// Worked example (power-on): after PowerOn a NOP costs 4 T + 3 memory waits
+// (MWBR #F0 covers all of 64K) + 1 M1 extension = 8 T for the first 15 M1
+// cycles; reading WCR (OUT (#EE),0 : IN A,(#EF)) returns #FF meanwhile.
+
+#ifndef Z84C15_H
+#define Z84C15_H
+
+#include <cstdint>
+#include <functional>
+
+#include "z84cpu.h"
+
+namespace Z84Lib
+{
+
+/// The four-channel CTC. Ports #10-#13, one per channel. A write with bit 0 =
+/// 1 is a control word (bit 7 interrupt enable, 6 counter mode, 5 prescaler
+/// 256 / 16, 2 a time constant follows, 1 software reset); with bit 0 = 0 to
+/// channel 0 it is the interrupt vector (bits 7-3). The time constant (0 =
+/// 256) loads the down-counter; a read returns the current count.
+///
+/// Timer mode counts the system clock through the prescaler. The clock comes
+/// from the owner (SetClock, in CPU clocks); the count is derived when read,
+/// so a channel costs nothing per instruction. A channel with its interrupt
+/// enabled requests one at every zero count (Poll). Counter mode (CLK/TRG
+/// inputs) holds its count: no input is wired.
+///
+/// Worked example: control #25 (timer, prescaler 256, time constant follows),
+/// then #0A: the channel counts 10, 9, ... 1, 10 ..., one step per 256 clocks;
+/// 512 clocks after the load a read returns 8. With control #A5 instead, an
+/// interrupt is requested every 2 560 clocks, vector = base | channel x 2.
+class Z84Ctc
+{
+public:
+    struct ChannelState
+    {
+        uint8_t control = 0x03;      ///< last control word (power-on: reset)
+        uint8_t timeConstant = 0;    ///< 0 = 256
+        uint8_t awaitingConstant = 0;
+        uint8_t running = 0;
+        uint64_t loadClock = 0;      ///< clock of the load (timer mode)
+        uint64_t zeroCounts = 0;     ///< zero counts already turned into requests
+        uint8_t ip = 0;              ///< interrupt pending
+        uint8_t ius = 0;             ///< interrupt under service
+    };
+
+    void Reset();
+
+    uint8_t Read(uint8_t channel);
+    void Write(uint8_t channel, uint8_t value);
+
+    uint8_t Vector() const { return _vector; }
+    const ChannelState& GetChannel(uint8_t channel) const { return _ch[channel & 3]; }
+    ChannelState& Channel(uint8_t channel) { return _ch[channel & 3]; }
+
+    /// The system clock in CPU clocks (monotonic)
+    void SetClock(std::function<uint64_t()> clock) { _clock = std::move(clock); }
+
+    /// Turn the zero counts up to now into interrupt requests (channels with the interrupt enabled)
+    void Poll();
+
+private:
+    uint64_t Now() const { return _clock ? _clock() : 0; }
+    uint64_t ZeroCounts(const ChannelState& ch, uint64_t now) const;
+
+    ChannelState _ch[4];
+    uint8_t _vector = 0;
+    std::function<uint64_t()> _clock;
+};
+
+/// The two-channel SIO, asynchronous mode. Ports (any high byte): #18 A data,
+/// #19 A control, #1A B data, #1B B control. WR0-WR7 stored through the WR0
+/// register pointer; RR0 (bit 0 a received character is waiting, bit 2
+/// transmit buffer empty), RR1 (bit 0 all sent, bit 5 receive overrun), RR2
+/// (channel B: the interrupt vector, modified by the status when WR1B bit 2 is
+/// set); a 3-byte receive FIFO per channel filled by the host (Receive);
+/// transmit goes to a sink at once.
+///
+/// Interrupts: receive only (WR1 bits 4-3: 01 the first character after
+/// "enable INT on next Rx character", 10 / 11 every character while one is
+/// waiting). Transmit and external / status interrupts are not modeled.
+///
+/// Worked example: OUT (#19),#00 / #01 selects WR1 and writes #00 to it (no
+/// interrupts); #03 / #C1 sets WR3 = #C1 (8 bits, receiver on); #04 / #07,
+/// #05 / #62. A scan code #1C pushed with Receive(0, #1C) makes IN A,(#19)
+/// return bit 0 = 1, IN A,(#18) return #1C and bit 0 = 0 again.
+class Z84Sio
+{
+public:
+    static constexpr uint8_t kFifoDepth = 3;
+
+    struct Channel
+    {
+        uint8_t wr[8] = {};
+        uint8_t pointer = 0;     ///< register for the next control access (WR0 bits 2-0)
+        uint8_t fifo[kFifoDepth] = {};
+        uint8_t fifoCount = 0;
+        uint8_t lastData = 0xFF; ///< what a read of an empty FIFO returns
+        uint8_t overrun = 0;
+        uint8_t rxFirstArmed = 0;  ///< WR1 mode 01: the next character interrupts
+        uint8_t rxFirstIp = 0;     ///< WR1 mode 01: that character's request
+        uint8_t rxIus = 0;         ///< the receive interrupt is under service
+    };
+
+    void Reset();
+
+    /// A host-side byte arrives on channel `ch` (0 = A, 1 = B). Returns false on overrun
+    bool Receive(uint8_t ch, uint8_t value);
+
+    uint8_t ReadData(uint8_t ch);
+    void WriteData(uint8_t ch, uint8_t value);
+    uint8_t ReadControl(uint8_t ch);
+    void WriteControl(uint8_t ch, uint8_t value);
+
+    /// Port access by the low address byte #18-#1B
+    uint8_t Read(uint8_t port);
+    void Write(uint8_t port, uint8_t value);
+
+    const Channel& GetChannel(uint8_t ch) const { return _ch[ch & 1]; }
+    Channel& ChannelState(uint8_t ch) { return _ch[ch & 1]; }
+
+    /// Bytes the guest transmits (channel, byte)
+    void SetTransmitSink(std::function<void(uint8_t, uint8_t)> sink) { _transmit = std::move(sink); }
+
+    /// A receive interrupt is requested on channel `ch`
+    bool RxIp(uint8_t ch) const;
+    /// The vector for channel `ch`'s receive interrupt (WR2 of channel B, status-modified by WR1B bit 2)
+    uint8_t RxVector(uint8_t ch) const;
+
+    /// WR0 command 7 on channel A (Return from interrupt): ends the SIO's highest service
+    std::function<void()> onReturnFromInt;
+
+private:
+    void ResetChannel(uint8_t ch);
+
+    Channel _ch[2];
+    std::function<void(uint8_t, uint8_t)> _transmit;
+};
+
+/// The PIO as a register file. Ports (any high byte, MAME read_alt order):
+/// #1C port A data, #1D port A control, #1E port B data, #1F port B control.
+/// Control words: mode (bits 3-0 = %1111, mode in bits 7-6; mode 3 takes a
+/// direction byte next), interrupt control (bits 3-0 = %0111: bit 7 enable,
+/// 6 AND / OR, 5 active high / low, 4 a mask follows), interrupt enable only
+/// (%xxxx0011), the vector (bit 0 = 0). A data read returns the output latch
+/// on output lines and the inputs (SetInputs; #FF while nothing drives them).
+///
+/// Interrupts: mode 3 only, when the monitored input lines (input direction,
+/// mask bit 0) meet the AND / OR, high / low condition - on the edge where it
+/// becomes true. The handshake modes 0-2 have no strobe wired: no interrupts.
+///
+/// Worked example (BIOS 3.04 #0154): OUT (#1D),#CF = mode 3 (bit control),
+/// OUT (#1D),#00 = all port A lines outputs, OUT (#1C),#EA = POST code: a read
+/// of #1C returns #EA.
+class Z84Pio
+{
+public:
+    struct Port
+    {
+        uint8_t mode = 1;            ///< 0 output, 1 input, 2 bidirectional, 3 bit control
+        uint8_t direction = 0xFF;    ///< mode 3: 1 = input line
+        uint8_t output = 0;
+        uint8_t vector = 0;
+        uint8_t intControl = 0;
+        uint8_t mask = 0xFF;         ///< mode 3: 1 = the line is not monitored
+        uint8_t next = 0;            ///< 1 = a direction byte follows, 2 = a mask follows
+        uint8_t inputs = 0xFF;       ///< the lines' input levels
+        uint8_t condition = 0;       ///< the interrupt condition was true at the last evaluation
+        uint8_t ip = 0;
+        uint8_t ius = 0;
+    };
+
+    void Reset();
+
+    uint8_t Read(uint8_t port);
+    void Write(uint8_t port, uint8_t value);
+
+    const Port& GetPort(uint8_t p) const { return _port[p & 1]; }
+    Port& PortState(uint8_t p) { return _port[p & 1]; }
+    void SetInputs(uint8_t p, uint8_t value);
+
+private:
+    uint8_t ReadData(uint8_t p) const;
+    void WriteControl(uint8_t p, uint8_t value);
+    void Evaluate(uint8_t p);
+
+    Port _port[2];
+};
+
+/// The system control registers (#EE pointer, #EF data: 0 WCR, 1 MWBR, 2 CSBR,
+/// 3 MCR), the watchdog (#F0 WDTMR, #F1 WDTCR) and the interrupt priority
+/// (#F4), as the software wrote them. WCR and MWBR also program the core's
+/// wait generator (Z84C15::Write).
+struct Z84SystemRegs
+{
+    uint8_t scrp = 0;
+    uint8_t wcr = 0x00;     ///< as written; reads #FF in the power-on window
+    uint8_t mwbr = 0xF0;
+    uint8_t csbr = 0xFF;    ///< reset: xxxx1111
+    uint8_t mcr = 0x01;     ///< D0 CS0 on, D1 CS1 on, D2 CRC, D3 reset output off, D4 clock / 1
+    uint8_t wdtmr = 0xFB;   ///< D7 enable, D6-5 period 2^(16 + 2n), D4-3 halt mode, D2-0 %011
+    uint8_t wdtcr = 0;      ///< the last command written
+    uint8_t irqPriority = 0;
+
+    /// First address outside CS0 (#10000 = CS0 covers everything; 0 = CS0 off).
+    /// CS0 is active for CSBR[3:0] >= A15-A12 >= 0
+    uint32_t Cs0End() const;
+    /// CS1 is active for CSBR[7:4] >= A15-A12 > CSBR[3:0] (MCR D1)
+    bool Cs1Selects(uint16_t addr) const;
+};
+
+class Z84C15
+{
+public:
+    Z84C15();
+    ~Z84C15();
+    Z84C15(const Z84C15&) = delete;
+    Z84C15& operator=(const Z84C15&) = delete;
+
+    /// The CPU core (z84cpu.h): the host wires its bus and steps it
+    Z84CPU* Cpu() const { return _cpu; }
+
+    /// Power-on reset: the system registers to their reset values, the wait
+    /// generator's power-on window armed, the watchdog started, the
+    /// peripherals reset. The core's registers are the host's (Z84CpuReset)
+    void PowerOn();
+    /// /RESET: the peripherals restart; the system control registers keep
+    /// their values (MAME sets them at device start only), the wait
+    /// generator keeps its programming
+    void Reset();
+
+    /// The chip answers this port itself (A7-A0 only)
+    static bool Owns(uint16_t port);
+    uint8_t Read(uint8_t lowByte);
+    void Write(uint8_t lowByte, uint8_t value);
+
+    /// The CPU clock (monotonic CPU clocks) for the CTC and the watchdog
+    void SetClock(std::function<uint64_t()> clock);
+
+    /// /WDTOUT: called once per watchdog timeout. Not set: the output is not
+    /// connected (the Sprinter, research-cpu-z84c15.md Q3)
+    void SetWatchdogHandler(std::function<void()> handler) { _watchdogHandler = std::move(handler); }
+
+    /// region <Daisy chain>
+    /// An on-chip source requests an interrupt the chain lets through (no
+    /// higher-priority source under service). Also polls the CTC and the watchdog
+    bool IntPending();
+    /// The INT acknowledge when IntPending: the winning source goes under
+    /// service and supplies its vector
+    uint8_t AcknowledgeInterrupt();
+    /// RETI on the bus: the highest-priority source under service ends its service
+    void OnReti();
+    /// Some on-chip source is under service (the chain blocks the board's lower-priority /INT devices)
+    bool AnyUnderService() const;
+    /// endregion </Daisy chain>
+
+    /// The watchdog: running and its timeout clock (for tests and debuggers)
+    bool WatchdogRunning() const { return _wdtRunning; }
+    uint64_t WatchdogDeadline() const;
+
+    Z84Ctc ctc;
+    Z84Sio sio;
+    Z84Pio pio;
+    Z84SystemRegs system;
+
+private:
+    /// One daisy-chain source: device 0 CTC (channels 0-3), 1 SIO (A Rx, B Rx), 2 PIO (A, B)
+    struct Source
+    {
+        uint8_t device;
+        uint8_t index;
+    };
+
+    uint64_t Now() const { return _clock ? _clock() : 0; }
+    void PollWatchdog();
+    void ClearWatchdog();
+    bool Ip(Source s) const;
+    bool Ius(Source s) const;
+    void SetIus(Source s, bool value);
+    uint8_t Vector(Source s) const;
+    void ClearIpOnAcknowledge(Source s);
+    /// Sources in priority order (#F4); returns the count
+    int Order(Source* out) const;
+    void ReturnFromIntInSio();
+
+    Z84CPU* _cpu = nullptr;
+    std::function<uint64_t()> _clock;
+    std::function<void()> _watchdogHandler;
+    bool _wdtRunning = false;
+    bool _wdtFired = false;
+    uint64_t _wdtStart = 0;
+};
+
+}  // namespace Z84Lib
+
+#endif  // Z84C15_H

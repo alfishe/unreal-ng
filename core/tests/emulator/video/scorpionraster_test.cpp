@@ -198,6 +198,7 @@ TEST_F(ScorpionRaster_Test, VideoModeNamesAppendWithoutShift)
         "Scorpion 256k",        // M_SCORPION
         "Profi 512x240",        // M_PROFIHR
         "TSConf ZX",            // M_TSZX
+        "Sprinter",             // M_SPRINTER
     };
     static_assert(sizeof(expected) / sizeof(expected[0]) == M_MAX, "expected name table must cover every mode");
 

@@ -807,9 +807,9 @@ TEST_F(LoaderSNA_Test, save_captures_CF_TRDOS_flag_in_snapshot)
     uint8_t port_7FFD;
     uint8_t is_TRDOS;
     
-    fread(&pc, sizeof(pc), 1, file);
-    fread(&port_7FFD, sizeof(port_7FFD), 1, file);
-    fread(&is_TRDOS, sizeof(is_TRDOS), 1, file);
+    EXPECT_EQ(fread(&pc, sizeof(pc), 1, file), 1u);
+    EXPECT_EQ(fread(&port_7FFD, sizeof(port_7FFD), 1, file), 1u);
+    EXPECT_EQ(fread(&is_TRDOS, sizeof(is_TRDOS), 1, file), 1u);
     
     FileHelper::CloseFile(file);
     
@@ -849,9 +849,9 @@ TEST_F(LoaderSNA_Test, save_clears_is_TRDOS_when_CF_TRDOS_not_set)
     uint8_t port_7FFD;
     uint8_t is_TRDOS;
     
-    fread(&pc, sizeof(pc), 1, file);
-    fread(&port_7FFD, sizeof(port_7FFD), 1, file);
-    fread(&is_TRDOS, sizeof(is_TRDOS), 1, file);
+    EXPECT_EQ(fread(&pc, sizeof(pc), 1, file), 1u);
+    EXPECT_EQ(fread(&port_7FFD, sizeof(port_7FFD), 1, file), 1u);
+    EXPECT_EQ(fread(&is_TRDOS, sizeof(is_TRDOS), 1, file), 1u);
     
     FileHelper::CloseFile(file);
     

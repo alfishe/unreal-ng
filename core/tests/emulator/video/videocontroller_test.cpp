@@ -1,6 +1,6 @@
 // The renderer is a Screen subclass chosen by model family (PLAN #60(e),
-// VideoController::CreateScreen): TS-Conf gets ScreenTSConf, every classic
-// machine ScreenZX.
+// VideoController::CreateScreen): TS-Conf gets ScreenTSConf, the Sprinter
+// ScreenSprinter, every classic machine ScreenZX.
 
 #include <gtest/gtest.h>
 
@@ -9,11 +9,12 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
 
-TEST(VideoController_Test, TsConfGetsItsOwnScreenEveryOtherModelTheZxScreen)
+TEST(VideoController_Test, TsConfAndSprinterGetTheirOwnScreenEveryOtherModelTheZxScreen)
 {
     // The factory is exercised with one machine's context, which is all a
     // screen's constructor needs
@@ -26,8 +27,10 @@ TEST(VideoController_Test, TsConfGetsItsOwnScreenEveryOtherModelTheZxScreen)
         SCOPED_TRACE(m);
         std::unique_ptr<Screen> screen(VideoController::CreateScreen(model, emulator->GetContext()));
         ASSERT_NE(screen, nullptr);
-        EXPECT_NE(dynamic_cast<ScreenZX*>(screen.get()), nullptr) << "every screen is a ZX screen with extra modes so far";
+        EXPECT_EQ(dynamic_cast<ScreenZX*>(screen.get()) != nullptr, model != MM_SPRINTER)
+            << "every screen but the Sprinter's is a ZX screen with extra modes";
         EXPECT_EQ(dynamic_cast<ScreenTSConf*>(screen.get()) != nullptr, model == MM_TSL);
+        EXPECT_EQ(dynamic_cast<ScreenSprinter*>(screen.get()) != nullptr, model == MM_SPRINTER);
     }
 
     EmulatorTestHelper::CleanupEmulator(emulator);

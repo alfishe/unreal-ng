@@ -21,8 +21,8 @@ Index: [README.md](README.md).
 - Network adapters ([tdd-network.md](tdd-network.md) §15): N0, N1a, N1b (ZXNETUSB / W5300 +
   virtual network) and the card INT on master; N2 COM port on master
   ([reference-evo-com-port.md](reference-evo-com-port.md)); N3 ESP modules (ESPNET 1.27 and AT)
-  on branch `esp-modules` ([reference-esp-modules.md](reference-esp-modules.md)), zxdb live over
-  both. On the same branch: settings per slot from the machine's capabilities
+  on master 8237edc2 ([reference-esp-modules.md](reference-esp-modules.md)), zxdb live over
+  both. Also on master: settings per slot from the machine's capabilities
   (`PortDecoder::DescribeNetwork`; `Card=` a list with `ZXWIFI`, `ZxWifi=`, `ComFlavor=` gone),
   the ZX-Evo AVR UART always present, every AVR firmware release as `[EVO] Avr=`, the /WAIT
   model ISR + loop phase + service ([reference-evo-com-port.md](reference-evo-com-port.md) §3, §9).
@@ -31,7 +31,7 @@ Index: [README.md](README.md).
   says "ZXEvo 4M" 07.01.2026 whatever `Avr=` picks (the old releases' tags and CRCs are not
   in the sources); the ZiFi API under a TS firmware on BaseConf (N5). The Qt Network window
   (Tools > Network, Ctrl+5: settings built from the machine's capabilities, live state tree)
-  is on the branch; settings changed there or by automation are not written back to the INI. Next: N4 ATM2 COM, N5-N6 the rest; debugging per
+  is on master 157bc4fae; settings changed there or by automation are not written back to the INI. Next: N4 ATM2 COM (research started 2026-10-01), N5-N6 the rest; debugging per
   [tdd-network-debugging.md](tdd-network-debugging.md) later.
 - Answer the open questions in the requirements (§5), then a design for the layer.
 - Emulator prerequisites (NK-23): both ATM register sets in the paging state,

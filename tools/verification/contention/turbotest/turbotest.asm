@@ -1,19 +1,23 @@
 ; turbotest - how much work a turbo machine gets done in one frame (docs/inprogress/2026-09-29-machine-waits)
 ;
-; A Scorpion ZS-256 Turbo+ at 7 MHz waits for its memory: the logic chip lets the CPU at the RAM only in its
-; own time slots, and the rules differ between the chip's two firmwares, SC15.1 and SC15.3. This program runs
-; five short pieces of code (bodies) in a loop for exactly one frame, at 3.5 MHz and in turbo, and counts how
-; many times each body ran. The counts are compared with the counts the two firmwares give in unreal-ng's model
-; of their equations, so the screen says which firmware the machine has, or that it matches neither.
+; In turbo, a Scorpion ZS-256 Turbo+ (7 MHz) and a ZX-Evo (14 MHz) make the CPU wait for its memory. The
+; Scorpion's logic chip lets the CPU at the RAM only in its own time slots, and the rules differ between the
+; chip's two firmwares, SC15.1 and SC15.3. The ZX-Evo waits on every RAM read that misses its two one-word
+; caches (code and data). This program runs five short pieces of code (bodies) in a loop for exactly one frame,
+; at 3.5 MHz and in turbo, and counts how many times each body ran. The counts are compared with what unreal-ng's
+; models give (the Scorpion's two firmwares, the ZX-Evo), so the screen names the Scorpion's firmware or says
+; whether the ZX-Evo matches.
 ;
 ; How a count is taken: HALT waits for the frame interrupt; the handler starts the loop (32 copies of the body,
 ; then INC DE / JP back), and the next frame's interrupt stops it. The stop handler takes the loop counter (DE)
 ; and the address the loop was interrupted at, which tells how many bodies of the current pass were done:
-; count = DE * 32 + done. One body more or less shows.
+; count = DE * 32 + done. A count matches a table within one body: HALT repeats 4 T fetches, so where the loop
+; starts after the interrupt moves by up to 3 T with the code before it.
 ;
-; Turbo is only switched on a machine whose first NOP count is a Scorpion's, at 3.5 MHz or in turbo (its ROM
-; leaves turbo on): on a 128K or a grey +2 reading port #7FFD or #1FFD, the Scorpion's turbo switches, can change
-; the memory paging.
+; Which machine: a ZX-Evo reads back its registers (DetectEvo); its speed is set through #EFF7 and #xx77. Any
+; other machine counts NOPs at whatever speed it runs, and turbo is only switched when that count is a
+; Scorpion's, at 3.5 MHz or in turbo (its ROM leaves turbo on): on a 128K or a grey +2 reading port #7FFD or
+; #1FFD, the Scorpion's turbo switches, can change the memory paging.
 ;
 ; Loads and runs at 36000. Standalone: CLEAR 35999, load the code, RANDOMIZE USR 36000. The expected tables are
 ; filled in by the generator (core/tests/emulator/memory/scorpion/turbotest_test.cpp); in the plain source they
@@ -36,14 +40,19 @@ SHOW:     db 1            ; print the report
 FORCE:    db 0            ; 1: measure turbo whatever the first count (the generator, before the tables exist)
 DONE:     db 0            ; 1 when finished
 FAILS:    dw 0            ; counts that differ from the closer table; #FFFF: turbo not tried or not working
-MATCH:    db 0            ; 1 SC15.1, 2 SC15.3, 0 neither, #FF turbo makes no difference, #FE not a Scorpion
-TRYTURBO: db 0            ; 1: the 3.5 MHz NOP count is a Scorpion's, turbo was measured
+MATCH:    db 0            ; 1 SC15.1, 2 SC15.3, 3 ZX-Evo as modeled, 0 neither, #FF turbo makes no difference,
+                          ; #FE not a Scorpion or a ZX-Evo
+TRYTURBO: db 0            ; 1: turbo was measured (a ZX-Evo, or the first NOP count is a Scorpion's)
+EVO:      db 0            ; 1: a ZX-Evo (BaseConf), turbo = 14 MHz
+EVORB:    db 0            ; the ZX-Evo's register readback port: #BD (current FPGA tree) or #BE (legacy)
+EVOBF:    db 0            ; its config port #xxBF, saved while the shadow ports are open
 COUNTS:   ds 30           ; NBODY * 6: per body: the 3.5 MHz count, the turbo count (24 bits each, low byte first)
 COUNTSEND:
 
 ; The counts unreal-ng gives with each firmware, the same layout as COUNTS (filled in by the generator)
 EXP151:   ds 30
 EXP153:   ds 30
+EXPEVO:   ds 30           ; the ZX-Evo at 3.5 and 14 MHz
 
 ; ---- the bodies ----
 
@@ -93,6 +102,15 @@ MAIN:
         out (c),a
         call InstallInt
 
+        call DetectEvo
+        ld a,(EVO)
+        or a
+        jr z,NotEvo
+        ld (TRYTURBO),a
+        call EvoSlow            ; 3.5 MHz: #EFF7 D4 (the ZX-Evo may have booted at 7 or 14 MHz)
+        call SpeedOff
+        jr HaveSpeed
+NotEvo:
         ld hl,BODIES            ; the NOP at whatever speed the machine runs (a Scorpion's ROM leaves turbo on)
         ld de,BODY
         ld bc,BODYSIZE
@@ -104,6 +122,7 @@ MAIN:
         call Guard
         call SpeedOffIfTried
 
+HaveSpeed:
         ld ix,COUNTS
         ld hl,BODIES
         ld b,NBODY
@@ -277,23 +296,113 @@ IntStop:
         ld a,(SPEED)
         or a
         ret z
-        ; turbo off: IN from #1FFD
 SpeedOff:
-        ld bc,#1FFD
+        ld a,(EVO)
+        or a
+        jr nz,EvoOff
+        ld bc,#1FFD             ; the Scorpion: turbo off on IN from #1FFD
+        in a,(c)
+        ret
+EvoOff:
+        xor a
+        jr EvoSet77
+
+SpeedOn:
+        ld a,(EVO)
+        or a
+        jr nz,EvoOn
+        ld bc,#7FFD             ; the Scorpion's logic chip latches turbo on IN from #7FFD
+        in a,(c)
+        ret
+EvoOn:
+        ld a,8
+
+; ZX-Evo: #xx77 D3 (14 MHz) = A, every other bit and address line as the machine has them now. #xx77 is written
+; only with the shadow ports open (#xxBF D0); its state reads back as register #0C: {A14, A9, A8, DOS, D3..D0}
+EvoSet77:
+        ld e,a
+        ld a,#0C
+        call EvoReg
+        ld d,a
+        ld b,0
+        bit 7,d
+        jr z,Evo77A9
+        set 6,b                 ; A14
+Evo77A9:
+        bit 6,d
+        jr z,Evo77A8
+        set 1,b                 ; A9
+Evo77A8:
+        bit 5,d
+        jr z,Evo77Out
+        set 0,b                 ; A8
+Evo77Out:
+        ld a,d
+        and #07                 ; the video mode
+        or e
+        push af
+        push bc
+        ld bc,#00BF             ; open the shadow ports, keep the other config bits
+        in a,(c)
+        ld (EVOBF),a
+        or 1
+        out (c),a
+        pop bc
+        ld c,#77
+        pop af
+        out (c),a
+        ld a,(EVOBF)
+        ld bc,#00BF
+        out (c),a
+        ret
+
+; ZX-Evo: #EFF7 D4 = 1 (3.5 MHz while #xx77 D3 is 0), the other bits as they are (register #0B)
+EvoSlow:
+        ld a,#0B
+        call EvoReg
+        or #10
+        ld bc,#EFF7
+        out (c),a
+        ret
+
+; ZX-Evo register A (0..#1F) from the readback port; A15 = 1 keeps the read away from a 128K's #7FFD
+EvoReg:
+        or #80
+        ld b,a
+        ld a,(EVORB)
+        ld c,a
         in a,(c)
         ret
 
-; turbo on: the Scorpion's logic chip latches it on IN from #7FFD
-SpeedOn:
-        ld bc,#7FFD
+; EVO = 1 on a ZX-Evo: register #0A reads back the #7FFD value MAIN wrote (#10), through #xxBD (the current
+; FPGA tree) or #xxBE (the legacy one), and the config port #xxBF reads back with its top bits clear
+DetectEvo:
+        ld bc,#8ABD
         in a,(c)
+        cp #10
+        ld e,#BD
+        jr z,EvoFound
+        ld bc,#8ABE
+        in a,(c)
+        cp #10
+        ret nz
+        ld e,#BE
+EvoFound:
+        ld bc,#00BF
+        in a,(c)
+        and #C0
+        ret nz
+        ld a,e
+        ld (EVORB),a
+        ld a,1
+        ld (EVO),a
         ret
 
 SpeedOffIfTried:
         ld a,(TRYTURBO)
         or a
         ret z
-        jr SpeedOff
+        jp SpeedOff
 
 ; CHL = LOOPS * COPIES + the bodies done in the interrupted pass
 Total:
@@ -371,6 +480,18 @@ Compare:
         sbc hl,de
         ret c
 HasTurbo:
+        ld a,(EVO)
+        or a
+        jr z,HasScorpTurbo
+        ld hl,EXPEVO
+        call Differ
+        ld a,b
+        or c
+        ld a,3
+        jr z,Matched
+        xor a
+        jr Matched
+HasScorpTurbo:
         ld hl,EXP151
         call Differ
         ld a,b
@@ -400,38 +521,52 @@ Matched:
         ld (FAILS),bc
         ret
 
-; BC = how many counts differ between COUNTS and the table at HL
+; BC = how many counts differ by more than one between COUNTS and the table at HL. One is the start's jitter:
+; HALT repeats 4 T fetches, so the loop starts 0-3 T after a fixed point, and a count can move by one body
 Differ:
         ld de,COUNTS
         ld bc,0
         ld a,NBODY * 2
 DifferNext:
         push af
-        ld a,(de)
-        cp (hl)
-        jr nz,Differ3
+        push bc
+        ld a,(de)               ; ABC... C:B:A = got - expected, 24 bits
+        sub (hl)
+        ld c,a
         inc de
         inc hl
         ld a,(de)
-        cp (hl)
-        jr nz,Differ2
+        sbc a,(hl)
+        ld b,a
         inc de
         inc hl
         ld a,(de)
-        cp (hl)
-        jr nz,Differ1
-        jr DifferStep
-Differ3:
+        sbc a,(hl)
         inc de
         inc hl
-Differ2:
-        inc de
-        inc hl
-Differ1:
+        or a
+        jr z,DifferHighZero
+        inc a                   ; -1: #FFFFFF
+        jr nz,DifferBad
+        ld a,b
+        and c
+        inc a
+        jr nz,DifferBad
+        jr DifferOk
+DifferHighZero:
+        ld a,b
+        or a
+        jr nz,DifferBad
+        ld a,c
+        cp 2
+        jr c,DifferOk
+DifferBad:
+        pop bc
         inc bc
+        jr DifferStep
+DifferOk:
+        pop bc
 DifferStep:
-        inc de
-        inc hl
         pop af
         dec a
         jr nz,DifferNext
@@ -449,6 +584,15 @@ Report:
         call PrintStr
         ld ix,COUNTS
         call PrintTable
+        ld a,(EVO)
+        or a
+        jr z,ReportScorp
+        ld hl,TxExpEvo
+        call PrintStr
+        ld ix,EXPEVO
+        call PrintTable
+        jr ReportVerdict
+ReportScorp:
         ld hl,TxExp151
         call PrintStr
         ld ix,EXP151
@@ -458,6 +602,7 @@ Report:
         ld ix,EXP153
         call PrintTable
 
+ReportVerdict:
         ld a,(MATCH)
         ld hl,TxNotScorp
         cp #FE
@@ -471,7 +616,14 @@ Report:
         ld hl,TxIs153
         cp 2
         jr z,ReportEnd
+        ld hl,TxIsEvo
+        cp 3
+        jr z,ReportEnd
         ld hl,TxNeither
+        ld a,(EVO)
+        or a
+        jr z,ReportEnd
+        ld hl,TxEvoDiffers
 ReportEnd:
         jp PrintStr
 
@@ -575,7 +727,10 @@ BodyNames: db "NOP       ", 0
            db "OUT (FE),A", 0
 TxExp151:  db "SC15.1    ", 0
 TxExp153:  db "SC15.3    ", 0
-TxNotScorp: db 13, "Not a Scorpion: turbo not tried", 13, 0
+TxExpEvo:  db "ZX-Evo    ", 0
+TxNotScorp: db 13, "No Scorpion / ZX-Evo turbo:", 13, "turbo not tried", 13, 0
+TxIsEvo:   db 13, "ZX-Evo 14 MHz: as modeled", 13, 0
+TxEvoDiffers: db 13, "ZX-Evo 14 MHz: differs", 13, "from the model", 13, 0
 TxNoTurbo: db 13, "Turbo makes no difference", 13, 0
 TxIs151:   db 13, "Turbo+ logic: SC15.1", 13, 0
 TxIs153:   db 13, "Turbo+ logic: SC15.3", 13, 0

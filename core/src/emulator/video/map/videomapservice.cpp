@@ -8,6 +8,7 @@
 #include "emulator/video/atm/atmvideomapper.h"
 #include "emulator/video/profi/profivideomapper.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/sprinter/sprintervideomapper.h"
 #include "emulator/video/tsconf/tsconfvideomapper.h"
 #include "emulator/video/zx/zxvideomapper.h"
 
@@ -52,6 +53,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
     static const AtmVideoMapper atm;
     static const ProfiVideoMapper profi;
     static const TsConfVideoMapper tsconf;
+    static const SprinterVideoMapper sprinter;
     static const NullVideoMapper none;
     switch (family)
     {
@@ -60,6 +62,7 @@ const IVideoMapper& VideoMapService::MapperFor(VideoFamily family)
         case VideoFamily::Atm:   return atm;
         case VideoFamily::Profi: return profi;
         case VideoFamily::TsConf: return tsconf;
+        case VideoFamily::Sprinter: return sprinter;
         default:                 return none;
     }
 }

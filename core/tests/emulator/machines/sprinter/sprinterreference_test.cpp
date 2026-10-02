@@ -207,7 +207,14 @@ protected:
         for (size_t i = 0; i < code.size(); i++)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(stub + i), code[i]);
         memory->DirectWriteToZ80Memory(flag, 0x00);
-        const uint16_t ret = _z80->pc;
+        // A halted CPU leaves the HALT first, as an interrupt would: the call returns past it. Left
+        // halted, the Z84C15 core keeps running HALT M1s at the stub's address until the next INT
+        // and then resumes one byte into the stub (the native core ran the stub at once, but its INT
+        // acknowledge then skipped a byte of whatever code was running)
+        uint16_t ret = _z80->pc;
+        if (_z80->halted & 1)
+            ret = static_cast<uint16_t>(ret + 1);
+        _z80->halted = 0;
         _z80->sp = static_cast<uint16_t>(sp - 2);
         memory->DirectWriteToZ80Memory(_z80->sp, static_cast<uint8_t>(ret));
         memory->DirectWriteToZ80Memory(static_cast<uint16_t>(_z80->sp + 1), static_cast<uint8_t>(ret >> 8));
@@ -219,7 +226,8 @@ protected:
 };
 
 // ports.csv: the first 10 000 port accesses equal MAME's - the same accesses in the
-// same order with the same internal codes, at the same time.
+// same order with the same internal codes, at the same time (plus the Z84C15's own
+// waits before the BIOS turns them off, which MAME does not model).
 // Boot-bound (~40 frames of BIOS POST, partly at 21 MHz): the turbo mode is on
 TEST_F(SprinterReference_Test, Bios304_PortTraceMatchesMame)
 {
@@ -261,9 +269,25 @@ TEST_F(SprinterReference_Test, Bios304_PortTraceMatchesMame)
     }
     ASSERT_GT(turboRow, 0u) << "the BIOS never switched the turbo on";
 
+    // The Z84C15's wait generator (research-cpu-z84c15.md section 4.1, the CPU library's design
+    // section 6): the fast start leaves WCR = #04 as the loader does, so the BIOS runs with one
+    // memory wait per cycle (M1s included) until InitCpuPorts writes WCR = 0 - access 7,
+    // OUT (#EF),A at #016C. MAME stores WCR and never applies it. Between the BIOS's first port
+    // access and that write the BIOS makes 22 memory cycles (e.g. access 3 -> 4: XOR A, then
+    // OUT (#1D),A's M1 and operand: 3 waits), so every later access is 22 T further from the
+    // first one than in MAME; before it the distance grows by the waits of each step
+    size_t wcrRow = 0;
+    for (size_t i = 1; i < bios.size() && !wcrRow; i++)
+        if (!bios[i].isRead && (bios[i].port & 0xFF) == 0xEF && bios[i - 1].port == 0xFFEE && bios[i - 1].value == 0x00)
+            wcrRow = i;
+    ASSERT_EQ(wcrRow, 6u) << "InitCpuPorts' WCR write";
+    ASSERT_EQ(bios[wcrRow].value, 0x00);
+    constexpr double kWcrShift = 22.0;
+
     const double mame0 = bios[0].timeUs * 3.5;
     const double unreal0 = unrealT[0];
     size_t mismatches = 0;
+    double lastShift = 0;
     std::string report;
     for (size_t i = 0; i < events.size(); i++)
     {
@@ -281,10 +305,18 @@ TEST_F(SprinterReference_Test, Bios304_PortTraceMatchesMame)
                                            m.isRead ? "R" : "W", m.port, m.value, m.pc, m.code.c_str(), e.isOut() ? "W" : "R",
                                            e.rawPort, e.value, e.pc, code.c_str());
 
-        // At 3.5 MHz (until the turbo switch) the time from the BIOS start is the same to the T-state.
-        // MAME's timestamps are exact there; tolerance 1 T for the microsecond rounding of the CSV
-        if (i < turboRow)
-            EXPECT_NEAR(unrealT[i] - unreal0, m.timeUs * 3.5 - mame0, 1.0) << "access #" << i + 1 << " PC " << std::hex << m.pc;
+        // At 3.5 MHz (until the turbo switch) the time from the BIOS start is MAME's to the T-state plus
+        // the chip's waits (above). MAME's timestamps are exact there; tolerance 1 T for the
+        // microsecond rounding of the CSV
+        const double shift = (unrealT[i] - unreal0) - (m.timeUs * 3.5 - mame0);
+        if (i < turboRow && i > wcrRow)
+            EXPECT_NEAR(shift, kWcrShift, 1.0) << "access #" << i + 1 << " PC " << std::hex << m.pc;
+        else if (i <= wcrRow)
+        {
+            EXPECT_GE(shift, lastShift - 1.0) << "access #" << i + 1 << ": the waits only add";
+            EXPECT_LE(shift, kWcrShift + 1.0) << "access #" << i + 1;
+            lastShift = shift;
+        }
     }
     EXPECT_EQ(mismatches, 0u) << report;
 

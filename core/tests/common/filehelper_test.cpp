@@ -732,7 +732,8 @@ TEST_F(FileHelper_Test, FileExists_PathNormalization)
         EXPECT_TRUE(FileHelper::FileExists(mixedPath)) << "FileExists should work with mixed slashes: " << mixedPath;
 
         // Cleanup
-        system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -757,7 +758,8 @@ TEST_F(FileHelper_Test, FileExists_PathNormalization)
         EXPECT_TRUE(FileHelper::FileExists(backslashPath)) << "FileExists should work with backslashes on Unix: " << backslashPath;
 
         // Cleanup
-        system(("rm -rf \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -806,7 +808,8 @@ TEST_F(FileHelper_Test, FolderExists_PathNormalization)
         EXPECT_TRUE(FileHelper::FolderExists(trailingSlash)) << "FolderExists should work with trailing slash: " << trailingSlash;
 
         // Cleanup
-        system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -828,7 +831,8 @@ TEST_F(FileHelper_Test, FolderExists_PathNormalization)
         EXPECT_TRUE(FileHelper::FolderExists(backslashPath)) << "FolderExists should work with backslashes on Unix: " << backslashPath;
 
         // Cleanup
-        system(("rm -rf \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -880,7 +884,8 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
         EXPECT_EQ(sizeMixed, expectedSize) << "GetFileSize should work with mixed slashes";
 
         // Cleanup
-        system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -907,7 +912,8 @@ TEST_F(FileHelper_Test, GetFileSize_PathNormalization)
         EXPECT_EQ(sizeBackslash, expectedSize) << "GetFileSize should work with backslashes on Unix";
 
         // Cleanup
-        system(("rm -rf \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -968,7 +974,8 @@ TEST_F(FileHelper_Test, OpenFile_PathNormalization)
         }
 
         // Cleanup
-        system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
@@ -994,7 +1001,8 @@ TEST_F(FileHelper_Test, OpenFile_PathNormalization)
         if (file) fclose(file);
 
         // Cleanup
-        system(("rm -rf \"" + tempDir + "\"").c_str());
+        std::error_code ec;
+        std::filesystem::remove_all(tempDir, ec);
     }
     else
     {
