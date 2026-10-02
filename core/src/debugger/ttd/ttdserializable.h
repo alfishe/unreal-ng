@@ -69,8 +69,8 @@ enum class PeripheralId : uint8_t
     KempstonJoystick = 23, // Kempston joystick state byte (core device; carried by machines whose decoder answers #1F)
     SerialPort = 24,      // the 16550 on #xxEF (ZX-Evo AVR firmware or a ZX-WiFi card) and its peer (network TDD §7)
     SprinterPld = 25,     // Sprinter Sp2000 PLD state + configuration module (Sprinter tdd-integration §2.1; serializer in phase S7)
-    Atm2Kbc = 26,
-    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232)         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard
+    Atm2Kbc = 26,         // ATM Turbo 2+ keyboard controller: the MCS-51 (RAM, SFRs, timers, UART), board latches, PS/2 keyboard
+    MachineSerialPeer = 27, // the peer on a machine serial port that is no 16550 on #xxEF (ATM Turbo 2+ controller RS-232)
     // Future: SAA1099, GS512, etc.
     Count
 };
