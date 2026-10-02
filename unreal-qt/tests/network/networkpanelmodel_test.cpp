@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
 #include "network/core/networkpanelmodel.h"
 
@@ -75,6 +76,42 @@ TEST(NetworkPanelModel_Test, TheZxEvoOffersItsOwnPortAndTheAvr)
     EXPECT_TRUE(a.avrFirmware);
     EXPECT_FALSE(a.zxWifi) << "#xxEF is the AVR's";
     EXPECT_NE(a.zxWifiWhy.find("AVR"), std::string::npos);
+}
+
+TEST(NetworkPanelModel_Test, TheAtm2OffersItsControllersPort)
+{
+    StateNode state = State("atm2-kbc", true, "NONE", "LOOPBACK", "AT");
+    state["settings"]["kbc_firmware"] = "V41";
+    NetworkForm form = NetworkFormFromState(state);
+    EXPECT_EQ(form.kbcFirmware, "V41");
+    NetworkAvailability a = NetworkFormAvailability(form);
+    EXPECT_TRUE(a.comPort) << a.comPortWhy;
+    EXPECT_TRUE(a.kbcFirmware);
+    EXPECT_TRUE(a.zxWifi) << "the controller is not on #xxEF: a ZX-WiFi card fits beside it";
+    EXPECT_FALSE(a.avrFirmware);
+
+    // A firmware without RS-232 chosen in the window: the port goes grey with the reason
+    NetworkForm edited = form;
+    edited.kbcFirmware = "V22-11";
+    a = NetworkFormAvailability(edited);
+    EXPECT_FALSE(a.comPort);
+    EXPECT_NE(a.comPortWhy.find("RS-232"), std::string::npos) << a.comPortWhy;
+    const auto changes = NetworkFormChanges(form, edited);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0].first, "kbc_firmware");
+    EXPECT_EQ(changes[0].second, "V22-11");
+}
+
+TEST(NetworkPanelModel_Test, EveryKbcPresetParses)
+{
+    const auto choices = NetworkKbcFirmwareChoices();
+    ASSERT_EQ(choices.size(), 10u);
+    for (const auto& [name, text] : choices)
+    {
+        Atm2Kbc::Firmware firmware = Atm2Kbc::Firmware::V41;
+        EXPECT_TRUE(Atm2Kbc::ParseFirmware(name.c_str(), firmware)) << name;
+        EXPECT_FALSE(text.empty()) << name;
+    }
 }
 
 TEST(NetworkPanelModel_Test, APentagonTakesCardsOnly)
