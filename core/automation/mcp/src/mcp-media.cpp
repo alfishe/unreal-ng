@@ -625,7 +625,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                                    std::to_string(status) + "): " + DescribeErrorBody(response)));
                             return;
                         }
-                        done(ToolResult::Ok(TemporalSummary(response) + " [target " + idOrError + "]", std::move(response)));
+                        // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string text = TemporalSummary(response) + " [target " + idOrError + "]";
+                        done(ToolResult::Ok(text, std::move(response)));
                     });
                 });
                 return;

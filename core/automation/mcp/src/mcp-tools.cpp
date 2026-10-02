@@ -259,9 +259,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
-                        done(ToolResult::Ok("Created and started emulator " + response["id"].asString() + " (model " +
-                                                response.get("symbolic_id", Json::Value("")).asString() + ")",
-                                            std::move(response)));
+                        // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
+                                                 response.get("symbolic_id", Json::Value("")).asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }
                     done(ToolResult::Error("Create failed (HTTP " + std::to_string(status) + "): " + DescribeErrorBody(response)));
@@ -767,7 +768,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                         caller.Call("GET", Endpoint(id, "/registers"), nullptr, [body, done](int regStatus, Json::Value registers) mutable {
                             if (regStatus == 200)
                             {
-                                done(ToolResult::Ok("Paused. " + FormatRegisters(registers), std::move(registers)));
+                                // the text first: argument order is unspecified (gcc moves `registers` out first)
+                                const std::string text = "Paused. " + FormatRegisters(registers);
+                                done(ToolResult::Ok(text, std::move(registers)));
                             }
                             else
                             {
