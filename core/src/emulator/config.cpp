@@ -868,6 +868,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 		// Apply hardware-accurate INT timing defaults based on the selected model
 		ApplyModelTimingDefaults(config);
 
+		// TS-Conf VDAC2 build: the card sits on the IDE connector and the
+		// firmware has no IDE controller (tune.v: IDE_VDAC2 instead of
+		// IDE_HDD), so the machine has no IDE whatever [HDD] Scheme says
+		// (vdac2-integration-design.md §3). With IDE_NONE no IDE slot exists
+		if (config.mem_model == MM_TSL && config.ts_vdac == 7 && config.ide_scheme != IDE_NONE)
+		{
+			MLOGWARNING("Config: [HDD] Scheme=%s ignored: the VDAC2 card ([MISC] TS_VDAC2=1) occupies the IDE "
+			            "connector", IdeSchemeName(config.ide_scheme));
+			config.ide_scheme = IDE_NONE;
+		}
+
 		// The config is loaded and valid: the process-wide hook gets the last
 		// word before any device is created from it
 		if (const ConfigLoadedHook& hook = ConfigLoadedHookStorage())
