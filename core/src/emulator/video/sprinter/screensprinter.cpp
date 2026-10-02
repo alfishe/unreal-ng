@@ -86,6 +86,21 @@ void ScreenSprinter::ApplyFrameLines()
     SetRasterZones();
 }
 
+void ScreenSprinter::RestoreFrameLines(uint16_t lines)
+{
+    lines = lines == 312 ? 312 : 320;
+    const uint32_t frame = static_cast<uint32_t>(lines) * kLineTStates;
+    CONFIG& config = _context->config;
+    _frameLines = lines;
+    if (config.frame != frame)
+    {
+        config.frame = frame;
+        config.frame_duration_us = CalculateFrameDurationUs(frame);
+    }
+    _rasterState.configFrameDuration = frame;
+    SetRasterZones();
+}
+
 void ScreenSprinter::SetRasterZones()
 {
     // Visible-first raster (tdd-video §2): lines 0-15 top border, 16-271 the

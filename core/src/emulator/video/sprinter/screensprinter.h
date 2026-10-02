@@ -72,6 +72,9 @@ public:
 
     /// The frame height the raster runs with now: 320 or 312 lines
     uint16_t FrameLines() const { return _frameLines; }
+    /// A TTD restore: the frame height the raster ran with at the capture (applied at a frame start, so it
+    /// can lag the PLD's latch inside a frame) - config.frame and the raster zones follow it
+    void RestoreFrameLines(uint16_t lines);
     /// The inputs the picture is drawn with now (tests, the debug mapper)
     SprinterVideoInputs CurrentInputs() const;
 

@@ -87,6 +87,9 @@ public:
     /// Give the CPU back to the native interpreter (only if this is installed)
     void Uninstall();
     bool IsInstalled() const;
+    /// The host's registers were replaced from outside (a TTD restore): its boundary is pushed to the
+    /// library at the next step even when it equals the one the library last reported
+    void InvalidateBoundary() { _boundarySeen = 0xFF; }
 
     /// The board's bus agent (null = none): opcode fetches, data accesses, INT acknowledges
     void SetBusAgent(IZ84BusAgent* agent) { _agent = agent; }

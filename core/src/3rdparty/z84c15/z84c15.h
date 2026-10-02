@@ -26,6 +26,7 @@
 #ifndef Z84C15_H
 #define Z84C15_H
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 
@@ -71,6 +72,8 @@ public:
     void Write(uint8_t channel, uint8_t value);
 
     uint8_t Vector() const { return _vector; }
+    /// The interrupt vector base as a state restore sets it (Z84C15::LoadState)
+    void SetVector(uint8_t vector) { _vector = vector; }
     const ChannelState& GetChannel(uint8_t channel) const { return _ch[channel & 3]; }
     ChannelState& Channel(uint8_t channel) { return _ch[channel & 3]; }
 
@@ -278,6 +281,30 @@ public:
     /// The watchdog: running and its timeout clock (for tests and debuggers)
     bool WatchdogRunning() const { return _wdtRunning; }
     uint64_t WatchdogDeadline() const;
+
+    /// region <State (snapshots, time travel)>
+    /// Everything the chip carries from one instruction to the next besides the
+    /// core's register file: the system registers, the wait generator (with the
+    /// power-on window's M1 counter and the RETI rule's "after ED" flag), the
+    /// watchdog, the CTC, the SIO (receive FIFOs included) and the PIO, with the
+    /// interrupt state of the daisy chain (each source's IP / IUS). A fixed
+    /// little-endian layout of kStateSize bytes, so a host can store it as a blob
+    /// and version it itself. Not in it: the CPU registers (the host's register
+    /// file, Z84CpuAttachRegisterFile), the clock and the callbacks.
+    ///
+    /// Layout: system 8 (SCRP, WCR, MWBR, CSBR, MCR, WDTMR, WDTCR, #F4) | wait
+    /// generator 6 (WCR as written, effective WCR, MWBR, M1 cycles left in the
+    /// power-on window, after-ED, active) | watchdog 10 (running, fired, start
+    /// clock u64) | CTC 89 (vector, then per channel: control, time constant,
+    /// awaiting constant, running, load clock u64, zero counts u64, IP, IUS) |
+    /// SIO 36 (per channel: WR0-WR7, pointer, FIFO[3], FIFO count, last data,
+    /// overrun, Rx-first armed, Rx-first IP, Rx IUS) | PIO 22 (per port: mode,
+    /// direction, output, vector, interrupt control, mask, next, inputs,
+    /// condition, IP, IUS)
+    static constexpr size_t kStateSize = 8 + 6 + 10 + 89 + 36 + 22;
+    void SaveState(uint8_t* dst) const;
+    void LoadState(const uint8_t* src);
+    /// endregion </State>
 
     Z84Ctc ctc;
     Z84Sio sio;
