@@ -258,9 +258,11 @@ Z3 can run in parallel with Z1.
    not in any document; MAME has no model. *Recommendation:* ship Z3 with phase 0 at the frame start in one
    constant, and ask the Sprinter community (Telegram `zx_sprinter`) for a measurement with a small test
    program (the emulated test-program pattern: a timing loop printing T counts); adjust the constant.
+   **Owner decision (2026-10-02): as recommended** - a placeholder constant plus a hardware measurement.
 2. **Q2 — base-clock tape time base for every turbo machine?** On ATM3 / ZX-Evo, Scorpion and ATM710 turbo
    the tape also speeds up with the CPU today. *Recommendation:* Sprinter-only opt-in now (as the WD1793
    was); a separate shared change for the others, because it moves their TTD fixtures.
+   **Owner decision (2026-10-02): Sprinter only now.**
 3. **Q3 — show the BIOS TR-DOS drive table in the state?** It is BIOS-internal RAM. *Recommendation:* yes,
    read-only, only for the BIOS builds whose export file gives the address (3.06 HF2, 3.07 β), absent
    otherwise; never written by the emulator.
@@ -274,6 +276,9 @@ Z3 can run in parallel with Z1.
 5. **Q5 — may `zx run` copy the file into an attached hard-disk image?** *Recommendation:* no: only into
    an attached host folder, or use a file already on a volume; refuse otherwise with the reason. Images
    are the user's data.
+   **Owner decision (2026-10-02): yes, through the change layer** - `zx run` may copy the file into an attached
+   hard-disk image, but only into its change layer (the shared CHD-style layer; the base image is never written),
+   and the layer can be discarded. A host folder or a file already on a volume needs no copy.
 6. **Q6 — default mode for `zx run`.** *Recommendation:* the disk's own `SPECTRUM.CFG` (what a user gets
    typing `spectrum game.trd`); `mode` overrides; tape files default to `P128.ZX` because the default mode
    has `/turbo`.

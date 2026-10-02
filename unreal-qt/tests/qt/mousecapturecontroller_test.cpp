@@ -140,6 +140,10 @@ TEST_F(MouseCaptureController_Test, ConfiguredReleaseKey)
     Tap(&_screen, Qt::Key_F10, PhysicalControl());
     EXPECT_FALSE(_controller->isCaptured());
 
+    EXPECT_EQ(_controller->releaseKeyText(), QStringLiteral("Ctrl+F10")) << "named as the physical keys, every platform";
+    _releaseKey.clear();
+    EXPECT_EQ(_controller->releaseKeyText(), QStringLiteral("Ctrl+Esc")) << "the default, as people read it";
+
     _releaseKey = "not a key sequence !!";
     EXPECT_EQ(_controller->releaseKey(), QKeySequence(QKeyCombination(PhysicalControl(), Qt::Key_Escape)))
         << "an unparsable value falls back to Ctrl+Esc";

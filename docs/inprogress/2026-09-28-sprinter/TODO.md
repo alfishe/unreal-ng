@@ -119,12 +119,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
      decisions Q1-Q3 recorded), network adapters ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md): NE2000 ISA Ethernet
      confirmed; maximum reuse of the shared network stack), ZX mode (`tdd-zx-mode.md`), the peripherals survey (`peripherals-survey.md`).
-  5. Recommendation from the developer-interest ranking ([peripherals-survey.md](peripherals-survey.md) §10,
-     2026-10-02), waiting for the owner. After the demo pass:
+  5. **Owner decision 2026-10-02** (the developer-interest ranking, [peripherals-survey.md](peripherals-survey.md)
+     §10, accepted; "the network definitely first"). After the demo pass:
      - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
        and are the only new programs that need a card.
      - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
        the BIOS / DSS developer's main work since 2024-10.
+     - The Centronics printer drops to P4.
 - **ZX mode, phase S8 (design 2026-10-02: [research-zx-mode.md](research-zx-mode.md),
   [tdd-zx-mode.md](tdd-zx-mode.md); roadmap §1 row S8).** The real machine loads TRD / SCL into a BIOS RAM disk
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
