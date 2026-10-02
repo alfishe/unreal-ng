@@ -113,6 +113,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
      picture, no sound - find and fix each cause with MAME's code as the reference.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
+- Queued after S6b I1: **S6c network cards** ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md),
+  roadmap row S6c): SN0 fixtures (S), SN1 NE2000 chip + slots (M), SN2 Ethernet gateway + RTL kit end to end (M-L),
+  SN3 SprinterESP with the Sprinter ESP Network Kit ([sprinter_wifi](https://github.com/witchcraft2001/sprinter_wifi),
+  `UNETESP.DLL`, owner: must be supported) (M), SN4 modem / SprinterSerial (S-M, needs I4), SN5 3C509B (M), SN6
+  host-LAN bridge (M, optional).
 - Phases S0-S7 ([roadmap-and-plan.md](roadmap-and-plan.md) §1), PLAN row #59.
 - Prerequisites (all before #59): shared infrastructure PLAN #60 (clock ratio, CMOS core and
   migrations, wait-state hook, per-model `Screen`, raw PC floppy loader, port-trace internal

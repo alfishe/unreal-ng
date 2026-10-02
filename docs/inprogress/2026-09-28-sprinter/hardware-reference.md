@@ -482,6 +482,17 @@ port `#9FBD` gives A19-A14, AEN and RESET. ISA interrupts arrive on the CPU's PI
 (MAN §8, §9.3; INC `SP2000.inc:596-602`; MAME `sprinter.cpp:1246-1276`). No emulator implements
 ISA memory; MAME fits a ZX-bus adapter in slot 0 (`:1975`).
 
+**Network and serial cards (research 2026-10-02,
+[2026-10-02-sprinter-network](../2026-10-02-sprinter-network/research.md)).** The main board has no free serial port:
+SIO A is the keyboard, SIO B the mouse ("not standard RS-232", Peters Plus FAQ). Every network adapter is an ISA card:
+NE2000-class Ethernet (RTL8019AS and clones, I/O `#200-#3E0`, default `#300`), the SprinterESP Wi-Fi card (TL16C550C at
+`#3E8`, 14.7456 MHz, ESP8266 with AT 2.2.1), the 3Com 3C509B (ID port `#110`), ISA Hayes modems (16450 / 16550 at
+`#3F8` / `#2F8` / `#3E8` / `#2E8`, 1.8432 MHz) and SprinterSerial (PC16552D at `#3F8` + `#2F8`). The 2026 network kits
+poll; only BC-Term uses the ISA interrupt (PIO port B bit 0 / 1, IM 2). BIOS 2.13 pulses ISA RESET at boot
+(`#9FBD` <- `#FF`, then `#00`). Bit assignment of the page byte and `#9FBD`: see the
+[ISA research](../2026-10-02-sprinter-isa/research.md) §4 (bit 2 = I/O, bit 1 = slot; confirmed again by BC-Term, ESPT
+and the network kits).
+
 ## 12. CMOS and clock
 
 DS12887A: address write `#DFBD`, data write `#BFBD`, data read `#FFBD` (MAN §12; INC

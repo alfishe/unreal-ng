@@ -88,8 +88,9 @@ the NeoGS ZX-DMA needs the Spectrum `/CSROM` signal; neither exists through ISA.
 
 **Recommendation:** no memory cycles through the adapter; the Sprinter reports no native ZX-bus to the network
 manager (`DescribeNetwork().zxBus = false`); the NeoGS ZX-DMA cannot install on the Sprinter. Network on the
-Sprinter goes through the ISA UART cards (phase I4: SprinterESP Wi-Fi, ISA modem), which real Sprinter software
-(ESPT, wterm, BC-Term) uses.
+Sprinter goes through ISA network cards (NE2000-class Ethernet, SprinterESP Wi-Fi, 3C509B, ISA modem), which real
+Sprinter software (the 2026 network kits, ESPT, wterm, BC-Term) uses: designed in
+[2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md).
 
 ## Q8. Order of the cards after the GS
 
@@ -97,6 +98,10 @@ Sprinter goes through the ISA UART cards (phase I4: SprinterESP Wi-Fi, ISA modem
 the network stack; ESPT, wterm, BC-Term), then deferred: I6 ESS688 / Sound Blaster Pro (L; only ESSMIXER found,
 which only sets the mixer), I7 SprinterJoy (its board is "in development"), I8 Sprinter-FT (experimental FT812
 card), I5 MoonSound on the adapter (no Sprinter program). Is that the owner's order?
+
+*Update 2026-10-02:* the owner decided that NE2000-class Ethernet is built; the network cards have their own
+design and phases ([2026-10-02-sprinter-network](../2026-10-02-sprinter-network/tdd.md) §16), and I4 keeps only
+the PIO interrupt lines. Whether the network cards go before ISA RAM is that folder's open question Q7.
 
 ## Q9. Does a Sprinter machine reset reset the GS?
 
