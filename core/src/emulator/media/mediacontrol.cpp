@@ -16,6 +16,7 @@
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediatargets.h"
 #include "emulator/state/statenodejson.h"
 
 namespace
@@ -485,88 +486,50 @@ MediaReply MediaControl::Formats(const MediaRequest& request)
 
 MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& options, std::string& slotId)
 {
-    const std::vector<SlotInfo> slots = _manager->List();
-    auto hasKind = [&slots](MediaKind kind) {
-        return std::any_of(slots.begin(), slots.end(), [kind](const SlotInfo& s) { return s.descriptor.kind == kind; });
-    };
-
-    MediaKind kind = MediaKind::Block;
+    // One analysis for every entry point (media-drop-targets design §4)
+    FileClass file = MediaTargets::Classify(path);
     if (auto hint = options.find("kind"); hint != options.end())
     {
+        MediaKind kind = MediaKind::Block;
         if (!ParseKind(hint->second, kind))
             return MediaResult::Fail(MediaError::BadRequest, "kind '" + hint->second + "': expected floppy, tape, block or optical");
-    }
-    else if (FileHelper::IsFolder(path))
-    {
-        kind = hasKind(MediaKind::Floppy) ? MediaKind::Floppy : MediaKind::Block;
-    }
-    else if (!FloppyFormats::Probe(path).empty())
-    {
-        kind = MediaKind::Floppy;
-    }
-    else
-    {
         const std::string ext = Lower(FileHelper::GetFileExtension(path));
-        const auto tape = MediaFormatRegistry::Extensions(MediaKind::Tape);
-        const auto optical = MediaFormatRegistry::Extensions(MediaKind::Optical);
-        const auto block = MediaFormatRegistry::Extensions(MediaKind::Block);
-        if (std::find(tape.begin(), tape.end(), ext) != tape.end())
-            kind = MediaKind::Tape;
-        else if (std::find(optical.begin(), optical.end(), ext) != optical.end())
-            kind = MediaKind::Optical;
-        else if (std::find(block.begin(), block.end(), ext) == block.end())
-            return MediaResult::Fail(MediaError::UnknownFormat,
-                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|tape|block|optical");
-    }
-
-    // Block media: hard-disk formats prefer an IDE unit, card images an SD
-    // slot (a machine may have both: ZX-Evo)
-    std::string preferTag;
-    if (kind == MediaKind::Block)
-    {
-        preferTag = HddImageFormats::IsHardDiskExtension(FileHelper::GetFileExtension(path)) ? "ide" : "sd";
-    }
-    auto tagged = [](const SlotInfo& info, const std::string& tag) {
-        return !tag.empty() && std::find(info.tags.begin(), info.tags.end(), tag) != info.tags.end();
-    };
-
-    // The first empty slot of that kind (a preferred one first, and among
-    // those the one tagged "primary": an SD image on a ZX-Evo with NeoGS goes
-    // to the Z-Controller card, not to the add-on); else the default one: the
-    // slot tagged "primary", else the first of the kind
-    const SlotInfo* preferred = nullptr;
-    for (const SlotInfo& info : slots)
-    {
-        if (info.descriptor.kind == kind && !info.present && !info.pending && tagged(info, preferTag))
+        switch (kind)
         {
-            if (!preferred || (tagged(info, "primary") && !tagged(*preferred, "primary")))
-                preferred = &info;
+            case MediaKind::Floppy: file.kinds = {FileKind::Floppy}; break;
+            case MediaKind::Tape: file.kinds = {FileKind::Tape}; break;
+            case MediaKind::Optical: file.kinds = {FileKind::Optical}; break;
+            case MediaKind::Block:
+                file.kinds = HddImageFormats::IsHardDiskExtension(ext) ? std::vector<FileKind>{FileKind::Hdd, FileKind::SdCard}
+                                                                       : std::vector<FileKind>{FileKind::SdCard, FileKind::Hdd};
+                break;
         }
     }
-    if (preferred)
-    {
-        slotId = preferred->descriptor.id;
-        return MediaResult::Success();
-    }
-    const SlotInfo* fallback = nullptr;
-    for (const SlotInfo& info : slots)
-    {
-        if (info.descriptor.kind != kind)
-            continue;
-        if (!info.present && !info.pending)
-        {
-            slotId = info.descriptor.id;
-            return MediaResult::Success();
-        }
-        const bool primary = std::find(info.tags.begin(), info.tags.end(), "primary") != info.tags.end();
-        if (!fallback || primary)
-            fallback = fallback && !primary ? fallback : &info;
-    }
-    if (!fallback)
-        return MediaResult::Fail(MediaError::KindMismatch,
-                                 std::string("no slot on this machine takes ") + MediaKindName(kind) + " media");
-    slotId = fallback->descriptor.id;
-    return MediaResult::Success();
+    // A snapshot, a recording or labels are no medium: `insert` takes media only
+    file.kinds.erase(std::remove_if(file.kinds.begin(), file.kinds.end(),
+                                    [](FileKind k) {
+                                        return k != FileKind::Floppy && k != FileKind::Tape && k != FileKind::Hdd &&
+                                               k != FileKind::SdCard && k != FileKind::Optical;
+                                    }),
+                     file.kinds.end());
+    if (file.kinds.empty())
+        return MediaResult::Fail(MediaError::UnknownFormat,
+                                 "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|tape|block|optical");
+
+    const MediaPlan plan = MediaTargets::Plan(_context, file);
+    if (plan.Refused())
+        return MediaResult::Fail(MediaError::KindMismatch, plan.refusal);
+
+    // The chooser's first entry: an empty slot before an occupied one, the
+    // primary / boot slot first (an occupied one is replaced only when every
+    // slot of the kind is taken)
+    const MediaTarget& chosen = plan.targets.front();
+    slotId = chosen.slotId;
+    MediaResult result = MediaResult::Success();
+    if (plan.targets.size() > 1 && chosen.as != FileKind::Floppy)
+        result.report.push_back("several slots take it (" + plan.SlotList() + "): " + slotId +
+                                " chosen; name the slot to pick another");
+    return result;
 }
 
 MediaResult MediaControl::ApplyDisposition(const std::string& slotId, const Options& options, Disposition& remaining)
@@ -639,6 +602,7 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
         reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
     if (!reply.result.Ok())
         return reply;
+    const std::vector<std::string> choice = reply.result.report;  // why this slot, when several take it
     const Options& o = request.options;
 
     // An IDE unit can change its drive first: device=cdrom puts a CD-ROM drive
@@ -711,6 +675,7 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
         return reply;
     }
     reply.result = _manager->Insert(reply.slot, source, options);
+    reply.result.report.insert(reply.result.report.begin(), choice.begin(), choice.end());
     Finish(reply, o);
     return reply;
 }

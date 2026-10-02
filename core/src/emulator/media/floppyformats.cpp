@@ -25,6 +25,9 @@ namespace
     constexpr size_t kProbeBytes = 17 + 255 * 256;
     /// TR-DOS volume sector (track 0, sector 9) byte #E7: the TR-DOS id #10
     constexpr size_t kTrdosIdOffset = 8 * 256 + 0xE7;
+    /// The largest TR-DOS image: 86 cylinders, 2 sides, 16 x 256-byte sectors. A bigger file with #10
+    /// at the TR-DOS id byte is something else (a CD or hard-disk image)
+    constexpr uint64_t kMaxTrdBytes = 2ull * 86 * 16 * 256;
 
     std::string Extension(const std::string& path)
     {
@@ -175,11 +178,11 @@ std::string FloppyFormats::Probe(const std::string& path)
         return "rawpc";
 
     // A TR-DOS volume sector, then the size rules
-    if (size % 256 == 0 && length > kTrdosIdOffset && data[kTrdosIdOffset] == 0x10)
+    if (size % 256 == 0 && size <= kMaxTrdBytes && length > kTrdosIdOffset && data[kTrdosIdOffset] == 0x10)
         return "trd";
     if (LoaderMGT::detect(static_cast<size_t>(size), ext))
         return "mgt";
-    if (ext == "trd" && size % 256 == 0 && size > 0)
+    if (ext == "trd" && size % 256 == 0 && size > 0 && size <= kMaxTrdBytes)
         return "trd";  // an unformatted TR-DOS image: no volume sector yet
     if (ext == "td0" && LoaderTD0::detect(data, length))
         return "td0";

@@ -78,6 +78,21 @@ std::optional<FatType> ClassifyFatVbr(const std::array<uint8_t, IBlockDevice::kS
 
 }  // namespace
 
+SectorZeroLayout ClassifySectorZero(const uint8_t* sector, size_t size)
+{
+    if (!sector || size < IBlockDevice::kSectorSize)
+        return SectorZeroLayout::Unknown;
+    std::array<uint8_t, IBlockDevice::kSectorSize> copy{};
+    std::memcpy(copy.data(), sector, copy.size());
+    if (!HasBootSignature(copy))
+        return SectorZeroLayout::Unknown;
+    if (LooksLikeFatBootSector(copy))
+        return SectorZeroLayout::FatVolume;
+    if (LooksLikePartitionTable(copy))
+        return SectorZeroLayout::PartitionTable;
+    return SectorZeroLayout::Unknown;
+}
+
 std::string DescribeBlockLayoutMismatch(IBlockDevice& block, const std::vector<std::string>& tags)
 {
     const bool expectsPartitionTable = HasTag(tags, "ide") && HasTag(tags, "hdd");
