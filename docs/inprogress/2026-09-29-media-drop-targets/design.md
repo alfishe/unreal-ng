@@ -135,7 +135,7 @@ test:
 | Hobeta header, file of at most 64 KB | floppy |
 | a tape extension the tape registry reads | tape |
 | `ZXST`, `.z80`, `.sna` | snapshot; `RZX!` rzx; `.zxp` / `.prom` zxpoly; `.map` / `.sym` symbols |
-| a folder | floppy and sdcard (and hdd) |
+| a folder | floppy, sdcard, hdd and tape (each slot that takes a folder) |
 
 The size cap on the TR-DOS and Hobeta rules closes the suspected ISO-as-floppy path of §1.
 
@@ -174,10 +174,9 @@ it names them instead of guessing.
 
 **As built in M1 (2026-10-01):** `ChooseSlot` runs `Classify` + `Plan` and takes the chooser's
 first entry (an empty slot before an occupied one, the primary / boot slot first, an add-on's
-last), naming the alternatives in the reply's report ("several slots take it (sd.zc, sd.ngs,
-ide0.master): sd.zc chosen; name the slot to pick another"; not for floppy drives). The refusal
-of several targets waits for M2 + M3: the Qt window still sends `insert auto` for CD, hard-disk
-and card images until it asks through the chooser, and a refusal there would undo the M0 fix.
+last), naming the alternatives in the reply's report. Superseded by M2b (below, §4.4): several
+targets (floppy drives excepted) answer `ambiguous-slot` with the list, now that the Qt window
+asks through its chooser instead of sending `insert auto`.
 The TR-DOS rule of the floppy probe (`FloppyFormats::Probe`) is capped at the largest TR-DOS
 image (2 x 86 x 16 x 256 bytes); sector 0 is read by `ClassifySectorZero`
 (`blockadvisory.h`), the rules the boot advisory of §10 uses.
@@ -194,7 +193,18 @@ the same data: reply fields `file` (`kinds`, `format`, `evidence`), `targets` (`
 `slot`, `label`, `occupiedBy`, `dirty`, `autostart`, `model` for a new machine), `default` (index
 or null) and `refusal` (or null); a refusal is an answer (`ok` true). WebAPI
 `GET /api/v1/emulator/{id}/media/targets?path=` (served by the `/media/{slot}` route, like
-`/media/formats`). Naming several targets in `media insert` waits for M3 (§4.3 "As built").
+`/media/formats`). Naming several targets in `media insert` landed with M3 (M2b): `ambiguous-slot`
+with the list, floppy drives excepted (the first empty drive, as before: the drives are
+interchangeable and scripts rely on it).
+
+**As built in M3 (2026-10-01):** `MainWindow::loadFile` classifies first; a medium goes to
+`placeMedium` (Plan, then the default, a plain `QMenu` chooser at the cursor, or - command line,
+the CLI's `open` - the first entry, logged), everything else keeps the old by-extension path. The
+drop is handled after the drop event returns (`QTimer::singleShot`), so the menu never opens inside
+the platform's drag session. While dragging, `showDropVerdict` plans the first file: blue border and
+"file -> Drive A" / "choose a slot (...)" in the status bar, red border and the refusal otherwise; a
+refused drop does nothing but repeat the reason in the status bar. The media panel checks a row's
+slot against the plan.
 
 ## 5. Qt: the drop overlay
 

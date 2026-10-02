@@ -38,12 +38,6 @@ namespace
             file.kinds = {FileKind::SdCard, FileKind::Hdd};
     }
 
-    bool IsMediaKind(FileKind kind)
-    {
-        return kind == FileKind::Floppy || kind == FileKind::Tape || kind == FileKind::Hdd ||
-               kind == FileKind::SdCard || kind == FileKind::Optical;
-    }
-
     /// Does a slot take a file of this kind
     bool Takes(const SlotInfo& info, FileKind kind)
     {
@@ -130,6 +124,12 @@ const char* FileKindName(FileKind kind)
     return "unknown";
 }
 
+bool MediaTargets::IsMedium(FileKind kind)
+{
+    return kind == FileKind::Floppy || kind == FileKind::Tape || kind == FileKind::Hdd || kind == FileKind::SdCard ||
+           kind == FileKind::Optical;
+}
+
 bool FileClass::Is(FileKind kind) const
 {
     return std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
@@ -153,11 +153,11 @@ FileClass MediaTargets::Classify(const std::string& path)
     file.path = path;
     const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
 
-    // A folder becomes a TR-DOS disk or a FAT volume: whichever slot takes one
+    // A folder becomes a TR-DOS disk, a FAT volume or a tape: whichever slot takes one
     if (FileHelper::IsFolder(path))
     {
         file.folder = true;
-        file.kinds = {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd};
+        file.kinds = {FileKind::Floppy, FileKind::SdCard, FileKind::Hdd, FileKind::Tape};
         file.format = "folder";
         file.evidence.push_back("a folder");
         return file;
@@ -304,7 +304,7 @@ MediaPlan MediaTargets::Plan(EmulatorContext* context, const FileClass& file)
 
     for (FileKind kind : file.kinds)
     {
-        if (!IsMediaKind(kind))
+        if (!MediaTargets::IsMedium(kind))
             continue;
         std::vector<const SlotInfo*> matches;
         for (const SlotInfo& info : slots)

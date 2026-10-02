@@ -26,6 +26,7 @@
 
 #include "common/threadhelper.h"
 #include "emulator/emulator.h"
+#include "emulator/media/mediatargets.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/mediacontrol.h"
@@ -624,5 +625,27 @@ void MediaPanelWindow::onFilesDropped(int row, const QStringList& paths)
 {
     if (row < 0 || row >= static_cast<int>(_rows.size()) || _rows[static_cast<size_t>(row)].detached)
         return;
-    insertInto(_rows[static_cast<size_t>(row)].slot, paths.front());
+    const MediaPanelRow& target = _rows[static_cast<size_t>(row)];
+    const QString& path = paths.front();
+
+    // The row's slot must take the file (media-drop-targets design §6): the core's plan says which do.
+    // An empty IDE unit may still swap its drive for a CD or a disk image (insertInto asks first)
+    Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
+    if (emulator)
+    {
+        const FileClass file = MediaTargets::Classify(S(path));
+        const MediaPlan plan = MediaTargets::Plan(emulator->GetContext(), file);
+        const bool takes = std::any_of(plan.targets.begin(), plan.targets.end(),
+                                       [&target](const MediaTarget& t) { return t.slotId == target.slot; });
+        const bool driveSwap = target.slot.rfind("ide", 0) == 0 && !target.present &&
+                               (file.Is(FileKind::Optical) || file.Is(FileKind::Hdd));
+        if (!takes && !driveSwap)
+        {
+            const QString why = plan.Refused() ? Q(plan.refusal) : tr("it goes to %1").arg(Q(plan.SlotList()));
+            QMessageBox::information(this, tr("Insert"),
+                                     tr("%1 does not take %2: %3").arg(Q(target.label), QFileInfo(path).fileName(), why));
+            return;
+        }
+    }
+    insertInto(target.slot, path);
 }

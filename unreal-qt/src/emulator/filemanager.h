@@ -14,7 +14,6 @@ enum SupportedFileCategoriesEnum
     FileSnapshot,
     FileTape,
     FileDisk,
-    FileStorage,  // CD, hard disk or memory card image: goes to the slot of that kind the machine has
     FileArchive,
     FileSymbol
 };
