@@ -341,6 +341,7 @@ TEST_F(ScreenSprinter_Test, FrameLength_312And320)
     _screen->InitFrame();
     _z80->BeginFrame();
     EXPECT_EQ(_context->config.frame, 69888u);
+    EXPECT_EQ(_context->config.frame_duration_us, 19968u) << "the wall-clock pacing: 69 888 T / 3.5 MHz = 50.08 Hz";
     EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);
     EXPECT_EQ(_screen->FrameLines(), 312);
     _z80->t = 69887 * Multiplier();
@@ -356,6 +357,7 @@ TEST_F(ScreenSprinter_Test, FrameLength_312And320)
     _screen->InitFrame();
     _z80->BeginFrame();
     EXPECT_EQ(_context->config.frame, 71680u);
+    EXPECT_EQ(_context->config.frame_duration_us, 20480u) << "71 680 T / 3.5 MHz = 48.83 Hz (MAME: 896 x 320 at 14 MHz)";
     EXPECT_EQ(_screen->FrameLines(), 320);
     EXPECT_EQ(SprinterVideoRenderer::B8(_screen->CurrentInputs(), 0), 304u);
     _z80->t = 0;

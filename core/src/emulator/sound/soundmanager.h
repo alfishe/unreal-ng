@@ -15,6 +15,7 @@
 #include "common/sound/filters/resampler_drc.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/covox.h"
+#include "emulator/sound/modelaudiosource.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/audioactivityindicators.h"
@@ -96,6 +97,9 @@ protected:
     Beeper* _beeper = nullptr;
     ITurboSoundDevice* _turboSound = nullptr;  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
+    // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
+    // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
+    IModelAudioSource* _modelAudio = nullptr;
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
 #ifdef UNREALNG_HAVE_OPL4
     SoundChip_Moonsound* _moonsound = nullptr;
@@ -369,6 +373,13 @@ public:
     // Covox access
     bool hasCovox() const { return _covox != nullptr; }
     Covox* getCovox() const { return _covox; }
+
+    /// A machine's own DAC device (IModelAudioSource): it takes the COVOX mixer slot (row, recording
+    /// source "COVOX", HUD LED) under its own name; a generic Covox, if one is configured, is no longer
+    /// mixed. The owner (the port decoder) detaches before it is destroyed. Emulation thread
+    void attachModelAudioSource(IModelAudioSource* source);
+    void detachModelAudioSource(IModelAudioSource* source);
+    IModelAudioSource* getModelAudioSource() const { return _modelAudio; }
 
     // General Sound access (automation, TTD, tests - M8 pattern). The slot is
     // personality-agnostic: LLE (Z80+firmware) or LW (in-tree mod player) both

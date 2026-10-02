@@ -99,7 +99,7 @@ uint64_t HashOf(const TTDSerializable& device)
 // Layout (v1):
 //    0    1  version
 //    1  112  SprinterPldState (fixed-width fields, no padding: sprinterpldstate.h)
-//  113    1  code #89 Covox-Blaster control (the decoder's _cblControl)
+//  113    1  code #89 Covox-Blaster control (CovoxBlaster's; its blob, id 32, carries it too)
 //  114    1  powered on (the next reset is a RESET button, not a power-on)
 //  115    8  frame of the first port read after the last PLD reset (i64, -1 = not yet)
 //  123    2  its PC
@@ -140,7 +140,7 @@ void TTDSprinterPld::TTDSaveState(uint8_t* dst) const
     Writer w{dst};
     w.U8(kVersion);
     w.Bytes(&d._pld, sizeof(SprinterPldState));
-    w.U8(d._cblControl);
+    w.U8(d._cbl.State().control);
     w.U8(d._poweredOn ? 1 : 0);
     w.U64(static_cast<uint64_t>(d._dcpOpenedFrame));
     w.U16(d._dcpOpenedPc);
@@ -185,7 +185,7 @@ void TTDSprinterPld::TTDLoadState(const uint8_t* src)
     PortDecoder_Sprinter& d = _decoder;
     Reader r{src + 1};
     r.Bytes(&d._pld, sizeof(SprinterPldState));
-    d._cblControl = r.U8();
+    d._cbl.RestoreControl(r.U8());
     d._poweredOn = r.U8() != 0;
     d._dcpOpenedFrame = static_cast<int64_t>(r.U64());
     d._dcpOpenedPc = r.U16();
@@ -423,5 +423,79 @@ uint64_t TTDSprinterFastRam::TTDHashState() const
 }
 
 /// endregion </TTDSprinterFastRam>
+
+/// region <TTDSprinterCovoxBlaster>
+//
+// Layout (v1, 545 bytes):
+//    0    1  version
+//    1  512  ring, 256 x u16
+//  513    1  control (code #89)
+//  514    1  play index CBL_CNT
+//  515    1  write index CBL_WA
+//  516    1  CBD (low byte of a 16-bit sample)
+//  517    1  the CBL_WAE flip-flop
+//  518    1  INT request pending
+//  519    2  left DAC word
+//  521    2  right DAC word
+//  523    2  reserved
+//  525    4  next play tick (base T-state in the frame)
+//  529   16  statistics: ticks, ring writes, Covox writes, INT requests (u32 each)
+
+void TTDSprinterCovoxBlaster::TTDSaveState(uint8_t* dst) const
+{
+    if (!dst)
+        return;
+    const CovoxBlasterState& c = _decoder.GetCovoxBlaster().State();
+    Writer w{dst};
+    w.U8(kVersion);
+    for (uint16_t entry : c.ring)
+        w.U16(entry);
+    w.U8(c.control);
+    w.U8(c.cnt);
+    w.U8(c.wa);
+    w.U8(c.cbd);
+    w.U8(c.waeFlip);
+    w.U8(c.intPending);
+    w.U16(c.levelL);
+    w.U16(c.levelR);
+    w.U16(c.reserved0);
+    w.U32(c.nextTick);
+    w.U32(c.ticks);
+    w.U32(c.ringWrites);
+    w.U32(c.covoxWrites);
+    w.U32(c.intRequests);
+}
+
+void TTDSprinterCovoxBlaster::TTDLoadState(const uint8_t* src)
+{
+    if (!src || src[0] != kVersion)
+        return;
+    CovoxBlasterState c{};
+    Reader r{src + 1};
+    for (uint16_t& entry : c.ring)
+        entry = r.U16();
+    c.control = r.U8();
+    c.cnt = r.U8();
+    c.wa = r.U8();
+    c.cbd = r.U8();
+    c.waeFlip = r.U8();
+    c.intPending = r.U8();
+    c.levelL = r.U16();
+    c.levelR = r.U16();
+    c.reserved0 = r.U16();
+    c.nextTick = r.U32();
+    c.ticks = r.U32();
+    c.ringWrites = r.U32();
+    c.covoxWrites = r.U32();
+    c.intRequests = r.U32();
+    _decoder.GetCovoxBlaster().RestoreState(c);
+}
+
+uint64_t TTDSprinterCovoxBlaster::TTDHashState() const
+{
+    return HashOf(*this);
+}
+
+/// endregion </TTDSprinterCovoxBlaster>
 
 }  // namespace ttd

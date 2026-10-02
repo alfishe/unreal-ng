@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -506,60 +507,56 @@ const std::vector<std::string>& Halt2Int48KEarly()
     return lines;
 }
 
-/// Where unreal-ng prints something else today (contention backlog C9): during HALT the Z80 fetches the byte AFTER
-/// the HALT and ignores it (the program counter already points past it); unreal-ng re-fetches the HALT itself
-/// (op_76 steps PC back). With the HALT at #7FFF the hardware's halt fetches go to #8000, uncontended, while
-/// unreal-ng's wait on #7FFF, so the interrupt is taken later; #BFFF / #FFFF are followed by uncontended bytes
-/// either way. The header follows from the values. Each entry: the line and what unreal-ng prints there now -
-/// when the core is fixed this test fails, and the entry goes
-const std::map<size_t, std::string>& Halt2IntKnownDeviations()
-{
-    static const std::map<size_t, std::string> lines = {
-        { 0, "Float: Early    HALT: Unknown" },
-        { 4, "16384/14335:44  32767/14335:44" },
-        { 7, "16384/14336:44  32767/14336:44" },
-        { 10, "16384/14562:1C  32767/14562:1C" },
-    };
-    return lines;
-}
 }  // namespace
 
 class Halt2Int_Test : public RomEditorFixture
 {
+protected:
+    /// Boots `model`'s 48 BASIC, loads `tape` and runs it to "0 OK"; the result lines without their padding (the
+    /// blank rows between the groups dropped)
+    std::vector<std::string> RunHalt2Int(const char* model, const char* tape)
+    {
+        std::vector<std::string> shown;
+        Boot(model, RM_SOS, "1982 Sinclair");
+        if (HasFatalFailure())
+            return shown;
+        _context->pFeatureManager->setFeature(Features::kFastTape, true);
+        _context->coreState.tapeFilePath = TestPathHelper::GetTestDataPath(std::string("contention/halt2int-v3/") + tape);
+        CommandTyper* typer = _context->pDebugManager->GetCommandTyper();
+        EXPECT_TRUE(typer->Request("LOAD \"\"", CommandTyper::Options{}));
+        RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000);
+        EXPECT_TRUE(RunUntil([&] { return Screen().find("0 OK") != std::string::npos; }, 3000)) << Screen();
+        std::istringstream rows(Screen());
+        std::string row;
+        while (std::getline(rows, row))
+        {
+            const size_t end = row.find_last_not_of(' ');
+            if (end == std::string::npos)
+                continue;
+            row.resize(end + 1);
+            if (row.find(':') != std::string::npos && row.find("OK") == std::string::npos)
+                shown.push_back(row);
+        }
+        return shown;
+    }
 };
 
-/// Boots the 48K ROM, loads the tape and runs the program to "0 OK" (~1 s: the ROM boot and the tape). Every
-/// line as on the hardware but the known deviations above
+/// The 48K program against the published early screen (~1 s: the ROM boot and the tape). Every line as on the
+/// hardware (the HALT column since the halted CPU fetches the byte after the HALT, 2026-10-02)
 TEST_F(Halt2Int_Test, EarlyMatchesTheHardware)
 {
-    Boot("48K", RM_SOS, "1982 Sinclair");
-    ASSERT_FALSE(HasFatalFailure());
-    _context->pFeatureManager->setFeature(Features::kFastTape, true);
-    _context->coreState.tapeFilePath = TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap");
-    CommandTyper* typer = _context->pDebugManager->GetCommandTyper();
-    ASSERT_TRUE(typer->Request("LOAD \"\"", CommandTyper::Options{}));
-    RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000);
-    ASSERT_TRUE(RunUntil([&] { return Screen().find("0 OK") != std::string::npos; }, 3000)) << Screen();
+    EXPECT_EQ(RunHalt2Int("48K", "halt2int.tap"), Halt2Int48KEarly()) << Screen();
+}
 
-    // The rows without their padding; the blank rows between the groups dropped
-    std::vector<std::string> shown;
-    std::istringstream rows(Screen());
-    std::string row;
-    while (std::getline(rows, row))
-    {
-        const size_t end = row.find_last_not_of(' ');
-        if (end == std::string::npos)
-            continue;
-        row.resize(end + 1);
-        if (row.find(':') != std::string::npos && row.find("OK") == std::string::npos)
-            shown.push_back(row);
-    }
-    std::vector<std::string> expected = Halt2Int48KEarly();
-    for (const auto& [line, printed] : Halt2IntKnownDeviations())
-        expected[line] = printed;
-    EXPECT_EQ(shown, expected) << "a known deviation changed: if unreal-ng now prints the hardware's line, drop its "
-                                  "entry in Halt2IntKnownDeviations\n"
-                               << Screen();
+/// The 128K program (no published screen): it compares its own measurements with an early and a late 128K and
+/// says which one it found, for the floating bus and for the HALT. unreal-ng's 128K has the early timings
+TEST_F(Halt2Int_Test, Early128KIsRecognized)
+{
+    const std::vector<std::string> shown = RunHalt2Int("128k", "halt2int128.tap");
+    ASSERT_FALSE(shown.empty()) << Screen();
+    EXPECT_EQ(shown.front(), "Float: Early    HALT: Early") << Screen();
+    if (std::getenv("UNREAL_HALT2INT_PRINT"))
+        std::printf("%s\n", Screen().c_str());
 }
 
 /// endregion </HALT2INT v3 (Mark Woodmass)>
