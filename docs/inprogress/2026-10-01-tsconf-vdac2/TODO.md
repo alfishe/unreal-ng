@@ -34,6 +34,9 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] FT812 bus capture (.evr replay stream, test corpus §4) on every automation surface; R-Type
   gameplay capture taken (local, 144 MB) for the library's replay tests and optimization
 - [ ] A/B benchmark of the TS-Conf per-step path (`BM_HostFrame_TSConf_*`, I1 vs I2) on a quiet machine
-- [ ] Performance: the FT812 in step with the machine saturates a core; optimize the library on the
-  replay stream, then study a parallel render thread
+- [x] Performance: the library optimized on the replay stream (R-Type 0.61x -> 4.5x real time on one core)
+- [x] Acceleration experiments (CPU line threads, native GPU, three profiles): results in
+  [acceleration-experiments.md](acceleration-experiments.md), experiments in `tools/poc/021-eve-accel/`
+- [ ] Build the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
+  graphics memory writes, skip unchanged frames, SIMD BILINEAR; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1
