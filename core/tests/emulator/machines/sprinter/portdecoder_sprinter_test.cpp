@@ -623,7 +623,7 @@ TEST_F(PortDecoderSprinterIde_Test, OutiLoopWritesASectorInOrder)
     EXPECT_EQ(In(0x4053), 0x50);
 }
 
-// The channel select through the table: OUT (#BC),#01 reaches the secondary channel (empty: the bus floats),
+// The channel select through the table: OUT (#BC),#01 reaches the secondary channel (empty: DD7 pulled down, #7F),
 // OUT (#BC),#21 the primary again; the latch is the IDE adapter's (the AtaChannel TTD blob)
 TEST_F(PortDecoderSprinterIde_Test, ChannelSelectThroughTheTable)
 {
@@ -632,7 +632,7 @@ TEST_F(PortDecoderSprinterIde_Test, ChannelSelectThroughTheTable)
     EXPECT_EQ(In(0x4053), 0x50);
     Out(0x01BC, 0x01);
     EXPECT_EQ(_decoder->GetIdeAdapter().State().channel, 1);
-    EXPECT_EQ(In(0x4053), 0xFF) << "secondary: no drive";
+    EXPECT_EQ(In(0x4053), 0x7F) << "secondary: no drive, BSY = 0";
     Out(0x21BC, 0x21);
     EXPECT_EQ(In(0x4053), 0x50);
 

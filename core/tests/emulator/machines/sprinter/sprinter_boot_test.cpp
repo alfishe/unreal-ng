@@ -23,7 +23,10 @@
 #include <emulator/ports/models/portdecoder_sprinter.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -222,17 +225,103 @@ protected:
 
     bool ScreenHas(const std::string& needle) { return ScreenText().find(needle) != std::string::npos; }
 
-    /// SETUP's IDE detection waits ~31 s per empty unit (no IDE adapter before S3b): press F4 for both, as a
-    /// user does. Set 2 scan codes through the Z84C15 SIO channel A, which SETUP's interrupt handler reads
+    /// SETUP's IDE detection with no drive: an empty channel reads #7F (the DD7 pull-down, BSY = 0), so BIOS 3.04
+    /// reports both primary units "None" at once, without the F4 a user pressed while the bus floated at #FF
     void SkipIdeDetection()
     {
-        for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Primary Slave") == "None"; }, 400, 1);
+        ASSERT_EQ(DetectResult("Primary Master"), "None") << ScreenText();
+        ASSERT_EQ(DetectResult("Primary Slave"), "None") << ScreenText();
+    }
+
+    /// What SETUP printed after "Detecting IDE <unit> ... ": "None", "Skipped" or the drive's model; empty while the
+    /// unit is still probed ("[Press F4 to skip]") or not reached yet
+    std::string DetectResult(const std::string& unit)
+    {
+        const std::string text = ScreenText();
+        const size_t at = text.find("Detecting IDE " + unit);
+        if (at == std::string::npos)
+            return {};
+        const size_t eol = text.find('\n', at);
+        const size_t dots = text.find("... ", at);
+        if (dots == std::string::npos || dots > eol)
+            return {};
+        std::string result = text.substr(dots + 4, eol - dots - 4);
+        result.erase(result.find_last_not_of(' ') + 1);
+        return result.rfind("[Press F4", 0) == 0 ? std::string() : result;
+    }
+
+    /// A blank hard disk image (1 MiB) in the scratch folder: enough for IDENTIFY
+    static std::string BlankHddFile(const std::string& leaf)
+    {
+        std::vector<uint8_t> disk(1024 * 1024, 0);
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(leaf);
+        return FileHelper::SaveBufferToFile(path, disk.data(), disk.size()) ? path : std::string();
+    }
+
+    struct UnitProbe
+    {
+        std::string unit;
+        std::string result;
+        uint64_t frames = 0;  ///< from the previous unit's result (the first: from "Detecting IDE" on the screen)
+    };
+
+    /// SETUP's IDE scan, unit by unit: each unit's result and the frames its probe took
+    std::vector<UnitProbe> RunIdeDetection(const std::vector<std::string>& units, int maxFramesPerUnit)
+    {
+        std::vector<UnitProbe> probes;
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Detecting IDE " + units[0]); }, 800, 1);
+        uint64_t last = Frame();
+        for (const std::string& unit : units)
         {
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(unit); }, 400, 5);
-            ASSERT_TRUE(ScreenHas(unit)) << ScreenText();
-            for (uint8_t code : {0x0C, 0xF0, 0x0C})
-                _decoder->GetZ84().sio.Receive(0, code);
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !DetectResult(unit).empty(); }, maxFramesPerUnit, 1);
+            probes.push_back({unit, DetectResult(unit), Frame() - last});
+            last = Frame();
+        }
+        return probes;
+    }
+
+    /// The kept BIOS images and the units their SETUP scans (3.04: the primary channel; 3.06 / 3.07: both)
+    static const std::vector<std::pair<std::string, std::vector<std::string>>>& DetectingBioses()
+    {
+        static const std::vector<std::string> two = {"Primary Master", "Primary Slave"};
+        static const std::vector<std::string> four = {"Primary Master", "Primary Slave", "Secondary Master", "Secondary Slave"};
+        static const std::vector<std::pair<std::string, std::vector<std::string>>> bioses = {
+            {"sp2k-3.04.rom", two}, {"sp2k-3.06-hf2.rom", four}, {"sp2k-3.07-beta1.rom", four}};
+        return bioses;
+    }
+
+    /// Each kept BIOS on a fresh machine (a blank CMOS and RAM: what one image leaves there changes the next one's
+    /// scan) with `insertMedia` through its IDE scan: every unit's result is `expected(unit)`; a unit on a channel
+    /// without a drive takes at most `kEmptyProbeFrames`
+    void ExpectIdeDetection(const std::function<void()>& insertMedia, const std::function<std::string(const std::string&)>& expected,
+                            const std::function<bool(const std::string&)>& channelEmpty)
+    {
+        constexpr uint64_t kEmptyProbeFrames = 10;  // ~0.2 s; a floating #FF bus kept BSY set for ~31 s
+        for (const auto& [bios, units] : DetectingBioses())
+        {
+            if (bios != DetectingBioses().front().first)
+            {
+                TearDown();
+                SetUp();
+            }
+            insertMedia();
+            if (!UseBios(bios))
+            {
+                ADD_FAILURE() << "data/rom/sprinter/" << bios << " not loaded";
+                continue;
+            }
+            for (const UnitProbe& probe : RunIdeDetection(units, 2000))
+            {
+                EXPECT_EQ(probe.result, expected(probe.unit)) << bios << " " << probe.unit << "\n" << ScreenText();
+                if (channelEmpty(probe.unit))
+                    EXPECT_LE(probe.frames, kEmptyProbeFrames) << bios << " " << probe.unit;
+                std::string key = bios + "-" + probe.unit;
+                std::replace(key.begin(), key.end(), ' ', '-');
+                RecordProperty(key, std::to_string(probe.frames) + " frames, " + probe.result);
+                std::printf("[ IDE probe ] %-20s %-17s %5llu frames  %s\n", bios.c_str(), probe.unit.c_str(),
+                            static_cast<unsigned long long>(probe.frames), probe.result.c_str());
+            }
         }
     }
 
@@ -343,17 +432,6 @@ protected:
         return true;
     }
 
-    /// F4 at SETUP's "Detecting IDE <unit> ... [Press F4 to skip]" (an empty channel floats: BSY never drops)
-    void PressF4At(const std::string& unit, int maxFrames = 2000)
-    {
-        const std::string waiting = unit + " ... [Press F4";
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(waiting); }, maxFrames, 1);
-        ASSERT_TRUE(ScreenHas(waiting)) << ScreenText();
-        for (uint8_t code : {0x0C, 0xF0, 0x0C})
-            _decoder->GetZ84().sio.Receive(0, code);
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(waiting); }, 300, 1);
-    }
-
     /// The DSS 1.62.92 system on a built hard disk (BuildDssHdd): the floppy's loader (LBA 1-3) and its SYSTEM.DOS /
     /// SYSTEM.EXE, with `bat` as SYSTEM.BAT; saved as a unique scratch file. Empty when the floppy is missing
     std::string DssHddFile(const std::string& leaf, const std::string& bat)
@@ -448,17 +526,9 @@ TEST_F(SprinterBoot_Test, Bios304_ReachesTheBootMenu)
     EXPECT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
     EXPECT_TRUE(ScreenHas("Memory    : 4096K")) << ScreenText();
 
-    // IDE auto-detect: no drive answers (the IDE adapter comes in S3b), so each unit waits ~31 s
-    // for BSY to drop. A user presses F4, as the screen says: the AT scan code arrives on
-    // the Z84C15 SIO channel A, which SETUP's interrupt handler polls (set 2: F4 = #0C)
-    for (const char* unit : {"Primary Master   ... [Press F4", "Primary Slave    ... [Press F4"})
-    {
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas(unit); }, 300, 5);
-        ASSERT_TRUE(ScreenHas(unit)) << ScreenText();
-        for (uint8_t code : {0x0C, 0xF0, 0x0C})
-            _decoder->GetZ84().sio.Receive(0, code);
-        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas(unit); }, 300, 1);
-    }
+    // IDE auto-detect with no drive: the empty channel reads #7F (DD7 pulled down, BSY = 0) and the sector count
+    // does not echo, so both units are "None" at once (a floating #FF kept BSY set: ~31 s per unit until F4)
+    SkipIdeDetection();
 
     // No boot device: the floppy and the hard disk fail, the BIOS offers ENTER / ESC
     const char* prompt = "PRESS <ENTER> TO REBOOT, <ESC> TO CANCEL";
@@ -827,10 +897,43 @@ TEST_F(SprinterBoot_Test, Bios306_DssUsesBothChannels)
     std::remove(data.c_str());
 }
 
+// Empty channels (tdd-storage §3.4): the Sprinter's AT board pulls DD7 down as the ATA standard asks, so a channel
+// with no drive reads #7F - BSY = 0 - and every BIOS rejects its units at once:
+//   3.04 (two units, AUTOIDE MASTER): status without BSY, then the sector count written with 5 reads back #7F;
+//   3.06 / 3.07 (four units, AUTOIDE.asm AUTODETECTING): CheckChanel's floating-bus signature (#78 #68 #ED, the
+//   opcode bytes a bus-holding board returns) does not match, Bug31SecCheck / Clear_BUSY see BSY = 0 at once, and
+//   DETECTORS.Counter reads #7F instead of 5.
+// A floating #FF (the S3b model) kept BSY set: ~1650 frames on a master (the 2 s Bug31 wait, then 31 s) and ~1550 on
+// a slave, until F4. An absent slave next to a master is unchanged: the master answers with status #00 (3.04's NOP
+// check waits #118 HALTs for DRDY, 3.06 / 3.07 see status 0 at once).
+// Boot-bound (BIOS POST, SETUP and the IDE scan of three BIOS images per test, ~300-500 frames each), turbo mode on
+TEST_F(SprinterBoot_Test, EmptyChannels_DiskOnThePrimaryMasterOnly)
+{
+    const std::string image = BlankHddFile("ide-empty-pm.img");
+    ASSERT_FALSE(image.empty());
+    ExpectIdeDetection([&] { InsertHdd(image, "ide0.master"); }, [](const std::string& unit) { return unit == "Primary Master" ? "UNREAL-NG HDD" : "None"; },
+                       [](const std::string& unit) { return unit.rfind("Secondary", 0) == 0; });
+    std::remove(image.c_str());
+}
+
+TEST_F(SprinterBoot_Test, EmptyChannels_NoDrives)
+{
+    ExpectIdeDetection([] {}, [](const std::string&) { return "None"; }, [](const std::string&) { return true; });
+}
+
+TEST_F(SprinterBoot_Test, EmptyChannels_DiskOnTheSecondaryMasterOnly)
+{
+    const std::string image = BlankHddFile("ide-empty-sm.img");
+    ASSERT_FALSE(image.empty());
+    ExpectIdeDetection([&] { InsertHdd(image, "ide1.master"); }, [](const std::string& unit) { return unit == "Secondary Master" ? "UNREAL-NG HDD" : "None"; },
+                       [](const std::string& unit) { return unit.rfind("Primary", 0) == 0; });
+    std::remove(image.c_str());
+}
+
 // The owner's real system disk (the MAME pack's sp_hdd_sys.chd as a raw 1 GiB image, not in the repo; path in
 // UNREAL_SPRINTER_HDD): DSS 1.71.57 on BIOS 3.06, the firmware the pack runs it with (BIOS 3.04 loads the DSS loader
 // and SYSTEM.DOS, then DSS 1.71 stops in its own start-up with "Fatal error", as it does from the DSS 1.71 floppy).
-// Guest writes stay in memory (Session). The empty secondary units float and are skipped with F4; MAME reaches the
+// Guest writes stay in memory (Session). The empty secondary channel reads #7F (DD7 pull-down): "None" at once; MAME reaches the
 // banner at frame 385 with its CD unit on the primary slave (testdata/machines/sprinter/reference/README.md).
 // Boot-bound (BIOS POST, SETUP, DSS 1.71 from the hard disk), the turbo mode on
 TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackImage)
@@ -842,8 +945,9 @@ TEST_F(SprinterBoot_Test, RealHdd_Dss171BootsFromTheMamePackImage)
         GTEST_SKIP() << "data/rom/sprinter/sp2k-3.06-hf2.rom not found";
     InsertHdd(path);
 
-    PressF4At("Secondary Master ");
-    PressF4At("Secondary Slave  ");
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return DetectResult("Secondary Slave") == "None"; }, 800, 1);
+    EXPECT_EQ(DetectResult("Secondary Master"), "None") << ScreenText();
+    EXPECT_EQ(DetectResult("Secondary Slave"), "None") << ScreenText();
     EXPECT_TRUE(ScreenHas("Detecting IDE Primary Master    ... UNREAL-NG HDD")) << ScreenText();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 400, 1);
     EXPECT_TRUE(ScreenHas("Boot from HDD Primary IDE Master OK")) << ScreenText();
@@ -891,3 +995,4 @@ TEST_F(SprinterBoot_Test, InstancesCanBeRemovedAndCreatedAgain)
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Memory    : 4096K"); }, 300, 5);
     EXPECT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
 }
+
