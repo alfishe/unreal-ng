@@ -83,3 +83,33 @@ TEST(ZXEvoSdCardTtd_Test, HashFollowsTheControllerState)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// Version 2 stores the whole Z-Controller config byte (the TS-Conf VDAC2
+/// build has a second chip select on D2); version 1 blobs, which stored the
+/// SD /CS bit, still load
+TEST(ZXEvoSdCardTtd_Test, Version1BlobStillLoads)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    LeaveShadow(context->emulatorState);
+    decoder->DecodePortOut(0x0077, 0x00, 0);  // selected
+
+    ttd::TTDEvoSdCard serializer(decoder->GetSdCard(), decoder->GetZController());
+    std::vector<uint8_t> blob(serializer.TTDStateSize());
+    serializer.TTDSaveState(blob.data());
+    EXPECT_EQ(blob[0], 2) << "current layout";
+    EXPECT_EQ(blob[1], 0x00) << "the config byte";
+
+    blob[0] = 1;  // version 1: [1] = SD /CS, 1 = deselected
+    blob[1] = 1;
+    serializer.TTDLoadState(blob.data());
+    EXPECT_FALSE(decoder->GetZController().IsSelected());
+    blob[1] = 0;
+    serializer.TTDLoadState(blob.data());
+    EXPECT_TRUE(decoder->GetZController().IsSelected());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

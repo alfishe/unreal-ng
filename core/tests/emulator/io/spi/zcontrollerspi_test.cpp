@@ -137,3 +137,72 @@ TEST(ZControllerSpi_Test, StateRoundTripMidCommand)
     for (int i = 0; i < 1500; i++)
         ASSERT_EQ(b.ReadData(), a.ReadData()) << "byte " << i;
 }
+
+/// Several devices (vdac2-integration-design.md §4): the TS-Conf VDAC2 build
+/// puts the FT812 on D2, active high (zports.v:296-311). Each slot follows
+/// its own config bit; a selected slot 1..3 device drives MISO instead of the
+/// SD card (top.v:1173-1178); it is clocked only while selected; slot 0 sees
+/// every byte as before
+TEST(ZControllerSpi_Test, SecondDeviceOnD2DrivesMisoWhileSelected)
+{
+    ScriptedDevice sd;
+    ScriptedDevice ft;
+    ZControllerSpi zc;
+    zc.SetDevice(&sd);
+    zc.AttachDevice(1, &ft, 0x04, true);
+    zc.Reset();
+    EXPECT_FALSE(zc.IsSelected());
+    EXPECT_FALSE(zc.IsSlotSelected(1)) << "reset: every select inactive";
+    sd.selects.clear();
+    ft.selects.clear();
+
+    zc.WriteConfig(0x07);  // TS-Labs SPI_FT_CS_ON: FT selected, SD deselected
+    EXPECT_TRUE(zc.IsSlotSelected(1));
+    EXPECT_FALSE(zc.IsSelected());
+    EXPECT_EQ(ft.selects, (std::vector<bool>{true}));
+    EXPECT_TRUE(sd.selects.empty()) << "SD stays deselected: not told again";
+
+    ft.replies = {0x7C};
+    sd.replies = {0x55};
+    zc.WriteData(0x30);
+    EXPECT_EQ(zc.ReadData(), 0x7C) << "the FT812 drives MISO";
+    EXPECT_EQ(ft.sent, (std::vector<uint8_t>{0x30, 0xFF}));
+    EXPECT_EQ(sd.sent, (std::vector<uint8_t>{0x30, 0xFF})) << "slot 0 is clocked as always";
+
+    zc.WriteConfig(0x03);  // SPI_FT_CS_OFF
+    EXPECT_FALSE(zc.IsSlotSelected(1));
+    EXPECT_EQ(ft.selects, (std::vector<bool>{true, false}));
+    zc.WriteData(0x11);
+    EXPECT_EQ(ft.sent.size(), 2u) << "a deselected slot 1..3 device is not clocked";
+
+    zc.WriteConfig(0x01);  // SD selected, FT not
+    sd.replies = {0x42};
+    zc.WriteData(0x12);
+    EXPECT_EQ(zc.ReadData(), 0x42) << "the SD card drives MISO when the FT812 is deselected";
+}
+
+/// The single-device machines see no difference: slot 0 only, the config
+/// byte is kept whole, a state round trip re-announces every select
+TEST(ZControllerSpi_Test, StateKeepsTheWholeConfigByte)
+{
+    ScriptedDevice sd;
+    ScriptedDevice ft;
+    ZControllerSpi a;
+    a.SetDevice(&sd);
+    a.AttachDevice(1, &ft, 0x04, true);
+    a.Reset();
+    a.WriteConfig(0x07);
+    EXPECT_EQ(a.GetState().config, 0x07);
+
+    ScriptedDevice sd2;
+    ScriptedDevice ft2;
+    ZControllerSpi b;
+    b.SetDevice(&sd2);
+    b.AttachDevice(1, &ft2, 0x04, true);
+    b.SetState(a.GetState());
+    EXPECT_TRUE(b.IsSlotSelected(1));
+    EXPECT_FALSE(b.IsSelected());
+    ASSERT_FALSE(ft2.selects.empty());
+    EXPECT_TRUE(ft2.selects.back());
+    EXPECT_FALSE(sd2.selects.back());
+}
