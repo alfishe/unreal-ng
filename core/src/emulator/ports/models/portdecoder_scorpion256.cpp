@@ -151,6 +151,9 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
 
     if (wanted)
     {
+        // A new overlay when the configured logic changed since the last one (a test, a config reload)
+        if (_turboOverlay && _turboOverlay->Logic() != _context->config.scorpionTurboLogic)
+            _turboOverlay.reset();
         if (!_turboOverlay)
         {
             // The fetch window starts 14336 T after INT, which fires at intstart + 1 (research-scorpion-turbo.md 5)
