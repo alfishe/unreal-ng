@@ -95,9 +95,9 @@ an engine never sees one.
 analyzers, the ROM traps), the call trace, the opcode profiler, the debug trace. Only the block
 "fetch + execute + Q" becomes `_engine->ExecuteStep()`.
 
-`Z80Step` stays the native interpreter's own step. Tests that drive a Sprinter must use
-`StepInstruction` (the one entry that honors the engine); the one Sprinter test that called
-`Z80Step` directly is switched over.
+`Z80Step` stays the native interpreter's own step. Tests that drive a Sprinter use
+`StepInstruction` or, below it, `EngineStep` (the Sprinter fixture's `Step()`); the Sprinter tests
+that called `Z80Step` directly are switched over.
 
 ### 2.3 Cost
 
@@ -153,8 +153,9 @@ wait generator needs ("no wait states for the on-chip registers", research §4.1
 ## 4. The host adapter `Z84C15Engine`
 
 `core/src/emulator/io/z84c15/z84c15engine.{h,cpp}`, machine neutral (the isolation test keeps it
-free of Sprinter names). It owns the library chip and implements `ICpuEngine` and
-`IInterruptSource`.
+free of Sprinter names). It wires a library chip owned by the machine (the Sprinter's decoder owns
+`Z84Lib::Z84C15`: its ports and registers exist before the CPU is wired) to the `Z80`, implements
+`ICpuEngine`, and installs an inner `IInterruptSource` (the daisy chain, then the board's /INT).
 
 | Job | How |
 |:--|:--|
