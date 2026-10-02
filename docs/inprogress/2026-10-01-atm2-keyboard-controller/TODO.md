@@ -1,6 +1,6 @@
 # TODO: ATM Turbo 2+ keyboard controller
 
-Status 2026-10-01 (branch `esp-modules`, uncommitted):
+Status 2026-10-01 (K0-K3 and the controller's TTD blob on master da579f4d9; K4 on branch `esp-modules`):
 
 - K0 done: reference, TDD, the nine images in `data/rom/atm2kbc/` (origin and links in its
   README). The firmware archives and sources themselves are kept outside the repository; every
@@ -15,8 +15,13 @@ Status 2026-10-01 (branch `esp-modules`, uncommitted):
   (`[INPUT] HostKeyboard=`, `key route`, `POST /keyboard/route`, Qt Machine > Host
   Keyboard); automation presses chord PC keys one frame apart.
 
-Next: K4 (the firmware's UART to the serial peers, NetworkManager serial port
-`Atm2Kbc`, Network window), K5 (TTD blob, state report on every surface, A/B benchmark).
+- K4 in progress: the firmware's UART to the serial peers (`ComPort=` on ATM710,
+  RTS-gated receive, modem lines), NetworkManager serial port `Atm2Kbc` beside a ZX-WiFi
+  card, `kbc_firmware` at runtime, `machine_serial` in the network state on every
+  surface, the peer's TTD blob (`MachineSerialPeer` = 27). Left: Qt Network window,
+  NedoOS ATM2 ESP kernel end-to-end check.
+
+Next: K5 (state report `atm2kbc` on every surface, A/B benchmark - skipped for now).
 Open: tdd §12; seen once: the same CP/M test reaches a key at a slightly different
 controller clock depending on which tests ran before it in the process (to explain
 before TTD work).

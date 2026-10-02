@@ -71,6 +71,13 @@ public:
     void reset() override;
     void OnFrameEnd() override;
 
+    /// Fit the keyboard controller [ATM] Kbc= / [ROM] ATM2KBC= name (power-on of
+    /// the controller; a runtime firmware change); its peer stays attached
+    bool ReloadKeyboardController(std::string& error);
+
+    /// The controller's RS-232 is the machine's own serial port (Atm2Kbc)
+    NetworkCapabilities DescribeNetwork() override;
+
     /// The keyboard controller (nullptr when [ATM] Kbc=NONE or on the ZX-Evo)
     Atm2Kbc* GetKeyboardController() const { return _kbc && _kbc->Present() ? _kbc.get() : nullptr; }
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;

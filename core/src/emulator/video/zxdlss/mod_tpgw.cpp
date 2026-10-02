@@ -366,6 +366,7 @@ private:
     }
     std::vector<uint8_t> _shifted, _motion;
     std::vector<int> _cost;
+    std::vector<int> _active;                // translation(): tiles that need the shift search
 
     std::vector<uint8_t> _period, _start, _explained;
 
@@ -660,6 +661,28 @@ private:
         const int th = _h / T, tw = _w / T;
         const size_t px = static_cast<size_t>(_w) * _h;
         const int nshift = (2 * R + 1) * (2 * R + 1);
+        const int zero = (2 * R + 1) * R + R;
+        _motion.assign(px, 0);
+        // A tile is a candidate only when the unshifted difference exceeds 2 % of
+        // it (the c0 test below). That cost is cheap; the 288-shift search runs
+        // for candidate tiles only, so static or barely changing frames skip it
+        // and the result is the same as searching every tile
+        _cost.assign(static_cast<size_t>(nshift) * th * tw, 0);
+        int* c0s = &_cost[static_cast<size_t>(zero) * th * tw];
+        for (int y = 0; y < th * T; ++y)
+        {
+            const uint8_t* a = cur + static_cast<size_t>(y) * _w;
+            const uint8_t* b = prev + static_cast<size_t>(y) * _w;
+            int* ct = c0s + (y / T) * tw;
+            for (int tx = 0; tx < tw; ++tx)
+                ct[tx] += simd::diff32(a + tx * T, b + tx * T);
+        }
+        _active.clear();
+        for (int t = 0; t < th * tw; ++t)
+            if (c0s[t] > 0.02 * T * T)
+                _active.push_back(t);
+        if (_active.empty())
+            return;
         // shifted[dx + R][y][x] = prev[y][(x - dx) mod W]
         _shifted.resize(static_cast<size_t>(2 * R + 1) * px);
         for (int dx = -R; dx <= R; ++dx)
@@ -668,58 +691,57 @@ private:
             for (int y = 0; y < _h; ++y)
                 copyShifted(dst + static_cast<size_t>(y) * _w, prev + static_cast<size_t>(y) * _w, _w, dx);
         }
-        _cost.assign(static_cast<size_t>(nshift) * th * tw, 0);
-        // SIMD-CANDIDATE(O-2): compare + count per tile, 289 shifts (vectorized byte loop, threads)
+        // SIMD(SSE2,NEON; scalar fallback): compare + count per tile column, 288 shifts, threads
         parallelFor(nshift, _threads, [&](int s0, int s1) {
+            std::vector<const uint8_t*> rows(static_cast<size_t>(th) * T);   // shifted row of each line
             for (int s = s0; s < s1; ++s)
             {
+                if (s == zero)
+                    continue;
                 const int dy = s / (2 * R + 1) - R, dx = s % (2 * R + 1) - R;
                 const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
                 int* cs = &_cost[static_cast<size_t>(s) * th * tw];
                 for (int y = 0; y < th * T; ++y)
+                    rows[y] = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
+                static_assert(kMotionTile == 32, "diff32Rows counts 32-pixel tile columns");
+                for (const int t : _active)
                 {
-                    const uint8_t* a = cur + static_cast<size_t>(y) * _w;
-                    const uint8_t* b = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
-                    int* ct = cs + (y / T) * tw;
-                    static_assert(kMotionTile == 32, "diff32 counts one 32-pixel tile row");
-                    for (int tx = 0; tx < tw; ++tx)
-                        ct[tx] += simd::diff32(a + tx * T, b + tx * T);
+                    const int ty = t / tw, tx = t % tw;
+                    cs[t] = simd::diff32Rows(cur + static_cast<size_t>(ty) * T * _w + tx * T, _w, rows.data() + ty * T,
+                                             static_cast<size_t>(tx) * T, T);
                 }
             }
         });
-        _motion.assign(px, 0);
-        const int zero = (2 * R + 1) * R + R;
-        for (int ty = 0; ty < th; ++ty)
-            for (int tx = 0; tx < tw; ++tx)
+        for (const int t : _active)
+        {
+            const int ty = t / tw, tx = t % tw;
+            int best = -1, bestCost = 0;
+            for (int k = 0; k < nshift; ++k)
             {
-                const size_t t = static_cast<size_t>(ty) * tw + tx;
-                int best = -1, bestCost = 0;
-                for (int k = 0; k < nshift; ++k)
-                {
-                    if (k == zero)
-                        continue;
-                    const int c = _cost[static_cast<size_t>(k) * th * tw + t];
-                    if (best < 0 || c < bestCost)
-                    {
-                        best = k;
-                        bestCost = c;
-                    }
-                }
-                const int c0 = _cost[static_cast<size_t>(zero) * th * tw + t];
-                if (!(bestCost < 0.25 * c0 && c0 > 0.02 * T * T))
+                if (k == zero)
                     continue;
-                const int dy = best / (2 * R + 1) - R, dx = best % (2 * R + 1) - R;
-                const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
-                for (int y = ty * T; y < (ty + 1) * T; ++y)
+                const int c = _cost[static_cast<size_t>(k) * th * tw + t];
+                if (best < 0 || c < bestCost)
                 {
-                    const uint8_t* srow = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
-                    for (int x = tx * T; x < (tx + 1) * T; ++x)
-                    {
-                        const size_t p = static_cast<size_t>(y) * _w + x;
-                        _motion[p] = cur[p] == srow[x] && cur[p] != prev[p];
-                    }
+                    best = k;
+                    bestCost = c;
                 }
             }
+            const int c0 = c0s[t];
+            if (!(bestCost < 0.25 * c0))
+                continue;
+            const int dy = best / (2 * R + 1) - R, dx = best % (2 * R + 1) - R;
+            const uint8_t* sh = &_shifted[static_cast<size_t>(dx + R) * px];
+            for (int y = ty * T; y < (ty + 1) * T; ++y)
+            {
+                const uint8_t* srow = sh + static_cast<size_t>(wrap(y - dy, _h)) * _w;
+                for (int x = tx * T; x < (tx + 1) * T; ++x)
+                {
+                    const size_t p = static_cast<size_t>(y) * _w + x;
+                    _motion[p] = cur[p] == srow[x] && cur[p] != prev[p];
+                }
+            }
+        }
     }
 
     // ---- section 5 ----------------------------------------------------------

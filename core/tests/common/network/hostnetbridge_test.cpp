@@ -313,11 +313,16 @@ TEST(HostNetBridge_Test, SerialDeviceFollowsTheLineFormat)
     ASSERT_GE(probe, 0);
     termios tio {};
     ASSERT_TRUE(TestWait::For([&] {
-        return ::tcgetattr(probe, &tio) == 0 && ::cfgetospeed(&tio) == B9600 && (tio.c_cflag & CSIZE) == CS7;
+        return ::tcgetattr(probe, &tio) == 0 && ::cfgetospeed(&tio) == B9600 && (tio.c_cflag & CSTOPB) != 0;
     }));
+#if defined(__linux__)
+    // A Linux pty keeps the speed and the stop bits but forces CS8 and no parity
+    // (the kernel's pty set_termios), so data bits and parity are not observable here
+#else
+    EXPECT_EQ(tio.c_cflag & CSIZE, static_cast<tcflag_t>(CS7));
     EXPECT_NE(tio.c_cflag & PARENB, 0u);
     EXPECT_EQ(tio.c_cflag & PARODD, 0u);
-    EXPECT_NE(tio.c_cflag & CSTOPB, 0u);
+#endif
     ::close(probe);
     bridge.Close(6);
     ::close(master);
