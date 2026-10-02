@@ -14,11 +14,13 @@ folder and tests are missing. The model is **not creatable** today solely becaus
 ([core/src/emulator/ports/portdecoder.cpp:111](../../../core/src/emulator/ports/portdecoder.cpp)).
 
 Every other emulator that has ATM450 (UnrealSpeccy, ZXMAK2, kozynax's ZXMAK2 port)
-shares one implementation shape: a `pFDFD` ROM/RAM-extension latch written through
-the `#FDFD` port group, two address-bus latches (`aFE` on `#xxFE` writes, `aFB` on
-`#xxFB`/`#xx7B` reads) that replace the 710/ATM3 `#FF77`/`#xxFF7` register file,
-and video modes selected by **address bits A13-A14** of the `#FE` write instead of
-a port latch. "PentEvo" in ZXMAK2/Xpeccy is the same hardware family position as
+shares one implementation shape: a `pFDFD` RAM-extension latch written through
+the `#FDFD` port group, two address-bus latches that capture the **low address
+byte** of the I/O cycle (`aFE` on `#xxFE` writes, `aFB` on `#xxFB`/`#xx7B` reads)
+and replace the 710/ATM3 `#FF77`/`#xxF7` register file, video modes selected by
+**address bits A6-A5** of the `#FE` write instead of a data latch, and a palette
+on the `#7DFD` group with its own `--grbGRB` bit layout. Where the two references
+differ, UnrealSpeccy is the one we follow (cross-mapping §3.3). "PentEvo" in ZXMAK2/Xpeccy is the same hardware family position as
 our ATM3 (baseconf) — no extra machine hides behind it. Full survey and the
 per-variant comparison: [cross-mapping.md](cross-mapping.md).
 
@@ -32,7 +34,8 @@ per-variant comparison: [cross-mapping.md](cross-mapping.md).
    `core/src/emulator/ports/portdecoder.cpp`; flip the "no factory case" expectation
    in `core/tests/emulator/emulatormanager_test.cpp:575`.
 3. `data/configs/atm450/unreal.ini` (from `data/configs/atm710/unreal.ini`;
-   the ROM image `data/rom/atm1.rom` is already shipped, 64 KiB = 4 × 16 KiB).
+   the ROM image `data/rom/atm1.rom` is already shipped, 64 KiB = 4 × 16 KiB,
+   page order sys/dos/128/sos verified).
 4. Tests, written first where practical: [tdd-plan.md](tdd-plan.md).
 5. UI (`unreal-qt/src/menumanager.cpp` supportedModels) + docs
    (`.recipe/_common/machines.md`, `AGENTS.md` model list).
@@ -49,7 +52,7 @@ separate "[turbo]" machine variant (ZXMAK2).
 
 ## How to start
 
-Work in a dedicated branch (suggested: `atm450`, off `master`). The TDD plan is
+Work happens on branch `atm450` (worktree `scratch/wt-atm450`, off `master`). The TDD plan is
 ordered so that each phase leaves the tree green: registry → decoder unit tests
 (CUT pattern) → boot tests → TTD/automation → UI/docs.
 

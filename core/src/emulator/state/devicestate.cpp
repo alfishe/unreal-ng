@@ -1474,7 +1474,17 @@ StateNode ScreenMode(EmulatorContext* context)
         dffd["scr"] = (s.pDFFD & 0x40) != 0;
         ret["dffd"] = dffd;
     }
-    if (s.model == MM_ATM710 || s.model == MM_ATM3 || s.model == MM_ATM450)
+    if (s.model == MM_ATM450)
+    {
+        // ATM 4.50 has no #FF77: the mode is the low address byte of the last #FE write
+        StateNode afe = StateNode::Object();
+        afe["value"] = int(s.aFE);
+        afe["value_hex"] = Hex8(s.aFE);
+        afe["video_mode_bits"] = int((s.aFE >> 5) & 0x03);
+        afe["rom_at_0000"] = (s.aFE & 0x80) != 0;
+        ret["afe"] = afe;
+    }
+    if (s.model == MM_ATM710 || s.model == MM_ATM3)
     {
         StateNode ff77 = StateNode::Object();
         ff77["value"] = int(s.pFF77);
