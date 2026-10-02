@@ -89,6 +89,9 @@ public:
     /// What the file is. Never fails: an unknown file has no kinds
     static FileClass Classify(const std::string& path);
 
+    /// A kind that goes into a slot (floppy, tape, hard disk, card, CD), not one the caller loads
+    static bool IsMedium(FileKind kind);
+
     /// The targets `context`'s machine offers for the file; `context` null:
     /// no machine runs (only a file that names its machine, or a floppy image
     /// with the Pentagon default, gets a target)

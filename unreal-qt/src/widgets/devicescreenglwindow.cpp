@@ -654,7 +654,8 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             if (dragEvent->mimeData()->hasUrls())
             {
                 dragEvent->acceptProposedAction();
-                emit dragEntered();
+                const QList<QUrl> urls = dragEvent->mimeData()->urls();
+                emit dragEntered(urls.isEmpty() ? QString() : urls.first().toLocalFile());
                 return true;
             }
             break;
