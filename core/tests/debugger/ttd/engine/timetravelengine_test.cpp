@@ -126,7 +126,7 @@ TEST(TimeTravelEngine_Test, UnchangedFramesShareTheReferenceTable)
     EXPECT_EQ(engine.HeapBreakdown().referenceTables, tablesAfterOne)
         << "frames that change nothing add no reference table";
     for (uint64_t f = 1; f < 50; ++f)
-        EXPECT_EQ(engine.Checkpoint(f)->regions[0].changeCount, 0u) << "frame " << f << " records nothing";
+        EXPECT_EQ(engine.ChangeCount(f, 0), 0u) << "frame " << f << " records nothing";
 }
 
 TEST(TimeTravelEngine_Test, OptionalStreamsRunAtEveryCapturedFrameWhenOn)
@@ -187,7 +187,7 @@ TEST(TimeTravelEngine_Test, OneChangedPieceRecordsOneChange_TheRestIsShared)
     EXPECT_NE(engine.VersionAt(0, 0, 100), engine.VersionAt(1, 0, 100));
 
     // One change record, not a copy of the whole map
-    EXPECT_EQ(engine.Checkpoint(1)->regions[0].changeCount, 1u);
+    EXPECT_EQ(engine.ChangeCount(1, 0), 1u);
     (void)blocksAfterFirst;
 }
 
@@ -204,7 +204,7 @@ TEST(TimeTravelEngine_Test, ContentRewrittenUnchangedRecordsNothing)
     TTDFrameInput f1 = Frame(1);
     f1.changed = {{0, 3, a.data()}};
     ASSERT_TRUE(engine.CaptureFrame(f1, err));
-    EXPECT_EQ(engine.Checkpoint(1)->regions[0].changeCount, 0u);
+    EXPECT_EQ(engine.ChangeCount(1, 0), 0u);
     EXPECT_EQ(engine.VersionAt(1, 0, 3), engine.VersionAt(0, 0, 3));
 }
 
@@ -256,7 +256,7 @@ TEST(TimeTravelEngine_Test, FullTablesShareUnchangedBlocks_AndRestoresCrossThem)
         ASSERT_TRUE(engine.CaptureFrame(in, err));
     }
     for (uint64_t f = 0; f < 13; ++f)
-        EXPECT_EQ(engine.Checkpoint(f)->regions[0].snapshot != nullptr, f % 4 == 0) << "frame " << f;
+        EXPECT_EQ(engine.HasFullTable(f, 0), f % 4 == 0) << "frame " << f;
 
     std::vector<uint8_t> out(1024 * kTTDPieceSize);
     std::vector<uint8_t> present;

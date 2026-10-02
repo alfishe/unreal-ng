@@ -131,7 +131,7 @@ TEST_F(TimeTravelManager_ShadowRegions_Test, IdleCardMemoryCostsNothing)
     const int flash = RegionIndex("neogs.flash");
     ASSERT_GT(flash, 0);
     for (size_t i = 1; i < _engine.CheckpointCount(); ++i)
-        EXPECT_EQ(_engine.Checkpoint(i)->regions[static_cast<size_t>(flash)].changeCount, 0u)
+        EXPECT_EQ(_engine.ChangeCount(i, static_cast<uint32_t>(flash)), 0u)
             << "nothing programs the flash, checkpoint " << i;
 }
 
@@ -226,7 +226,7 @@ TEST(TimeTravelManagerMoonSound_ShadowRegions_Test, WaveRamIsRecordedAndRestored
     // Frames without an upload add nothing to the wave RAM region
     size_t quiet = 0;
     for (size_t i = 1; i < engine.CheckpointCount(); ++i)
-        quiet += engine.Checkpoint(i)->regions[static_cast<size_t>(region)].changeCount == 0 ? 1 : 0;
+        quiet += engine.ChangeCount(i, static_cast<uint32_t>(region)) == 0 ? 1 : 0;
     EXPECT_GE(quiet, engine.CheckpointCount() - 3);
 
     EmulatorTestHelper::CleanupEmulator(emulator);

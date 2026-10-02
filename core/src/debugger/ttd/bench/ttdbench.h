@@ -138,12 +138,16 @@ struct StreamBytes
     uint64_t writeJournal = 0;
     uint64_t inputJournal = 0;
     uint64_t coverage = 0;
+    /// Device memory recorded as regions (the time-travel engine; v1 keeps
+    /// the General Sound RAM inside deviceBlobs and the rest not at all)
+    uint64_t deviceRegions = 0;
     /// Memory writes recorded since the session started, including those the
     /// write journal's ring has already dropped (not part of Total())
     uint64_t journalWritesTotal = 0;
     uint64_t Total() const
     {
-        return ramPayload + pageRefs + deviceBlobs + checkpointCore + writeJournal + inputJournal + coverage;
+        return ramPayload + pageRefs + deviceBlobs + checkpointCore + writeJournal + inputJournal + coverage +
+               deviceRegions;
     }
 };
 

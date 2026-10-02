@@ -61,16 +61,19 @@ struct TTDEngineCheckpoint
     TTDCpuState cpu;
     TTDChipsetState chipset;
     std::unordered_map<uint8_t, std::vector<uint8_t>> deviceBlobs;
-    /// Per region: the pieces that got a new version at this checkpoint (a
-    /// range of the engine's change records) and, on every S-th checkpoint, a
-    /// full reference table (shared blocks; one reference, held here)
+    /// Only for the regions that changed at this checkpoint (and, on every
+    /// S-th checkpoint, for every region): its range of the engine's change
+    /// records and, on those checkpoints, a full reference table (shared
+    /// blocks; one reference, held here). A region with no change has no entry,
+    /// so an idle region costs nothing per frame (PR-10)
     struct RegionRefs
     {
         TTDRefTables::Table* snapshot = nullptr;
+        uint32_t region = 0;
         uint32_t firstChange = 0;
         uint32_t changeCount = 0;
     };
-    std::vector<RegionRefs> regions;
+    std::vector<RegionRefs> regions;   ///< sorted by region
 };
 
 /// Where the engine's memory goes (FR-16; mirrors the benchmark's bm4_heap split)
@@ -177,6 +180,19 @@ public:
     /// The stored version of @p piece of @p region at checkpoint @p index, or kAbsent
     uint32_t VersionAt(size_t index, uint32_t region, uint32_t piece) const;
 
+    /// Pieces of @p region that got a new version at checkpoint @p index
+    uint32_t ChangeCount(size_t index, uint32_t region) const
+    {
+        const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
+        return r ? r->changeCount : 0;
+    }
+    /// Whether checkpoint @p index holds a full table of @p region
+    bool HasFullTable(size_t index, uint32_t region) const
+    {
+        const TTDEngineCheckpoint::RegionRefs* r = RefsOf(index, region);
+        return r && r->snapshot;
+    }
+
     /// Restore every region with live memory to checkpoint @p index, writing
     /// only the pieces whose content differs (Step 5): a piece is decoded when
     /// the version in live memory is not the target's, or when @p written says
@@ -199,6 +215,13 @@ public:
 
     const TTDPieceStore& PieceStore() const { return *_store; }
 
+    /// Compressed bytes stored for region @p region's new versions so far (a
+    /// stream size: what this region adds to the recording)
+    uint64_t RegionPayloadBytes(uint32_t region) const
+    {
+        return region < _regionPayload.size() ? _regionPayload[region] : 0;
+    }
+
 private:
     bool _open = false;
     struct PieceChange
@@ -209,6 +232,14 @@ private:
 
     /// The version of every piece of @p region at checkpoint @p index
     void BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const;
+    /// Checkpoint @p index's entry for @p region, or null when it has none
+    const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
+    {
+        for (const TTDEngineCheckpoint::RegionRefs& r : _checkpoints[index].regions)
+            if (r.region == region)
+                return &r;
+        return nullptr;
+    }
 
     std::shared_ptr<TTDPieceStore> _store;
     std::unique_ptr<TTDRefTables> _tables;
@@ -223,6 +254,7 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
+    std::vector<uint64_t> _regionPayload;
     TTDEngineCaptureWork _lastWork;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;

@@ -29,6 +29,8 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [x] MoonSound wave RAM (up to 1 MiB): taken from the wave memory's own dirty bitmap before each capture, no new hook
   - [x] General Sound RAM (128–512 KB): marks in `writeMem` and on a state load; the engine's GS blob holds the 95-byte registers only (`TTDStateWithoutRegions`), the v1 feeder splits v1's GS blob the same way. GS 512 upload, bytes per frame (memory pieces + device state): v1 2,304 → engine 1,624; capture p50 293 → 20 µs
   - [ ] The lightweight GS player's upload store
+  - [x] Machines with large RAM — region 0 on every model, no per-model code: `TimeTravelManager_ShadowModels_Test` checks every frame against v1 on Pentagon, Scorpion, ProfScorpion, Profi, ATM710, ATM450, ZX-Evo, TS-Conf and Sprinter. Matrix (600 frames, v1 → engine): capture p50 TS-Conf 223 → 6.3 µs, ZX-Evo 273 → 16.6, ATM710 112 → 7.5, Profi 74 → 4.9; memory restore p50 TS-Conf 585 → 32 µs, ZX-Evo 728 → 124; references TS-Conf / ZX-Evo 4,103 → 87 / 111 B per frame
+  - [x] Region records per checkpoint only for regions that changed (an idle card costs nothing per frame; references below v1 on every model, 48K 96 → 60 B per frame)
   - [ ] Sprinter video RAM and fast RAM, VDAC2 graphics memory (restored through the device)
   - [ ] ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model

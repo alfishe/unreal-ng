@@ -66,6 +66,7 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
         _sinceSnapshotFlag[r].assign(_regions[r].pieces, 0);
     }
     _lastSnapshot.assign(_regions.size(), nullptr);
+    _regionPayload.assign(_regions.size(), 0);
     _open = true;
     return true;
 }
@@ -91,6 +92,7 @@ void TimeTravelEngine::EndSession()
     _sinceSnapshot.clear();
     _sinceSnapshotFlag.clear();
     _lastSnapshot.clear();
+    _regionPayload.clear();
     _frames.Clear();
     _checkpoints.clear();
     _checkpoints.shrink_to_fit();
@@ -142,12 +144,12 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     }
     const size_t index = _checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
-    cp.regions.resize(_regions.size());
     const bool snapshot = index % _snapshotInterval == 0;
 
     for (uint32_t r = 0; r < _regions.size(); ++r)
     {
-        TTDEngineCheckpoint::RegionRefs& refs = cp.regions[r];
+        TTDEngineCheckpoint::RegionRefs refs;
+        refs.region = r;
         refs.firstChange = static_cast<uint32_t>(_changes.size());
         for (const TTDChangedPiece& c : input.changed)
         {
@@ -169,6 +171,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 continue;
             }
             _changes.push_back({c.piece, next});   // the record takes the reference
+            _regionPayload[r] += _store->PayloadSize(next);
             _live[r][c.piece] = next;
             if (!_sinceSnapshotFlag[r][c.piece])
             {
@@ -195,6 +198,8 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             refs.snapshot = table;
             _lastSnapshot[r] = table;
         }
+        if (refs.changeCount > 0 || refs.snapshot)
+            cp.regions.push_back(refs);
     }
 
     _checkpoints.push_back(std::move(cp));
@@ -230,18 +235,20 @@ void TimeTravelEngine::BuildMap(size_t index, uint32_t region, std::vector<TTDPi
 {
     // The nearest full table at or before the checkpoint, then the changes after it
     size_t s = index;
-    while (!_checkpoints[s].regions[region].snapshot)
+    while (!HasFullTable(s, region))
         --s;
-    const TTDRefTables::Table* table = _checkpoints[s].regions[region].snapshot;
+    const TTDRefTables::Table* table = RefsOf(s, region)->snapshot;
     map.resize(table->pieces);
     for (uint32_t p = 0; p < table->pieces; ++p)
         map[p] = _tables->Get(table, p);
     for (size_t i = s + 1; i <= index; ++i)
     {
-        const TTDEngineCheckpoint::RegionRefs& refs = _checkpoints[i].regions[region];
-        for (uint32_t k = 0; k < refs.changeCount; ++k)
+        const TTDEngineCheckpoint::RegionRefs* refs = RefsOf(i, region);
+        if (!refs)
+            continue;
+        for (uint32_t k = 0; k < refs->changeCount; ++k)
         {
-            const PieceChange& c = _changes[refs.firstChange + k];
+            const PieceChange& c = _changes[refs->firstChange + k];
             map[c.piece] = c.id;
         }
     }
@@ -285,12 +292,14 @@ uint32_t TimeTravelEngine::VersionAt(size_t index, uint32_t region, uint32_t pie
     // The newest record of the piece up to the checkpoint, else the nearest full table's entry
     for (size_t i = index;; --i)
     {
-        const TTDEngineCheckpoint::RegionRefs& refs = _checkpoints[i].regions[region];
-        for (uint32_t k = refs.changeCount; k-- > 0;)
-            if (_changes[refs.firstChange + k].piece == piece)
-                return _changes[refs.firstChange + k].id;
-        if (refs.snapshot)
-            return _tables->Get(refs.snapshot, piece);
+        const TTDEngineCheckpoint::RegionRefs* refs = RefsOf(i, region);
+        if (!refs)
+            continue;
+        for (uint32_t k = refs->changeCount; k-- > 0;)
+            if (_changes[refs->firstChange + k].piece == piece)
+                return _changes[refs->firstChange + k].id;
+        if (refs->snapshot)
+            return _tables->Get(refs->snapshot, piece);
     }
 }
 

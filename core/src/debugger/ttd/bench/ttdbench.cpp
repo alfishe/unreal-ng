@@ -481,8 +481,9 @@ public:
     StreamBytes Bytes() const override
     {
         StreamBytes b;
-        const TTDEngineHeapBreakdown h = _engine.HeapBreakdown();
-        b.ramPayload = h.piecePayload;
+        b.ramPayload = _engine.RegionPayloadBytes(0);   // machine RAM, as v1's ramPayload
+        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+            b.deviceRegions += _engine.RegionPayloadBytes(r);
         b.pageRefs = _engine.ReferenceBytes();
         for (size_t i = 0; i < _engine.CheckpointCount(); i++)
         {
@@ -802,6 +803,7 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm3_write_journal_bpf"] = static_cast<double>(b.writeJournal) / n;
         m["bm3_input_journal_bpf"] = static_cast<double>(b.inputJournal) / n;
         m["bm3_coverage_bpf"] = static_cast<double>(b.coverage) / n;
+        m["bm3_device_regions_bpf"] = static_cast<double>(b.deviceRegions) / n;
         m["bm3_total_bpf"] = static_cast<double>(b.Total()) / n;
         // Writes per frame over the whole session: the journal's bytes above
         // stop growing once its ring is full, this count does not
