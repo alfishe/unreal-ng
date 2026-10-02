@@ -412,7 +412,7 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             break;
         case PortArm::Joystick:
             // Kempston joystick outside DOS (as ATM3). No device or not fitted: 0x00
-            result = _context->pJoystick ? _context->pJoystick->Read() : 0x00;
+            result = Default_Port_KempstonJoystick_In();
             break;
         case PortArm::Gluk:
             result = DecodeF7In(port);

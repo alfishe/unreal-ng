@@ -287,7 +287,8 @@ TEST_F(DebugJoystickManager_Test, NotFitted_ReportsAbsentAndWarns)
 /// A machine whose decoder has no #1F joystick: accepted, with a warning that the guest cannot see it
 TEST(DebugJoystickManagerUnwired_Test, MachineWithoutTheArmWarns)
 {
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    // The 48K decoder has no #1F arm (the Pentagon family and Profi have one since 2026-10-01)
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     DebugJoystickManager* manager = emulator->GetContext()->pDebugManager->GetJoystickManager();
     ASSERT_NE(manager, nullptr);

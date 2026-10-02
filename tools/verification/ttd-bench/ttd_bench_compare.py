@@ -45,7 +45,8 @@ HIGHER_IS_BETTER = set()
 
 def is_byte_metric(name):
     """Mirror of ttd::bench::IsByteMetric (ttdbench.cpp)"""
-    return name.endswith("_bytes") or name.endswith("_bpf") or name in ("frames", "checkpoints")
+    return (name.endswith("_bytes") or name.endswith("_bpf") or name.endswith("_opf")
+            or name in ("frames", "checkpoints"))
 
 
 def load(path, engine=None):
@@ -218,7 +219,8 @@ def cmd_export_gate(args):
         "# Read by core/tests/debugger/ttd/bench/ttdbench_test.cpp.",
         f"# Exported by tools/verification/ttd-bench/ttd_bench_compare.py from a run of",
         f"# {describe(context, engine)}.",
-        "# Byte metrics only: timings do not belong in a stored baseline.",
+        "# Deterministic metrics only (bytes, bytes and operations per frame): timings do not",
+        "# belong in a stored baseline.",
         "# Columns: <configuration>/<workload> <metric> <value> <tolerance percent>",
         "# Tolerance 0 = exact; heap metrics follow the allocator's growth policy.",
     ]
@@ -230,7 +232,7 @@ def cmd_export_gate(args):
             lines.append(f"{case} {metric} {metrics[case][metric]:.6f} {tolerance:g}")
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"wrote {args.out}: {len(lines) - 7} metrics from {len(metrics)} cases")
+    print(f"wrote {args.out}: {sum(1 for l in lines if not l.startswith('#'))} metrics from {len(metrics)} cases")
     return 0
 
 

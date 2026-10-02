@@ -1,0 +1,114 @@
+=== VR3-0A1DFAFD.ROM  CRC32(2048)=0A1DFAFD
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 312 lines, frame 69888 T (19.968 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbBBBBBBSSSSBBBBBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b16 B31 V17 B39 b17
+     INT bit3 falls at h=46 (line counter 256): INT->paper col0 = 12584 T (56 lines + 40 T); INT length 36 T stock (DA3 FF), 36 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 320 lines, frame 61440 T (20.480 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbBBSSSSBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B15 V17 B15 b17
+     INT bit3 falls at h=44 (line counter 240): INT->paper col0 = 15376 T (80 lines + 16 T); INT length 48 T stock (DA3 FF), 8 T with Profi32_Pent mod
+=== VR3-15E9B638.ROM  CRC32(2048)=15E9B638
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 312 lines, frame 69888 T (19.968 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBBBBSSSSBBBBBBBBbbbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=44 (line counter 256): INT->paper col0 = 12592 T (56 lines + 48 T); INT length 44 T stock (DA3 FF), 8 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 312 lines, frame 59904 T (19.968 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbBBSSSSBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=44 (line counter 240): INT->paper col0 = 13840 T (72 lines + 16 T); INT length 48 T stock (DA3 FF), 8 T with Profi32_Pent mod
+=== VR3-5A0AB56B.ROM  CRC32(2048)=FB0579B6
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 320 lines, frame 71680 T (20.480 ms); count pulse active-low; bit4 unused
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b16 B32 V16 B47 b17
+     INT bit3 falls at h=44 (line counter 320): INT->paper col0 = 48 T (0 lines + 48 T); INT length 44 T stock (DA3 FF), 8 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 320 lines, frame 61440 T (20.480 ms); count pulse active-low; bit4 unused
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B16 V16 B15 b17
+     INT bit3 falls at h=46 (line counter 304): INT->paper col0 = 3080 T (16 lines + 8 T); INT length 40 T stock (DA3 FF), 64 T with Profi32_Pent mod
+=== VR3P-000624A6.ROM  CRC32(2048)=02BB2120
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 320 lines, frame 71680 T (20.480 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbbbbSSSSBBBBbbbbbbbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b47 V17 b64
+     INT bit3 falls at h=38 (line counter 240): INT->paper col0 = 17992 T (80 lines + 72 T); INT length 8 T stock (DA3 FF), 32 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 312 lines, frame 59904 T (19.968 ms); count pulse active-low; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbBBSSSSBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=44 (line counter 240): INT->paper col0 = 13840 T (72 lines + 16 T); INT length 48 T stock (DA3 FF), 8 T with Profi32_Pent mod
+=== VR3P-BCD770D5.ROM  CRC32(2048)=BCD770D5
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 320 lines, frame 71680 T (20.480 ms); count pulse active-low; bit4 unused
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b16 B32 V16 B47 b17
+     INT bit3 falls at h=44 (line counter 240): INT->paper col0 = 17968 T (80 lines + 48 T); INT length 44 T stock (DA3 FF), 8 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 320 lines, frame 61440 T (20.480 ms); count pulse active-low; bit4 unused
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B16 V16 B15 b17
+     INT bit3 falls at h=46 (line counter 304): INT->paper col0 = 3080 T (16 lines + 8 T); INT length 40 T stock (DA3 FF), 64 T with Profi32_Pent mod
+=== VR5-57D728AD.ROM  CRC32(2048)=88AF40E9
+  [Spectrum 256x192, v5 wiring] line [56] ticks = [224] T (64.00 us), 312 lines, frame 69888 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbBBBBSSSSBBBBBBBBbbb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=52 (line counter 240): INT->paper col0 = 16144 T (72 lines + 16 T); INT length 4 T stock (DA3 FF), 8 T with Profi32_Pent mod
+  [Spectrum 256x192, v5-album wiring] line [54] ticks = [216] T (61.71 us), 312 lines, frame 67392 T (19.255 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbBBBBSSSSBBBBBBBBb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=52 (line counter 240): INT->paper col0 = 15560 T (72 lines + 8 T); INT length 4 T stock (DA3 FF), 4 T with Profi32_Pent mod
+  [Spectrum 256x192, v3 wiring] line [54] ticks = [216] T (61.71 us), 312 lines, frame 67392 T (19.255 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbbBBBBSSSSBBBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=50 (line counter 240): INT->paper col0 = 15568 T (72 lines + 16 T); INT length 12 T stock (DA3 FF), 12 T with Profi32_Pent mod
+  [80DS 512x240, v5 wiring] line [48] ticks = [192] T (64.00 us), 312 lines, frame 59904 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBSSSSBBBBBbb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=62 (line counter 256): INT->paper col0 = 10760 T (56 lines + 8 T); INT length 40 T stock (DA3 FF), 64 T with Profi32_Pent mod
+  [80DS 512x240, v5-album wiring] line [46] ticks = [184] T (61.33 us), 312 lines, frame 57408 T (19.136 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBSSSSBBBBB
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B8 V16 B16 b16
+     INT bit3 falls at h=0 (line counter 256): INT->paper col0 = 10304 T (56 lines + 0 T); INT length 32 T stock (DA3 FF), 56 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [46] ticks = [184] T (61.33 us), 312 lines, frame 57408 T (19.136 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBBSSSSBBBBBP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=63 (line counter 256): INT->paper col0 = 10308 T (56 lines + 4 T); INT length 36 T stock (DA3 FF), 60 T with Profi32_Pent mod
+=== VR5-D2D4A7C8.ROM  CRC32(2048)=D2D4A7C8
+  [Spectrum 256x192, v5 wiring] line [56] ticks = [224] T (64.00 us), 312 lines, frame 69888 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbBBBBSSSSBBBBBBBBbbb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V9 B31 b33
+     INT bit3 falls at h=48 (line counter 256): INT->paper col0 = 14368 T (64 lines + 32 T); INT length 20 T stock (DA3 FF), 24 T with Profi32_Pent mod
+  [Spectrum 256x192, v5-album wiring] line [54] ticks = [216] T (61.71 us), 312 lines, frame 67392 T (19.255 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbBBBBSSSSBBBBBBBBb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V9 B31 b33
+     INT bit3 falls at h=48 (line counter 256): INT->paper col0 = 13848 T (64 lines + 24 T); INT length 20 T stock (DA3 FF), 20 T with Profi32_Pent mod
+  [Spectrum 256x192, v3 wiring] line [54] ticks = [216] T (61.71 us), 312 lines, frame 67392 T (19.255 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbbBBBBSSSSBBBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V9 B31 b33
+     INT bit3 falls at h=46 (line counter 256): INT->paper col0 = 13856 T (64 lines + 32 T); INT length 28 T stock (DA3 FF), 28 T with Profi32_Pent mod
+  [80DS 512x240, v5 wiring] line [48] ticks = [192] T (64.00 us), 312 lines, frame 59904 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBSSSSBBBBBbb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=62 (line counter 256): INT->paper col0 = 10760 T (56 lines + 8 T); INT length 40 T stock (DA3 FF), 64 T with Profi32_Pent mod
+  [80DS 512x240, v5-album wiring] line [46] ticks = [184] T (61.33 us), 312 lines, frame 57408 T (19.136 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBSSSSBBBBB
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B8 V16 B16 b16
+     INT bit3 falls at h=0 (line counter 256): INT->paper col0 = 10304 T (56 lines + 0 T); INT length 32 T stock (DA3 FF), 56 T with Profi32_Pent mod
+  [80DS 512x240, v3 wiring] line [46] ticks = [184] T (61.33 us), 312 lines, frame 57408 T (19.136 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBBSSSSBBBBBP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=63 (line counter 256): INT->paper col0 = 10308 T (56 lines + 4 T); INT length 36 T stock (DA3 FF), 60 T with Profi32_Pent mod
+=== PRINTED map, profi50.pdf p.9 (Kondor 1994)  CRC32(2048)=B88AF9D1
+  [Spectrum 256x192, v5-album wiring] line [57] ticks = [228] T (65.14 us), 312 lines, frame 71136 T (20.325 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbBBBBSSSSBBBBBBBBbbbb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=45 (line counter 256): INT->paper col0 = 12816 T (56 lines + 48 T); INT length 44 T stock (DA3 FF), 4 T with Profi32_Pent mod
+  [Spectrum 256x192, v5 wiring] no frame: the counters never reach video line 0 with this PROM and this reload
+  [Spectrum 256x192, v3 wiring] line [56] ticks = [224] T (64.00 us), 312 lines, frame 69888 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbbbBBBBSSSSBBBBBBBBbbbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P192 b32 B15 V17 B23 b33
+     INT bit3 falls at h=44 (line counter 256): INT->paper col0 = 12592 T (56 lines + 48 T); INT length 44 T stock (DA3 FF), 8 T with Profi32_Pent mod
+  [80DS 512x240, v5-album wiring] line [49] ticks = [196] T (65.33 us), 312 lines, frame 61152 T (20.384 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBSSSSBBBBBBBb
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=41 (line counter 256): INT->paper col0 = 11008 T (56 lines + 32 T); INT length 64 T stock (DA3 FF), 20 T with Profi32_Pent mod
+  [80DS 512x240, v5 wiring] no frame: the counters never reach video line 0 with this PROM and this reload
+  [80DS 512x240, v3 wiring] line [48] ticks = [192] T (64.00 us), 312 lines, frame 59904 T (19.968 ms); count pulse active-high; bit4 VSYNC
+     line from h=0 (P paper/FLD1, b border, B blank, S sync): PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPbbbbBBSSSSBBBBBBbP
+     vertical from paper line 0 (P paper, b border, B blank, V vsync): P240 b16 B7 V17 B15 b17
+     INT bit3 falls at h=40 (line counter 256): INT->paper col0 = 10784 T (56 lines + 32 T); INT length 64 T stock (DA3 FF), 24 T with Profi32_Pent mod

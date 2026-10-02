@@ -157,6 +157,32 @@ struct SeekTiming
     double screenUs = 0;
 };
 
+/// Counted work of a frame capture (BM-2 work). Unlike the capture time it
+/// repeats exactly for a replayable workload on any host and under any load,
+/// which makes it the CI gate's check of capture cost
+struct CaptureWork
+{
+    uint64_t pagesVisited = 0;
+    uint64_t deltaBaseBytes = 0;
+    uint64_t deviceBlobBytes = 0;
+    uint64_t bytesScanned = 0;
+    uint64_t compressCalls = 0;
+    uint64_t compressInputBytes = 0;
+    uint64_t slotsDecoded = 0;
+
+    CaptureWork& operator+=(const CaptureWork& o)
+    {
+        pagesVisited += o.pagesVisited;
+        deltaBaseBytes += o.deltaBaseBytes;
+        deviceBlobBytes += o.deviceBlobBytes;
+        bytesScanned += o.bytesScanned;
+        compressCalls += o.compressCalls;
+        compressInputBytes += o.compressInputBytes;
+        slotsDecoded += o.slotsDecoded;
+        return *this;
+    }
+};
+
 /// Recording modes (BM-1)
 enum class Mode : uint8_t
 {
@@ -179,6 +205,8 @@ public:
     virtual void Stop() = 0;
     /// Capture time of the frame that just ended, nanoseconds (BM-2)
     virtual uint64_t LastCaptureNs() const = 0;
+    /// Counted work of the capture of the frame that just ended
+    virtual CaptureWork LastCaptureWork() const = 0;
     virtual size_t Checkpoints() const = 0;
     virtual uint64_t FirstFrame() const = 0;
     virtual uint64_t LastFrame() const = 0;
@@ -223,8 +251,9 @@ struct Options
     std::function<std::string(const std::string&)> resolveTestData;
 };
 
-/// Metric name -> value. Names: see RunCase(); byte metrics end in "_bytes"
-/// or "_bpf" (bytes per frame) and are deterministic, everything else is time
+/// Metric name -> value. Names: see RunCase(). Deterministic metrics end in
+/// "_bytes", "_bpf" (bytes per frame) or "_opf" (operations per frame), plus
+/// "frames" and "checkpoints"; everything else is time
 using Metrics = std::map<std::string, double>;
 
 struct Result
@@ -237,7 +266,7 @@ struct Result
 /// Run one case with one engine and return BM-1..BM-8
 Result RunCase(Engine& engine, const Case& c, const Options& options);
 
-/// True for a deterministic (byte) metric name
+/// True for a deterministic metric name (bytes, bytes or operations per frame)
 bool IsByteMetric(const std::string& name);
 
 /// endregion </Runner>

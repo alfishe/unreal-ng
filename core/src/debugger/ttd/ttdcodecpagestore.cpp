@@ -43,6 +43,7 @@ uint32_t TTDCodecPageStore::InternFull(const uint8_t* pageData)
     // This is rare in normal emulator state (most pages have at least a
     // stack frame or some screen content) but common immediately after
     // reset, so it's worth the fast path.
+    _work.bytesScanned += kPageSize;
     if (codec::IsAllZero(pageData, kPageSize))
     {
         uint32_t idx = AllocateSlot();
@@ -56,6 +57,8 @@ uint32_t TTDCodecPageStore::InternFull(const uint8_t* pageData)
         return idx;
     }
 
+    _work.compressCalls++;
+    _work.compressInputBytes += kPageSize;
     auto compressed = codec::Compress(pageData, kPageSize);
     assert(!compressed.empty());
 
@@ -88,6 +91,7 @@ uint32_t TTDCodecPageStore::InternXor(uint32_t prevSlot, const uint8_t* pageData
     // Compute XOR buffer: cur ^ prev
     uint8_t xorBuf[kPageSize];
     codec::XorBuffers(pageData, _prevScratch.data(), xorBuf, kPageSize);
+    _work.bytesScanned += kPageSize;
 
     // If XOR is all zeros, page hasn't actually changed. Shouldn't happen
     // (caller should have detected this via dirty tracker) but be defensive.
@@ -102,6 +106,8 @@ uint32_t TTDCodecPageStore::InternXor(uint32_t prevSlot, const uint8_t* pageData
     // Decide between xor-prev and full encodings.
     // Empirically xor-prev wins ~92% of the time on real workloads, but
     // for pages with no temporal correlation (random data), full can win.
+    _work.compressCalls += 2;
+    _work.compressInputBytes += 2 * kPageSize;
     auto compressedXor = codec::Compress(xorBuf, kPageSize);
     auto compressedFull = codec::Compress(pageData, kPageSize);
 
@@ -146,6 +152,7 @@ uint32_t TTDCodecPageStore::InternXorCached(uint32_t prevSlot, const uint8_t* pa
     // Compute XOR buffer using cached previous (no decompression needed!)
     uint8_t xorBuf[kPageSize];
     codec::XorBuffers(pageData, cachedPrev, xorBuf, kPageSize);
+    _work.bytesScanned += kPageSize;
 
     // If XOR is all zeros, page hasn't changed
     if (codec::IsAllZero(xorBuf, kPageSize))
@@ -155,6 +162,8 @@ uint32_t TTDCodecPageStore::InternXorCached(uint32_t prevSlot, const uint8_t* pa
     }
 
     // Decide between xor-prev and full encodings
+    _work.compressCalls += 2;
+    _work.compressInputBytes += 2 * kPageSize;
     auto compressedXor = codec::Compress(xorBuf, kPageSize);
     auto compressedFull = codec::Compress(pageData, kPageSize);
 
@@ -254,6 +263,7 @@ bool TTDCodecPageStore::GetPageNoVerify(uint32_t idx, uint8_t* outBuf) const
 {
     assert(idx < _slots.size());
     const Slot& s = _slots[idx];
+    _work.slotsDecoded++;
 
     switch (s.encoding)
     {

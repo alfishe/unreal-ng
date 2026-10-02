@@ -297,6 +297,12 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
 
+	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
+	config.sprinter.fast_start = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "FastStart", 0) ? 1 : 0);
+	config.sprinter.turbo_allowed = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "Turbo", 1) ? 1 : 0);
+	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
+
 	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
@@ -310,6 +316,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a
@@ -1325,6 +1332,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_TSL:
                 // TS-Conf: 320 lines x 224 T (the Pentagon raster, hardware-spec §4). INT comes from the
                 // machine's interrupt source (VS_INT / HS_INT), so intstart / intlen are not used
+                config.frame = 71680;   // 224 * 320
+                config.t_line = 224;
+                break;
+            case MM_SPRINTER:
+                // Sprinter: 320 lines x 224 T after reset (Sprinter hardware-reference §6.1). INT comes from
+                // the mode table through the machine's interrupt source, so intstart / intlen are not used
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
                 break;

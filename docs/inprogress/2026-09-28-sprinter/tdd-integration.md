@@ -59,8 +59,10 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 
 `PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h`). Taken since this table was
 written: 15 `EvoSdCard`, 16 reserved for `TsConfPaging`, 17 `AtaChannel` (the IDE boards), 18 `Ds12887` (the shared clock, already built -
-the Sprinter reuses it and needs no id of its own). The Sprinter ids below therefore shift up by four
-when they are appended (15 -> 19 and so on); the order stays:
+the Sprinter reuses it and needs no id of its own). The Sprinter ids below therefore shift up when
+they are appended; the order stays. **S1 (2026-10-01):** ids 19-24 are taken as well, so
+`SprinterPld` is **25** (declared in S1 without a serializer: TTD refuses to record the machine
+until S7); `SprinterVideo`, `Z84C15`, `SprinterCbl` follow from 26:
 
 | Id | Name | Blob contents |
 |---|---|---|

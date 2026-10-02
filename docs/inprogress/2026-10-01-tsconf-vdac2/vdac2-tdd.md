@@ -62,7 +62,7 @@ firmware at all. The connector pins carry three things [V `top.v:454-508`]:
 | SPI to the FT812 | `ide_a[0]` = SCK, `ide_a[1]` = MOSI, `ide_rd_n` = FT CS_n, `ide_rdy` = MISO | both | The FT812 control channel |
 | FT812 INT_n | `ide_d[1]` (msel = 1 only) | card → FPGA | The card's CPLD drives `o_r[0]` with `ft_int_n` while msel = 1 [C `top.v:36`] |
 
-**Correction to the earlier materials:** the FT812 picture does **not** come back into the
+**Easy to get wrong:** the FT812 picture does **not** come back into the
 FPGA. The card's CPLD switches the monitor output as a whole: RGB, HSYNC, VSYNC **and the
 pixel clock** come either from the Evo or from the FT812 [C `top.v:39-45`]. When msel
 changes, the monitor sees a different video signal (another resolution and refresh rate)
@@ -419,7 +419,7 @@ carry the FT81x ROM uncompressed. Verified 2026-10-01:
 
 A small tool (`tools/`, Python) extracts and validates the image: it finds the metric
 table, checks all 19 blocks and draws a test string. The image stays a local file outside
-git, like the other materials. The library takes it as an optional input
+git. The library takes it as an optional input
 (`Config::romImage`) and serves it to SPI reads of the ROM area. Without the image, ROM
 reads return zeros and `CMD_TEXT` with ROM fonts draws nothing; the TS-Conf log says so
 once.
@@ -624,7 +624,7 @@ it describes is written.
 | **D-A** | **FT812 behavior specification** ([ft812-behavior-spec.md](ft812-behavior-spec.md), draft 2026-10-01), one section per area: SPI front end and host commands; registers (reset values, side effects, read behavior); display list commands (state, primitives, bitmap formats, matrix, blending, scissor, CALL/JUMP/MACRO); coprocessor commands with their RAM_CMD and RAM_DL effects; timing (scan, swap, INT); the line cost. Each rule carries its source ([PG] page, [SDK] or [SW] file) or a TO VERIFY mark | reviewed |
 | **D-B** | **Library architecture** ([eve-emu-architecture.md](eve-emu-architecture.md), draft 2026-10-01): modules, data layout of control state and memory regions, the catch-up drawing pipeline, the cost model, decoder interfaces, the public API in full | reviewed |
 | **D-C** | **Integration design** ([vdac2-integration-design.md](vdac2-integration-design.md), draft 2026-10-01): CS hub and TTD layout versioning of `EvoSdCard`; `Vdac2Card` and its clock conversion; the INT path in `TsConfInterrupts`; the second framebuffer and FT812-rate presentation in `Screen`; the exact Evo LUT (D6); the IDE-off config; TTD v2 regions (dependency on PLAN #40 V1); automation surfaces | reviewed |
-| **D-D** | **Test corpus and oracles**: TS-Labs SDK programs, demos, games, `ftview` files; golden-image procedure from the BT8XX emulator; the ROM extraction tool; what each test proves | reviewed |
+| **D-D** | **Test corpus and oracles** ([vdac2-test-corpus.md](vdac2-test-corpus.md), draft 2026-10-01): TS-Labs SDK programs, demos, games, `ftview` files; golden-image procedure from the BT8XX emulator; the ROM extraction tool; what each test proves | reviewed |
 | L0-L3b | Library, in the order of D-B (host side and timing, renderer, coprocessor, images / video / ROM fonts) | per D-B and D-D |
 | I1-I4 | Integration, in the order of D-C (bus and card, video and INT, TTD and automation, speed) | per D-C and D-D |
 | later | Widgets, `SNAPSHOT`, `SKETCH`, stencil / edge strips | when software that needs them appears |
@@ -677,19 +677,20 @@ The library is `eve-emu`, a separate static library (D-B).
 | Mid-frame `RAM_G` changes (the real chip draws line by line from live memory) | drawn in step with the beam by design (§5.1); the exact look-ahead of the line buffer is TO VERIFY |
 | TTD for VDAC2 depends on TTD v2 memory regions (PLAN #40 V1) | V1 goes first; until then VDAC2 machines refuse to record instead of recording incompletely |
 
-## 11. What was rethought compared with the other draft (`qoder-tdd.md`)
+## 11. Assumptions corrected during the design
 
-That draft served as a starting point, but its main assumptions are corrected here:
+Points that an earlier reading got wrong and this design corrects:
 
 - the video path (the card is the output, not a source into the FPGA);
 - the size of `RAM_G` (1 MB, not 256 KB);
-- the library: separate and vendored, not a folder in `core/src/emulator/io/`;
+- the library: a separate static library in its own repository, not a folder in
+  `core/src/emulator/io/`;
 - the scope, which is set by what the three games actually use, not by the full command set;
 - `VDAC_VER` (6 against 7);
 - the clock (an external 8 MHz × MUL, up to 80 MHz);
 - image and video decoding (`ftview` uses them, and FT81x decodes PNG as well as JPEG);
 - the state: control state plus memory regions with dirty pages (TTD v2 regions), not one
-  blob, an idea that came up in the review of that draft;
+  blob;
 - the picture: drawn in step with the FT812 beam and presented at the FT812's own frame
   rate, not once per machine frame.
 

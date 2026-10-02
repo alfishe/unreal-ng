@@ -2,10 +2,7 @@
 
 Status 2026-10-01: research done, design written, nothing implemented.
 
-- Design: [vdac2-tdd.md](vdac2-tdd.md). Research materials stay local and are not part of
-  the repository.
-- `qoder-tdd.md` is an earlier draft from another tool, kept for reference. `vdac2-tdd.md`
-  replaces it; its section 11 lists what changed.
+- Design: [vdac2-tdd.md](vdac2-tdd.md).
 - Games for testing (untracked): `testdata/machines/tsconf/vdac2/` (R-Type 1.01, Zuma 1.1,
   HMM2 v022).
 
@@ -19,7 +16,12 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [ ] D-C: integration design - draft [vdac2-integration-design.md](vdac2-integration-design.md)
   (2026-10-01): submodule `lib/eve-emu` + `ENABLE_VDAC2`, SPI hub, `Vdac2Card`, INT line
   source, FT812-rate presentation, exact LUT, TTD id 25 + regions; open C1-C2
-- [ ] D-D: test corpus and oracles (TS-Labs SDK programs, games, `ftview` files, ROM
-  extraction tool, BT8XX golden images)
+- [ ] D-D: test corpus and oracles - draft [vdac2-test-corpus.md](vdac2-test-corpus.md)
+  (2026-10-01): layers, TS-Labs SDK programs, BT8XX harness, replay format `.evr`,
+  card test programs; open O1-O3
 - [ ] Dependency: TTD v2 memory regions (PLAN #40 V1) before VDAC2 can be recorded
-- [ ] Code (L0-L3b, I1-I4) only after the designs; the TO VERIFY list in design §12.1
+- [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off
+  `13263c804`, ROM extraction tool `e6d50bc9d`, SPI hub `d3fecc61a`
+- [ ] Library L0-L3b: in progress by a separate agent (own repository)
+- [ ] Integration: the rest of I1 (`Vdac2Card`) and I2-I5, after the library host side; the TO VERIFY
+  list in design §12.1

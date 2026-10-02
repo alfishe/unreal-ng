@@ -413,7 +413,8 @@ int main(int ac, char** av) {
 	int aCAPS = sym_get(av[4], "CAPS");
 	int aFAILS = sym_get(av[4], "FAILS");
 	probeLo = aSTART;
-	if (aSTART < 0 || aEND < 0 || aDONE < 0 || aCLASS < 0 || aONSET < 0 || aCAPS < 0 || aFAILS < 0) {
+	// CLASS, ONSET, CAPS, FAILS: ctprobe's, printed when the program has them (turbotest has FAILS only)
+	if (aSTART < 0 || aEND < 0 || aDONE < 0) {
 		fprintf(stderr, "missing symbols in %s\n", av[4]);
 		return 2;
 	}
@@ -494,9 +495,12 @@ int main(int ac, char** av) {
 		for (int a = aSTART; a < aEND; a++) fputc(rd(comp, a), f);
 		fclose(f);
 	}
-	printf("DONE=%d CLASS=%d ONSET=%d CAPS=#%02X FAILS=%d\n", done, rd(comp, aCLASS),
-		rd(comp, aONSET) | (rd(comp, aONSET + 1) << 8), rd(comp, aCAPS),
-		rd(comp, aFAILS) | (rd(comp, aFAILS + 1) << 8));
+	printf("DONE=%d", done);
+	if (aCLASS >= 0) printf(" CLASS=%d", rd(comp, aCLASS));
+	if (aONSET >= 0) printf(" ONSET=%d", rd(comp, aONSET) | (rd(comp, aONSET + 1) << 8));
+	if (aCAPS >= 0) printf(" CAPS=#%02X", rd(comp, aCAPS));
+	if (aFAILS >= 0) printf(" FAILS=%d", rd(comp, aFAILS) | (rd(comp, aFAILS + 1) << 8));
+	printf("\n");
 	printf("keyboard mode %d, video mode #%02X, screen page %d, PC=#%04X IFF1=%d IM=%d, code at PC:", comp->keyb->core ? comp->keyb->core->id : -1, comp->vid->vmode, comp->vid->curscr, comp->cpu->regPC,
 		comp->cpu->flgIFF1, comp->cpu->regIM);
 	for (int i = -6; i < 6; i++) printf(" %02X", rd(comp, comp->cpu->regPC + i));

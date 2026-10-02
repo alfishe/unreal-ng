@@ -68,10 +68,15 @@ struct FolderScanOptions
 class FolderSnapshot
 {
 public:
-    /// Scan `folder`. False (with `error`) only when the folder itself cannot
-    /// be read, or cancelRequested() returned true mid-walk (error ==
-    /// "cancelled", checked by the caller with ==, not string-matched);
-    /// problems with individual entries go to Skipped() instead
+    /// Scan `folder`. False (with `error`, `out` left default-constructed)
+    /// when: the folder itself cannot be read; a directory partway through
+    /// the tree stops being readable mid-walk (the host disk unmounted, the
+    /// folder deleted - a structural I/O failure, deliberately **not**
+    /// reported as a truncated-but-"successful" tree); or cancelRequested()
+    /// returned true (error == kCancelledError, compare with ==, never
+    /// string-matched). Policy exclusions on individual entries (a symlink,
+    /// the manifest's exclude list, a service file, a size/count limit) are
+    /// not errors - they go to Skipped() and the scan continues
     static bool Scan(const std::filesystem::path& folder, const FolderScanOptions& options, FolderSnapshot& out,
                      std::string* error = nullptr);
 

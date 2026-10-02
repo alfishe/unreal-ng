@@ -12,6 +12,7 @@
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordIoWrite hot-path call
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -26,6 +27,7 @@
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
 #include "stdafx.h"
@@ -113,6 +115,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_ATM710:
         case MM_ATM3:
         case MM_TSL:
+        case MM_SPRINTER:
             return true;
         default:
             return false;
@@ -176,6 +179,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         case MM_TSL:
             result = new PortDecoder_TSConf(context);
+            break;
+        case MM_SPRINTER:
+            result = new PortDecoder_Sprinter(context);
             break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.
@@ -1258,6 +1264,16 @@ bool PortDecoder::Default_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegist
 bool PortDecoder::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     return Default_IsPort_KempstonMouse(port, outRegister);
+}
+
+bool PortDecoder::IsKempstonJoystickFitted() const
+{
+    return _context && _context->pJoystick && _context->pJoystick->IsPresent();
+}
+
+uint8_t PortDecoder::Default_Port_KempstonJoystick_In() const
+{
+    return (_context && _context->pJoystick) ? _context->pJoystick->Read() : 0x00;
 }
 
 uint8_t PortDecoder::Default_Port_KempstonMouse_In(uint16_t port, [[maybe_unused]] uint16_t pc)

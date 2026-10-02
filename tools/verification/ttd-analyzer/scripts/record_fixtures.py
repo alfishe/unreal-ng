@@ -92,6 +92,14 @@ CORPUS_DIR = "testdata/ttd"
 # fixture recorded with it cannot replay exactly; the classic card can
 FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
     "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
+    # The Pentagon corpus: TTD_Corpus_Test fits the classic card before loading, and a session loads only into the
+    # card it was recorded with. The shipped configs fit NeoGS, so without this a re-record from the stock app
+    # produced files the test refuses ("General Sound slot mismatch")
+    "idle_session": {"gs": "z80"},
+    "active_demo": {"gs": "z80"},
+    "demo_7threality": {"gs": "z80"},
+    "demo_across-the-edge-second": {"gs": "z80"},
+    "tsfm_tech_support": {"gs": "z80"},
 }
 
 # /run_frames runs at most this many frames per call

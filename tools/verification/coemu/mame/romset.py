@@ -41,6 +41,13 @@ UNREAD_REGIONS = {
     ('pentevo', 'fw'),
 }
 
+# Devices whose slot the runner leaves empty, so MAME never loads their ROMs. The Sprinter's default keyboard,
+# the Microsoft Natural (kb_ms_natural, an i8051 with natural.bin), has no ROM in unreal-ng; the Sprinter runner
+# (tools/verification/sprinter/mame-capture.sh) starts MAME with -kbd "" (no PC keyboard)
+EMPTY_SLOT_DEVICES = {
+    ('sprinter', 'kb_ms_natural'),
+}
+
 
 def bios_names(m):
     """The machine's BIOS names, the default one first"""
@@ -85,16 +92,17 @@ def set_roms(m, bios):
     return out
 
 
-def device_roms(machines, name, seen):
+def device_roms(machines, name, seen, driver=None):
     """The ROMs of a machine's devices, each with its default BIOS"""
+    driver = driver or name
     out = []
     for d in machines[name].findall('device_ref'):
         dn = d.get('name')
-        if dn in seen or dn not in machines:
+        if dn in seen or dn not in machines or (driver, dn) in EMPTY_SLOT_DEVICES:
             continue
         seen.add(dn)
         out += set_roms(machines[dn], None)
-        out += device_roms(machines, dn, seen)
+        out += device_roms(machines, dn, seen, driver)
     return out
 
 

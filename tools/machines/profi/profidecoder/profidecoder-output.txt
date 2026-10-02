@@ -1,0 +1,20 @@
+=== v3.2 port decoder PROM (ports with A1 A0 = 11, and A1 A0 = 01 for the #7FFD buffer enable)
+  CP/M=0 DOS=0 A15=0: 8255 #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, BUF7FFD #E1 #E5 #E9 #ED #F1 #F5 #F9 #FD
+  CP/M=0 DOS=0 A15=1: 8255 #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F
+  CP/M=0 DOS=1 A15=0: BUF7FFD #E1 #E5 #E9 #ED #F1 #F5 #F9 #FD, FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #E3 #E7 #EB #EF #F3 #F7 #FB #FF
+  CP/M=0 DOS=1 A15=1: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #E3 #E7 #EB #EF #F3 #F7 #FB #FF
+  CP/M=1 DOS=0 A15=0: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+  CP/M=1 DOS=0 A15=1: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+  CP/M=1 DOS=1 A15=0: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+  CP/M=1 DOS=1 A15=1: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+=== v4 / v5 port decoder PROM (ports with A1 A0 = 11)
+  CP/M=0 DOS=0 ROM14=0: 8255 #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F
+  CP/M=0 DOS=0 ROM14=1: 8255 #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F
+  CP/M=0 DOS=1 ROM14=0: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #E3 #E7 #EB #EF #F3 #F7 #FB #FF
+  CP/M=0 DOS=1 ROM14=1: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #E3 #E7 #EB #EF #F3 #F7 #FB #FF
+  CP/M=1 DOS=0 ROM14=0: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+  CP/M=1 DOS=0 ROM14=1: 8255 #87 #A7 #C7 #E7, COM #8F #AF #CF #EF, FDC #83 #A3 #C3 #E3, IDE #8B #AB #CB #EB, P4 #93 #B3 #D3 #F3, P5 #97 #B7 #D7 #F7, P6 #9B #BB #DB #FB, RTC #9F #BF #DF #FF, SYS #23 #27 #2B #2F #33 #37 #3B #3F
+  CP/M=1 DOS=1 ROM14=0: FDC #03 #07 #0B #0F #13 #17 #1B #1F #23 #27 #2B #2F #33 #37 #3B #3F #43 #47 #4B #4F #53 #57 #5B #5F #63 #67 #6B #6F #73 #77 #7B #7F, SYS #A3 #A7 #AB #AF #B3 #B7 #BB #BF
+  CP/M=1 DOS=1 ROM14=1: 8255 #87 #A7 #C7 #E7, COM #8F #AF #CF #EF, FDC #83 #A3 #C3 #E3, IDE #8B #AB #CB #EB, P4 #93 #B3 #D3 #F3, P5 #97 #B7 #D7 #F7, P6 #9B #BB #DB #FB, RTC #9F #BF #DF #FF, SYS #23 #27 #2B #2F #33 #37 #3B #3F
+=== v5 PROM vs unreal-ng today (low byte, A1 A0 = 11; COM and the control register are not modeled)
+  no differences
