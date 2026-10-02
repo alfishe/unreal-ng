@@ -603,6 +603,9 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
 
 bool DebugKeyboardManager::IsKeyPressed(ZXKeysEnum key) const
 {
+    // _tapHeldKeys is mutated by OnFrame on the emulator thread
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Check in directly pressed keys
     if (_directPressedKeys.count(key) > 0)
         return true;
@@ -614,6 +617,9 @@ bool DebugKeyboardManager::IsKeyPressed(ZXKeysEnum key) const
 
 std::vector<ZXKeysEnum> DebugKeyboardManager::GetPressedKeys() const
 {
+    // _tapHeldKeys is mutated by OnFrame on the emulator thread
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+
     // Combine direct pressed keys and tap held keys
     std::vector<ZXKeysEnum> result;
     result.reserve(_directPressedKeys.size() + _tapHeldKeys.size());
