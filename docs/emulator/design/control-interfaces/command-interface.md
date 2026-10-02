@@ -1331,11 +1331,19 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto]` | Start recording. Default format `gif`; default output file under the system temp directory. |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frame rate, and scale factor. |
+| `videorecord status` | | Show recording state, output file, frames, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+
+**Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
+only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
+`.mkv` any of aac/mp3/opus/vorbis/flac/pcm_s16le, `.webm` opus/vorbis, `.avi` aac/mp3/pcm_s16le. A GIF
+has no audio track, so `gif` + `--audio` is refused. On macOS h264/hevc + aac in `.mp4`/`.mov` uses
+the native encoder; every other combination needs ffmpeg. The WebAPI (`"audio"`), MCP
+(`capture_media record_start` `audio`), Lua and Python (`audio` option) follow the same rules.
+Example: `videorecord start h264 scratch/run.mp4 --scale 2 --audio aac`.
 
 **Audio rate**: `--audio-rate N` (one of 44100, 48000, 88200, 96000, 176400, 192000)
 pins the core audio rate before the first sample is stamped, so the whole

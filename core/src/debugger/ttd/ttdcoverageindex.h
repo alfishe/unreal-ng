@@ -238,6 +238,9 @@ public:
 
     /// @brief Total heap bytes held, for the session memory report.
     size_t HeapBytes() const;
+    /// Part of HeapBytes() allocated but not holding data: unused capacity of
+    /// the compressed blocks
+    size_t CompressedSlackBytes() const;
 
     /// @brief Compressed bytes actually held for a kind (sealed blocks plus the
     /// block still being filled). This is the number that matters for sizing a

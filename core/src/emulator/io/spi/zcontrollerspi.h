@@ -72,7 +72,12 @@ public:
 
     /// The SD card (slot 0) is selected
     bool IsSelected() const { return IsSlotSelected(0); }
-    bool IsSlotSelected(uint8_t slot) const { return SelectedBy(slot, _state.config); }
+    /// Slot 0 has its select line even when empty (the SD socket); slots
+    /// 1..3 exist only with a device in them
+    bool IsSlotSelected(uint8_t slot) const
+    {
+        return slot < kSlots && (slot == 0 || _devices[slot] != nullptr) && SelectedBy(slot, _state.config);
+    }
 
     const State& GetState() const { return _state; }
     /// Restore a saved state; every device is told about its chip select again

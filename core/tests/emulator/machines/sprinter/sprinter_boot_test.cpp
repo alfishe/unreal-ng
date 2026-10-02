@@ -16,11 +16,14 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
+#include <emulator/memory/sprinter/sprinteraccelerator.h>
 #include <emulator/ports/models/portdecoder_sprinter.h>
+#include <emulator/video/screen.h>
 #include <gtest/gtest.h>
 
 #include <cstdlib>
@@ -980,3 +983,178 @@ TEST_F(SprinterBoot_Test, InstancesCanBeRemovedAndCreatedAgain)
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Memory    : 4096K"); }, 300, 5);
     EXPECT_TRUE(ScreenHas("Sprinter BIOS: ver 3.04")) << ScreenText();
 }
+
+/// region <The accelerator in real software (phase S5, tdd-accel-sound-input §1)>
+
+namespace
+{
+/// The DSS 1.62 floppy's FAT12 (one FAT at LBA 10, the root at LBA 19, cluster n at LBA 31 + n, one sector per
+/// cluster; testdata/machines/sprinter/README.md): put `data` into the root as `name11` ("NAME    EXT"),
+/// replacing the file of that name
+bool PutRootFile(std::vector<uint8_t>& disk, const std::string& name11, const std::vector<uint8_t>& data)
+{
+    uint8_t* fat = disk.data() + 10 * 512;
+    const auto get = [fat](uint32_t n) -> uint32_t {
+        const uint32_t pair = fat[n * 3 / 2] | fat[n * 3 / 2 + 1] << 8;
+        return (n & 1) ? pair >> 4 : pair & 0xFFF;
+    };
+    const auto set = [fat](uint32_t n, uint32_t v) {
+        uint8_t* p = fat + n * 3 / 2;
+        if (n & 1)
+        {
+            p[0] = static_cast<uint8_t>((p[0] & 0x0F) | (v << 4));
+            p[1] = static_cast<uint8_t>(v >> 4);
+        }
+        else
+        {
+            p[0] = static_cast<uint8_t>(v);
+            p[1] = static_cast<uint8_t>((p[1] & 0xF0) | (v >> 8));
+        }
+    };
+    constexpr uint32_t kClusters = 2880 - 33 + 2;
+
+    uint8_t* entry = nullptr;
+    for (uint32_t i = 0; i < 224 && !entry; i++)
+    {
+        uint8_t* e = disk.data() + 19 * 512 + i * 32;
+        if (std::memcmp(e, name11.data(), 11) == 0)
+        {
+            for (uint32_t c = e[26] | e[27] << 8; c >= 2 && c < 0xFF8;)
+            {
+                const uint32_t next = get(c);
+                set(c, 0);
+                c = next;
+            }
+            entry = e;
+        }
+    }
+    for (uint32_t i = 0; i < 224 && !entry; i++)
+    {
+        uint8_t* e = disk.data() + 19 * 512 + i * 32;
+        if (e[0] == 0x00 || e[0] == 0xE5)
+            entry = e;
+    }
+    if (!entry)
+        return false;
+
+    uint32_t first = 0, previous = 0;
+    for (size_t at = 0; at < data.size(); at += 512)
+    {
+        uint32_t c = 2;
+        while (c < kClusters && get(c) != 0)
+            c++;
+        if (c >= kClusters)
+            return false;
+        set(c, 0xFFF);
+        if (previous)
+            set(previous, c);
+        else
+            first = c;
+        previous = c;
+        std::memcpy(disk.data() + (31 + c) * 512, data.data() + at, std::min<size_t>(512, data.size() - at));
+    }
+    std::memset(entry, 0, 32);
+    std::memcpy(entry, name11.data(), 11);
+    entry[11] = 0x20;  // archive
+    entry[26] = static_cast<uint8_t>(first);
+    entry[27] = static_cast<uint8_t>(first >> 8);
+    for (int b = 0; b < 4; b++)
+        entry[28 + b] = static_cast<uint8_t>(data.size() >> (8 * b));
+    return true;
+}
+}  // namespace
+
+// ACC-9 (part): the accelerator test program of the HDD system disk (TESTS\ACCTEST.EXE, testdata/machines/sprinter/
+// software) copies a 64 x 64 picture into the graphics screen one row at a time: LD D,D : LD A,#40 (length 64)
+// : LD L,L : LD A,(HL) (64 bytes into the buffer) : LD (DE),A (64 bytes into row PORT_Y) : LD B,B. The video RAM
+// rows 0-63, columns 0-63 then hold the file's picture (load address #8100, picture at #8300).
+// Boot-bound (BIOS, DSS from the floppy, the program): ~3 s host time with the turbo mode
+TEST_F(SprinterBoot_Test, Dss162_AccTestCopiesItsPictureWithTheAccelerator)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    const std::string program = TestPathHelper::GetTestDataPath("machines/sprinter/software/acctest.exe");
+    if (!FileHelper::FileExists(image) || !FileHelper::FileExists(program))
+        GTEST_SKIP() << "the DSS floppy or ACCTEST.EXE is missing";
+
+    std::vector<uint8_t> disk = ReadAll(image);
+    const std::vector<uint8_t> exe = ReadAll(program);
+    ASSERT_EQ(disk.size(), 1474560u);
+    ASSERT_EQ(exe.size(), 4632u);
+    const std::string bat = "@echo off\r\nacctest\r\n";
+    ASSERT_TRUE(PutRootFile(disk, "ACCTEST EXE", exe));
+    ASSERT_TRUE(PutRootFile(disk, "SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())));
+    const std::string copy = TestPathHelper::GetUniqueTestScratchPath("dss-acctest.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(copy, disk.data(), disk.size()));
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(copy, 1, &error)) << error;
+
+    // The picture: file offset #16 is load address #8100, so #8300 is offset #216
+    constexpr size_t kPicture = 0x216;
+    const SprinterVideoRam& vram = _decoder->GetVideoRam();
+    const auto mismatches = [&]() {
+        int count = 0;
+        for (uint32_t y = 0; y < 64; y++)
+            for (uint32_t x = 0; x < 64; x++)
+                count += vram.Read(y * 1024 + x) != exe[kPicture + y * 64 + x];
+        return count;
+    };
+
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return mismatches() == 0; }, 3000, 5);
+    EXPECT_EQ(mismatches(), 0) << StringHelper::Format("PC=%04X frame=%llu", _context->pCore->GetZ80()->pc,
+                                                       static_cast<unsigned long long>(_context->emulatorState.frame_counter));
+    const SprinterAccelerator* accelerator = _decoder->GetAccelerator();
+    ASSERT_NE(accelerator, nullptr);
+    EXPECT_GE(accelerator->State().operations, 128u) << "64 block reads and 64 block writes";
+    EXPECT_EQ(accelerator->State().length, 0x40);
+    EXPECT_EQ(vram.Read(64 * 1024), 0x00) << "row 64 is not drawn";
+
+    // The screen against MAME's (ScreenSprinter's render; reviewed against MAME's capture, s5-accelerator-outcome.md)
+    ExpectScreenMatchesGolden("acctest.png");
+}
+
+// Flex Navigator (SYSTEM.BAT's "fn") clears its graphics screen with the accelerator (#86CB: OUT (#A2),#50 puts the
+// video RAM into window 1, then LD D,D : LD A,0 sets the length 256 and every column of 320 runs LD E,E : LD (HL),E
+// : LD B,B: a vertical fill of 256 rows), then draws its panels: the text glyphs through the accelerator's copies.
+// The floppy RESTORE of the BIOS RESETD is too slow for its poll loop at 21 MHz (roadmap §8, the open wait-state
+// question): until that is fixed the test puts the head on track 20 when RESETD starts, so the RESTORE ends in time.
+// Boot-bound (BIOS, DSS, Flex Navigator loading from the floppy): ~6 s host time with the turbo mode
+TEST_F(SprinterBoot_Test, Dss162_FlexNavigatorDrawsWithTheAccelerator)
+{
+    const std::string image = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+    if (!FileHelper::FileExists(image))
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(image, 1, &error)) << error;
+
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->busTraceHook = [this, z80](char type, uint16_t addr, uint8_t) {
+        // ROM page 0 RESETD (#0609) fetched: the head from FN's last read (track 71) to track 20
+        FDD* drive = _context->pBetaDisk->getDrive();
+        if (type == 'R' && addr == 0x0609 && (z80->pc == 0x0609 || z80->pc == 0x060A) && drive && drive->getTrack() > 20)
+            drive->setTrack(20);
+    };
+
+    const SprinterVideoRam& vram = _decoder->GetVideoRam();
+    const auto cleared = [&]() {
+        const uint8_t v = vram.Read(0);
+        for (uint32_t y = 0; y < 256; y++)
+            for (uint32_t x = 0; x < 320; x++)
+                if (vram.Read(y * 1024 + x) != v)
+                    return false;
+        return true;
+    };
+
+    SkipIdeDetection();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("B:\\>"); }, 3000, 5);
+    EmulatorTestHelper::RunUntil(_emulator.get(), cleared, 1000, 1);
+    ASSERT_TRUE(cleared()) << "320 columns x 256 rows of one value";
+    EXPECT_EQ(_decoder->GetAccelerator()->State().operations, 320u) << "one vertical fill per column";
+
+    // The panels with the file list of B:\FN (the RTC is fixed: the clock shows the same time every run)
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 600);
+    z80->busTraceHook = nullptr;
+    ExpectScreenMatchesGolden("fn-panels.png");
+}
+
+/// endregion </The accelerator in real software>

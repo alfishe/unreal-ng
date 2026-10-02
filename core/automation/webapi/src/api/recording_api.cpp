@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <string>
 
+#include "../common/recordingjson.h"
 #include "../emulator_api.h"
 
 using namespace drogon;
@@ -67,6 +68,12 @@ void appendRecordingStats(Json::Value& target, const RecordingManager* rm)
     target["output_file_size"] = static_cast<Json::UInt64>(stats.outputFileSize);
     target["average_frame_time_ms"] = stats.averageFrameTime;
     target["recent_fps"] = stats.recentFps;
+    target["video_codec"] = rm->GetVideoCodec();
+    target["audio"] = rm->HasAudio();
+    target["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : "";
+    target["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+    target["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+    target["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
 }
 
 /// Default output: tempdir/unreal-mcp/video-<safe-emulator-id>-<stamp>.<ext>
@@ -107,7 +114,8 @@ void appendOutputFile(Json::Value& target, const std::string& path)
 /// @brief Video recording control over the RecordingManager
 /// @brief Request body: {"action":"start|stop|pause|resume",
 ///        "format":"gif" (native; mp4/avi/mkv depend on ffmpeg availability),
-///        "fps":50, "scale":1..4, "region":"full"|"screen", "filename":"..."}
+///        "fps":50, "scale":1..4, "region":"full"|"screen", "filename":"...",
+///        "audio":"aac" (optional; default none = video only), "video_bitrate":kbps, "audio_bitrate":kbps}
 void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
@@ -163,6 +171,22 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
                 json && json->isMember("filename") && !(*json)["filename"].asString().empty() ?
                     (*json)["filename"].asString() : defaultRecordingPath(id, extension);
 
+            // Optional audio track + bitrates, checked against the container before anything changes
+            RecordingCodecJson codecs;
+            std::string codecError;
+            if (!ParseRecordingCodecJson(json.get(), format, filename, codecs, codecError))
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = codecError;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+
             // Configuration setters refuse changes mid-recording — apply while paused
             const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
             if (wasRunning)
@@ -197,8 +221,9 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
                 fm->setFeature(Features::kRecording, true);
             }
 
-            // Video-only recording (empty audio codec; GIF has no audio track)
-            const bool started = rm->StartRecording(filename, format, "");
+            // No audio codec = video only (the default); GIF never carries audio (refused above)
+            const bool started =
+                rm->StartRecording(filename, format, codecs.audio, codecs.videoBitrate, codecs.audioBitrate);
 
             if (wasRunning)
             {
@@ -231,6 +256,12 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
             ret["fps"] = fps;
             ret["scale"] = scale;
             ret["region"] = captureRegion == VideoCaptureRegion::MainScreen ? "screen" : "full";
+            ret["audio"] = rm->HasAudio();
+            ret["audio_codec"] = codecs.audio;
+            ret["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
+            ret["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
+            ret["video_bitrate"] = codecs.videoBitrate;
+            ret["audio_bitrate"] = codecs.audioBitrate;
             ret["feature_auto_enabled"] = featureWasOff;
             appendOutputFile(ret, filename);
 

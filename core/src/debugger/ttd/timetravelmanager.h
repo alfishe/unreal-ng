@@ -153,6 +153,37 @@ struct TTDPerfCounters
     }
 };
 
+/// Where the session heap goes (sessionHeapBytes = Total()). Allocated
+/// bytes. The page-store payloads are split exactly into content
+/// (ramPayload) and unused allocation (ramPayloadSlack), two parts of the
+/// sum; the other *Slack fields name the unused allocation inside the part
+/// before them and are not added again
+struct TTDHeapBreakdown
+{
+    size_t pageStoreTable = 0;    ///< slot table, free list, decode scratch
+    size_t ramPayload = 0;        ///< compressed piece content (live slots)
+    size_t ramPayloadSlack = 0;   ///< allocated payload capacity beyond the content (and free slots')
+    size_t checkpoints = 0;       ///< the checkpoint structs themselves
+    size_t pageRefs = 0;          ///< per-checkpoint page reference tables (capacity)
+    size_t deviceBlobs = 0;       ///< per-checkpoint device-state blobs (capacity)
+    size_t inputJournals = 0;     ///< input + external-event journals, dirty-page scratch
+    size_t writeJournal = 0;      ///< committed ring chunks
+    size_t writeJournalSlack = 0; ///< committed chunk space not holding a record yet
+    size_t coverage = 0;
+    size_t coverageSlack = 0;     ///< unused capacity of compressed coverage blocks
+    size_t portReads = 0;
+    size_t portWrites = 0;
+    size_t portJournalSlack = 0;  ///< unused capacity of compressed port blocks (reads + writes)
+    size_t frameCache = 0;
+
+    /// ramPayloadSlack is a part of its own; the other slack fields are not added again
+    size_t Total() const
+    {
+        return pageStoreTable + ramPayload + ramPayloadSlack + checkpoints + pageRefs + deviceBlobs + inputJournals +
+               writeJournal + coverage + portReads + portWrites + frameCache;
+    }
+};
+
 struct TTDSessionInfo
 {
     TTDSessionState state = TTDSessionState::Idle;
@@ -1600,6 +1631,11 @@ private:
     /// page-store percentage (which is always ~100% because the COW store
     /// auto-grows to fit the working set).
     size_t EstimateSessionHeapBytes() const;
+ public:
+    /// The session heap by part (TTD benchmark BM-4 split)
+    TTDHeapBreakdown GetHeapBreakdown() const;
+
+ private:
 
     // -----------------------------------------------------------------------
     // Internal restore helpers (Phase 2 Item 1; parent TDD §8.1 step 2)

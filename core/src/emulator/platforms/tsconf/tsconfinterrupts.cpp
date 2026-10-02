@@ -56,10 +56,43 @@ void TsConfInterrupts::CatchUp(uint32_t raster)
     }
 
     // Line: tact 224 n - 1 of every line, i.e. (tact + 1) % 224 == 0
-    if ((mask & TsConfInt::Line) && (raster + 1) / kLineTacts > from / kLineTacts)
+    if (_lineSource) [[unlikely]]
+        CatchUpLineWithSource(from, raster, (mask & TsConfInt::Line) != 0);
+    else if ((mask & TsConfInt::Line) && (raster + 1) / kLineTacts > from / kLineTacts)
         _ts.intPending |= TsConfInt::Line;
 
     _ts.intLastRaster = raster + 1;
+}
+
+void TsConfInterrupts::CatchUpLineWithSource(uint32_t from, uint32_t raster, bool latch)
+{
+    // The source's edges are taken even while the mask is off: an event
+    // latches only while its mask bit is set, a masked edge is gone
+    uint32_t edges[kMaxLineEdges];
+    for (;;)
+    {
+        const size_t count = _lineSource->TakeLineEdges(raster, edges, kMaxLineEdges);
+        for (size_t i = 0; i < count && latch; i++)
+        {
+            // An edge before `from` (seen at a bus access inside the current
+            // instruction) counts at `from`
+            const uint32_t at = std::max(edges[i], from);
+            if (_lineSource->DrivesLine(std::min(at, kFrameTacts - 1) / kLineTacts))
+                _ts.intPending |= TsConfInt::Line;
+        }
+        if (count < kMaxLineEdges)
+            break;
+    }
+    if (!latch)
+        return;
+
+    // The line starts of the lines the source does not drive
+    for (uint32_t line = from / kLineTacts; line <= raster / kLineTacts; line++)
+    {
+        const uint32_t event = line * kLineTacts + kLineTacts - 1;
+        if (event >= from && event <= raster && !_lineSource->DrivesLine(line))
+            _ts.intPending |= TsConfInt::Line;
+    }
 }
 
 bool TsConfInterrupts::FramePulseActive(uint32_t t) const

@@ -775,11 +775,21 @@ void TimeTravelManager::ClearJournalGap()
 
 size_t TimeTravelManager::EstimateSessionHeapBytes() const
 {
+    return GetHeapBreakdown().Total();
+}
+
+TTDHeapBreakdown TimeTravelManager::GetHeapBreakdown() const
+{
+    TTDHeapBreakdown h;
+
     // Page store: slot table plus every compressed payload allocation (the
     // payloads are separate heap blocks; the slot table alone left out the
     // pages themselves - B7). Allocated, not live: free-list slots keep
     // their capacity until reused.
-    size_t total = _pageStore.HeapBytes();
+    const size_t payloadCapacity = _pageStore.PayloadCapacityBytes();
+    h.pageStoreTable = _pageStore.HeapBytes() - payloadCapacity;
+    h.ramPayload = _pageStore.GetLivePayloadBytes();
+    h.ramPayloadSlack = payloadCapacity - h.ramPayload;
 
     // Per-checkpoint: the struct itself + every vector's allocated backing
     // (capacity, not size — capacity is what's actually on the heap).
@@ -789,20 +799,18 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
     // heap allocations those vector headers point at.
     for (const TTDCheckpoint& cp : _timeline)
     {
-        total += sizeof(TTDCheckpoint);
+        h.checkpoints += sizeof(TTDCheckpoint);
         for (const auto& entry : cp.peripheralBlobs)
-            total += entry.second.capacity() * sizeof(uint8_t);
-        total += cp.ramPages.capacity()   * sizeof(TTDPageRef);
+            h.deviceBlobs += entry.second.capacity() * sizeof(uint8_t);
+        h.pageRefs += cp.ramPages.capacity() * sizeof(TTDPageRef);
     }
 
     // Input journal + external-event journal — same pattern: capacity is
-    // what's allocated, size is what's logically used.
-    total += _inputJournal.Events().capacity()   * sizeof(TTDInputEvent);
-    total += _externalEvents.Events().capacity() * sizeof(TTDExternalEvent);
-
-    // Session-scope dirty-page scratch buffer (reused every frame — counted
-    // once because there's only one).
-    total += _dirtyScratch.capacity() * sizeof(uint16_t);
+    // what's allocated, size is what's logically used. Plus the session-scope
+    // dirty-page scratch buffer (reused every frame, counted once).
+    h.inputJournals = _inputJournal.Events().capacity() * sizeof(TTDInputEvent) +
+                      _externalEvents.Events().capacity() * sizeof(TTDExternalEvent) +
+                      _dirtyScratch.capacity() * sizeof(uint16_t);
 
     // Write journal (committed ring chunks, not the nominal 64 MB), coverage
     // index and the decoded-frame cache hold the session's data; without a
@@ -810,14 +818,21 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
     if (!_timeline.empty())
     {
         if (_writeJournal)
-            total += _writeJournal->HeapBytes();
-        total += _coverageIndex.HeapBytes();
-        total += _portReads.HeapBytes() + _portWrites.HeapBytes();
+        {
+            h.writeJournal = _writeJournal->HeapBytes();
+            const size_t used = _writeJournal->Size() * sizeof(TTDWriteRecord);
+            h.writeJournalSlack = h.writeJournal > used ? h.writeJournal - used : 0;
+        }
+        h.coverage = _coverageIndex.HeapBytes();
+        h.coverageSlack = _coverageIndex.CompressedSlackBytes();
+        h.portReads = _portReads.HeapBytes();
+        h.portWrites = _portWrites.HeapBytes();
+        h.portJournalSlack = _portReads.CompressedSlackBytes() + _portWrites.CompressedSlackBytes();
         if (_frameCache)
-            total += _frameCache->Bytes();
+            h.frameCache = _frameCache->Bytes();
     }
 
-    return total;
+    return h;
 }
 
 // ---------------------------------------------------------------------------

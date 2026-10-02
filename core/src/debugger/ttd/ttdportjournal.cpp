@@ -293,6 +293,14 @@ size_t TTDPortJournal::HeapBytes() const
     return bytes;
 }
 
+size_t TTDPortJournal::CompressedSlackBytes() const
+{
+    size_t bytes = 0;
+    for (const Block& b : _blocks)
+        bytes += b.compressed.capacity() - b.compressed.size();
+    return bytes;
+}
+
 size_t TTDPortJournal::SerializedBytes() const
 {
     constexpr size_t kBlockHeader = 4 + 8 + 4 + 4;
