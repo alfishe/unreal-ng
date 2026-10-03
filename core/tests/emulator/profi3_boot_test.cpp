@@ -41,7 +41,7 @@ protected:
 
         _emulator = _manager->CreateEmulatorWithModelAndRAM("profi3-boot", "PROFI3", 512, LoggerLevel::LogError);
         if (!_emulator)
-            GTEST_SKIP() << "PROFI3 is not creatable (missing configs/profi3 or data/rom/profi/kramis-v02.rom)";
+            GTEST_SKIP() << "PROFI3 is not creatable (missing configs/profi3 or data/rom/profi/kramis-v03.rom)";
     }
 
     void TearDown() override
@@ -164,6 +164,8 @@ static bool KramisMenuOnScreen(EmulatorContext* context)
 TEST_F(Profi3Boot_Test, KramisV02ReachesItsMenu)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();  // asserts on emulated state (VRAM attributes) only
 
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
@@ -172,12 +174,12 @@ TEST_F(Profi3Boot_Test, KramisV02ReachesItsMenu)
     EXPECT_EQ(context->pScreen->GetVideoMode(), M_PROFI);
 }
 
-/// @brief The other factory v3 image ("ТОО Фирма ПРОФИ" BIOS V0.3 + TR-DOS 5.04T) reaches its menu too
+/// @brief The default v3 image ("ТОО Фирма ПРОФИ" BIOS V0.3 + TR-DOS 5.04T, configs/profi3) reaches its menu
 TEST_F(Profi3Boot_Test, KramisV03ReachesItsMenu)
 {
     EmulatorContext* context = _emulator->GetContext();
-    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v03.rom"));
-    _emulator->Reset(true);
+    EXPECT_NE(std::string(context->config.profi3_rom_path).find("kramis-v03.rom"), std::string::npos)
+        << "the PROFI3 default ROM: " << context->config.profi3_rom_path;
     _emulator->EnableTurboMode();
 
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
@@ -188,6 +190,8 @@ TEST_F(Profi3Boot_Test, KramisV03ReachesItsMenu)
 TEST_F(Profi3Boot_Test, KramisMenuSinclairStartsThe128Menu)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));   // the V0.2 menu and its TR-DOS 5.03
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
     ASSERT_TRUE(KramisMenuOnScreen(context));
@@ -206,6 +210,8 @@ TEST_F(Profi3Boot_Test, KramisMenuSinclairStartsThe128Menu)
 TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
 {
     EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v02.rom"));   // the V0.2 menu and its TR-DOS 5.03
+    _emulator->Reset(true);
     _emulator->EnableTurboMode();
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return KramisMenuOnScreen(context); }, 600);
     ASSERT_TRUE(KramisMenuOnScreen(context));
@@ -226,10 +232,8 @@ TEST_F(Profi3Boot_Test, KramisMenuTrDosStartsTrDos503)
 ///        v5 - while BIOS 2.0's TR-DOS 6.08 boots it on a v3 board too (traced, docs/inprogress/2026-10-01-profi-v3-v5)
 TEST_F(Profi3Boot_Test, KlugCpmBootsFromKramisV03)
 {
-    // Slower than the 50 ms guideline on purpose: the BIOS and CP/M boot from a floppy
+    // Slower than the 50 ms guideline on purpose: the BIOS and CP/M boot from a floppy. V0.3 is the PROFI3 default
     EmulatorContext* context = _emulator->GetContext();
-    ASSERT_TRUE(_emulator->LoadROM("rom\\profi\\kramis-v03.rom"));
-    _emulator->Reset(true);
     _emulator->RunNFrames(600, true);   // the Kramis menu, settled
     ASSERT_TRUE(KramisMenuOnScreen(context));
     std::string error;

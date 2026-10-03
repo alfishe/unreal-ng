@@ -9,7 +9,7 @@ machines here
 | | `PROFI3` (v3.x, Kramis, 1990) | `PROFI` (v5.0x, Kondor, 1993-94; alias `PROFI5`) |
 |:--|:--|:--|
 | RAM | **512K**, 1024K | 512K, **1024K** |
-| ROM | `rom/profi/kramis-v02.rom` (BIOS V0.2 + TR-DOS 5.03) | `rom/profi.rom` |
+| ROM | `rom/profi/kramis-v03.rom` (BIOS V0.3 + TR-DOS 5.04T; V0.2 + TR-DOS 5.03 in `kramis-v02.rom`) | `rom/profi.rom` |
 | Hi-res 512x240 | monochrome | 16 colours, palette `OUT #xx7E` |
 | Extended ports (CP/M + ROM14), RTC, IDE | none | yes |
 | Frame (default `[PROFI] SyncProm=`) | 69888 T, INT 12580 T before paper | 69888 T, INT 14368 T before paper |
@@ -79,7 +79,7 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
 | The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards |
-| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the V0.3 ROM (`[ROM] PROFI3=rom\profi\kramis-v03.rom`, TR-DOS 5.04T); the default V0.2 (TR-DOS 5.03) cannot load it |
+| CP/M | v5: boots from the BIOS menu "Загрузка системы CP/M" (`testdata/machines/profi/cpm/v5/*.fdi`, `ProfiBoot_Test.CpmBootsFromTheKondorSystemDisk`); v3: Klug CP/M (`cpm/v3/klug-cpm-2.3.td0`) boots from the Kramis "Profi-DOS" entry with the default V0.3 ROM (TR-DOS 5.04T); V0.2 (`kramis-v02.rom`, TR-DOS 5.03) cannot load it |
 
 ### Hi-res (512x240)
 

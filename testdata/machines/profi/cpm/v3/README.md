@@ -27,10 +27,10 @@ fits the Kramis BIOS's boot convention, so it is the v3 test disk until an SP-DO
   without the ROM switch it prints "Can't turn off ROM. Toggle RAM/ROM switch and press any key".
 - **How to boot:** drive A, Kramis menu entry **"Profi-DOS"** (on a v5 board: BIOS menu "Загрузка
   системы CP/M"). Answer `Y` to "RAM Disk E: format?" after a cold start. On the emulator (2026-10-03) it boots to its sign-on and
-  the "RAM Disk E: format?" question on the v5 (BIOS 2.0) and on the v3 with the **Kramis V0.3** ROM
+  the "RAM Disk E: format?" question on the v5 (BIOS 2.0) and on the v3 with the **Kramis V0.3** ROM (the `PROFI3` default)
   (`data/rom/profi/kramis-v03.rom`, TR-DOS 5.04T; `Profi3Boot_Test.KlugCpmBootsFromKramisV03`).
 - **Needs TR-DOS 5.04T or later:** the boot sector reads the system tracks through the TR-DOS ROM. With Kramis V0.2
-  (TR-DOS 5.03, the `PROFI3` default) TR-DOS switches to double stepping on this 5 x 1024-byte disk, every read
+  (TR-DOS 5.03, `kramis-v02.rom`) TR-DOS switches to double stepping on this 5 x 1024-byte disk, every read
   lands on a doubled cylinder and ends in Record Not Found, and the half-loaded system crashes - the same with V0.2
   on a v5 board, while the v3 board with BIOS 2.0 (TR-DOS 6.08) boots it. Traced on the emulator (the FDC follows
   TR-DOS's own seek / track-register writes); a property of the software, not of the board.

@@ -27,8 +27,8 @@ built.
 | ID | Requirement | v3 | v5 | Conf. | Evidence |
 |:--|:--|:--|:--|:--|:--|
 | R1 | Model ids: v5 keeps `PROFI` (`MM_PROFI`, alias `PROFI5`); v3 is a new `PROFI3` (`MM_PROFI3`, appended to the enum) | `PROFI3` | `PROFI` | - | design 2 |
-| R2 | Default system ROM | `rom/profi/kramis-v02.rom` | `rom/profi.rom` (unchanged) | H | roms.md |
-| R3 | The other factory images load through `[ROM] PROFI3=` / `PROFI=` | `kramis-v03.rom` | `bios10*.rom`, `bios20*.rom` | H | roms.md |
+| R2 | Default system ROM | `rom/profi/kramis-v03.rom` (V0.2 until 2026-10-03: its TR-DOS 5.03 cannot load Klug CP/M) | `rom/profi.rom` (unchanged) | H | roms.md |
+| R3 | The other factory images load through `[ROM] PROFI3=` / `PROFI=` | `kramis-v02.rom` | `bios10*.rom`, `bios20*.rom` | H | roms.md |
 | R4 | RAM: page = `((DFFD & 7) << 3) \| (7FFD & 7)`, wrapping on smaller boards | 512K default, 1024K allowed | 1024K default, 512K allowed | H | M1-M3 |
 | R5 | 256K and 768K v3 boards, with unfitted chip rows reading `#FF` | - | - | O | M4 (XP+ only) |
 | R6 | Reset enters the SYS ROM; ROM order SYS, DOS, 128, 48 | yes | yes | H | M5 |
