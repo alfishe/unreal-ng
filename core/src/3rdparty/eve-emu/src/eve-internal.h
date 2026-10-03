@@ -41,6 +41,7 @@ constexpr uint32_t kSpecialSize = 4 * 1024;
 
 constexpr uint32_t kPageSize = 4096;
 constexpr uint32_t kPageShift = 12;
+constexpr uint32_t kChangeBlockShift = 8;  // RAM_G change tracking for kept lines
 constexpr uint32_t kPagesPerWord = 64;   // dirty bits per uint64_t
 
 // Font metric block [PG §5.5.1]: 128 width bytes, then five 32-bit words.
@@ -502,6 +503,10 @@ struct EveChip
     // (dlVersion: a swap to different contents), the output (outputVersion: EveSetOutput
     // with another buffer, size or drawing switch) and the recorded walk with its handles
     std::unique_ptr<EveLib::LineKept[]> lineKept;  // kMaxLines
+    // ramGWrites at the last change of each 4 KB page of RAM_G and of each 256-byte block
+    // (a line's reads are checked page first, then block: palettes are 512 bytes)
+    std::unique_ptr<uint64_t[]> ramGPageChanges;
+    std::unique_ptr<uint64_t[]> ramGBlockChanges;
     bool lineKeepEnabled = true;           // false: every line is drawn (tests compare both)
     uint64_t drawRegChanges = 0;
     uint64_t outputVersion = 1;

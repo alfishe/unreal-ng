@@ -191,6 +191,9 @@ struct LineRun
     // every other line nothing reads it and nothing in the pixel pipeline tests it, so
     // its writes are skipped (WritesTag)
     bool tagLive;
+    int32_t keepLine;      // the screen line, when its pixels may be left in the frame buffer; else -1
+    bool pixelsKept;       // the line's pixels were left in the frame buffer: no output
+    bool remembered;       // RememberSteps wrote the line's signature
 };
 
 inline bool WritesTag(const LineRun& run)
@@ -224,6 +227,20 @@ struct LinePlanStep
     uint32_t commandWord;
 };
 
+// What a drawn screen line was drawn from (eve-dl.cpp, KeepLineBySteps): the steps of the
+// recorded walk that reached it, with their contexts, and the RAM_G change count then. A
+// later line whose reaching steps are equal and whose RAM_G pages read by them did not
+// change has the same pixels and fill cost, whatever else the display list changed.
+struct LineSignature
+{
+    bool valid = false;
+    bool readsAnyMemory = false;  // a step whose reads are not bounded (text, bargraph)
+    uint64_t ramGMark = 0, drawRegChanges = 0, outputVersion = 0;
+    uint64_t fillCost = 0;
+    std::vector<LinePlanStep> steps;
+    std::vector<GraphicsContext> contexts;  // one per step
+};
+
 struct LinePlan
 {
     bool valid = false;
@@ -238,6 +255,7 @@ struct LinePlan
     uint32_t events = 0;
     std::vector<GraphicsContext> contexts;
     std::vector<LinePlanStep> steps;
+    std::vector<LineSignature> lines;  // per screen line (kMaxLines), kept across recordings
 };
 
 // --- eve-dl.cpp --------------------------------------------------------------------------------
