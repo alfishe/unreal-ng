@@ -72,7 +72,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" \
 
 curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/porttrace/stop" >/dev/null
 curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/events?limit=100" \
-  | jq -r '.events[] | "pc=\(.pc) port=\(.dec) val=\(.val)"'
+  | jq -r '.events[] | "pc=\(.pc) port=\(.decoded_port) val=\(.value)"'
 ```
 
 Interpretation — TR-DOS ROM occupies `#0000-#3FFF` while paged, so:

@@ -27,10 +27,24 @@ media {"action":"save","slot":"hd"}                                  # write the
 media {"action":"export","slot":"hd","path":"scratch/disk.chd","compression":"zstd"}
 media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/sp_hdd_sys.chd"}  # only the changes
 media {"action":"eject","slot":"B","discard":true}
+media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
+media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
+media {"action":"rescan","slot":"sd"}                                # re-read a host folder after it changed (refused while dirty)
+media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 2 GiB)
+media {"action":"protect","slot":"A","on":true}                      # the write-protect switch
+media {"action":"insert","slot":"ide0.master","path":"/discs/game.iso","device":"cdrom"}  # an empty IDE unit becomes a CD-ROM drive (device: disk | cdrom)
+media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cdrom","format":"audio-cd"}  # a folder of MP3 / FLAC / WAV as an audio CD
 ```
 
+- Verbs: `list info formats targets insert eject swap save export discard rescan create protect`.
+- `insert` / `swap` options: `access` (`readonly` | `session` | `writethrough`), `format` (a hint, e.g. `audio-cd`),
+  `fs` (`fat16` | `fat32`), `codepage` (`cp866` | `cp1251`), `free` (bytes of room for guest writes), `wp` (insert write-protected),
+  `kind`, `device`, `immediate` (skip the swap delay), plus `save` / `export` / `discard` / `end_recording` / `async`.
+  `swap` takes every `insert` option.
+- `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`.
+
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
-- Paths are read by the **emulator** process (no upload here; `load_software` uploads).
+- Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).
 - The reply's `slot` is the canonical id; `revision` grows with every change.
 - **Unsure which slot?** Ask `targets` first. `default` is the index to use without asking
   (`null`: several slots fit - pick one, or ask the user); `refusal` says why nothing takes the
@@ -70,10 +84,11 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: applicatio
 ## Assert on
 
 - `ok` and `error` (codes: `unknown-slot` 404, `dirty` / `recording` / `in-use` 409,
-  `bad-request` / `ambiguous-slot` / `unknown-format` 400).
+  `bad-request` / `ambiguous-slot` / `unknown-format` / `unreadable-source` / `does-not-fit` / `kind-mismatch` 400,
+  `not-supported` 501, `io-error` 500, `cancelled` 499).
 - `pending: false` after a sync request (the default): the medium is in. With
   `"async": true` the reply is immediate, `pending: true`, and the slot's
-  `state` shows `pending` until the swap delay (floppy 2 s, SD 0.5 s) is over.
+  `state` shows `pending` until the swap delay (floppy 2 s, SD 0.5 s, IDE CD-ROM 3 s) is over; `immediate` skips it.
 - `report` for skipped host files (`.DS_Store`, files that do not fit a TR-DOS disk).
 
 ## Pitfalls

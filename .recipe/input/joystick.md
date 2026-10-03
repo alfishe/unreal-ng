@@ -11,6 +11,12 @@ Which machines let the guest see it (the others accept the input with a warning)
 | `ATM3` (ZX-Evo) | `IN #1F` outside shadow mode | in shadow (TR-DOS active or `#BF` bit 0) `#1F` is the floppy controller; the ROM service menu is outside shadow |
 | `SCORPION`, `PROFSCORP` | `#FF1F` | the Service Monitor's `IN #FF1F` idles at `0x00` |
 | `TSL` (TS-Conf) | `#1F` | |
+| `PENTAGON` (128 K, 512 K, 1024 K) | `#1F` outside a TR-DOS session | in a TR-DOS session `#1F` is the floppy controller |
+| `PROFI`, `PROFI3` | `#1F` in the normal port set | |
+| `SPRINTER` | `#1F` / `#0F` outside TR-DOS, `#FF` in it | the PLD's fixed-port rewrite (code `#15`) |
+
+Not wired (accept the input and warn): `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `ATM710`, `ATM450`
+(`ATM3` is the only ATM board with the joystick decoder).
 
 Fitting: `[INPUT] Joystick=KEMPSTON|NONE` and the runtime feature `kempstonjoystick` (on by
 default). Not fitted: the port reads `0x00` and every input call warns. Host keypad keys
@@ -103,4 +109,4 @@ print(emu.joystick_state()["pressed"])
 - Reading the state straight after a call on a paused machine shows the old state: `run_frames 1` first.
 - `IN #1F` reads `0x00` when nothing is held (the Evo board's idle), not `0xFF`.
 - During a TTD replay every live call is refused (409 / error): recorded input drives the machine.
-- A Pentagon or 48K accepts the input and warns `this machine does not decode a Kempston joystick port`.
+- A 48K, 128K, +2, +2A, +3, ATM710 or ATM450 accepts the input and warns `this machine does not decode a Kempston joystick port` (see the table at the top).

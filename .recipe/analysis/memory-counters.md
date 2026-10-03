@@ -31,6 +31,9 @@ invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/memor
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/memory/save",
                    "body":{"path":"scratch/memprofile.yaml","format":"yaml"}}
 
+# unified profiler control (opcode counters + memory status in one report):
+analyze_performance {"action":"profile_start"}     # also profile_stop, profile_status, profile_report
+
 # the complementary coverage instrument is first-class:
 analyze_performance {"action":"coverage_start","clear":true}
 analyze_performance {"action":"coverage_read","max_ranges":512}
@@ -120,8 +123,11 @@ curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?page=5&mode=physical" \
         | map({offset: (.key|tonumber), writes: .value})'
 ```
 
-Monitored regions (opt-in named ranges with caller/data-value tracking) are
-listed via `GET .../profiler/memory/regions`.
+Per-region monitoring (named ranges with caller/data-value tracking) is
+planned for the profiler (`.../profiler/memory/regions` is documented as
+planned and answers 404 today). The `/memory/regions` and
+`/memory/region/{name}` endpoints are a different feature (named memory
+region access), not profiler counters.
 
 ### Save / export
 

@@ -28,8 +28,8 @@ Even on the MCP path, endpoints without a smart tool go through the
 | | WebAPI | MCP |
 |:--|:--|:--|
 | Address | `http://localhost:8090/api/v1/...` | `POST http://localhost:8092/mcp` (also on :8090) |
-| Style | REST verbs, one endpoint per operation | 13 smart tools + schema-driven router |
-| Best for | scripts, CI, curl/jq one-liners, full 212-path surface | LLM agents, IDEs, intent-level calls, local-file upload |
+| Style | REST verbs, one endpoint per operation | 14 smart tools + schema-driven router (`search_api` / `invoke_api`) |
+| Best for | scripts, CI, curl/jq one-liners, full WebAPI surface | LLM agents, IDEs, intent-level calls, local-file upload |
 | Auth | none | none |
 | Sessions | none (state lives in emulator instances) | none (no `Mcp-Session-Id`, fully stateless) |
 
@@ -61,7 +61,7 @@ HTTP codes carry meaning: `400` bad body/state, `404` unknown instance,
 capturing), `501` build lacks the subsystem.
 
 Interactive endpoint browser: `http://localhost:8090/api/v1/openapi.json`
-(212 paths, generated from the live build — the source of truth when a
+(generated from the live build — the source of truth when a
 recipe and the binary disagree).
 
 ## MCP idioms
@@ -82,18 +82,20 @@ Every tool answers **dual content**: `content[]` (human/LLM summary) plus
 returns). Tool-level failures are `isError: true` results with remediation
 hints, not JSON-RPC errors.
 
-Tool catalog (16):
+Tool catalog (16: 14 smart tools + the 2 router tools):
 
 | Tool | Highlights |
 |:--|:--|
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models`, `server` |
 | `load_software` | snapshots/tapes/disks, `play`, `autostart`, local-file upload |
-| `control_execution` | run/pause/step/step_n/step_over/step_out, run_frames/tstates/to_interrupt, breakpoints |
-| `inspect_state` | aspects: machine, registers, memory, disasm, stack, memory_banks, paging, ports, screen_ocr/image/digest, timing, rom, audio_ay/fm, fdc, mouse, ttd (TTD status + position) |
+| `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frame/run_frames/run_tstates/run_to_interrupt, breakpoints (bp_add/remove/enable/disable/clear/list) |
+| `inspect_state` | aspects: machine (identity, `ram_kb`), registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, screen, screen_flash, screen_attributes, screen_ocr/image/digest, timing, video_layout, video_text, rom, audio_ay/fm/gs/covox/moonsound/opl4_fm/opl4_pcm, audio_mixer, fdc, ide, cdaudio, rtc, isa, network, mouse, ttd (TTD status + position), contention, tsconf, tsconf_tsu, sprinter, sprinter_ports/text/video/palette/sound_ring/bios/zx_mode/pld_journal, memory_region, video_changes |
 | `type_input` | type (`tokenized`: a BASIC line typed into the ROM editor, every key verified, no ENTER; BASIC commands with ENTER and a result: `basic/run` via `invoke_api`), tap/press/release, combo, macro, release_all, list_keys |
 | `mouse_input` | Kempston move/press/click/wheel |
 | `joystick_input` | Kempston joystick press/release/set/tap/status |
-| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary |
+| `media` | media slots by slot name: list, info, insert, eject, swap, save, export and more (see [use-media-slots.md](../media/use-media-slots.md)) |
+| `rzx_playback` | RZX input recordings: play / stop / status |
+| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary, port_events, file_info, history_limit |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |
 | `analyze_performance` | coverage_*, frame_cost, profiler suites, porttrace |

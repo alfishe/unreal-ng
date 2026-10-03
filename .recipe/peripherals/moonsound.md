@@ -1,43 +1,37 @@
 # Recipe: MoonSound (OPL4) Card
 
 Yamaha OPL4 (YMF278B) — FM synthesis plus wavetable PCM driven by the
-YRW801 wave ROM. **Branch-only hardware:** the engine
-(`core/src/3rdparty/opl4`, `soundchip_moonsound`) lives on the `moonsound`
-branch. On `master` the `MoonSound=` config key is parsed but inert —
-no engine, no sound.
+YRW801 wave ROM. The engine is on `master` (`core/src/3rdparty/opl4`,
+`core/src/emulator/sound/chips/soundchip_moonsound.*`); a model with
+`MoonSound=1` plays.
 
-Ground truth:
-`core/src/emulator/sound/chips/soundchip_moonsound.h` (moonsound branch —
-file not on master), OPL4 core `core/src/3rdparty/opl4/` (same branch),
-design docs
+Ground truth: `core/src/emulator/sound/chips/soundchip_moonsound.h`, OPL4
+core `core/src/3rdparty/opl4/`, design docs
 [docs/inprogress/2026-09-13-moonsound/](../../docs/inprogress/2026-09-13-moonsound/)
 (core TDD, TTD integration, emulator integration).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
-> create a clone model and prove the card with
+> create a clone model, read the card with `inspect_state`, prove it with
 > `capture_media audio_capture`. Use [WebAPI](#webapi) only inside
 > host-side Python/bash pipelines or when MCP is unavailable (policy:
 > [_common/transports.md](../_common/transports.md)).
 
 ## Where the card exists
 
-Config key `MoonSound=` (plus `MOONSOUND=` wave-ROM path):
+Config keys (`[SOUND]`): `MoonSound=` (enable), `MoonSoundVol=` (0-8192
+ini scale, out of range is clamped; shipped 8000); `[ROM] MOONSOUND=` is
+the wave-ROM path. Shipped configs under `data/configs/`:
 
-| Model | Value |
+| Model | `MoonSound=` |
 |:--|:--|
-| `PENTAGON`, `SCORPION`, `PROFSCORP`, `ATM710`, `ATM3` | `1` |
-| `48K`, `128k`, `PLUS3` | `0` — "real Sinclair never had this card - clones only" |
+| `ATM3`, `ATM710`, `ATM450`, `pentagon128k`, `pentagon512k`, `profscorp`, `scorpion` (also `ts-conf`, `zx-diagnostics`) | `1` |
+| `profi`, `profi3`, `sprinter` | `0` — the card's low-byte `#7E` claim would swallow palette writes on `#xx7E` |
+| `spectrum48`, `spectrum128`, `spectrum2`, `spectrum2a`, `spectrum3` | `0` — real Sinclair models never had this card |
 
-Caveat: on `master`, every model config (`spectrum48`/`spectrum128`
-included) ships `MoonSound=1` — the engine simply isn't compiled in there,
-so the key is inert everywhere on this branch. The `0`-on-Sinclair-models
-policy above could not be verified from `master`; confirm against the
-`moonsound` branch's own configs before relying on it.
-
-Wave ROM: `data/rom/YRW801-M - Yamaha - 1993.rom` (config key `MOONSOUND=`,
-verified in `data/configs/pentagon128k/unreal.ini` on `master` — no
-`opl4/` subfolder exists under `data/rom/`; if the branch config differs,
-that's the path to check first).
+Wave ROM: `rom/opl4/yrw801-m-yamaha-1993.rom` (file
+`data/rom/opl4/yrw801-m-yamaha-1993.rom`). Optional `[MOONSOUND]` section:
+`WaveRom` (overrides `[ROM] MOONSOUND=`), `RamSizeKb` (0-1024, default
+1024), `RenderMode`, `Quality`, `Punch`.
 
 ## Port map (what OPL4 software writes)
 
@@ -57,12 +51,19 @@ The FM banks cover the two YMF278B register planes; the wave registers
 ## MCP (preferred)
 
 ```text
-# On a moonsound-branch build:
 emulator_manage {"action":"create","model":"PENTAGON"}   # MoonSound=1 clones
 
-# Load an OPL4-capable demo/music (disk or tape recipes), then:
+# Card state: NEW/NEW2, address latches, #F8/#F9 mix, wave memory,
+# keyed FM channels and PCM slots
+inspect_state {"aspects":["audio_moonsound"]}
+inspect_state {"aspects":["audio_opl4_fm"]}    # 18 FM channels: F-number, block, Hz, key-on, route, timers
+inspect_state {"aspects":["audio_opl4_pcm"]}   # 24 wavetable slots: wave, rate, key-on, level, pan, envelope
+
+# Load an OPL4-capable demo/music (disk or tape recipes), then prove it
+# sounds: the master mix, or the card's own halves
 capture_media {"action":"audio_capture","seconds":3}
-#   → left/right {peak, rms}, dominant_hz, zero_crossing_rate,
+capture_media {"action":"audio_capture","seconds":3,"source":"moonsound_fm"}    # or "moonsound_pcm"
+#   -> left/right {peak, rms}, dominant_hz, zero_crossing_rate,
 #     sample_rate, duration_seconds; "wav":true exports wav_path
 
 # While iterating on a driver, watch the FM/wave traffic instead:
@@ -74,14 +75,19 @@ capture_media {"action":"audio_capture","seconds":3}
 ## WebAPI
 
 ```bash
-# Confirm the build actually has the engine
-curl -s "$BASE/emulator/status" | jq '.server.git_branch'   # "moonsound"
-
 curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
      -d '{"model": "ATM710"}' | jq '{id, model}'
 
+# Card state: overview, FM half, PCM half ({part} = fm | pcm, else 400)
+curl -s "$BASE/emulator/$EMU_ID/state/audio/moonsound" | jq .
+curl -s "$BASE/emulator/$EMU_ID/state/audio/moonsound/fm" | jq .
+curl -s "$BASE/emulator/$EMU_ID/state/audio/moonsound/pcm" | jq .
+
+# Level of the card's halves in the mix: GET /audio/mixer lists the fitted devices
+curl -s "$BASE/emulator/$EMU_ID/audio/mixer" | jq .
+
 curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" \
-     -H 'Content-Type: application/json' -d '{"action": "start", "seconds": 3}' | jq .
+     -H 'Content-Type: application/json' -d '{"action": "start", "seconds": 3, "source": "moonsound_pcm"}' | jq .
 # ...run ~150 frames...
 curl -s "$BASE/emulator/$EMU_ID/audio/capture/result" \
      | jq '{dominant_hz, left: .left.peak, right: .right.peak}'
@@ -89,19 +95,19 @@ curl -s "$BASE/emulator/$EMU_ID/audio/capture/result" \
 
 ## Pitfalls
 
-- **`MoonSound=1` on `master` produces silence** — the key is parsed, the
-  engine is not there. Check `server.git_branch` before debugging "dead
-  card" reports.
-- **Clone-only by policy** — on `48K/128k/PLUS3` the branch itself sets
-  `MoonSound=0`; don't override the config to force it there for
-  compatibility claims.
-- **No per-card state endpoint** — unlike AY/TSFM (`/state/audio/ay`,
-  `/state/audio/fm`) the OPL4 has no introspection route yet; the card is
-  verified by capture analysis and port traces, not register dumps.
-- **FM hiss / HiFi restore are tracked test scenarios** on the branch
-  (regression tests exist) — if a capture shows hiss at idle or broken
-  filter restore after a core-rate switch, that is a known class of bug,
-  not expected behavior.
+- **Silence on a model with `MoonSound=0`** — check the config first
+  (Sinclair models, Profi, Sprinter ship `0`); creating the card needs a
+  new instance after editing the config.
+- **Clone-only by policy** — don't override the config to force the card on
+  Sinclair models for compatibility claims. On the Profi family and Sprinter
+  it stays off because its `#7E` claim collides with the palette ports.
+- **Check the state before the audio** — `audio_moonsound` shows whether
+  the software ever opened NEW2 (`#7E/#7F` are NEW2-gated) and keyed any
+  FM channel or PCM slot; a flat capture with nothing keyed is the
+  software, not the engine.
+- **FM hiss / HiFi restore are tracked test scenarios** (regression tests
+  exist) — if a capture shows hiss at idle or broken filter restore after
+  a core-rate switch, that is a known class of bug, not expected behavior.
 - **The wave ROM path must resolve server-side** — a renamed/moved
   `data/rom/opl4/` breaks wave synthesis while FM still plays; check the
-  `MOONSOUND=` path in the model config before suspecting the engine.
+  `[ROM] MOONSOUND=` path in the model config before suspecting the engine.
