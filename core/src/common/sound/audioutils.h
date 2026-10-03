@@ -7,7 +7,11 @@
 #include <emmintrin.h>
 #define USE_SSE2
 #elif defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#include <arm64_neon.h>
+#else
 #include <arm_neon.h>
+#endif
 #define USE_NEON
 #endif
 

@@ -284,7 +284,7 @@ private:
 
     std::string _prefix;
     std::array<std::shared_ptr<Emulator>, MODULES> _instances{};
-    std::array<std::unique_ptr<ZXPolyPortInterceptor>, MODULES> _interceptors{};
+    std::array<std::unique_ptr<ZXPolyPortInterceptor>, MODULES> _interceptors;
 
     // Platform state
     uint8_t _port3D00 = 0;

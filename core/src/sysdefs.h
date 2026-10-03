@@ -6,7 +6,9 @@
 #ifdef _MSC_VER
 	// Microsoft Visual Studio
 	#include <intrin.h>			// CPUID capability
+	#if defined(_M_IX86) || defined(_M_X64)
 	#include <immintrin.h>		// AVX intrinsics
+	#endif
 #elif __x86_64__
     // GCC/CLang
 	#include <cpuid.h>			// _cpuid()
@@ -72,7 +74,7 @@
 		return ((unsigned long long)lo) | (((unsigned long long)hi) << 32);
 	}
 #endif
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
 	#define rdtsc __rdtsc
 #endif
 
@@ -99,8 +101,10 @@
 	static inline uint8_t rol8(uint8_t val, uint8_t shift) { return _rotl8(val, shift); }
 	static inline uint8_t ror8(uint8_t val, uint8_t shift) { return _rotr8(val, shift); }
 
+	#if defined(_M_IX86) || defined(_M_X64)
 	extern "C" void	_mm_pause(void);
 	#pragma intrinsic(_mm_pause)
+	#endif
 #endif
 
 #if defined(_MSC_VER) && _MSC_VER < 1300
