@@ -455,6 +455,15 @@ performance guidelines ask for below 12), so differences under ~5 % are noise.
 | `BM_SprinterFrame_ScreenReads/0` (a frame of `LD A,(#4000)` at 3.5 MHz, waits off) | — | 2 612 us | the mode every program but ORIGIN.ZX runs in |
 | `BM_SprinterFrame_ScreenReads/1` (the same with the original waits on) | — | 2 768 us | +6 %, paid only in ORIGIN.ZX |
 
+**Re-run 2026-10-03 (the derived phase, commit `782b06784`):** `core-benchmarks` from `a42be6408` (before) and the
+branch (after), interleaved twice, `--benchmark_repetitions=3`, medians of CPU time, load average 11.9-12.9:
+
+| Benchmark | Before (round 1 / 2) | After (round 1 / 2) | Reading |
+|---|---|---|---|
+| `BM_SprinterFrame_Logo` (no overlay) | 3 547 / 3 605 us | 3 580 / 3 557 us | equal within noise |
+| `BM_SprinterFrame_ScreenReads/0` (waits off) | 2 034 / 2 034 us | 2 057 / 2 033 us | equal |
+| `BM_SprinterFrame_ScreenReads/1` (waits on) | 2 114 / 2 106 us | 2 122 / 2 102 us | equal: the rule is one table lookup either way |
+
 ## 12. As built: Z4, the ZX mode report and the PLD journal (2026-10-03, branch `sprinter-zx-mode-report`)
 
 Why (owner, 2026-10-03): telling whether a session ran as "Sprinter ZX" (`SP.ZX`) or "Pentagon 128" (`P128.ZX`) took
