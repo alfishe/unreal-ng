@@ -79,6 +79,30 @@ NetworkManager::Plan NetworkManager::MakePlan() const
     if (!caps.zifi && !zifiPeer.empty())
         plan.notes.push_back("ZiFi: the machine has no ZiFi (TS-Conf, or a ZX-Evo with [EVO] Avr=TS2016-02 / TS2016-04)");
 
+    // Network cards in expansion slots: hardware the machine config fits (like the machine's own serial port they
+    // are there with the network off - then with no cable)
+    for (const PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+    {
+        if (!slot.networkCard)
+            continue;
+        if (slot.configured != "ne2000")
+        {
+            const std::string why = slot.configured + ": not built yet (network phases SN3-SN5)";
+            plan.notes.push_back(slot.id + ": " + why);
+            continue;
+        }
+        Plan::SlotCard card;
+        card.slotId = slot.id;
+        card.kind = slot.configured;
+        card.chip = slot.chip;
+        card.portKey = slot.portKey;
+        card.base = slot.base;
+        card.irq = slot.irq;
+        card.mac = slot.mac;
+        plan.slotCards.push_back(card);
+    }
+    plan.ethernetLink = networkOn && !plan.slotCards.empty();
+
     if (!networkOn)
         return plan;
 
@@ -288,8 +312,9 @@ void NetworkManager::Refit()
     if (!_firmwareNote.empty())
         plan.notes.push_back(_firmwareNote);
     const bool same = plan == _plan && !_forceRefit &&
-                      (_network || _com || _atm2IoEsp ||
-                       (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty() && !plan.atm2IoEsp));
+                      (_network || _com || _atm2IoEsp || !_slotCards.empty() ||
+                       (!plan.zxNetUsb && plan.serial == Plan::Serial::None && plan.machinePeer.empty() && !plan.atm2IoEsp &&
+                        plan.slotCards.empty()));
     _forceRefit = false;
     if (same)
     {
@@ -315,11 +340,12 @@ void NetworkManager::Refit()
             _zifi->SaveState(*keep->zifi);
         }
     }
-    Unplug();
+    const bool keepSlotCards = plan.slotCards == _plan.slotCards && !_slotCards.empty();
+    Unplug(keepSlotCards);
     _plan = plan;
 
     if (plan.zxNetUsb || !plan.peer.empty() || !plan.machinePeer.empty() || !plan.atm2IoEspPeer.empty() ||
-        !plan.zifiPeer.empty())
+        !plan.zifiPeer.empty() || plan.ethernetLink)
     {
         std::unique_ptr<IHostNet> host;
         if (_context->config.network.hostAccess)
@@ -330,6 +356,12 @@ void NetworkManager::Refit()
         }
         _network = std::make_unique<VirtualNetwork>(_context, std::move(host), BuildConfig(_context));
         _context->pVirtualNetwork = _network.get();
+    }
+    if (plan.ethernetLink && _network)
+    {
+        EmulatorContext* context = _context;
+        _gateway = std::make_unique<EthernetGateway>(*_network, [context]() { return context->emulatorState.frame_counter; });
+        _context->pEthernetGateway = _gateway.get();
     }
     if (plan.zxNetUsb)
     {
@@ -344,10 +376,102 @@ void NetworkManager::Refit()
         FitMachineSerial(plan);
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
+    FitSlotCards(plan);
     UpdateStatus();
 }
 
-void NetworkManager::Unplug()
+Ne2000Board* NetworkManager::EthernetCard(const std::string& portKey) const
+{
+    for (const SlotCard& c : _slotCards)
+    {
+        if (c.ne2000 && c.ne2000->PortKey() == portKey)
+            return c.ne2000.get();
+    }
+    return nullptr;
+}
+
+void NetworkManager::FitSlotCards(const Plan& plan)
+{
+    if (!_slotCards.empty())
+    {
+        // Kept across the refit: only the cable is new
+        for (SlotCard& card : _slotCards)
+        {
+            if (card.ne2000 && _gateway)
+            {
+                card.ne2000->SetLink(_gateway.get());
+                _gateway->Attach(card.ne2000.get());
+            }
+        }
+        return;
+    }
+    if (plan.slotCards.empty() || !_context || !_context->pPortDecoder)
+        return;
+    PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+    EmulatorContext* context = _context;
+    // The cards' time: base T-states (3.5 MHz units) - the wire speed does not change with the CPU's turbo
+    auto clock = [context]() -> uint64_t {
+        if (!context->pCore || !context->pCore->GetZ80())
+            return context->emulatorState.t_states;
+        const uint32_t multiplier = context->emulatorState.current_z80_frequency_multiplier
+                                        ? context->emulatorState.current_z80_frequency_multiplier
+                                        : 1u;
+        return context->emulatorState.t_states + context->pCore->GetZ80()->t / multiplier;
+    };
+    for (const Plan::SlotCard& want : plan.slotCards)
+    {
+        for (PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+        {
+            if (slot.id != want.slotId)
+                continue;
+            Ne2000Board::Settings settings;
+            settings.variant = want.chip == "UM9003"   ? Ne2000Board::Variant::Um9003
+                               : want.chip == "NE1000" ? Ne2000Board::Variant::Ne1000
+                                                       : Ne2000Board::Variant::Rtl8019as;
+            settings.base = want.base;
+            settings.irq = want.irq;
+            settings.mac = want.mac;
+            settings.key = want.portKey;
+            SlotCard card;
+            card.slotId = want.slotId;
+            card.ne2000 = std::make_unique<Ne2000Board>(settings, clock);
+            std::string why;
+            if (!slot.fit || !slot.fit(card.ne2000.get(), why))
+            {
+                _plan.notes.push_back(slot.id + ": the slot refused the card (" + why + ")");
+                continue;
+            }
+            if (_gateway)
+            {
+                card.ne2000->SetLink(_gateway.get());
+                _gateway->Attach(card.ne2000.get());
+            }
+            _slotCards.push_back(std::move(card));
+        }
+    }
+}
+
+void NetworkManager::UnplugSlotCards()
+{
+    if (_slotCards.empty())
+        return;
+    if (_context && _context->pPortDecoder)
+    {
+        PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+        for (const SlotCard& card : _slotCards)
+        {
+            for (PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+            {
+                std::string why;
+                if (slot.id == card.slotId && slot.fit)
+                    slot.fit(nullptr, why);
+            }
+        }
+    }
+    _slotCards.clear();
+}
+
+void NetworkManager::Unplug(bool keepSlotCards)
 {
     if (_context)
     {
@@ -367,6 +491,16 @@ void NetworkManager::Unplug()
         _context->pVirtualNetwork = nullptr;
     }
     // The adapters first: their sockets close through the virtual network
+    if (_context)
+        _context->pEthernetGateway = nullptr;
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.ne2000)
+            card.ne2000->SetLink(nullptr);
+    }
+    _gateway.reset();
+    if (!keepSlotCards)
+        UnplugSlotCards();
     _machinePeer.reset();
     _atm2IoEsp.reset();
     if (_com)
@@ -466,8 +600,17 @@ void NetworkManager::OnFrame()
 {
     if (_refitPending)
         Refit();
+    for (SlotCard& card : _slotCards)
+    {
+        if (card.ne2000)
+            card.ne2000->OnFrame();
+    }
     if (_network)
     {
+        // The gateway's own work first: the answers Pump applies (or the TTD journal applies right after this
+        // boundary, during a replay) then send what they cause at once - the same order live and replayed
+        if (_gateway)
+            _gateway->OnFrame();
         _network->Pump();
         if (_com)
             _com->OnFrame();
@@ -479,6 +622,8 @@ void NetworkManager::OnFrame()
             _zifi->OnFrame();
         UpdateStatus();
     }
+    else if (!_slotCards.empty())
+        UpdateStatus();   // a slot card's registers in the report follow every frame
     else if ((_com || _plan.machineSerial || _atm2IoEsp) && _context && _context->emulatorState.frame_counter % 25 == 0)
     {
         // A serial port with nothing on its line (a ZX-Evo's AVR UART): no
@@ -649,6 +794,35 @@ void NetworkManager::UpdateStatus()
         c.frameBits = uart.FrameBits();
         st.zifiRegisters = _zifi->GetView();
     }
+    if (_context && _context->pPortDecoder)
+    {
+        const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
+        for (const PortDecoder::NetworkCapabilities::Slot& slot : caps.expansionSlots)
+        {
+            Status::Slot s;
+            s.id = slot.id;
+            s.bus = slot.bus;
+            s.label = slot.label;
+            s.configured = slot.configured;
+            for (const SlotCard& card : _slotCards)
+            {
+                if (card.slotId == slot.id && card.ne2000)
+                {
+                    s.card = card.ne2000->Kind();
+                    s.details = StateNode::Object();
+                    card.ne2000->Describe(s.details);
+                }
+            }
+            for (const std::string& note : _plan.notes)
+            {
+                if (note.compare(0, slot.id.size() + 1, slot.id + ":") == 0)
+                    s.note = note.substr(slot.id.size() + 2);
+            }
+            st.expansionSlots.push_back(std::move(s));
+        }
+    }
+    if (_gateway)
+        st.ethernetGateway = _gateway->Describe();
     if (_context)
         st.frame = _context->emulatorState.frame_counter;
     std::lock_guard<std::mutex> lock(_statusMutex);

@@ -192,7 +192,7 @@ class Emulator:
         """Switch or clear the PLD journal"""
 
     def sprinter_bios(self) -> dict:
-        """BIOS images, the one loaded (CRC-32), the configured one, start options"""
+        """BIOS images, the one loaded (CRC-32), its known_issues, the configured one, start options"""
 
     def sprinter_bios_select(self, bios=None, fast_start=None, accel_int_suspend=None, reset=True) -> dict:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
@@ -261,6 +261,30 @@ class Emulator:
         """Write CMOS cells like a guest write: the time registers set the clock (set B bit 7
         SET around a multi-register set, as a guest does), C and D are read-only, RAM cells
         are stored. The address latch is not touched. ValueError without a clock / bad range"""
+
+    def isa_state(self) -> dict:
+        """ISA slots (Sprinter Sp2000): latch (the #9FBD byte: value, a19_a14, aen, reset), window
+        (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
+        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters).
+        available=False on other machines"""
+
+    def isa_io_read(self, slot: int, address) -> int:
+        """One ISA I/O read cycle at a 20-bit ISA address (int or '#30A' text); an empty slot
+        reads 0xFF. Also isa_io_write(slot, address, value), isa_io_peek(slot, address) (no side
+        effect), isa_mem_read / isa_mem_write, isa_reset() (one RESET DRV pulse to both slots) and
+        isa_latch(value). A cycle with an effect is a tool edit while TTD records. ValueError for
+        a bad slot / address / value or on a machine without ISA slots"""
+
+    def isa_journal(self, last: int = 64) -> dict:
+        """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
+        cpu_address, what = the card's register name, value)"""
+
+    def network_frames(self, link: str = "", last: int = 32) -> dict:
+        """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):
+        frames[] (index, frame, direction to_card / from_card, port, length, summary, hex).
+        Also network_frames_pcap(link='') -> bytes (a pcap file) and
+        network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
+        ValueError without a gateway / bad hex / unknown link)"""
 
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,

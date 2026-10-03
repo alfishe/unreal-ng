@@ -487,10 +487,23 @@ survives until changed; reset selects primary (MAME `:1582`).
 ## 11. ISA
 
 Two 8-bit slots reached through memory: set `#1FFD` = `#10` (Scorpion extended page), then put
-`#D0`/`#D2`/`#D4`/`#D6` in window 3 (memory or I/O, slot 0 or 1); CPU A13-A0 become ISA A13-A0,
-port `#9FBD` gives A19-A14, AEN and RESET. ISA interrupts arrive on the CPU's PIO port B
-(MAN §8, §9.3; INC `SP2000.inc:596-602`; MAME `sprinter.cpp:1246-1276`). No emulator implements
-ISA memory; MAME fits a ZX-bus adapter in slot 0 (`:1975`).
+`#D0`/`#D2`/`#D4`/`#D6` in window 3; CPU A13-A0 become ISA A13-A0, port `#9FBD` gives A19-A14, AEN and RESET.
+ISA interrupts arrive on the CPU's PIO port B (MAN §8, §9.3; INC `SP2000.inc:596-602`; MAME `sprinter.cpp:1246-1276`).
+MAME fits a ZX-bus adapter in slot 0 (`:1975`).
+
+Corrections from the ISA research ([2026-10-02-sprinter-isa/research.md](../2026-10-02-sprinter-isa/research.md) §10),
+applied when ISA phase I1 landed (2026-10-03, branch `sprinter-isa-network`):
+
+- **Page byte:** bit 2 = I/O (1) / memory (0), bit 1 = slot: `#D0` memory slot 1, `#D2` memory slot 2, `#D4` I/O slot 1,
+  `#D6` I/O slot 2 (INC / MAME, confirmed by the schematic: DD7 74ALS138). MAN §8 and INFO_012 have it the other way.
+- **`#9FBD`** (port-table code `#1B`, a 74HC374, DD6): bits 0-5 = A14-A19, bit 6 = AEN, bit 7 = RESET DRV to both slots.
+  The latch has no reset input: a machine reset keeps it; power-on starts it at 0 in the emulator (MAME too).
+- **No direct port path** to ISA on the Sp2000 (ISA research §4.4), although BIOS 3.04 maps `#A3-#BF` (DOS off) to
+  code `#32`: it reaches no slot, an `IN` reads `#FF`.
+- **ISA memory exists** (ISA RAM cards: Shaos's TIMER runs code from one): "ISA memory reads `#FF`" is a MAME gap, not
+  the hardware. In unreal-ng window 3 in ISA mode is a real cycle of the slot's card (memory and I/O, opcode fetches
+  too; an empty slot reads `#FF`); tool reads peek without side effects (`SprinterIsaBus`, `/state/isa`).
+- **Interrupts and DRQ / DACK** reach PIO port B (bits 0-5); the IRQ pins of each slot are tied together (ISA phase I4).
 
 **Network and serial cards (research 2026-10-02,
 [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/research.md)).** The main board has no free serial port:

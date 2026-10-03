@@ -179,6 +179,102 @@ inline void BlendSrcAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
 /// floor(t / 255) for t <= 65152 is (t + 1 + (t >> 8)) >> 8: the rounded 8-bit product of
 /// Multiply ((x * y + 127) / 255) without a division
 
+/// Each texel's channels times COLOR_RGB / COLOR_A: (x * y + 127) / 255 per channel, in
+/// place. Texels packed R in bits 31..24, G 23..16, B 15..8, A 7..0
+inline void Modulate(uint32_t* texels, uint32_t count, uint32_t r, uint32_t g, uint32_t b, uint32_t a)
+{
+    uint32_t i = 0;
+#if defined(EVE_SIMD_NEON)
+    const uint16x8_t half = vdupq_n_u16(127);
+    const uint16x8_t one = vdupq_n_u16(1);
+    const uint8x8_t factor[4] = {vdup_n_u8(static_cast<uint8_t>(a)), vdup_n_u8(static_cast<uint8_t>(b)),
+                                 vdup_n_u8(static_cast<uint8_t>(g)), vdup_n_u8(static_cast<uint8_t>(r))};
+    for (; i + 8 <= count; i += 8)
+    {
+        uint8x8x4_t t = vld4_u8(reinterpret_cast<const uint8_t*>(texels + i)); // A, B, G, R
+        for (int c = 0; c < 4; ++c)
+        {
+            uint16x8_t m = vaddq_u16(vmull_u8(t.val[c], factor[c]), half);
+            m = vshrq_n_u16(vaddq_u16(vaddq_u16(m, one), vshrq_n_u16(m, 8)), 8);
+            t.val[c] = vmovn_u16(m);
+        }
+        vst4_u8(reinterpret_cast<uint8_t*>(texels + i), t);
+    }
+#elif defined(EVE_SIMD_SSE2)
+    // Bytes in memory A, B, G, R per texel: 16-bit lanes of two texels at a time
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i half = _mm_set1_epi16(127);
+    const __m128i one = _mm_set1_epi16(1);
+    const __m128i factor = _mm_set_epi16(static_cast<short>(r), static_cast<short>(g), static_cast<short>(b),
+                                         static_cast<short>(a), static_cast<short>(r), static_cast<short>(g),
+                                         static_cast<short>(b), static_cast<short>(a));
+    for (; i + 4 <= count; i += 4)
+    {
+        const __m128i x = _mm_loadu_si128(reinterpret_cast<const __m128i*>(texels + i));
+        __m128i lo = _mm_add_epi16(_mm_mullo_epi16(_mm_unpacklo_epi8(x, zero), factor), half);
+        __m128i hi = _mm_add_epi16(_mm_mullo_epi16(_mm_unpackhi_epi8(x, zero), factor), half);
+        lo = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(lo, one), _mm_srli_epi16(lo, 8)), 8);
+        hi = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(hi, one), _mm_srli_epi16(hi, 8)), 8);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(texels + i), _mm_packus_epi16(lo, hi));
+    }
+#endif
+    for (; i < count; ++i)
+    {
+        const uint32_t p = texels[i];
+        texels[i] = ((((p >> 24) & 0xFF) * r + 127) / 255) << 24 | ((((p >> 16) & 0xFF) * g + 127) / 255) << 16 |
+                    ((((p >> 8) & 0xFF) * b + 127) / 255) << 8 | (((p & 0xFF) * a + 127) / 255);
+    }
+}
+
+/// dst = min(src + dst, 255) on the channels of colorMask (bit 3 R, 2 G, 1 B, 0 A), the
+/// others kept: BLEND_FUNC(ONE, ONE) (x 255 / 255 is exact). Line buffer bytes R, G, B, A;
+/// texels packed R in bits 31..24, A in 7..0
+inline void AddSaturate(uint8_t* dst, const uint32_t* texels, uint32_t count, uint8_t colorMask)
+{
+    uint32_t i = 0;
+    const bool on[4] = {(colorMask & 8) != 0, (colorMask & 4) != 0, (colorMask & 2) != 0, (colorMask & 1) != 0};
+#if defined(EVE_SIMD_NEON)
+    for (; i + 8 <= count; i += 8)
+    {
+        const uint8x8x4_t s = vld4_u8(reinterpret_cast<const uint8_t*>(texels + i)); // A, B, G, R
+        uint8x8x4_t d = vld4_u8(dst + 4 * i);                                       // R, G, B, A
+        const uint8x8_t src[4] = {s.val[3], s.val[2], s.val[1], s.val[0]};
+        for (int c = 0; c < 4; ++c)
+            if (on[c])
+                d.val[c] = vqadd_u8(d.val[c], src[c]);
+        vst4_u8(dst + 4 * i, d);
+    }
+#elif defined(EVE_SIMD_SSE2)
+    const __m128i lanes = _mm_set1_epi32(static_cast<int>((on[0] ? 0xFFu : 0u) | (on[1] ? 0xFF00u : 0u) |
+                                                          (on[2] ? 0xFF0000u : 0u) | (on[3] ? 0xFF000000u : 0u)));
+    const __m128i byte1 = _mm_set1_epi32(0xFF00), byte2 = _mm_set1_epi32(0xFF0000);
+    for (; i + 4 <= count; i += 4)
+    {
+        // Each texel's bytes into R, G, B, A order (the line buffer's)
+        const __m128i x = _mm_loadu_si128(reinterpret_cast<const __m128i*>(texels + i));
+        const __m128i rgba = _mm_or_si128(_mm_or_si128(_mm_srli_epi32(x, 24), _mm_slli_epi32(x, 24)),
+                                          _mm_or_si128(_mm_and_si128(_mm_srli_epi32(x, 8), byte1),
+                                                       _mm_and_si128(_mm_slli_epi32(x, 8), byte2)));
+        const __m128i d = _mm_loadu_si128(reinterpret_cast<const __m128i*>(dst + 4 * i));
+        const __m128i sum = _mm_adds_epu8(d, rgba);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + 4 * i),
+                         _mm_or_si128(_mm_and_si128(lanes, sum), _mm_andnot_si128(lanes, d)));
+    }
+#endif
+    for (; i < count; ++i)
+    {
+        const uint32_t p = texels[i];
+        const uint32_t src[4] = {p >> 24, (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF};
+        uint8_t* d = dst + 4 * i;
+        for (int c = 0; c < 4; ++c)
+            if (on[c])
+            {
+                const uint32_t v = d[c] + src[c];
+                d[c] = static_cast<uint8_t>(v > 255 ? 255 : v);
+            }
+    }
+}
+
 /// dst.rgb = src.rgb x dst.a (Multiply per channel), dst.a kept: BLEND_FUNC(DST_ALPHA,
 /// ZERO) with COLOR_MASK(1, 1, 1, 0). Line buffer bytes R, G, B, A; texels packed R in
 /// bits 31..24, A in 7..0
@@ -232,9 +328,10 @@ inline void MultiplyRgbByDstAlpha(uint8_t* dst, const uint32_t* texels, uint32_t
     }
 }
 
-/// dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255), dst.a kept: BLEND_FUNC(
-/// ONE_MINUS_DST_ALPHA, ONE) with COLOR_MASK(1, 1, 1, 0)
-inline void AddRgbTimesInverseDstAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
+/// dst.rgb = min(src.rgb x f + dst.rgb, 255), dst.a kept, f = 255 - dst.a (inverse) or
+/// dst.a: BLEND_FUNC(ONE_MINUS_DST_ALPHA, ONE) / BLEND_FUNC(DST_ALPHA, ONE) with
+/// COLOR_MASK(1, 1, 1, 0)
+inline void AddRgbTimesDstAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count, bool inverse)
 {
     uint32_t i = 0;
 #if defined(EVE_SIMD_NEON)
@@ -245,7 +342,7 @@ inline void AddRgbTimesInverseDstAlpha(uint8_t* dst, const uint32_t* texels, uin
     {
         const uint8x8x4_t s = vld4_u8(reinterpret_cast<const uint8_t*>(texels + i));
         uint8x8x4_t d = vld4_u8(dst + 4 * i);
-        const uint8x8_t inv = vsub_u8(full, d.val[3]);
+        const uint8x8_t inv = inverse ? vsub_u8(full, d.val[3]) : d.val[3];
         const uint8x8_t src[3] = {s.val[3], s.val[2], s.val[1]};
         for (int c = 0; c < 3; ++c)
         {
@@ -268,7 +365,8 @@ inline void AddRgbTimesInverseDstAlpha(uint8_t* dst, const uint32_t* texels, uin
         const uint32_t s1 = (p1 >> 24) | ((p1 >> 8) & 0xFF00) | ((p1 << 8) & 0xFF0000);
         const __m128i s = _mm_unpacklo_epi8(_mm_set_epi32(0, 0, static_cast<int>(s1), static_cast<int>(s0)), zero);
         const __m128i d = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(dst + 4 * i)), zero);
-        const __m128i inv = _mm_sub_epi16(full, _mm_shufflehi_epi16(_mm_shufflelo_epi16(d, 0xFF), 0xFF));
+        const __m128i da = _mm_shufflehi_epi16(_mm_shufflelo_epi16(d, 0xFF), 0xFF);
+        const __m128i inv = inverse ? _mm_sub_epi16(full, da) : da;
         __m128i t = _mm_add_epi16(_mm_mullo_epi16(s, inv), half);
         t = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(t, one), _mm_srli_epi16(t, 8)), 8);
         t = _mm_add_epi16(t, d);
@@ -280,7 +378,7 @@ inline void AddRgbTimesInverseDstAlpha(uint8_t* dst, const uint32_t* texels, uin
     {
         const uint32_t p = texels[i];
         uint8_t* d = dst + 4 * i;
-        const uint32_t inv = 255 - d[3];
+        const uint32_t inv = inverse ? 255u - d[3] : d[3];
         const uint32_t src[3] = {(p >> 24) & 0xFF, (p >> 16) & 0xFF, (p >> 8) & 0xFF};
         for (int c = 0; c < 3; ++c)
         {

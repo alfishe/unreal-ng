@@ -1,0 +1,20 @@
+PING.EXE - Host reachability diagnostic
+
+Purpose
+  Checks whether a host is reachable and prints the response time.
+
+Usage
+  PING.EXE host
+
+Examples
+  PING.EXE 8.8.8.8
+  PING.EXE example.com
+
+Behavior
+  PING prints the response time on success, otherwise it reports an error.
+
+Exit status
+  0  A reply was received.
+  1  Invalid command line.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP communication error, unsupported command or unreachable host.

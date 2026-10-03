@@ -79,6 +79,8 @@
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
+#include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
@@ -162,6 +164,24 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
 /// One media verb through MediaControl (media-control-design.md): the options
 /// come as keyword arguments, the reply is the dict every surface returns
 /// (ok, error, message, slot, pending, revision, report and the verb's fields)
+/// One ISA action through IsaAccess (every interface's call): reads return the byte, the rest True
+inline pybind11::object PyIsaCycle(Emulator& self, const std::string& action, int slot, pybind11::object address, int value)
+{
+    uint32_t addr = 0;
+    if (pybind11::isinstance<pybind11::int_>(address))
+        addr = address.cast<uint32_t>();
+    else if (!pybind11::isinstance<pybind11::str>(address) || !IsaAccess::ParseAddress(address.cast<std::string>(), addr))
+        throw pybind11::value_error("address: an int or '#..' / '0x..' text");
+    StateNode result;
+    std::string error;
+    if (!IsaAccess::Execute(self.GetContext(), action, slot, addr, value, "Python isa", result, error))
+        throw pybind11::value_error(error);
+    const StateNode* v = result.find("value");
+    if (v && (action == "io_read" || action == "mem_read" || action == "io_peek" || action == "mem_peek"))
+        return pybind11::int_(std::strtol(v->s.c_str() + 1, nullptr, 16));
+    return pybind11::bool_(true);
+}
+
 inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, const std::string& slot,
                                     const std::string& path, const pybind11::kwargs& options)
 {
@@ -2159,7 +2179,7 @@ namespace PythonBindings
                "Sprinter palettes from video RAM: pens (n, rgb '#RRGGBB' = R, G, B as stored, vram address); k 0-7, 'all' or 'used' (default)")
             .def("sprinter_bios", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterBios(self.GetContext()));
-            }, "Sprinter BIOS images (file, alias, version, CRC-32, present, loaded, selected), reload_pending, start options; available=False on other machines")
+            }, "Sprinter BIOS images (file, alias, version, CRC-32, present, loaded, selected, known_issues), known_issues of the loaded image, reload_pending, start options; available=False on other machines")
             .def("sprinter_bios_select", [](Emulator& self, py::object bios, py::object fastStart, py::object accelIntSuspend, bool reset) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
                     if (value.is_none())
@@ -2298,6 +2318,43 @@ namespace PythonBindings
                     throw py::value_error(error);
             }, py::arg("start"), py::arg("values"),
                "Write CMOS cells like a guest write (time registers set the clock); values: list of ints 0-255 (list(b) for bytes)")
+            // ISA slots (Sprinter ISA tdd §10): DeviceState::Isa and IsaAccess, as every interface
+            .def("isa_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Isa(self.GetContext()));
+            }, "ISA slots (Sprinter): the #9FBD latch, window 3, slots with the configured and fitted cards, counters; available=False elsewhere")
+            .def("network_frames", [](Emulator& self, const std::string& link, unsigned last) -> py::object {
+                return StateNodeToPy(EthernetAccess::Frames(self.GetContext(), link, last));
+            }, py::arg("link") = "", py::arg("last") = 32,
+               "The Ethernet gateway's capture of the frame-level cards (index, frame, direction, port, summary, hex)")
+            .def("network_frames_pcap", [](Emulator& self, const std::string& link) -> py::bytes {
+                std::vector<uint8_t> pcap;
+                std::string error;
+                if (!EthernetAccess::Pcap(self.GetContext(), link, pcap, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(pcap.data()), pcap.size());
+            }, py::arg("link") = "", "The capture as a pcap file (bytes)")
+            .def("network_inject_frame", [](Emulator& self, const std::string& link, const std::string& hex) {
+                std::string error;
+                if (!EthernetAccess::Inject(self.GetContext(), link, hex, "Python network_inject_frame", error))
+                    throw py::value_error(error);
+            }, py::arg("link"), py::arg("hex"), "A frame towards the card `link` (hex), offered at the next frame boundary")
+            .def("isa_journal", [](Emulator& self, unsigned last) -> py::object {
+                return StateNodeToPy(DeviceState::IsaJournal(self.GetContext(), last));
+            }, py::arg("last") = 64, "ISA access journal: the last N card accesses and bus events (frame, t, pc, slot, register)")
+            .def("isa_io_read", [](Emulator& self, int slot, py::object address) { return PyIsaCycle(self, "io_read", slot, address, -1); },
+                 py::arg("slot"), py::arg("address"), "One ISA I/O read cycle (slot 1 or 2, 20-bit ISA address as int or '#30A' text); returns the byte")
+            .def("isa_io_write", [](Emulator& self, int slot, py::object address, int value) { return PyIsaCycle(self, "io_write", slot, address, value); },
+                 py::arg("slot"), py::arg("address"), py::arg("value"), "One ISA I/O write cycle")
+            .def("isa_io_peek", [](Emulator& self, int slot, py::object address) { return PyIsaCycle(self, "io_peek", slot, address, -1); },
+                 py::arg("slot"), py::arg("address"), "What the card shows at an I/O address, no side effect")
+            .def("isa_mem_read", [](Emulator& self, int slot, py::object address) { return PyIsaCycle(self, "mem_read", slot, address, -1); },
+                 py::arg("slot"), py::arg("address"), "One ISA memory read cycle; returns the byte")
+            .def("isa_mem_write", [](Emulator& self, int slot, py::object address, int value) { return PyIsaCycle(self, "mem_write", slot, address, value); },
+                 py::arg("slot"), py::arg("address"), py::arg("value"), "One ISA memory write cycle")
+            .def("isa_reset", [](Emulator& self) { return PyIsaCycle(self, "reset", 0, py::int_(0), -1); },
+                 "One RESET DRV pulse to both ISA slots")
+            .def("isa_latch", [](Emulator& self, int value) { return PyIsaCycle(self, "latch", 0, py::int_(0), value); },
+                 py::arg("value"), "Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")

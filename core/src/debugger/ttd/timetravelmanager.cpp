@@ -4475,6 +4475,19 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
         }
     }
 
+    // Machine slot guard (Sprinter ISA tdd §9): the model compares its fixed expansion-slot population with
+    // the baseline's blobs (the Sprinter's ISA slots, blob 33) - a recording made with another card in a slot
+    // is refused, not loaded half-way
+    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pPortDecoder)
+    {
+        std::string why;
+        if (!_context->pPortDecoder->TtdSessionMatches(stagedTimeline.front().peripheralBlobs, why))
+        {
+            err = why;
+            return false;
+        }
+    }
+
     // --- Read journal section (v3 additive, TDD §9.3) ---
     if (hasJournal)
     {

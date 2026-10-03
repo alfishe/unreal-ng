@@ -71,7 +71,7 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM710::DescribeNetwork()
     // a ZX-WiFi card fits beside it
     NetworkCapabilities caps;
     if (_v710Board)
-        caps.internalIo = [this](IAtmIoDevice* device, bool attach) {
+        caps.internalIo = [this](IIoBusDevice* device, bool attach) {
             if (attach)
                 AttachIoDevice(device);
             else
@@ -121,7 +121,7 @@ void PortDecoder_ATM710::reset()
     // The keyboard controller's RST is on the board's reset line, so is the INTERNAL I/O connector's RS
     if (_kbc)
         _kbc->BoardReset();
-    for (IAtmIoDevice* device : _ioDevices)
+    for (IIoBusDevice* device : _ioDevices)
         device->Reset();
 
 
@@ -241,11 +241,12 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     else if (_v710Board && (port & 0x0007) == 0x0002)
     {
         result = 0xFF;
-        for (IAtmIoDevice* device : _ioDevices)
+        for (IIoBusDevice* device : _ioDevices)
         {
-            if (device->Matches(_ioBusAddress))
+            uint16_t offset = 0;
+            if (device->Decodes(_ioBusAddress, offset))
             {
-                result = device->Read(_ioBusAddress);
+                result = device->Read(offset);
                 _lastPortDecoded = true;
                 break;
             }
@@ -383,11 +384,12 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     // Port #FA (A2..A0 = 010): IOWR' on the INTERNAL I/O connector
     if (_v710Board && (port & 0x0007) == 0x0002)
     {
-        for (IAtmIoDevice* device : _ioDevices)
+        for (IIoBusDevice* device : _ioDevices)
         {
-            if (device->Matches(_ioBusAddress))
+            uint16_t offset = 0;
+            if (device->Decodes(_ioBusAddress, offset))
             {
-                device->Write(_ioBusAddress, value);
+                device->Write(offset, value);
                 break;
             }
         }
@@ -1023,13 +1025,13 @@ void PortDecoder_ATM710::AddFdcTurboWait(uint16_t decodedPort)
         core->GetZ80()->AddWaitStates(1);
 }
 
-void PortDecoder_ATM710::AttachIoDevice(IAtmIoDevice* device)
+void PortDecoder_ATM710::AttachIoDevice(IIoBusDevice* device)
 {
     if (device && std::find(_ioDevices.begin(), _ioDevices.end(), device) == _ioDevices.end())
         _ioDevices.push_back(device);
 }
 
-void PortDecoder_ATM710::DetachIoDevice(IAtmIoDevice* device)
+void PortDecoder_ATM710::DetachIoDevice(IIoBusDevice* device)
 {
     _ioDevices.erase(std::remove(_ioDevices.begin(), _ioDevices.end(), device), _ioDevices.end());
 }

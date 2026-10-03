@@ -23,6 +23,7 @@
 11. [Tests](#11-tests)
 12. [Phased plan](#12-phased-plan)
 13. [Risks](#13-risks)
+14. [As built](#14-as-built)
 
 ## 1. Goal and scope
 
@@ -397,3 +398,18 @@ The owner's goal (MOD playback) is **I0 + I1 + I2: about S + M + M**.
 | Memory-cycle timestamp inside the z84c15 library differs from port-cycle timing | GS catch-up off by a few T | T-ISA-6 |
 | Window 3 code paths in `SprinterMemory` become non-const and touch the bank fast path | Sprinter slowdown | only the ISA branch changes; `BM_HostFrame_Sprinter_Fast` A/B in I1 |
 | Fitting the GS only with an adapter changes the Sprinter's default frame cost and TTD fixture | fixture re-record | default population keeps the GS (Q2), so the fixture changes only by blob 33 |
+
+## 14. As built
+
+### I1 (2026-10-03, branch `sprinter-isa-network`)
+
+| Item | As built | Differs from the design |
+|---|---|---|
+| Bus | `SprinterIsaBus` + `IIsaCard` in `core/src/emulator/io/sprinter/isa/` (`sprinterisabus.{h,cpp}`, `iisacard.h`), owned by `PortDecoder_Sprinter` (`GetIsaBus()`); `ReadAt` / `WriteAt` / `PeekAt` take a full 20-bit address for automation | `IsaCycle` carries `address` and `aen` (no `dack` until I4); cards report state for blob 33 through `StateSize` / `SaveState` / `LoadState` (bytes) instead of `ttd::Writer` |
+| Window 3 | `SprinterMemory`: the ISA page sets `_isaSpace` / `_isaSlot`; `MemoryReadFast` / `MemoryReadDebug` call `IsaRead` (opcode fetches too), the write intercept calls `Write`, `ToolReadRedirect` peeks | - |
+| Latch | code `#1B` writes the whole byte (`WriteLatch`): A19-A14 (also `SprinterPldState::isaAddrExt`), AEN, RESET DRV; an edge reaches both slots' `SetReset`; while RESET is held every cycle reads `#FF`; **a machine reset keeps the latch** (no reset input), power-on clears it | `ResetPld` no longer clears `isaAddrExt` (hardware: the 74HC374 has no reset) |
+| Population | `[ISA] SlotN=` (+ `SlotNChip`, `SlotNBase`, `SlotNIrq`, `SlotNMac` for network cards) parsed into `CONFIG::sprinter.isa` (`isaslotconfig.h`); create option `"sprinter": {"isa_slot1", "isa_slot2"}` (WebAPI), `--isa-slot1/2` (CLI), `sprinter_isa_slot1/2` (MCP). A kind this build has not got is refused with the reason (`not_fitted` in the report) | default slot 1 = **NONE** until I2 builds the adapter (owner: slot 1 = adapter + NeoGS is the I2 target), slot 2 = **NE2000** (network owner decision Q1 = B). The INI writes the base as `0x300`: `#` starts an INI comment |
+| TTD | blob 33 v1: version, the `#9FBD` byte, the fitted kind of slot 1 / 2, the cards' own bytes (none yet); `PortDecoder::TtdSessionMatches` refuses a session recorded with another population ("ISA slot N mismatch: recorded with X, fitted: Y") | network cards carry their state in their own blob (network tdd §13) |
+| Automation | `DeviceState::Isa` (also the `isa` section of `state/sprinter`) and `IsaAccess::Execute` (`isaaccess.{h,cpp}`): WebAPI `GET state/isa`, `POST control/isa` (+ OpenAPI `openapi_isa.inc`), MCP `inspect_state` aspect `isa`, CLI `isa` / `state isa`, Lua / Python `isa_state`, `isa_io_read/_write/_peek`, `isa_mem_read/_write`, `isa_reset`, `isa_latch` | MCP acts through `invoke_api POST /control/isa` (as `rtc` / `cdaudio`), no `emulator_manage` actions |
+| Port trace | ISA cycles (not peeks) while a capture runs: internal code `#200 + (memory ? 2 : 0) + slot` (`isa_io slot 1` ... `isa_mem slot 2`), decoded port = ISA address bits 15-0, raw port = the CPU address | - |
+| Tests | `sprinterisabus_test` (T-ISA-1..5, tracer, population, blob 33), `isaslotconfig_test`, `isaaccess_test` (T-ISA-14 core part), `sprintermemory_test` (T-ISA-7: routing, opcode fetch from card memory, peeks), `sprinterbios_test` (create option), `ttdsprinter_test` (blob 33 in every checkpoint) | T-ISA-9 (ISACHK on an image) and T-ISA-15 (A/B) move to the network phase SN1, where the default NE2000 changes the Sprinter |

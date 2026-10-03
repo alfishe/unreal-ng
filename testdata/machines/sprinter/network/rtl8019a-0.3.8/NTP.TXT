@@ -1,0 +1,46 @@
+NTP.EXE
+
+Minimal NTPv3 client.  Sends a 48-byte client query to UDP port
+123, receives the server's reply, prints the time in UTC and
+local timezone, then writes local time back to the DSS system
+clock via DSS_SETTIME.
+
+Usage
+
+NTP [server]
+NTP /?
+
+Option  |  Meaning
+server  |  Numeric IPv4 or hostname of the NTP server.  Optional;
+  |  defaults to NET_NTP (set by NETCFG -i from the
+  |  NTP= line in NET.CFG).
+
+Example
+
+RTL8019AS NTP v0.2.16
+
+Querying NTP at 162.159.200.1 from 192.168.7.119
+Reply: stratum=2
+NTP transmit timestamp: 0xEDA5F312 (seconds since 1900-01-01)
+UTC time:   2026-05-06 17:04:18
+Local time: 2026-05-06 22:04:18 (TZ +5)
+DSS clock updated.
+RESULT OK
+
+The banner line always shows the resolved address, so a hostname
+(whether passed as an argument or taken from NET_NTP) appears here
+as the IPv4 it resolved to, not as the name.
+
+Local time = UTC + NET_TZ hours.  Missing or unparseable
+NET_TZ is treated as UTC+0.  DSS_SETTIME is fed the local
+time so subsequent DIR, DSS_SYSTIME, and any file-create
+stamps reflect the right wall clock.
+
+Exit codes
+
+Code  |  Meaning
+0  |  OK
+1  |  Usage
+2  |  RTL8019AS not detected
+3  |  ARP / NTP timeout
+4  |  Config

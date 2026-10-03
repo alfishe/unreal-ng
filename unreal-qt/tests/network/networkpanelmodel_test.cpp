@@ -214,3 +214,35 @@ TEST(NetworkPanelModel_Test, TheAtm2IoEspCardNeedsTheInternalIoConnector)
     form.internalIo = false;
     EXPECT_FALSE(NetworkFormAvailability(form).atm2IoEsp);
 }
+
+// Expansion slots (the Sprinter's ISA slots): one line per slot - what is plugged and what it uses, or why not
+TEST(NetworkPanelModel_Test, SlotRowsSayWhatIsPluggedAndWhatItUses)
+{
+    StateNode network = StateNode::Object();
+    StateNode slots = StateNode::Array();
+    StateNode empty = StateNode::Object();
+    empty["id"] = "isa1";
+    empty["label"] = "ISA slot 1 (J6), page #D4";
+    empty["configured"] = "zxbus";
+    empty["card"] = "none";
+    empty["not_fitted"] = "not built yet";
+    slots.push(empty);
+    StateNode ne = StateNode::Object();
+    ne["id"] = "isa2";
+    ne["label"] = "ISA slot 2 (J7), page #D6";
+    ne["configured"] = "ne2000";
+    ne["card"] = "ne2000";
+    ne["chip"] = "RTL8019AS";
+    ne["base"] = "#300";
+    ne["irq"] = 3;
+    ne["mac"] = "02:53:50:00:00:02";
+    ne["link"] = "ethernet-gateway";
+    slots.push(ne);
+    network["slots"] = slots;
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    ASSERT_EQ(rows.size(), 2u);
+    EXPECT_EQ(rows[0].line, "zxbus not fitted: not built yet");
+    EXPECT_EQ(rows[1].line, "NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway");
+    EXPECT_TRUE(NetworkSlotRows(StateNode::Object()).empty()) << "machines without slots show no group";
+}

@@ -31,6 +31,13 @@ Captures are local files (game data); they are not in the repository.
 - Without `--no-hash` the replay also checks every answer byte, every frame count and
   every drawn picture against the capture: every optimization below kept all of them
   equal, on the whole 6-minute capture.
+  `--all-mismatches` lists every mismatching picture (frame and clock), not only the
+  first: a capture started while the chip was drawing differs in its first one or two
+  frames (lines drawn before the capture started), which is not an emulation error.
+- `eve-replay-profile` (target built on demand, `EVE_PROFILE` counters) prints, for a frame
+  range (`--profile FROM TO`), the drawing time per kind of bitmap span, the pixels blended
+  pixel by pixel per blend setting, the lines replayed and kept. `eve-tests-profile` runs
+  the golden cases on the same build and prints, per case, what left the fast paths.
 - Release builds, Apple M1 Ultra, the machine shared with other builds (load 40-120 during
   the runs): the figures are CPU time of one thread, not wall time.
 

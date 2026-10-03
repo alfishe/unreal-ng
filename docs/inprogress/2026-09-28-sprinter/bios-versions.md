@@ -216,6 +216,31 @@ BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1
   program has been found to mind it so far.
 - **3.07 BETA 1 boots DSS 1.71.57 from the MAME pack's `sp_hdd_sys.chd`**: Flex Navigator 1.15 comes up with
   proper glyphs (the owner's run, 2026-10-02; `.recipe/machines/sprinter.md` §6 was checked on it).
+- **3.07 BETA 1 + DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file")** (2026-10-03). On the
+  MAME pack's system disk, `b:\netcfg.exe` (or any EXE, drive A or B, 1.44 MB or 720 KB) gets Flex Navigator's
+  "Invalid EXE file" dialog, while directory listings work; on 3.06 Hotfix 2 the same floppy runs. DSS never
+  reads the file: the port trace stops after the FAT read, and its EXEC finds no "EX" in a header it never
+  loaded. The cause is the beta's FDD driver, rewritten on IY (`FDD_DRIVER.asm`, BIOS-TT `f546c4e`):
+  `SELECT_FDD` points IY at the drive's table, and RESET, GET_PAR, SET_PAR, DETECT, READ and WRITE return with
+  IY changed (the `PUSH IY` / `POP IY` of `.Start` is commented out). The 3.06 driver never changed IY (one table
+  at fixed addresses, `.Start` saved IY). DSS 1.71.57 keeps its own pointer in IY across these calls: a BIOS-entry
+  log shows IY `#31D0` going into RESET and `#C1E8` coming out on 3.07, unchanged on 3.06. Newer DSS wraps every
+  call in its floppy driver in `PUSH IY` / `POP IY` (Estex-DSS `master`, `drivers/media/fdd-drv.asm`; the public
+  1.70 beta did not), and the DSS of the beta's recovery disk (`SYSTEM.DOS` of 11.08.2026) runs the program on
+  3.07 BETA 1. So the beta needs the matching DSS; it is not an emulation fault:
+  - MAME 0.289 (`zxsp`, the beta image under the `v3.06` name, the same CHD, the floppy in drive A) shows the same
+    dialog; with MAME's own 3.06 the program runs.
+  - A 3.07 BETA 1 rebuilt with `PUSH IY` / `POP IY` around the six FDD functions runs it on unreal-ng.
+  - The controller side is pinned by `PortDecoderSprinter_Test.Fdc_Bios307SectorReadLoop_HdSide1` (the beta's own
+    transfer loop reads a side-1 HD sector whole), the firmware side by `SprinterFloppyExe_Test` (env-gated:
+    `UNREAL_SPRINTER_HDD`; at the DSS prompt 3.06 Hotfix 2 runs `b:\bin\type.exe b:\install.bat` from the DSS 1.62.92
+    test floppy, 3.07 BETA 1 prints "Bad command or file name", the shell's word for the failed EXEC; with
+    `UNREAL_SPRINTER_ZX_BIOS` pointing at the IY build the 3.07 case prints the file).
+  Copying does not help either: `copy b:\netcfg.exe c:\` on 3.07 BETA 1 writes a 0-byte file (byte-identical on 3.06).
+  Workaround: BIOS 3.06 Hotfix 2 for DSS 1.71.57, or update the system disk to the DSS of the 3.07 recovery disk.
+  The default stays 3.07 BETA 1 (owner decision 2026-10-03, faithful firmware); the BIOS report lists the issue
+  under `known_issues` on every surface, unreal-qt's status bar shows "BIOS: known issue". Note for the BIOS author
+  with the fix: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md).
 - **The alternative boot device is floppy A on 3.06 / 3.07, floppy B on 3.04** (blank CMOS, SETUP defaults).
   Checked live 2026-10-02 on unreal-ng: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on 3.07 BETA 1 into Flex
   Navigator 1.10; in drive B both 3.06 Hotfix 2 and 3.07 BETA 1 print "Alternative Boot from Diskette fail" and

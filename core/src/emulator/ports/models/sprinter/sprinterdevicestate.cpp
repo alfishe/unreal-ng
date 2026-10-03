@@ -160,7 +160,8 @@ StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_
         {
             kind = "ISA";
             writable = false;
-            note = "ISA view (#1FFD bit 4, pages #D0-#D6): no card, reads #FF, writes ignored";
+            note = "ISA view (#1FFD bit 4, pages #D0-#D6): cycles of an ISA slot (page bit 1 = slot, bit 2 = I/O), "
+                   "address #9FBD bits 5-0 << 14 | A13-A0; an empty slot reads #FF (/state/isa)";
         }
         else if (window == 0 && (pld.sc & 0x01) && pld.ramSys)
         {
@@ -614,12 +615,21 @@ StateNode Bios(EmulatorContext* context)
         n["loaded"] = loadedCrc == known.crc32;
         n["selected"] = selectedName == known.file;
         n["active"] = loadedCrc == known.crc32;  // kept for older clients: the image that runs
+        StateNode issues = StateNode::Array();
+        for (const std::string& issue : SprinterBios::KnownIssues(known.crc32))
+            issues.push(issue);
+        n["known_issues"] = issues;
         if (loadedCrc == known.crc32)
             loadedName = known.file;
         images.push(n);
     }
     b["images"] = images;
     b["loaded"] = loadedName.empty() ? std::string("not a shipped image (") + selectedName + ")" : loadedName;
+    // What a user should know about the image that runs (bios-versions.md §5.2); empty for the others
+    StateNode loadedIssues = StateNode::Array();
+    for (const std::string& issue : SprinterBios::KnownIssues(loadedCrc))
+        loadedIssues.push(issue);
+    b["known_issues"] = loadedIssues;
     b["reload_pending"] = context->pEmulator && context->pEmulator->RomReloadPending();
     StateNode options = StateNode::Object();
     options["fast_start"] = context->config.sprinter.fast_start != 0;
@@ -916,6 +926,13 @@ StateNode Sprinter(EmulatorContext* context)
     ret["video"] = VideoSummary(*decoder, context);
     ret["accelerator"] = AcceleratorSummary(*decoder, context);
     ret["sound"] = SoundSummary(*decoder, context);
+    // The ISA slots (Sprinter ISA tdd §10): the same report as /state/isa
+    {
+        StateNode isa = Isa(context);
+        if (const StateNode* available = isa.find("available"); available && available->b)
+            isa.members.erase(isa.members.begin());
+        ret["isa"] = isa;
+    }
     ret["z84c15"] = Z84Summary(*decoder, context);
 
     // Floppy: the WD1793 behind codes #10-#17
@@ -1044,6 +1061,13 @@ StateNode SprinterText(EmulatorContext* context)
     ret["picture_is_text"] = !spectrumScreen && textSquares * 2 > kPictureColumns * kPictureRows;
     ret["lines"] = lines;
     return ret;
+}
+
+std::vector<std::string> SprinterBiosKnownIssues(EmulatorContext* context)
+{
+    if (!SprinterDecoder(context) || !context->pMemory || !context->pMemory->ROMBase())
+        return {};
+    return SprinterBios::KnownIssues(SprinterBios::Crc32(context->pMemory->ROMBase(), 16 * 0x4000));
 }
 
 StateNode SprinterBios(EmulatorContext* context)

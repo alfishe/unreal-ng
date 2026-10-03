@@ -21,6 +21,11 @@ media verbs in [use-media-slots.md](use-media-slots.md). Verified 2026-10-02 on 
   - `rom/sprinter/sp2k-3.07-beta1.rom` (the default since 2026-10-02) or
     `rom/sprinter/sp2k-3.06-hf2.rom`: needed for **DSS 1.71** (the MAME pack's system disk boots to
     Flex Navigator 1.15 on both); they probe all **four** units.
+  - **3.07 BETA 1 with DSS 1.71.57**: programs on a **floppy** do not start ("Invalid EXE file" /
+    "Bad command or file name") and a `copy` from the floppy writes a 0-byte file - the beta's floppy driver
+    returns with IY changed (firmware; MAME agrees). Hard-disk programs are not affected. Use 3.06 Hotfix 2 for
+    floppy work, or the DSS of the 3.07 recovery disk; `state/sprinter/bios` lists it under `known_issues`
+    ([bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md) §5.2).
   - `rom/sprinter/sp2k-3.04.rom` boots DSS 1.62 from a hard disk and probes the **primary**
     channel only; on it DSS 1.71 loads SYSTEM.DOS and stops with "Fatal error! Press RESET to
     restart." (MAME does the same).

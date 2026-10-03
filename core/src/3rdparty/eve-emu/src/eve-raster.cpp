@@ -50,6 +50,31 @@ void ShadeCovered(LineRun& run, int32_t x, uint32_t coverage)
                 ctx.colorRgb & kChannelMax, Multiply(ctx.colorA, coverage));
 }
 
+// Pixels [first, last) all at one coverage: one span through the pipeline when drawing
+// (BlendSpan: the default blend in SIMD), pixel by pixel for a probe
+template <LineMode Mode>
+void ShadeCoveredSpan(LineRun& run, int32_t first, int32_t last, uint32_t coverage)
+{
+    if (coverage == 0 || last <= first)
+        return;
+    if constexpr (Mode == LineMode::Draw)
+    {
+        const GraphicsContext& ctx = run.ctx;
+        const uint32_t texel = (((ctx.colorRgb >> kRedShift) & kChannelMax) << 24) |
+                               (((ctx.colorRgb >> kGreenShift) & kChannelMax) << 16) | ((ctx.colorRgb & kChannelMax) << 8) |
+                               Multiply(ctx.colorA, coverage);
+        const uint32_t count = static_cast<uint32_t>(last - first);
+        for (uint32_t i = 0; i < count; ++i)
+            run.texels[i] = texel;
+        BlendSpan(run, first, run.texels, count);
+    }
+    else
+    {
+        for (int32_t x = first; x < last; ++x)
+            ShadeCovered<Mode>(run, x, coverage);
+    }
+}
+
 void CountFill(LineRun& run, int32_t first, int32_t last)
 {
     if (last > first)
@@ -221,12 +246,28 @@ void DrawRect(LineRun& run, const Vertex& a, const Vertex& b)
         return;
     CountFill(run, first, last);
     const int64_t iy = static_cast<int64_t>(dy);
-    for (int32_t x = first; x < last; ++x)
+    // Pixels whose centers lie in [x0, x1] are at distance iy from the core, one coverage:
+    // one span; the rounded ends pixel by pixel
+    int32_t inner = static_cast<int32_t>(std::ceil((x0 - kPixelCenter) / kSubpixel));
+    int32_t innerEnd = static_cast<int32_t>(std::floor((x1 - kPixelCenter) / kSubpixel)) + 1;
+    inner = inner < first ? first : (inner > last ? last : inner);
+    innerEnd = innerEnd < inner ? inner : (innerEnd > last ? last : innerEnd);
+    const auto edge = [&](int32_t from, int32_t to) {
+        for (int32_t x = from; x < to; ++x)
+        {
+            const double px = PixelCenter(x);
+            const int64_t ix = static_cast<int64_t>(px < x0 ? x0 - px : (px > x1 ? px - x1 : 0));
+            ShadeCovered<Mode>(run, x, Coverage(run.ctx.lineWidth, IntSqrt(static_cast<uint64_t>(ix * ix + iy * iy))));
+        }
+    };
+    if (!run.chip->rasterSpanFill)
     {
-        const double px = PixelCenter(x);
-        const int64_t ix = static_cast<int64_t>(px < x0 ? x0 - px : (px > x1 ? px - x1 : 0));
-        ShadeCovered<Mode>(run, x, Coverage(run.ctx.lineWidth, IntSqrt(static_cast<uint64_t>(ix * ix + iy * iy))));
+        edge(first, last);
+        return;
     }
+    edge(first, inner);
+    ShadeCoveredSpan<Mode>(run, inner, innerEnd, Coverage(run.ctx.lineWidth, IntSqrt(static_cast<uint64_t>(iy * iy))));
+    edge(innerEnd, last);
 }
 
 template <LineMode Mode>
@@ -248,8 +289,11 @@ void DrawEdge(LineRun& run, const Vertex& a, const Vertex& b, uint8_t primitive)
         if (!ScissorSpan(run, first, last))
             return;
         CountFill(run, first, last);
-        for (int32_t x = first; x < last; ++x)
-            ShadeCovered<Mode>(run, x, kChannelMax);
+        if (run.chip->rasterSpanFill)
+            ShadeCoveredSpan<Mode>(run, first, last, kChannelMax);
+        else
+            for (int32_t x = first; x < last; ++x)
+                ShadeCovered<Mode>(run, x, kChannelMax);
         return;
     }
     // Above / below: a pixel is filled when its sample is on the fill side of the segment
