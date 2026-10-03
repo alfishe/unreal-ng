@@ -1,6 +1,6 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-9 done, live profile taken. Paused 2026-10-03: further rounds wait for captures of other usage patterns (other games and programs).
+**Created:** 2026-10-03. **Status:** rounds 0-10 done, live profile taken. Round 10 came from the TS-Labs SDK test programs; further rounds wait for captures of other usage patterns.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
 speed of the real card to twenty times faster than it. Each round records what we
@@ -330,6 +330,56 @@ the Qt main thread about 3 %, audio about 2 %. Of the emulation thread:
 The FT812 is no longer the largest part. What remains of it in R-Type is real drawing: the
 background scrolls, so every line changes every frame and nothing can be kept.
 
+## Round 10: the TS-Labs SDK test programs
+
+**Start.** The first captures that are not Zuma or R-Type: the eight `.spg` programs of the
+TS-Labs FT812 SDK (`testdata/machines/tsconf/vdac2-sdk/`), 30 s each, recorded in unreal-qt
+without the FT81x ROM image. Five draw a still picture once (test1, test3 and test-sd do not
+touch the FT812 after that; test2, test4 and test5 cost 0.00 - 0.03 ms per frame: every line
+kept). Two were slow, and slower than the card in unreal-qt itself (test9 drew 548 FT812
+frames in 20 s instead of about 1180):
+
+| Program | What it draws | Drawing per frame | Real-time factor |
+|:--|:--|--:|--:|
+| test6 | a 1940 x 768 picture scrolled every frame, four full-screen passes | 10.2 ms | 1.59x |
+| test9 | ROM-font text, `CMD_NUMBER`, a full-screen `CMD_GRADIENT` | 21.3 ms | **0.83x** |
+
+**What was slow and why.**
+
+- test9, 89 %: `CMD_GRADIENT` draws an L8 ramp stored in the chip's ROM (address 0x200065),
+  scaled and rotated over the screen. The fast paths read layouts from graphics memory only,
+  so every pixel took the general path at 13.4 ns. Without the ROM image those bytes read as
+  zero, the picture is the same, the cost was not.
+- test9's second pass, `BLEND_FUNC(DST_ALPHA, ONE)` onto RGB, had no fast blend (its twin
+  `ONE_MINUS_DST_ALPHA, ONE` from round 2 did).
+- test6: one of its four passes is `BLEND_FUNC(ONE, ONE)` on all channels; only the alpha
+  channel alone had a fast blend.
+- Both: every pixel is multiplied by `COLOR_RGB` / `COLOR_A` (in Zuma 10 % of the pixels
+  are), and that multiplication was the last scalar loop of the fast path's tail.
+
+**Change.**
+
+- The fast paths take a layout's bytes from wherever they are contiguous: graphics memory,
+  the ROM image, or - without the image - a block of zeros, exactly as the byte-by-byte
+  reads give them (`LayoutBytes`).
+- `Simd::AddSaturate` (`ONE, ONE` on any color mask), `Simd::AddRgbTimesDstAlpha` (both
+  destination-alpha additions) and `Simd::Modulate` (the `COLOR_RGB` / `COLOR_A`
+  multiplication), each NEON, SSE2 and plain C++ with the general path's rounding.
+- Test: the fast path against the general path for a ROM layout with and without the image
+  (axis-aligned, rotated, BILINEAR), `ONE, ONE` on all and some channels, both
+  destination-alpha additions over a varied alpha, modulation; each change was broken once
+  to see the test fail (one of them first passed: the destination alpha under the pass was
+  0, which hides a wrong factor - the test now writes a varied alpha first).
+- `eve-replay --all-mismatches` lists every mismatching picture. The first test9 capture
+  differed in its first two frames: it began while the chip was still drawing the previous
+  program's frame (lines drawn before the capture started), not an emulation error - fresh
+  captures match every frame, with keeping lines on and off.
+
+**Result.** test9 **0.83x -> 3.75x**, test6 **1.59x -> 2.94x**;
+Zuma 21.1x -> 21.4x, R-Type boot 24.7x -> 26.0x. **Meaning:** both programs now run with
+room to spare in unreal-qt; text, gradients and additive full-screen passes - typical of
+menus and effects - are on the fast path.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -344,6 +394,7 @@ background scrolls, so every line changes every frame and nothing can be kept.
 | 7. unchanged lines kept | 11.0 s | 13.3x | 1.06 ms | 2.22 ms |
 | 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
 | 9. shapes reach only nearby lines | 7.05 s | 20.7x | 0.44 ms | 1.25 ms |
+| 10. SDK programs: ROM layouts, adding blends, SIMD modulation | 6.8 s | 21.4x | | |
 
 From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes

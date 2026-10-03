@@ -7,7 +7,7 @@ The FT812 emulator library for the TS-Conf VDAC2 card, developed in its own repo
 
 | | |
 |---|---|
-| Source | eve-emu `main`, commit `624d221` (2026-10-03: shapes reach only nearby lines; lines kept by their own steps; unchanged lines kept; display list walked once per frame, tag buffer only where read, blend shortcuts; rotated NEAREST fast path, palettes kept across lines; BILINEAR fast path, SIMD masking blends, skipped empty glyphs; frame metrics block, state version 8) |
+| Source | eve-emu `main`, commit `bc5196a` (2026-10-03: ROM layouts on the fast path, adding blends and modulation in SIMD; shapes reach only nearby lines; lines kept by their own steps; unchanged lines kept; display list walked once per frame, tag buffer only where read, blend shortcuts; rotated NEAREST fast path, palettes kept across lines; BILINEAR fast path, SIMD masking blends, skipped empty glyphs; frame metrics block, state version 8) |
 | Copied | `CMakeLists.txt`, `LICENSE`, `README.md`, `cmake/CheckSymbols.cmake`, `include/`, `src/`, `docs/performance.md`, `vendor/README.md`, `vendor/config/` |
 | Vendored decoders | only the files the library compiles: `vendor/miniz/` (`miniz.h`, `miniz_common.h`, `miniz_tdef.h`, `miniz_tinfl.h`, `miniz_tinfl.c`, `miniz_zip.h`, `LICENSE`; miniz 3.1.2) and `vendor/stb/` (`stb_image.h`, `LICENSE`; stb `2c980bb`) - in eve-emu they are git submodules |
 | Not copied | the library's tests, benchmarks, tools (`eve-replay`), golden cases and oracle harness: they live in eve-emu |

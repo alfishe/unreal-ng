@@ -56,6 +56,25 @@ uint32_t ReadByte(const EveChip& chip, uint32_t address)
     return 0;
 }
 
+// The bytes [start, end) as ReadByte reads them, contiguous, or nullptr: RAM_G, the ROM
+// image, or the ROM area without an image (reads 0 up to the font root word; CMD_GRADIENT
+// draws a ramp from there)
+const uint8_t* LayoutBytes(const EveChip& chip, uint64_t start, uint64_t end)
+{
+    static const uint8_t kZeros[64 * 1024] = {};
+    if (end <= start)
+        return nullptr;
+    if (end <= kRamGSize)
+        return chip.regions[RegionRamG].base + start;
+    if (start < kRomFontBase || end > kRomEnd)
+        return nullptr;
+    if (chip.romImage != nullptr)
+        return start >= chip.romBase ? chip.romImage + (start - chip.romBase) : nullptr;
+    if (end <= kRomFontRootAddress && end - start <= sizeof(kZeros))
+        return kZeros;
+    return nullptr;
+}
+
 uint32_t Read16(const EveChip& chip, uint32_t address)
 {
     return ReadByte(chip, address) | (ReadByte(chip, address + 1) << kBitsPerByte);
@@ -564,9 +583,10 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
     Profile().modulatePixels += modulate ? count : 0;
     Profile().simdBlendPixels += simple && kMultiplyRoundDiv255 ? count : 0;
 #endif
-    if (modulate)
+    if (modulate && kMultiplyRoundDiv255)
+        Simd::Modulate(texels, count, colorR, colorG, colorB, ctx.colorA);
+    else if (modulate)
     {
-        // SIMD-CANDIDATE: four channels times COLOR_RGB / COLOR_A per texel.
         for (uint32_t i = 0; i < count; ++i)
         {
             const Rgba c = Unpack(texels[i]);
@@ -651,9 +671,9 @@ bool DrawBitmapBilinearFast(LineRun& run, const BitmapHandle& h, uint32_t base, 
             continue;
         }
         const uint64_t rowStart = static_cast<uint64_t>(base) + static_cast<uint64_t>(r) * stride;
-        if (rowStart + rowBytes > kRamGSize)
+        const uint8_t* row = LayoutBytes(*run.chip, rowStart, rowStart + rowBytes);
+        if (row == nullptr)
             return false;
-        const uint8_t* row = run.chip->regions[RegionRamG].base + rowStart;
         WithRowFetch(run, h, row, [&](auto fetch) { DecodeColumns(columns[k], lo, n, width, wrapX, fetch); });
     }
 
@@ -696,8 +716,14 @@ bool DrawBitmapAffineFast(LineRun& run, const BitmapHandle& h, uint32_t base, ui
     const int32_t* t = run.ctx.transform;
     const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * BitsPerPixel(h.format) + kBitsPerByte - 1) / kBitsPerByte;
     const uint64_t layoutEnd = static_cast<uint64_t>(base) + static_cast<uint64_t>(layoutHeight - 1) * stride + rowBytes;
-    if (layoutEnd > kRamGSize)
+    const uint8_t* layout = LayoutBytes(*run.chip, base, layoutEnd);
+    if (layout == nullptr)
+    {
+#ifdef EVE_PROFILE
+        Profile().fastRejects["layout not contiguous in RAM_G or ROM"]++;
+#endif
         return false;
+    }
     const int64_t a = t[0], b = t[1], c = t[2], d = t[3], e = t[4], f = t[5];
     const int64_t relFirst = static_cast<int64_t>(first) * kSubpixel + kPixelCenter - vx;
     int64_t sx = ((a * relFirst + b * rely) >> kSubpixelShift) + c;
@@ -707,7 +733,6 @@ bool DrawBitmapAffineFast(LineRun& run, const BitmapHandle& h, uint32_t base, ui
     const int32_t rows = static_cast<int32_t>(layoutHeight);
     const bool wrapX = h.wrapX != 0, wrapY = h.wrapY != 0;
     uint32_t* texels = run.texels;
-    const uint8_t* layout = run.chip->regions[RegionRamG].base + base;
     WithLayoutFetch(run, h, layout, stride, [&](auto fetch) {
         for (uint32_t i = 0; i < count; ++i, sx += a, sy += d)
         {
@@ -777,14 +802,14 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
     const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * bpp + kBitsPerByte - 1) / kBitsPerByte;
     if (ty < 0 || ty >= layoutRows)
         return DrawTransparentSpan(run, first, last);  // BORDER: every texel transparent
-    if (rowStart + rowBytes > kRamGSize)
+    const uint8_t* row = LayoutBytes(*run.chip, rowStart, rowStart + rowBytes);
+    if (row == nullptr)
     {
 #ifdef EVE_PROFILE
-        Profile().fastRejects["row beyond RAM_G"]++;
+        Profile().fastRejects["row not contiguous in RAM_G or ROM"]++;
 #endif
         return false;
     }
-    const uint8_t* row = run.chip->regions[RegionRamG].base + rowStart;
     const int32_t width = static_cast<int32_t>(layoutWidth);
     const uint32_t count = static_cast<uint32_t>(last - first);
     uint32_t* texels = run.texels;
