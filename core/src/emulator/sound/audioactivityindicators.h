@@ -22,7 +22,8 @@
 ///
 /// Mixer sources map onto HUD sources: AY 1 alone -> AY, AY 2 -> TurboSound
 /// (single-AY playback only uses chip 0), FM 1/FM 2 -> FM, GS -> GeneralSound
-/// or NeoGS by the card fitted, NeoGS MP3 -> NeoGSMp3, the rest 1:1.
+/// or NeoGS by the card fitted, NeoGS MP3 -> NeoGSMp3, every CD drive -> CdAudio,
+/// the rest 1:1.
 class AudioActivityIndicators
 {
 public:
@@ -51,7 +52,7 @@ public:
 
 private:
     static constexpr int SOURCE_TYPES = static_cast<int>(AudioSourceType::Custom) + 1;
-    static constexpr int HUD_SOURCES = 13;  // AudioSource values (checked in the .cpp)
+    static constexpr int HUD_SOURCES = 14;  // AudioSource values (checked in the .cpp)
 
     int _framesSinceSound[SOURCE_TYPES];
     int _framesSinceNeoGSDma;

@@ -10,6 +10,8 @@
 
 #include "platform-sockets.h"
 
+struct StateNode;
+
 /**
  * @brief Session context for a client connection
  */
@@ -206,6 +208,7 @@ private:
 
     // TS-Conf VDAC2 card (FT812) command handlers: bus capture
     void HandleVdac2(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVdac2Metrics(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void ShowVdac2Help(const ClientSession& session);
 
 
@@ -321,6 +324,10 @@ private:
 
     // Media command handlers (every slot through MediaControl)
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
+    void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowCdAudioHelp(const ClientSession& session);
+    static std::string CdAudioStateText(const StateNode& state);
     void ShowMediaHelp(const ClientSession& session);
 
     // Disk control command handlers
@@ -370,6 +377,8 @@ private:
     void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
                          const std::vector<std::string>& args);
     void HandleTTDStop(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDHistoryLimit(const ClientSession& session, EmulatorContext* context,
+                               const std::vector<std::string>& args);
     void HandleTTDInvalidate(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDSeek(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDStepBack(const ClientSession& session, EmulatorContext* context);

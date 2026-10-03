@@ -12,7 +12,9 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <string>
+#include <utility>
 
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
@@ -128,6 +130,24 @@ protected:
     // Control flow
     volatile bool _stopRequested = false;
 
+    /// Direct stepping (RunNFrames, RunTStates, RunUntil*, ...) drives the Z80 on the caller's thread while
+    /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
+    /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
+    std::atomic<int> _directStepDepth{0};
+    /// Marks a direct-stepping call for its duration; the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
+    /// skipped updates meanwhile refreshes once, at the end
+    class DirectStepScope
+    {
+    public:
+        explicit DirectStepScope(Emulator& emulator);
+        ~DirectStepScope();
+        DirectStepScope(const DirectStepScope&) = delete;
+        DirectStepScope& operator=(const DirectStepScope&) = delete;
+
+    private:
+        Emulator& _emulator;
+    };
+
     // Emulator state
     // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
     // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
@@ -146,6 +166,11 @@ protected:
     std::mutex _stopMutex;
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
+
+    // Context leases (LeaseContext): readers hold _leaseMutex shared; the
+    // removal sets _retiring, then takes it exclusively before Stop()/Release()
+    mutable std::shared_mutex _leaseMutex;
+    std::atomic<bool> _retiring{false};
     std::atomic<bool> _romReloadPending{false};  ///< RequestRomReload: reread the ROM at the next Reset
 
     // Step-over synchronization
@@ -521,11 +546,62 @@ public:
     /// Release() has run: the context and every subsystem are gone. A holder
     /// of a shared_ptr (a UI binding) must not call into the instance any more
     bool IsReleased() const { return _isReleased; }
+
+    /// A short-lived guarantee that the context (and every subsystem it points
+    /// to) stays alive: EmulatorManager::RemoveEmulator() waits for all live
+    /// leases before it stops and frees the instance. Empty (false) once the
+    /// removal has begun or the instance is released - the holder then must not
+    /// touch the instance. For threads that do not own the instance (the UI):
+    /// a raw GetContext() can be freed by a removal on another thread at any
+    /// moment. Keep a lease for one handler at most, and never remove the leased
+    /// instance (or wait for a thread that does) while holding it.
+    class ContextLease
+    {
+    public:
+        ContextLease() = default;
+        ContextLease(ContextLease&& other) noexcept
+            : _lock(std::move(other._lock)), _context(std::exchange(other._context, nullptr))
+        {
+        }
+        ContextLease& operator=(ContextLease&& other) noexcept
+        {
+            _lock = std::move(other._lock);
+            _context = std::exchange(other._context, nullptr);
+            return *this;
+        }
+        ContextLease(const ContextLease&) = delete;
+        ContextLease& operator=(const ContextLease&) = delete;
+
+        EmulatorContext* get() const { return _context; }
+        EmulatorContext* operator->() const { return _context; }
+        explicit operator bool() const { return _context != nullptr; }
+
+    private:
+        friend class Emulator;
+        ContextLease(std::shared_lock<std::shared_mutex>&& lock, EmulatorContext* context)
+            : _lock(std::move(lock)), _context(context)
+        {
+        }
+
+        std::shared_lock<std::shared_mutex> _lock;
+        EmulatorContext* _context = nullptr;
+    };
+    ContextLease LeaseContext();
+
+    /// The removal has begun (EmulatorManager): LeaseContext() refuses from now on
+    bool IsRetiring() const { return _retiring.load(); }
+    /// EmulatorManager, first step of a removal: refuse new leases
+    void BeginRetirement();
+    /// EmulatorManager, before Stop()/Release(): wait until every lease taken
+    /// before BeginRetirement() has ended. Hold no lock a lease holder may wait for
+    void WaitForContextLeases();
     void SetState(EmulatorStateEnum state);
 
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
+    bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
     bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();

@@ -589,6 +589,7 @@ bool InitDrawing(EveChip& chip)
 {
     InitBitmapTables();
     chip.bitmapFastPath = true;
+    chip.lineBudgetMargin = kLineBudgetMarginPercent;
     chip.lineColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.lineStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
@@ -617,6 +618,10 @@ void CatchUp(EveChip& chip)
     const uint32_t due = LinesDue(chip);
     if (!chip.drawing || !ScanRunning(chip))
     {
+        // Lines passed without drawing are not measured: their costs from an earlier
+        // frame must not count for this one (the frame's metrics block, the in-flight view)
+        for (uint32_t line = chip.drawnLines; line < due && line < kMaxLines; ++line)
+            chip.lineCosts[line].valid = 0;
         if (chip.drawnLines < due)
             chip.drawnLines = due;
         return;
@@ -650,6 +655,50 @@ void DrawingInvalidate(EveChip& chip)
     chip.drawnLines = 0;
     for (uint32_t i = 0; i < kMaxLines; ++i)
         chip.lineCosts[i] = EveLineCost{};
+}
+
+void FoldFrameMetrics(EveChip& chip)
+{
+    FrameMetricsState& m = chip.state.metrics;
+    const uint32_t lines = VisibleLines(chip);
+    const uint32_t hard = LineBudget(chip);
+    const uint32_t soft = static_cast<uint32_t>((static_cast<uint64_t>(hard) * (100 - chip.lineBudgetMargin)) / 100);
+    m.frame = chip.state.scan.frames;
+    m.lines = lines;
+    m.hardBudget = hard;
+    m.softBudget = soft;
+    m.worstLine = 0;
+    m.worstClocks = 0;
+    m.totalClocks = 0;
+    m.linesOverSoft = 0;
+    m.linesOverHard = 0;
+    bool valid = chip.drawing != 0 && lines > 0;
+    for (uint32_t i = 0; i < lines; ++i)
+    {
+        const EveLineCost& cost = chip.lineCosts[i];
+        if (!cost.valid)
+            valid = false;
+        const uint32_t clocks = cost.valid ? cost.totalClocks : 0;
+        m.lineClocks[i] = static_cast<uint16_t>(clocks > 0xFFFF ? 0xFFFF : clocks);
+        m.totalClocks += clocks;
+        if (clocks > m.worstClocks)
+        {
+            m.worstClocks = clocks;
+            m.worstLine = i;
+        }
+        if (clocks > hard)
+            ++m.linesOverHard;
+        else if (clocks > soft)
+            ++m.linesOverSoft;
+    }
+    if (lines < kMetricsLines)
+        std::memset(&m.lineClocks[lines], 0, (kMetricsLines - lines) * sizeof(m.lineClocks[0]));
+    m.valid = valid ? 1 : 0;
+}
+
+uint32_t FrameLinesDue(const EveChip& chip)
+{
+    return chip.drawnLines;
 }
 
 void GetLineCost(const EveChip& chip, uint32_t line, EveLineCost& out)

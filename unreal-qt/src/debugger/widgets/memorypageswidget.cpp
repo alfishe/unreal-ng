@@ -42,12 +42,15 @@ Emulator* MemoryPagesWidget::getEmulator()
 
 EmulatorContext* MemoryPagesWidget::getEmulatorContext()
 {
-    return m_debuggerWindow->getEmulator()->GetContext();
+    Emulator* emulator = m_debuggerWindow->getEmulator();
+    return emulator ? emulator->GetContext() : nullptr;
 }
 
 Memory* MemoryPagesWidget::getMemory()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+    Emulator* emulator = m_debuggerWindow->getEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context ? context->pMemory : nullptr;
 }
 
 /// region <Event handlers / Slots>
@@ -90,6 +93,8 @@ void MemoryPagesWidget::refresh()
     else
     {
         Memory* memory = getMemory();
+        if (!memory)
+            return;
         QString page0Name = memory->GetCurrentBankName(0).c_str();
         QString page1Name = memory->GetCurrentBankName(1).c_str();
         QString page2Name = memory->GetCurrentBankName(2).c_str();

@@ -1,5 +1,11 @@
 # TTD v2 target architecture
 
+> **Note (2026-10-02).** This is the target as first designed, for migrating v1
+> in place. v2 is now built as a new engine, `ttd::TimeTravelEngine`, next to v1
+> ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Where this
+> document differs from [engine-decisions.md](engine-decisions.md) (D1–D33), the
+> decisions win; the main differences are marked inline.
+
 The architecture TTD should end up with, derived from the current code
 ([current-state.md](current-state.md)), the design corpus (§8 lists it), the
 three feature branches ([branch-merge-strategy.md](branch-merge-strategy.md))
@@ -53,6 +59,10 @@ struct TTDRegionDesc {
 };
 ```
 
+*Superseded by D3:* region ids are their own fixed table, `TTDRegionId` (u16),
+not `PeripheralId` values; a region's owner is a device id, and one device can
+own several regions (NeoGS: RAM and flash). Region size has no fixed cap (D27).
+
 - The owner marks pieces dirty on its own write path (GS: its Z80's memory
   write; MoonSound: the wave-SRAM data port). Machine RAM keeps the existing
   debug-write hook, with page indices widened so page 255 is no longer the
@@ -81,7 +91,7 @@ Changed:
 |---|---|---|
 | Global key frame every 50 frames re-stores every non-zero page in full | **Per-piece chain cap**: a piece is stored `Full` when *its own* XOR chain would exceed K links. K = 50 initially, matching v1's key-frame interval so seek cost stays comparable; the final value comes from the benchmarks (BM-5 vs BM-8). Unchanged pieces are never re-stored. Worst-case chain depth is the same as v1 (every piece at 49); pieces that do not change stay at depth 0 instead of being re-stored every 50 frames | Key frames are O(installed RAM): 5.4 ms per key frame on 4 MB. The only reason for them is to bound chain length, which is a per-piece property |
 | `_prevPageCache` refreshed by copying all model RAM every frame | Refresh only the pieces that were dirty this frame; rebuild from the restored checkpoint on resume/seek | 4 MB memcpy per frame on ZX-Evo; the stale-cache resume bug (current-state B1) disappears with an explicit rebuild |
-| Dense reference table per checkpoint (16 B × pages) | Reference table split into blocks of 16 pages (256 B each), copy-on-write between consecutive checkpoints | 4 KB/frame on a 256-page machine (~720 MB/hour) for tables that are almost always identical to the previous frame's. Estimate: with the measured 1–2 dirty 16 KB pages per frame, 1–2 blocks are copied: 256–512 B plus 16 block pointers per frame, ≈ 8–16× less. Block size (8 / 16 / 32 pages, or per region) is tuned with BM-3 |
+| Dense reference table per checkpoint (16 B × pages) | Reference table split into blocks of 8 pages (128 B each), copy-on-write between consecutive checkpoints; the block size is set per region (D2). First designed as 16 pages; experiment [E3](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/e3-reference-blocks/README.md) chose 8 | 4 KB/frame on a 256-page machine (~720 MB/hour) for tables that are almost always identical to the previous frame's. With the measured 1–2 dirty 16 KB pages per frame, 1–2 blocks are copied per frame plus the block pointers; measured numbers in E3 |
 | Dirty tracking at 16 KB, splitting into 4 KB at the codec | Unchanged | Measured and argued in `ttddirtytracker.h`; the all-zero XOR fast path already skips unchanged 4 KB pieces |
 
 **Not adopted** (and why):
@@ -122,7 +132,9 @@ Changed:
    `UpdatePeripheral`) is part of the registry API.
 6. **One id table.** `PeripheralId` values are allocated in one place on master
    (see [branch-merge-strategy.md](branch-merge-strategy.md) §2) and never
-   reused. Region ids come from the same table.
+   reused. Region ids come from the same table. *Superseded:* region ids are
+   their own table `TTDRegionId` (D3); the engine identifies devices by a
+   stable u16 type id plus an instance name (D23).
 
 ## 5. Determinism inputs
 
@@ -153,12 +165,20 @@ Also persisted (they exist in memory today but are lost on save):
 | **Hot** (memory) | recent checkpoints, their pieces and blobs, the write-journal ring, coverage | configurable budget (default to be measured; today's sessions reach 0.3–2.1 GB/hour) |
 | **Cold** (disk, optional) | older chunks appended to the session file by a background writer | disk space |
 
+> *Superseded 2026-10-02 by [D28](engine-decisions.md#f-storage-and-use):* there is no choice between the two modes below. The session is always written to its file as it records; memory is a cache of it under the budget, and "save" is a rename. The two descriptions remain as the history of the design.
+
 - **Memory-only mode** (default for casual use): when the budget is reached, the
   oldest frames are dropped (their pieces released) and the session start moves
   forward. The UI and status report the earliest reachable frame. This is a
-  ring, not "thinning".
+  ring, not "thinning". *Per D5:* without key frames, a piece whose chain reaches
+  past the new start is first rebuilt as a full piece, and a piece still referred
+  to (by a later checkpoint, a shared block, a branch or another session sharing
+  the piece store, D22) is never released; every stored item records what it
+  depends on. *Per D28:* the session is always written to a file as it records,
+  memory is a cache of it, and evicted data is read back on a seek.
 - **Disk mode**: sealed chunks (≈50 frames of checkpoints plus the pieces and
-  blobs they introduced, journal blocks, coverage blocks) are appended to the
+  blobs they introduced, journal blocks, coverage blocks; *per D6* a part is cut
+  by the explicit dependencies of its items, not at a fixed frame count) are appended to the
   session file by a background thread that reads immutable pieces without
   blocking the emulator. Evicted pieces are fetched back through the cue table
   on seek. "Save" becomes "finalize": write the cue table and footer.
@@ -212,7 +232,7 @@ Footer   cue table (stream, first_frame -> file offset), footer magic
 | Stream | Content |
 |---|---|
 | 0 | page-store pieces (all regions) |
-| 1 | checkpoints (cut at chain-cap boundaries, so a chunk is self-contained enough to seek into) |
+| 1 | checkpoints (first designed as cut at chain-cap boundaries; per-piece limits have no common boundary, so *per D6* parts are cut by explicit dependencies and each is self-contained enough to seek into) |
 | 2 | write journal blocks |
 | 3 | input journal |
 | 4 | external events |
@@ -275,13 +295,18 @@ the stored piece CRC instead of overwriting it).
 - One checkpoint per frame at the frame boundary; silent deterministic replay
   inside a frame. Checkpoints inside a frame are added only if the turbo
   measurements require them (requirements PR-5, trajectory Phase 0, Step 4).
+  They do not: seek p99 ≤ 3.8 ms on every configuration, 3.46 ms on the
+  heaviest 10-minute session ([v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
 - Capture after every device has caught up to the frame boundary
   (requirements FR-19) — today by call order, in v2 as a tested rule.
 - The DeZog frame cache: it replays one frame through the normal restore path
   and collects instruction records, so it does not depend on how pieces,
   references or blobs are stored.
-- The write journal (12-byte records, columnar zstd blocks) and the coverage
-  index.
+- The coverage index. The write journal (12-byte records, columnar zstd
+  blocks) no longer stays as it is: *per D17* it becomes a derived index with a
+  replaceable retention policy (a ring, the whole history, or a window
+  regenerated by replay), the default chosen by experiment E7 (roadmap Phase 3,
+  Step 7).
 - Seek, find-last, reverse step / continue algorithms.
 - The WebAPI / MCP / CLI / Python / Lua surface. New fields (degraded restore,
   earliest reachable frame, fingerprint mismatch, real memory use) are added; no
@@ -303,4 +328,4 @@ the stored piece CRC instead of overwriting it).
 - v2 research PoC: `tools/poc/011-ttd-v2-capture-analysis/` — useful for codec
   and index-overhead numbers; its "v1 vs v2" comparison is against a
   hypothetical full-state-per-frame format, not the shipped engine (see
-  [README.md](README.md) §2).
+  [README.md §6](README.md#6-what-v1-and-v2-mean-here)).

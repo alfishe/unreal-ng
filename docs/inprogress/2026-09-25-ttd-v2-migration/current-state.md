@@ -70,6 +70,19 @@ A checkpoint also carries a **dense page reference table**: 4 × u32 per 16 KB
 page, every frame. 128 B/frame on Pentagon 128, but 4 KB/frame (~720 MB/hour)
 on a 256-page machine.
 
+**History limit (added 2026-10-02, `TimeTravelManager::SetHistoryLimit`).** Until then
+the history only grew. Now a limit in checkpoints and/or bytes (page-store slots plus
+device blobs, `HistoryBytes()`, kept as a running count) releases the oldest checkpoints
+after each capture. It relies on every checkpoint decoding alone (each XorPrev piece
+holds a reference on its base), keeps at least two checkpoints, and cuts the input,
+external-event and bookmark records and whole sealed port-journal blocks before the new
+start (`DropBefore`; port cursors stay absolute in memory and are rebased when saving), so
+a file saved after a release loads and replays its remaining frames exactly
+(`timetravelmanager_historylimit_test.cpp`, `TTDVdac2_Test.HistoryLimitKeepsTheChipRight`).
+Every automation surface and the Qt TTD panel set it; the default is no limit. The engine
+must keep this behavior at switchover (memory as a cache, decision 28, replaces it for the
+file-backed session).
+
 ## 4. Seek and reverse
 
 - **Seek**: binary search for the target frame's checkpoint (there is one per
@@ -188,7 +201,7 @@ Why:
 | B6 | Page-255 gap (§7) | **fixed 2026-09-27**, with the stale-cache-on-ROM-switch defect found alongside it |
 | B7 | `sessionHeapBytes` ("Memory MB" in Qt and WebAPI) excludes page payloads, the 64 MB journal, coverage and caches | **fixed 2026-09-28**: it now sums the slot table and every compressed page payload, the write journal's committed ring chunks, the coverage index and the frame cache (still zero without a session) |
 | B8 | Python analyzer: does not know flag bit 3 (bookmarks) → reports `trailing_bytes` on files with bookmarks. (The missing CRC comparison and the false "writer stores 0" comments were fixed 2026-09-25: 300/300 payload flips now caught) | **fixed 2026-09-28**: the analyzer parses the bookmarks section (`info` lists them, `validate` is clean) |
-| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | **fixed** in `e175ff42`: a running recording refuses switching them off (and loads, ROM, invalidate, journal-mode change) with a reason on every surface |
+| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | **fixed** in `e175ff42`: a running recording refuses switching them off (and loads, ROM, invalidate, journal-mode change) with a reason on every surface. The engine replaces the refusal with a clean stop (FR-17) and makes a load a timeline event (D10): [Phase 5 TDD](phase-5-switchover-tdd.md) |
 | B10 | The #7FFD paging lock lived in a decoder-private flag no checkpoint captured: a seek back across a lock left the machine locked (and on 128K/Pentagon/+2 mapped to the locked page); 128K/Pentagon also stored and applied locked writes, unlike the hardware | **fixed 2026-09-28**, found by the FR-3 state-completeness test: a locked port ignores the whole write (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2, MiSTer agree) and the lock is derived from the latches (`PortDecoder::IsPagingLocked`) |
 
 Stale documentation in code: re-checked 2026-09-28, the pre-codec format

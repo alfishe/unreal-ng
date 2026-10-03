@@ -172,6 +172,21 @@ compares with MAME and with the Pentagon's own `intstart` (`core/src/emulator/co
   cost one compare, as before). The screen digest hashes the video RAM (`DigestSurface`); `/capture/framebuffer
   ?format=index` gives the pen of every pixel (`IndexedFrame`, `SprinterVideoRenderer::PenAt`). The Qt views
   of the first bullet are still open.
+- **Spectrum screen squares (2026-10-02, branch `sprinter-statusbar-zx`):** the owner saw "text 40 (mixed)" in
+  the GUI status bar in the Spectrum mode. Root cause: the classifier read Mode0 only. The hardware has no
+  Spectrum mode of its own - ALL_MODE bit 0 only turns on the Spectrum screen shadow (CPU writes into video
+  RAM); the beam draws the mode table as always, and the launcher writes 32 x 24 ZX-40 squares (`m0` = `#30` |
+  third << 6, `m1` = `m2` = the cell's address low byte) inside border squares (`#F8`), dumped from the 128 menu
+  and the TR-DOS prompt. The renderer draws them as symbol squares whose font is the shadow's bitmap and whose
+  attribute is the same cell's. `SprinterSquare::Classify` now takes all three mode bytes: a 40-column symbol
+  square with `m1 = m2` and a third 0-2 is `Kind::Spectrum` (letter `Z`, key `spectrum`, `zx_row` /
+  `zx_column` per square); the renderer and the video mapper use the same `IsSymbol` / `IsBlank` / `IsBorder`
+  predicates. `SprinterPicture` (one summary of the 40 x 32 picture) feeds `DescribeScreenState`
+  (`videoModeBrief` "Spectrum 256x192, screen 5|7" by `#7FFD` bit 3), the machine report (`picture_mode`,
+  `picture_mode_key`, `picture_mixed`, `picture_brief`), `/state/sprinter/video` (the same three fields) and
+  `SprinterText.spectrum_screen` (now from the squares, not ALL_MODE). "Mixed" means more than one content
+  kind; border and blank squares frame a picture. Known limit: a native text-40 square whose character code
+  equals its attribute row reads as a Spectrum cell (one square: the picture is then "mixed").
 
 ## 8. Tests
 

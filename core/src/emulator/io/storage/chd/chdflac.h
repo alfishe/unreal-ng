@@ -27,6 +27,7 @@ namespace chd::flac
 
     /// Decode FLAC frames into exactly `frames` sample frames of `channels`
     /// interleaved 16-bit samples. False on a syntax or CRC error, or when the
-    /// data ends early
-    bool Decode(const uint8_t* src, size_t length, int16_t* samples, uint32_t frames, int channels);
+    /// data ends early. `consumed` (optional): the bytes the frames took (the
+    /// CD codec `cdfl` stores the subcode right after them)
+    bool Decode(const uint8_t* src, size_t length, int16_t* samples, uint32_t frames, int channels, size_t* consumed = nullptr);
 }  // namespace chd::flac

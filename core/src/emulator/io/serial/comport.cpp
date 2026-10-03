@@ -1,6 +1,7 @@
 #include "emulator/io/serial/comport.h"
 
 #include "emulator/io/network/atm2ioesp.h"
+#include "emulator/io/network/zifi.h"
 
 #include <cstring>
 
@@ -110,6 +111,8 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
     guests.machine = NetGuestOf(context->pMachineSerialPeer);
     if (context->pAtm2IoEsp)
         guests.atmIo = context->pAtm2IoEsp->Com().NetGuest();
+    if (context->pZiFi)
+        guests.zifi = context->pZiFi->Line().NetGuest();
     return guests;
 }
 
@@ -225,8 +228,10 @@ uint8_t ComPort::portDeviceInMethod(uint16_t port)
 {
     const int reg = Register(port);
     AddAccessWait(static_cast<uint8_t>(reg < 0 ? 5 : reg), true);   // every #xxEF access waits for the AVR
-    if (reg == kDataRegion || reg == kZiFiRegister)
-        return 0xFF;
+    if (reg == kDataRegion)
+        return _zifi ? _zifi->Read(ZiFi::kData) : 0xFF;
+    if (ComPortRegister::IsZiFi(reg))
+        return _zifi ? _zifi->Read(static_cast<uint8_t>(ZiFi::kZifr + (reg - ComPortRegister::kZiFiBase))) : 0xFF;
     if (reg == kNothing)
         return 0x00;
     return _uart.Read(static_cast<uint8_t>(reg), Now());
@@ -236,6 +241,10 @@ void ComPort::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
     const int reg = Register(port);
     AddAccessWait(static_cast<uint8_t>(reg < 0 ? 5 : reg), false);
+    if (reg == kDataRegion && _zifi)
+        _zifi->Write(ZiFi::kData, value);
+    else if (ComPortRegister::IsZiFi(reg) && _zifi)
+        _zifi->Write(static_cast<uint8_t>(ZiFi::kZifr + (reg - ComPortRegister::kZiFiBase)), value);
     if (reg < 0)
         return;
     _uart.Write(static_cast<uint8_t>(reg), value, Now());

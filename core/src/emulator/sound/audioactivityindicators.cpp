@@ -6,7 +6,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
-static_assert(static_cast<int>(AudioSource::NeoGSTransfer) + 1 == 13, "HUD_SOURCES must cover every AudioSource");
+static_assert(static_cast<int>(AudioSource::CdAudio) + 1 == 14, "HUD_SOURCES must cover every AudioSource");
 
 void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices,
                                        bool neoGSFitted, bool neoGSDma, bool neoGSTransfer)
@@ -36,6 +36,8 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
     on[static_cast<int>(AudioSource::NeoGSTransfer)] = _framesSinceNeoGSTransfer < HOLD_FRAMES;
     on[static_cast<int>(AudioSource::MoonFM)] = held(AudioSourceType::Moonsound_FM);
     on[static_cast<int>(AudioSource::MoonPCM)] = held(AudioSourceType::Moonsound_PCM);
+    on[static_cast<int>(AudioSource::CdAudio)] = held(AudioSourceType::CdAudio0) || held(AudioSourceType::CdAudio1) ||
+                                                 held(AudioSourceType::CdAudio2) || held(AudioSourceType::CdAudio3);
 
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
     for (int source = 0; source < HUD_SOURCES; source++)

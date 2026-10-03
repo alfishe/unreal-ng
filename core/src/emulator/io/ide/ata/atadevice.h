@@ -163,6 +163,12 @@ protected:
     virtual uint8_t ResetStatus() const { return ReadyStatus(); }
     /// A new medium came (the CD raises unit attention)
     virtual void MediumChanged() {}
+    /// HardReset ran (power-on, the reset line, DEVICE RESET): state outside AtaDeviceState
+    virtual void PowerOnReset() {}
+    /// The block that just went through the data register lights the activity LED. A disk:
+    /// every block. A CD drive: only the medium's data (READ, READ CD), not the packets and
+    /// replies a player polls with (READ SUB-CHANNEL, TEST UNIT READY)
+    virtual bool CountsAsActivity() const { return true; }
     /// endregion </Command set hooks>
 
     /// region <Helpers for the command sets>

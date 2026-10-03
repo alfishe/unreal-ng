@@ -87,6 +87,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [media/use-media-slots.md](media/use-media-slots.md) | Every media slot (floppy drives, SD card): list, insert a file or a **host folder**, `auto` slot choice, swap multi-disk software with save/export/discard, export the guest's writes |
+| [media/cd-audio.md](media/cd-audio.md) | CD audio in the ATAPI CD drive: CUE/BIN and CD CHD discs with audio tracks, play / pause / stop a track, the head (LBA, MSF, track, index), page 0Eh volume, the drive's mixer row; which machines have a CD drive |
 | [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`), drive A/B, blank disks, catalog/sysinfo inspection, Sprinter 1.44 MB floppies and the density latch |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
 | [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`, TS-Conf `.spg` load), verify a state took effect, snapshot round-trips |

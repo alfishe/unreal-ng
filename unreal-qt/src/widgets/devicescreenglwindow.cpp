@@ -713,8 +713,10 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             event->ignore();
             return false;
         }
-        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here
-        if (KeyboardManager::machineOwnsKey(keyEvent, _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here.
+        // Leased: automation may be removing the instance on another thread
+        const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+        if (KeyboardManager::machineOwnsKey(keyEvent, lease ? lease->pKeyboard : nullptr))
         {
             event->accept();
             return true;

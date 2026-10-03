@@ -67,6 +67,17 @@ bool MouseManager::HasMouseDevice() const
     return std::any_of(_sinks.begin(), _sinks.end(), [](const IMouseSink* sink) { return sink->IsMouseFitted(); });
 }
 
+bool MouseManager::IsMouseInUse() const
+{
+    // The sinks are copied out of the lock: a sink asks the port decoder, which may ask back
+    std::vector<IMouseSink*> sinks;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        sinks = _sinks;
+    }
+    return std::any_of(sinks.begin(), sinks.end(), [](const IMouseSink* sink) { return sink->IsMouseInUse(); });
+}
+
 /// endregion </Devices>
 
 /// region <Apply>

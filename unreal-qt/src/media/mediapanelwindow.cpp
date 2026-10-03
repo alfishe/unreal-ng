@@ -166,7 +166,7 @@ void MediaPanelWindow::buildUi()
         return button;
     };
     _insertFile = add(tr("Insert File..."), tr("Insert an image file into the selected slot"), &MediaPanelWindow::onInsertFile);
-    _insertFolder = add(tr("Insert Folder..."), tr("A host folder as a disk (TR-DOS) or card (FAT)"), &MediaPanelWindow::onInsertFolder);
+    _insertFolder = add(tr("Insert Folder..."), tr("A host folder as a disk (TR-DOS), a card or hard disk (FAT) or, in a CD-ROM drive, an audio CD of its MP3 / FLAC / WAV files"), &MediaPanelWindow::onInsertFolder);
     _eject = add(tr("Eject"), tr("Take the medium out"), &MediaPanelWindow::onEject);
     _save = add(tr("Save"), tr("Write the disk back into its file"), &MediaPanelWindow::onSave);
     _export = add(tr("Export..."), tr("Write a copy of the medium as it is now"), &MediaPanelWindow::onExport);
@@ -221,7 +221,8 @@ void MediaPanelWindow::hideEvent(QHideEvent* event)
 void MediaPanelWindow::refresh()
 {
     Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
-    MediaManager* manager = emulator ? emulator->GetContext()->pMediaManager : nullptr;
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    MediaManager* manager = context ? context->pMediaManager : nullptr;
     if (!manager)
     {
         if (!_rows.empty() || _revision != 0)
@@ -377,20 +378,31 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
     // async: the UI does not wait for the swap delay; the table shows "pending"
     std::map<std::string, std::string> options = {{"async", "true"}};
 
-    // An IDE unit takes the other kind of medium once its drive is swapped:
-    // an ISO needs a CD-ROM drive, a disk image a hard disk (the unit is empty)
+    // An IDE unit takes the other kind of medium once its drive is swapped (the unit is empty):
+    // a CD image (ISO, CUE, raw BIN, CD CHD) or a folder of MP3 / FLAC / WAV files (an audio CD)
+    // needs a CD-ROM drive; a disk image or another folder a hard disk. The same classifier as
+    // every insert target (MediaTargets::Classify) decides
     const auto row = std::find_if(_rows.begin(), _rows.end(), [&slot](const MediaPanelRow& r) { return r.slot == slot; });
     if (row != _rows.end() && slot.rfind("ide", 0) == 0 && !row->present)
     {
-        const bool iso = QFileInfo(path).suffix().compare(QStringLiteral("iso"), Qt::CaseInsensitive) == 0;
+        const FileClass file = MediaTargets::Classify(S(path));
+        const bool cdMedium = !file.kinds.empty() && file.kinds.front() == FileKind::Optical;
         const bool cdDrive = row->kind == "optical";
-        if (iso != cdDrive)
+        if (cdMedium != cdDrive)
         {
-            const QString question = iso ? tr("%1 is a hard disk unit. Make it a CD-ROM drive for this disc?")
-                                         : tr("%1 is a CD-ROM drive. Make it a hard disk unit for this image?");
-            if (QMessageBox::question(this, tr("Insert"), question.arg(Q(slot))) != QMessageBox::Yes)
+            QString question;
+            if (cdMedium && file.folder)
+                question = tr("%1 is a hard disk unit. Make it a CD-ROM drive and insert the folder's MP3 / FLAC / WAV "
+                              "files as an audio CD? (No: the folder becomes a disk volume)");
+            else if (cdMedium)
+                question = tr("%1 is a hard disk unit. Make it a CD-ROM drive for this disc?");
+            else
+                question = tr("%1 is a CD-ROM drive. Make it a hard disk unit for this image?");
+            const QMessageBox::StandardButton answer = QMessageBox::question(this, tr("Insert"), question.arg(Q(slot)));
+            if (answer == QMessageBox::Yes)
+                options["device"] = cdMedium ? "cdrom" : "disk";
+            else if (!(cdMedium && file.folder))
                 return;
-            options["device"] = iso ? "cdrom" : "disk";
         }
     }
 
@@ -410,6 +422,19 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
         return;
     }
     report(run("insert", slot, S(path), options), tr("Insert"));
+}
+
+bool MediaPanelWindow::insertFolder(const std::string& slot, const QString& path, QString* reason)
+{
+    if (_insertWorker.joinable())
+    {
+        if (reason)
+            *reason = tr("another folder is still being built");
+        return false;
+    }
+    _lastDirectory = QFileInfo(path).absolutePath();
+    insertFolderAsync(slot, path, {{"async", "true"}});
+    return true;
 }
 
 void MediaPanelWindow::insertFolderAsync(const std::string& slot, const QString& path,

@@ -552,7 +552,7 @@ types:
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
           keyboard controller's RS-232: netstate::Com, the peer part only),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
-          memory regions), 29 Z84C15 (u1 version 1, then the Z84C15's on-chip block, 171 bytes: z84c15_blob below),
+          memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
           32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
@@ -568,7 +568,17 @@ types:
           23 KempstonJoystick.
           36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
           37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort),
-          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved).
+          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved),
+          39 ZiFiLine (the TS AVR's ZiFi UART and its peer: netstate::SerialPort, as SerialPort),
+          40 ZiFi (the TS AVR's ZiFi API block, 32 bytes: version 1, api, err, selectZf, imr, isr, zibtr, zitor,
+          ribtr, ritor, 5 reserved, u8 x 8 zfLastRx, u8 x 8 rsLastRx).
+          41 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
+          with a CD unit, so the blobs of every other machine are unchanged),
+          42 Vdac2Memory (the TS-Conf VDAC2 card's FT812 memory regions whole, in region order: RAM_G, DL0, DL1,
+          REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
+          43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
+          u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
+          restored after 42).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
@@ -578,6 +588,72 @@ types:
           mismatch and does not restore.
       - id: state
         type: peripheral_blob
+
+  cd_drive_blob:
+    doc: |
+      Payload of peripheral 41 CdDrive (ttdcddrive.cpp): the CD audio side and the READ CD
+      staging of every unit of the IDE board (channel * 2 + position; 2 units, 4 on the
+      Sprinter), zero for a unit that is no CD drive. Little-endian.
+    seq:
+      - id: version
+        type: u1
+        doc: 2 (v1, without disc_identity, is not restored)
+      - id: cd_units
+        type: u1
+        doc: bit n set - unit n is a CD drive
+      - id: reserved
+        size: 6
+      - id: units
+        type: cd_drive_unit
+        repeat: eos
+  cd_drive_unit:
+    seq:
+      - id: head
+        type: s8
+        doc: |
+          The optical head in 1 / 3,500,000 of a 44.1 kHz sample from LBA 0; while playing it is
+          relative to the frame start (the head = this + elapsed base T-states x 44100)
+      - id: play_start_lba
+        type: u4
+      - id: end_lba
+        type: u4
+        doc: the play stops before this frame
+      - id: status
+        type: u1
+        doc: 0 idle (15h), 1 playing (11h), 2 paused (12h), 3 completed (13h, reported once), 4 error (14h, once)
+      - id: sotc
+        type: u1
+        doc: page 0Eh stop on track crossing
+      - id: port_select
+        size: 4
+        doc: page 0Eh channels routed to output ports 0-3 (bit 0 left, bit 1 right)
+      - id: port_volume
+        size: 4
+      - id: flags
+        type: u1
+        doc: bit 0 - the play ends at a data track (status 14h)
+      - id: reserved
+        size: 5
+      - id: stage_pos
+        type: u2
+      - id: stage_len
+        type: u2
+      - id: tray_open
+        type: u1
+        doc: START STOP UNIT eject opened the tray (no disc for the drive until it loads); 0 before 2026-10-02
+      - id: prevent_removal
+        type: u1
+        doc: PREVENT ALLOW MEDIUM REMOVAL (bit 0)
+      - id: stage_reserved
+        size: 2
+      - id: stage
+        size: 2816
+        doc: the READ CD sector (with C2 and subchannel fields) still going to the 2048-byte data buffer
+      - id: disc_identity
+        type: u8
+        doc: |
+          v2: the inserted disc's ContentId (0 without a disc). A restore onto a disc with
+          another identity is reported (warning), not refused
 
   sprinter_pld_blob:
     doc: |
@@ -644,13 +720,25 @@ types:
         type: u1
       - id: watchdog_start
         type: u8
+        doc: The clock (the board's units; the Sprinter's 42 MHz crystal ticks) the current watchdog count started at.
+      - id: watchdog_clocks_before
+        type: u8
+        doc: System clocks the watchdog counted before watchdog_start (a clock speed change folds them).
+      - id: ctc_clock_num
+        type: u4
+        doc: One system clock lasts ctc_clock_num / ctc_clock_den clock units (the Sprinter - 12 / multiplier).
+      - id: ctc_clock_den
+        type: u4
       - id: ctc_vector
         type: u1
       - id: ctc_channels
-        size: 22
+        size: 32
         repeat: expr
         repeat-expr: 4
-        doc: control, time constant, awaiting constant, running, load clock u8, zero counts u8, IP, IUS.
+        doc: |
+          control, time constant, awaiting constant, running, waiting for the trigger edge, count at the
+          anchor (0 = 256), anchor u8 (timer - the clock; counter or waiting - the input edges counted),
+          zero counts before the anchor u8, zero counts turned into requests u8, IP, IUS.
       - id: sio_channels
         size: 18
         repeat: expr

@@ -42,7 +42,7 @@ Outputs below are real, from a build of branch `sprinter-automation`
 emulator_manage {"action":"list_models"}
 #   → models[] has {"name":"SPRINTER","full_name":"Sprinter 2000","creatable":true,
 #     "available_ram_sizes_kb":[4096],"default_ram_kb":4096}
-emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.04)
+emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.07 BETA 1)
 emulator_manage {"action":"create","model":"SPRINTER","sprinter_bios":"3.07","sprinter_fast_start":true}
 #   → Created and started emulator 4ff43195-...            (sprinter_bios: 3.04 | 3.06 | 3.07 | a file in rom/sprinter)
 inspect_state {"aspects":["sprinter_bios"]}
@@ -62,7 +62,8 @@ the flash is reread at the next reset (`reset: true`, the default, resets now; `
 `reload_pending: true` until the next reset). `loaded` names the image the flash holds (by CRC-32), so a
 mismatch with `rom_file` is visible. A reset stops a TTD recording and a new image invalidates its session.
 `[ROM] SPRINTER=` in `<build>/bin/configs/sprinter/unreal.ini` (macOS: `unreal-qt.app/Contents/Resources/configs/sprinter/unreal.ini`)
-remains the default for new machines. DSS 1.71 needs 3.06 or 3.07. Background:
+remains the default for new machines: shipped `rom/sprinter/sp2k-3.07-beta1.rom` (owner decision 2026-10-02;
+3.04 and 3.06 Hotfix 2 stay selectable). DSS 1.71 needs 3.06 or 3.07. Background:
 [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md).
 
 **Full start vs fast start** (`fast_start` of the selection above, default `[SPRINTER] FastStart=`):
@@ -70,13 +71,19 @@ remains the default for new machines. DSS 1.71 needs 3.06 or 3.07. Background:
 473 720 configuration writes, about 1.9 s of emulated time with a black
 screen; `1` starts with the PLD already configured (the tests use it). Either
 way `sprinter.pld` ends `"state":"configured","module":"Standard"`; the
-bitstream hashes name the image (3.04: `full_hash 0xFC0928F2`, `head_hash 0x78EDDFC6`).
+bitstream hashes name the image (3.07 BETA 1: `full_hash 0x29641AB3`, `head_hash 0x49861031`; 3.04:
+`full_hash 0xFC0928F2`, `head_hash 0x78EDDFC6`).
 
 ### 2. Boot DSS from a floppy
 
-SETUP boots the IDE master first, then the "alternative device", floppy B.
-With no hard disk both IDE units read an empty channel and SETUP prints
-"None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
+SETUP boots the IDE master first, then the "alternative device": **floppy A on
+the default BIOS 3.07 BETA 1 (and 3.06), floppy B on BIOS 3.04**. Checked live
+2026-10-02 with a blank CMOS: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on
+3.07 BETA 1 straight into Flex Navigator 1.10 (`A:\FN\`); in drive B 3.07 prints
+"Alternative Boot from Diskette fail". The steps and outputs below are BIOS 3.04
+with the disk in B: create with `"sprinter_bios":"3.04"` to follow them as they
+are, or keep the default and use drive A. With no hard disk every IDE unit reads
+an empty channel and SETUP prints "None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
 
 The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect; `video_text` and
 `screen_ocr` read the same cells while most of the picture is text (Spectrum mode stays a ZX screen).
@@ -178,8 +185,15 @@ mouse_input {"action":"move","dx":100,"dy":-20}      # + right, + up (Kempston a
 mouse_input {"action":"click","button":"left"}       # inactive panel: activates it; on a row: the bar goes there
 mouse_input {"action":"click","button":"right"}      # marks the file under the bar, the bar moves down
 inspect_state {"aspects":["sprinter"]}
-#   → sprinter.z84c15.mouse: {"buttons":"0xFF","packet_in_flight":false,"sio_b_fifo":"","x":43,"y":67}
+#   → sprinter.z84c15.mouse: {"buttons":"0xFF","framing_errors":0,"mouse_baud":1200,"packet_in_flight":false,
+#      "sio_b_baud":1215.2777777777778,"sio_b_fifo":"","sio_b_in_tune":true,"x":31,"y":85}
 ```
+
+SIO B receives the mouse with CTC ZC/TO0 as its clock: DSS 1.71 programs CTC 0
+`#55` with 45 and SIO B x16 (WR4 `#44`), 875 kHz / 45 / 16 = 1 215 baud. A
+program that leaves SIO B off 1 200 baud by more than 5 % gets no mouse
+characters (`sio_b_in_tune: false`, `framing_errors` counts them), as on the
+board.
 
 Buttons: D0 left, D1 right, D2 middle (active low). The Kempston view shows all
 three; the serial packet has left and right only; FN ignores the middle button.
@@ -202,9 +216,37 @@ After a panel switch FN 1.10 re-reads the floppy for about 0.6 s with
 interrupts off; keys sent in that time overrun the SIO's 3-byte FIFO
 (`sprinter.z84c15.keyboard.overruns`). Wait a moment between keys.
 
+### 3b. Demos paced by the CTC (Bad Apple, dontBlink)
+
+Some DSS 1.71 programs run their playback on a Z84C15 CTC interrupt instead of
+the frame INT: CTC 2 counts the board's 875 kHz TRG2 by 112, ZC/TO2 drives
+TRG3, CTC 3 counts by 160 and interrupts at 48.83 Hz with vector `#06` (IM 2).
+On the owner's DSS 1.71 disk (BIOS 3.06, `sp_hdd_sys.chd` as above), from
+Flex Navigator (the left panel on the root of C:):
+
+```bash
+tap() { curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -H 'Content-Type: application/json' \
+             -d "{\"key\":\"$1\",\"frames\":3}" >/dev/null; sleep 0.3; }
+tap down; tap down; tap enter; sleep 2          # C:\DEMOS
+tap down; tap enter; sleep 2                     # BADAPPLE (DNTBLINK: 4 x down)
+for k in b a d a p p l e period e x e; do tap $k; done; tap enter
+sleep 15
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.z84c15.ctc.channels[3] | {control, mode, count, zero_counts, zc_to_hz, trigger_input}'
+#   → {"control":"0xD5","mode":"counter","count":28,"zero_counts":479,"zc_to_hz":48.828125,
+#      "trigger_input":{"kind":"cascade","source":"ZC/TO2"}}
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.sound.covox_blaster | {mode, rate_hz, ticks, ring_writes}'
+#   → {"mode":"covox-blaster","rate_hz":21875.0,"ticks":377447,"ring_writes":755072}
+```
+
+`zero_counts` grows by one per 20.48 ms frame; `count` is the live
+down-counter. MCP: `inspect_state {"aspects":["sprinter"]}`, the same
+`z84c15.ctc` tree (CLI `state sprinter`, Lua / Python `sprinter_state`).
+Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
+
 ### 4. Spectrum mode and TR-DOS
 
-BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
+The community BIOS (3.06 / 3.07, the default) carries the ZX ROMs: ESC at its boot prompt starts the
+Spectrum 128 menu "Sprinter" directly. BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
 `A:\ZX\ROMS`. So put a second copy of the floppy in drive A **before the
 boot** (a medium cannot be in two drives; a disk inserted into A after DSS
 started was not seen by the launcher):
@@ -268,10 +310,12 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `registers`, `cells` | ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD (mode page), HOLD, SCALE; cells `#C0-#FF` as hex rows |
 | `clock`, `frame` | turbo requested / front-panel switch, `ratio` 1 or 6, `mhz` 3.5 / 21; `lines` 320 / 312, `t_states` 71 680 / 69 888 |
 | `clock.waits` | the 21 MHz rule, `active`, `windows_waiting[4]` (main RAM waits, ROM and fast RAM not), the taken clocks |
-| `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
+| `clock.original_waits` | the ZX mode's PLD `WAIT_ORIG` (ALL_MODE bit 2 = 0 at 3.5 MHz, ORIGIN.ZX): `active`, `all_mode_bit2`, `rule`, `period_t` 4, `phase_t` (a placeholder until a board is measured), `windows_waiting[4]` (window 1; window 3 while `#7FFD` bit 2 is set) |
+| `tape` | `time_base`: `base_clock` - the tape input counts real time, so load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX); at 21 MHz the ROM loader fails, as on the board |
+| `video` | `picture_mode` (the dominant content kind of the 640 x 256 picture; `picture_mode_key`, e.g. `spectrum` in the Spectrum mode, `graphics_640` in Flex Navigator), `picture_mixed` (more than one content kind), `picture_brief` (the GUI status bar's words), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
 | `sound` | the AY (chips, clock, stereo from its config) and the Covox-Blaster (control, rate, indices, counters; the ring: `sprinter_sound_ring`) - [sprinter-sound.md](sprinter-sound.md) |
-| `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, CTC channels, SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
+| `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, `ctc` (`time_base_hz`, `cpu_clock_hz`; per channel the mode, prescaler, edge, timer start, `trigger_input` - `clock` 875 kHz / `cascade` ZC/TO2 -, the live `count`, `zero_counts`, `zc_to_hz` and what ZC/TO drives), SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
 | `fdc` | `density_latch` (720 KB code `#16` / 1.44 MB code `#17`), the WD1793 `clock` (1 / 2 MHz) and `data_rate` (250 / 500 kbit/s), `drive` |
 | `cmos`, `ide` | links: the CMOS report is `rtc`; `ide` shows the selected channel and data latch, the drives are in `state/ide` (see [sprinter-hdd.md](../media/sprinter-hdd.md)) |
 | `bios` | the configured ROM file, `loaded` (by CRC-32), the pages identified by signature, the shipped images, `options`, `reload_pending`, how to select (also `sprinter_bios`) |
@@ -283,8 +327,10 @@ Verified on Flex Navigator 1.15 (DSS 1.71 from the HDD, BIOS 3.07) and on the BI
 ```text
 inspect_state {"aspects":["sprinter_video"]}         # one letter a square (squares[b][a] decoded: invoke_api GET /state/sprinter/video)
 #   → [sprinter_video] page 1, RGMOD 0x01, HOLD 0x77, 320 lines, PORT_Y 0xC0, palettes 4 5 6 7
-#       G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, . blank, * blank with the frame INT
+#       G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, Z Spectrum screen cell (ZX-40), B border, . blank, * blank with the frame INT
 #       tttttttttttttttttttttttttttttttttttttttt          (the BIOS: 40 x 32 squares of 80-column text; FN: all "g")
+#       BBBBZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZBBBB          (the Spectrum mode: rows 4-27; rows 0-3 and 28-31 all "B";
+#                                                     picture_mode "spectrum", the status bar "Spectrum 256x192, screen 5")
 inspect_state {"aspects":["sprinter_palette"]}       # the palettes the picture uses, R G B as video RAM holds them
 #   → [sprinter_palette] used by the picture (R G B per pen)
 #       0 graphics 0: 000000 FF0000 008000 ...
@@ -426,7 +472,7 @@ local t = sprinter_ports({map = 0, dos = 1, rw = "w"}); print(#t.rows)          
 local l = sprinter_port(0x21BC, {rw = "w"}); print(l.results[1].code)          -- 0x2B
 for _, line in ipairs(sprinter_text().lines) do print(line.text) end
 print(sprinter_video{squares=false}.map[1])                                      -- tttttttt... (BIOS)
-print(region_read("vram", 0x17F0, 6)[5], sprinter_bios().loaded)                -- 168  sp2k-3.04.rom
+print(region_read("vram", 0x17F0, 6)[5], sprinter_bios().loaded)                -- 168  sp2k-3.04.rom (switched to 3.04)
 local fb = framebuffer("index"); print(fb.width, fb.height, #fb.data)           -- 736 288 423936
 ```
 
@@ -491,3 +537,51 @@ and core reports as Lua.)
   both floppies before the boot.
 - **Uploads**: MCP `load_software` uploads a file that exists on the MCP host;
   floppies up to 4 MB are accepted (1.44 MB PC images included).
+
+### ZX DLSS de-flicker in the Spectrum mode
+
+Verified 2026-10-03 (WebAPI on a spare port, BIOS 3.06, the MAME-pack disk): in Flex Navigator type
+`\zx\spectrum.exe \zx\p128.zx \trd\across\0.trd`, ENTER, ENTER on TR-DOS, `R` ENTER, ENTER on ACROSS.
+
+```bash
+curl -s -X PUT $BASE/emulator/$EMU/video/temporal -H 'Content-Type: application/json' -d '{"algorithm":"mod-tpgwafsd"}' |
+  jq -c '{active, applicable, inactive_reason, video_delay_frames}'
+#   Spectrum mode → {"active":true,"applicable":true,"inactive_reason":"","video_delay_frames":7}
+#   Flex Navigator → {"active":false,"applicable":false,
+#                     "inactive_reason":"not applicable: Sprinter native mode (640x256 16c): ZX DLSS works in the Spectrum mode only", ...}
+```
+
+The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen` is the raw
+one). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
+of its 704 x 288 window at (16, 0). CLI `video temporal`, MCP `capture_media` `temporal_status`, Lua / Python
+`video_temporal()` report the same fields. Design: `docs/inprogress/2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md` §7.
+
+### ZX-mode timing: the zxtime program
+
+Verified 2026-10-02 on a GUI build (WebAPI on a spare port, BIOS 3.06 HF2, the MAME-pack disk as a CHD with
+`ZXTIME.TRD` in `C:\TRD`): `spectrum origin.zx zxtime.trd`, the standard 128 menu down to TR-DOS, `R` ENTER.
+ORIGIN.ZX's TR-DOS 5.04Em reads only the real floppy: with no disk in `fdd.a` it says "Disc Error" (the launcher's
+RAM disk is for the Sprinter TR-DOS 7.03 of SP / P128 / P512); insert the same TRD as `fdd.a` and `R` ENTER again.
+
+```bash
+BASE=http://localhost:8090/api/v1
+tap() { curl -s -X POST $BASE/emulator/$EMU/keyboard/tap -H 'Content-Type: application/json' -d "{\"key\":\"$1\",\"frames\":3}"; sleep 1; }
+curl -s -X POST $BASE/emulator/$EMU/keyboard/type -H 'Content-Type: application/json' -d '{"text":"spectrum origin.zx zxtime.trd"}'; tap enter
+tap down; tap down; tap down; tap down; tap enter       # Tape Loader, 128 BASIC, Calculator, 48 BASIC, TR-DOS
+curl -s -X POST $BASE/emulator/$EMU/media/fdd.a/insert -H 'Content-Type: application/json' -d "{\"path\":\"$PWD/zxtime.trd\"}"
+tap r; tap enter                                        # RUN: about 5 s later the report
+curl -s "$BASE/emulator/$EMU/state/sprinter" | jq -c '.clock.original_waits | {active, windows_waiting}, .tape.time_base'
+#   → {"active":true,"windows_waiting":[false,true,false,false]}  "base_clock"
+```
+
+The screen then reads `FRAME 69888 T`, `RATE 50.08 frames/s`, `INT 50 in 50 frames`, `REPEAT 0`, and the screen
+reads `#4000 996`, `#C000 page 5 996`, `#C000 page 1 0` (thousandths of a T: the original waits, MAME prints 0).
+The same block on the other surfaces: MCP `inspect_state {"aspects":["sprinter"]}` adds the lines "original waits
+(ALL_MODE bit 2 = 0) ..." and "tape in real time ...", CLI `state sprinter` prints `original_waits:` and `tape:`,
+Lua `sprinter_state().clock.original_waits.active`, Python `emulator.sprinter_state()["clock"]["original_waits"]`
+(the Python surface needs a build with `ENABLE_PYTHON_AUTOMATION=ON`). What each line means and the numbers of every
+launcher mode: [testdata/machines/sprinter/zx-timing/README.md](../../testdata/machines/sprinter/zx-timing/README.md),
+[tdd-zx-mode.md](../../docs/inprogress/2026-09-28-sprinter/tdd-zx-mode.md) §4.1.
+
+After Ctrl+Alt+Del from any mode started with `/ret-fn` the machine is back in DSS at 21 MHz (the PLD presets its
+turbo bit on the reset); `/state/sprinter` shows `registers.all_mode.value` `0xFF` and `clock.mhz` `21`.

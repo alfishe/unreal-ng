@@ -179,6 +179,7 @@ slot names, options and errors as the WebAPI, CLI, MCP and Python. Full referenc
 media_list()                                            -- slots + detached media
 media_insert("A", "/games/elite-1.trd")                 -- slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
 media_insert("sd", "/home/me/zx/sdcard", {fs = "fat32"})
+media_insert("cd", "/home/me/music/album", {format = "audio-cd"})  -- MP3 / FLAC / WAV files as an audio CD
 media_swap("A", "/games/elite-2.trd", {save = true})    -- a dirty disk needs save / export / discard
 media_eject("B", {export = "/tmp/b.trd"})
 media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
@@ -380,13 +381,16 @@ msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register bank
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
 ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+cd = cdaudio_state()        -- CD drives' audio: drives[] (slot, disc + tracks, audio status / head / track / index, drive_volume, mixer)
+r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frames, msf/end), pause, resume, stop, volume, mixer
+r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
 sp = sprinter_state()       -- Sprinter Sp2000: pld, decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
 txt = sprinter_text()       -- the screen text of the mode table's text squares (80 x 32: BIOS SETUP, DSS)
-vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
+vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
@@ -404,7 +408,7 @@ net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets),
 ok, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings (the card is fitted again)
 route, err = key_route("ps2")          -- where keys go: "auto" | "matrix" | "ps2" | "both"; key_route() queries
 ok, err = network_configure{com_port="tcp:127.0.0.1:2323"}          -- the machine's own serial port (ZX-Evo AVR, ATM Turbo 2+ keyboard controller): none | loopback | tcp:host:port | serial:device[,baud] | espnet[,baud] | at[,baud] (an ESP module's baud defaults to the port's: 38400 on ATM2, else 115200); com_modem_lines=true|false; esp_chip="esp32"|"esp8266"
-ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31)
+ok, err = network_configure{card="zxwifi", zx_wifi="espnet"}          -- cards: none | zxnetusb | zxwifi | atm2ioesp (ATM Turbo 2+ INTERNAL I/O; atm2ioesp="espnet", atm2ioesp_address="0xF0") or a list "zxnetusb,zxwifi"; zx_wifi: what the ZX-WiFi card's 16550 is wired to (default "at"); avr_firmware="ts2013" etc. (ZX-Evo, [EVO] Avr= names); kbc_firmware="v41" etc. (ATM Turbo 2+ keyboard controller, [ATM] Kbc= names; com_port is its RS-232 from v31); zifi="at" (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP, default "none"; network_state().zifi has the API registers and rings)
 cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
 ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics (debug mode)
@@ -791,6 +795,8 @@ ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled cho
 ttd_start("development")     --> bool   -- write journal on
 ttd_start("gaming")          --> bool   -- no write journal (smaller)
 ttd_set_journal_enabled(b)             -- choose journal mode for the next start
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
@@ -1058,7 +1064,7 @@ emu.video_pixel_at(t)                -- the same for the point under the beam at
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_address_in(space, offset [, page]) -- "ram", "sprite_ram" (attribute word, byte offset) or "palette" (cell, byte offset)
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
-emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason, applicable,
                                      --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
                                      --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
                                      --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,

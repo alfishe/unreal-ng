@@ -607,6 +607,7 @@ struct CONFIG
 	uint8_t ide_stall;				// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (0 = bypass, the default)
 	uint8_t ts_vdac = 0;			// [MISC] TS_VDAC / TS_VDAC2: TS-Conf firmware build's video DAC = its STATUS VDAC_VER: 0 none (PWM), 1 / 2 / 3 = 3 / 4 / 5 bit, 7 = VDAC2
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
+	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
@@ -731,6 +732,9 @@ struct CONFIG
 		/// The card's bus address (#FB latch): #F0 (Rev 1.5 / 2.0 default) or #F8
 		/// (Rev 1.0); its 16550 answers base .. base + 7
 		uint8_t atm2IoEspAddress;
+		/// What the TS AVR firmware's ZiFi UART (TS-Conf; ZX-Evo with a TS-Labs AVR firmware) is wired to:
+		/// ComPortSpec, empty = NONE (no ZiFi board). AT = the original ZiFi (an ESP-01 with Espressif's AT)
+		char zifi[256];
 		/// 1 = a SERIAL: device gets the ZX's RTS / DTR and reports its CTS / DSR / RI / DCD;
 		/// 0 (default) = its lines are left alone (USB ESP boards wire RTS / DTR to reset / boot)
 		uint8_t comModemLines;

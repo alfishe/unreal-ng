@@ -306,6 +306,10 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["external_event_count"]     = Json::UInt64(0);
     ret["input_history_complete"]   = true;
     ret["port_journal_active"]      = false;
+    ret["history_limit_frames"]     = Json::UInt64(0);
+    ret["history_limit_bytes"]      = Json::UInt64(0);
+    ret["history_bytes"]            = Json::UInt64(0);
+    ret["evicted_checkpoints"]      = Json::UInt64(0);
     ret["port_journal_off_reason"]  = Json::Value(Json::nullValue);
     ret["port_read_count"]          = Json::UInt64(0);
     ret["port_write_count"]         = Json::UInt64(0);
@@ -344,6 +348,11 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["input_history_complete"] = info.inputHistoryComplete;
     // Port-read journal: whether replay is isolated from media and host devices
     ret["port_journal_active"]    = info.portJournalActive;
+    // History limit: the oldest checkpoints are released beyond it while recording
+    ret["history_limit_frames"]   = Json::UInt64(info.historyLimitFrames);
+    ret["history_limit_bytes"]    = Json::UInt64(info.historyLimitBytes);
+    ret["history_bytes"]          = Json::UInt64(info.historyBytes);
+    ret["evicted_checkpoints"]    = Json::UInt64(info.evictedCheckpoints);
     ret["port_journal_off_reason"] = info.portJournalOffReason.empty() ? Json::Value(Json::nullValue)
                                                                        : Json::Value(info.portJournalOffReason);
     ret["port_read_count"]        = Json::UInt64(info.portReadCount);
@@ -530,6 +539,13 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
     {
         mgr->SetEnableWriteJournal(enableWriteJournal);
     }
+    // Optional history limit, the same as POST /ttd/history-limit
+    if (json && (json->isMember("history_limit_frames") || json->isMember("history_limit_bytes")))
+    {
+        const ttd::TTDSessionInfo current = mgr->GetSessionInfo();
+        mgr->SetHistoryLimit((*json).get("history_limit_frames", Json::UInt64(current.historyLimitFrames)).asUInt64(),
+                             (*json).get("history_limit_bytes", Json::UInt64(current.historyLimitBytes)).asUInt64());
+    }
     bool ok = mgr->StartRecording();
 
     Json::Value ret;
@@ -537,6 +553,58 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
     ret["already_active"]       = alreadyRecording;
     ret["state"]                = ttd::TTDSessionStateToString(mgr->GetState());
     ret["write_journal_enabled"] = mgr->GetEnableWriteJournal();
+    const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    ret["history_limit_frames"] = Json::UInt64(info.historyLimitFrames);
+    ret["history_limit_bytes"]  = Json::UInt64(info.historyLimitBytes);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/history-limit
+///
+/// JSON body: { "frames": <n>, "bytes": <n> } - each optional (missing keeps the
+/// current value, 0 = no limit); an empty body only reports. While recording the
+/// limit applies at once; otherwise from the next recorded frame
+void EmulatorAPI::historyLimitTTD(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    ttd::TTDSessionInfo info = mgr->GetSessionInfo();
+    auto json = req->getJsonObject();
+    if (json && (json->isMember("frames") || json->isMember("bytes")))
+    {
+        const Json::Value& frames = (*json)["frames"];
+        const Json::Value& bytes = (*json)["bytes"];
+        if ((!frames.isNull() && !frames.isUInt64()) || (!bytes.isNull() && !bytes.isUInt64()))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "frames and bytes must be non-negative integers (0 = no limit)";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        mgr->SetHistoryLimit(frames.isNull() ? info.historyLimitFrames : frames.asUInt64(),
+                             bytes.isNull() ? info.historyLimitBytes : bytes.asUInt64());
+        info = mgr->GetSessionInfo();
+    }
+
+    Json::Value ret;
+    ret["history_limit_frames"] = Json::UInt64(info.historyLimitFrames);
+    ret["history_limit_bytes"]  = Json::UInt64(info.historyLimitBytes);
+    ret["history_bytes"]        = Json::UInt64(info.historyBytes);
+    ret["evicted_checkpoints"]  = Json::UInt64(info.evictedCheckpoints);
+    ret["checkpoint_count"]     = Json::UInt64(info.checkpointCount);
+    ret["session_start_frame"]  = Json::UInt64(info.sessionStartFrame);
+    ret["current_end_frame"]    = Json::UInt64(info.currentEndFrame);
+    ret["state"]                = ttd::TTDSessionStateToString(info.state);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

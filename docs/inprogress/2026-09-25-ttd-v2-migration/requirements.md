@@ -1,5 +1,12 @@
 # TTD v2 requirements
 
+> **Note (2026-10-02).** v2 is built as a new engine, `ttd::TimeTravelEngine`,
+> next to v1 and checked against it byte for byte
+> ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Where this
+> document and [engine-decisions.md](engine-decisions.md) (D1–D33) disagree, the
+> decisions win. The phases named here are those of the current
+> [roadmap](README.md#2-phases); §7 traces each requirement to them.
+
 Requirements, quality criteria and acceptance criteria for TTD v2. The design
 that meets them is [target-architecture.md](target-architecture.md); the order
 of work is [migration-trajectory.md](migration-trajectory.md); the v1 baseline
@@ -48,9 +55,11 @@ written justification; **MAY** = allowed, not required.
   card personality switch, sound device change); the change is recorded and a
   seek across it restores the device set of the target position, or reports
   that it cannot.
-- **FR-5 (MUST)** Memory regions of any size up to at least 4 MB machine RAM +
-  1 MB device RAM per device, with no per-page-index limitation (the v1
-  page-255 case itself was fixed in Phase 0, Step 1, 2026-09-27).
+- **FR-5 (MUST)** Memory regions of any size, with no fixed cap per region:
+  at least 4 MB machine RAM, and each device region as large as its device
+  needs (NeoGS RAM and flash: about 4.5 MB), with no per-page-index limitation
+  (the v1 page-255 case itself was fixed in Phase 0, Step 1, 2026-09-27).
+  Corrected 2026-10-02 (D27): this read "+ 1 MB device RAM per device".
 
 ### 2.2 Restore and seek
 
@@ -151,7 +160,7 @@ close the door on them:
   predecessor (a branch's first checkpoint shares its fork point's). Reference
   counts, chain caps and copy-on-write reference blocks (Phase 1) already allow it;
   nothing in Phases 1–4 may assume a strictly linear timeline.
-- **FR-23 (SHOULD)** The Phase 5 container reserves stream ids for branch data
+- **FR-23 (SHOULD)** The session file (Phase 4, Step 2) reserves stream ids for branch data
   (branch table, non-trunk checkpoints and events, the parent link of a forked
   session) and keeps the rule that readers skip unknown streams, so a reader
   without branch support opens a branched file as its trunk.
@@ -198,13 +207,20 @@ Release build), reference workloads of §5.3.
   Whether that is needed is **measured first** (BM-5 on turbo configurations,
   from the Phase 0, Step 2 harness); if PR-5 fails there, the conditional step Phase 0, Step 4 of the
   trajectory adds them. Until then v2 keeps one checkpoint per frame.
+  **Measured** (Phase 0, Step 2): seek p99 ≤ 3.8 ms on every configuration of
+  the full matrix, 3.46 ms on the heaviest 10-minute session, so Phase 0,
+  Step 4 was dropped ([v0b-benchmark-results.md](v0b-benchmark-results.md) §3).
 
 ### 3.3 Storage efficiency
 
 - **PR-9 (MUST)** v2 is **more efficient than v1** on every reference workload
   in each of: bytes per frame in memory, bytes per frame in the file, capture
   time, restore time. No metric may regress by more than 5%; the sum must
-  improve.
+  improve. *Tightened 2026-10-02 by [D33](engine-decisions.md#g-quality-bar-after-every-phase):*
+  bytes in memory, bytes in the file and counted capture work may not regress
+  at all, in any case, for the same history kept; restore time may be slower
+  than v1's, within PR-5 (and within 25% of E4's estimates once restore-only-
+  differences is in).
 - **PR-10 (MUST)** Unchanged state costs (almost) nothing: a frame in which
   nothing changed costs ≤ 64 bytes of checkpoint data in the file, regardless
   of configuration (v1: device blobs alone are 309–646 B per frame).
@@ -316,7 +332,9 @@ folder's `DONE.md`:
    PR-4, PR-5, PR-7, PR-9, PR-10 and PR-12; SHOULD targets are reported with
    justification where missed.
 4. **Comparison**: a published comparison table v1 vs v2 for the matrix (BR-3),
-   showing no metric regressing more than 5% and the overall improvement.
+   showing no metric regressing more than 5% and the overall improvement
+   (*tightened by D33*: no regression in bytes or capture work at all; seek
+   time within PR-5).
 5. **Robustness**: the fuzz test (QR-4) passes; ASan/UBSan clean (QR-1); a
    kill-during-recording test in disk mode passes (FR-13).
 6. **Persistence**: a file written by the first v2 release still loads in the
@@ -330,18 +348,36 @@ folder's `DONE.md`:
 
 ## 7. Traceability to the roadmap
 
-| Phase / step ([roadmap](README.md)) | Requirements it delivers |
+Updated 2026-10-02 for the engine roadmap ([README §2](README.md#2-phases)).
+Until then this table followed the in-place phases; [README §5](README.md#5-former-step-names)
+maps their steps to the current ones. Rows marked *(assigned 2026-10-02)* give
+a phase to requirements no phase covered before ([engine-decisions.md §D](engine-decisions.md#d-documents)).
+
+| Phase / step ([roadmap](README.md#2-phases)) | Requirements it delivers |
 |---|---|
-| Phase 0, Step 1 — Make v1 honest | FR-3 (first version), FR-9, FR-18, QR-4 (current format) |
+| Phase 0, Step 1 — Make v1 honest | FR-3 (first version), FR-9 (v1), FR-18, QR-4 (current format) |
 | Phase 0, Step 2 — Benchmark harness | BR-1…BR-9 with v1 as first engine; PR-5 measured on turbo configurations |
 | Phase 0, Step 3 — Merge the feature branches (GS, MoonSound, Profi) | FR-1, FR-2, FR-4 for those devices |
-| Phase 0, Step 4 — Checkpoints inside a frame (dropped) | PR-5 on turbo configurations (met without it) |
-| Phase 1 — Memory that costs only what changes | FR-5, FR-22, PR-3, PR-4, the memory part of PR-9/PR-10 |
+| Phase 0, Step 4 — Checkpoints inside a frame (dropped) | PR-5 on turbo configurations (met without it: p99 ≤ 3.8 ms, [v0b §3](v0b-benchmark-results.md#3-the-phase-0-step-4-question-pr-5)) |
+| Phase 1, Step 1 — Engine skeleton and verification | BR-1 (the engine as a second engine in the harness), D33 oracle; positions carry a branch (FR-22, FR-24) |
+| Phase 1, Step 2 — Piece store | PR-3, PR-4, the memory part of PR-9; I-6 measured here: the share of the per-piece CRC in capture and seek *(assigned 2026-10-02)* |
+| Phase 1, Step 3 — Regions and copy-on-write reference table | FR-5, FR-22; parent link for FR-23 |
+| Phase 1, Step 4 — Live capture next to v1 | PR-4, PR-10 (memory part); PR-1 / PR-2 measured for the engine's capture (BM-1, BM-2) *(assigned 2026-10-02)* |
+| Phase 1, Step 5 — Restore only the pieces that differ | PR-6, PR-7 in memory *(assigned 2026-10-02)*; PR-5 |
+| Phase 1, Step 6 — Device memory as regions | FR-1, FR-2 and FR-5 for device memory |
 | Phase 2 — Device state with versions | FR-2, FR-4, FR-7, FR-19, PR-10 |
-| Phase 3 — Everything a replay needs, in the file | FR-10 (journals, fingerprint), FR-14, FR-20, FR-21 |
-| Phase 4 — Memory budget | FR-15, FR-16, FR-17 |
-| Phase 5 — Versioned file and disk mode | FR-11, FR-12, FR-13, FR-23, PR-8, PR-12, QR-2, QR-5 |
+| Phase 3, Steps 1–3 — Event stream, two replay modes, several CPUs | FR-10 (journals), FR-21 |
+| Phase 3, Step 4 — Configuration fingerprint, media versions | FR-10 (fingerprint), FR-14 *(assigned 2026-10-02: open in another configuration, report what is not exact)* |
+| Phase 3, Steps 5–6 — Emulated clock, no writes outside the session | FR-20; the emulated time base QR-3 needs |
+| Phase 3, Step 7 — Write journal as a derived index | FR-10 (write journal); its default retention feeds PR-11 |
+| Phase 4, Step 1 — Integrity and versioning decided | FR-11, FR-12; I-4 failure model of a partially damaged session; I-6 decided (keep or drop the in-memory CRC) *(assigned 2026-10-02)* |
+| Phase 4, Step 2 — Written as it records | FR-13, FR-23, QR-2, QR-3 *(assigned 2026-10-02: deterministic file contents)*, PR-11 *(assigned 2026-10-02: measured on the file)* |
+| Phase 4, Step 3 — Memory as a cache of the file | FR-15, FR-16, PR-7 in disk mode *(assigned 2026-10-02)*, PR-8 |
+| Phase 4, Steps 5–6 — v1 files, format description and analyzer | PR-12, QR-4 (new format), QR-5 |
+| Phase 5, Step 1 — The emulator runs on the engine | QR-8, FR-17; FR-8 through every surface *(assigned 2026-10-02)*; PR-1 / PR-2 met with v1 out of the frame *(assigned 2026-10-02)*; FR-7 and a partially damaged session (I-4) shown on every surface *(assigned 2026-10-02)* |
+| Phase 5, Step 2 — History never cut short | FR-24; FR-9 on the engine: resume from here starts an exact branch *(assigned 2026-10-02)* |
 | Phase 6 — Cleanup | QR-9, acceptance |
+| Every step | QR-1, QR-6, QR-7, D33 |
 
 The benchmark harness (§5) starts in Phase 0, Step 2 with v1 as its first engine, so every
 later step is measured against the same baseline.

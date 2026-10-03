@@ -59,13 +59,19 @@ class TTDSprinterPld;
 ///     codes #90 / #91 / #52;
 ///   - the DS12887A CMOS (codes #1C/#1D/#1E, century #32),
 ///     the video RAM and the INT source (the mode table);
-///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits).
+///   - the 21 MHz turbo (hw_turbo_ratio 6) and its wait states (SprinterWaits), and the ZX mode's
+///     "original waits" at 3.5 MHz (SprinterOrigWaits).
 class PortDecoder_Sprinter : public PortDecoder, public IMachineStepHook, public IMachineM1Hook
 {
 public:
     /// Port trace internal codes: the PLD codes #00-#FF as they are; the
     /// Z84C15's own ports as kTraceZ84Base + the low address byte
     static constexpr uint16_t kTraceZ84Base = 0x100;
+    /// The Z84C15's time base: the board crystal X_SP = 42 MHz, 12 ticks per base T-state (3.5 MHz = X_SP / 12)
+    static constexpr uint32_t kChipTicksPerBaseT = 12;
+    static constexpr uint64_t kChipClockHz = 42'000'000;
+    /// CTC TRG0-TRG2: X_SP / 48 = 875 kHz, independent of the CPU clock (MAME sprinter.cpp:1993-1995)
+    static constexpr uint32_t kCtcTriggerHz = 875'000;
 
     /// region <Constructors / Destructors>
 public:
@@ -120,6 +126,9 @@ public:
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
     /// endregion
+
+    /// The frame boundary: the host speed control's next multiplier reaches the Z84C15's clock
+    void OnFrameEnd() override;
 
     /// region <PLD state and parts>
 public:
@@ -184,6 +193,13 @@ public:
     /// The turbo wait overlay (SprinterWaits; null until the CPU exists): the windows it marks
     /// (SlotWaits) are the ones whose accesses wait at 21 MHz - automation reports it
     const SprinterWaits* GetWaits() const { return _waits.get(); }
+    /// The "original waits" overlay (SprinterOrigWaits): installed while ALL_MODE bit 2 = 0 and the CPU runs
+    /// at 3.5 MHz on the configured PLD; automation reports whether it is (OrigWaitsActive)
+    const SprinterOrigWaits* GetOrigWaits() const { return _origWaits.get(); }
+    bool OrigWaitsActive() const;
+    /// The original waits follow ALL_MODE bit 2, the clock and #7FFD bit 2 (window 3): install or remove the
+    /// overlay, mark its windows. Called on every change of those; public for a PLD state set directly (tests)
+    void ApplyOrigWaits();
     /// The Covox / Covox-Blaster DAC (S6, tdd-accel-sound-input §2)
     CovoxBlaster& GetCovoxBlaster() { return _cbl; }
     const CovoxBlaster& GetCovoxBlaster() const { return _cbl; }
@@ -222,6 +238,10 @@ private:
     void PerformPendingReset();
     void FinishLoad(bool watchdog);
     void ApplyTurbo();
+    /// The Z84C15's clock: ticks of the 42 MHz crystal since the machine's power-on (monotonic, real time)
+    uint64_t ChipClock() const;
+    /// The CPU clock the Z84C15 counts (CTC timers, watchdog) at `multiplier` x 3.5 MHz
+    void SyncChipClock(uint8_t multiplier);
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();
@@ -256,6 +276,7 @@ private:
     std::unique_ptr<Z84C15Engine> _cpuEngine;
     SprinterMemory* _sprinterMemory = nullptr;
     std::unique_ptr<SprinterWaits> _waits;
+    std::unique_ptr<SprinterOrigWaits> _origWaits;
 
     /// DS12887A: 128 cells, century register #32; battery-backed through
     /// [SPRINTER] CmosFile, so it lives with the decoder and survives resets

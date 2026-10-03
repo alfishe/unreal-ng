@@ -27,7 +27,14 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
     });
 
     _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) { SampleMouse(x, y, buttons); });
-    _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) { _chip.sio.Receive(1, value); });
+    // SIO B samples the mouse's 1 200 baud line with the clock CTC ZC/TO0 gives it: off by more than the
+    // tolerance (or no clock at all), the character is lost (a framing error, not modeled further)
+    _mouse.SetByteSink([this](uint8_t value, [[maybe_unused]] uint64_t at) {
+        if (MouseReceiverInTune())
+            _chip.sio.Receive(1, value);
+        else
+            _mouseFramingErrors++;
+    });
 
     if (_context && _context->pMouseManager)
         _context->pMouseManager->AddSink(this);
@@ -37,6 +44,21 @@ SprinterInput::~SprinterInput()
 {
     if (_context && _context->pMouseManager)
         _context->pMouseManager->RemoveSink(this);
+}
+
+double SprinterInput::MouseReceiverBaud() const
+{
+    // WR4 bits 7-6: the clock mode (x1, x16, x32, x64); ZC/TO0 is SIO B's receive and transmit clock
+    // (MAME sprinter.cpp:2006-2007). DSS 1.71: CTC 0 counts 875 kHz / 45, SIO B x16 = 1 215 baud
+    static constexpr uint32_t kClockMode[4] = {1, 16, 32, 64};
+    return _chip.ctc.OutputHz(0) / kClockMode[(_chip.sio.GetChannel(1).wr[4] >> 6) & 3];
+}
+
+bool SprinterInput::MouseReceiverInTune() const
+{
+    const double baud = MouseReceiverBaud();
+    const double error = (baud - MsSerialMouse::kBaud) / MsSerialMouse::kBaud;
+    return error <= kBaudTolerance && error >= -kBaudTolerance;
 }
 
 void SprinterInput::SampleMouse(uint8_t& x, uint8_t& y, uint8_t& buttons) const

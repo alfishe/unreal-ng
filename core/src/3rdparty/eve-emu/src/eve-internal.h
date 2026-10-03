@@ -366,6 +366,23 @@ struct CoproState
     VideoState video;
 };
 
+// Line budget metrics of the last completed frame (line-budget-metrics design §3.1).
+constexpr uint32_t kMetricsLines = 4096; // VSIZE is 12 bits (= kMaxLines)
+struct FrameMetricsState
+{
+    uint64_t frame;
+    uint32_t valid;
+    uint32_t lines;
+    uint32_t hardBudget;
+    uint32_t softBudget;
+    uint32_t worstLine;
+    uint32_t worstClocks;
+    uint64_t totalClocks;
+    uint32_t linesOverSoft;
+    uint32_t linesOverHard;
+    uint16_t lineClocks[kMetricsLines];
+};
+
 // The control state, saved whole by EveSaveState. Coprocessor, graphics and in-flight
 // parts are added by their units (see eve-copro.h).
 struct ControlState
@@ -383,11 +400,12 @@ struct ControlState
     CoproState copro;
     BitmapHandle handles[kHandleCount];
     GraphicsContext context;   // carried between lines unless reset per line (spec V1)
+    FrameMetricsState metrics; // the last completed frame's line costs (replaced at frame end)
 };
 static_assert(std::is_trivially_copyable<ControlState>::value, "ControlState must be trivially copyable");
 
 constexpr uint32_t kStateMagic = 0x31455645; // "EVE1"
-constexpr uint32_t kStateVersion = 7;
+constexpr uint32_t kStateVersion = 8; // 8: FrameMetricsState
 
 } // namespace EveLib
 
@@ -444,6 +462,7 @@ struct EveChip
     std::unique_ptr<uint8_t[]> probeTag;
     std::unique_ptr<EveLineCost[]> lineCosts; // per visible line of the last frame
     uint32_t overflowLines;                  // lines over budget in the current frame
+    uint32_t lineBudgetMargin;               // soft budget = hard budget minus this percent (host setting)
     uint32_t drawnLines;                     // lines of the current frame already drawn (catch-up)
     bool bitmapFastPath;                     // false: every bitmap pixel through the general path
 
@@ -557,11 +576,13 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 // --- Drawing (eve-dl.cpp) ----------------------------------------------------------------------
 
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
+uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
 void DisplayListSwapped(EveChip& chip);       // a new active list
 void DrawingInvalidate(EveChip& chip);        // derived drawing state is stale (restore)
 void GetLineCost(const EveChip& chip, uint32_t line, EveLineCost& out);
+void FoldFrameMetrics(EveChip& chip);          // the frame's line costs into state.metrics (frame end)
 bool ProbePixel(const EveChip& chip, uint32_t x, uint32_t y, EvePixelSource& out);
 void LoadRomFontHandle(EveChip& chip, uint32_t handle, uint32_t font);
 void SetHandleFromMetrics(BitmapHandle& h, uint32_t format, uint32_t stride, uint32_t width, uint32_t height,

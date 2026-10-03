@@ -48,17 +48,18 @@ void ULABeamWidget::reset()
 
 void ULABeamWidget::refresh()
 {
-    if (!_emulator)
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    if (!context || !context->pScreen || !context->pCore)
         return;
 
-    CONFIG& config = _emulator->GetContext()->config;
+    CONFIG& config = context->config;
     if (config.t_line == 0 || config.frame == 0)
         return;
 
     // Geometry in beam dots from the raster state (the renderer's line origin),
     // so the display window is where the mode really draws it (ATM 320/640 x 200,
     // Profi 512 x 240), not where the framebuffer happens to store it
-    Screen* screen = _emulator->GetContext()->pScreen;
+    Screen* screen = context->pScreen;
     VideoModeEnum mode = screen->GetVideoMode();
     const RasterDescriptor& rd = screen->rasterDescriptors[mode];
     const RasterDescriptor& timing = screen->GetTimingDescriptor(mode);
@@ -79,7 +80,7 @@ void ULABeamWidget::refresh()
     _fbPaperOffsetX = rd.screenOffsetLeft;
     _fbPaperWidth = rd.screenWidth;
 
-    Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
+    Z80* cpu = context->pCore->GetZ80();
     if (cpu)
     {
         _currentTstate = cpu->t;
@@ -92,7 +93,7 @@ void ULABeamWidget::refresh()
         _beamY = _currentLine;         // Absolute raster line
 
         // Frame counter
-        _frameCounter = _emulator->GetContext()->emulatorState.frame_counter;
+        _frameCounter = context->emulatorState.frame_counter;
     }
 
     updateScreenImage();

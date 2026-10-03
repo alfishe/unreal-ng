@@ -45,6 +45,7 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 
     // The AVR's PS/2 mouse is the board's mouse: the host mouse reaches it through the
     // emulator's mouse manager, and the Kempston-address ports read its registers
+    _evoAvr.Ps2Mouse().SetFrameSource([context = _context] { return context->emulatorState.frame_counter; });
     _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
     if (_context->pMouseManager)
         _context->pMouseManager->AddSink(&_evoAvr.Ps2Mouse());
@@ -1527,6 +1528,7 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM3::DescribeNetwork()
     //  - since 2021-04-28: the index is read from #41 = the Gluk clock address
     //    (the last #DFF7 write): F8..FF reach the 16550, C0..CF the ZiFi
     //    registers, D0..F7 nothing, 00..BF the ZiFi data area
+    caps.zifi = firmware == Uart16550::AvrFirmware::Ts2016Feb || firmware == Uart16550::AvrFirmware::Ts2016Apr;
     if (firmware == Uart16550::AvrFirmware::Ts2016Feb)
         caps.serialRegister = [](uint16_t) { return ComPortRegister::kDataRegion; };
     else if (firmware == Uart16550::AvrFirmware::Ts2016Apr)
@@ -1536,7 +1538,7 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM3::DescribeNetwork()
             if (index >= 0xF8)
                 return static_cast<int>(index - 0xF8);
             if (index >= 0xC0 && index <= 0xCF)
-                return ComPortRegister::kZiFiRegister;
+                return ComPortRegister::kZiFiBase + (index - 0xC0);
             if (index >= 0xD0)
                 return ComPortRegister::kNothing;
             return ComPortRegister::kDataRegion;

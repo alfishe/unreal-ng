@@ -1,3 +1,4 @@
+#include <emulator/io/ide/cdaudiocontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
@@ -60,6 +61,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
+        ss << "  cdaudio        - CD drives' audio: disc, tracks, status, head, volume, mixer row" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
         ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;
@@ -92,6 +94,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
+        ss << "  state cdaudio        - Show the CD drives' audio state" << NEWLINE;
         ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
         ss << "  state tsconf tsu     - Show the TSU objects and the palette (debug views)" << NEWLINE;
         ss << "  state sprinter       - Show the Sprinter machine state (also: sp)" << NEWLINE;
@@ -201,6 +204,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     {
         HandleStateFdc(session, context);
         return;
+    }
+    else if (subsystem == "cdaudio" || subsystem == "cdda")
+    {
+        session.SendResponse(std::string("CD audio") + NEWLINE + "========" + NEWLINE +
+                             CdAudioStateText(CdAudioControl::State(context)));
     }
     else if (subsystem == "ide" || subsystem == "hdd" || subsystem == "cdrom")
     {

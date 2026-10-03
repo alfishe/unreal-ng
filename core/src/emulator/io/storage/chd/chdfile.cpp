@@ -92,6 +92,11 @@ namespace chd
 
     std::unique_ptr<ChdFile> ChdFile::FindParentNextTo(const Sha1& sha1, const std::string& childPath, std::string* error)
     {
+        return FindParent(sha1, childPath, error, false);
+    }
+
+    std::unique_ptr<ChdFile> ChdFile::FindParent(const Sha1& sha1, const std::string& childPath, std::string* error, bool cdRom)
+    {
         const std::filesystem::path child = FileHelper::ToFsPath(childPath);
         std::error_code ec;
         const std::filesystem::path folder = child.has_parent_path() ? child.parent_path() : std::filesystem::path(".");
@@ -107,7 +112,7 @@ namespace chd
             uint32_t version = 0;
             Sha1 candidate{};
             if (PeekHeader(name, version, candidate) && candidate == sha1)
-                return Open(name, error);
+                return cdRom ? OpenCd(name, error) : Open(name, error);
         }
         if (error)
             *error = childPath + ": needs its parent CHD (SHA-1 " + Sha1Hex(sha1) + "): put the parent file in the same folder";
@@ -116,8 +121,23 @@ namespace chd
 
     std::unique_ptr<ChdFile> ChdFile::Open(const std::string& path, std::string* error, ParentFinder finder)
     {
+        return OpenAs(path, error, std::move(finder), false);
+    }
+
+    std::unique_ptr<ChdFile> ChdFile::OpenCd(const std::string& path, std::string* error)
+    {
+        // A CD child's parent is a CD CHD too
+        auto finder = [](const Sha1& sha1, const std::string& childPath, std::string* parentError) {
+            return FindParent(sha1, childPath, parentError, true);
+        };
+        return OpenAs(path, error, finder, true);
+    }
+
+    std::unique_ptr<ChdFile> ChdFile::OpenAs(const std::string& path, std::string* error, ParentFinder finder, bool cdRom)
+    {
         std::unique_ptr<ChdFile> chd(new ChdFile());
         chd->_path = path;
+        chd->_cdRom = cdRom;
 
         const std::filesystem::path fsPath = FileHelper::ToFsPath(path);
         std::error_code ec;
@@ -151,13 +171,26 @@ namespace chd
         if (!chd->ParseHeader(header, error) || !chd->ReadMetadata(error) || !chd->ReadMap(error))
             return nullptr;
 
+        bool cdTracks = false;
         for (const MetadataEntry& entry : chd->_metadata)
         {
             if (IsCdTag(entry.tag))
-            {
-                chd->Fail(error, "a CD-ROM / GD-ROM / DVD CHD: only hard-disk CHDs are supported (extract it with chdman extractcd)");
-                return nullptr;
-            }
+                cdTracks = true;
+        }
+        if (cdTracks && !cdRom)
+        {
+            chd->Fail(error, "a CD-ROM CHD: it goes into a CD drive, not a hard-disk unit or an SD card");
+            return nullptr;
+        }
+        if (cdRom && !cdTracks)
+        {
+            chd->Fail(error, "a hard-disk CHD, not a CD-ROM: it goes into a hard-disk unit or an SD card");
+            return nullptr;
+        }
+        if (cdRom && (chd->_version < 5 || chd->_hunkBytes % kCdFrameBytes != 0 || chd->_unitBytes != kCdFrameBytes))
+        {
+            chd->Fail(error, "a v" + std::to_string(chd->_version) + " CD-ROM CHD: only v5 CD CHDs are read (convert it with chdman copy)");
+            return nullptr;
         }
 
         if (chd->_hasParent)
@@ -267,8 +300,15 @@ namespace chd
             const uint32_t tag = _codecs[i];
             if (tag == kCodecNone)
                 continue;
-            if (tag == kCodecCdZlib || tag == kCodecCdZstd || tag == kCodecCdLzma || tag == kCodecCdFlac)
-                return Fail(error, "a CD-ROM CHD (codec " + CodecName(tag) + "): only hard-disk CHDs are supported (extract it with chdman extractcd)");
+            if (IsCdCodec(tag))
+            {
+                if (!_cdRom)
+                    return Fail(error, "a CD-ROM CHD (codec " + CodecName(tag) + "): it goes into a CD drive, not a hard-disk unit or an SD card");
+                _decoders[i] = CreateCdCodec(tag, _hunkBytes);
+                if (!_decoders[i])
+                    return Fail(error, "codec " + CodecName(tag) + " with a hunk of " + std::to_string(_hunkBytes) + " bytes (no whole 2448-byte frames)");
+                continue;
+            }
             if (tag == kCodecAvHuff)
                 return Fail(error, "a LaserDisc (A/V) CHD: only hard-disk CHDs are supported");
             _decoders[i] = CreateCodec(tag, _hunkBytes);

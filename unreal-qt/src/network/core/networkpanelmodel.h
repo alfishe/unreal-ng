@@ -28,6 +28,7 @@ struct NetworkForm
     bool zxBus = true;
     bool internalIo = false;           ///< the ATM Turbo 2+ INTERNAL I/O connector (ATM2IOESP)
     std::string serialPort = "none";   ///< none | evo-avr | zifi | atm2-kbc
+    bool zifiMachine = false;          ///< the TS AVR firmware's ZiFi (TS-Conf, ZX-Evo + a TS firmware)
 
     // ZX-Bus cards
     bool zxNetUsb = false;
@@ -35,6 +36,8 @@ struct NetworkForm
     bool atm2IoEsp = false;            ///< not on the ZX-Bus: the ATM Turbo 2+ INTERNAL I/O connector
     ComPortSpec atm2IoEspPeer;         ///< default AT
     unsigned atm2IoEspAddress = 0xF0;  ///< #F0 (Rev 1.5 / 2.0) or #F8 (Rev 1.0)
+
+    ComPortSpec zifiPeer;              ///< the ZiFi board's ESP; kind None = no board (default)
 
     // Serial ports: the machine's own and the ZX-WiFi card's
     ComPortSpec comPort;               ///< kind None = nothing on the line
@@ -56,7 +59,7 @@ struct NetworkForm
 NetworkForm NetworkFormFromState(const StateNode& network);
 
 /// The settings that differ between two forms, as ParseChange takes them
-/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, esp_chip, com_modem_lines, avr_firmware, kbc_firmware,
+/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, com_modem_lines, avr_firmware, kbc_firmware,
 /// host_access, dns_mode, hosts, forwards, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
 
@@ -69,6 +72,7 @@ struct NetworkAvailability
     bool avrFirmware = true;    std::string avrFirmwareWhy;
     bool kbcFirmware = true;    std::string kbcFirmwareWhy;
     bool atm2IoEsp = true;      std::string atm2IoEspWhy;
+    bool zifi = true;           std::string zifiWhy;
 };
 NetworkAvailability NetworkFormAvailability(const NetworkForm& form);
 

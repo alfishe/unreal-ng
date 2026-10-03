@@ -48,6 +48,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/hostkeyboardmenu.h"
 #include "emulator/keyboardmanager.h"
 #include "emulator/soundcharacterpreferences.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -84,6 +85,22 @@
 
 namespace
 {
+/// Where a quick drop goes when the plan has no default and nobody can be asked: a folder goes to a
+/// card, hard disk or CD (a TS-Conf game folder is an SD card, not a TR-DOS disk) when the machine
+/// has one; anything else to the first target of the plan's order (the boot slot first)
+int QuickDropTarget(const MediaPlan& plan)
+{
+    if (plan.file.folder)
+    {
+        for (size_t i = 0; i < plan.targets.size(); i++)
+        {
+            if (plan.targets[i].as != FileKind::Floppy && plan.targets[i].as != FileKind::Tape)
+                return static_cast<int>(i);
+        }
+    }
+    return 0;
+}
+
 // B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
 bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
 {
@@ -156,6 +173,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
+    // Windows that show the same moment as the screen refresh with it
+    connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
+        if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
+            _ft812DebugWindow->refresh();
+    });
 
     // Forward drag/drop from GPU window to main window
     // The slot chooser, drop zones and refusal over the screen (media-drop-targets M4)
@@ -186,7 +208,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_dropOverlay, &DropTargetOverlay::droppedOutside, this, [this]() {
         // Released away from the zones: the same slots, picked by a click
         clearDropVerdict();
-        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), _dropOverlay->plan());
+        // Re-planned: the media manager's slots may have changed since the zones were shown
+        const MediaPlan plan = _emulator ? MediaTargets::Plan(_emulator->GetContext(),
+                                                              MediaTargets::Classify(_pendingPlacement.path.toStdString()))
+                                         : _dropOverlay->plan();
+        _dropOverlay->showChooser(dropArea(), QFileInfo(_pendingPlacement.path).fileName(), plan);
     });
     connect(_dropOverlay, &DropTargetOverlay::cancelled, this, [this]() {
         _pendingPlacement.active = false;
@@ -293,6 +319,31 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
 
+    // FT812 Debug (line-budget-metrics.md §3.3): hidden by default, Debug -> FT812 Debug,
+    // offered only while the machine has the VDAC2 card
+    _ft812DebugWindow = new Ft812DebugWindow();
+    _ft812DebugWindow->setBinding(m_binding);
+    _ft812DebugWindow->setPictureGeometry(
+        [this](QRect& global, double& firstRow, double& rows) {
+            if (!_screenWrapper)
+                return false;
+            global = _screenWrapper->pictureGlobalRect();
+            const QRectF source = _screenWrapper->pictureSourceRect();
+            firstRow = source.top();
+            rows = source.height();
+            return !global.isEmpty() && rows > 0;
+        },
+        this);
+    // A native child on macOS: it rides with the main window without lagging
+    _dockingManager->addDockableWindow(_ft812DebugWindow, Qt::RightEdge, /*useNativeChildWindow=*/true);
+    // Queued: the main window's own resize handling refits the picture first
+    connect(_ft812DebugWindow, &Ft812DebugWindow::pictureGeometryChanged, this, [this]() { placeFt812DebugWindow(false); },
+            Qt::QueuedConnection);
+    connect(_ft812DebugWindow, &Ft812DebugWindow::visibilityChanged, this, [this](bool visible) {
+        if (visible)  // after the layout settled
+            QTimer::singleShot(0, this, [this]() { placeFt812DebugWindow(true); });
+    });
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -326,23 +377,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     connect(_menuManager, &MenuManager::frontPanelTurboToggled, this, &MainWindow::handleFrontPanelTurboToggled);
     connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
+    // The bound instance can be removed by automation at any moment (the UI
+    // unbinds one queued event later): both handlers go through a context lease
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
-        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
-        if (keyboard)
-            _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
-                                               Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+        if (const auto view = HostKeyboardMenu::Read(m_binding))
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
     });
     connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
-        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
-        if (!keyboard)
-            return;
         std::string error;
-        if (!keyboard->RequestHostRoute(route.toStdString(), error))
+        const auto view = HostKeyboardMenu::Request(m_binding, route, error);
+        if (!error.empty())
             statusBar()->showMessage(tr("Host keyboard: %1").arg(QString::fromStdString(error)), 5000);
-        _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
-                                           Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+        if (view)
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
     });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
@@ -356,6 +403,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
+    connect(_menuManager, &MenuManager::ft812DebugToggled, this, &MainWindow::handleFt812DebugToggled);
+    connect(_ft812DebugWindow, &Ft812DebugWindow::visibilityChanged, _menuManager, &MenuManager::setFt812DebugChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -612,6 +661,14 @@ MainWindow::~MainWindow()
         delete networkWindow;
     }
 
+    if (_ft812DebugWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(_ft812DebugWindow);
+        _ft812DebugWindow->hide();
+        delete _ft812DebugWindow;
+        _ft812DebugWindow = nullptr;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -805,6 +862,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         networkWindow->hide();
         delete networkWindow;
         networkWindow = nullptr;
+    }
+    if (_ft812DebugWindow)
+    {
+        _dockingManager->removeDockableWindow(_ft812DebugWindow);
+        _ft812DebugWindow->hide();
+        delete _ft812DebugWindow;
+        _ft812DebugWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -1381,11 +1445,15 @@ void MainWindow::toggleEmulatorStartStop()
                 qDebug("%s", dumpSettings.c_str());
 
                 // Mute I/O outs to frequently used ports
-                PortDecoder& portDecoder = *newEmulator->GetContext()->pPortDecoder;
-                portDecoder.MuteLoggingForPort(0x00FE);
-                portDecoder.MuteLoggingForPort(0x7FFD);
-                portDecoder.MuteLoggingForPort(0xFFFD);
-                portDecoder.MuteLoggingForPort(0xBFFD);
+                EmulatorContext* newContext = newEmulator->GetContext();
+                if (newContext && newContext->pPortDecoder)
+                {
+                    PortDecoder& portDecoder = *newContext->pPortDecoder;
+                    portDecoder.MuteLoggingForPort(0x00FE);
+                    portDecoder.MuteLoggingForPort(0x7FFD);
+                    portDecoder.MuteLoggingForPort(0xFFFD);
+                    portDecoder.MuteLoggingForPort(0xBFFD);
+                }
 
                 // NOTE: Disabled debug code that redirects logger output to LogWindow.
                 // The pointer-to-member cast triggers MSVC C4407 warning due to multiple inheritance.
@@ -2273,7 +2341,10 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                const CONFIG& running = _emulator->GetContext()->config;
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                const CONFIG& running = runningContext->config;
                 if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
                 {
                     const TMemModel* target = Config::FindModelByEnum(machine.model);
@@ -2293,7 +2364,10 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                if (_emulator->GetContext()->config.mem_model != MM_TSL)
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                if (runningContext->config.mem_model != MM_TSL)
                 {
                     qInfo() << "SPG program - replacing the running machine by TS-Conf";
                     if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
@@ -2390,12 +2464,20 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
                 << "): no one to ask, the first one -" << QString::fromStdString(plan.targets.front().slotId);
         index = 0;
     }
+    else if (origin == LoadOrigin::Drop)
+    {
+        // A quick drop: no one to ask and a chooser would hang about until clicked. It goes to the
+        // slot a folder or image most likely belongs in, and the overlay shows where, then fades
+        index = QuickDropTarget(plan);
+    }
     else
     {
         _pendingPlacement = {filePath, mountOnly, origin, true};
         _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
         return;
     }
+    if (origin == LoadOrigin::Drop && slot.empty() && plan.targets.size() > 1)
+        _dropOverlay->showConfirm(dropArea(), QFileInfo(filePath).fileName(), plan, index);
     const MediaTarget& target = plan.targets[static_cast<size_t>(index)];
 
     switch (target.as)
@@ -2436,8 +2518,20 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
         }
         default:
         {
-            // A hard disk, a card or a CD: the media manager inserts it (async: the UI does not wait
-            // for the slot's swap delay)
+            // A folder (a FAT volume, an audio CD of MP3 / FLAC / WAV files): built off the UI
+            // thread by the media panel's folder worker (BUGS.md #3), with its pending row and
+            // completion refresh - a large music folder takes seconds to decode
+            if (plan.file.folder && mediaPanelWindow)
+            {
+                QString busy;
+                if (!mediaPanelWindow->insertFolder(target.slotId, filePath, &busy))
+                    refuseFile(filePath, busy, origin);
+                else
+                    qInfo() << "Building" << QString::fromStdString(target.slotId) << "from the folder" << filePath;
+                break;
+            }
+            // A hard disk, a card or a CD image: the media manager inserts it (async: the UI does not
+            // wait for the slot's swap delay)
             const MediaReply reply = MediaTargets::Apply(_emulator->GetContext(), plan, static_cast<size_t>(index),
                                                          {{"async", "true"}});
             if (!reply.result.Ok())
@@ -3201,6 +3295,31 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::placeFt812DebugWindow(bool opening)
+{
+    // Right of the main window, its chart level with the picture: each bar beside
+    // its screen line; the height follows the picture. A window the user dragged
+    // away stays where it is until it is opened again
+    if (!_ft812DebugWindow || !_ft812DebugWindow->isVisible() || !_screenWrapper || !_dockingManager)
+        return;
+    if (!opening && !_dockingManager->isDocked(_ft812DebugWindow))
+        return;
+    const QRect picture = _screenWrapper->pictureGlobalRect();
+    if (picture.isEmpty())
+        return;
+    const int headroom = Ft812LineChart::kLabelHeadroom;
+    _ft812DebugWindow->resize(_ft812DebugWindow->width(),
+                              picture.height() + headroom + _ft812DebugWindow->HeightAroundChart());
+    const int frameTop = picture.top() - headroom - _ft812DebugWindow->ChartTopInFrame();
+    _dockingManager->dockAt(_ft812DebugWindow, Qt::RightEdge, frameTop - geometry().top());
+}
+
+void MainWindow::handleFt812DebugToggled(bool visible)
+{
+    if (_ft812DebugWindow)
+        _ft812DebugWindow->setVisible(visible && _emulator && Ft812DebugWindow::Offered(_emulator->GetContext()));
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -3475,7 +3594,10 @@ bool MainWindow::playRzxFile(const std::string& file)
         QMessageBox::warning(this, tr("Play RZX"), QString::fromStdString(resolve.message));
         return false;
     }
-    const CONFIG& running = _emulator->GetContext()->config;
+    EmulatorContext* runningContext = _emulator ? _emulator->GetContext() : nullptr;
+    if (!runningContext)
+        return false;  // removed by automation; the queued unbind follows
+    const CONFIG& running = runningContext->config;
     if (!rzx::MachineMatches(start.machine, running.mem_model, running.ramsize))
     {
         const TMemModel* target = Config::FindModelByEnum(start.machine.model);
@@ -3735,6 +3857,10 @@ void MainWindow::updateMenuStates()
         // Menu will query emulator directly - no state duplication!
         _menuManager->updateMenuStates(_emulator);
     }
+    // The FT812 Debug window exists only for a machine with the VDAC2 card
+    if (_ft812DebugWindow && _ft812DebugWindow->isVisible() &&
+        !(_emulator && Ft812DebugWindow::Offered(_emulator->GetContext())))
+        _ft812DebugWindow->hide();
     if (_toolBarManager)
     {
         // Toolbar mirrors the same emulator state (after menus, so viewport enablement is current)
@@ -3808,6 +3934,10 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
+        if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
+            _ft812DebugWindow->refresh();
+    });
     if (_toolBarManager)
         _toolBarManager->setMouseCapture(_screenWrapper->mouseCapture());  // the gate carries over
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
@@ -3911,9 +4041,10 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
         _screenWrapper->setTemporalBlendingEnabled(enabled);
     }
     // One temporal effect at a time: blending a de-flickered picture again smears it
-    if (enabled && m_binding && m_binding->emulator() && m_binding->emulator()->GetContext()->pScreen)
+    EmulatorContext* context = enabled && m_binding && m_binding->emulator() ? m_binding->emulator()->GetContext() : nullptr;
+    if (context && context->pScreen)
     {
-        m_binding->emulator()->GetContext()->pScreen->SetTemporalAlgorithm("");
+        context->pScreen->SetTemporalAlgorithm("");
     }
 }
 
@@ -4050,14 +4181,17 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
         {
             std::string destroyedId = payload->_payloadText;
 
-            // Remember the removal for adoptions still queued for this instance
+            // Remember the removal for adoptions still queued for this instance,
+            // and check under the same lock whether the UI has adopted it: an
+            // adoption in flight either sees the id here (and backs out itself)
+            // or has committed _adoptedEmulatorId before this check (see
+            // adoptEmulator()). _emulator belongs to the UI thread - not read here
+            bool wasOurEmulator = false;
             {
                 std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
                 _destroyedEmulatorIds.insert(destroyedId);
+                wasOurEmulator = (_adoptedEmulatorId == destroyedId);
             }
-
-            // Check if this was our active emulator
-            bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
 
             if (wasOurEmulator)
             {
@@ -4120,6 +4254,7 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
+                        setAdoptedEmulatorId({});
 
                         updateMenuStates();
 
@@ -4155,28 +4290,10 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
                 return;
             }
 
-            // Check if this is the emulator we already have adopted
-            if (_emulator && _emulator->GetId() == createdId)
-            {
-                qDebug() << "MainWindow: This is our already-adopted emulator, ignoring notification";
-                return;
-            }
-
-            // Only try to adopt if we don't currently have an adopted emulator
-            // This prevents switching to new emulators when we already have one adopted
-            if (!_emulator)
-            {
-                qDebug() << "MainWindow: No adopted emulator - trying to adopt the new one";
-
-                // Try to adopt the newly created emulator
-                // Must be called on main thread since it may modify UI menus
-                QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
-            }
-            else
-            {
-                qDebug() << "MainWindow: Already have adopted emulator" << QString::fromStdString(_emulator->GetId())
-                         << "- new emulator" << QString::fromStdString(createdId) << "remains headless";
-            }
+            // _emulator belongs to the UI thread (this runs on the MessageCenter
+            // worker): decide there. tryAdoptRemainingEmulator() adopts only
+            // while the UI has no instance - a new one otherwise stays headless
+            QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
         }
     }
 }
@@ -4208,15 +4325,10 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
             auto newEmulator = _emulatorManager->GetEmulator(newId);
             if (newEmulator)
             {
-                // Skip if this is already our emulator
-                if (_emulator && _emulator->GetId() == newId)
-                {
-                    qDebug() << "MainWindow: Selection is already our emulator, ignoring";
-                    return;
-                }
-
-                // Use canonical adoption flow on main thread
+                // Use canonical adoption flow on main thread (it ignores the
+                // instance already adopted and refuses one removed meanwhile).
                 // This handles: release old emulator, bind(), setEmulator(), etc.
+                // _emulator belongs to the UI thread: not read here
                 QMetaObject::invokeMethod(
                     this,
                     [this, newEmulator]() {
@@ -4394,7 +4506,7 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
 /// widget and the next unbind calling into a context that is gone
 bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
 {
-    if (!emulator || emulator->IsReleased())
+    if (!emulator || emulator->IsReleased() || emulator->IsRetiring())
         return true;
     {
         std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
@@ -4402,6 +4514,12 @@ bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
             return true;
     }
     return _emulatorManager && !_emulatorManager->GetEmulator(emulator->GetId());
+}
+
+void MainWindow::setAdoptedEmulatorId(const std::string& id)
+{
+    std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+    _adoptedEmulatorId = id;
 }
 
 void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin)
@@ -4412,10 +4530,16 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         return;
     }
 
+    // Automation can remove the instance while this runs (a WebAPI DELETE on
+    // its own thread). The lease keeps the context alive until we return: the
+    // removal waits for it before it frees anything. It is refused once the
+    // removal has begun.
+    const Emulator::ContextLease lease = emulator->LeaseContext();
+
     // An adoption queued (selection change, creation) before the instance was
     // removed can run after the removal: refuse it rather than bind a released
     // instance
-    if (isEmulatorGone(emulator))
+    if (!lease || isEmulatorGone(emulator))
     {
         qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(emulator->GetId())
                  << "was removed before the adoption ran; skipping";
@@ -4579,6 +4703,29 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _ttdWidget->updateState(_emulator);
     }
 
+    // Commit the adoption against a removal that began while we were binding.
+    // Either the destroy notice (MessageCenter worker) already recorded the id -
+    // it did not see us as its owner, so back out here, while the lease still
+    // keeps the context alive - or it runs after this point and finds
+    // _adoptedEmulatorId, cuts the paint path and queues the unbind
+    bool removedMeanwhile = false;
+    {
+        std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+        removedMeanwhile = _destroyedEmulatorIds.count(_emulator->GetId()) > 0;
+        if (!removedMeanwhile)
+            _adoptedEmulatorId = _emulator->GetId();
+    }
+    if (removedMeanwhile)
+    {
+        qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(_emulator->GetId())
+                 << "was removed while being adopted; backing out";
+        unbindFromEmulator();
+        updateMenuStates();
+        // Queued: the removed instance may still be listed until its removal ends
+        QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
+        return;
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -4648,6 +4795,7 @@ void MainWindow::unbindFromEmulator()
 
     // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
+    setAdoptedEmulatorId({});
 
     qDebug() << "MainWindow::unbindFromEmulator() - Emulator unbound (still running headless)";
 }
@@ -4890,7 +5038,8 @@ void MainWindow::tryAdoptRemainingEmulator()
     for (const auto& candidateId : emulatorIds)
     {
         auto candidateEmulator = emulatorManager->GetEmulator(candidateId);
-        if (candidateEmulator && candidateEmulator->IsRunning())
+        // A retiring instance is still listed until its removal ends
+        if (candidateEmulator && candidateEmulator->IsRunning() && !candidateEmulator->IsRetiring())
         {
             auto creationTime = candidateEmulator->GetCreationTime();
             if (!latestRunningEmulator || creationTime > latestCreationTime)

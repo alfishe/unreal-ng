@@ -58,6 +58,23 @@ void DockingManager::removeDockableWindow(QWidget* window)
     }
 }
 
+void DockingManager::dockAt(QWidget* window, Qt::Edge edge, int offset)
+{
+    if (!_dockableWindows.contains(window))
+        return;
+    DockingInfo& info = _dockableWindows[window];
+    info.snappedEdge = edge;
+    info.offset = (edge == Qt::LeftEdge || edge == Qt::RightEdge) ? QPoint(0, offset) : QPoint(offset, 0);
+    updateWindowPosition(window, info);
+    attachNative(window, info);
+}
+
+bool DockingManager::isDocked(QWidget* window) const
+{
+    auto it = _dockableWindows.constFind(window);
+    return it != _dockableWindows.constEnd() && it->snappedEdge.has_value();
+}
+
 void DockingManager::attachNative(QWidget* window, DockingInfo& info)
 {
     if (!info.useNativeChildWindow || info.nativeAttached || !info.snappedEdge.has_value())

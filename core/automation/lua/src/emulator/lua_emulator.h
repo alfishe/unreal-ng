@@ -16,6 +16,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
+#include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
@@ -2548,6 +2549,49 @@ public:
             return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
         });
 
+        // CD audio of the ATAPI CD drives (CdAudioControl, PLAN #83): cdaudio_state() reports every
+        // drive; cdaudio(verb, drive, {options}) runs status / play / pause / resume / stop / volume / mixer
+        lua.set_function("cdaudio_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, CdAudioControl::State(emulator->GetContext()));
+        });
+        lua.set_function("cdaudio", [this](sol::this_state s, const std::string& verb, sol::optional<std::string> drive,
+                                           sol::optional<sol::table> opts) -> sol::object {
+            CdAudioRequest request;
+            request.verb = verb;
+            request.drive = drive.value_or("");
+            if (opts)
+            {
+                for (const auto& [key, value] : *opts)
+                {
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                    {
+                        const double number = value.as<double>();
+                        text = number == static_cast<double>(static_cast<long long>(number))
+                                   ? std::to_string(static_cast<long long>(number))
+                                   : std::to_string(number);
+                    }
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, CdAudioControl(emulator->GetContext()).Execute(request).ToValue());
+        });
+
         lua.set_function("tsconf_state", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -3161,6 +3205,10 @@ public:
             info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
             info["baseline_frames_captured"] = si.baselineFramesCaptured;
             info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
+            info["history_limit_frames"]     = si.historyLimitFrames;
+            info["history_limit_bytes"]      = si.historyLimitBytes;
+            info["history_bytes"]            = si.historyBytes;
+            info["evicted_checkpoints"]      = si.evictedCheckpoints;
             info["loaded_from_file"]      = si.loadedFromFile;
             info["source_path"]           = si.sourcePath;
             info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
@@ -3262,6 +3310,22 @@ public:
             if (modeOpt.has_value())
                 ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
             return ctx->pTimeTravelManager->StartRecording();
+        });
+
+        // ttd_set_history_limit(frames, bytes) - bound the recorded history: while
+        // recording, the oldest frames are released beyond either limit (0 = none;
+        // nil keeps the current value). Returns the limit now in force: frames, bytes
+        lua.set_function("ttd_set_history_limit",
+                         [this](sol::optional<uint64_t> frames, sol::optional<uint64_t> bytes) -> std::tuple<uint64_t, uint64_t> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {0, 0};
+            auto* ctx = emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
+            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+            ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
+                                                     bytes.value_or(si.historyLimitBytes));
+            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+            return {now.historyLimitFrames, now.historyLimitBytes};
         });
 
         // ttd_set_journal_enabled(bool) - configure write journal capture

@@ -57,6 +57,16 @@ protected:
         return out;
     }
 
+    /// SIO B's receive clock as DSS 1.71 programs it: CTC 0 counts the 875 kHz TRG0 by 45 (ZC/TO0 = 19.4 kHz),
+    /// SIO B in x16 mode (WR4 #44) = 1 215 baud, within the tolerance of the mouse's 1 200
+    void ProgramMouseClock(uint8_t timeConstant = 45, uint8_t wr4 = 0x44)
+    {
+        Out(0x0010, 0x55);  // counter, rising edge, time constant follows
+        Out(0x0010, timeConstant);
+        Out(0x001B, 0x04);
+        Out(0x001B, wr4);
+    }
+
     /// ALL_MODE through its port (#204E, code #C3) after opening the decoder
     void WriteAllMode(uint8_t value)
     {
@@ -201,6 +211,7 @@ TEST_F(SprinterInput_Test, F12TogglesTheTurboSwitch)
 TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
 {
     ASSERT_NE(_context->pMouseManager, nullptr);
+    ProgramMouseClock();
     while (In(0x001B) & 0x01)
         In(0x001A);
     _context->pMouseManager->ApplyMotion(5, 3);  // 5 right, 3 up
@@ -210,6 +221,41 @@ TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
     while (In(0x001B) & 0x01)
         got.push_back(In(0x001A));
     EXPECT_EQ(got, (std::vector<uint8_t>{0x4C, 0x05, 0x3D}));
+    EXPECT_EQ(Input().MouseFramingErrors(), 0u);
+}
+
+// SIO B samples the mouse line with CTC ZC/TO0 (MAME sprinter.cpp:2006-2007): with no clock (CTC 0 not counting)
+// or a rate off the mouse's 1 200 baud by more than 5 % (x32: 608 baud; 875 kHz / 40 / 16 = 1 367 baud), the
+// characters are lost; 875 kHz / 45 / 16 = 1 215 baud receives them
+TEST_F(SprinterInput_Test, MouseNeedsSioBClockedAt1200Baud)
+{
+    const auto packet = [&]() {
+        _context->pMouseManager->ApplyMotion(2, 0);
+        In(0x001B);  // the poll that starts the packet
+        Wait(3 * 26250);
+        std::vector<uint8_t> got;
+        while (In(0x001B) & 0x01)
+            got.push_back(In(0x001A));
+        return got;
+    };
+    while (In(0x001B) & 0x01)
+        In(0x001A);
+    In(0x001B);  // the first sample is the reference
+
+    EXPECT_FALSE(Input().MouseReceiverInTune());
+    EXPECT_TRUE(packet().empty()) << "no receive clock";
+    EXPECT_EQ(Input().MouseFramingErrors(), 3u);
+
+    ProgramMouseClock(45, 0x84);
+    EXPECT_NEAR(Input().MouseReceiverBaud(), 875000.0 / 45 / 32, 1e-6);
+    EXPECT_TRUE(packet().empty()) << "x32: half the rate";
+    ProgramMouseClock(40, 0x44);
+    EXPECT_TRUE(packet().empty()) << "1 367 baud: 14 % fast";
+    EXPECT_EQ(Input().MouseFramingErrors(), 9u);
+
+    ProgramMouseClock();
+    EXPECT_TRUE(Input().MouseReceiverInTune());
+    EXPECT_EQ(packet().size(), 3u);
 }
 
 // The board's mouse is always fitted: with no Kempston interface configured ([INPUT] Mouse=NONE) the manager's
@@ -217,6 +263,7 @@ TEST_F(SprinterInput_Test, MouseMoveReachesSioB)
 // (DSS 1.62.9x reads #FADF / #FBDF / #FFDF). The view once read the interface: #FF without it
 TEST_F(SprinterInput_Test, MouseWithoutAKempstonInterface)
 {
+    ProgramMouseClock();
     ASSERT_NE(_context->pMouse, nullptr);
     MouseManager& manager = *_context->pMouseManager;
     _context->pMouse->SetPresent(false);
@@ -284,6 +331,7 @@ TEST_F(SprinterInput_Test, MouseButtonsMapping)
             got.push_back(In(0x001A));
         return got;
     };
+    ProgramMouseClock();
     while (In(0x001B) & 0x01)
         In(0x001A);
     In(0x001B);  // the first sample is the reference
@@ -387,6 +435,7 @@ protected:
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->GetRtc().SetFixedTime(1767268830);
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.07 BETA 1)
         _context->config.sprinter.fast_start = 1;
         _emulator->Reset();
         _emulator->EnableTurboMode();  // no assertion looks at pixels

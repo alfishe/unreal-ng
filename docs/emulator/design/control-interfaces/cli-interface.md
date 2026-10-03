@@ -102,10 +102,17 @@ state audio fm          TurboSound FM overview    state audio fm 1    one YM2203
 state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
 state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
+state cdaudio           CD drives' audio: disc, tracks, status, head (LBA, MSF, track, index), volume, mixer row (alias: state cdda)
+cdaudio [status] [drive]                      the same as `state cdaudio`, or one drive (ide0.slave, a unit 0-3)
+cdaudio play [drive] track=N [to=M]           play track N through track M (default: the last); also lba=X frames=N, msf=MM:SS:FF end=MM:SS:FF
+cdaudio pause|resume|stop [drive]             as PAUSE / RESUME and STOP PLAY / SCAN (refused while TTD records)
+cdaudio volume [drive] left=0-255 right=0-255 route=stereo|swap|mono|left|right|mute sotc=on|off   page 0Eh
+cdaudio mixer [drive] volume=0-4 mute=on|off solo=on|off                                           the drive's mixer row
+cdaudio ... --json                            the raw reply (the WebAPI's JSON)
 state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
 network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity) (alias: net)
 key route [auto|matrix|ps2|both]  Where host and injected keys go: the ZX matrix, the PS/2 keyboard controller (ZX-Evo, ATM Turbo 2+), both
-network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud] (the machine's own serial port: the ZX-Evo AVR's) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector); devices the machine cannot take are listed under not_fitted in `network`
+network set k=v ..      Change [NETWORK] settings: card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud] (the machine's own serial port: the ZX-Evo AVR's) zx_wifi=<same values> (the ZX-WiFi card's ESP, default at) com_modem_lines=on|off esp_chip=esp32|esp8266 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo) kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31) atm2ioesp=at|espnet|.. atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector) zifi=none|at|loopback|tcp:..|serial:.. (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: what the AVR's ZiFi UART is wired to; the state's zifi block shows the API registers and both rings); devices the machine cannot take are listed under not_fitted in `network`
 rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
 rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
@@ -229,6 +236,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | ✅ Implemented |
 | `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
+| `ttd limit [frames N] [bytes N[K\|M\|G]]` | `ttd history-limit` | Bound the history: the oldest frames are released while recording beyond either limit (`off` clears; no arguments shows it). See command-interface.md. | ✅ Implemented |
 | `ttd seek --frame N` | `ttd goto` | Seek to a (frame, tstate) point; optionally `--tstate T` for intra-frame. | ✅ Implemented |
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |

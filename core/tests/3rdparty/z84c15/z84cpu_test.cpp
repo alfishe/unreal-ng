@@ -287,5 +287,5 @@ TEST(Z84Cpu_Test, AttachedRegisterFileIsTheCpuState)
 
 TEST(Z84Cpu_Test, VersionNamesTheFork)
 {
-    EXPECT_STREQ(Z84CpuVersion(), "0.5.0-z84c15.1");
+    EXPECT_STREQ(Z84CpuVersion(), "0.5.0-z84c15.2");
 }

@@ -190,6 +190,13 @@ TEST_P(TTDBench_Test, CiGate)
     EXPECT_NEAR(partsSum, result.metrics.at("bm4_resident_bpf"), 1e-6 * result.metrics.at("bm4_resident_bpf"))
         << c.Name() << ": the bm4_heap_* parts do not add up to the session heap";
     EXPECT_LE(result.metrics.at("bm4_heap_write_journal_slack_bpf"), result.metrics.at("bm4_heap_write_journal_bpf"));
+
+    // Compressed data is stored at its exact size (ttd::codec::Compress, POC 011
+    // E5): the stored pieces, coverage and port-journal blocks hold no unused
+    // allocation - before the fix ~4 KB per piece, half a recording's memory
+    for (const char* slack : {"bm4_heap_ram_payload_slack_bpf", "bm4_heap_coverage_slack_bpf",
+                              "bm4_heap_port_journal_slack_bpf"})
+        EXPECT_EQ(result.metrics.at(slack), 0.0) << c.Name() << ": " << slack;
     EXPECT_LE(result.metrics.at("bm4_heap_coverage_slack_bpf"), result.metrics.at("bm4_heap_coverage_bpf"));
     EXPECT_LE(result.metrics.at("bm4_heap_port_journal_slack_bpf"),
               result.metrics.at("bm4_heap_port_reads_bpf") + result.metrics.at("bm4_heap_port_writes_bpf"));

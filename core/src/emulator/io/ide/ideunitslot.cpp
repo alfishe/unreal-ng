@@ -3,6 +3,7 @@
 #include "ideunitslot.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/media/medium.h"
 
@@ -19,7 +20,7 @@ IdeUnitSlot::IdeUnitSlot(EmulatorContext* context, std::string id, AtaDevice& de
     _descriptor.kind = cd ? MediaKind::Optical : MediaKind::Block;
     _descriptor.removable = cd;
     _descriptor.swapDelayMs = cd ? kCdSwapDelayMs : 0;
-    _descriptor.acceptsFolder = !cd;
+    _descriptor.acceptsFolder = true;  // a disk: a FAT volume; a CD drive: an audio CD of MP3 / FLAC / WAV files
     _descriptor.defaultAccess = cd ? AccessMode::ReadOnly : AccessMode::WriteThrough;
     _descriptor.defaultFs = FatType::Fat16;
     _descriptor.hasWriteProtectSwitch = !cd;
@@ -41,6 +42,9 @@ void IdeUnitSlot::Attach(Medium& medium)
     IBlockDevice* block = medium.Block();
     if (!block)
         return;
+    // A CD drive also gets the disc itself: its tracks, raw frames and audio
+    if (_device.Kind() == AtaDeviceKind::Cdrom)
+        static_cast<AtapiCdrom&>(_device).SetDisc(medium.Cd());
     _device.AttachMedium(*block, _config);
 }
 

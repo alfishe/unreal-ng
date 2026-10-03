@@ -8,6 +8,7 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/memory/sprinter/sprinteraccelerator.h"
 
 class PortDecoderSprinter_Test : public SprinterFixture
 {
@@ -267,6 +268,100 @@ TEST_F(PortDecoderSprinter_Test, Turbo_SysBit1SelectsRatio6)
     Pld().turboHard = 0;
     Out(0x007C, 0x03);
     EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 1);
+}
+
+// The board's /RESET (Ctrl+Alt+Del, a write to page #A0, the RESET button) presets ALL_MODE to #FF and clears RGMOD
+// and PORT_Y (PLD SP2_ACEX.TDF:1041, :958, ACCELER.TDF:204); the border and HOLD keep their values, HOLD returns to
+// #77 only with a new configuration (its /RES, SP2_ACEX.TDF:827-830). The ZX mode's ALL_MODE #FE must not survive
+// a reset: BIOS 3.07 BETA 1 reads the register back at its reset intercept and writes what it read (the owner's
+// report of 2026-10-02: Flex Navigator without its video mode after the ZX mode and a reset)
+TEST_F(PortDecoderSprinter_Test, CpuReset_PresetsAllModeClearsRgModAndPortY)
+{
+    auto program = [&] {
+        OpenDcp();
+        SetCode(0x0001, false, 0xC3);
+        SetCode(0x0001, true, 0xC3);  // the 3.07 BETA 1 table reads ALL_MODE back
+        SetCode(0x0002, false, 0xC4);
+        SetCode(0x0003, false, 0xC5);
+        SetCode(0x0004, false, 0xCB);
+        Out(0x0001, 0xFE);  // the launcher's ZX mode
+        Out(0x0002, 0x55);
+        Out(0x0003, 0x01);
+        Out(0x0004, 0x12);
+        ASSERT_EQ(Pld().allMode, 0xFE);
+        ASSERT_EQ(Pld().rgMod, 0x01);
+        ASSERT_EQ(_decoder->GetIntSource().ModePage(), 1);
+        ASSERT_FALSE(_decoder->GetAccelerator()->IsEnabled());
+    };
+
+    // Ctrl+Alt+Del / page #A0: a CPU reset of the running configuration
+    ASSERT_NO_FATAL_FAILURE(program());
+    _decoder->RequestCpuReset(SprinterResetKind::SoftReset);
+    _decoder->OnMachineStep(0);
+    ASSERT_EQ(_z80->pc, 0x0000);
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x12) << "HOLD follows the configuration's /RES only";
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
+    OpenDcp();
+    EXPECT_EQ(In(0x0001), 0xFF) << "ALL_MODE reads back #FF";
+
+    // The RESET button: the PLD loads again (fast start here), HOLD too starts over
+    ASSERT_NO_FATAL_FAILURE(program());
+    _core->Reset();
+    EXPECT_EQ(Pld().allMode, 0xFF);
+    EXPECT_EQ(Pld().rgMod, 0x00);
+    EXPECT_EQ(_decoder->GetIntSource().ModePage(), 0);
+    EXPECT_EQ(Pld().portY, 0x00);
+    EXPECT_EQ(Pld().hold, 0x77);
+    EXPECT_TRUE(_decoder->GetAccelerator()->IsEnabled());
+}
+
+// The Z84C15's CTC on the board (MAME sprinter.cpp:1993-2008): TRG0-TRG2 are X_SP / 48 = 875 kHz in real time and
+// ZC/TO2 drives TRG3, so the 48.83 Hz tick of channels 2 + 3 (Bad Apple, dontBlink) is the same at 3.5 and 21 MHz;
+// a timer counts the CPU clock (MAME derives the CTC clock from the scaled CPU clock) and runs six times faster
+TEST_F(PortDecoderSprinter_Test, Ctc_TriggersAreRealTimeTimersFollowTheCpuClock)
+{
+    Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+    const auto wait = [&](uint64_t baseT) { _context->emulatorState.t_states += baseT; };
+    _z80->t = 0;  // the load on an edge of the 875 kHz grid (an edge every 4 base T-states from the power-on)
+    Out(0x0010, 0x00);  // vector base
+    Out(0x0012, 0x57);
+    Out(0x0012, 112);
+    Out(0x0013, 0xD7);
+    Out(0x0013, 160);
+    Out(0x0011, 0x05);  // timer, prescaler 16, 256
+    Out(0x0011, 0x00);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 3500000.0 / 16 / 256);
+
+    constexpr uint64_t kTickT = 112 * 160 * 4;  // 71 680 base T-states = 20.48 ms
+    const uint64_t zeros = ctc.ZeroCounts(3);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
+    _decoder->GetZ84().OnReti();
+
+    // 21 MHz: the same tick in real time; the timer six times faster, its count kept through the switch
+    const uint8_t before = ctc.Read(1);
+    OpenDcp();
+    SetCode(0x007C, false, 0xC6);
+    Out(0x007C, 0x03);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(ctc.Read(1), before);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 21000000.0 / 16 / 256);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 2);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
 }
 
 /// endregion </T-MEM-1 / T-MEM-2>

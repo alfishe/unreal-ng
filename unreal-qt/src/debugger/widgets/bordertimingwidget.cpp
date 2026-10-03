@@ -50,10 +50,9 @@ void BorderTimingWidget::reset()
     _tStates.fill(0);
     _currentFrameTStates = 0;
 
-    if (_emulator)
+    if (EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr)
     {
-        CONFIG& config = _emulator->GetContext()->config;
-        _totalFrameTStates = config.frame;
+        _totalFrameTStates = context->config.frame;
     }
 
     refresh();
@@ -61,7 +60,8 @@ void BorderTimingWidget::reset()
 
 void BorderTimingWidget::refresh()
 {
-    if (!_emulator)
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    if (!context || !context->pCore)
         return;
 
     // In a real implementation, we would get the actual border timing data from the emulator
@@ -70,7 +70,7 @@ void BorderTimingWidget::refresh()
     if (_emulator->IsPaused())
     {
         // Get current T-state counter from Z80
-        Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
+        Z80* cpu = context->pCore->GetZ80();
         if (cpu)
         {
             _currentFrameTStates = cpu->t % _totalFrameTStates;

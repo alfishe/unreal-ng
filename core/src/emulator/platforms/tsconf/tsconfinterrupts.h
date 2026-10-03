@@ -34,7 +34,7 @@ struct ITsConfLineSource
 /// | Frame     | 0 (reset 1)  | 0xFF   | VS_INT * 224 + HS_INT (none when HS_INT >= 224 or VS_INT >= 320); a 32 CPU-clock pulse |
 /// | Line      | 1            | 0xFD   | 224 n - 1 on every one of the 320 lines; the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
 /// | DMA       | 2            | 0xFB   | DMA completion (phase 5)                                 |
-/// | Wait-port | 3            | 0xF9   | not emulated                                             |
+/// | Wait-port | 3            | 0xF9   | the AVR's strobe (ZiFi / enhanced RS-232 ISR not zero: RaiseWaitPort) |
 ///
 /// Priority frame > line > DMA > wait-port; an acknowledge clears only the
 /// source it served. An event latches only while its mask bit is set;
@@ -62,6 +62,8 @@ public:
     void OnMaskWrite(uint8_t mask);
     /// DMA completion (phase 5)
     void RaiseDma();
+    /// The AVR's wait-port strobe (TS firmware: on every main-loop pass while its ZiFi ISR is not zero)
+    void RaiseWaitPort();
     /// The line INT's other source (the VDAC2 card), nullptr = line starts only
     void SetLineSource(ITsConfLineSource* source) { _lineSource = source; }
     static constexpr size_t kMaxLineEdges = 8;

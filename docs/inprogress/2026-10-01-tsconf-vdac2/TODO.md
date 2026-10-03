@@ -19,7 +19,13 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [ ] D-D: test corpus and oracles - draft [vdac2-test-corpus.md](vdac2-test-corpus.md)
   (2026-10-01): layers, TS-Labs SDK programs, BT8XX harness, replay format `.evr`,
   card test programs; open O1-O3
-- [ ] Dependency: TTD v2 memory regions (PLAN #40 V1) before VDAC2 can be recorded
+- [x] TTD for the FT812 (design §9): `Vdac2Memory` (regions, zero runs dropped) + `Vdac2` blobs, the picture after a seek by frame / T-state, tests `ttdvdac2_test.cpp`
+- [x] TTD history limit (frames / bytes, every automation surface, Qt TTD panel "Keep N GB"): long VDAC2 sessions (~0.6 MB per frame with content) stay in memory; a file saved after a release replays its remaining frames
+- [x] Line budget metrics L1: metrics block in the chip state (eve-emu `db828d0`, state version 8); design [line-budget-metrics.md](line-budget-metrics.md), the model explained in [line-budget-model.md](line-budget-model.md)
+- [x] Line budget metrics L2: Vdac2Control metrics API (+ the frame in flight, eve-emu `125876d` `EveFrameLinesPassed`), `[VDAC2] LineBudgetMargin`, measure-always, the five automation surfaces, OpenAPI, recipe
+- [x] Line budget metrics L3: Debug -> FT812 Debug window (TSL-VDAC2 only, bars in the main screen's scale, the metrics kept with the presented picture)
+- [ ] Line budget metrics L4: calibration on a card (line overhead, fill rates, the look of an overflow)
+- [ ] When TTD v2 memory regions exist: `Vdac2Memory` as changed pages only
 - [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off
   `13263c804`, ROM extraction tool `e6d50bc9d`, SPI hub `d3fecc61a`
 - [ ] Library L0-L3b: in progress by a separate agent (own repository)
@@ -34,6 +40,9 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] FT812 bus capture (.evr replay stream, test corpus §4) on every automation surface; R-Type
   gameplay capture taken (local, 144 MB) for the library's replay tests and optimization
 - [ ] A/B benchmark of the TS-Conf per-step path (`BM_HostFrame_TSConf_*`, I1 vs I2) on a quiet machine
-- [ ] Performance: the FT812 in step with the machine saturates a core; optimize the library on the
-  replay stream, then study a parallel render thread
+- [x] Performance: the library optimized on the replay stream (R-Type 0.61x -> 4.5x real time on one core)
+- [x] Acceleration experiments (CPU line threads, native GPU, three profiles): results in
+  [acceleration-experiments.md](acceleration-experiments.md), experiments in `tools/poc/021-eve-accel/`
+- [ ] Build the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
+  graphics memory writes, skip unchanged frames, SIMD BILINEAR; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1

@@ -1,6 +1,9 @@
 -- Scripted user session on MAME's sprinter driver: ZXK_STEPS = "frame|action|arg;frame|action|arg;..."
 -- actions: keys (natkeyboard:post_coded, e.g. "dir{ENTER}"), snap (PNG name), play (start the cassette),
---          stop (stop the cassette), load (snapshot image path), end, kbd (list keyboards), state (log PLD state)
+--          stop (stop the cassette), load (snapshot image path), end, kbd (list keyboards), state (log PLD state),
+--          reset / hardreset, dbg (a debugger command, e.g. bpset with a printf action; needs SPC_DEBUG=1),
+--          vram (the video RAM to <name>.bin: the mode table that places the INT),
+--          fields (input fields held for 4 frames: "<port tag>/<field name>+...")
 if zxk_started then return end
 zxk_started = true
 
@@ -8,9 +11,15 @@ local machine = manager.machine
 local out = os.getenv("ZXK_OUT") or "."
 local screen = machine.screens[":screen"]
 local steps = {}
-for item in string.gmatch(os.getenv("ZXK_STEPS") or "", "[^;]+") do
+-- ZXK_SEP: the step separator (default ";"; set another, e.g. "~", when a dbg command holds ";")
+local sep = os.getenv("ZXK_SEP") or ";"
+for item in string.gmatch(os.getenv("ZXK_STEPS") or "", "[^" .. sep .. "]+") do
 	local f, a, arg = string.match(item, "^(%d+)|([^|]+)|?(.*)$")
-	steps[#steps + 1] = { frame = tonumber(f), action = a, arg = arg }
+	if f then
+		steps[#steps + 1] = { frame = tonumber(f), action = a, arg = arg }
+	else
+		print("zxsteps: bad step '" .. item .. "'")
+	end
 end
 local every = tonumber(os.getenv("ZXK_SNAP_EVERY") or "0")
 
@@ -36,8 +45,15 @@ end
 
 local frame = 0
 local idx = 1
+local held = {}  -- input fields pressed by "fields", released 4 frames later
 zxk_sub = emu.add_machine_frame_notifier(function()
 	frame = frame + 1
+	for i = #held, 1, -1 do
+		if held[i].until_frame <= frame then
+			held[i].field:clear_value()
+			table.remove(held, i)
+		end
+	end
 	if every > 0 and frame % every == 0 then
 		screen:snapshot(string.format("%s/f%05d.png", out, frame))
 	end
@@ -73,6 +89,47 @@ zxk_sub = emu.add_machine_frame_notifier(function()
 			-- logged above
 		elseif s.action == "reset" then
 			machine:soft_reset()
+		elseif s.action == "hardreset" then
+			machine:hard_reset()
+		elseif s.action == "dbg" then
+			-- a debugger console command (needs SPC_DEBUG=1: -debug -debugger none -debuglog; output in debug.log)
+			if machine.debugger then
+				machine.debugger:command(s.arg)
+				machine.debugger:command("g")
+			else
+				print("zxsteps: dbg needs SPC_DEBUG=1")
+			end
+		elseif s.action == "fields" then
+			-- input fields held together for 4 frames: "<port tag>/<field name>+..." (a chord the natural keyboard
+			-- cannot type, e.g. the Spectrum's cursor down: ":IO_LINE4/6   Down       &    YELLOW   MOVE+:IO_LINE4/CS Line4")
+			for spec in string.gmatch(s.arg, "[^+]+") do
+				local tag, name = string.match(spec, "^([^/]+)/(.+)$")
+				local port = tag and machine.ioport.ports[tag]
+				local field = port and port.fields[name]
+				if field then
+					field:set_value(1)
+					held[#held + 1] = { field = field, until_frame = frame + 4 }
+				else
+					print("zxsteps: no input field '" .. spec .. "'")
+				end
+			end
+		elseif s.action == "vram" then
+			-- the 256 KB video RAM (mode tables, palettes, pictures) to <out>/<arg>.bin, with the PLD's RGMOD
+			local share = machine.memory.shares[":vram"]
+			local f = io.open(out .. "/" .. s.arg .. ".bin", "wb")
+			if share and f then
+				local chunk = {}
+				for i = 0, share.size - 1 do
+					chunk[#chunk + 1] = string.char(share:read_u8(i))
+					if #chunk == 4096 then f:write(table.concat(chunk)); chunk = {} end
+				end
+				f:write(table.concat(chunk))
+				f:close()
+				local rg = item("m_rgmod")
+				print(string.format("zxsteps: vram %s.bin %d bytes rgmod=%s", s.arg, share.size, rg and string.format("%02X", rg:read(0)) or "?"))
+			else
+				print("zxsteps: vram share not found")
+			end
 		elseif s.action == "end" then
 			machine:exit()
 		end

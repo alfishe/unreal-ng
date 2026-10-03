@@ -1,7 +1,7 @@
 # TTD CI gate baseline (PLAN #40 Phase 0, Step 2, requirements BR-7 / BR-8 / BR-9).
 # Read by core/tests/debugger/ttd/bench/ttdbench_test.cpp.
 # Exported by tools/verification/ttd-bench/ttd_bench_compare.py from a run of
-# engine v1, set ci, ttd-experiments@8420f714a, Release, MacStudio.localdomain.
+# engine v1, set ci, ttd-v2-model@31808dae0, Release, MacStudio.localdomain.
 # Deterministic metrics only (bytes, bytes and operations per frame): timings do not
 # belong in a stored baseline.
 # Columns: <configuration>/<workload> <metric> <value> <tolerance percent>
@@ -14,6 +14,8 @@
 # ATM3/idle blob and file rows updated 2026-10-01 (esp-modules): the SerialPort blob (id 24) - the ZX-Evo AVR's UART is always there (~48 compressed bytes per checkpoint).
 # All rows 2026-10-01 (ttd-gate-stable): bm2_work_* added - counted capture work, the gate's load-independent check of capture cost; every other row unchanged.
 # ATM3/idle blob, RAM and file rows updated 2026-10-02 (mouse-manager M3): the EvoMouse blob (id 38, 20 bytes per capture with its header); the idle ROM now reads the AVR mouse registers (found: X = 0, Y = 1), so the RAM payload moved slightly.
+# ATM3/idle blob and file rows updated 2026-10-02 (cdda, PLAN #83): the CdDrive blob (id 39) - the ZX-Evo's IDE slave is a CD drive (CD1=1): its audio state and READ CD staging, ~42 compressed bytes per capture.
+# All rows 2026-10-02 (exact-size compression, POC 011 E5): bm4_resident_* down (no unused payload allocation), bm3_journal_writes_opf added; every byte row unchanged.
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -22,15 +24,16 @@
 48K/idle bm2_work_pages_visited_opf 6.000000 0
 48K/idle bm2_work_scanned_bpf 32768.000000 0
 48K/idle bm3_checkpoint_core_bpf 170.800000 0
-48K/idle bm3_coverage_bpf 52976.933333 25
+48K/idle bm3_coverage_bpf 52847.333333 25
 48K/idle bm3_device_blobs_bpf 460.016667 0
 48K/idle bm3_input_journal_bpf 0.000000 0
+48K/idle bm3_journal_writes_opf 1808.700000 0
 48K/idle bm3_page_refs_bpf 97.600000 0
 48K/idle bm3_ram_payload_bpf 71.616667 0
-48K/idle bm3_total_bpf 75481.366667 25
+48K/idle bm3_total_bpf 75351.766667 25
 48K/idle bm3_write_journal_bpf 21704.400000 0
-48K/idle bm4_resident_bpf 88716.683333 25
-48K/idle bm4_resident_bytes 5323001.000000 25
+48K/idle bm4_resident_bpf 80171.566667 25
+48K/idle bm4_resident_bytes 4810294.000000 25
 48K/idle bm7_file_bpf 1196.500000 0
 48K/idle bm7_file_bytes 71790.000000 0
 48K/idle checkpoints 61.000000 0
@@ -39,21 +42,22 @@ ATM3/idle bm2_work_compress_calls_opf 8.216667 0
 ATM3/idle bm2_work_compress_input_bpf 33655.466667 0
 ATM3/idle bm2_work_decoded_opf 0.000000 0
 ATM3/idle bm2_work_delta_base_bpf 4194304.000000 0
-ATM3/idle bm2_work_device_blobs_bpf 2259.200000 0
+ATM3/idle bm2_work_device_blobs_bpf 2301.200000 0
 ATM3/idle bm2_work_pages_visited_opf 256.000000 0
 ATM3/idle bm2_work_scanned_bpf 66628.266667 0
 ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
-ATM3/idle bm3_coverage_bpf 55482.666667 25
-ATM3/idle bm3_device_blobs_bpf 2295.550000 0
+ATM3/idle bm3_coverage_bpf 54287.050000 25
+ATM3/idle bm3_device_blobs_bpf 2338.250000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
+ATM3/idle bm3_journal_writes_opf 450.083333 0
 ATM3/idle bm3_page_refs_bpf 4164.266667 0
 ATM3/idle bm3_ram_payload_bpf 898.833333 0
-ATM3/idle bm3_total_bpf 68392.666667 25
+ATM3/idle bm3_total_bpf 67260.200000 25
 ATM3/idle bm3_write_journal_bpf 5401.000000 0
-ATM3/idle bm4_resident_bpf 96044.050000 25
-ATM3/idle bm4_resident_bytes 5762643.000000 25
-ATM3/idle bm7_file_bpf 8507.350000 0
-ATM3/idle bm7_file_bytes 510441.000000 0
+ATM3/idle bm4_resident_bpf 76470.933333 25
+ATM3/idle bm4_resident_bytes 4588256.000000 25
+ATM3/idle bm7_file_bpf 8555.133333 0
+ATM3/idle bm7_file_bytes 513308.000000 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm2_work_compress_calls_opf 8.100000 0
@@ -64,15 +68,16 @@ PENTAGON/game bm2_work_device_blobs_bpf 885.500000 0
 PENTAGON/game bm2_work_pages_visited_opf 8.000000 0
 PENTAGON/game bm2_work_scanned_bpf 35771.733333 0
 PENTAGON/game bm3_checkpoint_core_bpf 170.800000 0
-PENTAGON/game bm3_coverage_bpf 78869.533333 25
+PENTAGON/game bm3_coverage_bpf 69894.983333 25
 PENTAGON/game bm3_device_blobs_bpf 898.616667 0
 PENTAGON/game bm3_input_journal_bpf 2.133333 0
+PENTAGON/game bm3_journal_writes_opf 2196.416667 0
 PENTAGON/game bm3_page_refs_bpf 130.133333 0
 PENTAGON/game bm3_ram_payload_bpf 2514.583333 0
-PENTAGON/game bm3_total_bpf 108928.566667 25
+PENTAGON/game bm3_total_bpf 99968.250000 25
 PENTAGON/game bm3_write_journal_bpf 26357.000000 0
-PENTAGON/game bm4_resident_bpf 139685.616667 25
-PENTAGON/game bm4_resident_bytes 8381137.000000 25
+PENTAGON/game bm4_resident_bpf 113413.383333 25
+PENTAGON/game bm4_resident_bytes 6804803.000000 25
 PENTAGON/game bm7_file_bpf 10055.266667 0
 PENTAGON/game bm7_file_bytes 603316.000000 0
 PENTAGON/game checkpoints 61.000000 0
@@ -85,15 +90,16 @@ PENTAGON/idle bm2_work_device_blobs_bpf 877.116667 0
 PENTAGON/idle bm2_work_pages_visited_opf 8.000000 0
 PENTAGON/idle bm2_work_scanned_bpf 16930.133333 0
 PENTAGON/idle bm3_checkpoint_core_bpf 170.800000 0
-PENTAGON/idle bm3_coverage_bpf 53064.100000 25
+PENTAGON/idle bm3_coverage_bpf 52885.650000 25
 PENTAGON/idle bm3_device_blobs_bpf 890.816667 0
 PENTAGON/idle bm3_input_journal_bpf 0.000000 0
+PENTAGON/idle bm3_journal_writes_opf 54.333333 0
 PENTAGON/idle bm3_page_refs_bpf 130.133333 0
 PENTAGON/idle bm3_ram_payload_bpf 67.416667 0
-PENTAGON/idle bm3_total_bpf 54961.033333 25
+PENTAGON/idle bm3_total_bpf 54796.816667 25
 PENTAGON/idle bm3_write_journal_bpf 652.000000 0
-PENTAGON/idle bm4_resident_bpf 72373.350000 25
-PENTAGON/idle bm4_resident_bytes 4342401.000000 25
+PENTAGON/idle bm4_resident_bpf 67476.450000 25
+PENTAGON/idle bm4_resident_bytes 4048587.000000 25
 PENTAGON/idle bm7_file_bpf 1403.116667 0
 PENTAGON/idle bm7_file_bytes 84187.000000 0
 PENTAGON/idle checkpoints 61.000000 0

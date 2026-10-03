@@ -33,3 +33,17 @@ then `ping -c 1 10.0.2.2` is typed.
 
 Source: https://github.com/alfishe/NedoOS, revision `44049473`, folder `release/`.
 
+
+# NedoOS CD player (`cdplay/`)
+
+The NedoOS audio CD player for the CD audio test (PLAN #83):
+`ZXEvoErs_Test.NedoOsCdplayPlaysAudioTracks` builds an SD card folder from
+`sdcard/` plus this program and an `autoexec.bat` that starts it, puts a CUE/BIN
+disc with audio tracks into the CD drive (the IDE slave) and plays, pauses and
+stops a track with the player's keys.
+
+| File | Origin |
+|------|--------|
+| `cdplay/cdplay.com` | `release/bin/cdplay.com` ("Audio CD Player", source `src/kapps/cdplay/main.c`: READ TOC, PLAY AUDIO MSF, PAUSE / RESUME, READ SUB-CHANNEL, STOP on the slave drive, NemoIDE or ATM ports) |
+
+Source: https://github.com/alfishe/NedoOS, revision `44049473`, folder `release/`.

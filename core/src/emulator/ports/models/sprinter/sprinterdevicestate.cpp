@@ -21,6 +21,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
@@ -214,11 +215,10 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
     const uint16_t lines = screen ? screen->FrameLines() : (pld.frameLines ? 312 : 320);
 
-    // The 56 x 40 squares of the mode page; the picture is the 40 x 32 squares from (0, 0)
-    // (SprinterSquare: the classifier ScreenSprinter::DescribeScreenState shares)
+    // The 56 x 40 squares of the mode page (SprinterSquare: the classifier ScreenSprinter::DescribeScreenState
+    // shares); the picture, the 40 x 32 squares from (0, 0), by SprinterPicture below
     constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
     int all[kKinds] = {};
-    int picture[kKinds] = {};
     int lowres = 0;
     int intArmed = 0;
     for (uint8_t b = 0; b < kSquareRowsAll; b++)
@@ -227,8 +227,6 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
         {
             const SprinterSquare square = SprinterSquare::Decode(vram.Data() + SprinterVideoRam::ModeAddress(a, b, modePage));
             all[static_cast<int>(square.kind)]++;
-            if (a < kPictureColumns && b < kPictureRows)
-                picture[static_cast<int>(square.kind)]++;
             lowres += square.LowRes() ? 1 : 0;
             intArmed += square.IntArmed() ? 1 : 0;
         }
@@ -236,12 +234,14 @@ StateNode VideoSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
 
     StateNode v = StateNode::Object();
     v["mode_page"] = int(modePage);
-    int best = 0;
-    for (int k = 1; k < kKinds; k++)
-        if (picture[k] > picture[best])
-            best = k;
-    v["picture_mode"] = SprinterSquare::Name(static_cast<SprinterSquare::Kind>(best));
-    v["picture_mode_squares"] = StringHelper::Format("%d of 1280", picture[best]);
+    // The picture's mode by the summary the GUI status bar shows (SprinterPicture: border / blank squares
+    // frame a picture, a Spectrum screen is its ZX-40 squares)
+    const SprinterPicture shown = SprinterPicture::Of(vram.Data(), modePage);
+    v["picture_mode"] = SprinterSquare::Name(shown.mode);
+    v["picture_mode_key"] = SprinterSquare::Key(shown.mode);
+    v["picture_mode_squares"] = StringHelper::Format("%d of 1280", shown.Count(shown.mode));
+    v["picture_mixed"] = shown.mixed;
+    v["picture_brief"] = shown.Brief(static_cast<uint8_t>((pld.pn >> 3) & 1));
     StateNode squares = StateNode::Object();
     for (int k = 0; k < kKinds; k++)
         squares[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = all[k];
@@ -294,19 +294,51 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     wd["output"] = "not connected (/WDTOUT, research-cpu-z84c15.md Q3)";
     z["watchdog"] = wd;
 
+    // The CTC: programming, the board's CLK/TRG wiring and the live count (Z84Ctc's lazy view, no side effects)
+    const Z84Lib::Z84Ctc& c84 = chip.ctc;
     StateNode ctc = StateNode::Object();
-    ctc["vector"] = Hex8(chip.ctc.Vector());
+    ctc["vector"] = Hex8(c84.Vector());
+    ctc["time_base_hz"] = c84.UnitsPerSecond();
+    ctc["cpu_clock_hz"] = c84.SystemClockNum() ? static_cast<double>(c84.UnitsPerSecond()) * c84.SystemClockDen() / c84.SystemClockNum() : 0.0;
     StateNode channels = StateNode::Array();
+    static const char* const kZcUse[4] = {"SIO B receive / transmit clock (serial mouse)", "not connected", "TRG3",
+                                          "no ZC/TO pin"};
     for (uint8_t c = 0; c < 4; c++)
     {
-        const Z84Lib::Z84Ctc::ChannelState& ch = chip.ctc.GetChannel(c);
+        const Z84Lib::Z84Ctc::ChannelState& ch = c84.GetChannel(c);
+        const Z84Lib::Z84Ctc::Trigger& trg = c84.GetTrigger(c);
         StateNode n = StateNode::Object();
         n["channel"] = int(c);
         n["control"] = Hex8(ch.control);
         n["mode"] = (ch.control & 0x40) ? "counter" : "timer";
         n["interrupt"] = (ch.control & 0x80) != 0;
+        n["prescaler"] = (ch.control & 0x20) ? 256 : 16;
+        n["edge"] = (ch.control & 0x10) ? "rising" : "falling";
+        n["timer_start"] = (ch.control & 0x08) ? "trigger edge" : "time constant";
         n["time_constant"] = ch.timeConstant ? int(ch.timeConstant) : 256;
-        n["running"] = ch.running != 0;
+        n["running"] = ch.running != 0 && !ch.waitingTrigger;
+        n["waiting_trigger"] = ch.running != 0 && ch.waitingTrigger != 0;
+        const uint8_t count = c84.Count(c);
+        n["count"] = count ? int(count) : 256;
+        n["zero_counts"] = c84.ZeroCounts(c);
+        StateNode input = StateNode::Object();
+        switch (trg.kind)
+        {
+            case Z84Lib::Z84Ctc::TriggerKind::Clock:
+                input["kind"] = "clock";
+                input["hz"] = trg.hz;
+                break;
+            case Z84Lib::Z84Ctc::TriggerKind::Cascade:
+                input["kind"] = "cascade";
+                input["source"] = StringHelper::Format("ZC/TO%u", static_cast<unsigned>(trg.source));
+                break;
+            default:
+                input["kind"] = "none";
+                break;
+        }
+        n["trigger_input"] = input;
+        n["zc_to_hz"] = c84.OutputHz(c);
+        n["zc_to_drives"] = kZcUse[c];
         n["ip"] = ch.ip != 0;
         n["ius"] = ch.ius != 0;
         channels.push(n);
@@ -315,7 +347,7 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     z["ctc"] = ctc;
 
     StateNode sio = StateNode::Array();
-    static const char* const kSioUse[2] = {"AT keyboard (set 2 scan codes)", "serial mouse (Microsoft, 1200 baud)"};
+    static const char* const kSioUse[2] = {"AT keyboard (set 2 scan codes)", "serial mouse (Microsoft, 1200 baud; clock: CTC ZC/TO0)"};
     for (uint8_t c = 0; c < 2; c++)
     {
         const Z84Lib::Z84Sio::Channel& ch = chip.sio.GetChannel(c);
@@ -351,6 +383,10 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     mouse["buttons"] = Hex8(board.buttons);
     mouse["packet_in_flight"] = serial.sent < 3;
     mouse["sio_b_fifo"] = HexRow(chip.sio.GetChannel(1).fifo, chip.sio.GetChannel(1).fifoCount);
+    mouse["mouse_baud"] = int(MsSerialMouse::kBaud);
+    mouse["sio_b_baud"] = input.MouseReceiverBaud();  // CTC ZC/TO0 / the WR4 clock mode
+    mouse["sio_b_in_tune"] = input.MouseReceiverInTune();
+    mouse["framing_errors"] = input.MouseFramingErrors();
     z["mouse"] = mouse;
 
     StateNode pio = StateNode::Array();
@@ -504,6 +540,27 @@ StateNode WaitsSummary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
         windows.push(turbo && waits && waits->SlotWaits(slot));
     w["windows_waiting"] = windows;
     w["at_3_5_mhz"] = "none (the PLD's /MR_WAIT with an accelerator mode armed is not emulated: S5 open point 3)";
+    return w;
+}
+
+/// The ZX mode's "original waits" (SprinterOrigWaits, PLD WAIT_ORIG; tdd-zx-mode.md §3.3): ALL_MODE bit 2 = 0 at 3.5 MHz
+StateNode OrigWaitsSummary(PortDecoder_Sprinter& decoder)
+{
+    StateNode w = StateNode::Object();
+    const SprinterPldState& pld = decoder.GetPldState();
+    const bool active = decoder.OrigWaitsActive();
+    w["active"] = active;
+    w["all_mode_bit2"] = (pld.allMode & 0x04) != 0;
+    w["rule"] = "ALL_MODE bit 2 = 0 at 3.5 MHz: a memory access to #4000-#7FFF, or to #C000-#FFFF while #7FFD bit 2 is set, "
+                "waits while CT5 = 0 - 2 T when its T2 falls on the first low T of the 4-T CT5 period, 1 T on the second, "
+                "none on the high half (PLD WAIT_ORIG; ORIGIN.ZX)";
+    w["period_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPeriod);
+    w["phase_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPhase);
+    w["phase_note"] = "placeholder until measured on a real board (testdata/machines/sprinter/zx-timing, tdd-zx-mode Q1)";
+    StateNode windows = StateNode::Array();
+    for (uint8_t window = 0; window < 4; window++)
+        windows.push(active && SprinterOrigWaits::WindowWaits(window, pld.pn));
+    w["windows_waiting"] = windows;
     return w;
 }
 
@@ -829,7 +886,16 @@ StateNode Sprinter(EmulatorContext* context)
         c["ratio"] = ratio;
         c["mhz"] = ratio >= 6 ? "21" : "3.5";
         c["waits"] = WaitsSummary(*decoder, context);
+        c["original_waits"] = OrigWaitsSummary(*decoder);
         ret["clock"] = c;
+
+        // The tape input (KMPS, #FE bit 6) counts real time: base 3.5 MHz T-states whatever the CPU runs at
+        StateNode t = StateNode::Object();
+        const bool baseClock = context->pTape && context->pTape->IsBaseClockTimeBase();
+        t["time_base"] = baseClock ? "base_clock" : "cpu_clock";
+        t["note"] = "base_clock: a tape plays in real time, so at 21 MHz the ROM loader times its pulses six times too "
+                    "long and fails, as on the board; load tapes in a 3.5 MHz mode (P128.ZX, ORIGIN.ZX)";
+        ret["tape"] = t;
 
         auto* screen = dynamic_cast<ScreenSprinter*>(context->pScreen);
         StateNode f = StateNode::Object();
@@ -959,10 +1025,11 @@ StateNode SprinterText(EmulatorContext* context)
     ret["columns"] = 80;
     ret["rows"] = int(kPictureRows);
     ret["text_squares"] = textSquares;
-    // Spectrum mode (ALL_MODE bit 0 = 0: the Spectrum screen shadow on) draws the ZX screen with text
-    // squares whose "font" is the screen bitmap: their codes are not text, the screen OCR reads that
-    // picture as a ZX screen. Otherwise text is the picture when most squares are text (BIOS, DSS)
-    const bool spectrumScreen = (decoder->GetPldState().allMode & 0x01) == 0;
+    // The Spectrum mode draws the ZX screen with ZX-40 squares whose "font" is the screen bitmap
+    // (SprinterSquare::Kind::Spectrum: not text, TextCode skips them): the screen OCR reads that picture as a
+    // ZX screen. The squares decide, as the renderer does - not ALL_MODE bit 0, which only turns on the
+    // Spectrum screen shadow. Otherwise text is the picture when most squares are text (BIOS, DSS)
+    const bool spectrumScreen = SprinterPicture::Of(vram.Data(), modePage).mode == SprinterSquare::Kind::Spectrum;
     ret["spectrum_screen"] = spectrumScreen;
     ret["picture_is_text"] = !spectrumScreen && textSquares * 2 > kPictureColumns * kPictureRows;
     ret["lines"] = lines;
@@ -1048,7 +1115,7 @@ uint8_t PalettesOf(const SprinterSquare& square)
 {
     if (square.IsGraphics())
         return static_cast<uint8_t>(1u << square.Palette());
-    if (square.IsText())
+    if (square.UsesTextPalettes())
         return 0xF0;
     return 0x10;
 }
@@ -1103,8 +1170,8 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
                             : "the picture: 40 x 32 squares from (0, 0), 16 x 8 pixels each (all=1: the whole table)";
     ret["mode_table"] = "square (a, b): Mode0-Mode2 at video RAM row 1 + 2a + #80 x page, column #300 + 4b; Line2 "
                         "(the right character of an 80-column text square) one row lower";
-    ret["legend"] = "G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, B border, "
-                    ". blank, * blank with the frame INT";
+    ret["legend"] = "G graphics 320 (256 colors), g graphics 640 (16 colors), T text 40, t text 80, Z Spectrum "
+                    "screen cell (ZX-40), B border, . blank, * blank with the frame INT";
 
     constexpr int kKinds = static_cast<int>(SprinterSquare::Kind::Count);
     int counts[kKinds] = {};
@@ -1156,6 +1223,11 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
                 if (square.kind == SprinterSquare::Kind::Text80)
                     n["line2_m0"] = Hex8(line1[SprinterVideoRam::kRowBytes]);
             }
+            else if (square.kind == SprinterSquare::Kind::Spectrum)
+            {
+                n["zx_row"] = int(square.ZxRow());
+                n["zx_column"] = int(square.ZxColumn());
+            }
             else if (square.IntArmed())
                 n["int"] = true;
             row.push(n);
@@ -1170,6 +1242,11 @@ StateNode SprinterVideo(EmulatorContext* context, const SprinterVideoQuery& quer
         summary[SprinterSquare::Key(static_cast<SprinterSquare::Kind>(k))] = counts[k];
     summary["low_res"] = lowres;
     ret["counts"] = summary;
+    // What the picture shows (SprinterPicture, the GUI status bar's summary): the dominant content kind
+    const SprinterPicture shown = SprinterPicture::Of(vram.Data(), page);
+    ret["picture_mode"] = SprinterSquare::Key(shown.mode);
+    ret["picture_mixed"] = shown.mixed;
+    ret["picture_brief"] = shown.Brief(static_cast<uint8_t>((pld.pn >> 3) & 1));
     StateNode used = StateNode::Array();
     for (unsigned k = 0; k < 8; k++)
         if (palettes & (1u << k))

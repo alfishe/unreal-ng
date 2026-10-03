@@ -6,6 +6,7 @@
 /// CPU/chipset are field-copied via the helpers in ttdcheckpoint.cpp.
 
 #include "timetravelmanager.h"
+#include "ttddisplayparticipant.h"
 
 
 #include <algorithm>
@@ -236,6 +237,7 @@ bool TimeTravelManager::StartRecording()
         for (auto& cp : _timeline)
             ReleaseCheckpointRefs(cp);
         _timeline.clear();
+        _blobBytes = 0;
         _pageStore.Reset();
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
@@ -309,6 +311,7 @@ bool TimeTravelManager::StartRecording()
     // up front (v1 strategy — see the header doc for the v2 fast-path plan).
     TTDCheckpoint baseline;
     CaptureNow(baseline);
+    _blobBytes += BlobBytes(baseline);
     _timeline.push_back(std::move(baseline));
 
     SetState(TTDSessionState::Recording);
@@ -451,6 +454,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
     _timeline.clear();
+    _blobBytes = 0;
     _pageStore.Reset();
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
@@ -483,6 +487,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     // Reset Phase 5 codec state.
     _lastKeyFrameIdx = 0;
+    _evictedCheckpoints = 0;
     _forceNextKeyFrame = true;
 
     // Clear previous-page cache (only allocated during active recording)
@@ -715,6 +720,10 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.sessionStartFrame = first.time.frame;
         info.currentEndFrame   = last.time.frame;
     }
+    info.historyLimitFrames = _historyLimitFrames;
+    info.historyLimitBytes = _historyLimitBytes;
+    info.evictedCheckpoints = _evictedCheckpoints;
+    info.historyBytes = HistoryBytes();
 
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
     info.writeJournalComplete = _journalGapless && _writeJournal != nullptr;
@@ -878,6 +887,9 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";
+        case TTDGuardedAction::CdFrontPanel:
+            return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
+                   "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
     }
     return "This action is not allowed while TTD is recording. Stop the recording first.";
 }
@@ -940,7 +952,9 @@ void TimeTravelManager::OnFrameBoundary()
 
         TTDCheckpoint cp;
         CaptureNow(cp);
+        _blobBytes += BlobBytes(cp);
         _timeline.push_back(std::move(cp));
+        EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
         return;
@@ -2706,10 +2720,15 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
             std::fill(planeB, planeB + planeBCount, uint16_t{0});
     };
 
+    ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
     if (frameTarget)
     {
-        // The frame's final picture: its own T-states, start to end.
-        if (const TTDCheckpoint* cp = checkpointAtOrBefore(frame))
+        // The frame's final picture: its own T-states, start to end. A device
+        // picture (VDAC2) runs on its own frame clock: its frame that finished
+        // last may have started before this frame, so replay from earlier
+        const uint64_t leadIn = participant ? participant->TTDLeadInFrames() : 0;
+        const uint64_t from = frame > leadIn ? frame - leadIn : 0;
+        if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
         {
             RestoreCheckpointForReplay(*cp);
             paintStaticBase();
@@ -2741,6 +2760,10 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
             RunToTInFrame(tInFrame);
         _context->pScreen->UpdateScreen();
     }
+
+    // A device picture (VDAC2) gets ready for the target kind before the copy
+    if (participant)
+        participant->TTDPrepareComposedPicture(frameTarget);
 
     std::vector<uint8_t> composed;
     uint32_t* fb = nullptr;
@@ -3082,6 +3105,75 @@ bool TimeTravelManager::ResumeRecordingLive()
     return true;
 }
 
+void TimeTravelManager::SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes)
+{
+    _historyLimitFrames = maxFrames;
+    _historyLimitBytes = maxBytes;
+    if (_state == TTDSessionState::Recording)
+        EnforceHistoryLimit();
+}
+
+uint64_t TimeTravelManager::BlobBytes(const TTDCheckpoint& cp)
+{
+    uint64_t bytes = 0;
+    for (const auto& blob : cp.peripheralBlobs)
+        bytes += blob.second.size();
+    return bytes;
+}
+
+uint64_t TimeTravelManager::HistoryBytes() const
+{
+    return _pageStore.GetUsedBytes() + _blobBytes;
+}
+
+void TimeTravelManager::EnforceHistoryLimit()
+{
+    if (_historyLimitFrames == 0 && _historyLimitBytes == 0)
+        return;
+    if (_historyLimitFrames != 0 && _timeline.size() > _historyLimitFrames)
+        EvictOldest(_timeline.size() - static_cast<size_t>(_historyLimitFrames));
+    if (_historyLimitBytes != 0)
+    {
+        // Released slots free their bytes only once no later checkpoint shares
+        // them, so measure again after each step; steps of 1/64 of the history
+        // keep the vector erases few
+        while (_timeline.size() > 2 && HistoryBytes() > _historyLimitBytes)
+            EvictOldest(std::max<size_t>(1, _timeline.size() / 64));
+    }
+}
+
+void TimeTravelManager::EvictOldest(size_t count)
+{
+    // Two checkpoints always stay: the start of the history and the present
+    if (_timeline.size() <= 2 || count == 0)
+        return;
+    count = std::min(count, _timeline.size() - 2);
+
+    // Each checkpoint decodes on its own: its delta pages hold references on
+    // their base pages, so releasing the oldest ones never breaks a later one
+    for (size_t i = 0; i < count; ++i)
+    {
+        ReleaseCheckpointRefs(_timeline[i]);
+        _blobBytes -= BlobBytes(_timeline[i]);
+    }
+    _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
+    _evictedCheckpoints += count;
+
+    // The journals start where the history now starts
+    const TTDCheckpoint& front = _timeline.front();
+    _inputJournal.DropBefore(front.time);
+    _externalEvents.DropBefore(front.time);
+    _bookmarks.DropBefore(front.time);
+    if (_portJournalValid)
+    {
+        _portReads.DropBefore(front.portReadCursor);
+        _portWrites.DropBefore(front.portWriteCursor);
+    }
+    if (_inputPlaybackArmed)
+        _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
+    ClearFrameCache();
+}
+
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
 {
     // ------------------------------------------------------------------
@@ -3107,7 +3199,10 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
     // refs are how the page store knows which slots are still in use by
     // some checkpoint; failing to release would leak slots.
     for (auto it = upperIt; it != _timeline.end(); ++it)
+    {
         ReleaseCheckpointRefs(*it);
+        _blobBytes -= BlobBytes(*it);
+    }
 
     _timeline.erase(upperIt, _timeline.end());
 
@@ -3891,10 +3986,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         std::vector<uint64_t> writeCursors;
         readCursors.reserve(_timeline.size());
         writeCursors.reserve(_timeline.size());
+        // A file starts at the journals' first kept record (the history limit
+        // may have dropped older ones): cursors relative to it
         for (const TTDCheckpoint& cp : _timeline)
         {
-            readCursors.push_back(cp.portReadCursor);
-            writeCursors.push_back(cp.portWriteCursor);
+            readCursors.push_back(cp.portReadCursor - _portReads.FirstIndex());
+            writeCursors.push_back(cp.portWriteCursor - _portWrites.FirstIndex());
         }
         if (!_portReads.Serialize(out, readCursors, err) || !_portWrites.Serialize(out, writeCursors, err))
             return false;
@@ -4555,6 +4652,9 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     // Nothing below can fail. The old session's slots go with its store, so
     // its checkpoints need no per-slot release.
     _timeline      = std::move(stagedTimeline);
+    _blobBytes     = 0;
+    for (const TTDCheckpoint& cp : _timeline)
+        _blobBytes += BlobBytes(cp);
     _pageStore     = std::move(stagedStore);
     _modelRamPages = modelRamPages;
     _inputJournal.Assign(std::move(stagedInputs), std::move(stagedNet), std::move(stagedNetPayload));
@@ -4878,6 +4978,14 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             goto replay_fallback;
 
         auto found = _writeJournal->FindLast(beforeGlobalT, pred);
+        // The ring may still hold writes from before the history limit's start:
+        // those are outside the session now
+        const uint64_t startGlobalT = static_cast<uint64_t>(sessionStart.frame) * frameT + sessionStart.tInFrame;
+        if (found && found->globalT < startGlobalT)
+        {
+            reportWindow(sessionStart, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
+            return std::nullopt;
+        }
 
         if (found)
         {
@@ -5573,6 +5681,9 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     const bool coverageUsable =
         _enableCoverageIndex &&
         _coverageIndex.CoveredRange(TTDCoverageKind::Executed, coverFirst, coverLast);
+    // Coverage may reach back before the history limit's start
+    if (!_timeline.empty())
+        coverFirst = std::max(coverFirst, _timeline.front().time.frame);
 
     if (coverageUsable)
     {

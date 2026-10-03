@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/cdtestdisc.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
 #include "emulator/config.h"
@@ -21,6 +22,9 @@
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "base/featuremanager.h"
 
 using namespace ata;
 
@@ -489,3 +493,126 @@ TEST_F(IdeController_Test, OneChannelBoardsHaveNoSecondChannel)
     std::string error;
     EXPECT_FALSE(_context->pIdeController->SetUnitKind(2, true, &error));
 }
+
+/// region <CD audio on every board (PLAN #83)>
+
+namespace
+{
+    struct CdBoard
+    {
+        const char* model;
+        IDE_SCHEME scheme;  ///< IDE_NONE: as the machine's config ships it
+        int unit;           ///< the unit made a CD drive
+    };
+
+    std::ostream& operator<<(std::ostream& out, const CdBoard& board)
+    {
+        return out << board.model << " unit " << board.unit;
+    }
+
+    class IdeControllerCd_Test : public ::testing::TestWithParam<CdBoard>
+    {
+    };
+}  // namespace
+
+/// Every board that hosts an ATAPI unit plays CD audio: the unit made a CD drive, a disc with
+/// audio tracks, PLAY AUDIO MSF through the channel as a driver sends it, the line output on the
+/// drive's mixer row, the head on the board's frame clock, the CdDrive blob under TTD. The guest
+/// side of each board's ports is covered by IdeAdapter_Test and, with real players, by
+/// ZXEvoErs_Test.NedoOsCdplayPlaysAudioTracks (Nemo / DivIDE ports) and
+/// ATM710NedoOsCdplay_Test (ATM ports)
+TEST_P(IdeControllerCd_Test, PlaysAudioOnTheBoard)
+{
+    const CdBoard board = GetParam();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(board.model, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    struct Cleanup
+    {
+        Emulator* emulator;
+        ~Cleanup()
+        {
+            EmulatorTestHelper::CleanupEmulator(emulator);
+            MessageCenter::DisposeDefaultMessageCenter();
+        }
+    } cleanup{emulator};
+    if (board.scheme != IDE_NONE)
+    {
+        context->config.ide_scheme = board.scheme;
+        context->pCore->RefitIde();
+    }
+    IdeController& ide = *context->pIdeController;
+    ASSERT_TRUE(ide.Enabled()) << board;
+    std::string error;
+    ASSERT_TRUE(ide.SetUnitKind(board.unit, true, &error)) << error;
+    context->pSoundManager->setCoreRatePin(44100);
+
+    ScratchFolder folder("ide-cd-board");
+    MediaSource source;
+    source.path = cdtest::WriteMusicDisc(folder.Path(), 1, 2, 16, cdtest::MusicLayout::Mixed);
+    InsertOptions options;
+    options.immediate = true;
+    const std::string slot = IdeUnitSlot::IdFor(board.unit / AtaChannel::kUnits, board.unit % AtaChannel::kUnits);
+    const MediaResult inserted = context->pMediaManager->Insert(slot, source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    emulator->RunNFrames(1);
+
+    // The driver's side: select the unit, clear the unit attention, PLAY AUDIO MSF 00:04:16 - 00:06:16 (track 2)
+    AtaChannel& channel = ide.Channel(board.unit / AtaChannel::kUnits);
+    auto packet = [&channel, &board](std::vector<uint8_t> cdb) {
+        cdb.resize(12, 0);
+        channel.WriteRegister(DeviceHead, (board.unit % 2) ? 0xB0 : 0xA0);
+        channel.WriteRegister(ErrorFeatures, 0);
+        channel.WriteRegister(CylinderLow, 0xFE);
+        channel.WriteRegister(CylinderHigh, 0xFF);
+        channel.WriteRegister(StatusCommand, Command::Packet);
+        for (size_t i = 0; i < 12; i += 2)
+            channel.WriteData(static_cast<uint16_t>(cdb[i] | (cdb[i + 1] << 8)));
+    };
+    packet({0x00});
+    packet({0x03, 0, 0, 0, 18});
+    for (int i = 0; i < 9; i++)
+        channel.ReadData();
+    packet({0x47, 0, 0, 0, 4, 16, 0, 6, 16});
+    ASSERT_EQ(channel.ReadRegister(StatusCommand) & Status::ERR, 0) << board;
+
+    const AudioSourceType row = CdAudioSourceFor(board.unit);
+    CdAudioPlayer* player = ide.CdAudio(board.unit);
+    ASSERT_NE(player, nullptr);
+    emulator->RunNFrames(10);
+    EXPECT_EQ(player->PeekStatus(), CdAudioStatus::Playing) << board;
+    const int16_t* out = context->pSoundManager->deviceBuffer(row);
+    ASSERT_NE(out, nullptr) << board << ": the drive's mixer row";
+    EXPECT_TRUE(player->HadSoundLastFrame()) << board;
+    ASSERT_NE(context->pSoundManager->device(row), nullptr);
+    EXPECT_EQ(context->pSoundManager->device(row)->name, "CD " + slot);
+    // Ten frames of the board's frame length: the head moved exactly that much emulated time
+    EXPECT_EQ(player->PeekHeadSample() / 588, 166u + 10ull * context->config.frame * 44100 / 3500000 / 588) << board;
+
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    EXPECT_TRUE(context->pTimeTravelManager->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive)) << board;
+    context->pTimeTravelManager->StopRecording();
+}
+
+INSTANTIATE_TEST_SUITE_P(Boards, IdeControllerCd_Test,
+                         ::testing::Values(CdBoard{"PENTAGON", IDE_NONE, 1},           // Nemo
+                                           CdBoard{"PENTAGON", IDE_NEMO_A8, 0},        // Nemo A8
+                                           CdBoard{"PENTAGON", IDE_DIVIDE, 1},         // DivIDE ports
+                                           CdBoard{"ATM3", IDE_NONE, 1},               // ZX-Evo, Nemo / DivIDE, CD1=1 shipped
+                                           CdBoard{"ATM710", IDE_NONE, 1},             // ATM
+                                           CdBoard{"ATM450", IDE_NONE, 1},             // ATM
+                                           CdBoard{"PROFI", IDE_NONE, 1},              // Profi
+                                           CdBoard{"SCORPION", IDE_SMUC, 1},           // SMUC
+                                           CdBoard{"TSL", IDE_NONE, 1},                // TS-Conf, Nemo / DivIDE
+                                           CdBoard{"SPRINTER", IDE_NONE, 3}),          // Sprinter, secondary slave
+                         [](const ::testing::TestParamInfo<CdBoard>& info) {
+                             std::string name = std::string(info.param.model) + "_" + Config::IdeSchemeName(info.param.scheme) +
+                                                "_unit" + std::to_string(info.param.unit);
+                             for (char& c : name)
+                                 if (!std::isalnum(static_cast<unsigned char>(c)))
+                                     c = '_';
+                             return name;
+                         });
+
+/// endregion </CD audio on every board>

@@ -22,10 +22,31 @@ void EvoAvrMouse::SetConnected(bool connected)
 {
     const uint8_t value = connected ? 1 : 0;
     if (_connected.exchange(value, std::memory_order_relaxed) != value)
+    {
         ResetRegisters(connected);
+        _lastPollFrame.store(kNeverPolled, std::memory_order_relaxed);  // a new mouse: nobody read it yet
+    }
 }
 
 uint8_t EvoAvrMouse::ReadRegister(uint8_t selectRegister) const
+{
+    if (_frame)
+        _lastPollFrame.store(_frame(), std::memory_order_relaxed);
+    return PeekRegister(selectRegister);
+}
+
+bool EvoAvrMouse::IsMouseInUse() const
+{
+    if (!IsConnected())
+        return false;
+    if (!_frame)
+        return true;  // no frame source (unit-test contexts): connected is in use
+    const uint64_t last = _lastPollFrame.load(std::memory_order_relaxed);
+    const uint64_t frame = _frame();
+    return last != kNeverPolled && frame >= last && frame - last <= kPolledWithinFrames;
+}
+
+uint8_t EvoAvrMouse::PeekRegister(uint8_t selectRegister) const
 {
     switch (selectRegister)
     {

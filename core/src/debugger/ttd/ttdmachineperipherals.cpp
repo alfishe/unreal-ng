@@ -2,10 +2,13 @@
 
 #include "common/modulelogger.h"
 #include "ide/ttdatachannel.h"
+#include "ide/ttdcddrive.h"
 #include "emulator/io/network/atm2ioesp.h"
 #include "network/ttdmachineserialpeer.h"
 #include "network/ttdserialport.h"
+#include "network/ttdzifi.h"
 #include "network/ttdzxnetusb.h"
+#include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
@@ -86,6 +89,13 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto ide = std::make_unique<TTDAtaChannel>(context);
         registry.Register(PeripheralId::AtaChannel, ide.get());
         ownedSerializers.push_back(std::move(ide));
+        // Its CD drives' audio and READ CD staging: only when a unit is a CD drive
+        if (context->pIdeController->CdUnitMask())
+        {
+            auto cd = std::make_unique<TTDCdDrive>(context);
+            registry.Register(PeripheralId::CdDrive, cd.get());
+            ownedSerializers.push_back(std::move(cd));
+        }
     }
 
     // Network adapters (network TDD §6.3, §7): while the virtual network
@@ -110,6 +120,17 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
             PeripheralId::Atm2IoEsp, "Atm2IoEsp");
         registry.Register(PeripheralId::Atm2IoEsp, card.get());
         ownedSerializers.push_back(std::move(card));
+    }
+    if (context->pZiFi)
+    {
+        auto line = std::make_unique<TTDSerialPort>(
+            context, [context]() { return context->pZiFi ? &context->pZiFi->Line() : nullptr; },
+            PeripheralId::ZiFiLine, "ZiFiLine");
+        registry.Register(PeripheralId::ZiFiLine, line.get());
+        ownedSerializers.push_back(std::move(line));
+        auto zifi = std::make_unique<TTDZiFi>(context);
+        registry.Register(PeripheralId::ZiFi, zifi.get());
+        ownedSerializers.push_back(std::move(zifi));
     }
     if (context->pMachineSerialPeer)
     {

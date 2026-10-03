@@ -21,7 +21,9 @@
 ///   - Ctrl + Alt + Del pulls the CPU's /RESET (KBD.TDF KB_RESET; the PLD keeps
 ///     its configuration); F12 without Shift / Ctrl / Alt toggles the hardware
 ///     turbo switch (KB_F12 -> TEST_SWITCH -> TURBO_HAND; MAME F12 "TURBO");
-///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol;
+///   - the serial mouse on SIO channel B (1 200 baud, Microsoft protocol; SIO B
+///     receives with CTC ZC/TO0 as its clock: the characters arrive only while
+///     the software programs ~1 200 baud there, DSS 1.71: 875 kHz / 45 / 16;
 ///     DSS 1.71 reads it, INTMOUSE READ_M: three bytes synced on bit 6, no 'M'
 ///     identification) and the PLD's Kempston view of the same mouse (code #58,
 ///     #FADF / #FBDF / #FFDF; DSS 1.62.9x reads that). Both views read one set
@@ -126,6 +128,13 @@ public:
     Ps2KeyboardStream& KeyboardStream() { return _keyboard; }
     MsSerialMouse& SerialMouse() { return _mouse; }
 
+    /// SIO B's receive clock from CTC ZC/TO0 and its clock mode (WR4), in baud (0: no clock)
+    double MouseReceiverBaud() const;
+    /// That clock is within kBaudTolerance of the mouse's 1 200 baud: its characters are received
+    bool MouseReceiverInTune() const;
+    /// Statistics: mouse characters lost to a receive clock out of tune (not in TTD: no machine state)
+    uint64_t MouseFramingErrors() const { return _mouseFramingErrors; }
+
     /// Statistics: bytes the SIO refused (FIFO full)
     uint64_t KeyboardOverruns() const { return _keyboardOverruns; }
     void SetKeyboardOverruns(uint64_t count) { _keyboardOverruns = count; }  ///< TTD restore
@@ -147,6 +156,10 @@ private:
     Ps2KeyboardStream _keyboard;
     MsSerialMouse _mouse;
     uint64_t _keyboardOverruns = 0;
+    uint64_t _mouseFramingErrors = 0;
+    /// An asynchronous receiver samples mid-bit: about half a bit over the 9.5 bits up to the stop bit, shared by
+    /// both ends; 5 % is the usual budget
+    static constexpr double kBaudTolerance = 0.05;
     // Written on the emulator thread by the manager (or by automation without TTD), read by the decoder:
     // atomics, the relative moves compare-and-swap loops (as the Kempston interface's counters)
     std::atomic<uint8_t> _mouseX{kResetX};

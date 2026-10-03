@@ -4,6 +4,8 @@
 
 #include "common/modulelogger.h"
 #include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/ata/atadisk.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
@@ -74,7 +76,12 @@ void IdeController::BuildUnit(int unit)
 
     std::unique_ptr<AtaDevice> device;
     if (ide.cd)
-        device = std::make_unique<AtapiCdrom>();
+    {
+        auto cd = std::make_unique<AtapiCdrom>();
+        EmulatorContext* context = _context;
+        cd->Audio().SetClock([context]() { return FrameElapsedBaseT(context); });
+        device = std::move(cd);
+    }
     else
         device = std::make_unique<AtaDisk>();
     AtaDevice& unitDevice = *device;
@@ -95,6 +102,49 @@ void IdeController::BuildUnit(int unit)
     if (FirstOfKind(unit))
         d.aliases.push_back(ide.cd ? "cd" : "hd");
     _slots[unit] = std::move(slot);
+}
+
+CdAudioPlayer* IdeController::CdAudio(int unit)
+{
+    if (unit < 0 || unit >= ChannelCount() * AtaChannel::kUnits)
+        return nullptr;
+    AtaDevice* device = _channels[unit / AtaChannel::kUnits].Unit(unit % AtaChannel::kUnits);
+    if (!device || device->Kind() != AtaDeviceKind::Cdrom)
+        return nullptr;
+    return &static_cast<AtapiCdrom*>(device)->Audio();
+}
+
+uint8_t IdeController::CdUnitMask() const
+{
+    uint8_t mask = 0;
+    const int units = ChannelCount() * AtaChannel::kUnits;
+    for (int unit = 0; unit < units; unit++)
+    {
+        const AtaDevice* device = _channels[unit / AtaChannel::kUnits].Unit(unit % AtaChannel::kUnits);
+        if (device && device->Kind() == AtaDeviceKind::Cdrom)
+            mask = static_cast<uint8_t>(mask | (1u << unit));
+    }
+    return mask;
+}
+
+std::string IdeController::CdAudioName(int unit)
+{
+    return "CD " + IdeUnitSlot::IdFor(unit / AtaChannel::kUnits, unit % AtaChannel::kUnits);
+}
+
+uint32_t IdeController::FrameElapsedBaseT(EmulatorContext* context)
+{
+    if (!context || !context->pCore)
+        return 0;
+    Z80* z80 = context->pCore->GetZ80();
+    if (!z80)
+        return 0;
+    const EmulatorState& state = context->emulatorState;
+    uint32_t t = state.AudioTstate(static_cast<uint32_t>(z80->t));
+    const uint8_t host = state.HostSpeedMultiplier();
+    if (host > 1)
+        t /= host;
+    return t;
 }
 
 int IdeController::UnitForSlot(const std::string& slotId)
@@ -154,6 +204,12 @@ bool IdeController::SetUnitKind(int unit, bool cdrom, std::string* error)
 
 IdeController::~IdeController()
 {
+    // The CD drives' clock reads the CPU through the context: nothing reads it while the board goes
+    for (int unit = 0; unit < kMaxUnits; unit++)
+    {
+        if (CdAudioPlayer* player = CdAudio(unit))
+            player->SetClock({});
+    }
     if (_registered && _context && _context->pMediaManager)
     {
         for (auto& slot : _slots)

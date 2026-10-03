@@ -136,6 +136,16 @@ class Emulator:
         units[2] (kind, slot, medium, translation, task_file with decoded bits,
         command, atapi sense on a CD drive). available=False without a board"""
 
+    def cdaudio_state(self) -> dict:
+        """The ATAPI CD drives' audio: drives[] (unit, slot, disc with tracks, audio
+        status / status_code / lba / msf / track / index / relative_msf / play range,
+        drive_volume (page 0Eh), mixer row). available=False without a CD drive"""
+
+    def cdaudio(self, verb: str = "status", drive: str = "", **options) -> dict:
+        """A CD audio verb (CdAudioControl): play (track=2, to=3 | lba=, frames= |
+        msf="00:04:16", end=...), pause, resume, stop, volume (left=, right=, route=,
+        sotc=), mixer (volume=, mute=, solo=). Reply: ok, error, message, drive"""
+
     def tsconf_state(self) -> dict:
         """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
         lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /
@@ -218,7 +228,8 @@ class Emulator:
         com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's own serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi=<same values> (the ZX-WiFi card's ESP, default 'at'), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41'
         (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31, shown as machine_serial in network_state()),
         atm2ioesp=<com_port values> and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, shown as
-        atm2ioesp in network_state()). Applied at the next frame
+        atm2ioesp in network_state()), zifi=<com_port values> (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP,
+        default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
     def rtc_state(self) -> dict:
@@ -373,6 +384,7 @@ slot names, options and errors as the WebAPI, CLI, MCP and Lua. Full reference:
 emu.media_list()                                         # slots + detached media
 emu.media_insert("A", "/games/elite-1.trd")              # slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
 emu.media_insert("sd", "/home/me/zx/sdcard", fs="fat32")
+emu.media_insert("cd", "/home/me/music/album", format="audio-cd")  # MP3 / FLAC / WAV files as an audio CD
 emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs save / export / discard
 emu.media_eject("B", export="/tmp/b.trd")
 emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
@@ -933,6 +945,8 @@ emu.ttd_start(mode='development')        # write journal on
 emu.ttd_start(mode='gaming')             # no write journal (smaller)
 emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
 emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
+emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
 emu.ttd_get_journal_enabled()            # -> bool
 emu.ttd_stop()                   # stop recording, keep history
 emu.ttd_invalidate()             # drop all history (reason defaults to 'python invalidate')
@@ -1224,7 +1238,7 @@ emu.video_pixel_at(t)                # the same for the point under the beam at 
 emu.video_address(page, offset)      # areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_address_in(space, offset, page=0)  # "ram", "sprite_ram" (attribute word, byte offset) or "palette" (cell, byte offset)
 emu.video_text(layer=0)              # exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
-emu.video_temporal()                 # ZX DLSS de-flicker status: {'algorithm' ('' = off), 'active', 'inactive_reason',
+emu.video_temporal()                 # ZX DLSS de-flicker status: {'algorithm' ('' = off), 'active', 'inactive_reason', 'applicable',
                                      #   'video_delay_frames', 'video_delay_ms', 'audio_extra_delay_frames', 'processed',
                                      #   'correcting', 'showing_processed', 'corrected_frames', 'written', 'shown_raw', 'late',
                                      #   'restarts', 'last_ms', 'average_ms', 'shown_frame' / 'last_frame': {'pattern',

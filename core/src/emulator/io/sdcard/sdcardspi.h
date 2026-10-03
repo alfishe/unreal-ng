@@ -74,6 +74,21 @@ public:
     bool present() const { return _device != nullptr; }
     /// A block write is being received: a swap now would lose it
     bool busy() const { return _mode == Mode::ReceiveData; }
+    /// The host finished with the card, as a shell does before it starts a
+    /// program (TS-Conf .spg from Wild Commander): no stream (CMD18), no bytes
+    /// still queued for the host, no half-received command or data block. The
+    /// card stays initialized (its state, block size and CRC setting are kept),
+    /// so the program's driver finds it idle. A snapshot load that lands while
+    /// the firmware is mid-transfer would otherwise hand the program the rest
+    /// of the firmware's stream as answers to its first commands
+    void EndTransfer();
+    /// The card as a shell leaves it for the program it starts: no transfer
+    /// (EndTransfer), and initialized - the shell read the program from it, so it
+    /// is in SPI mode and past ACMD41 (Ready). A program's driver may skip the
+    /// initialization a shell already did (R-Type VDAC2 reads at once)
+    void LeaveForProgram();
+    /// A transfer is in progress or answers are queued (for tests and debugging)
+    bool InTransfer() const { return _mode != Mode::Command || !_out.empty() || _multiWrite; }
     const std::string& path() const { return _path; }
     bool isSdhc() const { return _sdhc; }
     uint64_t sizeBytes() const { return _blocks * BLOCK; }

@@ -14,7 +14,7 @@ class EmulatorContext;
 /// devices. The reports are DeviceState::AudioMixer / AudioChannels.
 ///
 /// Keys: master, beeper, ay1, ay2, fm1, fm2, covox (the Covox / SoundDrive, or the machine's own
-/// DAC: the Sprinter's Covox-Blaster), gs, gs_mp3, moonsound_fm, moonsound_pcm.
+/// DAC: the Sprinter's Covox-Blaster), gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3 (the CD drive on IDE unit 0..3).
 ///
 /// Worked example: {source: covox, muted: true} silences the Sprinter's DAC in the mix while the
 /// AY plays on; /audio/capture {source: covox} still records the DAC (the device's own buffer).

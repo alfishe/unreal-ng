@@ -35,7 +35,29 @@ differences from.
 | Parent / child CHDs (MAME's `-diff` files, `chdman createhd -op`) | ✔ the parent is found by its SHA-1 among the `.chd` files next to the child | ✔ `export ... parent=` |
 | SHA-1 of the data and of data + metadata; CRC-16 per hunk (v5), CRC-32 (v3 / v4) | checked (CRCs on every read, SHA-1 by `Verify`) | written (compressed files; MAME leaves them zero in uncompressed files) |
 | Metadata (`GDDD` geometry, `IDNT` identify data, ...) | ✔ | kept on save / export |
-| CD-ROM, GD-ROM, DVD, LaserDisc CHDs (`cdlz`, `cdzl`, `cdfl`, `cdzs`, `avhu`, `CHT2` metadata) | refused with the reason | — |
+| CD-ROM CHDs (v5: `cdlz`, `cdzl`, `cdzs`, `cdfl`, uncompressed; `CHT2` / `CHTR` track metadata) | ✔ in the CD drive (below) | — |
+| GD-ROM, DVD, LaserDisc CHDs (`avhu`), v3 / v4 CD CHDs (`CHCD`) | refused with the reason (`chdman copy` makes a v5 CD CHD) | — |
+
+### CD-ROM CHDs
+
+A CD CHD stores 2448-byte frames (2352 bytes of sector data, 96 of subcode), 8 to a hunk by
+chdman's default. Each track takes `FRAMES` frames, padded to a multiple of 4 in the file;
+`PGTYPE` starting with `V` means its pregap (`PREGAP` frames) is inside those frames, otherwise
+the pregap is silence the CHD does not store. A track's INDEX 01 (the TOC address) is the pregap's
+end; `POSTGAP` frames of silence follow the track. Audio is stored **big-endian** (MAME swaps
+a CUE's little-endian samples when it writes the CHD); the drive outputs little-endian.
+`MODE1` / `MODE2_FORM1` frames store 2048 user bytes, `MODE2` / `MODE2_FORM_MIX` 2336,
+`MODE1_RAW` / `MODE2_RAW` / `AUDIO` 2352.
+
+The CD codecs are a base codec for the sector data and a second one for the subcode: `cdlz`
+(LZMA + deflate), `cdzl` (deflate + deflate), `cdzs` (Zstandard + Zstandard), each after a
+bitmap of the frames whose sync pattern and ECC were stripped (rebuilt on reading, ECMA-130) and
+the base stream's length (2 bytes, 3 for hunks of 64 KB and more); `cdfl` codes the sector data
+as 16-bit stereo FLAC frames (no byte-order prefix; the samples are written back big-endian)
+followed by the subcode in deflate. Implementation: `chdcodec.cpp` (`CreateCdCodec`),
+`ChdFile::OpenCd`, the track layout in `core/src/emulator/io/storage/cd/cdimageformats.cpp`.
+chdman 0.289 writes a CD CHD it cannot read back itself when `cdzs` or `cdzl` is the only codec
+("Decompression error" from `chdman verify`); with a second codec it is fine.
 
 ## Layout (v5)
 

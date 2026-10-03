@@ -588,6 +588,7 @@ namespace
             case PeripheralId::Tape:
                 return Binding::Tape;
             case PeripheralId::AtaChannel:
+            case PeripheralId::CdDrive:
             case PeripheralId::EvoSdCard:
                 return Binding::Storage;
             default:

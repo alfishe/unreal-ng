@@ -1306,6 +1306,23 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave.cubicTo(cx + w / 8, cy + h / 2, cx + w / 4, cy + h / 2, cx + w / 2, cy);
         painter.drawPath(wave);
     }
+    else if (iconName == "cdaudio")
+    {
+        // CD audio icon: a disc with its centre hole and a music note beside it
+        qreal cy = r.center().y();
+        qreal discR = r.height() / 2.0 - 2.0;
+        QPointF discC(r.left() + 1.0 + discR, cy);
+        painter.drawEllipse(discC, discR, discR);
+        painter.drawEllipse(discC, discR / 4.0, discR / 4.0);
+        qreal noteX = discC.x() + discR + 3.0;
+        if (noteX + 3.0 < r.right())
+        {
+            painter.drawLine(QPointF(noteX + 2.0, cy - discR), QPointF(noteX + 2.0, cy + discR / 2.0));
+            painter.setBrush(color);
+            painter.drawEllipse(QPointF(noteX, cy + discR / 2.0), 2.0, 1.5);
+            painter.setBrush(Qt::NoBrush);
+        }
+    }
     else if (iconName == "moonsound")
     {
         // MoonSound icon: crescent moon with sound-wave arcs (OPL4 FM + PCM).

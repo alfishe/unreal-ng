@@ -430,6 +430,12 @@ bool Emulator::Init()
 
 void Emulator::Release()
 {
+    // No context lease outlives the context, whoever releases. EmulatorManager
+    // has already waited for the leases (with no lock held), so there this
+    // never blocks
+    BeginRetirement();
+    std::unique_lock<std::shared_mutex> leaseLock(_leaseMutex);
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
@@ -722,6 +728,37 @@ bool Emulator::IsTurboMode() const
 EmulatorContext* Emulator::GetContext()
 {
     return _context;
+}
+
+Emulator::ContextLease Emulator::LeaseContext()
+{
+    // Never block: a writer exists only once _retiring is set (the removal sets
+    // it before WaitForContextLeases() / Release() take the lock exclusively),
+    // and a blocking shared lock behind a waiting writer would deadlock a thread
+    // that already holds a lease (rwlocks may prefer writers). try_lock_shared
+    // may fail spuriously, so retry until it succeeds or the removal shows up
+    std::shared_lock<std::shared_mutex> lock(_leaseMutex, std::defer_lock);
+    while (!lock.try_lock())
+    {
+        if (_retiring.load())
+            return {};
+        std::this_thread::yield();
+    }
+    // Checked under the shared lock: a lease that passes is one the removal
+    // waits for; one taken after BeginRetirement() is refused
+    if (_retiring.load() || _isReleased || _context == nullptr)
+        return {};
+    return ContextLease(std::move(lock), _context);
+}
+
+void Emulator::BeginRetirement()
+{
+    _retiring.store(true);
+}
+
+void Emulator::WaitForContextLeases()
+{
+    std::unique_lock<std::shared_mutex> lock(_leaseMutex);
 }
 
 ModuleLogger* Emulator::GetLogger()
@@ -2386,8 +2423,20 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
+Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
+{
+    _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+Emulator::DirectStepScope::~DirectStepScope()
+{
+    if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);  // the GUI's one refresh, now it may read
+}
+
 void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2410,6 +2459,7 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 
 void Emulator::RunFrame(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     ResetLineStepAnchor();
 
@@ -2468,6 +2518,7 @@ void Emulator::RunFrame(bool skipBreakpoints)
 
 void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2535,6 +2586,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
 void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2588,6 +2640,7 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2626,6 +2679,7 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 
 void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2699,6 +2753,7 @@ void Emulator::ResetLineStepAnchor()
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2737,6 +2792,7 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 
 void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2783,6 +2839,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates,
                                  bool notifyDebugger)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 

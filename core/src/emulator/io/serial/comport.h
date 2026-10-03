@@ -20,6 +20,7 @@
 #include "emulator/ports/portdecoder.h"
 
 class EmulatorContext;
+class ZiFi;
 
 class ComPort final : public PortDevice
 {
@@ -29,7 +30,6 @@ public:
     /// Which register an access reaches: 0..7, or one of the values below
     /// (the AVR firmware and the FPGA decide; ZX-Evo + TS firmware differs)
     static constexpr int kDataRegion = ComPortRegister::kDataRegion;
-    static constexpr int kZiFiRegister = ComPortRegister::kZiFiRegister;
     static constexpr int kNothing = ComPortRegister::kNothing;
     using RegisterOf = std::function<int(uint16_t port)>;
 
@@ -55,6 +55,10 @@ public:
     uint8_t portDeviceInMethod(uint16_t port) override;
     void portDeviceOutMethod(uint16_t port, uint8_t value) override;
     bool portDeviceClaimsRead(uint16_t) override { return true; }
+
+    /// The TS firmware's ZiFi block: the data area and the #C0..#CF registers go there (nullptr: #FF, the
+    /// API off as far as the Z80 can tell)
+    void SetZiFi(ZiFi* zifi) { _zifi = zifi; }
 
     Uart16550& Uart() { return _uart; }
     const Uart16550& Uart() const { return _uart; }
@@ -97,4 +101,5 @@ private:
     Uart16550 _uart;
     PortDecoder* _decoder = nullptr;
     RegisterOf _registerOf;
+    ZiFi* _zifi = nullptr;
 };

@@ -28,6 +28,7 @@ namespace HudNotificationCategory
     inline constexpr const char* AudioGeneralSound = "audio-generalsound";
     inline constexpr const char* AudioMoonSound = "audio-moonsound";
     inline constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
+    inline constexpr const char* AudioCdda = "audio-cdda";
 
     // Recording
     inline constexpr const char* RecordingVideo = "recording-video";

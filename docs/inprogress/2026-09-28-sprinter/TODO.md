@@ -103,6 +103,16 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   from its INT handler and goes silent with the block on; the literal PLD `ACC_BLK` reading and MAME agree); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
   `.recipe/machines/sprinter-sound.md`
 
+- [x] Default BIOS 3.07 BETA 1 (owner decision 2026-10-02, "switch the default straight to 3.07"; replaces Q1's 3.04;
+  branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
+  config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
+  (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+- [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
+  [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
+  window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
+  window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
+  (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
+
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**
@@ -116,6 +126,9 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
        base differs); a per-T table-write history (not only first / last) if a tool needs it;
      - a Qt view of the mode map / palettes / video RAM (the debugger-model work; the data is all in the reports);
      - G18-G21 (P3) unchanged.
+     - ~~the GUI status bar said "text 40 (mixed)" in the Spectrum mode~~ **fixed** (2026-10-02, branch
+       `sprinter-statusbar-zx`): the classifier reads all three mode bytes, ZX-40 squares are `spectrum`
+       ([tdd-video.md](tdd-video.md) §7 "Spectrum screen squares").
   2. Demos from the MAME-pack HDD (`DEMOS/`, 21 items) one by one against MAME on the same image: hangs, no
      picture, no sound - find and fix each cause with MAME's code as the reference.
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
@@ -138,11 +151,36 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   that only the Sprinter TR-DOS 7.0x reads (no PLD trap, unlike ZX-Evo vdos); TAP has no software, only the
   tape input; snapshots exist only as an emulator convenience. Checked on MAME (BIOS 3.06, MAME-pack disk): TRD,
   SCL, the reset back to DSS and a snapshot in ZX mode work; MAME's tape input never toggles (`kbd_fe_r`).
-  - [ ] Z1 (S) faithful path on unreal-ng against the MAME captures (launcher v2.03 + TRD / SCL, `/ret-fn`,
-    the Peters Plus launcher with a TRD on the floppy)
-  - [ ] Z2 (S-M) tape: the I5 test, the base-clock tape time base under turbo (today the tape speeds up with
-    the 21 MHz CPU), a real-time TAP load in `ORIGIN.ZX`
-  - [ ] Z3 (M) "original waits" (ALL_MODE bit 2, PLD `WAIT_ORIG`), A/B benchmark
+  - [x] Z1 (S) faithful path on unreal-ng against MAME (2026-10-02, branch `sprinter-zx-timing`, tdd-zx-mode §4.1, §11):
+    every launcher mode (SP, P128, P512, SC256, ORIGIN) runs the zxtime program; frame, clock, INT position (identical
+    mode tables), INT count / repeat, 21 MHz loop counts and the picture equal MAME's; launcher + TRD / SCL RAM disk,
+    Flex Navigator Enter, `/ret-fn` three times. Still open: the Peters Plus launcher with a TRD on the floppy is ACC-6
+    (unchanged)
+  - [x] Z2 (S-M) tape (2026-10-02): `Tape::ClockCount` / `SetBaseClockTimeBase` (Sprinter only, Q2), a TAP through 48
+    BASIC's `LOAD ""` loads at 3.5 MHz and fails at 21 MHz (T-ZX-7, T-ZX-8)
+  - [x] Z3 (M) "original waits" (2026-10-02): `SprinterOrigWaits`, the PLD's 4-T CT5 period (not 5.33 T), windows 1 and
+    3 with `#7FFD` bit 2; A/B in tdd-zx-mode §11.1
+  - [ ] Z3 follow-up (Q1): the CT phase from a real board - zxtime (testdata/machines/sprinter/zx-timing) reports the
+    average; an INT-relative 1-T probe is needed for the phase once a board confirms the waits
+  - [ ] BIOS 3.06 Hotfix 2: DSS text does not scroll at the bottom line (MAME too; BIOS 3.06 of 2025 scrolls): find
+    out whether HF2 needs a newer PLD bitstream or has a bug; ask the BIOS author
+  - [ ] Owner's report (a), `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del: not reproduced (tdd-zx-mode §11
+    finding 3); the turbo-after-reset fix may be it. Ask for the exact steps (BIOS, mode, what ran, which keys; a held
+    SPACE / ESC right after the reset swaps `/ret-fn` and `/ret-zx` by design)
+  - [x] Owner's report (c), 2026-10-02: Flex Navigator's video mode not back after the ZX mode and a reset - done
+    2026-10-02 (branch `sprinter-zx-reset-video`, tdd-zx-mode §11 finding 5): `/RESET` presets ALL_MODE `#FF`,
+    clears RGMOD / PORT_Y (PLD), BIOS 3.07 BETA 1 reads ALL_MODE back; MAME gap B8
+  - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
+    the image. The "comdos" catalog was TWIX's disk (finding 4)
+  - [x] Temporal effects in the Spectrum mode (2026-10-03, branch `sprinter-temporal-effects`; owner report "ZX DLSS
+    does not work on the Sprinter"): the ZX DLSS input came only from the ZX per-T renderer's plane B; now the
+    Sprinter renderer writes plane B too (`DrawSpanPlaneB`), `ScreenSprinter::TemporalInput` hands over the 352 x 288
+    ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
+    Across the Edge: paper plane B identical to a Pentagon on the same frames
+    ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
+    border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
+    change 8 lines off in the bottom border
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
@@ -155,11 +193,29 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
     pad 2 read on PIO A with PIO B bit 7, the select counters reset at each frame INT (gap I10, C13) - S-M; host
     gamepads through the shared input path, journaled for TTD, all five automation surfaces.
-  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
-    counter-mode inputs and ZC outputs (gap I7, C11) - S.
+  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) (gap I7) - S.
+  - [x] CTC counter mode, TRG inputs and ZC/TO outputs (gap C11), the mouse baud from CTC ZC0 (gap I7) - done
+    2026-10-02 (branch `sprinter-ctc-trg`): TRG0-2 = 875 kHz in real time, ZC/TO2 -> TRG3, ZC/TO0 -> SIO B;
+    Bad Apple and dontBlink (both wait for the 48.83 Hz CTC 3 tick, vector #06) play with sound
+    (`SprinterCtcDemo_Test`, env `UNREAL_SPRINTER_HDD`); TTD blob 29 v2; `state sprinter` z84c15.ctc shows the
+    inputs, live counts and ZC/TO rates.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.
+    **CD audio status (PLAN #83, 2026-10-02, branch `cdda`):** done in the shared drive; any Sprinter IDE unit is
+    a CD drive with `CDn=1` or `device=cdrom` and plays audio on its own mixer row (`IdeControllerCd_Test`, the
+    secondary slave). Left for S7: whether the shipped config puts the CD on `ide0.slave` (the BIOS detection
+    screens change), and the real-software check with `CD_PLAY.TRD` (Peters Plus 2001, TR-DOS in Spectrum mode)
+    and `CDPLAYER.FLX` ([2026-10-02-cd-audio](../2026-10-02-cd-audio/TODO.md)). Since branch `cd-folder-audio`
+    (2026-10-02) the test disc `testdata/machines/sprinter/cd/music.cue` (untracked) is an Enhanced CD: audio
+    tracks 1-3 first, the data track 4 in session 2 (what `CD_PLAY.TRD` should list as tracks 1-3); a folder of
+    MP3 / FLAC / WAV files in the CD slot is an audio CD too. `CD_PLAY.TRD` plays (owner, live, BIOS 3.06 + DSS
+    1.71); the Flex Navigator plugin `C:\FN\FLX\cdplayer.flx` did not - its PLAY MSF 00:02:00 - 80:00:74 was refused
+    for the end past the lead-out, fixed per MMC-3 (only the start is checked); the plugin plays from track 1
+    only and has no track skip ([disassembly](../../disasm/software/sprinter/cdplayer-flx/README.md)). The
+    owner's "no INT after Play, FN stuck" (2026-10-02): INTs and FN keep working (PC #A441 is FN's idle HALT); the
+    plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
+    `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
   - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by

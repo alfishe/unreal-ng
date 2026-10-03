@@ -59,12 +59,13 @@ void MemoryPagesVisWidget::reset()
     if (!_emulator)
         return;
 
-    Memory* memory = _emulator->GetMemory();
+    EmulatorContext* context = _emulator->GetContext();
+    Memory* memory = context ? context->pMemory : nullptr;
     if (!memory)
         return;
 
     // Determine max RAM pages based on the emulator configuration
-    CONFIG& config = _emulator->GetContext()->config;
+    CONFIG& config = context->config;
 
     switch (config.mem_model)
     {
@@ -197,14 +198,15 @@ void MemoryPagesVisWidget::updatePageDisplay()
     if (!_emulator)
         return;
 
-    Memory* memory = _emulator->GetMemory();
+    EmulatorContext* context = _emulator->GetContext();
+    Memory* memory = context ? context->pMemory : nullptr;
     if (!memory)
         return;
 
     MemoryAccessTracker& tracker = memory->GetAccessTracker();
 
     // Update the title with configuration info
-    CONFIG& config = _emulator->GetContext()->config;
+    CONFIG& config = context->config;
     _titleLabel->setText(QString("Memory Pages (%1K)").arg(config.ramsize));
 
     // Determine which absolute pages are currently mapped to Z80 banks

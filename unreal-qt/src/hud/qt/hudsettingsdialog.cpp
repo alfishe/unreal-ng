@@ -58,6 +58,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioMoonSound, QObject::tr("MoonSound Activity"),
      QObject::tr("Show when MoonSound (OPL4) synthesis is active - 'Moon FM' (FM only), 'Moon PCM' (wave only) or 'Moonsound' (both)"),
      QObject::tr("Audio"), true},  // Default on - MoonSound is opt-in hardware
+    {HudNotificationCategory::AudioCdda, QObject::tr("CD Audio Activity"),
+     QObject::tr("Show when an ATAPI CD drive plays an audio track (Red Book CD-DA) - 'CD'"),
+     QObject::tr("Audio"), true},  // Default on - a CD drive is opt-in hardware
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),

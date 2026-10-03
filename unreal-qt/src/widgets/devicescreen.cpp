@@ -350,12 +350,16 @@ void DeviceScreen::setEmulator(std::shared_ptr<Emulator> emulator)
 bool DeviceScreen::event(QEvent* event)
 {
     // A PC-keyboard machine owns the bare F-keys while the view has focus: accepting the
-    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here
-    if (event->type() == QEvent::ShortcutOverride &&
-        KeyboardManager::machineOwnsKey(static_cast<QKeyEvent*>(event), _emulator ? _emulator->GetContext()->pKeyboard : nullptr))
+    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here.
+    // Leased: automation may be removing the instance on another thread
+    if (event->type() == QEvent::ShortcutOverride)
     {
-        event->accept();
-        return true;
+        const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+        if (KeyboardManager::machineOwnsKey(static_cast<QKeyEvent*>(event), lease ? lease->pKeyboard : nullptr))
+        {
+            event->accept();
+            return true;
+        }
     }
     return QWidget::event(event);
 }

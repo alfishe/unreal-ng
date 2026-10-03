@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace ttd {
 
@@ -85,6 +86,12 @@ enum class PeripheralId : uint8_t
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
     Atm2IoEsp = 37,       // the ATM2IOESP card on it: the 16550 and its peer (netstate::SerialPort)
     EvoMouse = 38,        // ZX-Evo AVR PS/2 mouse: the Kempston-address registers, plugged in (ATM3, TSConf)
+    ZiFiLine = 39,        // the TS AVR's ZiFi UART (USART0) and its peer (netstate::SerialPort)
+    ZiFi = 40,            // the TS AVR's ZiFi API block: registers, selector, last-byte times (ZiFi::State)
+    CdDrive = 41,         // the IDE board's ATAPI CD drives beyond their task file (AtaChannel): CD audio play state, head,
+                          // page 0Eh volume / routing, the READ CD sector waiting for the data buffer; boards with a CD unit only
+    Vdac2Memory = 42,     // TS-Conf VDAC2 card: the FT812's memory regions (RAM_G, display lists, REG, CMD, ...), zero runs dropped, until TTD v2 regions
+    Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
     // Future: SAA1099, GS512, etc.
     Count
 };
@@ -142,6 +149,20 @@ public:
     /// blob. Default: nothing (most devices have no host-time dependence)
     virtual void TTDRecordingStarted() {}
     virtual void TTDRecordingStopped() {}
+
+    /// Variable-size state (default: no). A device whose state is large but
+    /// usually compresses away by its own encoding (the VDAC2 card's FT812
+    /// memory, zero runs dropped) saves only what it needs: TTDSaveStateTo
+    /// fills `out` with at most TTDStateSize() bytes, and a restore hands
+    /// TTDLoadState a blob of any size up to that (the blob is self-delimiting).
+    /// Then the capture does not allocate, clear and compress the worst case
+    /// every frame
+    virtual bool TTDVariableSize() const { return false; }
+    virtual void TTDSaveStateTo(std::vector<uint8_t>& out) const
+    {
+        out.resize(TTDStateSize());
+        TTDSaveState(out.data());
+    }
 };
 
 } // namespace ttd

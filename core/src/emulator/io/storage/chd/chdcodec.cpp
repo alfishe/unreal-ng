@@ -14,6 +14,7 @@
 #include "LzmaEnc.h"
 #include "emulator/io/storage/chd/chdflac.h"
 #include "emulator/io/storage/chd/chdhuffman.h"
+#include "emulator/io/storage/cd/cdecc.h"
 
 namespace chd
 {
@@ -237,7 +238,137 @@ namespace chd
         };
 
         /// endregion </flac>
+
+        /// region <CD-ROM codecs>
+
+        /// Frames back together: the sector data of every frame, then the subcode
+        /// of every frame -> 2448-byte frames
+        void Interleave(const uint8_t* data, const uint8_t* subcode, uint32_t frames, uint8_t* dst)
+        {
+            for (uint32_t frame = 0; frame < frames; frame++)
+            {
+                std::memcpy(dst + frame * kCdFrameBytes, data + frame * kCdSectorBytes, kCdSectorBytes);
+                std::memcpy(dst + frame * kCdFrameBytes + kCdSectorBytes, subcode + frame * kCdSubcodeBytes, kCdSubcodeBytes);
+            }
+        }
+
+        /// `cdlz`, `cdzl`, `cdzs` (MAME chd_cd_decompressor): a bitmap of the frames
+        /// whose sync and ECC were stripped, the base stream's length (2 or 3
+        /// bytes), the sector data in the base codec, the subcode in the second
+        class CdCodec : public Codec
+        {
+        public:
+            CdCodec(uint32_t baseTag, uint32_t subcodeTag, uint32_t hunkBytes)
+                : _frames(hunkBytes / kCdFrameBytes),
+                  _base(CreateCodec(baseTag, _frames * kCdSectorBytes)),
+                  _subcode(CreateCodec(subcodeTag, _frames * kCdSubcodeBytes)),
+                  _buffer(static_cast<size_t>(_frames) * (kCdSectorBytes + kCdSubcodeBytes))
+            {
+            }
+            bool Compress(const uint8_t*, uint32_t, uint8_t*, uint32_t&) override { return false; }
+            bool Decompress(const uint8_t* src, uint32_t length, uint8_t* dst, uint32_t dstLength) override
+            {
+                const uint32_t frames = dstLength / kCdFrameBytes;
+                if (frames != _frames || !_base || !_subcode)
+                    return false;
+                const uint32_t lengthBytes = dstLength < 65536 ? 2 : 3;
+                const uint32_t eccBytes = (frames + 7) / 8;
+                const uint32_t header = eccBytes + lengthBytes;
+                if (length < header)
+                    return false;
+                uint32_t baseLength = (static_cast<uint32_t>(src[eccBytes]) << 8) | src[eccBytes + 1];
+                if (lengthBytes > 2)
+                    baseLength = (baseLength << 8) | src[eccBytes + 2];
+                if (header + baseLength > length)
+                    return false;
+                uint8_t* data = _buffer.data();
+                uint8_t* subcode = data + static_cast<size_t>(frames) * kCdSectorBytes;
+                if (!_base->Decompress(src + header, baseLength, data, frames * kCdSectorBytes) ||
+                    !_subcode->Decompress(src + header + baseLength, length - header - baseLength, subcode, frames * kCdSubcodeBytes))
+                    return false;
+                Interleave(data, subcode, frames, dst);
+                for (uint32_t frame = 0; frame < frames; frame++)
+                {
+                    if (src[frame / 8] & (1u << (frame % 8)))
+                    {
+                        uint8_t* sector = dst + frame * kCdFrameBytes;
+                        std::memcpy(sector, cd::kSync, sizeof(cd::kSync));
+                        cd::GenerateEcc(sector);
+                    }
+                }
+                return true;
+            }
+
+        private:
+            uint32_t _frames;
+            std::unique_ptr<Codec> _base;
+            std::unique_ptr<Codec> _subcode;
+            std::vector<uint8_t> _buffer;
+        };
+
+        /// `cdfl` (MAME chd_cd_flac_decompressor): the sector data as 16-bit stereo
+        /// FLAC frames, stored back big-endian, then the subcode as raw deflate
+        class CdFlacCodec : public Codec
+        {
+        public:
+            explicit CdFlacCodec(uint32_t hunkBytes)
+                : _frames(hunkBytes / kCdFrameBytes),
+                  _subcode(CreateCodec(kCodecZlib, _frames * kCdSubcodeBytes)),
+                  _samples(static_cast<size_t>(_frames) * kCdSectorBytes / 2),
+                  _buffer(static_cast<size_t>(_frames) * (kCdSectorBytes + kCdSubcodeBytes))
+            {
+            }
+            bool Compress(const uint8_t*, uint32_t, uint8_t*, uint32_t&) override { return false; }
+            bool Decompress(const uint8_t* src, uint32_t length, uint8_t* dst, uint32_t dstLength) override
+            {
+                const uint32_t frames = dstLength / kCdFrameBytes;
+                if (frames != _frames)
+                    return false;
+                size_t used = 0;
+                if (!flac::Decode(src, length, _samples.data(), frames * kCdSectorBytes / 4, 2, &used) || used > length)
+                    return false;
+                uint8_t* data = _buffer.data();
+                uint8_t* subcode = data + static_cast<size_t>(frames) * kCdSectorBytes;
+                for (size_t i = 0; i < _samples.size(); i++)
+                {
+                    const uint16_t v = static_cast<uint16_t>(_samples[i]);
+                    data[2 * i] = static_cast<uint8_t>(v >> 8);
+                    data[2 * i + 1] = static_cast<uint8_t>(v);
+                }
+                if (!_subcode->Decompress(src + used, static_cast<uint32_t>(length - used), subcode, frames * kCdSubcodeBytes))
+                    return false;
+                Interleave(data, subcode, frames, dst);
+                return true;
+            }
+
+        private:
+            uint32_t _frames;
+            std::unique_ptr<Codec> _subcode;
+            std::vector<int16_t> _samples;
+            std::vector<uint8_t> _buffer;
+        };
+
+        /// endregion </CD-ROM codecs>
     }  // namespace
+
+    bool IsCdCodec(uint32_t tag)
+    {
+        return tag == kCodecCdLzma || tag == kCodecCdZlib || tag == kCodecCdZstd || tag == kCodecCdFlac;
+    }
+
+    std::unique_ptr<Codec> CreateCdCodec(uint32_t tag, uint32_t hunkBytes)
+    {
+        if (hunkBytes == 0 || hunkBytes % kCdFrameBytes != 0)
+            return nullptr;
+        switch (tag)
+        {
+            case kCodecCdLzma: return std::make_unique<CdCodec>(kCodecLzma, kCodecZlib, hunkBytes);
+            case kCodecCdZlib: return std::make_unique<CdCodec>(kCodecZlib, kCodecZlib, hunkBytes);
+            case kCodecCdZstd: return std::make_unique<CdCodec>(kCodecZstd, kCodecZstd, hunkBytes);
+            case kCodecCdFlac: return std::make_unique<CdFlacCodec>(hunkBytes);
+            default: return nullptr;
+        }
+    }
 
     std::unique_ptr<Codec> CreateCodec(uint32_t tag, uint32_t hunkBytes)
     {

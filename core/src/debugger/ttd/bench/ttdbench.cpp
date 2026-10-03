@@ -899,6 +899,8 @@ std::vector<Case> Matrix(const std::string& set)
     // full: every base model with its default peripherals (BR-4) ...
     const Configuration bases[] = {Base("48K", "48K"),
                                    Base("128K", "128k"),
+                                   Base("PLUS2", "PLUS2"),
+                                   Base("PLUS2A", "PLUS2A"),
                                    Base("PENTAGON", "PENTAGON"),
                                    Base("PENTAGON512", "PENTAGON", 512),
                                    Base("PENTAGON1024", "PENTAGON", 1024),
@@ -906,10 +908,14 @@ std::vector<Case> Matrix(const std::string& set)
                                    scorpion,
                                    scorpion35,
                                    profScorpion,
+                                   Base("ATM450", "ATM450"),
                                    Base("ATM710", "ATM710"),
                                    atm710Turbo,
                                    atm3,
+                                   Base("TSCONF", "TSL"),
                                    Base("PROFI", "PROFI")};
+    // (SPRINTER is not here: it refuses to record until its PLD state has a
+    // serializer, Sprinter phase S7 - see ttd.ksy, peripheral id 25)
     for (const Configuration& c : bases)
         add(c, Idle(3000));
 

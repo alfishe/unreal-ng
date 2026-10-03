@@ -81,6 +81,10 @@ std::string TemporalSummary(const Json::Value& status)
     {
         out << " active";
     }
+    else if (!status.get("applicable", true).asBool())
+    {
+        out << " " << status.get("inactive_reason", "").asString();  // "not applicable: ..."
+    }
     else
     {
         const std::string reason = status.get("inactive_reason", "").asString();

@@ -40,7 +40,7 @@ ninja -C cmake-build-agent-release core-benchmarks
 UNREAL_TTD_BENCH_SET=turbo ./cmake-build-agent-release/bin/core-benchmarks \
     --benchmark_filter='TTDMatrix/' --benchmark_format=json --benchmark_out=scratch/ttd-turbo.json
 
-# Everything: 13 base models, 9 workloads, 9 peripheral sets on two models
+# Everything: 17 base models, 9 workloads, 9 peripheral sets on two models
 UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_DIRTY=1 ./cmake-build-agent-release/bin/core-benchmarks \
     --benchmark_filter='TTDMatrix/' --benchmark_format=json --benchmark_out=scratch/ttd-full.json
 ```

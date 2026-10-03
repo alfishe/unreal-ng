@@ -117,6 +117,8 @@ private:
     QLabel* _atm2IoEspWhy = nullptr;
     SerialPeerEditor* _atm2IoEspPeer = nullptr;
     QComboBox* _atm2IoEspAddress = nullptr;
+    QLabel* _zifiWhy = nullptr;
+    SerialPeerEditor* _zifiPeer = nullptr;
     QLabel* _kbcWhy = nullptr;
     QComboBox* _espChip = nullptr;
     QCheckBox* _modemLines = nullptr;

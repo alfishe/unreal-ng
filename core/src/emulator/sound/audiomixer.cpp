@@ -32,6 +32,9 @@ const KeyName kKeys[] = {
     {AudioSourceType::FM2, "fm2"},                {AudioSourceType::COVOX, "covox"},
     {AudioSourceType::GeneralSound, "gs"},        {AudioSourceType::GeneralSoundMp3, "gs_mp3"},
     {AudioSourceType::Moonsound_FM, "moonsound_fm"}, {AudioSourceType::Moonsound_PCM, "moonsound_pcm"},
+    // The ATAPI CD drives by IDE unit (0 ide0.master .. 3 ide1.slave)
+    {AudioSourceType::CdAudio0, "cd0"}, {AudioSourceType::CdAudio1, "cd1"},
+    {AudioSourceType::CdAudio2, "cd2"}, {AudioSourceType::CdAudio3, "cd3"},
 };
 
 std::string Lower(std::string s)

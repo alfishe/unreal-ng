@@ -228,6 +228,56 @@ TEST(TTDCodecPageStore_Test, Release_DecrementsRefcount_AndFreesOnZero)
 }
 
 // ===========================================================================
+// Payload memory: exactly the content, nothing held by free slots
+// (TTD v2 POC 011 experiment E5)
+// ===========================================================================
+
+TEST(TTDCodecPageStore_Test, Payloads_HoldNoUnusedAllocation)
+{
+    TTDCodecPageStore store;
+    std::vector<uint8_t> a;
+    std::vector<uint8_t> b;
+    FillPageIncremental(a, 0x10);
+    b = a;
+    b[100] ^= 0xFF;   // a small change: a small XOR payload
+
+    const uint32_t full = store.InternFull(a.data());
+    store.InternXor(full, b.data());
+    store.InternFull(std::vector<uint8_t>(TTDCodecPageStore::kPageSize, 0).data());
+
+    EXPECT_EQ(store.PayloadCapacityBytes(), store.GetLivePayloadBytes());
+    EXPECT_LT(store.PayloadCapacityBytes(), 2u * 1024u) << "two compressed payloads, not two worst-case buffers";
+}
+
+TEST(TTDCodecPageStore_Test, Release_GivesThePayloadBack)
+{
+    TTDCodecPageStore store;
+    std::vector<uint8_t> page;
+    FillPageIncremental(page, 0x33);
+    const uint32_t idx = store.InternFull(page.data());
+    ASSERT_GT(store.PayloadCapacityBytes(), 0u);
+
+    store.Release(idx);
+
+    EXPECT_EQ(store.GetUsedSlots(), 0u);
+    EXPECT_EQ(store.PayloadCapacityBytes(), 0u) << "a free slot holds no payload memory";
+}
+
+TEST(TTDCodecPageStore_Test, ZeroPageInReusedSlot_HoldsNoPayload)
+{
+    TTDCodecPageStore store;
+    std::vector<uint8_t> page;
+    FillPageIncremental(page, 0x44);
+    store.Release(store.InternFull(page.data()));
+
+    // The freed slot is reused for an all-zero page
+    store.InternFull(std::vector<uint8_t>(TTDCodecPageStore::kPageSize, 0).data());
+
+    EXPECT_EQ(store.GetUsedSlots(), 1u);
+    EXPECT_EQ(store.PayloadCapacityBytes(), 0u);
+}
+
+// ===========================================================================
 // Reset
 // ===========================================================================
 

@@ -242,16 +242,16 @@ TEST_F(MediaTargets_Test, PlanWithNoMachine)
     EXPECT_EQ(snapshot.targets[0].action, MediaTarget::Action::Load);
 }
 
-/// The order of the targets: an empty slot before an occupied one
-TEST_F(MediaTargets_Test, PlanListsEmptySlotsFirstAndNamesTheOccupant)
+/// The order of the targets does not depend on what the slots hold: the tiles keep their place
+TEST_F(MediaTargets_Test, PlanKeepsSlotOrderWhateverTheyHoldAndNamesTheOccupant)
 {
     Create("PENTAGON");
     const std::string first = Fixture("testdata/loaders/trd/EyeAche.trd");
     ASSERT_TRUE(MediaControl(_context).Execute(MediaRequest{"insert", "fdd.a", first, {}}).result.Ok());
 
     const MediaPlan plan = PlanFor(Fixture("testdata/loaders/scl/insult.scl"));
-    EXPECT_EQ(Slots(plan), (std::vector<std::string>{"fdd.b", "fdd.c", "fdd.d", "fdd.a"}));
-    EXPECT_EQ(plan.targets.back().occupiedBy, first);
+    EXPECT_EQ(Slots(plan), (std::vector<std::string>{"fdd.a", "fdd.b", "fdd.c", "fdd.d"}));
+    EXPECT_EQ(plan.targets.front().occupiedBy, first);
     ASSERT_GE(plan.defaultTarget, 0);
     EXPECT_EQ(plan.targets[static_cast<size_t>(plan.defaultTarget)].slotId, "fdd.a")
         << "the drop shortcut still names drive A";

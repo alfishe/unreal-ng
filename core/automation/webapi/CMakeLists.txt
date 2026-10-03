@@ -239,6 +239,7 @@ set(COMMON_SOURCES
     src/api/tape_disk_api.cpp
     src/api/rzx_api.cpp
     src/api/media_api.cpp
+    src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
     src/common/upload_helper.cpp

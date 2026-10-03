@@ -13,6 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
@@ -59,14 +60,18 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
             _context->pScreen->NoteVideoTableWrite(palette ? videomap::VideoTable::Palette : videomap::VideoTable::ModeTable, address);
     });
 
-    // The Z84C15's CTC and watchdog count the CPU clock: base T-states x the current ratio.
-    // The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
+    // The Z84C15's time base: ticks of the board's 42 MHz crystal (X_SP) in real time, from the machine's base
+    // T-states (3.5 MHz = X_SP / 12) and the in-frame CPU position descaled by the current clock multiplier, so
+    // it runs on unchanged through a 3.5 / 21 MHz switch. The CPU clock (the CTC timers' prescaler input and
+    // the watchdog) lasts 12 / multiplier ticks (SyncChipClock); TRG0-TRG2 are X_SP / 48 = 875 kHz whatever
+    // the CPU runs at, ZC/TO2 drives TRG3 (MAME sprinter.cpp:1993-1995, 2008), ZC/TO0 clocks SIO B
+    // (SprinterInput). The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
     // (research-cpu-z84c15.md Q3) and BIOS 3.04 never clears it
-    _z84.SetClock([this]() -> uint64_t {
-        const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
-        return _state->t_states * multiplier + (z80 ? z80->t : 0);
-    });
+    _z84.SetClock([this]() -> uint64_t { return ChipClock(); });
+    _z84.SetUnitsPerSecond(kChipClockHz);
+    for (uint8_t channel = 0; channel < 3; channel++)
+        _z84.ctc.SetTrigger(channel, {Z84Lib::Z84Ctc::TriggerKind::Clock, kCtcTriggerHz, 0});
+    _z84.ctc.SetTrigger(3, {Z84Lib::Z84Ctc::TriggerKind::Cascade, 0, 2});
 
     // The AT keyboard: the host's physical keys reach SIO A (and the PLD's reset and turbo keys)
     _input.SetResetHandler([this]() { RequestCpuReset(SprinterResetKind::SoftReset); });
@@ -89,16 +94,24 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     if (_context->pCore && _context->pCore->GetZ80())
     {
         _waits = std::make_unique<SprinterWaits>(_context->pCore->GetZ80());
+        _origWaits = std::make_unique<SprinterOrigWaits>(_context->pCore->GetZ80());
         _cpuEngine = std::make_unique<Z84C15Engine>(_context, _context->pCore->GetZ80(), _z84);
     }
 
     // The WD1793 has its own clock: the disk keeps 300 rpm when the CPU runs at 21 MHz
     if (_context->pBetaDisk)
         _context->pBetaDisk->SetBaseClockTimeBase(true);
+    // A tape plays in real time: at 21 MHz the ROM loader times its pulses six times too long and fails, as on
+    // the board (tdd-zx-mode.md §3.4; the Sprinter only for now, Q2)
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(true);
 }
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    if (_context->pTape)
+        _context->pTape->SetBaseClockTimeBase(false);  // the next model's decoder decides again
+
     if (_context->pSoundManager)
         _context->pSoundManager->detachModelAudioSource(&_cbl);
 
@@ -116,6 +129,8 @@ PortDecoder_Sprinter::~PortDecoder_Sprinter()
             core->RemoveBusOverlay(&memory->GetWriteIntercept());
         if (_waits)
             core->RemoveBusOverlay(_waits.get());
+        if (_origWaits)
+            core->RemoveBusOverlay(_origWaits.get());
         Z80* z80 = core->GetZ80();
         _cpuEngine.reset();  // gives the CPU back to the native interpreter
         if (z80 && z80->GetInterruptSource() == &_intSource)
@@ -194,7 +209,25 @@ void PortDecoder_Sprinter::PowerCycle()
 
 void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 {
-    // MAME machine_reset: the cells, ALL_MODE, PORT_Y, RGMOD and HOLD keep their values
+    // The board's /RESET (every kind here: Ctrl+Alt+Del, a write to page #A0, the RESET button, the end of a
+    // load) presets or clears the video and mode registers (PLD SP2_ACEX.TDF / SP2_1K30.TDF): ALL_MODE to #FF
+    // (:1041, ALL_MODE[].prn = /RESET), RGMOD to 0 (:958) and PORT_Y to 0 (ACCELER.TDF:204, AGR[].clrn). MAME
+    // machine_reset keeps them; the BIOS relies on the preset: 3.07 BETA 1 reads ALL_MODE back at the reset
+    // intercept and writes the value it read, so a kept #FE (the ZX mode's) left the accelerator, the keyboard
+    // INT and the Sprinter screen addressing off after the return to DSS / Flex Navigator. HOLD is cleared by the
+    // configuration's own /RES only (SP2_ACEX.TDF:827-830, DCP.TDF:258): a new configuration starts at #77
+    if (kind == SprinterResetKind::SoftReset)
+        CatchUpScreen();  // the picture up to the reset in the old mode
+    _input.BeforeAllModeWrite();
+    _pld.allMode = 0xFF;
+    _pld.Cell(SprinterCode::AllMode) = 0xFF;  // the register reads back (3.07 BETA 1 table)
+    _pld.rgMod = 0;
+    _pld.Cell(SprinterCode::RgMod) = _pld.Cell(0xCD) = 0;
+    _pld.portY = 0;
+    _pld.Cell(SprinterCode::PortY) = _pld.Cell(0xCC) = 0;
+    if (kind == SprinterResetKind::Configured)
+        _pld.hold = _pld.Cell(SprinterCode::Hold) = 0x77;
+    // The cells #C0-#EF and the border keep their values
     _pld.starting = 1;
     _pld.dos = 1;
     _pld.romOff = 0;
@@ -210,8 +243,11 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     GetIdeAdapter().SprinterReset();  // the primary channel (MAME machine_reset :1582)
     _pld.frameLines = 0;
     _pld.turboHard = _context->config.sprinter.turbo_allowed ? 1 : 0;
-    if (kind != SprinterResetKind::SoftReset)
-        _pld.turbo = 0;  // a new configuration starts at 3.5 MHz
+    // The turbo bit is preset by the board's /RESET (DCP.TDF:663, TB_SW.prn = /RESET): a CPU reset of the
+    // running configuration (Ctrl+Alt+Del, a write to page #A0) brings the CPU back at 21 MHz when the
+    // front-panel switch allows it, whatever mode it ran in (a ZX mode at 3.5 MHz returns to DSS in turbo).
+    // A new configuration starts at 3.5 MHz (the register's power-up value; MAME, the boot timing)
+    _pld.turbo = kind == SprinterResetKind::SoftReset ? 1 : 0;
     _pld.resetPending = 0;
     // The density latch starts at 720 KB, the FDC codes on (ZXMAK2 SprinterFdd.cs:318; MAME enables the Beta interface)
     _pld.fdcHd = 0;
@@ -222,7 +258,9 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
 
     _intSource.Reset();
     _intSource.SetFrameLines(320);
+    _intSource.SetModePage(0);  // RGMOD bit 0
     _accelerator.Reset();  // the PLD's /RESET (MAME machine_reset: m_acc_dir = 0, m_alt_acc = 0)
+    NoteVideoLatches();
 
     ActiveModule().OnReset(kind, _pld);
 }
@@ -400,6 +438,8 @@ void PortDecoder_Sprinter::InstallHooks()
     RefreshAccelerator();
     if (!_waits)
         _waits = std::make_unique<SprinterWaits>(z80);
+    if (!_origWaits)
+        _origWaits = std::make_unique<SprinterOrigWaits>(z80);
 }
 
 void PortDecoder_Sprinter::RefreshAccelerator()
@@ -471,6 +511,27 @@ void PortDecoder_Sprinter::OnMachineFrameRollover([[maybe_unused]] uint32_t fram
         FinishLoad(true);
 }
 
+uint64_t PortDecoder_Sprinter::ChipClock() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+    return _state->t_states * kChipTicksPerBaseT + (z80 ? static_cast<uint64_t>(z80->t) * kChipTicksPerBaseT / multiplier : 0);
+}
+
+void PortDecoder_Sprinter::SyncChipClock(uint8_t multiplier)
+{
+    _z84.SetSystemClockPeriod(kChipTicksPerBaseT, multiplier ? multiplier : 1);
+}
+
+void PortDecoder_Sprinter::OnFrameEnd()
+{
+    // The host speed control's queued multiplier takes effect at the frame start that follows (Z80::BeginFrame);
+    // the CTC timers and the watchdog switch rate at this instant, the frame boundary
+    const uint8_t ratio = _state->hw_turbo_ratio ? _state->hw_turbo_ratio : 1;
+    const uint8_t next = _state->next_z80_frequency_multiplier ? _state->next_z80_frequency_multiplier : 1;
+    SyncChipClock(static_cast<uint8_t>(next * ratio));
+}
+
 void PortDecoder_Sprinter::ApplyTurbo()
 {
     const uint8_t ratio = (_pld.turbo && _pld.turboHard) ? 6 : 1;
@@ -481,6 +542,8 @@ void PortDecoder_Sprinter::ApplyTurbo()
         if (core && core->GetZ80())
             core->GetZ80()->ApplyHardwareTurboNow();
     }
+    // The CPU clock the CTC timers and the watchdog count changed with it (same instant: the switch rescaled z80.t)
+    SyncChipClock(_state->current_z80_frequency_multiplier);
 
     // Turbo waits (technical-design §4): an overlay only while the CPU runs at 21 MHz
     if (core && _waits)
@@ -495,6 +558,34 @@ void PortDecoder_Sprinter::ApplyTurbo()
             core->RemoveBusOverlay(_waits.get());
         }
     }
+    ApplyOrigWaits();
+}
+
+void PortDecoder_Sprinter::ApplyOrigWaits()
+{
+    Core* core = _context->pCore;
+    if (!core || !_origWaits)
+        return;
+
+    // WAIT_ORIG: ALL_MODE bit 2 = 0 and TURBO = 0, on the configured PLD (the loader has no such logic)
+    const bool on = _pld.configState == SprinterConfigState::Configured && (_pld.allMode & 0x04) == 0 &&
+                    _state->hw_turbo_ratio <= 1;
+    if (on)
+    {
+        for (uint8_t window = 0; window < 4; window++)
+            _origWaits->SetSlotWaits(window, SprinterOrigWaits::WindowWaits(window, _pld.pn));
+        core->AddBusOverlay(_origWaits.get());  // no-op when installed already
+    }
+    else
+    {
+        core->RemoveBusOverlay(_origWaits.get());  // no-op when not installed
+    }
+}
+
+bool PortDecoder_Sprinter::OrigWaitsActive() const
+{
+    const Core* core = _context->pCore;
+    return core && _origWaits && core->IsBusOverlayInstalled(_origWaits.get());
 }
 
 void PortDecoder_Sprinter::AddPortWait()
@@ -508,6 +599,9 @@ void PortDecoder_Sprinter::AddPortWait()
 
 void PortDecoder_Sprinter::OnBanksChanged()
 {
+    // Window 3 waits in the original mode while #7FFD bit 2 is set
+    if (_origWaits)
+        _origWaits->SetSlotWaits(3, SprinterOrigWaits::WindowWaits(3, _pld.pn));
     if (!_waits)
         return;
     // Main RAM waits; ROM and fast RAM do not (MAME: only ram_r / ram_w / isa_r / isa_w call do_mem_wait)
@@ -911,6 +1005,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::AllMode:
             _input.BeforeAllModeWrite();
             _pld.allMode = value;
+            ApplyOrigWaits();   // bit 2: the original waits
             RefreshStepHook();  // the keyboard INT on or off
             NoteVideoLatches();
             return;

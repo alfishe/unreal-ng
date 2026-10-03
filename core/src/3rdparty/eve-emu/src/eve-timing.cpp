@@ -37,6 +37,7 @@ void FrameEvent(EveChip& chip)
     ++scan.frames;
     RegSet(chip, Reg::Frames, static_cast<uint32_t>(scan.frames));
     ++scan.completedFrames;
+    FoldFrameMetrics(chip);
 }
 
 void EndOfLine(EveChip& chip)

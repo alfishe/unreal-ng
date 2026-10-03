@@ -733,6 +733,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
+| CD audio of the ATAPI CD drives (disc and tracks, status 11h-15h, head as LBA / MSF / track / index, play range, page 0Eh volume, mixer row) | `state cdaudio` / `cdaudio` | `GET /state/cdaudio` | `cdaudio_state()` | `cdaudio_state()` | `cdaudio` |
+| CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
 | TS-Conf machine (memory map, video, TSU, interrupts, DMA) | `state tsconf` | `GET /state/tsconf` | `tsconf_state()` | `tsconf_state()` | `tsconf` |
 | TS-Conf TSU objects and palette (tile layers, 85 sprites decoded, 256 CRAM cells) | `state tsconf tsu` | `GET /state/tsconf/tsu` | `tsconf_tsu()` | `tsconf_tsu()` | `tsconf_tsu` |
 | Sprinter Sp2000 machine (PLD, decoder, windows, cells, clock + 21 MHz waits, frame, video summary, accelerator, sound, Z84C15 with wait generator and daisy chain, floppy latch, CMOS / IDE links, BIOS) | `state sprinter` | `GET /state/sprinter` | `sprinter_state()` | `sprinter_state()` | `sprinter` (summary: PLD, windows, accelerator, sound line) |
@@ -744,7 +746,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter Covox-Blaster ring (256 words, play / write index) | `state sprinter ring` | `GET /state/sprinter/sound/ring` | `sprinter_sound_ring()` | `sprinter_sound_ring()` | `sprinter_sound_ring` |
 | Sprinter BIOS images, loaded image, start options | `state sprinter bios` | `GET /state/sprinter/bios` | `sprinter_bios()` | `sprinter_bios()` | `sprinter_bios` |
 | Sprinter BIOS / start options select (loads at the reset) | `state sprinter bios 3.06 [fast_start=0\|1] [accel_int_suspend=0\|1] [reset=0\|1]` | `POST /sprinter/bios {bios, fast_start, accel_int_suspend, reset}` | `sprinter_bios_select{bios="3.06"}` | `sprinter_bios_select(bios="3.06")` | `invoke_api` POST `/sprinter/bios` |
-| Sprinter BIOS at create | `create SPRINTER --sprinter-bios 3.07 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.07"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
+| Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
 | Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
@@ -769,7 +771,11 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 Every report carries `available` (false with a `description` when the
 device is not on this machine — e.g. `audio/fm` on a plain TurboSound
-configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card).
+configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card;
+`cdaudio` without a CD drive reports `available: false` with a `reason` and answers 200).
+The CD audio control verbs that act on the drive (play, pause, resume, stop, volume) are refused while
+TTD records (`error: recording`, 409): a replay would not repeat them - the guest's own CD player
+commands are recorded. `mixer` (the host's mixer row) is always allowed.
 WebAPI answers 404 in that case; Lua/Python return the same object (`gs_state()`
 used to return nil - it now returns this object too); the MCP aspect reports it
 in the summary instead of failing the call. Field lists for GS and Covox: the
@@ -1402,7 +1408,10 @@ The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
 `video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
 actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
-when off), `active`, `inactive_reason`, `correcting` (a detector fired in the
+when off), `active`, `inactive_reason`, `applicable` (false while the machine
+shows no ZX screen: a Sprinter native mode or a frame that is no ZX raster - the
+reason then starts with `not applicable:`; the Sprinter's Spectrum mode is
+applicable), `correcting` (a detector fired in the
 frame on screen and an averaging mask formed - the Qt dialog's LED; every frame
 is analyzed, but a frame with nothing detected passes unchanged),
 `showing_processed` (the frame on screen went through the algorithm, changed
@@ -2596,6 +2605,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd start` | `ttd record` | `[--no-journal \| -n] [--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--no-journal` is "gaming mode": no write journal, smaller memory footprint, but reverse search has less to work with. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
+| `ttd limit` | `ttd history-limit` | `[frames <n>] [bytes <n>[K\|M\|G]]` *or* `off` | Bound the history. While recording, the oldest checkpoints (one per frame) are released once there are more than `frames` of them or their data (RAM pages + device blobs, compressed) exceeds `bytes`; the session start moves forward and the input, port, external-event and bookmark records before it go too, so a file saved afterwards replays its remaining frames exactly. Two checkpoints always stay. `0` = no limit (the default), a value not given is kept, `off` clears both; no arguments prints the limit, the history range, the bytes held and how many checkpoints were released. The limit stays for later recordings of this instance. | ✅ Implemented |
 | `ttd seek` | `ttd goto` | `<frame> [tinframe]` *or* `--bookmark <label>` (`-b`) | Seek to a point in the timeline. Prints `Seek reached target (frame=…, tInFrame=…)`, or `Seek halted at (…)` plus the reason (external-event marker with its kind and reason, or target out of range). | ✅ Implemented |
 | `ttd step-back` | `ttd back`, `ttd sb` | — | Step back one frame, keeping the position inside the frame. | ✅ Implemented |
 | `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
@@ -3339,7 +3349,7 @@ errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../fea
 | `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
 | `media formats [--kind floppy]` | accepted formats |
 | `media targets <path>` | where a file can go: what it is, the slots that take it (`*` = used without asking), or why nothing does |
-| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
+| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32] [--format audio-cd]` | a file or a folder; a folder of MP3 / FLAC / WAV files in a CD slot is an audio CD (`media info cd` lists its tracks) |
 | `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
 | `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
 | `media save <slot> [path] [--compression ..]`, `media export <slot> <path> [--compression none\|default\|zlib,lzma,huff,flac,zstd] [--parent <base.chd>]`, `media discard <slot>` | keep or drop the writes; a `.chd` path writes a MAME CHD (hard disks, cards; `--parent` makes a delta CHD on a base image) |

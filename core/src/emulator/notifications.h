@@ -643,7 +643,8 @@ enum class AudioSource : uint8_t
     NeoGS = 9,        // NeoGS card in the GS slot: its DAC channels (GeneralSound is then silent)
     NeoGSMp3 = 10,    // NeoGS MP3 decoder output
     NeoGSDma = 11,    // NeoGS: the card's own DMA (SD card, MP3 decoder) moving data - not sound
-    NeoGSTransfer = 12 // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
+    NeoGSTransfer = 12, // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
+    CdAudio = 13        // CD-DA from an ATAPI CD drive (any IDE unit)
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

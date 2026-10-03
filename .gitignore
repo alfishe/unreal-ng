@@ -30,6 +30,8 @@
 **/*.so
 .Python
 build/
+# tools/build holds the build/test gate scripts (slot limiter), not build output
+!/tools/build/
 develop-eggs/
 dist/
 downloads/

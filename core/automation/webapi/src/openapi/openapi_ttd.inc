@@ -46,7 +46,9 @@
         "if recording was already in progress.\n\n"
         "**Optional JSON body:**\n"
         "- `mode`: \"gaming\" (smaller files, no write journal) or \"development\" (full journal, default)\n"
-        "- `enable_write_journal`: explicit bool override (takes precedence over mode)\n\n"
+        "- `enable_write_journal`: explicit bool override (takes precedence over mode)\n"
+        "- `history_limit_frames`, `history_limit_bytes`: the history limit, as POST /ttd/history-limit "
+        "(a missing one keeps its current value)\n\n"
         "Gaming mode produces ~90% smaller .ttd files but disables fast reverse-watchpoint queries.";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
@@ -62,6 +64,52 @@
         "TTD engine not available in this build";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["responses"]["503"]["description"] =
         "Emulator is shutting down";
+
+    // =====================================================================
+    // POST /ttd/history-limit — keep only the newest history while recording
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/history-limit"]["post"];
+        op["summary"] = "Set or read the TTD history limit";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Bounds the recorded history: while recording, the oldest checkpoints (one per frame) are released "
+            "once there are more than `frames` of them or their data exceeds `bytes`. The session start moves "
+            "forward; the input, port, external-event and bookmark records before it go too, so a session saved "
+            "after a release loads and replays its remaining frames exactly. Two checkpoints always stay.\n\n"
+            "Body (each field optional; a missing one keeps its value; 0 = no limit; an empty body only reports): "
+            "`frames` (integer), `bytes` (integer). While recording the limit applies at once, otherwise from "
+            "the next recorded frame. The limit stays for later recordings of this instance. Default: no limit.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["properties"]["frames"]["type"] = "integer";
+        body["properties"]["frames"]["minimum"] = 0;
+        body["properties"]["frames"]["description"] = "Keep at most this many checkpoints (frames); 0 = no limit";
+        body["properties"]["bytes"]["type"] = "integer";
+        body["properties"]["bytes"]["minimum"] = 0;
+        body["properties"]["bytes"]["description"] =
+            "Keep checkpoint data (RAM pages + device blobs, compressed) under this many bytes; 0 = no limit";
+        op["requestBody"]["required"] = false;
+        Json::Value& r = op["responses"]["200"]["content"]["application/json"]["schema"];
+        op["responses"]["200"]["description"] = "The limit now in force and the history it bounds";
+        r["type"] = "object";
+        for (const char* name : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
+                                 "checkpoint_count", "session_start_frame", "current_end_frame"})
+        {
+            r["properties"][name]["type"] = "integer";
+            r["properties"][name]["format"] = "uint64";
+        }
+        r["properties"]["history_bytes"]["description"] = "Checkpoint data held now (what `bytes` bounds)";
+        r["properties"]["evicted_checkpoints"]["description"] = "Checkpoints released by the limit in this session";
+        r["properties"]["state"]["type"] = "string";
+        op["responses"]["400"]["description"] = "frames or bytes is not a non-negative integer";
+        op["responses"]["404"]["description"] = "Emulator instance not found";
+        op["responses"]["501"]["description"] = "TTD engine not available in this build";
+    }
 
     // =====================================================================
     // POST /ttd/stop — stop recording (history retained, browsable)

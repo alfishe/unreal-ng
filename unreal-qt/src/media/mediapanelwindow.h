@@ -60,6 +60,12 @@ public:
     /// Connect to the central binding (mirrors TapeManagerWindow::setBinding)
     void setBinding(EmulatorBinding* binding);
 
+    /// A folder into `slot` off the UI thread (BUGS.md #3), for the main window's drop and
+    /// File > Open too: the same worker, "pending" row and completion refresh as Insert Folder.
+    /// A FAT volume, a TR-DOS disk, a tape or, in a CD drive, an audio CD of MP3 / FLAC / WAV.
+    /// False (with `reason`) while another folder is still being built
+    bool insertFolder(const std::string& slot, const QString& path, QString* reason = nullptr);
+
 signals:
     /// Visibility changed via the window's own close box (keeps the menu in sync)
     void visibilityChanged(bool visible);

@@ -107,7 +107,10 @@
         body["properties"]["kind"]["type"] = "string";
         body["properties"]["kind"]["description"] = "insert auto: the kind a folder becomes (floppy or block)";
         body["properties"]["format"]["type"] = "string";
-        body["properties"]["format"]["description"] = "create: auto, unformatted or plus3 (floppies)";
+        body["properties"]["format"]["description"] =
+            "insert / swap: audio-cd - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a folder "
+            "in a CD slot is one anyway; the report lists the tracks and every file not taken, info.medium.disc the tracks); "
+            "create: auto, unformatted or plus3 (floppies)";
         body["properties"]["cylinders"]["type"] = "integer";
         body["properties"]["sides"]["type"] = "integer";
         body["properties"]["size"]["type"] = "integer";

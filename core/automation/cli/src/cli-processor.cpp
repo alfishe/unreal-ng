@@ -207,6 +207,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Media: every slot (floppy, SD, later tape / IDE / CD)
                         {"media", &CLIProcessor::HandleMedia},
 
+                        // CD audio of the ATAPI CD drives
+                        {"cdaudio", &CLIProcessor::HandleCdAudio},
+
 
                         // Memory aliases
                         {"mem", &CLIProcessor::HandleMemory},
@@ -641,6 +644,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;
+    oss << "                                 zifi=none|at|loopback|tcp:..|serial:.. (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP)" << NEWLINE;
     oss << NEWLINE;
     oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
     oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;
@@ -711,6 +715,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  media insert <slot|auto> <path> - Insert a file or folder (A, B, sd, fdd.b, ...)" << NEWLINE;
     oss << "  media eject <slot> [--save|--export <path>|--discard]" << NEWLINE;
     oss << "  media help             - All verbs and options" << NEWLINE;
+    oss << NEWLINE;
+    oss << "CD Audio (ATAPI CD drives):" << NEWLINE;
+    oss << "  cdaudio [status]       - Disc, tracks, audio status, head, volume of every CD drive" << NEWLINE;
+    oss << "  cdaudio play track=N   - Play a track; pause / resume / stop; volume; mixer" << NEWLINE;
+    oss << "  cdaudio help           - All verbs and options" << NEWLINE;
     oss << NEWLINE;
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;

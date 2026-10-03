@@ -213,3 +213,108 @@ TEST(Z84C15_Test, CpuRetiAndIm2ReachTheChain)
     Z84CpuStep(cpu);  // RETI
     EXPECT_FALSE(chip.AnyUnderService());
 }
+
+// The Sprinter's playback tick (Bad Apple, dontBlink: IM2 with only vector #06 in the table): TRG2 a 875 kHz clock,
+// channel 2 counts it by 112, ZC/TO2 drives TRG3, channel 3 counts those by 160 and interrupts at 48.83 Hz with
+// vector base #00 -> #06. The clock here is the board's: 42 MHz crystal ticks (875 kHz = an edge every 48)
+TEST(Z84C15_Test, CtcCascadeInterruptsWithVector06)
+{
+    using Z84Lib::Z84Ctc;
+    uint64_t clock = 0;
+    Z84C15 chip;
+    chip.SetClock([&] { return clock; });
+    chip.SetUnitsPerSecond(42'000'000);
+    chip.SetSystemClockPeriod(12, 1);  // 3.5 MHz
+    chip.ctc.SetTrigger(2, Z84Ctc::Trigger{Z84Ctc::TriggerKind::Clock, 875'000, 0});
+    chip.ctc.SetTrigger(3, Z84Ctc::Trigger{Z84Ctc::TriggerKind::Cascade, 0, 2});
+    chip.PowerOn();
+    chip.Write(0x10, 0x00);  // vector base #00
+    chip.Write(0x12, 0x57);
+    chip.Write(0x12, 112);
+    chip.Write(0x13, 0xD7);
+    chip.Write(0x13, 160);
+
+    constexpr uint64_t kTick = 112 * 160 * 48;  // 860 160 ticks = 20.48 ms
+    EXPECT_DOUBLE_EQ(chip.ctc.OutputHz(3), 875'000.0 / 112 / 160);
+    clock = kTick - 1;
+    EXPECT_FALSE(chip.IntPending());
+    clock = kTick;
+    ASSERT_TRUE(chip.IntPending());
+    EXPECT_EQ(chip.AcknowledgeInterrupt(), 0x06);
+    chip.OnReti();
+
+    // A turbo switch to 21 MHz does not move the tick: the inputs are real time
+    chip.SetSystemClockPeriod(2, 1);
+    clock = 2 * kTick - 1;
+    EXPECT_FALSE(chip.IntPending());
+    clock = 2 * kTick;
+    ASSERT_TRUE(chip.IntPending());
+    EXPECT_EQ(chip.AcknowledgeInterrupt(), 0x06);
+}
+
+// The watchdog counts system clocks: a clock speed change keeps the clocks counted so far
+TEST(Z84C15_Test, WatchdogKeepsItsCountAcrossAClockChange)
+{
+    uint64_t clock = 0;
+    int timeouts = 0;
+    Z84C15 chip;
+    chip.SetClock([&] { return clock; });
+    chip.SetWatchdogHandler([&] { timeouts++; });
+    chip.SetSystemClockPeriod(6, 1);
+    chip.PowerOn();  // 2^22 system clocks
+    clock = 6 * (uint64_t{1} << 21);  // half way at 6 units per clock
+    chip.SetSystemClockPeriod(1, 1);
+    EXPECT_EQ(chip.WatchdogDeadline(), clock + (uint64_t{1} << 21));
+    clock += (uint64_t{1} << 21) - 1;
+    chip.IntPending();
+    EXPECT_EQ(timeouts, 0);
+    clock++;
+    chip.IntPending();
+    EXPECT_EQ(timeouts, 1);
+}
+
+// SaveState / LoadState mid-count: a counter, its cascade and an armed timer resume exactly
+TEST(Z84C15_Test, StateRoundTripKeepsTheCtcMidCount)
+{
+    using Z84Lib::Z84Ctc;
+    uint64_t clock = 0;
+    Z84C15 chip;
+    chip.SetClock([&] { return clock; });
+    chip.SetUnitsPerSecond(1000);
+    chip.ctc.SetTrigger(1, Z84Ctc::Trigger{Z84Ctc::TriggerKind::Clock, 10, 0});
+    chip.ctc.SetTrigger(2, Z84Ctc::Trigger{Z84Ctc::TriggerKind::Clock, 250, 0});
+    chip.ctc.SetTrigger(3, Z84Ctc::Trigger{Z84Ctc::TriggerKind::Cascade, 0, 2});
+    chip.PowerOn();
+    chip.Write(0x12, 0x57);
+    chip.Write(0x12, 4);
+    chip.Write(0x13, 0xD7);
+    chip.Write(0x13, 3);
+    chip.SetSystemClockPeriod(3, 1);
+    clock = 30;
+    chip.Write(0x11, 0x1D);  // timer, trigger start
+    chip.Write(0x11, 2);
+    clock = 40;  // channel 2 at 2 (10 edges), channel 3 at 1... zero at 48
+
+    std::vector<uint8_t> saved(Z84C15::kStateSize);
+    chip.SaveState(saved.data());
+    const uint8_t c2 = chip.ctc.Read(2);
+    const uint8_t c3 = chip.ctc.Read(3);
+
+    chip.SetSystemClockPeriod(1, 1);
+    chip.PowerOn();
+    chip.LoadState(saved.data());
+    EXPECT_EQ(chip.ctc.SystemClockNum(), 3u);
+    EXPECT_EQ(chip.ctc.Read(2), c2);
+    EXPECT_EQ(chip.ctc.Read(3), c3);
+    EXPECT_EQ(chip.ctc.Read(1), 2) << "still armed";
+    clock = 47;
+    EXPECT_FALSE(chip.IntPending());
+    clock = 48;
+    EXPECT_TRUE(chip.IntPending());
+    clock = 100 + 3 * 16;  // started at the edge at 100, 16 x 3 units per step
+    EXPECT_EQ(chip.ctc.Read(1), 1);
+    std::vector<uint8_t> again(Z84C15::kStateSize);
+    chip.LoadState(saved.data());
+    chip.SaveState(again.data());
+    EXPECT_EQ(again, saved);
+}

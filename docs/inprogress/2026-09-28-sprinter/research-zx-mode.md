@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Research done; checked on MAME 0.289 with BIOS 3.06 and the owner's MAME-pack hard disk (§9). Design: [tdd-zx-mode.md](tdd-zx-mode.md) |
+| **Status** | Research done; checked on MAME 0.289 with BIOS 3.06 and the owner's MAME-pack hard disk (§9). Design: [tdd-zx-mode.md](tdd-zx-mode.md). **Corrections of 2026-10-02 (Z1-Z3 build)**: §5.5 (the turbo after a reset), §7.2 (the Scorpion INT), §7.3 (the CT5 period is 4 T, the window-3 condition is `#7FFD` bit 2), §10 (what is built) |
 | **Branch** | `sprinter-zxmode-design` (documents, the MAME session tool, the reference captures and one disassembly) |
 | **Related** | [hardware-reference.md](hardware-reference.md) §3.3 (vROM), §5 (ALL_MODE), §10 (floppy); [bios-versions.md](bios-versions.md); [mame-gap-analysis.md](mame-gap-analysis.md); [peripherals-survey.md](peripherals-survey.md); the ISA design [2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/research.md) |
 
@@ -39,7 +39,7 @@ mechanism; the TAP half does not exist on the real machine.
   ordinary RAM pages reached through the `#7FFD` / `#1FFD` cells, the screen is the PLD's Spectrum mode
   of the mode table, the frame is 320 lines (Pentagon) or 312, the INT position is Pentagon, Scorpion or
   Spectrum, and the CPU runs at 3.5 or 21 MHz. There is **no ULA-style contention**; an optional PLD
-  "original waits" mode (ALL_MODE bit 2) slows screen-memory accesses on a fixed 5.33 T cycle (§7.3).
+  "original waits" mode (ALL_MODE bit 2) slows screen-memory accesses on a fixed 4 T cycle (§7.3).
 
 **MAME** runs all of this correctly where it runs the real software (TRD from RAM disk, SCL, the
 reset back to DSS), and loads a snapshot in ZX mode. It gets one thing wrong: **its tape input never
@@ -193,7 +193,10 @@ return address at `#FFF0-#FFF6` (Peters Plus) or `RST_CONF.CUSTOM` (community). 
 **CPU reset from the PLD keyboard block** (the PLD stays configured, RAM is kept). The BIOS starts,
 sees the intercept, and jumps back into the launcher, which either restarts the Spectrum (`/ret-zx`;
 SPACE right after Ctrl+Alt+Del still goes to DSS) or restores the DSS text screen and exits with "EXIT
-from Spectrum mode" (`/ret-fn`). The PLD source has an NMI (Alt+F12) behind a build option `NMI_ON`,
+from Spectrum mode" (`/ret-fn`). The SPACE check works both ways (`FIRST_PREPARE`: `IN (#7FFE)`, `AND #1F`,
+`CP #1E`): with `/ret-fn`, SPACE held at that moment restarts the Spectrum instead. The reset also presets the PLD's
+turbo bit (`DCP.TDF:663`, `TB_SW.prn = /RESET`): the BIOS and the launcher's return run at 21 MHz whatever the
+Spectrum mode ran at (MAME keeps its `m_turbo`; corrected in unreal-ng 2026-10-02). The PLD source has an NMI (Alt+F12) behind a build option `NMI_ON`,
 **off** in the released configuration (`SP2_ACEX.TDF:8`, `:731-734`); there is no magic button.
 
 ## 6. Ports and memory in ZX mode
@@ -218,16 +221,20 @@ when it holds Spectrum page 5 or 7) are copied into video RAM in the PLD's Spect
 the BIOS writes shows a Spectrum screen with border squares (hardware-reference §6). The border color
 comes from `#FE` bits 0-2 through the border squares. The picture is 256×192 doubled horizontally
 inside the 640×256 picture (MAME screenshot [mame-menu-sprinter.png](../../../testdata/machines/sprinter/reference/zx-mode/mame-menu-sprinter.png)).
+The mode table is not bypassed: the launcher's table (dumped 2026-10-02 from the 128 menu and the TR-DOS
+prompt) has border squares `#F8` around 32 × 24 ZX-40 squares from square (4, 4), `m0` = `#30` | third << 6,
+`m1` = `m2` = the cell's address low byte; the reports classify them as Spectrum squares
+([tdd-video.md](tdd-video.md) §7, "Spectrum screen squares").
 
 ### 7.2 Frame and INT
 
 | Mode | Lines | T per frame (3.5 MHz) | INT position (MAME, FN_SYNC) |
 |---|---|---|---|
-| Pentagon (default) | 320 | 71 680 | line 287 |
-| Scorpion (`/sc-int`) | 320 or 312 | 71 680 / 69 888 | line 271 |
-| Spectrum (`/origin`) | 312 (`/lines312`) | 69 888 | line 295 |
+| Pentagon (default) | 320 | 71 680 | line 287 (T 192) |
+| Scorpion (`/sc-int`) | 320 or 312 | 71 680 / 69 888 | line 271 per `int.csv`; **line 287 T 192 with launcher v2.03 on BIOS 3.06** (SC256.ZX, MAME and unreal-ng, identical mode tables; correction 2026-10-02) |
+| Spectrum (`/origin`) | 312 (`/lines312`) | 69 888 | line 295 (T 192) |
 
-(roadmap §6.1, `int.csv`.) Line = 224 T. With `/turbo` every T is six CPU clocks plus the 21-MHz memory
+(roadmap §6.1, `int.csv`; the 2026-10-02 measurements: [tdd-zx-mode.md](tdd-zx-mode.md) §4.1.) Line = 224 T. With `/turbo` every T is six CPU clocks plus the 21-MHz memory
 wait rule (hardware-reference §1).
 
 ### 7.3 "Original waits" (ALL_MODE bit 2)
@@ -239,18 +246,21 @@ WAIT_ORIG = /MR or CT5 or ALL_MODE2 or ((!(V_RAM & A14 & A15) & !(A14 & !A15)) o
 /WAIT_ALL = DECODE./WAIT & WAIT_ROM & WAIT_ORIG
 ```
 
-In words: with bit 2 = 0, turbo off, a memory access to `#4000-#7FFF` (or to window 3 holding a
-Spectrum screen page) waits while `CT5` = 0. `CT[5..0]` counts the 42 MHz clock, so `CT5` is low for 32
-of every 64 clocks: 2.67 T low, 2.67 T high, a 5.33 T period, three periods every 16 T, the same on every
-line and in the border (a line is 2 688 clocks = 42 periods exactly).
+In words: with bit 2 = 0, turbo off, a memory access to `#4000-#7FFF`, or to window 3 while `#7FFD` bit 2 is set
+(`V_RAM = PN2`, `DCP.TDF:577`: Spectrum pages 4-7, not "a Spectrum screen page"), waits while `CT5` = 0.
+`CT[5..0]` is the video counter's low part (`VIDEO2.TDF:280-298`): `CT[2..0]` is a **mod-6** counter (0, 1, 2, 4, 5,
+6) and `CT[5..3]` steps once per six 42 MHz clocks, so `CT5` is low for 24 clocks and high for 24: a **48-clock =
+4 T period**, 56 periods per 224-T line, one per 16-pixel square, the same on every line and in the border.
+(Correction 2026-10-02: the first reading took `CT[5..0]` as a plain 6-bit counter - 64 clocks, 5.33 T.)
 
-Worked example: an `LD A,(#4000)` whose read cycle starts when `CT5` has just gone low waits about 2.7 T
-(the CPU samples /WAIT at T2, so it waits whole T until the sample sees `CT5` = 1: 3 T); one that starts
-with `CT5` high waits 0. Averaged, a screen access costs ~1.3 T extra. That is a **uniform slowdown**, not
-the ULA's frame-position pattern, so timing-exact multicolor effects do not match a real Spectrum either
-way. It is used by `ORIGIN.ZX`. MAME does not model it; unreal-ng neither. Whether the released bitstream
-was built from this `UPDATE` sheet is **unverified** (the BIOS-TT changelog mentions the bit as `FN_SINC`
-bit 3).
+Worked example: an `LD A,(#4000)` whose T2 (where the CPU samples /WAIT) falls on the first low T of `CT5` waits
+2 T, on the second low T 1 T, on the high half 0 (0.75 T over the four phases). `LD A,(nn)` repeated every 13 T settles
+on alternating 2-T and 0-T waits: 1 T per read, what the zxtime program measures in unreal-ng
+(testdata/machines/sprinter/zx-timing). That is a **uniform slowdown**, not the ULA's frame-position pattern, so
+timing-exact multicolor effects do not match a real Spectrum either way. It is used by `ORIGIN.ZX`. MAME does not
+model it; unreal-ng does since 2026-10-02 (tdd-zx-mode §3.3, the phase relative to the frame is a placeholder until a
+board is measured). Whether the released bitstream was built from this `UPDATE` sheet is **unverified** (the
+BIOS-TT changelog mentions the bit as `FN_SINC` bit 3): zxtime on a board answers it.
 
 ### 7.4 Sound
 
@@ -339,13 +349,13 @@ does not reset).
 | AY, beeper, Covox | done | S6 |
 | BIOS 3.06 / 3.07 ESC → ZX menu | done to the menu | `SprinterBiosVersions_Test` |
 | Peters Plus launcher + TR-DOS 7.01 on a floppy | done (ACC-6) | `SprinterBoot_Test.Dss162_SpectrumModeTrDosReadsATrd` |
-| Community launcher v2.03, RAM disk, SCL, `/ret-fn` | **untested** (pure software on BIOS 3.06 + DSS 1.71, both of which boot) | — |
-| Tape input on `#FE` bit 6 | shared path, **untested** on the Sprinter (mame-gap I5) | `PortDecoder::Default_Port_FE_In` via code `#40` |
-| Tape time base at 21 MHz | **unfaithful**: the tape counts CPU T-states (`tape.cpp:586`), so at 21 MHz the tape plays six times faster with the CPU and a turbo load succeeds where the board fails | `core/src/emulator/io/tape/tape.cpp` |
+| Community launcher v2.03, RAM disk, SCL, `/ret-fn` | **works** (2026-10-02: every launcher mode, TRD and SCL images, Ctrl+Alt+Del three times; tdd-zx-mode §4.1, §11) | `SprinterZxMode_Test`, `SprinterZxTimeModes_Test` |
+| Tape input on `#FE` bit 6 | **works**: 48 BASIC `LOAD ""` loads a TAP at 3.5 MHz (P128.ZX) | `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo` |
+| Tape time base at 21 MHz | **real time** since 2026-10-02 (`Tape::SetBaseClockTimeBase`, Sprinter only): at 21 MHz the ROM loader fails as on the board | `core/src/emulator/io/tape/tape.cpp` |
 | Fast tape loading trap | would fire in ZX mode: all three 48 ROMs on the disk (`BASIC_48`, `SP__48`, `SC__48`) carry the LD-BYTES signature at `#0556` | `tapefastload.cpp:110-129` |
-| "Original waits" (ALL_MODE bit 2) | **missing** | — |
+| "Original waits" (ALL_MODE bit 2) | **built** 2026-10-02 (4-T CT5 period, phase placeholder) | `SprinterOrigWaits` (`sprinterwaits.h`) |
 | Snapshot loading | **wrong**: the SNA/Z80 loaders write physical RAM pages 0-7 (`loader_sna.cpp:657`, `memory.RAMPageAddress`), which on the Sprinter are system pages, not the Spectrum pages; nothing refuses a snapshot on the Sprinter (goals FR-51 asked for a refusal) | `core/src/loaders/snapshot/` |
-| ZX-mode state for automation | only `registers.all_mode.zx_screen_shadow` (automation audit row 14) | `sprinterdevicestate.cpp` |
+| ZX-mode state for automation | `registers.all_mode.zx_screen_shadow` (automation audit row 14); the picture: `picture_mode` `spectrum` (machine report, `/state/sprinter/video`, the GUI status bar "Spectrum 256x192, screen 5", 2026-10-02) | `sprinterdevicestate.cpp`, `SprinterPicture` |
 
 ### 10.1 ZX-Evo / TS-Conf for comparison
 

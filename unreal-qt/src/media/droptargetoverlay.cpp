@@ -30,11 +30,6 @@ namespace
     constexpr int kHeader = 52;
     constexpr int kFooter = 34;
 
-    QString FileNameOf(const std::string& path)
-    {
-        return QFileInfo(QString::fromStdString(path)).fileName();
-    }
-
     /// A rounded badge ("AUTOSTART") at `x`, centred on `y`; returns its width
     qreal Badge(QPainter& p, qreal x, qreal y, const QString& text, const QColor& color, qreal scale)
     {
@@ -63,6 +58,18 @@ DropTargetOverlay::DropTargetOverlay(QWidget* owner)
     setAcceptDrops(true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+
+    _confirmHold.setSingleShot(true);
+    connect(&_confirmHold, &QTimer::timeout, this, [this]() { _fade.start(); });
+    _fade.setTargetObject(this);
+    _fade.setPropertyName("windowOpacity");
+    _fade.setDuration(kConfirmFadeMs);
+    _fade.setStartValue(1.0);
+    _fade.setEndValue(0.0);
+    connect(&_fade, &QPropertyAnimation::finished, this, [this]() {
+        if (_mode == Mode::Confirm)
+            dismiss();
+    });
 
     _autoHide.setSingleShot(true);
     connect(&_autoHide, &QTimer::timeout, this, [this]() {
@@ -104,9 +111,22 @@ void DropTargetOverlay::showRefusal(const QRect& globalArea, const QString& file
         _autoHide.start(autoHideMs);
 }
 
+void DropTargetOverlay::showConfirm(const QRect& globalArea, const QString& fileName, const MediaPlan& plan, int index)
+{
+    open(Mode::Confirm, globalArea, fileName, plan);
+    _hovered = index;  // the glow
+    update();
+    _confirmHold.start(kConfirmHoldMs);
+    // Whatever happens to the animation, the overlay is gone shortly after it should have been
+    _autoHide.start(kConfirmHoldMs + kConfirmFadeMs + 150);
+}
+
 void DropTargetOverlay::dismiss()
 {
     _autoHide.stop();
+    _confirmHold.stop();
+    _fade.stop();
+    setWindowOpacity(1.0);
     _mode = Mode::Hidden;
     _hovered = -1;
     hide();
@@ -115,6 +135,14 @@ void DropTargetOverlay::dismiss()
 void DropTargetOverlay::open(Mode mode, const QRect& globalArea, const QString& fileName, const MediaPlan& plan)
 {
     _autoHide.stop();
+    _confirmHold.stop();
+    _fade.stop();
+    setWindowOpacity(1.0);
+    // Confirm takes no input: a following drop or click reaches the window below
+    const bool transparent = mode == Mode::Confirm;
+    if (windowFlags().testFlag(Qt::WindowTransparentForInput) != transparent)
+        setWindowFlag(Qt::WindowTransparentForInput, transparent);
+    setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
     _mode = mode;
     _plan = plan;
     _fileName = fileName;
@@ -233,7 +261,9 @@ void DropTargetOverlay::paintEvent(QPaintEvent*)
     header.setPointSizeF(14);
     p.setFont(header);
     p.setPen(Qt::white);
-    const QString heading = _mode == Mode::Zones ? tr("Drop %1 on a slot") : tr("Insert %1 into");
+    const QString heading = _mode == Mode::Zones     ? tr("Drop %1 on a slot")
+                            : _mode == Mode::Confirm ? tr("%1 went to")
+                                                     : tr("Insert %1 into");
     const QRectF headerRect(kMargin, kMargin, width() - 2 * kMargin, kHeader - 12);
     p.drawText(headerRect, Qt::AlignCenter,
                QFontMetricsF(header).elidedText(heading.arg(_fileName), Qt::ElideMiddle, headerRect.width()));
@@ -245,6 +275,17 @@ void DropTargetOverlay::paintEvent(QPaintEvent*)
         const qreal scale = tile.width() / kTileWidth;
         const bool hot = static_cast<int>(i) == _hovered;
 
+        if (hot && _mode == Mode::Confirm)
+        {
+            // The glow: soft rings growing out of the tile
+            for (int ring = 4; ring >= 1; ring--)
+            {
+                p.setPen(QPen(QColor(kAccent.red(), kAccent.green(), kAccent.blue(), 36 + (4 - ring) * 12), 2.0));
+                p.setBrush(Qt::NoBrush);
+                const qreal grow = ring * 3.0 * scale;
+                p.drawRoundedRect(tile.adjusted(-grow, -grow, grow, grow), 12 * scale + grow, 12 * scale + grow);
+            }
+        }
         p.setPen(hot ? QPen(kAccent, 2.5) : QPen(QColor(255, 255, 255, 70), 1.2));
         p.setBrush(hot ? QColor(kAccent.red(), kAccent.green(), kAccent.blue(), 105) : QColor(255, 255, 255, 24));
         p.drawRoundedRect(tile, 12 * scale, 12 * scale);
@@ -271,8 +312,8 @@ void DropTargetOverlay::paintEvent(QPaintEvent*)
         p.setPen(kSubtle);
         p.drawText(QRectF(tile.left() + 7 * scale, textTop + 34 * scale, textWidth, 15 * scale), Qt::AlignCenter,
                    QString::fromStdString(target.slotId));
-        const QString holds = target.occupiedBy.empty() ? tr("empty") : tr("replaces %1").arg(FileNameOf(target.occupiedBy));
-        p.setPen(target.occupiedBy.empty() ? QColor(140, 220, 150) : QColor(235, 235, 235));
+        const QString holds = target.occupiedBy.empty() ? tr("empty") : tr("occupied");
+        p.setPen(target.occupiedBy.empty() ? QColor(140, 220, 150) : QColor(255, 165, 40));
         p.drawText(QRectF(tile.left() + 7 * scale, textTop + 49 * scale, textWidth, 15 * scale), Qt::AlignCenter,
                    QFontMetricsF(small).elidedText(holds, Qt::ElideMiddle, textWidth));
 
@@ -310,6 +351,9 @@ void DropTargetOverlay::paintEvent(QPaintEvent*)
             p.drawText(key, Qt::AlignCenter, QString::number(i + 1));
         }
     }
+
+    if (_mode == Mode::Confirm)
+        return;  // nothing to pick: it is done
 
     // How to pick
     QFont hint = font();

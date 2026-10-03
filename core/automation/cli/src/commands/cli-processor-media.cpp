@@ -226,6 +226,8 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  formats [--kind floppy]      - accepted formats per kind" << NEWLINE;
     out << "  targets <path>               - the slots that take a file (* = used without asking)" << NEWLINE;
     out << "  insert <slot|auto> <path>    - a file or a folder; auto picks the slot" << NEWLINE;
+    out << "                                 a folder of MP3 / FLAC / WAV files in a CD slot is an audio CD" << NEWLINE;
+    out << "                                 (--format audio-cd); 'info <slot>' lists its tracks" << NEWLINE;
     out << "  swap <slot> <path>           - eject + insert in one step" << NEWLINE;
     out << "  eject <slot>                 - take the medium out" << NEWLINE;
     out << "  save <slot> [path]           - floppies: write back (or to path)" << NEWLINE;

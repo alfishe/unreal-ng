@@ -153,7 +153,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "switch_model: the current machine's mode. A ZX-Poly machine applies it to all four modules";
     schema["properties"]["sprinter_bios"]["type"] = "string";
     schema["properties"]["sprinter_bios"]["description"] =
-        "'create' with model SPRINTER: the BIOS image - 3.04 (default), 3.06, 3.07 (DSS 1.71 needs it) or a file in "
+        "'create' with model SPRINTER: the BIOS image - 3.07 (default), 3.06, 3.04 (DSS 1.71 needs 3.06+) or a file in "
         "rom/sprinter (on a running Sprinter: invoke_api POST /api/v1/emulator/{id}/sprinter/bios {bios, reset})";
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
@@ -1023,6 +1023,16 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         out << " (loaded file predates saved input: in-frame replay may differ from the recording)";
     }
+    if (status["history_limit_frames"].asUInt64() != 0 || status["history_limit_bytes"].asUInt64() != 0)
+    {
+        out << ", history limit";
+        if (status["history_limit_frames"].asUInt64() != 0)
+            out << " " << status["history_limit_frames"].asUInt64() << " frames";
+        if (status["history_limit_bytes"].asUInt64() != 0)
+            out << " " << status["history_limit_bytes"].asUInt64() / (1024 * 1024) << " MB";
+        out << " (" << status["history_bytes"].asUInt64() / (1024 * 1024) << " MB held, "
+            << status["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released)";
+    }
     if (status["port_journal_active"].asBool())
     {
         out << ", port journals: " << status["port_read_count"].asUInt64() << " IN, "
@@ -1070,7 +1080,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "memory_region", "video_changes",
                                "audio_mixer"})
@@ -1096,6 +1106,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "(F-number, block, Hz, key-on, feedback, route, timers, register banks), 'audio_opl4_pcm' = its 24 wavetable slots "
         "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, "
         "'ide' = IDE board (scheme, latches, both units' task file, command in progress, CD sense; unavailable without a board), "
+        "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
+        "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
+        "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
@@ -1114,7 +1127,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "pattern; one port or another map: invoke_api GET /api/v1/emulator/{id}/state/sprinter/ports/lookup?port=21BC "
         "and /state/sprinter/ports?map=0&dos=1&rw=r), 'sprinter_text' = its screen text (80 x 32 from the mode table's "
         "text squares: BIOS SETUP, DSS; video_text and screen_ocr fall back to it), 'sprinter_video' = the mode table "
-        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, B border, . blank, * INT) "
+        "per square as a map (one letter a square: G graphics 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT) "
         "with HOLD / frame length / RGMOD / PORT_Y and the palettes in use (every square decoded: invoke_api GET "
         "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
         "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "
@@ -1196,14 +1209,14 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1483,6 +1496,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Ide via the WebAPI; 404 = no IDE board
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/ide"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "cdaudio")
+                        {
+                            // Core CdAudioControl::State via the WebAPI (available false without a CD drive)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/cdaudio"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1861,6 +1885,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << " baud, rx " << ioEsp["rx_fifo"].asInt() << " / tx " << ioEsp["tx_fifo"].asInt() << " in FIFO, in "
                                             << ioEsp["bytes_in"].asUInt64() << " / out " << ioEsp["bytes_out"].asUInt64() << " bytes, overruns "
                                             << ioEsp["overruns"].asUInt64();
+                                    const Json::Value& zifi = value["zifi"];
+                                    if (zifi["fitted"].asBool())
+                                        out << "\n[zifi] " << zifi["avr_firmware"].asString() << " API " << zifi["api"].asInt() << ", data register "
+                                            << zifi["data_register"].asString() << ", ISR " << zifi["isr"].asString() << " IMR " << zifi["imr"].asString()
+                                            << ", rings zifi " << zifi["zifi_rx"].asInt() << " in / " << zifi["zifi_tx"].asInt() << " out, rs232 "
+                                            << zifi["rs232_rx"].asInt() << " / " << zifi["rs232_tx"].asInt() << "; line "
+                                            << (zifi.isMember("peer") ? zifi["peer"].asString() : std::string("none"))
+                                            << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
+                                            << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
+                                            << zifi["dropped"].asUInt64();
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
@@ -1868,7 +1902,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "\n[network] settings: card " << set["card"].asString() << ", com_port " << set["com_port"].asString()
                                             << ", zx_wifi " << set["zx_wifi"].asString() << ", esp_chip " << set["esp_chip"].asString()
                                             << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
-                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string());
+                                            << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string())
+                                            << (value["machine"]["zifi"].asBool() ? ", zifi " + set["zifi"].asString() : std::string());
                                 }
                             }
                             else if (aspect == "rtc")
@@ -1921,6 +1956,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& waits = value["clock"]["waits"];
                                     if (waits["active"].asBool())
                                         out << "\n  21 MHz waits on main RAM windows";
+                                    if (value["clock"]["original_waits"]["active"].asBool())
+                                        out << "\n  original waits (ALL_MODE bit 2 = 0): screen memory waits on the 4-T CT5 period";
+                                    if (value["tape"]["time_base"].asString() == "base_clock")
+                                        out << "\n  tape in real time (load in a 3.5 MHz mode)";
                                 }
                             }
                             else if (aspect == "audio_mixer")
@@ -2069,6 +2108,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << ", page " << value["video"]["v_page"].asInt() << ", " << value["cpu_clock"].asString()
                                         << ", DMA " << (value["dma"]["busy"].asBool() ? value["dma"]["task"].asString() : std::string("idle"))
                                         << ", sprites " << value["video"]["tsu"]["active_sprites"].asInt();
+                            }
+                            else if (aspect == "cdaudio")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[cdaudio] " << (value.isMember("reason") ? value["reason"] : value["description"]).asString();
+                                else
+                                {
+                                    for (const Json::Value& drive : value["drives"])
+                                    {
+                                        const Json::Value& audio = drive["audio"];
+                                        out << "\n[cdaudio] " << drive["slot"].asString() << ": ";
+                                        if (drive["disc"].isObject())
+                                        {
+                                            out << drive["disc"]["format"].asString() << " tracks " << drive["disc"]["first_track"].asInt() << "-"
+                                                << drive["disc"]["last_track"].asInt();
+                                            if (drive["disc"]["sessions"].asInt() > 1)
+                                                out << " in " << drive["disc"]["sessions"].asInt() << " sessions";
+                                            out << ", ";
+                                        }
+                                        else
+                                            out << "no disc, ";
+                                        out << audio["status"].asString() << " at " << audio["msf"].asString();
+                                        if (audio.isMember("track"))
+                                            out << " (track " << audio["track"].asInt() << " index " << audio["index"].asInt() << ", "
+                                                << audio["relative_msf"].asString() << ")";
+                                        out << ", volume L" << drive["drive_volume"]["left"].asInt() << " R" << drive["drive_volume"]["right"].asInt();
+                                    }
+                                }
                             }
                             else if (aspect == "ide")
                             {
@@ -2959,7 +3026,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary"})
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
+                               "history_limit"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -2983,6 +3051,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
         "fit before 'load'). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
+        "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
+        "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
+        "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
+        "takes the same two fields. "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
         "'coverage_summary' (bucketed activity heatmap).";
     schema["properties"]["target"]["type"] = "string";
@@ -2995,6 +3067,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["mode"]["description"] =
         "start: 'development' (default; keeps the write journal, so find_last is fast) or 'gaming' (no write journal, "
         "less memory; find_last falls back to replay)";
+    schema["properties"]["history_frames"]["type"] = "integer";
+    schema["properties"]["history_frames"]["minimum"] = 0;
+    schema["properties"]["history_frames"]["description"] =
+        "start / history_limit: keep at most this many frames of history (one checkpoint each); 0 = no limit";
+    schema["properties"]["history_bytes"]["type"] = "integer";
+    schema["properties"]["history_bytes"]["minimum"] = 0;
+    schema["properties"]["history_bytes"]["description"] =
+        "start / history_limit: keep the history's checkpoint data under this many bytes; 0 = no limit";
     schema["properties"]["enable_write_journal"]["type"] = "boolean";
     schema["properties"]["enable_write_journal"]["description"] = "start: explicit write-journal switch, overrides mode";
     schema["properties"]["reason"]["type"] = "string";
@@ -3152,6 +3232,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     (*body)["enable_write_journal"] = args["enable_write_journal"].asBool();
                 }
+                if (args.isMember("history_frames"))
+                    (*body)["history_limit_frames"] = args["history_frames"];
+                if (args.isMember("history_bytes"))
+                    (*body)["history_limit_bytes"] = args["history_bytes"];
+            }
+            else if (action == "history_limit")
+            {
+                if (args.isMember("history_frames"))
+                    (*body)["frames"] = args["history_frames"];
+                if (args.isMember("history_bytes"))
+                    (*body)["bytes"] = args["history_bytes"];
             }
             else if (action == "invalidate")
             {
@@ -3288,6 +3379,26 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
                                 "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
+                    }, done);
+                }
+                else if (action == "history_limit")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/history-limit"), body.get(), caller, [id](const Json::Value& b) {
+                        std::ostringstream text;
+                        text << "TTD history limit on " << id << ": ";
+                        const uint64_t frames = b["history_limit_frames"].asUInt64();
+                        const uint64_t bytes = b["history_limit_bytes"].asUInt64();
+                        if (frames == 0 && bytes == 0)
+                            text << "none";
+                        if (frames != 0)
+                            text << frames << " frames ";
+                        if (bytes != 0)
+                            text << bytes << " bytes ";
+                        text << "- history frames " << b["session_start_frame"].asUInt64() << ".."
+                             << b["current_end_frame"].asUInt64() << ", " << b["history_bytes"].asUInt64() << " bytes held, "
+                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released (state "
+                             << b["state"].asString() << ")";
+                        return text.str();
                     }, done);
                 }
                 else if (action == "stop")

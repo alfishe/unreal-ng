@@ -17,6 +17,7 @@
 #include "emulator/io/storage/iblockdevice.h"
 #include "emulator/media/mediatypes.h"
 
+class CdImage;
 class SessionWriteMap;
 
 struct MediaSource
@@ -52,6 +53,12 @@ public:
 
     /// The block stack (Block / Optical kinds), nullptr otherwise
     IBlockDevice* Block() { return _block.get(); }
+    /// The disc (Optical kind): its tracks, raw frames and audio; it is also the
+    /// base of the block stack. nullptr otherwise
+    CdImage* Cd() { return _cd; }
+    const CdImage* Cd() const { return _cd; }
+    /// Set by the format registry when it builds an Optical medium (non-owning: the stack owns it)
+    void SetCd(CdImage* cd) { _cd = cd; }
     /// The session change layer (block media with Session access), nullptr otherwise
     SessionWriteMap* Session() { return _session; }
     /// The disk image (Floppy kind), nullptr otherwise
@@ -107,6 +114,7 @@ private:
     std::unique_ptr<DiskImage> _disk;
     std::unique_ptr<TapeImage> _tape;
     SessionWriteMap* _session = nullptr;
+    CdImage* _cd = nullptr;
     std::string _sourceKey;
     std::vector<std::string> _report;
     OpenOptions _options;

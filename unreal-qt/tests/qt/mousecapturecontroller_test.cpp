@@ -176,6 +176,41 @@ TEST_F(MouseCaptureController_Test, GateAndDevice)
     EXPECT_FALSE(_controller->isCaptured()) << "focus loss releases";
 }
 
+/// TR-DOS shadows the mouse while captured: released after 3 s of continuous unreachability,
+/// not by a brief access, and never re-captured by itself
+TEST_F(MouseCaptureController_Test, ReleasesWhenTheMouseStaysUnreachable)
+{
+    qint64 now = 10000;
+    _controller->setClock([&now] { return now; });
+    _controller->capture();
+    ASSERT_TRUE(_controller->isCaptured());
+
+    _fitted = false;  // TR-DOS goes active
+    _controller->checkReachable();
+    now += 2900;
+    _controller->checkReachable();
+    EXPECT_TRUE(_controller->isCaptured()) << "not yet 3 s";
+
+    _fitted = true;  // a brief access: the mouse is back
+    now += 100;
+    _controller->checkReachable();
+    _fitted = false;
+    now += 2900;
+    _controller->checkReachable();
+    EXPECT_TRUE(_controller->isCaptured()) << "the count restarted when it came back";
+
+    now += 3000;
+    _controller->checkReachable();
+    EXPECT_FALSE(_controller->isCaptured()) << "unreachable for 3 s";
+
+    _fitted = true;
+    now += 10000;
+    _controller->checkReachable();
+    EXPECT_FALSE(_controller->isCaptured()) << "no re-capture without a click";
+    _controller->capture();
+    EXPECT_TRUE(_controller->isCaptured());
+}
+
 /// Speed matching: host travel over a picture drawn at 2x moves the guest half as many pixels,
 /// so the guest cursor keeps up with where the host pointer would be; at 1x one for one.
 /// Off: one host pixel = one count whatever the zoom. The same arithmetic serves the
@@ -243,12 +278,4 @@ TEST_F(MouseCaptureController_Test, WarpBackendMeasuresTravelFromTheCenter)
     EXPECT_TRUE(_controller->handleMouseMove(&move));
     EXPECT_EQ(sumX, 10) << "20 host pixels at 2x";
     EXPECT_EQ(sumY, 5) << "10 up on screen = 5 up for the mouse";
-}
-
-int main(int argc, char** argv)
-{
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-    QApplication app(argc, argv);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

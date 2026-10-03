@@ -18,9 +18,11 @@ class EmulatorContext;
 /// A name is a shipped file ("sp2k-3.06-hf2.rom"), its version alias ("3.04", "3.06", "3.07"),
 /// "rom/sprinter/<file>", or the path of any other 256 KB image.
 ///
-/// Worked example: select {bios: "3.07", fast_start: 0, reset: true} on a running SPRINTER sets
-/// [ROM] SPRINTER = rom/sprinter/sp2k-3.07-beta1.rom and FastStart = 0 for this instance, reloads
-/// the flash and resets: the PLD loader runs, then BIOS 3.07 (DSS 1.71 needs it).
+/// The shipped config's default is 3.07 BETA 1 (owner decision 2026-10-02); 3.04 and 3.06 stay selectable.
+///
+/// Worked example: select {bios: "3.04", fast_start: 0, reset: true} on a running SPRINTER sets
+/// [ROM] SPRINTER = rom/sprinter/sp2k-3.04.rom and FastStart = 0 for this instance, reloads
+/// the flash and resets: the PLD loader runs, then BIOS 3.04 (DSS 1.62 boots, DSS 1.71 needs 3.06+).
 namespace SprinterBios
 {
 struct Image

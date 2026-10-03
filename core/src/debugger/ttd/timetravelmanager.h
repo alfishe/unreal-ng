@@ -192,6 +192,10 @@ struct TTDSessionInfo
     size_t   checkpointCount   = 0;
     size_t   pageStoreBytes    = 0;   ///< Capacity (allocated) — for budget checks
     size_t   pageStoreUsedBytes = 0;  ///< Live slot bytes
+    uint64_t historyLimitFrames = 0;  ///< Oldest frames released beyond this many checkpoints (0 = no limit)
+    uint64_t historyLimitBytes  = 0;  ///< ... or beyond this many bytes of checkpoint data (0 = no limit)
+    uint64_t evictedCheckpoints = 0;  ///< Checkpoints the history limit released since the session started
+    uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelManager::HistoryBytes)
     uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
 
     /// @brief Total heap footprint of the recorded session, in bytes.
@@ -332,7 +336,8 @@ enum class TTDGuardedAction : uint8_t
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
     ChangeWriteJournal,  ///< a recording keeps the journal mode it started with
-    SwitchGsCard         ///< a General Sound personality switch changes the device set (FR-4)
+    SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
+    CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -508,6 +513,18 @@ public:
     void EndDebuggerLiveHistory();
 
     TTDSessionInfo GetSessionInfo() const;
+
+    /// @brief History limit: while recording, the oldest checkpoints are
+    /// released once the timeline holds more than `maxFrames` checkpoints or
+    /// more than `maxBytes` of checkpoint data (page store + device blobs).
+    /// 0 = no limit for that measure (the default for both). What stays is a
+    /// complete, shorter session: every checkpoint decodes on its own (a delta
+    /// page holds a reference on its base page), the journals are cut to the
+    /// new start, and a session saved after an eviction starts there.
+    void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
+    /// Bytes of checkpoint data held now: the page store's slots and every
+    /// checkpoint's device blobs (what the byte limit measures)
+    uint64_t HistoryBytes() const;
 
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
@@ -1758,6 +1775,12 @@ private:
     /// methods agree on the meaning of "strictly after".
     void TruncateTimelineAfter(const TTDTimePoint& from);
 
+    /// @brief Release the `count` oldest checkpoints (at least two stay) and
+    /// cut the input, marker, bookmark and port journals to the new start.
+    void EvictOldest(size_t count);
+    /// @brief Apply the history limit after a checkpoint was captured.
+    void EnforceHistoryLimit();
+
     // -----------------------------------------------------------------------
     // Dependencies (non-owning)
     // -----------------------------------------------------------------------
@@ -1888,6 +1911,11 @@ private:
     /// I-frame restore by walking deltas from this anchor. Updated on
     /// every OnFrameBoundary when an I-frame is emitted.
     uint64_t _lastKeyFrameIdx = 0;
+    uint64_t _historyLimitFrames = 0;   ///< SetHistoryLimit (0 = no limit)
+    uint64_t _historyLimitBytes = 0;
+    uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
+    uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _timeline (kept with it)
+    static uint64_t BlobBytes(const TTDCheckpoint& cp);
 
     /// Force the next OnFrameBoundary capture to be an I-frame regardless
     /// of the periodic interval. Set when the session is replaced

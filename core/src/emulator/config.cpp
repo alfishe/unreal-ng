@@ -534,13 +534,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 				else
 					MLOGWARNING("Config: [HDD] CHS%d=%s: expected C/H/S (heads up to 16)", unit, chs);
 			}
-			// A CD drive: CDn=1, or the unit's configured image is an ISO
+			// A CD drive: CDn=1, or the unit's configured image is a CD image (an ISO, a CUE sheet)
 			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
 			const char* image = inimanager.GetValue("MEDIA", kUnitSlots[unit], nullptr);
 			if (!image || !*image)
 				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
-			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
-			ide.cd = ((cd && std::atoi(cd) != 0) || iso) ? 1 : 0;
+			const std::string extension = image ? StringHelper::ToLower(FileHelper::GetFileExtension(image)) : std::string();
+			const bool cdImage = extension == "iso" || extension == "cue";
+			ide.cd = ((cd && std::atoi(cd) != 0) || cdImage) ? 1 : 0;
 		}
 	}
 
@@ -905,6 +906,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// a missing file only leaves the ROM fonts blank
 	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
 	                sizeof config.vdac2_rom_path);
+	// [VDAC2] LineBudgetMargin: the FT812 line metrics' soft budget, percent below
+	// the line period (line-budget-model.md §2); 0..50, default 10
+	config.vdac2_line_budget_margin =
+		static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac2, "LineBudgetMargin", 10), 0, 50));
 	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
 	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
 	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,
@@ -960,6 +965,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 		{
 			MLOGWARNING("Config: [NETWORK] ZxWifi=%s: %s - the card's ESP runs AT", config.network.zxWifi, error.c_str());
 			config.network.zxWifi[0] = '\0';
+		}
+	}
+	config.network.zifi[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ZiFi", nullptr), config.network.zifi, sizeof config.network.zifi);
+	if (config.network.zifi[0])
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.zifi, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ZiFi=%s: %s - no ZiFi board", config.network.zifi, error.c_str());
+			config.network.zifi[0] = '\0';
 		}
 	}
 	config.network.atm2IoEsp[0] = '\0';

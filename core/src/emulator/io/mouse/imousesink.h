@@ -20,6 +20,16 @@ public:
     /// mouse only when some sink of the machine is fitted
     virtual bool IsMouseFitted() const = 0;
 
+    /// In use: a program is using this device right now. A fitted device may be unused
+    /// (the 128K ROM never reads the mouse) or shadowed (the Kempston mouse ports belong
+    /// to Beta Disk while TR-DOS is active). The front end captures the host mouse only
+    /// while some sink is in use; asked at the click and while captured. Devices that
+    /// cannot tell are in use whenever fitted
+    virtual bool IsMouseInUse() const { return IsMouseFitted(); }
+    /// A device that can tell counts as polled when a program read it within this many frames
+    /// (EmulatorState::frame_counter), about a second
+    static constexpr uint64_t kPolledWithinFrames = 50;
+
     /// Motion in emulated pixels: dx > 0 = right, dy > 0 = up
     virtual void OnMouseMotion(int dx, int dy) = 0;
     /// The buttons held now, active low: D0 left, D1 right, D2 middle (0 = pressed)

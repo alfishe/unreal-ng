@@ -88,8 +88,8 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: applicatio
 - **A CHD is never written in place**: guest writes stay in the session (an IDE unit's default
   `writethrough` becomes `session`, said in `report`); `save` writes the CHD again (its codecs, or
   `compression`: `none`, `default`, `lzma,zlib,huff,flac,zstd`), `export <x>.chd` writes a new one,
-  `export <x>.img` a raw image. A child CHD needs its parent `.chd` in the same folder. CD-ROM CHDs
-  are refused. Format: [chd.md](../../docs/file-formats/disk-images/chd.md).
+  `export <x>.img` a raw image. A child CHD needs its parent `.chd` in the same folder. A CD-ROM CHD
+  goes into a CD drive ([cd-audio.md](cd-audio.md)). Format: [chd.md](../../docs/file-formats/disk-images/chd.md).
 - **TTD recording fixes the media set**: `recording` (409) unless
   `"end_recording": true`.
 - **Drive letters follow the machine**: `C` on a +3 is `unknown-slot`.

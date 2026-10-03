@@ -1,4 +1,4 @@
-    // TS-Conf VDAC2 card (FT812): bus capture to an .evr replay stream
+    // TS-Conf VDAC2 card (FT812): bus capture to an .evr replay stream, line budget metrics
     // Design: docs/inprogress/2026-10-01-tsconf-vdac2/ (vdac2-test-corpus.md §4)
     {
         auto addIdParam = [&paths](const std::string& path, const char* verb) {
@@ -46,4 +46,53 @@
         addIdParam(statusPath, "get");
         paths[statusPath]["get"]["responses"]["200"]["description"] = statusText;
         paths[statusPath]["get"]["responses"]["409"]["description"] = "No VDAC2 card";
+
+        // FT812 line budget metrics (line-budget-metrics.md, line-budget-model.md)
+        const char* metricsText =
+            "The line budget of the last finished FT812 frame: valid (every visible line drawn and measured), frame "
+            "(REG_FRAMES), lines, hard_budget (clocks per line: HCYCLE x PCLK), soft_budget (hard minus margin), "
+            "worst_line, worst_clocks, total_clocks, lines_over_soft, lines_over_hard (broken on a real card), "
+            "margin, measure_always; with lines=1 line_clocks (cost per line, saturating at 65535); with "
+            "in_flight=1 in_flight {known, reason, lines_passed, line_clocks (-1 = passed without drawing)}";
+        const std::string metricsPath = "/api/v1/emulator/{id}/vdac2/metrics";
+        Json::Value& get = paths[metricsPath]["get"];
+        get["summary"] = "VDAC2 FT812 line budget metrics";
+        get["tags"].append("VDAC2");
+        get["description"] =
+            "What each FT812 screen line cost against the clocks it has (display list commands, one clock each on "
+            "every line, plus pixel filling by format and filter). The block is replaced at each FT812 frame end and "
+            "is part of the chip state, so after a TTD seek it describes that moment. A frame that was not drawn "
+            "(the monitor showed the Evo, or turbo skipped it) is not valid unless measure_always is on. The frame "
+            "in flight (in_flight=1) is read only on a paused machine: reading it brings the chip up to the "
+            "machine's position.";
+        addIdParam(metricsPath, "get");
+        get["parameters"][1]["name"] = "lines";
+        get["parameters"][1]["in"] = "query";
+        get["parameters"][1]["schema"]["type"] = "boolean";
+        get["parameters"][1]["description"] = "Include the cost of every line";
+        get["parameters"][2]["name"] = "in_flight";
+        get["parameters"][2]["in"] = "query";
+        get["parameters"][2]["schema"]["type"] = "boolean";
+        get["parameters"][2]["description"] = "Include the frame in flight (paused machine)";
+        get["responses"]["200"]["description"] = metricsText;
+        get["responses"]["409"]["description"] = "No VDAC2 card";
+
+        Json::Value& put = paths[metricsPath]["put"];
+        put["summary"] = "Set the VDAC2 line budget margin / measure-always";
+        put["tags"].append("VDAC2");
+        put["description"] =
+            "Body: {\"margin\": 0..50, \"measure_always\": bool}, each optional. margin: the soft budget, percent "
+            "below the line period (default from [VDAC2] LineBudgetMargin, 10); used from the next finished frame. "
+            "measure_always: draw and measure every frame, also while not shown (costs the drawing time; nothing "
+            "the guest sees changes). Answers with the metrics (without lines).";
+        addIdParam(metricsPath, "put");
+        Json::Value& body = put["requestBody"]["content"]["application/json"]["schema"];
+        body["type"] = "object";
+        body["properties"]["margin"]["type"] = "integer";
+        body["properties"]["margin"]["minimum"] = 0;
+        body["properties"]["margin"]["maximum"] = 50;
+        body["properties"]["measure_always"]["type"] = "boolean";
+        put["responses"]["200"]["description"] = metricsText;
+        put["responses"]["400"]["description"] = "No JSON body, margin out of 0..50, or measure_always not a boolean";
+        put["responses"]["409"]["description"] = "No VDAC2 card";
     }

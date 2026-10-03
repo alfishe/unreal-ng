@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Design, not built. Open questions in §10 wait for the owner |
+| **Status** | Z1-Z3 built on branch `sprinter-zx-timing` (2026-10-02, as built: §11); Z4-Z6 open. Owner decisions in §10 |
 | **Research** | [research-zx-mode.md](research-zx-mode.md) (how the real machine does it, MAME runs) |
 | **Plan** | phase **S8** (Z1-Z6) in [roadmap-and-plan.md](roadmap-and-plan.md) §1, [TODO.md](TODO.md) |
 | **Parallel work** | `sprinter-automation` (state/automation, audit P1/P2), `sprinter-mouse`, the ISA design [2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md) (S6b). This design does not repeat them; it names the points where it plugs into them |
@@ -91,28 +91,39 @@ builds, never written (Q3).
 
 ### 3.3 "Original waits"
 
-Per the PLD (research §7.3): while ALL_MODE bit 2 = 0 and the CPU is not in turbo, a memory read or write
-to `#4000-#7FFF`, or to window 3 when its cell holds a Spectrum screen page, is held while `CT5` = 0. `CT`
-is the 42 MHz counter, period 64 clocks = 5.33 T, phase locked to the line (42 periods per 224-T line).
+Per the PLD (research §7.3, corrected 2026-10-02): while ALL_MODE bit 2 = 0 and the CPU is not in turbo, a memory
+read or write to `#4000-#7FFF`, or to window 3 while `#7FFD` bit 2 is set (`V_RAM = PN2`, `DCP.TDF:577`: Spectrum
+pages 4-7), is held while `CT5` = 0. `CT[5..0]` is the video counter's low part: `CT[2..0]` counts 0, 1, 2, 4, 5, 6
+(six 42 MHz clocks, `VIDEO2.TDF:285-293`) and `CT[5..3]` steps once per six clocks, so `CT5` is low for 24 clocks
+and high for 24: a **48-clock = 4-T period**, 56 periods per 224-T line, one per 16-pixel square (the first reading,
+64 clocks = 5.33 T, missed the mod-6 counter).
 
 ```text
-phase   = (frameT * 12) mod 64             // 42 MHz clocks since the period start; frameT in 3.5 MHz T
-wait    = (phase < 32) ? ceil((32 - phase) / 12) : 0   // whole T until the T2 sample sees CT5 = 1
+sample  = (accessStartT + 1 + kPhase) mod 4      // T2, where the CPU samples /WAIT; frameT in 3.5 MHz T
+wait    = sample == 0 ? 2 : sample == 1 ? 1 : 0  // the first / second low T of CT5, or the high half
 ```
 
-Where the CT phase sits relative to the frame start must be measured once (Q1); until then the model
-takes phase 0 at the frame start, in one constant. Gate: one bool `_origWaits` updated on ALL_MODE and
-turbo writes; the access path tests it only on the already-taken "not fast RAM" branch, so the default
-(off) costs one predictable branch. A/B benchmark per performance-guidelines (`BM_Sprinter*` frame loop).
+Where the CT period sits relative to the frame start must be measured once (Q1); until then `kPhase` = 0, in one
+constant (`SprinterOrigWaits::kPhase`). The measurement program is `testdata/machines/sprinter/zx-timing/`
+(zxtime): it prints the average extra T of screen reads, which tells whether a board has the waits at all and
+whether the 4-T model holds (LD A,(nn) every 13 T settles on alternating 2 T / 0 T waits: 1.000 T per read).
+
+Gate: the rule is a `MemoryWaitOverlay` (`SprinterOrigWaits`, `sprinterwaits.h`) that the decoder installs only
+while it applies (`PortDecoder_Sprinter::ApplyOrigWaits`, called on ALL_MODE writes, turbo changes, resets and
+TTD loads; window 3 follows `#7FFD` in `OnBanksChanged`). Every other mode and machine pays nothing: the overlay
+is not in the bus chain. A/B: `BM_SprinterFrame_ScreenReads/0,1` and the existing `BM_Sprinter*` frame loops (§11).
 
 ### 3.4 Tape time base
 
-`Tape::handlePortIn` uses `t_states + cpu.t` (CPU clocks). On a machine with a hardware clock ratio, the
-opt-in `SetBaseClockTimeBase(true)` divides by `hw_turbo_ratio` the way the WD1793 does it
-(`portdecoder_sprinter.cpp` S3a). Worked example: a 2 168-T pilot pulse lasts 2 168 base T = 13 008 CPU
-clocks at 21 MHz; the ROM's edge loop at 21 MHz times it as ~6 times too long and rejects it — as on the
-board. The fast-load trap is unaffected (it does not time pulses) and stays the convenience it is on
-every machine; its on/off switch is the existing one.
+`Tape::handlePortIn` used `t_states + cpu.t`: base T-states for the frames before, CPU clocks inside the current
+frame. Under a hardware clock ratio the in-frame part ran six times faster and the sum stepped back at every
+frame boundary. As built: `Tape::ClockCount()` is the one clock of the tape (port reads, the frame start, the
+per-step EAR edge), and the opt-in `Tape::SetBaseClockTimeBase(true)` divides the in-frame part by
+`hw_turbo_ratio_applied`, as the WD1793 does. The Sprinter's decoder turns it on in its constructor and off in its
+destructor (the next model decides). Worked example: a 2 168-T pilot pulse lasts 2 168 base T = 13 008 CPU clocks
+at 21 MHz; the ROM's edge loop at 21 MHz times it as ~6 times too long and rejects it - as on the board. The
+fast-load trap is unaffected (it does not time pulses) and stays the convenience it is on every machine; its
+on/off switch is the existing `fasttape` feature. Other turbo machines keep the CPU-clock time base (Q2).
 
 ### 3.5 Snapshots into the ZX mode
 
@@ -137,12 +148,40 @@ at the same frame count after the load (the frame is 71 680 T in both).
 | Item | Value | Changes |
 |---|---|---|
 | Frame | 71 680 T (320 lines) or 69 888 T (312) | none (S1) |
-| INT | Pentagon / Scorpion / Spectrum position by `FN_SYNC` | none (S1) |
+| INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) | none (S1) |
 | Contention | none | — |
-| "Original waits" | §3.3 | new, off by default (follows ALL_MODE) |
+| "Original waits" | §3.3: 4-T CT5 period, phase placeholder | new: on with ALL_MODE bit 2 = 0 at 3.5 MHz |
 | 21 MHz | memory and port waits as built | none |
-| Tape | base-clock time base (§3.4) | new, opt-in |
+| Turbo after a CPU reset | the PLD presets its turbo bit (`DCP.TDF:663`, `TB_SW.prn = /RESET`): Ctrl+Alt+Del or a page-`#A0` write brings the CPU back at 21 MHz (front-panel switch permitting) | new (§11) |
+| Tape | base-clock time base (§3.4) | new, Sprinter only |
 | WD1793 | base-clock time base (S3a) | none |
+
+### 4.1 Measured: unreal-ng against MAME (zxtime, 2026-10-02)
+
+Each launcher mode of the owner's MAME-pack disk (`C:\ZX`, BIOS 3.06) runs `zxtime` (testdata/machines/sprinter/
+zx-timing) as a user does: `spectrum <mode>.zx zxtime.trd` (SP / P128 / P512: the RAM disk; SC256 / ORIGIN: the
+floppy, their TR-DOS reads only that), TR-DOS, `RUN`. MAME 0.289 `zxsp` with `-bios v3.06`
+(`tools/machines/sprinter/mame-capture/mame-zxsteps.sh`); unreal-ng: `SprinterZxTimeModes_Test.LauncherModes`.
+The INT position comes from the mode table: both emulators' video RAM mode tables were dumped at the menu and are
+byte-identical in every mode; the positions follow from the same rule (MAME `update_int`, ours `SprinterIntSource`).
+
+| Mode (options) | CPU | Frame (T) / rate | INT: line, T | INTs in 50 frames / repeats | 21 MHz loop passes per frame | Screen reads, extra T x 1000 (`#4000` / `#C000` p5 / p1) |
+|---|---|---|---|---|---|---|
+| SP.ZX (`/sprinter /turbo /7FFD /1FFD`) | 21 MHz both | 320 lines (PLD), not timed in turbo | 287, 192 both | 50 / 0 both | 7 164 both | not timed (turbo) |
+| P128.ZX (`/7FFD`) | 3.5 both | 71 680, 48.83/s both | 287, 192 both | 50 / 0 both | — | 0 / 0 / 0 both |
+| P512.ZX (`/turbo /7FFD /mem512`) | 21 both | 320 lines, not timed | 287, 192 both | 50 / 0 both | 7 164 both | not timed |
+| SC256.ZX (`/turbo /7FFD /1FFD /sc-int /lines312`) | 21 both | 312 lines, not timed | **287, 192 both** (not 271: §11) | 50 / 0 both | 6 984 both | not timed |
+| ORIGIN.ZX (`/7FFD /origin /lines312`) | 3.5 both | 69 888, 50.08/s both | 295, 192 both | 50 / 0 both | — | **ours 996 / 996 / 0, MAME 0 / 0 / 0** (MAME has no original waits; PLD: §3.3) |
+| BIOS 3.06 ESC (own Spectrum mode) | 21 (ours) | — | 287, 192 | 50 / 0 | 7 164 | not timed |
+
+- The picture: the Spectrum screen of the 128 menu is pixel-identical in both (736 x 288; the same raster origin
+  and border).
+- The INT pulse: 32 base T in both, ended by the acknowledge in both (MAME `irqack_cb` clears the line; zxtime's
+  "REPEAT 0" shows it from the program's side, at 3.5 and at 21 MHz).
+- The handler's first fetch lands at line 287 T 210-215 in MAME's debugger (`beamx` / 4; MAME's beam position
+  inside a time slice is approximate) and at T 217 in ours (the fetch callback runs 3 T into the cycle).
+- What the table does not show: the tape (MAME's cassette never reaches `#FE` bit 6, mame-gap I5; ours: §3.4,
+  `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo`).
 
 ## 5. How images get in
 
@@ -237,13 +276,30 @@ machines (TTD sealed replay rule); typed keys are recorded as keys.
 Boot-bound tests use the fast start and `EnableTurboMode()` except where the pixels are asserted, and
 justify their length in a comment (tests README).
 
+As built (Z1-Z3), the tests behind the ids (`core/tests/emulator/machines/sprinter/`; the `UNREAL_SPRINTER_HDD` ones
+skip without the owner's disk):
+
+| Id | Test |
+|---|---|
+| T-ZX-2 (timing part) | `SprinterZxTimeEsc_Test.Pentagon_FrameIntAndNoWaits`: ESC at BIOS 3.06's prompt, zxtime from a TR-DOS floppy (no hard disk) |
+| T-ZX-3 | `SprinterZxMode_Test.RamDisk_TrdAndSclBootToTheirPrograms` (VIBRATE!.SCL, KOL0BOK2.TRD: the "boot" in memory is the image's) |
+| T-ZX-5 | `SprinterZxMode_Test.RetFn_CtrlAltDelReturnsToDssEveryTime` (SP, P128, SP; keys held 20 frames) |
+| owner's CD_PLAY report | `SprinterZxModeFn_Test.FlexNavigator_EnterOnCdPlayTrd_ShowsItsCatalog` |
+| Z1 table | `SprinterZxTimeModes_Test.LauncherModes` (§4.1) |
+| T-ZX-7 | `SprinterZxTimeModes_Test.Tape_LoadsAt35MhzNotInTurbo` (zxtime.tap through 48 BASIC's `LOAD ""`, fast load off) |
+| T-ZX-8 | `Tape_Test.BaseClockTimeBase_ScalesTheInFrameClock`, `SprinterZxTimeEsc_Test.Tape_BaseClockTimeBaseOnTheSprinter` |
+| T-ZX-9 | `SprinterWaits_Test.OrigWaits_*` (phase table, windows, the gate, LD A,(nn) timing) |
+| T-ZX-10 | `BM_SprinterFrame_ScreenReads/0,1` and `BM_Sprinter*` before / after (§11) |
+| state | `SprinterDeviceState_Test.OriginalWaitsAndTapeAreReported` |
+| program files | `SprinterZxTimeFiles_Test.CommittedFilesMatchTheSource` |
+
 ## 9. Phased plan
 
 | Phase | Content | Size | Depends on |
 |---|---|---|---|
-| **Z1** | Faithful path verification: T-ZX-2..6 on unreal-ng against the MAME captures; fix what fails (expected: nothing new in the emulator; possibly DSS 1.71 / launcher behavior) | S | S3b, S4 (done) |
-| **Z2** | Tape: I5 test, the base-clock tape time base (Sprinter opt-in), T-ZX-7, T-ZX-8; one-line note in the shared tape docs | S-M | none; Q2 for other machines |
-| **Z3** | "Original waits": model, gate, T-ZX-9, A/B T-ZX-10; Q1 for the CT phase | M | none (real-board measurement for Q1 is a follow-up) |
+| **Z1** (done 2026-10-02, §11) | Faithful path verification: T-ZX-2..6 on unreal-ng against the MAME captures; fix what fails (expected: nothing new in the emulator; possibly DSS 1.71 / launcher behavior) | S | S3b, S4 (done) |
+| **Z2** (done 2026-10-02) | Tape: I5 test, the base-clock tape time base (Sprinter opt-in), T-ZX-7, T-ZX-8; one-line note in the shared tape docs | S-M | none; Q2 for other machines |
+| **Z3** (done 2026-10-02; Q1 measurement pending) | "Original waits": model, gate, T-ZX-9, A/B T-ZX-10; Q1 for the CT phase | M | none (real-board measurement for Q1 is a follow-up) |
 | **Z4** | `SprinterZxMode` state + automation of the `zx` block on all five surfaces, OpenAPI, MCP resource text | S-M | the automation audit P1 branch (`sprinter-automation`) merged first, to extend its `state/sprinter` instead of forking it |
 | **Z5** | Snapshots: parse/apply split (SNA, Z80; SZX after), `SprinterZxSnapshot`, `SnapshotLauncher` routing and refusal, T-ZX-11, T-ZX-12, all surfaces. Done through the shared snapshot pipeline ([proposal](../2026-10-02-snapshot-pipeline/proposal.md), PLAN #84): its steps P0-P3 first, then `SprinterZxSnapshot` is the Sprinter's commit policy (pipeline step P4) | M (+ P0-P3 of the pipeline, about M) | Z4; Q4 (decided 2026-10-02); PLAN #84 P0-P3 |
 | **Z6** | `zx run` macro on all surfaces, recipe `.recipe/machines/sprinter-zx-mode.md`, T-ZX-13, T-ZX-14 (TTD) | M | Z1, Z4; S7-TTD (done) |
@@ -254,11 +310,15 @@ Z3 can run in parallel with Z1.
 
 ## 10. Open questions (each with a recommendation)
 
-1. **Q1 — the `CT` phase of the "original waits".** Where the 5.33-T wait window sits relative to INT is
+1. **Q1 — the `CT` phase of the "original waits".** Where the 4-T wait window (5.33 T in the first reading, §3.3) sits relative to INT is
    not in any document; MAME has no model. *Recommendation:* ship Z3 with phase 0 at the frame start in one
    constant, and ask the Sprinter community (Telegram `zx_sprinter`) for a measurement with a small test
    program (the emulated test-program pattern: a timing loop printing T counts); adjust the constant.
    **Owner decision (2026-10-02): as recommended** - a placeholder constant plus a hardware measurement.
+   As built: `SprinterOrigWaits::kPhase` = 0; the program is `testdata/machines/sprinter/zx-timing/` (zxtime, with a
+   README for people: what to run, what each line means, what to report). Its average-cost lines confirm or refute
+   the 4-T model and the waits' presence; the phase itself needs a finer, INT-relative probe on the board (zxtime
+   cannot see a 1-T shift: the Sprinter has no floating bus) - a follow-up once a board report confirms the waits.
 2. **Q2 — base-clock tape time base for every turbo machine?** On ATM3 / ZX-Evo, Scorpion and ATM710 turbo
    the tape also speeds up with the CPU today. *Recommendation:* Sprinter-only opt-in now (as the WD1793
    was); a separate shared change for the others, because it moves their TTD fixtures.
@@ -284,3 +344,81 @@ Z3 can run in parallel with Z1.
    has `/turbo`.
 7. **Q7 — report MAME's tape bug upstream?** *Recommendation:* yes, a one-line MAME issue/PR (`kbd_fe_r`:
    drop the `^ 0x40` or set bit 6 from the cassette like `spectrum.cpp`); our T-ZX-7 does not depend on it.
+
+## 11. As built: Z1-Z3 (2026-10-02, branch `sprinter-zx-timing`)
+
+**Code.**
+
+| Change | Where |
+|---|---|
+| `SprinterOrigWaits` (the PLD's WAIT_ORIG: 4-T CT5 period, `kPhase` placeholder, windows 1 and 3-with-`#7FFD`-bit-2) and the decoder's `ApplyOrigWaits` gate | `core/src/emulator/memory/sprinter/sprinterwaits.h`, `portdecoder_sprinter.{h,cpp}` |
+| `Tape::ClockCount`, `SetBaseClockTimeBase` (the tape's one clock; base T under a hardware ratio); the Sprinter turns it on | `core/src/emulator/io/tape/tape.{h,cpp}`, the Sprinter decoder's constructor / destructor |
+| The turbo bit preset by a CPU reset of the running configuration (`TB_SW.prn = /RESET`): DSS comes back at 21 MHz after Ctrl+Alt+Del from a 3.5 MHz mode (it came back at 3.5 MHz and lost the first key typed at the DSS prompt). MAME keeps its `m_turbo` across a reset (a MAME gap now) | `PortDecoder_Sprinter::ResetPld` |
+| `clock.original_waits` and `tape` in the Sprinter state (one builder: WebAPI `/state/sprinter`, MCP `inspect_state sprinter`, CLI `state sprinter`, Lua `emu:sprinter()`, Python `emulator.sprinter()`); OpenAPI text, MCP summary line | `sprinterdevicestate.cpp`, `openapi_state.inc`, `mcp-tools.cpp` |
+| zxtime, the ZX timing program (asm, .trd, .tap, .sym, README) | `testdata/machines/sprinter/zx-timing/` |
+| MAME session tool: `dbg` (headless debugger, `SPC_DEBUG=1`), `vram`, `fields`, `hardreset`, `SPC_FLOP1`, `ZXK_SEP` | `tools/machines/sprinter/mame-capture/mame-zxsteps.{sh,lua}` |
+
+No TTD format change: the original waits derive from ALL_MODE, the clock and `#7FFD` (all in the PLD blob) and are
+re-derived on load (`OnTtdStateLoaded` -> `ApplyTurbo` -> `ApplyOrigWaits`); the tape's time base is configuration.
+
+**Findings while verifying.**
+
+1. **Scorpion INT (`/sc-int`)**: with launcher v2.03 on BIOS 3.06 the INT stays at line 287 T 192 - in MAME too, with
+   byte-identical mode tables. The 271 of research §7.2 came from `FN_SYNC` captures of another path; the table there
+   is corrected.
+2. **BIOS 3.06 Hotfix 2 does not scroll the DSS text** at the bottom line, in MAME as well (MAME with HF2 in its
+   v3.06 slot, `ver` x 7: the last lines overwrite each other); BIOS 3.06 of 2025 (MAME's) scrolls in both. After
+   Ctrl+Alt+Del the launcher's "EXIT from Spectrum mode" therefore lands on the bottom line and the prompt
+   overwrites it. Not an emulation difference; reported as an open point (TODO).
+3. **Owner's report (a)**, `/ret-fn` going back into the 128 menu on the second Ctrl+Alt+Del: not reproduced - three
+   rounds (SP, P128, SP), keys held 3-50 frames, from the DSS prompt and from Flex Navigator (command line and
+   Enter on a TRD), fast and full start, BIOS 3.06 HF2 / 3.06 / 3.07 beta: DSS every time. The launcher swaps
+   `/ret-fn` and `/ret-zx` when it sees SPACE (`#7FFE` bit 0) right after the reset (`FIRST_PREPARE`); a held SPACE
+   (or ESC, which the GUI maps to CAPS + SPACE) at that moment gives exactly the reported behavior. Fixed on the way:
+   the 3.5 MHz return (above). Regression test: T-ZX-5.
+4. **Owner's report (b)**, Enter on `CD_PLAY.TRD` showing a "comdos" catalog: our RAM disk shows CD_PLAY's own
+   catalog (Title pp, SYSTEM / boot / CD_PLAY) through Flex Navigator's Enter, the DSS command line and TR-DOS; ten
+   more images (TRD of 6 KB to 640 KB, odd sizes, SCL) catalog and boot correctly. `comdos.trd` is the TWIX kit's
+   Commander DOS (`C:\UTILS\COMDOS`, `C:\UTILS\TWIX`): TWIX creates its own RAM disks (its menu item 1) and its
+   disk was what drive A held. The launcher's TRD traces of BIOS / DSS calls are identical to MAME's (only HDD
+   geometry words differ). "Disk Error after the catalog" did not occur from the RAM disk here; a likely source:
+   ORIGIN.ZX and SC256.ZX run TR-DOS 5.04 builds that read only the real floppy - the launcher's RAM disk is
+   invisible to them, so they catalog whatever disk is in `fdd.a` (or say "Disc Error" with none), and a catalog of
+   one disk followed by loading another fails. Needs the owner's exact mode and image.
+5. **BIOS 3.07 beta 1** returns to DSS with ALL_MODE `#FE` kept (the ZX keyboard and Spectrum screen shadow stay on
+   in DSS); 3.06 sets `#FF`. **Our bug, fixed 2026-10-02** (branch `sprinter-zx-reset-video`; the owner's report
+   "after the ZX mode and a reset Flex Navigator's accelerated video mode does not always come back"): the board's
+   `/RESET` presets ALL_MODE to `#FF` and clears RGMOD and PORT_Y (PLD `SP2_ACEX.TDF:1041`, `:958`,
+   `ACCELER.TDF:204`); `ResetPld` kept them, as MAME's `machine_reset` does. 3.07 BETA 1's reset intercept reads
+   ALL_MODE back and writes the value it read (3.06 writes `#FF`), so the ZX mode's `#FE` survived Ctrl+Alt+Del and the
+   RESET button: Flex Navigator drew with the accelerator off and the Spectrum screen addressing on (a black, broken
+   picture). Deterministic per path, not timing: 3.07 BETA 1 failed after Ctrl+Alt+Del and after the RESET button
+   every time, 3.06 HF2 never, a power cycle never - the "not always" is the BIOS and the way back. The full
+   comparison with the cold start (PLD registers, accelerator, INT source, the Z84C15's system registers and wait
+   generator, frame length, HOLD) differed only in ALL_MODE (and the accelerator it gates) and in the last CNF write
+   (`#07` instead of `#04`: the same map and turbo, after 3.06 HF2 as well). HOLD now also returns
+   to `#77` with every new configuration (its `/RES`). Tests: `PortDecoderSprinter_Test.CpuReset_PresetsAllModeClearsRgModAndPortY`
+   (no disk), `SprinterZxResetFn_Test` / `SprinterZxResetFn307_Test` (env `UNREAL_SPRINTER_HDD`: Flex Navigator ->
+   Enter on a TRD -> Ctrl+Alt+Del / reset / Ctrl+Alt+Del / reset / power cycle, each compared with the cold start:
+   the mode registers, the accelerator and the picture). BIOS 3.04 cannot boot DSS 1.71 (bios-versions §5.1); the
+   unit test covers it, the reset path is the PLD's, not the BIOS's.
+
+**Live check** (2026-10-02, the GUI build on spare WebAPI / CLI / MCP ports, BIOS 3.06 HF2, the MAME-pack CHD with
+ZXTIME.TRD): ORIGIN.ZX + zxtime printed the table's numbers; `clock.original_waits` (active, windows 1) and `tape`
+(`base_clock`) read the same on WebAPI, MCP (`inspect_state` summary lines), CLI (`state sprinter`) and Lua
+(`sprinter_state()`). Python reads the same builder but this build has `ENABLE_PYTHON_AUTOMATION=OFF` (the default),
+so it was not run live. Recipe: `.recipe/machines/sprinter.md` "ZX-mode timing".
+
+### 11.1 A/B (T-ZX-10)
+
+`core-benchmarks` built from master `28c74d831` (before) and from this branch (after), run interleaved twice
+(`--benchmark_repetitions=3`, medians of CPU time). The machine was shared: load average 18-31 (the
+performance guidelines ask for below 12), so differences under ~5 % are noise.
+
+| Benchmark | Before (round 1 / 2) | After (round 1 / 2) | Reading |
+|---|---|---|---|
+| `BM_HostFrame_Pentagon_Fast` (another machine: the tape clock is the only shared change) | 1 582 / 1 666 us | 1 661 / 1 638 us | equal within noise |
+| `BM_HostFrame_Sprinter_Fast` | 3 174 / 3 234 us | 3 250 / 3 176 us | equal within noise |
+| `BM_SprinterFrame_Logo` (BIOS 3.04, ALL_MODE bit 2 set: no overlay) | 3 994 / 4 152 us | 4 218 / 4 059 us | equal within noise |
+| `BM_SprinterFrame_ScreenReads/0` (a frame of `LD A,(#4000)` at 3.5 MHz, waits off) | — | 2 612 us | the mode every program but ORIGIN.ZX runs in |
+| `BM_SprinterFrame_ScreenReads/1` (the same with the original waits on) | — | 2 768 us | +6 %, paid only in ORIGIN.ZX |

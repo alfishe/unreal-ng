@@ -1348,6 +1348,63 @@ TEST_F(McpTools_Test, AnalyzePerformance_FrameCost_GetsEndpoint)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/frame_cost"));
 }
 
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudget_GetsMetricsAndSummarizes)
+{
+    Json::Value reply;
+    reply["valid"] = true;
+    reply["frame"] = 1234;
+    reply["lines"] = 768;
+    reply["hard_budget"] = 1344;
+    reply["soft_budget"] = 1209;
+    reply["worst_line"] = 402;
+    reply["worst_clocks"] = 1247;
+    reply["lines_over_soft"] = 12;
+    reply["lines_over_hard"] = 0;
+    reply["margin"] = 10;
+    reply["measure_always"] = false;
+    reply["in_flight"]["known"] = false;
+    reply["in_flight"]["reason"] = "the machine is running: pause it to read the frame in flight";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac2/metrics?lines=1&in_flight=1"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget";
+    args["lines"] = true;
+    args["in_flight"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("worst line 402 = 1247 of 1344"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12 line(s) over soft"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("pause it"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
+{
+    Json::Value reply;
+    reply["valid"] = false;
+    reply["measure_always"] = true;
+    _caller->routes["PUT /api/v1/emulator/emu-1/vdac2/metrics"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget_set";
+    args["measure_always"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/vdac2/metrics");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["measure_always"].asBool());
+    EXPECT_FALSE(call->body.isMember("margin"));
+    EXPECT_NE(result.text.find("not measured"), std::string::npos) << result.text;
+
+    Json::Value bad;
+    bad["action"] = "vdac2_line_budget_set";
+    bad["margin"] = 60;
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", bad, *_caller).isError);
+    Json::Value empty;
+    empty["action"] = "vdac2_line_budget_set";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/labels"] = {200, Json::Value(Json::objectValue)};
@@ -1728,6 +1785,55 @@ TEST_F(McpTools_Test, TimeTravel_Start_PostsModeAndReportsJournal)
     EXPECT_FALSE(call->body.isMember("enable_write_journal"));
     EXPECT_NE(result.text.find("recording started"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("write journal off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_HistoryLimit_PostsLimitsAndSummarizes)
+{
+    Json::Value reply;
+    reply["history_limit_frames"] = 0;
+    reply["history_limit_bytes"] = 1073741824;
+    reply["history_bytes"] = 524288000;
+    reply["evicted_checkpoints"] = 120;
+    reply["session_start_frame"] = 300;
+    reply["current_end_frame"] = 900;
+    reply["checkpoint_count"] = 601;
+    reply["state"] = "recording";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/history-limit"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "history_limit";
+    args["history_bytes"] = Json::UInt64(1073741824);
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/history-limit");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["bytes"].asUInt64(), 1073741824u);
+    EXPECT_FALSE(call->body.isMember("frames")) << "a missing limit is kept, not cleared";
+    EXPECT_NE(result.text.find("1073741824 bytes"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frames 300..900"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("120 oldest"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Start_PassesHistoryLimit)
+{
+    Json::Value reply;
+    reply["started"] = true;
+    reply["already_active"] = false;
+    reply["state"] = "recording";
+    reply["write_journal_enabled"] = true;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/start"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "start";
+    args["history_frames"] = 3000;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["history_limit_frames"].asUInt64(), 3000u);
+    EXPECT_FALSE(call->body.isMember("history_limit_bytes"));
 }
 
 TEST_F(McpTools_Test, TimeTravel_Start_BadMode_RejectsBeforeAnyCall)

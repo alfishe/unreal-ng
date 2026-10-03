@@ -131,6 +131,7 @@ constexpr uint32_t kContextStackDepth = 4;  // SAVE_CONTEXT levels [PG §4.39]
 constexpr uint32_t kCallStackDepth = 4;     // CALL levels [PG §4.19]
 constexpr uint32_t kMaxLineWidth = 4096;    // HSIZE is 12 bits
 constexpr uint32_t kMaxLines = 4096;        // VSIZE is 12 bits
+static_assert(kMaxLines == kMetricsLines, "the metrics block holds one cost per line");
 constexpr uint32_t kChannels = 4;           // line buffer: R, G, B, A
 constexpr uint32_t kChannelMax = 255;
 constexpr uint32_t kBitmapSizeBits = 9;     // BITMAP_SIZE width / height low bits

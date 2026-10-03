@@ -146,6 +146,22 @@ typedef struct EveLineCost
     uint32_t overflow;    /* 1 when totalClocks > budget */
 } EveLineCost;
 
+/* Line budget metrics of the last completed frame (line-budget-metrics design): replaced at
+ * every frame end (REG_FRAMES increment), part of the saved chip state (EveSaveState). */
+typedef struct EveFrameMetrics
+{
+    uint64_t frame;         /* REG_FRAMES value of the frame described */
+    uint32_t valid;         /* 1: every visible line was drawn and measured; 0: not drawn */
+    uint32_t lines;         /* visible lines (VSIZE) */
+    uint32_t hardBudget;    /* clocks a line has (HCYCLE x PCLK, spec 5.2) */
+    uint32_t softBudget;    /* the warning threshold used for this frame */
+    uint32_t worstLine;     /* the most expensive line */
+    uint32_t worstClocks;   /* and its cost */
+    uint64_t totalClocks;   /* sum over the lines */
+    uint32_t linesOverSoft; /* softBudget < cost <= hardBudget */
+    uint32_t linesOverHard; /* cost > hardBudget */
+} EveFrameMetrics;
+
 typedef struct EvePixelSource
 {
     uint32_t color;         /* final output ARGB8888 */
@@ -164,6 +180,18 @@ size_t EveGetDisplayList(const EveChip* chip, int active, uint32_t* words, size_
 int EveDisassemble(uint32_t word, char* text, size_t size); /* length written */
 void EveGetCoprocessor(const EveChip* chip, EveCoproView* out);
 void EveGetLineCost(const EveChip* chip, uint32_t line, EveLineCost* out);
+/* The metrics of the last completed frame; lineClocks (may be NULL) receives the cost of up to
+ * maxLines lines, saturated at 65535. Returns the number of line costs written. */
+size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* lineClocks, size_t maxLines);
+/* The frame in flight: visible lines the scan has passed so far, as of the last catch-up
+ * (EveSetOutput catches up). Lines 0..n-1 of EveGetLineCost belong to this frame: valid
+ * when drawn and measured, not valid when passed without drawing; lines from n on still
+ * hold the previous frame's costs. 0 at a frame start and after a state restore; after the
+ * last visible line, all of them until the next frame starts. */
+uint32_t EveFrameLinesPassed(const EveChip* chip);
+/* The soft budget: the hard budget minus `percent` (0..50, default 10). Host configuration,
+ * not chip state: every frame block records the threshold it was measured with. */
+void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent);
 int EveProbePixel(const EveChip* chip, uint32_t x, uint32_t y, EvePixelSource* out);
 
 #ifdef __cplusplus

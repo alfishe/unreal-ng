@@ -286,14 +286,15 @@ TEST_F(ComPort_Test, TtdKeepsAnUnconnectedEvoUartInAShortBlob)
     EXPECT_EQ(_context->pComPort->Uart().GetView().scr, 0x21);
 }
 
-TEST_F(ComPort_Test, TsConfKeepsItsPortsForZiFi)
+TEST_F(ComPort_Test, TsConfHasTheTsAvrPort)
 {
+    // #xxEF is the TS AVR firmware's: its 16550 at #F8EF..#FFEF beside ZiFi; a ZX-WiFi card does not fit
     Create("TSL", 4096);
     ASSERT_TRUE(Fit("loopback"));
-    EXPECT_EQ(_context->pComPort, nullptr) << "#xxEF is ZiFi on TS-Conf";
-    EXPECT_TRUE(HasNote(Notes(), "ZiFi"));
+    ASSERT_NE(_context->pComPort, nullptr);
+    EXPECT_EQ(_context->pComPort->Uart().GetParams().avr, Uart16550::AvrFirmware::Ts2016Apr);
     ASSERT_TRUE(Apply({{"card", "zxwifi"}}));
-    EXPECT_EQ(_context->pComPort, nullptr);
+    EXPECT_EQ(_context->pComPort->Uart().GetParams().flavor, Uart16550::Flavor::EvoAvr);
     EXPECT_TRUE(HasNote(Notes(), "ZXWIFI: not fitted"));
 }
 

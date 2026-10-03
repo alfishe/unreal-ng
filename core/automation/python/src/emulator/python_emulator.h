@@ -5,6 +5,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
+#include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
@@ -1989,6 +1990,27 @@ namespace PythonBindings
             .def("ide_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Ide(self.GetContext()));
             }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
+            // CD audio of the ATAPI CD drives (CdAudioControl, PLAN #83)
+            .def("cdaudio_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(CdAudioControl::State(self.GetContext()));
+            }, "Every CD drive: disc and tracks, audio status, head (LBA, MSF, track, index), play range, page 0Eh, mixer row")
+            .def("cdaudio", [](Emulator& self, const std::string& verb, const std::string& drive, const py::kwargs& options) -> py::object {
+                CdAudioRequest request;
+                request.verb = verb;
+                request.drive = drive;
+                for (const auto& item : options)
+                {
+                    const std::string name = py::str(item.first);
+                    const py::handle value = item.second;
+                    if (py::isinstance<py::bool_>(value))
+                        request.options[name] = value.cast<bool>() ? "true" : "false";
+                    else
+                        request.options[name] = py::str(value);
+                }
+                return StateNodeToPy(CdAudioControl(self.GetContext()).Execute(request).ToValue());
+            }, py::arg("verb") = "status", py::arg("drive") = "",
+               "A CD audio verb: status, play (track=N [to=M] | lba=X frames=N | msf='MM:SS:FF' end=...), pause, resume, stop, "
+               "volume (left=, right=, route=, sotc=), mixer (volume=, mute=, solo=); options as keywords")
             .def("tsconf_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
             }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")
@@ -2060,7 +2082,7 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return StateNodeToPy(DeviceState::SprinterVideo(self.GetContext(), query));
             }, py::arg("page") = py::none(), py::arg("all") = false, py::arg("squares") = true,
-               "Sprinter mode table per square: HOLD, frame length, RGMOD, PORT_Y, counts, map (one letter a square: G 320, g 640, T text 40, t text 80, B border, . blank, * INT), palettes used, squares[b][a] decoded; page 0/1 (default RGMOD's), all=True = 56 x 40")
+               "Sprinter mode table per square: HOLD, frame length, RGMOD, PORT_Y, counts, map (one letter a square: G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), palettes used, squares[b][a] decoded; page 0/1 (default RGMOD's), all=True = 56 x 40")
             .def("sprinter_palette", [](Emulator& self, py::object k) -> py::object {
                 int palette = DeviceState::kSprinterPalettesUsed;
                 std::string error;
@@ -2159,7 +2181,7 @@ namespace PythonBindings
                 std::string error;
                 if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
                     throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector); applied at the next frame boundary, every connection closes")
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,baud]' (the machine's serial port: the ZX-Evo AVR's or the ATM Turbo 2+ keyboard controller's; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266', avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP); applied at the next frame boundary, every connection closes")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -3145,6 +3167,10 @@ namespace PythonBindings
                 info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
                 info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
                 info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
+                info["history_limit_frames"]     = py::cast(si.historyLimitFrames);
+                info["history_limit_bytes"]      = py::cast(si.historyLimitBytes);
+                info["history_bytes"]            = py::cast(si.historyBytes);
+                info["evicted_checkpoints"]      = py::cast(si.evictedCheckpoints);
                 // Provenance and section sizes: "is this something I recorded
                 // or something I opened, and what is inside it".
                 info["loaded_from_file"]         = py::cast(si.loadedFromFile);
@@ -3254,6 +3280,20 @@ namespace PythonBindings
                 return ctx->pTimeTravelManager->StartRecording();
             }, "Start TTD recording",
                py::arg("mode") = py::none(), py::arg("enable_write_journal") = py::none())
+
+            .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                    throw std::runtime_error("TTD not available");
+                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->GetSessionInfo();
+                ctx->pTimeTravelManager->SetHistoryLimit(
+                    framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
+                    bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
+                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->GetSessionInfo();
+                return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
+            }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
+               "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
+               py::arg("frames") = py::none(), py::arg("bytes") = py::none())
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();

@@ -835,7 +835,7 @@ public:
         {
             None,     ///< no serial port of its own (a ZX-WiFi card adds one)
             EvoAvr,   ///< ZX-Evo: the AVR firmware's 16550 on #xxEF
-            ZiFi,     ///< TS-Conf: ZiFi + 16550 through the TS AVR (step N5, not emulated yet)
+            ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
         } serialPort = SerialPort::None;
 
@@ -864,6 +864,11 @@ public:
         /// Which register an #xxEF access reaches (ComPort::RegisterOf);
         /// nullptr = A10..A8
         std::function<int(uint16_t port)> serialRegister;
+
+        /// The TS-Labs AVR firmware's ZiFi block (TS-Conf; a ZX-Evo with a TS firmware from 2016-02)
+        bool zifi = false;
+        /// The TS-Conf wait-port interrupt (vector #F9, INTMASK bit 3); empty: none (BaseConf FPGA)
+        std::function<void()> waitPortInterrupt;
     };
     virtual NetworkCapabilities DescribeNetwork() { return NetworkCapabilities(); }
 

@@ -105,6 +105,20 @@ protected:
     }
 
 public:
+    /// Point a machine built from the shipped config (default firmware 3.07 BETA 1, bios-versions.md §6) at another
+    /// kept image in data/rom/sprinter and reload the flash; the caller resets. False when the file is missing or the
+    /// load fails. Tests pinned to one BIOS (3.04's screens, timings, MAME captures) select it with this
+    static bool SelectBios(EmulatorContext* context, const std::string& file)
+    {
+        const std::string path = (TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / file).string();
+        if (!context || !FileHelper::FileExists(path))
+            return false;
+        CONFIG& config = context->config;
+        std::memset(config.sprinter_rom_path, 0, sizeof(config.sprinter_rom_path));
+        std::strncpy(config.sprinter_rom_path, path.c_str(), sizeof(config.sprinter_rom_path) - 1);
+        return context->pCore->GetROM()->LoadROM();
+    }
+
     static bool Rom304Available()
     {
         return FileHelper::FileExists((TestPathHelper::FindProjectRoot() / "data" / "rom" / "sprinter" / "sp2k-3.04.rom").string());

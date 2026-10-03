@@ -1918,6 +1918,7 @@ StateNode Ide(EmulatorContext* context)
         {
             StateNode atapi = StateNode::Object();
             atapi["disc"] = device->Medium() != nullptr;
+            atapi["tray_open"] = static_cast<const AtapiCdrom*>(device)->TrayOpen();
             atapi["unit_attention"] = s.unitAttention != 0;
             atapi["byte_count_limit"] = int(s.byteLimit);
             atapi["transfer_left"] = static_cast<unsigned>(s.transferLeft);
@@ -2038,6 +2039,7 @@ StateNode Network(EmulatorContext* context)
     set["avr_firmware"] = st.settings.avrFirmware;
     set["atm2ioesp"] = st.settings.atm2IoEsp;
     set["atm2ioesp_address"] = StringHelper::Format("0x%02X", st.settings.atm2IoEspAddress);
+    set["zifi"] = st.settings.zifi;
     if (!st.settings.kbcFirmware.empty())
         set["kbc_firmware"] = st.settings.kbcFirmware;
     set["host_access"] = st.settings.hostAccess;
@@ -2057,6 +2059,7 @@ StateNode Network(EmulatorContext* context)
     machine["zx_bus"] = st.zxBus;
     machine["serial_port"] = st.serialPort;
     machine["internal_io"] = st.internalIo;
+    machine["zifi"] = st.zifiMachine;
     ret["cards"] = st.cards;
     if (!st.notes.empty())
     {
@@ -2154,6 +2157,33 @@ StateNode Network(EmulatorContext* context)
         ioEsp["address"] = StringHelper::Format("0x%02X", st.atm2IoEspAddress);
         peerFields(ioEsp, st.atm2IoEsp);
         uartFields(ioEsp, st.atm2IoEsp);
+    }
+
+    // The TS AVR firmware's ZiFi: the API block, both rings' fill, its UART to the ESP and the peer
+    StateNode& zifi = ret["zifi"];
+    zifi["fitted"] = st.zifi.fitted;
+    if (st.zifi.fitted)
+    {
+        const ZiFi::View& r = st.zifiRegisters;
+        zifi["avr_firmware"] = st.zifi.firmware;
+        zifi["api"] = int(r.api);
+        zifi["data_register"] = r.selectZf ? "zifi" : "rs232";
+        zifi["er"] = StringHelper::Format("#%02X", r.err);
+        zifi["imr"] = StringHelper::Format("#%02X", r.imr);
+        zifi["isr"] = StringHelper::Format("#%02X", r.isr);
+        zifi["zibtr"] = int(r.zibtr);
+        zifi["zitor_ms"] = int(r.zitor);
+        zifi["ribtr"] = int(r.ribtr);
+        zifi["ritor_ms"] = int(r.ritor);
+        zifi["zifi_rx"] = int(r.zfRx);
+        zifi["zifi_tx"] = int(r.zfTx);
+        zifi["rs232_rx"] = int(r.rsRx);
+        zifi["rs232_tx"] = int(r.rsTx);
+        peerFields(zifi, st.zifi);
+        const Uart16550::View& u = st.zifi.uart;
+        zifi["bytes_in"] = u.bytesIn;
+        zifi["bytes_out"] = u.bytesOut;
+        zifi["dropped"] = u.overruns;
     }
 
     StateNode& card = ret["card"];

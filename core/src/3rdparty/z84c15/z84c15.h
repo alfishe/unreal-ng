@@ -17,7 +17,8 @@
 // The host routes those ports to Read / Write from its own port path (so its
 // tracing and journals see them), asks IntPending / AcknowledgeInterrupt at an
 // instruction boundary (the chain comes before the board's own /INT), and
-// supplies the CPU clock the CTC and the watchdog count.
+// supplies the clock the CTC and the watchdog count (a monotonic time base, the
+// length of a CPU clock in it, the CTC's CLK/TRG wiring).
 //
 // Worked example (power-on): after PowerOn a NOP costs 4 T + 3 memory waits
 // (MWBR #F0 covers all of 64K) + 1 M1 extension = 8 T for the first 15 M1
@@ -35,35 +36,90 @@
 namespace Z84Lib
 {
 
-/// The four-channel CTC. Ports #10-#13, one per channel. A write with bit 0 =
-/// 1 is a control word (bit 7 interrupt enable, 6 counter mode, 5 prescaler
-/// 256 / 16, 2 a time constant follows, 1 software reset); with bit 0 = 0 to
-/// channel 0 it is the interrupt vector (bits 7-3). The time constant (0 =
-/// 256) loads the down-counter; a read returns the current count.
+namespace Detail
+{
+/// floor(a x b / c) without overflowing a x b while (c - 1) x b fits (c > 0)
+inline uint64_t MulDivFloor(uint64_t a, uint64_t b, uint64_t c)
+{
+    return (a / c) * b + ((a % c) * b) / c;
+}
+/// ceil(a x b / c), same range
+inline uint64_t MulDivCeil(uint64_t a, uint64_t b, uint64_t c)
+{
+    return MulDivFloor(a, b, c) + (((a % c) * b) % c != 0 ? 1u : 0u);
+}
+}  // namespace Detail
+
+/// The four-channel CTC (Zilog Z80 CTC data sheet, PS0181; the Z84C15's CTC
+/// is the same block, PS0182 p. 293). Ports #10-#13, one per channel. A write
+/// with bit 0 = 1 is a control word: bit 7 interrupt enable, 6 counter mode
+/// (else timer), 5 prescaler 256 (else 16), 4 rising CLK/TRG edge (else
+/// falling), 3 timer started by a CLK/TRG edge (else by the time constant), 2
+/// a time constant follows, 1 software reset. With bit 0 = 0 to channel 0 it is
+/// the interrupt vector (bits 7-3; channel n answers base | n x 2). The time
+/// constant (0 = 256) loads the down-counter; a read returns the current count.
 ///
-/// Timer mode counts the system clock through the prescaler. The clock comes
-/// from the owner (SetClock, in CPU clocks); the count is derived when read,
-/// so a channel costs nothing per instruction. A channel with its interrupt
-/// enabled requests one at every zero count (Poll). Counter mode (CLK/TRG
-/// inputs) holds its count: no input is wired.
+/// The down-counter steps on the prescaler's output (timer mode: the system
+/// clock / 16 or / 256) or on the selected CLK/TRG edge (counter mode). At
+/// zero it reloads the time constant, pulses ZC/TO (channels 0-2 have the pin)
+/// and, with its interrupt enabled, requests an interrupt. A time constant
+/// written to a running channel takes effect at the next reload; a software
+/// reset stops the channel and keeps its count.
 ///
-/// Worked example: control #25 (timer, prescaler 256, time constant follows),
-/// then #0A: the channel counts 10, 9, ... 1, 10 ..., one step per 256 clocks;
-/// 512 clocks after the load a read returns 8. With control #A5 instead, an
-/// interrupt is requested every 2 560 clocks, vector = base | channel x 2.
+/// Time. Nothing runs by itself: the owner supplies a monotonic clock in
+/// "units" of its choice (SetClock) and how many units one system clock lasts
+/// (SetSystemClockPeriod, a ratio, default 1 / 1 = the clock counts system
+/// clocks). Counts are derived from the clock when read or polled, so a
+/// channel costs nothing per instruction. When the system clock changes speed
+/// (a turbo switch) the owner calls SetSystemClockPeriod at that instant: the
+/// timers keep their count and continue at the new rate.
+///
+/// CLK/TRG inputs are the board's (SetTrigger): nothing, a fixed-frequency
+/// clock in real time (needs SetUnitsPerSecond), or the ZC/TO output of a
+/// lower channel (cascade). A counter without an input holds its count; a
+/// timer waiting for its trigger edge waits.
+///
+/// Simplifications (all below one input period): the timer starts at the
+/// trigger edge or the time-constant write (the data sheet: the second system
+/// clock after it), and a clock input's rising and falling edges count at the
+/// same instant (the edge select shifts a count by half an input period).
+///
+/// Worked example (the Sprinter, MAME sprinter.cpp:1993-2008): TRG2 is a
+/// 875 kHz clock, ZC/TO2 drives TRG3. Channel 2 gets control #57 (counter,
+/// rising edge, time constant follows) and 112: ZC/TO2 pulses at 875 000 / 112
+/// = 7 812.5 Hz. Channel 3 gets #D7 (interrupt, counter) and 160: it counts
+/// those pulses and interrupts at 7 812.5 / 160 = 48.83 Hz, with vector base
+/// #00 answering #06.
 class Z84Ctc
 {
 public:
+    /// What drives a channel's CLK/TRG input
+    enum class TriggerKind : uint8_t
+    {
+        None = 0,     ///< not connected: a counter holds, a triggered timer waits
+        Clock = 1,    ///< a fixed-frequency clock in real time (`hz`)
+        Cascade = 2,  ///< the ZC/TO output of channel `source` (a lower channel)
+    };
+    struct Trigger
+    {
+        TriggerKind kind = TriggerKind::None;
+        uint32_t hz = 0;     ///< Clock: the frequency
+        uint8_t source = 0;  ///< Cascade: the channel whose ZC/TO it is
+    };
+
     struct ChannelState
     {
-        uint8_t control = 0x03;      ///< last control word (power-on: reset)
-        uint8_t timeConstant = 0;    ///< 0 = 256
+        uint8_t control = 0x03;       ///< last control word (power-on: reset)
+        uint8_t timeConstant = 0;     ///< 0 = 256
         uint8_t awaitingConstant = 0;
-        uint8_t running = 0;
-        uint64_t loadClock = 0;      ///< clock of the load (timer mode)
-        uint64_t zeroCounts = 0;     ///< zero counts already turned into requests
-        uint8_t ip = 0;              ///< interrupt pending
-        uint8_t ius = 0;             ///< interrupt under service
+        uint8_t running = 0;          ///< counting, or a timer waiting for its trigger edge
+        uint8_t waitingTrigger = 0;   ///< timer with bit 3: the first CLK/TRG edge after `anchor` starts it
+        uint8_t down = 0;             ///< the count at the anchor (0 = 256)
+        uint64_t anchor = 0;          ///< timer: the clock at `down`; counter (or waiting): the input edges counted by then
+        uint64_t zeroBase = 0;        ///< zero counts (ZC/TO pulses) before the anchor, since the reset
+        uint64_t zeroSeen = 0;        ///< zero counts already turned into interrupt requests
+        uint8_t ip = 0;               ///< interrupt pending
+        uint8_t ius = 0;              ///< interrupt under service
     };
 
     void Reset();
@@ -77,19 +133,70 @@ public:
     const ChannelState& GetChannel(uint8_t channel) const { return _ch[channel & 3]; }
     ChannelState& Channel(uint8_t channel) { return _ch[channel & 3]; }
 
-    /// The system clock in CPU clocks (monotonic)
+    /// region <Time base and inputs (the board's wiring)>
+    /// The clock in units (monotonic)
     void SetClock(std::function<uint64_t()> clock) { _clock = std::move(clock); }
+    /// Units per second of that clock (for the Clock triggers; 0 = unknown, Clock triggers never fire)
+    void SetUnitsPerSecond(uint64_t unitsPerSecond);
+    uint64_t UnitsPerSecond() const { return _unitsPerSecond; }
+    /// One system clock lasts num / den units. At a change the timers keep their count (folded at now)
+    void SetSystemClockPeriod(uint32_t num, uint32_t den);
+    uint32_t SystemClockNum() const { return _clkNum; }
+    uint32_t SystemClockDen() const { return _clkDen; }
+    /// Restore the period without folding (a state restore: the anchors were saved under it)
+    void RestoreSystemClockPeriod(uint32_t num, uint32_t den);
+    /// Connect channel `channel`'s CLK/TRG (a Cascade source must be a lower channel; anything else is None)
+    void SetTrigger(uint8_t channel, Trigger trigger);
+    const Trigger& GetTrigger(uint8_t channel) const { return _trg[channel & 3]; }
+    /// endregion
+
+    /// region <Live view (no side effects: debuggers, automation, the board's ZC/TO consumers)>
+    /// The down-counter now (1-256 as a byte, 0 = 256)
+    uint8_t Count(uint8_t channel) const;
+    /// ZC/TO pulses since the reset, up to now
+    uint64_t ZeroCounts(uint8_t channel) const;
+    /// The ZC/TO frequency from the channel's programming and input (0 = stopped, no input or still waiting)
+    double OutputHz(uint8_t channel) const;
+    /// endregion
 
     /// Turn the zero counts up to now into interrupt requests (channels with the interrupt enabled)
     void Poll();
+    /// The channels were changed from outside (a state restore): recompute when Poll has work next
+    void Refresh() { UpdateNextDue(); }
 
 private:
     uint64_t Now() const { return _clock ? _clock() : 0; }
-    uint64_t ZeroCounts(const ChannelState& ch, uint64_t now) const;
+    /// The channel as it stands at `now`: a triggered timer whose edge came is running from that edge
+    ChannelState Effective(uint8_t channel, uint64_t now) const;
+    /// Input edges (counter) seen by channel `channel` up to `now`
+    uint64_t InputEdges(uint8_t channel, uint64_t now) const;
+    /// The clock of input edge number `edge` (UINT64_MAX: never)
+    uint64_t EdgeTime(uint8_t channel, uint64_t edge) const;
+    /// Down-counter steps since the anchor of `ch` (an effective, running channel)
+    uint64_t Steps(uint8_t channel, const ChannelState& ch, uint64_t now) const;
+    /// Total zero counts of `channel` at `now`
+    uint64_t ZeroCountsAt(uint8_t channel, uint64_t now) const;
+    /// The clock of zero count number `k` (total, k > zeroBase; UINT64_MAX: never)
+    uint64_t ZeroTime(uint8_t channel, uint64_t k) const;
+    /// The down-counter of `ch` at `now` (1-256)
+    uint32_t CountAt(uint8_t channel, const ChannelState& ch, uint64_t now) const;
+    /// Re-anchor a running channel at `now` (its count, zero counts and phase kept)
+    void Fold(uint8_t channel, uint64_t now);
+    /// The earliest clock a channel with its interrupt enabled reaches its next zero count
+    void UpdateNextDue();
+    uint64_t Prescaler(const ChannelState& ch) const { return (ch.control & 0x20) ? 256u : 16u; }
 
     ChannelState _ch[4];
+    Trigger _trg[4];
     uint8_t _vector = 0;
     std::function<uint64_t()> _clock;
+    uint64_t _unitsPerSecond = 0;
+    uint32_t _clkNum = 1;  ///< one system clock = _clkNum / _clkDen units
+    uint32_t _clkDen = 1;
+    /// Clock triggers: edges = clock x _trgNum[ch] / _trgDen[ch] (hz / units per second, reduced)
+    uint64_t _trgNum[4] = {};
+    uint64_t _trgDen[4] = {1, 1, 1, 1};
+    uint64_t _nextDue = UINT64_MAX;
 };
 
 /// The two-channel SIO, asynchronous mode. Ports (any high byte): #18 A data,
@@ -258,8 +365,14 @@ public:
     uint8_t Read(uint8_t lowByte);
     void Write(uint8_t lowByte, uint8_t value);
 
-    /// The CPU clock (monotonic CPU clocks) for the CTC and the watchdog
+    /// The clock (monotonic, in units of the owner's choice) for the CTC and the
+    /// watchdog; with the default system clock period of 1 / 1 it counts CPU clocks
     void SetClock(std::function<uint64_t()> clock);
+    /// One system (CPU) clock lasts num / den units. Call it at the instant the
+    /// clock changes speed: the watchdog and the CTC timers continue at the new rate
+    void SetSystemClockPeriod(uint32_t num, uint32_t den);
+    /// Units per second of the clock (the CTC's fixed-frequency trigger inputs)
+    void SetUnitsPerSecond(uint64_t unitsPerSecond) { ctc.SetUnitsPerSecond(unitsPerSecond); }
 
     /// /WDTOUT: called once per watchdog timeout. Not set: the output is not
     /// connected (the Sprinter, research-cpu-z84c15.md Q3)
@@ -278,7 +391,7 @@ public:
     bool AnyUnderService() const;
     /// endregion </Daisy chain>
 
-    /// The watchdog: running and its timeout clock (for tests and debuggers)
+    /// The watchdog: running and its timeout clock (for tests and debuggers; at the current system clock rate)
     bool WatchdogRunning() const { return _wdtRunning; }
     uint64_t WatchdogDeadline() const;
 
@@ -294,14 +407,17 @@ public:
     ///
     /// Layout: system 8 (SCRP, WCR, MWBR, CSBR, MCR, WDTMR, WDTCR, #F4) | wait
     /// generator 6 (WCR as written, effective WCR, MWBR, M1 cycles left in the
-    /// power-on window, after-ED, active) | watchdog 10 (running, fired, start
-    /// clock u64) | CTC 89 (vector, then per channel: control, time constant,
-    /// awaiting constant, running, load clock u64, zero counts u64, IP, IUS) |
-    /// SIO 36 (per channel: WR0-WR7, pointer, FIFO[3], FIFO count, last data,
-    /// overrun, Rx-first armed, Rx-first IP, Rx IUS) | PIO 22 (per port: mode,
-    /// direction, output, vector, interrupt control, mask, next, inputs,
-    /// condition, IP, IUS)
-    static constexpr size_t kStateSize = 8 + 6 + 10 + 89 + 36 + 22;
+    /// power-on window, after-ED, active) | watchdog 18 (running, fired, start
+    /// clock u64, system clocks counted before the start u64) | CTC 137 (system
+    /// clock period num u32, den u32, vector, then per channel: control, time
+    /// constant, awaiting constant, running, waiting for the trigger, count at
+    /// the anchor, anchor u64, zero counts before it u64, zero counts seen u64,
+    /// IP, IUS) | SIO 36 (per channel: WR0-WR7, pointer, FIFO[3], FIFO count,
+    /// last data, overrun, Rx-first armed, Rx-first IP, Rx IUS) | PIO 22 (per
+    /// port: mode, direction, output, vector, interrupt control, mask, next,
+    /// inputs, condition, IP, IUS). The CTC's inputs (SetTrigger) and the units
+    /// per second are the board's wiring, not state
+    static constexpr size_t kStateSize = 8 + 6 + 18 + 137 + 36 + 22;
     void SaveState(uint8_t* dst) const;
     void LoadState(const uint8_t* src);
     /// endregion </State>
@@ -336,7 +452,8 @@ private:
     std::function<void()> _watchdogHandler;
     bool _wdtRunning = false;
     bool _wdtFired = false;
-    uint64_t _wdtStart = 0;
+    uint64_t _wdtStart = 0;       ///< the clock the watchdog's current count started at
+    uint64_t _wdtClocksBefore = 0; ///< system clocks counted before _wdtStart (a clock speed change folds)
 };
 
 }  // namespace Z84Lib
