@@ -130,6 +130,24 @@ protected:
     // Control flow
     volatile bool _stopRequested = false;
 
+    /// Direct stepping (RunNFrames, RunTStates, RunUntil*, ...) drives the Z80 on the caller's thread while
+    /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
+    /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
+    std::atomic<int> _directStepDepth{0};
+    /// Marks a direct-stepping call for its duration; the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
+    /// skipped updates meanwhile refreshes once, at the end
+    class DirectStepScope
+    {
+    public:
+        explicit DirectStepScope(Emulator& emulator);
+        ~DirectStepScope();
+        DirectStepScope(const DirectStepScope&) = delete;
+        DirectStepScope& operator=(const DirectStepScope&) = delete;
+
+    private:
+        Emulator& _emulator;
+    };
+
     // Emulator state
     // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
     // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
@@ -582,6 +600,8 @@ public:
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
+    bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
     bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();

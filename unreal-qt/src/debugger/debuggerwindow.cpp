@@ -551,6 +551,12 @@ void DebuggerWindow::updateState()
     {
         return;
     }
+    // Automation is stepping the machine on another thread (RunNFrames, ...): its memory map changes under
+    // a reader (this crashed in the disassembler and the stack view). The end of the stepping refreshes
+    if (_emulator && _emulator->IsDirectStepping())
+    {
+        return;
+    }
 
     if (_emulator)
     {
