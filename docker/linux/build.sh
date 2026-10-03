@@ -16,7 +16,7 @@
 #   --cpus N          hard CPU cap for the whole container: configure, link and the
 #                     test run included, not only the compile jobs (default: same as
 #                     --jobs, i.e. half the host cores)
-#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3)
+#   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
 #
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3"
+IMAGE="ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04"
 TARGET="core-tests"
 TYPE="Release"
 PLATFORM=""

@@ -1,7 +1,7 @@
 # Linux build in Docker
 
 Reproduces the GitHub Actions Linux build locally, inside the same image
-(`ghcr.io/alfishe/unreal-ng:qt6.9.3`, gcc + libstdc++ + Qt).
+(`ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04`, gcc + libstdc++ + Qt).
 
 ```bash
 docker/linux/build.sh                     # build core-tests, host-native architecture
