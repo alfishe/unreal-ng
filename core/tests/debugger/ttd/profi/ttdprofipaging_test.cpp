@@ -236,7 +236,7 @@ TEST(TTDProfiTurboSwitch_Test, FlipIsJournaledAndReplayed)
     ASSERT_TRUE(emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
     EXPECT_EQ(context->emulatorState.hw_turbo_ratio_applied, 2);
     emulator->RunTStates(10000);
-    const ttd::TTDTimePoint afterFlip{flipFrame, context->pCore->GetZ80()->t};
+    const ttd::TTDTimePoint afterFlip{flipFrame, ttd->TInFrameNow()};   // TTD time units, not CPU T
     const uint16_t livePc = context->pCore->GetZ80()->pc;
 
     size_t flips = 0;

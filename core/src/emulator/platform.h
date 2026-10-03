@@ -872,6 +872,8 @@ struct CONFIG
 	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
 	uint8_t profi_rom_wait;               // [PROFI] RomWait: v5 ROM one-shot gives 1 wait at 3.5 MHz too
 	uint8_t profi_turbo;                  // [PROFI] Turbo: the front-panel turbo switch at power-on
+	uint8_t profi_zq3_mhz;                // [PROFI] ZQ3MHz: the v5's third crystal (hi-res CPU clock = ZQ3 / 4), 16-24
+	uint8_t profi_ay_clock_new;           // [PROFI] AyClock=new: v5 jumper SB7 "CLCAY NEW", the AY at 1.75 MHz in hi-res too
 	uint8_t profi_cpm;                    // [PROFI] CpmSwitch: the v5 front-panel CP/M switch at power-on
 	uint8_t profi_dffd_decode;            // [PROFI] DffdDecode: 0 emulators (A15=1, A13=0, A1=0), 1 v50 (A13=0, A1=0),
 	                                      // 2 v506 (high byte #DF, A1=0, not from OUT (n),A)

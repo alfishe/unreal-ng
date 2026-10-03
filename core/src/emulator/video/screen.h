@@ -521,7 +521,8 @@ public:
         // M_SCORPION: 312 lines x 224T = 69888T frame - same 312-line geometry as
         // M_ZX48 (Pentagon's row differs only in vSyncLines 16 vs 8)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_SCORPION
-        // M_PROFIHR: same beam and timing as M_PROFI (no emulator changes the frame in hi-res).
+        // M_PROFIHR: the same 64 us (224 base T) line as M_PROFI; the frame length and INT come from the sync PROM's
+        // upper half and the CPU runs its hi-res clock (PortDecoder_Profi::SyncFrame, design-hires.md).
         // 512x240 paper drawn at 4 px/T inside the 128 T paper window; the paper starts 24 lines
         // above the standard one (240 lines centred on the 192-line window). Storage is wider than
         // the beam: 48 px side borders at 2 px/T.

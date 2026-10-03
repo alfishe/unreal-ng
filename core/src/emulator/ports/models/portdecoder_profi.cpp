@@ -11,6 +11,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/audio.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
@@ -190,12 +191,51 @@ void PortDecoder_Profi::SyncTurbo()
     }
 
     const bool headLoaded = followHld && _context->pBetaDisk && _context->pBetaDisk->IsHeadLoaded();
-    const uint8_t ratio = (pressed && !headLoaded) ? 2 : 1;
-    if (_state->hw_turbo_ratio == ratio)
+    const bool turbo = pressed && !headLoaded;
+
+    // Hi-res (#DFFD bit 7) switches the sync PROM to its upper half and the CPU to its other crystal at once
+    // (design-hires.md): the frame and INT first, so the clock change below rescales against the new geometry
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    SyncFrame(hires);
+
+    uint8_t ratio = turbo ? 2 : 1;
+    uint8_t den = 1;
+    if (hires)
+    {
+        ratio = ProfiHiresClockNum(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz), turbo);
+        den = kProfiHiresClockDen;
+    }
+    const uint8_t currentDen = _state->hw_clock_den > 1 ? _state->hw_clock_den : 1;
+    if (_state->hw_turbo_ratio == ratio && currentDen == den)
         return;
     _state->hw_turbo_ratio = ratio;
+    _state->hw_clock_den = den;
     if (z80)
         z80->ApplyHardwareTurboNow();
+}
+
+void PortDecoder_Profi::SyncFrame(bool hires)
+{
+    // The sync PROM's lower half in Spectrum mode, its upper half in hi-res (ProfiSyncPromFrameHires): the v3's
+    // 0a1d PROM gives 320 lines there, so the frame length itself changes, not only the INT position
+    CONFIG& config = _context->config;
+    const ProfiSyncProm prom = static_cast<ProfiSyncProm>(config.profi_sync_prom);
+    const ProfiFrame f = hires ? ProfiSyncPromFrameHires(prom, config.mem_model) : ProfiSyncPromFrame(prom, config.mem_model);
+    const uint32_t intstart = hires ? ProfiHiresIntStart(f) : ProfiIntStart(f);
+    if (config.frame == f.frame && config.intstart == intstart && config.intlen == f.intLength)
+        return;
+    config.frame = f.frame;
+    config.t_line = f.tLine;
+    config.intstart = intstart;
+    config.intlen = f.intLength;
+    config.frame_duration_us = CalculateFrameDurationUs(f.frame);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->RecomputeFrameTiming();
+}
+
+uint8_t PortDecoder_Profi::TtdClockUnits() const
+{
+    return ProfiTtdClockUnits(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz));
 }
 
 void PortDecoder_Profi::OnMachineStep([[maybe_unused]] uint32_t t)

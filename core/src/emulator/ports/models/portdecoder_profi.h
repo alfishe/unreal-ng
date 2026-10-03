@@ -87,6 +87,9 @@ public:
     /// The front-panel TURBO switch (both boards): 7 MHz while it is pressed and, on v3, while the VG93's HLD is low
     /// (the HLD pin drives the board's /TURBO; research-profi-v3-turbo-floatbus.md A2)
     /// TURBO on both boards; the CP/M switch on v5 (the v3 drawings have none)
+    /// TTD units per base T: the numerators the board can select (ProfiTtdClockUnits)
+    uint8_t TtdClockUnits() const override;
+
     bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override
     {
         return sw == FrontPanelSwitch::Turbo || (sw == FrontPanelSwitch::Cpm && _board.palette);
@@ -98,6 +101,8 @@ public:
 
     /// The clock the board runs at now, from the switch and (v3) the HLD pin; applies a change at once
     void SyncTurbo();
+    /// The frame and INT of the sync PROM half in use (hi-res: the upper half) into CONFIG
+    void SyncFrame(bool hires);
     /// Installs or removes the wait-state overlay (ProfiWaitOverlay) for the board's mode and clock
     void SyncWaits();
     bool AreWaitsInstalled() const { return _waitsInstalled; }

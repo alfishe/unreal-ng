@@ -347,6 +347,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.profi_rom_wait = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "RomWait", 0) ? 1 : 0);
 	config.profi_turbo = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "Turbo", 0) ? 1 : 0);
+	config.profi_zq3_mhz = ProfiClampZq3(inimanager.GetLongValue("PROFI", "ZQ3MHz", kProfiZq3DefaultMHz));
+	{
+		const char* ayClock = inimanager.GetValue("PROFI", "AyClock", "old");
+		config.profi_ay_clock_new = 0;
+		if (ayClock && StringHelper::CompareCaseInsensitive(ayClock, "new", 3) == 0)
+			config.profi_ay_clock_new = 1;
+		else if (ayClock && StringHelper::CompareCaseInsensitive(ayClock, "old", 3) != 0)
+			MLOGWARNING("Config: unknown [PROFI] AyClock=%s, old (1.5 MHz in hi-res) used", ayClock);
+	}
 	config.profi_cpm = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "CpmSwitch", 0) ? 1 : 0);
 	{
 		const char* decode = inimanager.GetValue("PROFI", "DffdDecode", "emulators");

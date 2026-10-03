@@ -63,4 +63,13 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [ ] Keyboard: a clean re-dump of the PROFI-XT v1.27 EPROM (confirms the 5 reconstructed bytes 02Eh-032h)
 - [ ] Keyboard: the v3.2 on-board XT pads (`#FE` bit 7 + the XT clock on /INT) - not built until software for it turns up
 - [ ] Keyboard: the native v5 mechanical keyboard's EXT / MODE / GRAF keys (two-contact combinations, sheet 9)
+- [x] H1 (branch `profi-hires-xt`): the fractional clock ratio (`hw_clock_den`) through every CPU / base T conversion;
+  no machine changes ([design-hires.md](design-hires.md))
+- [x] H2a: hi-res CPU clock (v3 3 MHz, v5 ZQ3 / 4, `[PROFI] ZQ3MHz`), frame and INT from the sync PROM's upper half,
+  switched at the #DFFD write; the Profi TTD time grid (`TtdClockUnits`) - it was 1, so turbo halves were lost
+- [ ] H2b: AY clock 1.5 MHz in hi-res (`[PROFI] AyClock`, parsed; the AY engine's clock is a compile-time constant)
+- [ ] H3: hi-res waits (v5 model rule, v3 turbo) and the v3 hi-res floating bus
+- [ ] H4: automation surfaces for ZQ3MHz / AyClock and the hi-res clock in state; recipes; checks against the forum's
+  speed-test figures and the CP/M disk
+- [ ] A/B of H1 (the screen descale gained a branch)
 

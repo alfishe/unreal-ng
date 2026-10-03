@@ -102,6 +102,62 @@ constexpr uint32_t ProfiIntStart(const ProfiFrame& f)
     return (kProfiPaperStartT + f.frame - f.intToPaper - 1) % f.frame;
 }
 
+/// The hi-res (DS80) half of the same PROM (A10 = 80DS), in base 3.5 MHz T-states (research-profi-hires-timing.md,
+/// tools/machines/profi/hires/ds80frames-output.txt). The generator runs from the 12 MHz crystal: one tick is 16
+/// clocks, 1.333 us = 14/3 base T, and a line is 48 ticks, the same 64 us (224 base T) as in Spectrum mode. The CPU
+/// clock changes instead (ProfiHiresClock). INT-to-paper and the INT length are rounded to whole base T (+-1/3 T;
+/// the decode itself is +-1 tick). v5 INT: the generator ends it after 10 ticks or at the acknowledge
+constexpr ProfiFrame ProfiSyncPromFrameHires(ProfiSyncProm prom, MEM_MODEL model)
+{
+    switch (ProfiResolveSyncProm(prom, model))
+    {
+        case ProfiSyncProm::Samx6:    return {69888, 224, 16147, 56};   // 312 lines; 3460 / 12 ticks
+        case ProfiSyncProm::Fb0579b6: return {71680, 224, 3593, 47};    // 320 lines; 770 / 10 ticks
+        case ProfiSyncProm::V503:     return {69888, 224, 12553, 47};   // 312 lines; 2690 / 10 ticks
+        case ProfiSyncProm::Vr0a1d:
+        case ProfiSyncProm::Default:
+        default:                      return {71680, 224, 17939, 56};   // 320 lines; 3844 / 12 ticks
+    }
+}
+
+/// The frame T-state of the first hi-res paper dot: 24 lines above the Spectrum paper (line 48, T 24), the raster
+/// of ScreenProfi (M_PROFIHR in screen.h)
+constexpr uint32_t kProfiHiresPaperStartT = 48 * 224 + 24;
+
+/// [ULA] intstart for a hi-res frame (see ProfiIntStart)
+constexpr uint32_t ProfiHiresIntStart(const ProfiFrame& f)
+{
+    return (kProfiHiresPaperStartT + f.frame - f.intToPaper - 1) % f.frame;
+}
+
+/// The CPU clock in hi-res as a fraction of 3.5 MHz, numerator over 7 (EmulatorState::hw_turbo_ratio / hw_clock_den):
+/// v3 12 MHz / 4 = 3 MHz = 6/7 (turbo 12/7); v5 ZQ3 / 4 (ZQ3 the third crystal, [PROFI] ZQ3MHz, 16-24, even) =
+/// ZQ3/2 sevenths, turbo ZQ3 sevenths: 20 MHz gives 5 MHz = 10/7 (research-profi-hires-timing.md, Emulator rules)
+constexpr uint8_t kProfiHiresClockDen = 7;
+constexpr uint8_t ProfiHiresClockNum(bool v5, uint8_t zq3MHz, bool turbo)
+{
+    const uint8_t num = v5 ? static_cast<uint8_t>(zq3MHz / 2) : 6;
+    return turbo ? static_cast<uint8_t>(num * 2) : num;
+}
+
+/// TTD time units per base T for a board: the least common multiple of the numerators it can select (1, 2 in
+/// Spectrum mode; the hi-res pair) - EmulatorState::ttd_clock_units
+constexpr uint8_t ProfiTtdClockUnits(bool v5, uint8_t zq3MHz)
+{
+    // n and 2n with n even (6, 8, 10, 12) or odd (9, 11): 2n covers 1, 2, n and 2n
+    return static_cast<uint8_t>(ProfiHiresClockNum(v5, zq3MHz, true));
+}
+
+/// [PROFI] ZQ3MHz: the v5's third crystal, 16-24 MHz (the 5.0 album's table), even values only (the clock is half of
+/// it in sevenths); default 20 (the 5.06 parts list: C12 = 27 pF is the 20 MHz entry)
+constexpr uint8_t kProfiZq3DefaultMHz = 20;
+constexpr uint8_t ProfiClampZq3(long mhz)
+{
+    if (mhz < 16 || mhz > 24)
+        return kProfiZq3DefaultMHz;
+    return static_cast<uint8_t>(mhz & ~1L);
+}
+
 /// [PROFI] SyncProm= value; false (and `out` untouched) for an unknown one. Empty / null = Default
 bool ParseProfiSyncProm(const char* text, ProfiSyncProm& out);
 const char* ProfiSyncPromName(ProfiSyncProm prom);
