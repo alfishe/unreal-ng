@@ -51,7 +51,7 @@ bank number combines `#7FFD` bits into 6 bits → 64 pages of 16K.
 Exercise it from a snapshot of running code or poke the port through a small
 loader; then verify the effect with
 [capture_media screenshot](../media/agent-screenshot-view.md) (GigaScreen
-flicker needs two frames) or `inspect_state {"aspects":["video"]}`.
+flicker needs two frames; a screenshot is the whole frame, 352x288, by default) or `inspect_state {"aspects":["video"]}`.
 
 ## WebAPI
 

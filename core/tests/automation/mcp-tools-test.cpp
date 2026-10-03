@@ -1430,6 +1430,140 @@ TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/screen/digest"));
 }
 
+namespace
+{
+/// What GET /capture/screen answers for a whole Pentagon frame
+Json::Value ScreenshotBody(bool saved = false)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["format"] = "png";
+    body["area"] = "full";
+    body["width"] = 352;
+    body["height"] = 288;
+    body["size"] = 1234;
+    body["frame"]["width"] = 352;
+    body["frame"]["height"] = 288;
+    body["frame"]["mode"] = "Pentagon128K";
+    body["frame"]["source"] = "native";
+    body["frame"]["frame_number"] = 77;
+    body["screen_window"]["x"] = 48;
+    body["screen_window"]["y"] = 48;
+    body["screen_window"]["width"] = 256;
+    body["screen_window"]["height"] = 192;
+    body["crop"]["x"] = 0;
+    body["crop"]["y"] = 0;
+    body["crop"]["width"] = 352;
+    body["crop"]["height"] = 288;
+    if (saved)
+    {
+        body["saved"] = true;
+        body["file"] = "scratch/my shot.png";
+    }
+    else
+    {
+        body["data"] = "iVBORw0KGgo=";
+    }
+    return body;
+}
+}  // namespace
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_WithoutArguments_LeavesTheDefaultsToTheServer)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/capture/screen"))
+        << "no query: the server's defaults (whole frame, PNG) apply";
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ForwardsAreaFormatAndAnEncodedPath)
+{
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?format=png&area=screen&path=scratch%2Fmy%20shot.png";
+    _caller->routes["GET " + route] = {200, ScreenshotBody(true)};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["area"] = "screen";
+    args["format"] = "png";
+    args["path"] = "scratch/my shot.png";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route)) << "a path with a slash and a space must be percent-encoded";
+    EXPECT_NE(result.text.find("saved to scratch/my shot.png"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_SaysWhatTheImageIs)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("352x288 png"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("full of the 352x288 Pentagon128K frame"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("screen window 256x192 at (48,48)"), std::string::npos) << result.text;
+    EXPECT_FALSE(result.structured.isMember("data")) << "the pixels only come with include_image";
+    EXPECT_TRUE(result.structured.isMember("screen_window")) << "the geometry stays in the structured answer";
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_IncludeImageKeepsTheData)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, ScreenshotBody()};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["include_image"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.structured["data"].asString(), "iVBORw0KGgo=");
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_LiveFrameIsAskedForAndTheBeamIsReported)
+{
+    Json::Value body = ScreenshotBody();
+    body["source"] = "live";
+    body["frame"]["partial"] = true;
+    body["frame"]["beam"]["line"] = 120;
+    body["frame"]["beam"]["tstate"] = 26880;
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?source=live"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["source"] = "live";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/capture/screen?source=live"));
+    EXPECT_NE(result.text.find("live frame"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("beam stopped at line 120 T 26880 (half-drawn frame)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_AServerRefusalIsAnErrorWithItsReason)
+{
+    Json::Value refusal;
+    refusal["error"] = "Bad Request";
+    refusal["message"] = "Unknown area 'border': use full or screen";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?area=border"] = {400, refusal};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["area"] = "border";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Unknown area 'border'"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("400"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_BoundedEveryNthRecording_ReportsCapturedFramesProgress)
 {
     // One route covers start/pause/resume/stop — FakeApiCaller routes by method+path

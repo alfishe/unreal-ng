@@ -1177,8 +1177,14 @@ void MenuManager::createToolsMenu()
     // F12 must reach the machine (the ZX-Evo AVR turns its short press into a
     // Z80 reset, e.g. the TS-BIOS setup screen's "F12 - exit")
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
-    _screenshotAction->setStatusTip(tr("Copy the emulator screen to the clipboard"));
+    _screenshotAction->setStatusTip(tr("Copy what the emulator window shows to the clipboard"));
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
+
+    // The whole frame (border included) to a PNG or GIF file: the same screenshot the WebAPI, MCP, CLI, Lua and
+    // Python take (core Screenshotter), whatever the window's viewport crop
+    _saveScreenshotAction = _toolsMenu->addAction(tr("Save Screenshot &As..."));
+    _saveScreenshotAction->setStatusTip(tr("Save the whole emulator frame, border included, to a PNG or GIF file"));
+    connect(_saveScreenshotAction, &QAction::triggered, this, &MenuManager::saveScreenshotRequested);
 
 #ifdef ENABLE_RECORDING
     // Recording (widget toggle)

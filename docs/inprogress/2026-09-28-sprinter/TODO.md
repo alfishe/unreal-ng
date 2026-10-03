@@ -120,6 +120,15 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   overrun cannot switch the turbo), TTD blob 31 v3, `boot.ttd` re-recorded; focus out releases the ZX matrix keys
   as well as the PS/2 keys
 
+- [x] Spectrum mode: attributes lagged behind the pixels in Pentagon multicolor demos (owner report 2026-10-03,
+  `scroller.trd`, `atarin.trd` in P128; branch `sprinter-zx-shadow-squares`; [research-zx-mode.md](research-zx-mode.md)
+  §7.1): the frame INT sat at MAME's place, 10 T after the PLD's edge (`CT5` rising 2 T into the first square
+  after the INT run), so the Sprinter read each cell 17 980 T after the INT where a Pentagon reads it after
+  17 988; now 17 990. With it: a video RAM byte lands 1 T before the write cycle's end, a `#7FFD` write catches
+  the beam up (bit 3 picks the screen), and a text / Spectrum square keeps the font byte latched at its start
+  (the attribute is read every half T). The shadow copy was right: the same conditions and address as MAME, the
+  address as the PLD's `VXA` (`VIDEO2.TDF`), and both demos' pixels equal the PENTAGON model's frame for frame. Open: mode bytes written inside a square are not latched (no known program needs it)
+
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**
@@ -185,10 +194,25 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
     Across the Edge: paper plane B identical to a Pentagon on the same frames
     ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [x] Spectrum mode: the border one character (8 ZX pixels) ahead of the paper (owner report 2026-10-03, Across
+    the Edge in P128; branch `sprinter-zx-border-phase`): the border color was drawn from the port callback (IORQ);
+    the PLD latches it on `/IOWR` rising, at the I/O cycle's end (`SP2_ACEX.TDF:310-315`), and samples it with the
+    attribute every half T. Now drawn from IORQ + 4 T (`ScreenSprinter::CatchUpToBorderLatch`): Across's split-screen
+    border edge 168 -> 176 against the paper's 176, as the PENTAGON model ([research-zx-mode.md](research-zx-mode.md) §7.1).
+    The PLD sources give IORQ + 3 T (edge 174, still visibly 2 ZX pixels ahead); the owner chose the PENTAGON picture
+  - [ ] Check the border latch against a board (a photo / capture of Across the Edge's split screen on a Sprinter):
+    `kBorderLatchAfterIorqT` is 4 T by owner decision, 1 T beyond the PLD's latch; one constant if a board says 3
   - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
     border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
     change 8 lines off in the bottom border
-  - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
+  - [x] Z4 (2026-10-03, branch `sprinter-zx-mode-report`; [tdd-zx-mode.md](tdd-zx-mode.md) §12): the ZX mode report
+    (which mode file - SP.ZX / P128.ZX / ORIGIN.ZX ... - from the hardware and from the launcher's own text and option
+    table in RAM, each option with its evidence, clock request / F12 / MHz, INT, ROMs by CRC, the decode of `#01FD` and
+    the other ZX ports), the PLD journal (who changed CNF, turbo, `#1FFD`, `#7FFD`, ALL_MODE, the port table ... with
+    frame, T, PC; also from a TTD recording), the TTD port journals on the Sprinter (no NeoGS without a ZX-bus), the
+    Qt status line "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)"; all five surfaces
+  - [ ] The launchers parse `int-sc`, not the `/sc-int` that SC256.ZX and SCORPION.ZX carry: the Scorpion INT is never
+    applied (both launchers' option tables; research §4 corrected). Report upstream (the `.ZX` files or the parser)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
     2026-10-02 (owner: yes, via the shared pipeline, lower priority): built on the shared snapshot pipeline

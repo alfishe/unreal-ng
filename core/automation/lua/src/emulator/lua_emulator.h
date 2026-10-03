@@ -5,6 +5,7 @@
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
+#include "emulator/video/screenshotter.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -894,6 +895,79 @@ public:
             t["format"] = frame.format;
             t["encoding"] = frame.encoding;
             t["data"] = std::string(frame.bytes.begin(), frame.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
+        // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
+        // frame.beam = {line, tstate}).
+        // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
+        // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
+        // instead of `data`; nil, error on a bad word, a missing emulator or no frame
+        lua.set_function("screenshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pScreen) return mouseError(s, "The emulator has no screen");
+
+            ScreenshotOptions options;  // the whole frame, PNG
+            if (opts)
+            {
+                const std::string area = opts->get_or<std::string>("area", "");
+                const std::string format = opts->get_or<std::string>("format", "");
+                const std::string source = opts->get_or<std::string>("source", "");
+                if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
+                    return mouseError(s, "Unknown area '" + area + "': use full or screen");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
+                if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
+                    return mouseError(s, "Unknown format '" + format + "': use png or gif");
+                options.saveTo = opts->get_or<std::string>("path", "");
+            }
+
+            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
+            if (!shot.ok) return mouseError(s, shot.errorMessage);
+
+            sol::state_view view(s);
+            auto rect = [&view](const FrameRect& r) {
+                sol::table t = view.create_table();
+                t["x"] = r.x;
+                t["y"] = r.y;
+                t["width"] = r.width;
+                t["height"] = r.height;
+                return t;
+            };
+            sol::table t = view.create_table();
+            t["format"] = Screenshotter::FormatName(shot.format);
+            t["area"] = Screenshotter::AreaName(options.area);
+            t["source"] = Screenshotter::RequestSourceName(options.source);
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.encodedSize;
+            t["crop"] = rect(shot.crop);
+            t["screen_window"] = rect(shot.frame.screenWindow);
+            sol::table frame = view.create_table();
+            frame["width"] = shot.frame.width;
+            frame["height"] = shot.frame.height;
+            frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                                       : Screen::GetVideoModeName(shot.frame.videoMode);
+            frame["source"] = Screenshotter::SourceName(shot.frame.source);
+            frame["frame_number"] = shot.frame.frameNumber;
+            if (shot.frame.beamLine >= 0)
+            {
+                frame["partial"] = shot.frame.partial;
+                sol::table beam = view.create_table();
+                beam["line"] = shot.frame.beamLine;
+                beam["tstate"] = shot.frame.beamTstate;
+                frame["beam"] = beam;
+            }
+            t["frame"] = frame;
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
             sol::variadic_results out;
             out.push_back(t);
             return out;
@@ -2715,6 +2789,54 @@ public:
             sol::variadic_results out;
             out.push_back(StateNodeToLua(s, report));
             return out;
+        });
+        // sprinter_zx_mode([deep]): the ZX (Spectrum) mode report (DeviceState::SprinterZxMode); deep = false skips
+        // the whole-RAM search for the launcher's option table
+        lua.set_function("sprinter_zx_mode", [this](sol::this_state s, sol::optional<bool> deep) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::SprinterZxMode(emulator->GetContext(), deep.value_or(true)));
+        });
+        // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
+        // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option
+        lua.set_function("sprinter_pld_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            DeviceState::SprinterJournalQuery query;
+            std::string error;
+            if (!DeviceState::SprinterJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"),
+                                                              text("source"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::SprinterJournal(emulator->GetContext(), query)));
+            return out;
+        });
+        // sprinter_pld_journal_control({enabled=true|false, clear=true}): switch / clear the PLD journal
+        lua.set_function("sprinter_pld_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+            }
+            return StateNodeToLua(s, DeviceState::SprinterJournalControl(emulator->GetContext(), enable, clear));
         });
         lua.set_function("sprinter_sound_ring", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();

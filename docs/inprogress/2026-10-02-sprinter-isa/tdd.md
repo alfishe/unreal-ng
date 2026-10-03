@@ -70,6 +70,13 @@ fits the GS only where `ZxBusPresent()` holds (today the Sprinter builds a NeoGS
 although nothing can reach it), and `DescribeNetwork().zxBus` on the Sprinter becomes `false` in v1 (ZX-bus
 network cards through the adapter: [open-questions.md](open-questions.md) Q7).
 
+**As built ahead of I1 (2026-10-03, branch `sprinter-zx-mode-report`, [Sprinter tdd-zx-mode.md](../2026-09-28-sprinter/tdd-zx-mode.md)
+§12.3):** `PortDecoder::ZxBusPresent()` exists (default `true`); the Sprinter answers `false` until the adapter is
+built, and `SoundManager::attachToPorts` removes the GS / NeoGS card `[SOUND] GSType` asked for (the decoder exists
+only from there on; the mixer rows go with it). This was the minimal step that lets the TTD port journals record on
+the Sprinter (the NeoGS's ZX-DMA kept them off). I1 / I2 turn the answer into "an adapter is fitted" and fit the card
+again through it; `DescribeNetwork().zxBus` is still the default (`true`) and moves with I1.
+
 ## 3. Architecture
 
 ```mermaid

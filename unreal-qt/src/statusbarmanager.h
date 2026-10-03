@@ -91,6 +91,9 @@ private slots:
     /// The machine's own video mode summary (ScreenState::videoModeBrief, e.g. the Sprinter's dominant
     /// square kind); hidden on machines without one
     void updateVideoMode(EmulatorContext* context);
+    /// The Sprinter's ZX mode: "ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)", the full report as the tooltip
+    /// (DeviceState::SprinterZxModeBrief); hidden on other machines and outside the ZX mode
+    void updateZxMode(EmulatorContext* context);
     void updateJoystick(EmulatorContext* context);
 
 private:
@@ -115,6 +118,8 @@ private:
     QLabel* _rzx = nullptr;               ///< RZX playback progress, shown while a recording was played
     QLabel* _ttd = nullptr;               ///< TTD history replay progress, shown while positioned in the past
     QLabel* _videoMode = nullptr;         ///< the picture's mode on machines that mix modes per area (Sprinter: ScreenState::videoModeBrief)
+    QLabel* _zxMode = nullptr;            ///< the Sprinter's ZX mode and launcher configuration (DeviceState::SprinterZxModeBrief)
+    int _zxModeTicks = 0;                 ///< the tooltip report is rebuilt every few ticks (it reads the vROM pages)
     RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop
     bool _rzxPopoverOpen = false;         ///< the label shows it (a toggle)
     bool _rzxDesynced = false;            ///< the label is red after a desync

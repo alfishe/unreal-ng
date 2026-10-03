@@ -1,22 +1,10 @@
 #include "screencapture.h"
 
-#include "emulator/emulator.h"
-#include "emulator/emulatormanager.h"
-#include "emulator/video/screen.h"
-#include "3rdparty/gif/gif.h"
-#include "3rdparty/lodepng/lodepng.h"
+#include "emulator/video/screenshotter.h"
 
-#include <cstdio>
-#include <cstring>
-#include <filesystem>
-
-// Default ZX Spectrum screen dimensions (fallback when Screen unavailable)
-static constexpr uint16_t ZX_SCREEN_WIDTH = 256;
-static constexpr uint16_t ZX_SCREEN_HEIGHT = 192;
-
-// ============================================================================
-// Public API
-// ============================================================================
+// Legacy shim: the pictures, the crop and the encoders live in Screenshotter. What stays here is the old
+// calling convention (format as a word that falls back to GIF, mode as an enum, a CaptureResult with
+// base64) for the surfaces that have not moved to Screenshotter yet
 
 ScreenCapture::CaptureResult ScreenCapture::captureAsGif(const std::string& emulatorId, CaptureMode mode)
 {
@@ -28,292 +16,32 @@ ScreenCapture::CaptureResult ScreenCapture::captureAsPng(const std::string& emul
     return captureScreen(emulatorId, "png", mode);
 }
 
-ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emulatorId, 
+ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emulatorId,
                                                            const std::string& format,
                                                            CaptureMode mode,
                                                            const std::string& filePath)
 {
+    ScreenshotOptions options;
+    options.area = mode == CaptureMode::ScreenOnly ? ScreenshotArea::Screen : ScreenshotArea::Full;
+    // The legacy convention: "png" is PNG, any other word was silently GIF (the surfaces validate now)
+    options.format = format == "png" ? ScreenshotFormat::Png : ScreenshotFormat::Gif;
+    options.saveTo = filePath;
+
+    const ScreenshotResult shot = Screenshotter::Take(emulatorId, options);
+
     CaptureResult result;
-    
-    // Get emulator
-    auto* manager = EmulatorManager::GetInstance();
-    if (!manager)
+    if (!shot.ok)
     {
-        result.errorMessage = "EmulatorManager not available";
+        result.errorMessage = shot.errorMessage;
         return result;
     }
-
-    auto emulator = manager->GetEmulator(emulatorId);
-    if (!emulator)
-    {
-        result.errorMessage = "Emulator not found: " + emulatorId;
-        return result;
-    }
-
-    // Get framebuffer
-    FramebufferDescriptor fb = emulator->GetFramebuffer();
-    if (fb.memoryBuffer == nullptr || fb.width == 0 || fb.height == 0)
-    {
-        result.errorMessage = "Framebuffer not available";
-        return result;
-    }
-
-    // Determine what to capture
-    const uint8_t* imageData = nullptr;
-    uint16_t imageWidth = 0;
-    uint16_t imageHeight = 0;
-    std::vector<uint8_t> screenOnlyData;
-
-    if (mode == CaptureMode::ScreenOnly)
-    {
-        // Get screen dimensions from Screen::rasterDescriptors
-        uint16_t screenWidth = ZX_SCREEN_WIDTH;
-        uint16_t screenHeight = ZX_SCREEN_HEIGHT;
-        uint16_t offsetX = 0;
-        uint16_t offsetY = 0;
-
-        auto* ctx = emulator->GetContext();
-        if (ctx && ctx->pScreen && fb.videoMode < M_MAX)
-        {
-            const auto& rd = ctx->pScreen->rasterDescriptors[fb.videoMode];
-            if (rd.screenWidth > 0)
-            {
-                screenWidth = rd.screenWidth;
-                screenHeight = rd.screenHeight;
-                offsetX = rd.screenOffsetLeft;
-                offsetY = rd.screenOffsetTop;
-            }
-        }
-
-        // Fallback: center screen if offsets not set
-        if (offsetX == 0 && offsetY == 0)
-        {
-            offsetX = (fb.width - screenWidth) / 2;
-            offsetY = (fb.height - screenHeight) / 2;
-        }
-
-        // Extract screen area
-        if (!extractScreenArea(fb, screenOnlyData, screenWidth, screenHeight, offsetX, offsetY))
-        {
-            result.errorMessage = "Failed to extract screen area";
-            return result;
-        }
-        imageData = screenOnlyData.data();
-        imageWidth = screenWidth;
-        imageHeight = screenHeight;
-    }
-    else  // FullFramebuffer
-    {
-        imageData = fb.memoryBuffer;
-        imageWidth = fb.width;
-        imageHeight = fb.height;
-    }
-
-    result.width = imageWidth;
-    result.height = imageHeight;
-
-    // Encode to requested format
-    std::vector<uint8_t> encodedData;
-    
-    if (format == "png")
-    {
-        encodedData = encodeToPng(imageData, imageWidth, imageHeight);
-        result.format = "png";
-    }
-    else  // Default to GIF
-    {
-        encodedData = encodeToGif(imageData, imageWidth, imageHeight);
-        result.format = "gif";
-    }
-
-    if (encodedData.empty())
-    {
-        result.errorMessage = "Failed to encode image";
-        return result;
-    }
-
-    result.originalSize = encodedData.size();
-
-    if (!filePath.empty())
-    {
-        // Create missing parent directories (e.g. a fresh clone without scratch/) — persistent failures surface in fopen below
-        const std::filesystem::path outPath(filePath);
-        if (outPath.has_parent_path() && !outPath.parent_path().empty())
-        {
-            std::error_code ec;
-            std::filesystem::create_directories(outPath.parent_path(), ec);
-        }
-        FILE* f = std::fopen(filePath.c_str(), "wb");
-        if (!f)
-        {
-            result.errorMessage = "Failed to open output file for writing: " + filePath;
-            return result;
-        }
-        size_t written = std::fwrite(encodedData.data(), 1, encodedData.size(), f);
-        std::fclose(f);
-        if (written != encodedData.size())
-        {
-            std::remove(filePath.c_str());  // do not leave a truncated image behind
-            result.errorMessage = "Failed to write complete image data to " + filePath;
-            return result;
-        }
-        result.savedFile = filePath;
-    }
-    else
-    {
-        result.base64Data = base64Encode(encodedData);
-    }
-
     result.success = true;
-
-    return result;
-}
-
-// ============================================================================
-// Screen Extraction
-// ============================================================================
-
-bool ScreenCapture::extractScreenArea(const FramebufferDescriptor& fb, std::vector<uint8_t>& outData,
-                                       uint16_t screenWidth, uint16_t screenHeight,
-                                       uint16_t offsetX, uint16_t offsetY)
-{
-    // Validate framebuffer has enough data
-    if (fb.width < offsetX + screenWidth || fb.height < offsetY + screenHeight)
-    {
-        return false;
-    }
-
-    // Allocate output buffer (RGBA)
-    outData.resize(screenWidth * screenHeight * 4);
-
-    // Copy screen area line by line
-    const uint8_t* src = fb.memoryBuffer;
-    uint8_t* dst = outData.data();
-
-    for (uint16_t y = 0; y < screenHeight; y++)
-    {
-        const uint8_t* srcLine = src + ((offsetY + y) * fb.width + offsetX) * 4;
-        uint8_t* dstLine = dst + (y * screenWidth) * 4;
-        std::memcpy(dstLine, srcLine, screenWidth * 4);
-    }
-
-    return true;
-}
-
-// ============================================================================
-// GIF Encoding
-// ============================================================================
-
-std::vector<uint8_t> ScreenCapture::encodeToGif(const uint8_t* data, uint16_t width, uint16_t height)
-{
-    std::vector<uint8_t> result;
-
-    // GIF library writes to file, so we need a temp file approach
-    char tempPath[256];
-#ifdef _WIN32
-    snprintf(tempPath, sizeof(tempPath), "%s\\unreal_capture_%p.gif", 
-             std::getenv("TEMP") ? std::getenv("TEMP") : ".", data);
-#else
-    snprintf(tempPath, sizeof(tempPath), "/tmp/unreal_capture_%p.gif", static_cast<const void*>(data));
-#endif
-
-    GifWriter writer = {};
-    
-    // Start GIF (single frame, delay=0 for static image)
-    if (!GifBegin(&writer, tempPath, width, height, 0))
-    {
-        return result;
-    }
-
-    // Write single frame
-    if (!GifWriteFrame(&writer, data, width, height, 0))
-    {
-        GifEnd(&writer);
-        std::remove(tempPath);
-        return result;
-    }
-
-    // Finalize
-    GifEnd(&writer);
-
-    // Read file into memory
-    FILE* f = fopen(tempPath, "rb");
-    if (f)
-    {
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        
-        if (size > 0)
-        {
-            result.resize(size);
-            size_t read = fread(result.data(), 1, size, f);
-            (void)read;  // Suppress unused warning
-        }
-        fclose(f);
-    }
-
-    // Clean up temp file
-    std::remove(tempPath);
-
-    return result;
-}
-
-// ============================================================================
-// PNG Encoding
-// ============================================================================
-
-std::vector<uint8_t> ScreenCapture::encodeToPng(const uint8_t* data, uint16_t width, uint16_t height)
-{
-    std::vector<uint8_t> result;
-
-    // lodepng encodes to memory directly
-    unsigned error = lodepng::encode(result, data, width, height);
-    
-    if (error)
-    {
-        result.clear();
-    }
-
-    return result;
-}
-
-// ============================================================================
-// Base64 Encoding
-// ============================================================================
-
-std::string ScreenCapture::base64Encode(const std::vector<uint8_t>& data)
-{
-    static const char* chars = 
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789+/";
-
-    std::string result;
-    result.reserve(((data.size() + 2) / 3) * 4);
-
-    for (size_t i = 0; i < data.size(); i += 3)
-    {
-        uint32_t n = static_cast<uint32_t>(data[i]) << 16;
-        
-        if (i + 1 < data.size())
-            n |= static_cast<uint32_t>(data[i + 1]) << 8;
-        if (i + 2 < data.size())
-            n |= static_cast<uint32_t>(data[i + 2]);
-
-        result.push_back(chars[(n >> 18) & 0x3F]);
-        result.push_back(chars[(n >> 12) & 0x3F]);
-        
-        if (i + 1 < data.size())
-            result.push_back(chars[(n >> 6) & 0x3F]);
-        else
-            result.push_back('=');
-            
-        if (i + 2 < data.size())
-            result.push_back(chars[n & 0x3F]);
-        else
-            result.push_back('=');
-    }
-
+    result.format = Screenshotter::FormatName(shot.format);
+    result.originalSize = shot.encodedSize;
+    result.width = shot.width;
+    result.height = shot.height;
+    result.savedFile = shot.savedFile;
+    if (shot.savedFile.empty())
+        result.base64Data = Screenshotter::Base64Encode(shot.bytes);
     return result;
 }

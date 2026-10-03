@@ -386,6 +386,9 @@ GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/spri
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
 GET  /api/v1/emulator/{id}/state/sprinter/sound/ring  The Covox-Blaster ring: 256 words, play / write index
+GET  /api/v1/emulator/{id}/state/sprinter/zx-mode ?deep=0 - the ZX (Spectrum) mode: active, config (options with evidence, best_match file + confidence), launcher (its .ZX text and option table in RAM), clock, frame / INT, rom, paging, ports (decodes + ttd_query)
+GET  /api/v1/emulator/{id}/state/sprinter/pld-journal ?kinds=&since=&from=&to=&limit=&source=live|ttd - who changed the PLD setup, when (frame, T, line, PC), ttd_queries
+POST /api/v1/emulator/{id}/sprinter/pld-journal   {"enabled": true|false, "clear": true} - switch / clear the PLD journal
 GET  /api/v1/emulator/{id}/state/sprinter/bios    BIOS images, the one loaded (CRC-32), the configured one, start options
 POST /api/v1/emulator/{id}/sprinter/bios          {"bios": "3.04|3.06|3.07|<file>", "fast_start", "accel_int_suspend", "reset": true} - select; the image loads at the reset
 GET  /api/v1/emulator/{id}/video/temporal     ZX DLSS de-flicker status: algorithm ("" = off), active, inactive_reason, applicable, correcting, showing_processed, video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed, corrected_frames, written, shown_raw, late, restarts, last_ms, average_ms, shown_frame and last_frame {pattern, period2..period5, field, field_stage, whole_paper, scene_average}, algorithms[], default_algorithm (fields: command-interface.md, video temporal)
@@ -457,6 +460,27 @@ GET  /api/v1/emulator/{id}/listing/source_at   Source line for an address (?addr
 POST /api/v1/emulator/{id}/listing/step_line   Run until the source line changes (body: {"max_tstates": N})
 POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line (body: {"line": N})
 ```
+
+### Screenshots
+
+```
+GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live&path=<file>
+GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64   (raw pixels of the same frame)
+```
+
+`capture/screen` is a screenshot of the **presented frame** (the finished, tear-free frame the window shows, a couple of frames behind the machine, more with ZX DLSS). `area=full` (default) is the whole frame with its border (352x288 on a Spectrum, 736x288 on the Sprinter, the whole picture of an FT812 card, e.g. 1024x768); `area=screen` is the working picture the frame's own geometry names (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture; on a hires mode it can be the whole frame, then both give the same image). `format=png` (default, lossless) or `gif` (256 colors). `path=` (alias `filename=`) writes the image on the server (folders are created) instead of returning it. `mode=full|screen` is a deprecated alias of `area`; the pair must not disagree. `source=presented` (default) is the frame above; `source=live` is the frame as drawn right now (no present delay, no ZX DLSS): a running machine's emulation thread copies it at the end of its next frame (409 `no-frame` if none arrives within 1 s), a paused machine is read directly and the answer adds `frame.beam {line, tstate}` and `frame.partial` (the beam stopped inside a frame drawn per T-state). The master of a ZX-Poly group answers with the group's composed display frame (`frame.source: composed`, 2x, the working picture 512x384).
+
+```bash
+curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen" | jq 'del(.data)'
+# {"status":"success","format":"png","area":"full","width":352,"height":288,"size":2331,
+#  "crop":{"x":0,"y":0,"width":352,"height":288},
+#  "screen_window":{"x":48,"y":48,"width":256,"height":192},
+#  "source":"presented",
+#  "frame":{"width":352,"height":288,"mode":"Pentagon128K","source":"native","frame_number":4711}}
+curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?area=screen&path=scratch/shot.png" | jq .
+```
+
+The answer always says what it is: `frame` (size, video mode, `source` `native` or `external` for a video card's picture, the emulated `frame_number`), `screen_window` (the working picture inside the frame) and `crop` (the returned image's rectangle inside the frame). Errors are JSON `{error, message, kind}`: 400 `bad-parameter` (an unknown `area`, `mode` or `format`: the message lists the allowed words; or `area` and `mode` disagree), 404 `not-found`, 409 `no-frame` (no frame presented yet), 500 `bad-geometry` / `encode-failed` / `io-failed`, 503 while the emulator shuts down. The same screenshot is on every surface: CLI `capture screen`, Lua `screenshot{}`, Python `capture_screen()`, MCP `capture_media` screenshot, Qt Tools > Save Screenshot As. See [command-interface.md](./command-interface.md).
 
 ### Analysis & Capture
 ```

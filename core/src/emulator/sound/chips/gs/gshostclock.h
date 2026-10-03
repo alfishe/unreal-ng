@@ -37,6 +37,40 @@ struct GSHostClock
     /// One ZX frame in card units
     static int64_t frameUnits(const EmulatorContext* context, double unitsPerSecond);
 
+    /// Card time at which the host frame that starts now begins, in card units.
+    ///
+    /// A card runs its CPU in whole instructions, so a frame ends a little PAST
+    /// its nominal end (the overshoot: 0 up to one instruction, or one
+    /// 320-cycle quantum for the lightweight player). The next frame must not
+    /// take the card's actual time as its base - that would add the overshoot
+    /// to every frame and let the card run ahead of the machine without bound.
+    /// The base follows the NOMINAL timeline instead, so the overshoot is paid
+    /// back by the next frame's catch-up and the card's time stays within one
+    /// instruction of `frames * frameUnits`.
+    ///
+    /// `previousBase` / `previousFrameUnits`: the previous frame's base and
+    /// length. `cardNow`: the card's actual time. `zxElapsed`: host tacts since
+    /// the previous frame's anchor (negative: the ZX clock was rewound).
+    /// `unitsPerZxTact`: the host -> card conversion.
+    ///
+    /// - The card ran the previous frame to its end (it stands at or just past
+    ///   the nominal end, by less than a frame): the base is the nominal end.
+    /// - The card did NOT reach the nominal end: that frame was abandoned or is
+    ///   being started a second time (a pause and resume, a state restored in
+    ///   the middle of a frame and resumed). The card then keeps the lead it has
+    ///   over the host: the base is the nominal card time of the host's current
+    ///   tact, `previousBase + zxElapsed * unitsPerZxTact`. A repeated start in
+    ///   the same tact leaves the base where it was.
+    /// - Anything else means the timeline was broken (first frame, reset, the
+    ///   ZX clock rewound, a state from another timeline): the base restarts
+    ///   from the card's actual time.
+    static int64_t nextFrameBase(int64_t previousBase, int64_t previousFrameUnits, int64_t cardNow,
+                                 int64_t zxElapsed, double unitsPerZxTact);
+
+    /// Host tacts since `anchorZxTacts` (the previous frame's ZX base), or -1
+    /// when the ZX clock was rewound (a ZX reset)
+    static int64_t zxElapsedSince(const EmulatorContext* context, uint64_t anchorZxTacts);
+
     /// Card target time for the host's current tact, relative to the frame
     /// bases taken at handleFrameStart. Returns false when the ZX clock was
     /// rewound (a ZX reset) - the caller waits for the next frame base.

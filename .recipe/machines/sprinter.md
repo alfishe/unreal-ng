@@ -148,7 +148,7 @@ inspect_state {"aspects":["sprinter_text"]}
 #       ZX            <DIR>          22.03.21  17:01
 #               6 file(s)       364,060 bytes
 #       B:\>
-capture_media {"action":"screenshot","format":"png","mode":"full","filename":"/abs/path/scratch/dss-dir.png"}
+capture_media {"action":"screenshot","format":"png","area":"full","filename":"/abs/path/scratch/dss-dir.png"}
 #   → Screenshot saved to .../scratch/dss-dir.png (736x288 ...)
 ```
 
@@ -443,7 +443,7 @@ curl -s "$BASE/emulator/$EMU/state/sprinter/ports/lookup?port=7FFD" | jq -c '.re
 curl -s "$BASE/emulator/$EMU/state/paging" | jq -c '.banks[] | {bank, type, page}'      # the Sprinter windows
 curl -s "$BASE/emulator/$EMU/state/memory/rom" | jq '.total_rom_pages'                  # 16
 curl -s "$BASE/emulator/$EMU/ports" | jq '.live.sprinter_port_table'                    # map, DOS, PN5 now
-curl -s "$BASE/emulator/$EMU/capture/screen?format=png&mode=full&path=$PWD/scratch/sprinter.png" | jq -c .
+curl -s "$BASE/emulator/$EMU/capture/screen?area=full&format=png&path=$PWD/scratch/sprinter.png" | jq -c .
 #   {"file":".../scratch/sprinter.png","format":"png","height":288,"saved":true,"size":...,"status":"success","width":736}
 
 # Video (step 6), BIOS (step 1), raw pixels
@@ -569,8 +569,8 @@ curl -s -X PUT $BASE/emulator/$EMU/video/temporal -H 'Content-Type: application/
 #                     "inactive_reason":"not applicable: Sprinter native mode (640x256 16c): ZX DLSS works in the Spectrum mode only", ...}
 ```
 
-The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen` is the raw
-one). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
+The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen?area=full` is the same
+pixels, encoded). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
 of its 704 x 288 window at (16, 0). CLI `video temporal`, MCP `capture_media` `temporal_status`, Lua / Python
 `video_temporal()` report the same fields. Design: `docs/inprogress/2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md` §7.
 
@@ -603,3 +603,52 @@ launcher mode: [testdata/machines/sprinter/zx-timing/README.md](../../testdata/m
 
 After Ctrl+Alt+Del from any mode started with `/ret-fn` the machine is back in DSS at 21 MHz (the PLD presets its
 turbo bit on the reset); `/state/sprinter` shows `registers.all_mode.value` `0xFF` and `clock.mhz` `21`.
+
+### Which ZX mode runs, and who changed the PLD (CNF, turbo, `#1FFD`)
+
+Two questions that used to take an investigation: is this Spectrum session "Sprinter ZX" (`SP.ZX`:
+`/sprinter /turbo /7FFD /1FFD`) or "Pentagon 128" (`P128.ZX`: `/7FFD`), and which instruction turned turbo on or
+wrote `#1FFD`. Both are one call on a live (paused or running) machine and on a TTD recording. Design:
+[tdd-zx-mode.md](../../docs/inprogress/2026-09-28-sprinter/tdd-zx-mode.md) §12.
+
+Verified 2026-10-03 (GUI build on spare ports, BIOS 3.06, the MAME-pack CHD, Flex Navigator): TTD recording on,
+`\zx\spectrum.exe \zx\sp.zx \trd\across\0.trd` typed in Flex Navigator, ENTER on TR-DOS, `R` ENTER, ENTER on ACROSS.
+
+```bash
+BASE=http://localhost:8090/api/v1; B=$BASE/emulator/$EMU
+curl -s "$B/state/sprinter/zx-mode" | jq -c '{summary, best: .config.best_match | {file, confidence}, opts: .config.option_line,
+     clock: .clock.why, int: .frame.int | {kind, line}, rom: .rom.set, launcher: .launcher.mode_name}'
+#  {"summary":"ZX: Sprinter ZX (turbo req, 21 MHz, /1FFD)","best":{"file":"SP.ZX","confidence":"certain"},
+#   "opts":"/sprinter /turbo /7FFD /1FFD /ret-fn","clock":"21 MHz: the CNF turbo request is on and the front-panel
+#   switch (F12) allows it","int":{"kind":"pentagon","line":287},"rom":"sprinter-community","launcher":"Sprinter ZX"}
+curl -s "$B/state/sprinter/zx-mode" | jq -c '.ports.rows[] | select(.port=="0x01FD") | {out: .tr_dos_off.out, ttd_query}'
+#  {"out":{"code":"0xC0","name":"1FFD","effect":"the #1FFD latch: Scorpion paging (bit 4: +8 pages in window 3, ...)"},
+#   "ttd_query":{"port":"0x00E5","port_mask":"0xE0E7"}}        (P128.ZX: "stores cell #C0 only: CNF bit 6 'SC clean' ...")
+
+# Who wrote #1FFD (live journal: on by default, every change with frame, T, PC and the port used)
+curl -s "$B/state/sprinter/pld-journal?kinds=port_1ffd&limit=1" | jq -c '.events[] | {frame, t, pc, port, value, text}'
+#  {"frame":1873,"t":65528,"pc":"0x88F1","port":"0x01FD","value":"0x17","text":"#1FFD <- #17 via port #01FD: latch #00 -> #17"}
+# The same from the TTD recording (its OUT journal, decoded through the port table as it is now)
+curl -s "$B/state/sprinter/pld-journal?source=ttd&kinds=cnf,port_1ffd&limit=3" | jq -c '.events[] | {frame, t, pc, kind, port, value}'
+#  ... {"frame":868,"t":50052,"pc":"0x5B5C","kind":"cnf","port":"0x073C","value":"0x07"}
+#      {"frame":1873,"t":65527,"pc":"0x88F1","kind":"port_1ffd","port":"0x01FD","value":"0x17"}
+# Or the raw TTD query with the report's port / mask (every spelling the PLD treats as #1FFD)
+curl -s -X POST $B/ttd/port-events -H 'Content-Type: application/json' \
+     -d '{"event":"out","port":"0x00E5","port_mask":"0xE0E7","newest":true,"limit":3}' | jq -c '[.hits[] | {frame, port, value, pc}]'
+```
+
+- `config.best_match.confidence`: `certain` when the launcher's copy of the `.ZX` file in RAM (page `#FF`, community
+  launcher; page `#41`, Peters Plus) agrees with the hardware; `high` from the hardware alone (CNF byte, ALL_MODE,
+  frame length, ROM set by CRC). P128.ZX and ORIGIN.ZX share CNF `#4E`: ALL_MODE `#FA` and 312 lines tell ORIGIN.
+- `launcher.option_table.flags` is the launcher's own parsed table (`ret-fn`, `ret-zx`, ...); `config.return` says
+  what Ctrl+Alt+Del does.
+- Journal kinds: `port_table` (page `#40` written: the key ZX port decodes it changed), `cnf`, `clock`, `port_7ffd`,
+  `port_1ffd`, `all_mode`, `rgmod`, `hold`, `frame_lines`, `pld_load`, `pld_configured`, `f12`, `ctrl_alt_del`,
+  `reset`. The frame's events also appear in `/video/changes` (`machine_events`). Off / clear:
+  `POST $B/sprinter/pld-journal {"enabled": false}` / `{"clear": true}`.
+- The TTD time (`t`) is taken at the start of the I/O cycle, the live journal's after it: they can differ by 1 T.
+- Other surfaces: CLI `state sprinter zx`, `state sprinter journal kinds=port_1ffd [source=ttd]`; MCP `inspect_state`
+  aspects `sprinter_zx_mode`, `sprinter_pld_journal` (`pld_journal_kinds`, `pld_journal_source`); Lua
+  `sprinter_zx_mode()`, `sprinter_pld_journal{kinds="port_1ffd"}`; Python `emu.sprinter_zx_mode()`,
+  `emu.sprinter_pld_journal(kinds="port_1ffd", source="ttd")`. The GUI status bar shows the summary line, the
+  tooltip the report.

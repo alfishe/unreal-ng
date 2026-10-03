@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <vector>
 
@@ -321,6 +322,49 @@ struct FramebufferDescriptor
     size_t memoryBufferSize = 0;
 };
 
+/// A rectangle inside a frame, in frame pixels
+struct FrameRect
+{
+    uint16_t x = 0;
+    uint16_t y = 0;
+    uint16_t width = 0;
+    uint16_t height = 0;
+};
+
+/// Where a frame comes from
+enum class FrameSource : uint8_t
+{
+    Native,    ///< the machine's own renderer
+    External,  ///< a video card's picture (the FT812 of the TS-Conf VDAC2 card)
+    Composed,  ///< a group's composed picture: the ZX-Poly display frame (2x, the four modules' paper)
+};
+
+/// What a consumer needs to know about a frame to use its pixels: its size and where the
+/// working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole picture of
+/// an external card) sits inside it. Latched together with the pixels, so the two always agree
+/// (docs/inprogress/2026-10-03-screenshotter/design.md). Pixels are RGBA8888, `stride` bytes per line
+struct PictureGeometry
+{
+    uint16_t width = 0;
+    uint16_t height = 0;
+    uint32_t stride = 0;
+    FrameRect screenWindow;  ///< the working picture; the whole frame when the frame has no border
+    VideoModeEnum videoMode = M_NUL;
+    FrameSource source = FrameSource::Native;
+    uint64_t frameNumber = 0;  ///< emulated frame the pixels belong to
+    // Only a live snapshot of a stopped machine (Screen::SnapshotLive): where the beam stood
+    bool partial = false;      ///< the frame is half drawn: the beam is inside it and the raster is drawn per T-state
+    int32_t beamLine = -1;     ///< raster line of the beam, -1 when not known
+    int32_t beamTstate = -1;   ///< frame T-state of the beam, -1 when not known
+};
+
+/// One presented frame: pixels and geometry taken together, under one lock
+struct FrameSnapshot
+{
+    std::vector<uint8_t> pixels;
+    PictureGeometry geometry;
+};
+
 /// Display viewport configuration for cropping framebuffer to display
 /// Used with M_P384 overscan mode to allow symmetric display output
 struct DisplayViewport
@@ -344,15 +388,15 @@ struct DisplayViewport
 };
 
 /// Preset viewports for M_P384 overscan mode
-/// M_P384 framebuffer layout (from raster descriptor screenOffsetLeft=48):
+/// M_P384 framebuffer layout (the paper is at (48, 64), measured by FrameGeometry_Test):
 ///   Left border: 48px, Paper: 256px, Right border: 80px = 384px total
-///   Top border: 56px, Paper: 192px, Bottom border: 56px = 304px total
-/// Extra pixels vs Pentagon (352x288): 32 on right, 8 top + 8 bottom
+///   Top border: 64px, Paper: 192px, Bottom border: 48px = 304px total
+/// Extra border vs Pentagon (352x288): 32 pixels on the right, 16 lines on top
 namespace ViewportPresets
 {
     // Raster descriptor values
     static constexpr uint16_t SCREEN_OFFSET_LEFT = 48;   // Paper starts at x=48
-    static constexpr uint16_t SCREEN_OFFSET_TOP = 56;    // Paper starts at y=56
+    static constexpr uint16_t SCREEN_OFFSET_TOP = 64;    // Paper starts at y=64
     static constexpr uint16_t SCREEN_WIDTH = 256;
     static constexpr uint16_t SCREEN_HEIGHT = 192;
     static constexpr uint16_t P384_WIDTH = 384;
@@ -362,7 +406,7 @@ namespace ViewportPresets
 
     // Derived: right/bottom borders
     static constexpr uint16_t RIGHT_BORDER = P384_WIDTH - SCREEN_OFFSET_LEFT - SCREEN_WIDTH;   // 80
-    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 56
+    static constexpr uint16_t BOTTOM_BORDER = P384_HEIGHT - SCREEN_OFFSET_TOP - SCREEN_HEIGHT; // 48
 
     // Full overscan (384x304) - show everything including extra border areas
     constexpr DisplayViewport FULL_OVERSCAN = {0, 0, 0, 0};
@@ -378,8 +422,8 @@ namespace ViewportPresets
     constexpr DisplayViewport STANDARD = {
         0,
         static_cast<uint16_t>(RIGHT_BORDER - SCREEN_OFFSET_LEFT),  // 32
-        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 56 - 48 = 8
-        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 56 - 48 = 8
+        static_cast<uint16_t>(SCREEN_OFFSET_TOP - 48),             // 64 - 48 = 16
+        static_cast<uint16_t>(BOTTOM_BORDER - 48)                  // 48 - 48 = 0
     };
 
     // Screen only (256x192) - paper area only
@@ -483,9 +527,11 @@ public:
         // M_P384: Pentagon Overscan - larger framebuffer with same timing as Pentagon
         // Timing must be IDENTICAL to M_PENTAGON128K for correct border effects
         // Only fullFrameWidth/Height differ for larger framebuffer allocation
-        // Screen position (48,48) same as Pentagon - extra border rendered around it
-        // Frame: 16 vSync + 16 vBlank + 288 visible = 320 lines, same 71680 T-states
-        {384, 304, 256, 192, 48, 48, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
+        // Screen position (48,64): the frame starts 16 lines earlier than Pentagon's (inside what is vBlank
+        // there), so the paper sits 16 lines lower in the buffer; 32 more pixels on the right, none at the left.
+        // The beam timing (GetTimingDescriptor) stays the Pentagon row. Frame: 16 vSync + 16 vBlank + 288
+        // visible = 320 lines, same 71680 T-states. Measured against both renderers (FrameGeometry_Test)
+        {384, 304, 256, 192, 48, 64, 448, 64, 32, 16, 16},   // M_P384 (Pentagon 384x304 overscan)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PHR
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_TIMEX
         // TS-Conf modes (ScreenTSConf; TSConf hardware-spec §4.1): one geometry for every
@@ -912,6 +958,23 @@ protected:
     std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
     FramebufferDescriptor _external;
     uint32_t _externalFramePeriodUs = 0;
+    /// The monitor's current picture and its geometry (the external picture while one is active); emulation
+    /// thread, or a thread that knows it is parked
+    bool CaptureCurrentFrame(FrameSnapshot& out) const;
+    // SnapshotLive: one request at a time, served by the emulation thread
+    std::mutex _liveRequestMutex;
+    std::mutex _liveMutex;
+    std::condition_variable _liveCv;
+    std::atomic<bool> _livePending{false};
+    bool _liveDone = false;
+    bool _liveOk = false;
+    FrameSnapshot _liveResult;
+
+    /// Geometry of the frame in each present slot (under _presentMutex)
+    PictureGeometry _presentSlotGeometry[PRESENT_SLOTS];
+    /// The geometry of the machine's own frame as it is now / of the external picture (emulation thread)
+    PictureGeometry DescribeNativeFrame() const;
+    PictureGeometry DescribeExternalFrame() const;
     /// The present queue's slots for frames of `size` bytes (caller holds _presentMutex)
     void ResizePresentSlotsLocked(size_t size);
     /// Copy one frame into the next present slot (caller holds _presentMutex)
@@ -1000,6 +1063,40 @@ public:
     /// @param dstSize Destination size in bytes; must be >= framebuffer size
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
+
+    /// @brief The presented frame and its geometry as one atomic pair (any thread).
+    /// The geometry was latched with the frame, so a mode switch or a resize between the two reads
+    /// cannot give a size that disagrees with the pixels
+    /// @return false when there is no presented frame
+    bool SnapshotPresented(FrameSnapshot& out);
+
+    /// @brief The frame as drawn right now: no present delay, no post-processing (ZX DLSS).
+    /// The live buffer belongs to the emulation thread, so a caller's thread never reads it while that thread
+    /// runs:
+    ///  - `emulationParked` (stopped, or paused and confirmed parked): copied directly, with the beam position
+    ///    and `partial` when the stop is inside a frame drawn per T-state;
+    ///  - otherwise a one-shot request, served by the emulation thread at the end of its next rendered frame
+    ///    (ServeLiveRequest), where the finished frame is copied; the caller waits up to `timeoutMs`
+    /// @return false when the frame does not arrive in time (no frames: stuck emulation, no feature) or there is
+    ///         no buffer
+    bool SnapshotLive(FrameSnapshot& out, bool emulationParked, uint32_t timeoutMs);
+
+    /// Emulation thread, frame end, before the frame is latched: serve a waiting SnapshotLive. One atomic read
+    /// when nobody waits
+    void ServeLiveRequest();
+
+    /// Geometry of what the monitor shows now: the external picture while one is active, else the machine's own
+    /// frame (size, working window, mode, source). Emulation thread, or a thread that knows it is parked: it reads
+    /// renderer state. Recording and every other consumer that cuts "the screen" asks this, not the raster table
+    PictureGeometry DescribeCurrentFrame() const
+    {
+        return IsExternalPictureActive() ? DescribeExternalFrame() : DescribeNativeFrame();
+    }
+
+    /// The working picture's rectangle in the machine's own frame, for the current video mode:
+    /// the raster descriptor's screen window; modes whose window moves (TS-Conf) override this.
+    /// Emulation thread (it reads renderer state)
+    virtual FrameRect WorkingWindow() const;
 
     /// The picture the monitor shows: the machine's framebuffer, or the
     /// external picture while one is active (SetExternalPicture)

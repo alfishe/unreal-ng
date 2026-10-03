@@ -47,6 +47,8 @@ SprinterVideoInputs ScreenSprinter::CurrentInputs() const
         in.textPage = static_cast<uint8_t>((pld.pn >> 3) & 1);
         in.SetHold(pld.hold);
     }
+    if (_state && _fontLatchFrame == _state->frame_counter)
+        in.fontLatch = _fontLatch;
     return in;
 }
 
@@ -190,10 +192,73 @@ BeamPosition ScreenSprinter::DescribeBeam(uint32_t tInFrame) const
 
 void ScreenSprinter::UpdateScreen()
 {
+    DrawTo(GetCurrentTstate());
+}
+
+void ScreenSprinter::CatchUpToWrite()
+{
+    // In base T-states: at a raised clock the 3 CPU T of the cycle are a fraction of one
+    const Z80* cpu = _context->pCore->GetZ80();
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    const uint32_t landed = (cpu->t > kWriteLandsBeforeEndT ? cpu->t - kWriteLandsBeforeEndT : 0) / multiplier;
+    DrawTo(landed);
+    if (!_turboRenderSkip && _feature_screenhq_enabled)
+        LatchFont(landed);
+}
+
+void ScreenSprinter::CatchUpToBorderLatch()
+{
+    // In base T-states, as CatchUpToWrite. The rest of the OUT is internal: no write changes the picture
+    // before the latch, so the beam is drawn ahead to it now and the next catch-up goes on from there
+    const Z80* cpu = _context->pCore->GetZ80();
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    DrawTo((cpu->t + kBorderLatchAfterIorqT) / multiplier);
+}
+
+void ScreenSprinter::LatchFont(uint32_t t)
+{
+    const uint32_t line = t / kLineTStates;
+    const uint32_t x = (t % kLineTStates) * 4;
+    if (line >= kVisibleLines || x >= SprinterVideoRenderer::kVisibleWidth || !_state)
+        return;
+    const uint64_t frame = _state->frame_counter;
+    if (_fontLatchFrame == frame && _fontLatch.line == line && x >= _fontLatch.x0 && x < _fontLatch.x1)
+        return;  // latched by an earlier write in this square: the byte of the square's start
+    if (_fontLatchCheckedT == t && _fontLatchCheckedFrame == frame)
+        return;  // this moment was looked at (an accelerator burst writes many bytes at one T)
+    _fontLatchCheckedT = t;
+    _fontLatchCheckedFrame = frame;
+
+    SprinterVideoInputs in = CurrentInputs();
+    if (!in.vram)
+        return;
+    const uint32_t a16 = SprinterVideoRenderer::A16(in, x);
+    const uint32_t b8 = SprinterVideoRenderer::B8(in, line);
+    const uint8_t* line1 =
+        in.vram + SprinterVideoRam::ModeAddress(static_cast<uint8_t>(a16 >> 4), static_cast<uint8_t>(b8 >> 3), in.modePage);
+    if (!SprinterSquare::IsSymbol(line1[0]) || SprinterSquare::IsBlank(line1[0]) || SprinterSquare::IsBorder(line1[0]))
+        return;
+
+    // The latch unit: the square (320: one font byte per 16 pixels) or its 8-pixel half (640)
+    const uint32_t unit = (line1[0] & 0x20) ? 16u : 8u;
+    const uint32_t sub = a16 & 15;
+    const uint32_t intoUnit = sub & (unit - 1);
+    if (intoUnit == 0)
+        return;  // the unit starts with this write: it latches the new byte
+    // A16 is x shifted by whole pixels: the unit started intoUnit pixels earlier (left of the window: from 0)
+    const int32_t start = static_cast<int32_t>(x) - static_cast<int32_t>(intoUnit);
+    _fontLatch.line = line;
+    _fontLatch.x0 = static_cast<uint32_t>(std::max(start, 0));
+    _fontLatch.x1 = static_cast<uint32_t>(start + static_cast<int32_t>(unit));
+    _fontLatch.font = in.vram[SprinterVideoRenderer::FontAddress(in, SprinterVideoRenderer::SymbolMode(line1, sub), b8 & 7)];
+    _fontLatchFrame = frame;
+}
+
+void ScreenSprinter::DrawTo(uint32_t now)
+{
     // _prevTstate here is the next base T-state to draw: [_prevTstate, now)
     // were not drawn yet (frame start: 0, so the frame's first T is drawn too)
     const uint32_t frameEnd = _rasterState.maxFrameTiming;
-    uint32_t now = GetCurrentTstate();
     if (now > frameEnd)
         now = frameEnd;  // the frame's last instruction ends past the frame
     if (now <= _prevTstate)

@@ -658,7 +658,7 @@ Store presets as JSON for easy import/export:
 | **Quick Record (Gameplay)** | `Ctrl+Shift+R` | Instant gameplay recording |
 | **Stop Recording** | `Ctrl+Shift+S` | Stop current recording |
 | **Pause Recording** | `Ctrl+Shift+P` | Pause (resume with same key) |
-| **Screenshot** | `F12` | Quick screenshot |
+| **Screenshot** | none | Implemented as Tools > Take Screenshot (clipboard) and Tools > Save Screenshot As... (file). There is no `F12` shortcut: plain F12 must reach the emulated machine. See [screenshotter design](../../../inprogress/2026-10-03-screenshotter/design.md) |
 
 ## Toolbar Buttons (Optional)
 

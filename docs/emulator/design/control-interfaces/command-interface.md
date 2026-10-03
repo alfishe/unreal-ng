@@ -744,6 +744,9 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter mode table per square (map, HOLD, frame length, RGMOD, PORT_Y, palettes in use) | `state sprinter video [page=0\|1] [all=1] [squares=1]` | `GET /state/sprinter/video?page=&all=&squares=` | `sprinter_video{page=, all=, squares=}` | `sprinter_video(page=, all=, squares=)` | `sprinter_video` (the map) |
 | Sprinter palettes (8 x 256 pens, R, G, B as video RAM holds them) | `state sprinter palette [0-7\|all\|used]` | `GET /state/sprinter/palette?k=` | `sprinter_palette(k)` | `sprinter_palette(k)` | `sprinter_palette` |
 | Sprinter Covox-Blaster ring (256 words, play / write index) | `state sprinter ring` | `GET /state/sprinter/sound/ring` | `sprinter_sound_ring()` | `sprinter_sound_ring()` | `sprinter_sound_ring` |
+| Sprinter ZX (Spectrum) mode: active, launcher configuration from the hardware and the launcher's RAM (each `.ZX` option with its evidence), best-matching mode file + confidence, clock (CNF request, F12, MHz, why), frame / INT, ROMs by CRC, the decode of `#7FFD` / `#1FFD` / `#01FD` / `#xxFD` / `#FE` / `#1F` with each port's effect and its TTD query | `state sprinter zx [deep=0]` | `GET /state/sprinter/zx-mode?deep=0` (also the `zx_mode` section of `/state/sprinter`) | `sprinter_zx_mode([deep])` | `sprinter_zx_mode(deep=True)` | `sprinter_zx_mode` |
+| Sprinter PLD journal: who changed the PLD setup and when (frame, T, PC): port table writes with the decodes they changed, CNF / turbo, clock, `#7FFD` / `#1FFD` (the port used), ALL_MODE, RGMOD, HOLD, frame length, PLD load, F12, Ctrl+Alt+Del, resets; `source=ttd`: the OUTs of the TTD recording to those PLD codes | `state sprinter journal [kinds=cnf,port_1ffd] [since=N] [from=F] [to=F] [limit=N] [source=live\|ttd]` | `GET /state/sprinter/pld-journal?kinds=&since=&from=&to=&limit=&source=` | `sprinter_pld_journal{kinds=, since=, from=, to=, limit=, source=}` | `sprinter_pld_journal(kinds=, since=, from_frame=, to_frame=, limit=, source=)` | `sprinter_pld_journal` (`pld_journal_kinds`, `pld_journal_source`) |
+| Sprinter PLD journal on / off / clear (on by default; off costs nothing) | `state sprinter journal on\|off\|clear` | `POST /sprinter/pld-journal {enabled, clear}` | `sprinter_pld_journal_control{enabled=, clear=}` | `sprinter_pld_journal_control(enabled=, clear=)` | `invoke_api` POST `/sprinter/pld-journal` |
 | Sprinter BIOS images, loaded image, start options | `state sprinter bios` | `GET /state/sprinter/bios` | `sprinter_bios()` | `sprinter_bios()` | `sprinter_bios` |
 | Sprinter BIOS / start options select (loads at the reset) | `state sprinter bios 3.06 [fast_start=0\|1] [accel_int_suspend=0\|1] [reset=0\|1]` | `POST /sprinter/bios {bios, fast_start, accel_int_suspend, reset}` | `sprinter_bios_select{bios="3.06"}` | `sprinter_bios_select(bios="3.06")` | `invoke_api` POST `/sprinter/bios` |
 | Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
@@ -756,6 +759,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Pixel sources (memory, registers, palette behind a pixel; `t=` the beam point at a frame T) | `video pixel <x> <y> [layer]`, `video pixel t <tstate>` | `GET /video/pixel?x=&y=&layer=` / `?t=` | `video_pixel(...)`, `video_pixel_at(t)` | `video_pixel(...)`, `video_pixel_at(t)` | `invoke_api` |
 | Pixels a byte feeds (RAM page, Z80 address, palette cell, sprite word, device video RAM) | `video address <page> <off>`, `video address z80\|palette\|sprite_ram\|vram <n>` | `GET /video/address?page=&offset=` / `?z80=` / `?space=vram&offset=` | `video_address(...)`, `video_address_in(space, off)` | the same | `invoke_api` |
 | Text grid of a text mode (ATM / ZX-Evo / TS-Conf, the Sprinter's text squares) | `video text [layer]` | `GET /video/text` | `video_text()` | `video_text()` | `video_text` |
+| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | `GET /capture/screen?area=&format=&source=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, source=, path=}` | `capture_screen(format="png", area="", path="", source="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `source`, `path` |
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
@@ -3376,8 +3380,8 @@ Capture and export audio/video output for recording and analysis.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `screenshot <file>` | `<filename>` | Capture current screen frame to PNG file. Includes border. Resolution: 320x240 (with border) or 256x192 (screen only). | 🔮 Planned |
-| `screenshot screen <file>` | `<filename>` | Capture only screen area (no border). | 🔮 Planned |
+| `screenshot <file>` | `<filename>` | Superseded by `capture screen [--area=full\|screen] [--format=png\|gif] <file>` (see 8.2): whole frame with border by default (352x288 on a Spectrum, 1024x768 for the FT812 picture), PNG. | ✅ Implemented as `capture screen` |
+| `screenshot screen <file>` | `<filename>` | Superseded by `capture screen --area=screen <file>`: only the working picture (256x192 on a Spectrum, the graphics window on TS-Conf, the whole FT812 picture). | ✅ Implemented as `capture screen --area=screen` |
 | `video record <file>` | `<filename>` | Start recording video to file (MP4, WebM, or AVI). Frame rate: 50 FPS (PAL) or 60 FPS (NTSC). | 🔮 Planned |
 | `video stop` | | Stop video recording and finalize file. | 🔮 Planned |
 | `audio record <file>` | `<filename>` | Start recording audio to WAV file. Captures beeper + AY output. | 🔮 Planned |
@@ -3649,10 +3653,12 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 | :--- | :--- | :--- | :--- |
 | `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
 | `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
-| `capture screen` | `[5\|7\|shadow]` | Capture screen bitmap. Default: screen 5. Output: base64-encoded GIF with format/size metadata. | 🔮 Planned |
-| `capture screen 5` | | Capture main screen (page 5). | 🔮 Planned |
-| `capture screen 7` | | Capture shadow screen (page 7). | 🔮 Planned |
-| `capture screen shadow` | | Alias for `capture screen 7`. | 🔮 Planned |
+| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default; the presented frame by default, `--source=live` the frame as drawn now. Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
+| `capture framebuffer` | `<file> [rgba\|index]` | Raw pixels of the same presented frame (RGBA, or the Sprinter's u16 pens with `index`). | ✅ Implemented |
+
+`source=presented` (default) is the finished frame the window shows, a couple of frames behind the machine. `source=live` is the frame as drawn right now, with no present delay and no ZX DLSS processing: on a running machine the emulation thread copies it at the end of its next frame (an answer within one frame time; 409 `no-frame` if none comes within 1 s), on a paused one it is read directly and the answer says where the beam stopped (`frame.beam.line`, `frame.beam.tstate`) and whether the frame is half drawn (`frame.partial`: the beam is inside a frame drawn per T-state, so the lines it has not reached are still the previous frame's). The master of a ZX-Poly group shows the group's composed display frame (2x, `frame.source: composed`, the working picture 512x384); a slave keeps its own frame.
+
+A screenshot is one frame snapshot: the pixels and the frame's own geometry, taken together from the presented frame (the tear-free frame the window shows, a couple of frames behind the machine; more with ZX DLSS). `area=screen` cuts the frame geometry's screen window: the paper of a Spectrum, the graphics window of a TS-Conf (from V_CONFIG), the whole picture of an FT812 card, and on a hires mode the whole frame when the picture fills it. The old per-page (`5` / `7` / `shadow`) capture was never implemented and is not planned: the picture is what the monitor shows. Design: [`docs/inprogress/2026-10-03-screenshotter/design.md`](../../../inprogress/2026-10-03-screenshotter/design.md).
 
 **OCR Implementation Details**:
 - Uses `ZXSpectrum::FONT_BITMAP[96][8]` from ROM for character matching
@@ -3660,14 +3666,25 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 - Returns '?' for unrecognized patterns, ' ' for empty cells
 - Tested at all 768 screen positions (32×24) and all 96 font characters
 
-**WebAPI Response Format** (for `capture screen`):
+**WebAPI Response Format** (for `GET /capture/screen`, here `area=full` on a Pentagon):
 ```json
 {
-  "format": "gif",
+  "status": "success",
+  "format": "png",
+  "area": "full",
+  "source": "presented",
+  "width": 352,
+  "height": 288,
   "size": 12345,
+  "crop":          { "x": 0,  "y": 0,  "width": 352, "height": 288 },
+  "screen_window": { "x": 48, "y": 48, "width": 256, "height": 192 },
+  "frame": { "width": 352, "height": 288, "mode": "Pentagon128K", "source": "native", "frame_number": 4711 },
   "data": "base64encodeddata..."
 }
 ```
+`crop` is the returned image's rectangle inside the frame, `screen_window` the working picture inside the frame, `frame.source` is `native` (the machine's own frame), `external` (a video card's picture: the FT812) or `composed` (a ZX-Poly group's display frame). With `path=` the image is written on the server and `saved: true, file` replace `data`.
+
+**Errors** (JSON `{error, message, kind}`): 400 `bad-parameter` for an unknown `area`, `mode` or `format` (the message lists the allowed words) or an `area` and `mode` that disagree; 404 `not-found`; 409 `no-frame` when the emulator has not presented a frame yet; 500 `bad-geometry` (the screen window does not fit the frame, the message has both sizes), `encode-failed`, `io-failed`; 503 while the emulator shuts down.
 
 #### 8.3 Music Detector & Ripper
 

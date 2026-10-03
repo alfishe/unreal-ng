@@ -25,9 +25,8 @@ VideoLayout ZxVideoMapper::Layout(const VideoState& s) const
     zx.window.dotsPerT = 2;
     layout.layers.push_back(zx);
 
-    // P384 stores 16 lines more on top (ScreenZX::CreateTstateLUT)
-    const uint16_t extraTop = s.mode == M_P384 ? ZxGeometry::kP384ExtraTopLines : 0;
-    layout.fb = {l.fullFrameWidth, l.fullFrameHeight, l.screenOffsetLeft, static_cast<uint16_t>(l.screenOffsetTop + extraTop)};
+    // The storage row says where the paper sits in the buffer (P384: 64, its 16 extra lines are on top)
+    layout.fb = {l.fullFrameWidth, l.fullFrameHeight, l.screenOffsetLeft, l.screenOffsetTop};
     return layout;
 }
 

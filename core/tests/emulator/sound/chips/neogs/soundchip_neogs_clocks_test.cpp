@@ -170,6 +170,37 @@ TEST_P(NeoGSClocks_Card, FramesTrackHostTimeWithoutDrift)
     EXPECT_NEAR(static_cast<double>(c.steps() - stepsBase), expectedSteps, 2.0);
 }
 
+/// The test above cannot see the overshoot: a frame (2 396 160 ticks) is an
+/// exact multiple of a 12-clock JR $ at all four card clocks (and of JP $ and
+/// of 13-clock instructions too), so every frame ends exactly on an
+/// instruction boundary. The loop PUSH AF / POP AF / JR (11 + 10 + 12 clocks)
+/// does not divide the frame at any card clock: a frame ends a few ticks past
+/// its end. Against the nominal timeline (frame N ends at N * frameTicks) the
+/// card may only ever be one instruction ahead, however many frames have run
+TEST_P(NeoGSClocks_Card, OvershootOfUnalignedInstructionsDoesNotAccumulate)
+{
+    const ClockCase k = GetParam();
+    const int64_t longestInstruction = 12 * k.ticksPerCycle;
+    Card c;
+    Asm p;
+    p.b({0xF3}).out(0x0F, k.cfg);
+    p.b({0xF5, 0xF1, 0x18, 0xFC}); // PUSH AF; POP AF; JR -4 (back to PUSH)
+    c.boot(p);
+    c.runFrames(1);
+
+    const int64_t frameTicks = GSHostClock::frameUnits(&c.ctx, SoundChip_NeoGS::TICKS_PER_SECOND);
+    ASSERT_NE(frameTicks % (33 * k.ticksPerCycle), 0) << "the case must not be frame-aligned, or it proves nothing";
+
+    const int64_t base = c.chip->cardTicks();
+    for (int i = 1; i <= 500; i++)
+    {
+        c.runFrames(1);
+        const int64_t off = c.chip->cardTicks() - base - static_cast<int64_t>(i) * frameTicks;
+        ASSERT_GE(off, -longestInstruction) << "frame " << i;
+        ASSERT_LE(off, longestInstruction) << "frame " << i << ": the card is " << off << " ticks ahead of the host";
+    }
+}
+
 /// The CPU takes the new clock from the instruction after the OUT, for every
 /// pair of clocks
 TEST_P(NeoGSClocks_Card, SwitchTakesEffectOnTheNextInstruction)

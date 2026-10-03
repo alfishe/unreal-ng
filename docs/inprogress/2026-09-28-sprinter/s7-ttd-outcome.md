@@ -107,5 +107,9 @@ it there or move it to id 32 with a PLD blob version bump.
   their fixtures are re-recorded next; until then a restore inside a floppy command on them still
   ends the command.
 - Video RAM and fast RAM to TTD v2 memory regions (Phase 1).
-- Port journals stay off on the Sprinter (its interrupt source supplies the IM2 vector; NeoGS when
-  fitted): replay runs against the live media.
+- ~~Port journals stay off on the Sprinter~~ **On since 2026-10-03** ([tdd-zx-mode.md](tdd-zx-mode.md) §12.3): the
+  IM2 vector (Z84C15 daisy chain, the PLD's INT) and the stepped engines follow the checkpointed state and the input
+  journal (`PortDecoder::TtdEnginesSealed`), and the unreachable NeoGS is no longer fitted (`PortDecoder::ZxBusPresent`
+  = false until the ISA ZX-bus adapter). `/ttd/port-events` answers on Sprinter recordings; replays feed the recorded
+  IN results with no divergence (`TTDSprinterMachine_Test.PortJournal_RecordsAndAnswersPortEvents` and every replay
+  test above). The corpus fixture `boot.ttd` was re-recorded without a GS card and with the journals.

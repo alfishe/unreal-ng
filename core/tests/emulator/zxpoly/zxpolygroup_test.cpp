@@ -16,6 +16,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/modelswitch.h"
+#include "emulator/video/screenshotter.h"
 #include <algorithm>
 #include <cstring>
 #include "emulator/memory/memory.h"
@@ -1338,6 +1339,57 @@ TEST_F(ZXPolyGroup_Test, ManagerCreatesDescribesAndRemovesAGroup)
 
     EXPECT_FALSE(manager->CreateZXPolyMachine("", "NOT_A_MODEL", "", &error));
     EXPECT_FALSE(error.empty());
+}
+
+/// A screenshot of the master of a ZX-Poly group is the frame the user sees: the group's composed display frame
+/// (the master's picture at 2x, the four modules' paper 512x384 on top), with its own geometry. A slave, which
+/// the window never shows, keeps its own native frame
+TEST_F(ZXPolyGroup_Test, ScreenshotOfTheMasterIsTheComposedDisplayFrame)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine(
+        "zxpoly-shot", "PENTAGON", TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error);
+    ASSERT_TRUE(master) << error;
+    ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
+    ASSERT_NE(group, nullptr);
+    group->RunFrames(5);
+    master->GetContext()->pScreen->SetPresentDelayFrames(0);
+    const ZXPolyGroup::Status status = group->GetStatus();
+
+    ScreenshotOptions full;
+    const ScreenshotResult whole = Screenshotter::Take(master->GetId(), full);
+    ASSERT_TRUE(whole.ok) << whole.errorMessage;
+    EXPECT_EQ(whole.frame.source, FrameSource::Composed);
+    EXPECT_EQ(whole.width, 704) << "the master's 352x288 frame at 2x";
+    EXPECT_EQ(whole.height, 576);
+    EXPECT_EQ(whole.frame.screenWindow.x, 96);
+    EXPECT_EQ(whole.frame.screenWindow.y, 96);
+    EXPECT_EQ(whole.frame.screenWindow.width, 512) << "the composed paper: 512x384, not the 256x192 downsample";
+    EXPECT_EQ(whole.frame.screenWindow.height, 384);
+
+    ScreenshotOptions screenOnly;
+    screenOnly.area = ScreenshotArea::Screen;
+    const ScreenshotResult paper = Screenshotter::Take(master->GetId(), screenOnly);
+    ASSERT_TRUE(paper.ok) << paper.errorMessage;
+    EXPECT_EQ(paper.width, 512);
+    EXPECT_EQ(paper.height, 384);
+
+    // Slave 2 is not shown: its own native frame
+    std::shared_ptr<Emulator> slave = manager->GetEmulator(status.memberIds[2]);
+    ASSERT_TRUE(slave);
+    slave->GetContext()->pScreen->SetPresentDelayFrames(0);
+    slave->GetContext()->pScreen->LatchFramebuffer();
+    const ScreenshotResult own = Screenshotter::Take(status.memberIds[2], full);
+    ASSERT_TRUE(own.ok) << own.errorMessage;
+    EXPECT_EQ(own.frame.source, FrameSource::Native);
+    EXPECT_EQ(own.width, 352);
+    EXPECT_EQ(own.height, 288);
+
+    slave.reset();
+    const std::string masterId = master->GetId();
+    master.reset();
+    EXPECT_TRUE(manager->RemoveEmulator(masterId));
 }
 
 /// The named configurations resolve case-insensitively to their base models,

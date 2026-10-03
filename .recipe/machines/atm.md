@@ -184,9 +184,11 @@ UnrealSpeccy [`dxr_atm0.cpp`](https://github.com/alfishe/unreal-speccy/blob/mast
 **Debugging a visual glitch**: use
 [ttd-visual-inspection.md](../analysis/ttd-visual-inspection.md) to get a
 reproducible frame instead of live pause/screenshot — a live GUI screenshot
-and the `/capture/screen` WebAPI endpoint were observed to genuinely
-diverge once this session for reasons not yet root-caused; TTD-seeked
-frames don't have that ambiguity. To empirically verify which physical RAM
+and the `/capture/screen` WebAPI endpoint were observed to disagree once.
+The cause was that they read different buffers (the window the presented
+frame, the endpoint the live one); now both read the same presented frame
+(see [agent-screenshot-view.md](../media/agent-screenshot-view.md)), but
+that frame lags the machine, so TTD-seeked frames are still the exact way. To empirically verify which physical RAM
 page is live for the current mode (rather than trusting the formula),
 poke a distinctive byte via `PUT /emulator/{id}/memory/ram/{page}/{offset}`
 at the address the formula predicts for a known screen column, advance one

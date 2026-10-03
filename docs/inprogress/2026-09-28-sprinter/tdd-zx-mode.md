@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Z1-Z3 built on branch `sprinter-zx-timing` (2026-10-02, as built: §11); Z4-Z6 open. Owner decisions in §10 |
+| **Status** | Z1-Z3 built on branch `sprinter-zx-timing` (2026-10-02, as built: §11); Z4 built 2026-10-03 on `sprinter-zx-mode-report` with the PLD journal and the Sprinter TTD port journals (§12); Z5-Z6 open. Owner decisions in §10 |
 | **Research** | [research-zx-mode.md](research-zx-mode.md) (how the real machine does it, MAME runs) |
 | **Plan** | phase **S8** (Z1-Z6) in [roadmap-and-plan.md](roadmap-and-plan.md) §1, [TODO.md](TODO.md) |
 | **Parallel work** | `sprinter-automation` (state/automation, audit P1/P2), `sprinter-mouse`, the ISA design [2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md) (S6b). This design does not repeat them; it names the points where it plugs into them |
@@ -148,7 +148,7 @@ at the same frame count after the load (the frame is 71 680 T in both).
 | Item | Value | Changes |
 |---|---|---|
 | Frame | 71 680 T (320 lines) or 69 888 T (312) | none (S1) |
-| INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) | none (S1) |
+| INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) in MAME; the PLD's edge, which unreal-ng uses since 2026-10-03, is 10 T earlier (T 182; research-zx-mode §7.1) | none (S1) |
 | Contention | none | — |
 | "Original waits" | §3.3: 4-T CT5 period, phase placeholder | new: on with ALL_MODE bit 2 = 0 at 3.5 MHz |
 | 21 MHz | memory and port waits as built | none |
@@ -422,3 +422,76 @@ performance guidelines ask for below 12), so differences under ~5 % are noise.
 | `BM_SprinterFrame_Logo` (BIOS 3.04, ALL_MODE bit 2 set: no overlay) | 3 994 / 4 152 us | 4 218 / 4 059 us | equal within noise |
 | `BM_SprinterFrame_ScreenReads/0` (a frame of `LD A,(#4000)` at 3.5 MHz, waits off) | — | 2 612 us | the mode every program but ORIGIN.ZX runs in |
 | `BM_SprinterFrame_ScreenReads/1` (the same with the original waits on) | — | 2 768 us | +6 %, paid only in ORIGIN.ZX |
+
+## 12. As built: Z4, the ZX mode report and the PLD journal (2026-10-03, branch `sprinter-zx-mode-report`)
+
+Why (owner, 2026-10-03): telling whether a session ran as "Sprinter ZX" (`SP.ZX`) or "Pentagon 128" (`P128.ZX`) took
+long investigations - Across the Edge hangs only in the first, because `/1FFD` lets its `OUT (#01FD)` reach the
+Scorpion latch. The answer must be one call on every automation surface, on a live machine and on a TTD recording.
+
+### 12.1 The ZX mode report (`DeviceState::SprinterZxMode`)
+
+One builder in `sprinterdevicestate.cpp`; `/state/sprinter/zx-mode` (and the `zx_mode` section of `/state/sprinter`),
+CLI `state sprinter zx`, MCP `inspect_state` aspect `sprinter_zx_mode`, Lua `sprinter_zx_mode()`, Python
+`emu.sprinter_zx_mode()`; the GUI status bar line and its tooltip (`SprinterZxModeBrief`).
+
+| Part | Source | Example (SP.ZX) |
+|---|---|---|
+| `active` | window 0 shows a vROM page (`romOff`, not fast RAM) and ALL_MODE bit 0 = 0 (§3.2, without the `ramSys` term: the launcher's own vROM cells cover it) | `true` |
+| `config.options[]` | the launcher's CNF byte E (`spectrum.asm` PARAMS add-up: turbo `#02/#03`, `/sprinter` map 0 `#04` else map 1 `#0C`, `/7FFD` `#00` else `#30`, `/1FFD` `#00` else `#40`, `/mem512` `#80`); `/lines312` = the frame latch; `/origin` = ALL_MODE bit 2 = 0; `/int-sc` = the INT line | `/sprinter /turbo /7FFD /1FFD`, CNF `#07` |
+| `config.best_match` | the known mode files (community v2.03: SP, P128, P512, SC256, ORIGIN; Peters Plus: SPRINTER, PENT128, PENT512, SCORPION, ORIGINAL) scored by option, CNF and ROM-set differences; the launcher's text breaks ties | `SP.ZX`, `certain` |
+| `launcher` | the `.ZX` text the launcher read (community: SHARED_PAGE `#FF` from `#0000`, NUL-terminated lines; Peters Plus: page `#41`), its option table (found by the names block `"turbo",#FF,0,"lines312",...` in the launcher's pages `#41:#FFF0-#FFF3`, else all RAM; an option is set when its two bytes are equal), the reset intercept (cell `#EE` = `#41`, `#41:#FFF0-#FFF6`), the BIOS system page's copy of CNF (`#FE:#013A`) | `"Sprinter ZX"`, `ret-fn` set |
+| `clock` | `pld.turbo` (CNF request), `turboHard` (F12), `hw_turbo_ratio`, and why | `21 MHz: the CNF turbo request is on and ... F12 allows it` |
+| `frame` | the frame latch, the INT positions from the mode table (`SprinterIntSource::ComputePositions`): line 287 Pentagon, 295 original, 271 Scorpion | 320 lines, INT pentagon, line 287 |
+| `rom` | the CRC-32 of the pages in cells `#E0-#E3` against the launchers' ROM files and the BIOS flash copies | `sprinter-community` |
+| `ports` | the live table (`SprinterPortTable::Index`, one formula with the decoder) for `#7FFD`, `#1FFD`, `#01FD`, `#3FFD`, `#5FFD`, `#9FFD`, `#BFFD`, `#DFFD`, `#FFFD`, `#FE`, `#1F` (`sprinterzxports.h`), TR-DOS off / on, OUT and IN: code, name, what the write does now (the CNF clean rules applied); `ttd_query` port / mask `#E0E7` for `/ttd/port-events` | `#01FD` OUT -> `#C0`: "the #1FFD latch: Scorpion paging" (P128: "stores cell #C0 only: CNF bit 6 'SC clean'") |
+
+Findings: both launchers' tables know the word `int-sc`; SC256.ZX / SCORPION.ZX say `/sc-int`, which matches nothing -
+the Scorpion INT is never requested (research §4 corrected, §7.2's line 287 explained). `/1FFD` is a CNF clean bit
+only: `#01FD` and `#1FFD` are one table index (A12-A8 are not decoded) and decode to `#C0` in maps 0, 1 and 3.
+
+### 12.2 The PLD journal (`MachineEventJournal`, `DeviceState::SprinterJournal`)
+
+`core/src/emulator/machineeventjournal.h`: a generic, thread-safe ring (8 192 events) of a machine's configuration
+events with seq, epoch (machine resets), frame, base T and PC; `PortDecoder::GetMachineEventJournal()` exposes it and
+the video change log (`/video/changes`) lists the events of its frames (`machine_events`). The Sprinter decoder fills
+it from the port handlers' own cases (cold code), on a change only: `cnf` (turbo request or CNF byte; the vROM-set
+switch the ZX BIOS calls flip at `#3FD3` is left out), `clock`, `port_7ffd` / `port_1ffd` (new value or latch change,
+with the port used), `all_mode`, `rgmod`, `hold`, `frame_lines`, `pld_load`, `pld_configured` (module, hashes),
+`f12`, `ctrl_alt_del`, `reset` (power on, RESET, the page `#A0` soft restart), and `port_table`: page `#40` writes are
+counted through a `SprinterMemory::BankAction::PortTable` set only while the journal is on, and the frame end emits
+one event with the key ZX port decodes (all maps, both DOS states, both directions) that changed.
+
+On by default; `POST /sprinter/pld-journal {"enabled": false}` removes the table watch and every event build (zero
+cost). TTD: nothing is appended while a replay re-executes history (`ttdReplayActive`); an event earlier than the newest
+one of its epoch means a seek followed by live running, and the later events are dropped (`rewound`).
+
+From a recording: `?source=ttd` scans the TTD OUT journal for the ports that reach the tracked codes (the cubes of the
+current table, map, DOS and PN5) and keeps the writes that change something. Every reply lists `ttd_queries` (port /
+mask per kind) for `/ttd/port-events`. Worked example (verified live, Across the Edge in SP.ZX, recorded):
+`frame 1873, T 65528, PC #88F1: #1FFD <- #17 via port #01FD` in the live journal, the same write at T 65527 from the
+TTD journal (taken at the start of the I/O cycle) - Scorpion paging with RAM at `#0000`.
+
+### 12.3 TTD port journals on the Sprinter
+
+`/ttd/port-events` answered 409 on the Sprinter. Two reasons, both removed:
+
+1. **NeoGS**: the shipped config fits a NeoGS the Sprinter's software cannot reach (it sits behind the not yet emulated
+   ISA ZX-bus adapter). `PortDecoder::ZxBusPresent()` (the ISA design's seam, §2 there) is `false` on the Sprinter and
+   `SoundManager::attachToPorts` removes the card `[SOUND] GSType` built. Phase I2 fits it again through the adapter.
+2. **The engine guards** ("the interrupt source supplies the IM2 vector", "a machine engine stepped with the CPU"):
+   `PortDecoder::TtdEnginesSealed()` = true on the Sprinter - its vector (Z84C15 daisy chain, the PLD's `#FF`) and its
+   stepped engines (PLD resets, loader watchdog, CTC) follow the checkpointed state and the input journal only
+   (s7-ttd-outcome.md). Every Sprinter replay test now runs with the journals feeding the recorded IN results.
+
+The corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` was re-recorded (no GS card, port journals present).
+
+### 12.4 Tests
+
+| Test | What |
+|---|---|
+| `MachineEventJournal_Test.*` | order, filters, the TTD rewind rule, epochs, the ring, off |
+| `SprinterZxReport_Test.*` (`sprinterdevicestate_test.cpp`) | SP.ZX / P128.ZX / ORIGIN.ZX from the hardware state, the `#01FD` effect per CNF, the launcher text as authority, the brief line, the journal (CNF, `#1FFD` by port, change only, ALL_MODE, a port table write with the decode it changed, off = no watch) |
+| `SprinterZxMode_Test.LauncherModes_ReportAndJournal` (`UNREAL_SPRINTER_HDD`) | the real launcher: SP, P128, ORIGIN as a user starts them; best match `certain`, CNF `#07` / `#4E` / `#4E`, options, ROM set, `/ret-fn`; the launcher's CNF write in the live journal and the same write (PC, value) from the TTD recording of the SP launch; Ctrl+Alt+Del journaled |
+| `TTDSprinterMachine_Test.PortJournal_RecordsAndAnswersPortEvents` | no GS card, the journals record, `port-events` answers, `source=ttd` works, replay with 0 divergences / mismatches |
+| `CliSprinterMachine_Test.ZxModeAndJournalRenderAsText` | `state sprinter zx`, `journal`, on / off / clear, errors |

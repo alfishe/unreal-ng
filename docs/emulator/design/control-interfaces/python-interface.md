@@ -181,6 +181,16 @@ class Emulator:
     def sprinter_sound_ring(self) -> dict:
         """The Covox-Blaster ring: 256 words, play / write index"""
 
+    def sprinter_zx_mode(self, deep=True) -> dict:
+        """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
+        (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
+
+    def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
+        """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
+
+    def sprinter_pld_journal_control(self, enabled=None, clear=False) -> dict:
+        """Switch or clear the PLD journal"""
+
     def sprinter_bios(self) -> dict:
         """BIOS images, the one loaded (CRC-32), the configured one, start options"""
 
@@ -201,6 +211,12 @@ class Emulator:
 
     def framebuffer(self, format="rgba") -> dict:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
+
+    def capture_screen(self, format="png", full=None, area="", path="", source="") -> dict:
+        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame). area="full" (default, the whole frame with border) or "screen" (the
+        working picture); format "png" (default) or "gif"; path writes the file on the machine running the
+        emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
+        | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""
 
     def audio_mixer(self) -> dict: ...
     def audio_mixer_set(self, source, muted=None, solo=None, volume=None, gain_db=None) -> dict: ...

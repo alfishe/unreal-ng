@@ -203,6 +203,56 @@ bool SprinterPortFromString(const std::string& text, uint16_t& port);
 bool SprinterPortQueryFromStrings(const std::string& map, const std::string& dos, const std::string& pn5,
                                   const std::string& rw, SprinterPortQuery& query, std::string& error);
 
+/// The ZX (Spectrum) mode report (`SprinterZxMode()`, /state/sprinter/zx-mode, also the `zx_mode` section of
+/// `Sprinter()`; tdd-zx-mode.md §12). Everything is read from the hardware state, and the launcher's RAM
+/// where it is found:
+/// - `active`: window 0 shows a vROM page and ALL_MODE bit 0 = 0 (ZX screen shadow + ZX keyboard);
+/// - `config`: each `.ZX` option as the PLD implements it (/turbo, /sprinter, /7FFD, /1FFD, /mem512,
+///   /lines312, /origin, the INT position, /ret-fn | /ret-zx) with its evidence, the option line they make,
+///   the best-matching known mode file (SP.ZX, P128.ZX, P512.ZX, SC256.ZX, ORIGIN.ZX, the Peters Plus
+///   SPRINTER.ZX ...) with a confidence and the differences of the others;
+/// - `launcher`: what SPECTRUM.EXE left in RAM (the `.ZX` text, its option table, the reset intercept, the
+///   BIOS system page's CNF copy), the authoritative source when present, cross-checked with the hardware;
+/// - `clock` (CNF request, the F12 switch, the MHz and why), `frame` (lines, T, the INT position and its
+///   kind), `rom` (the vROM cells, each page's CRC-32 and the ROM it is), `paging`, and `ports`: the table
+///   decode of #7FFD, #1FFD, #01FD, the #xxFD variants, #FE, #1F - code, device and what it does now, with
+///   the TTD port-events port / mask that finds every spelling of the port in a recording.
+/// `deep` = false skips the whole-RAM search for the launcher's option table (the GUI's status line)
+StateNode SprinterZxMode(EmulatorContext* context, bool deep = true);
+/// One line for a status bar ("Sprinter ZX (turbo req, 21 MHz, /1FFD)", "Pentagon 128 (3.5 MHz)") and the
+/// report as text for its tooltip; `sprinter` false on other machines, `active` false outside the ZX mode
+struct SprinterZxBrief
+{
+    bool sprinter = false;
+    bool active = false;
+    std::string text;
+    std::string details;
+};
+/// `details` false: the line only (a GUI tick that keeps the last tooltip)
+SprinterZxBrief SprinterZxModeBrief(EmulatorContext* context, bool details = true);
+
+/// The PLD journal (`SprinterJournal()`, /state/sprinter/pld-journal; the Sprinter decoder's PldJournal):
+/// events with seq, frame, T (base, and as line / T in line), PC, kind, port, value, text, details.
+/// source "live" (default): the journal; "ttd": the OUTs of the TTD recording that reach the PLD's
+/// configuration codes (CNF #C6/#CE, #1FFD #C0/#C8, #7FFD #C1/#C9, ALL_MODE #C3, RGMOD #C5/#CD, HOLD #CB,
+/// frame #2C/#2D, reload #2E), found through the port table as it decodes now (the current map, DOS and
+/// PN5), from the TTD write journal. Both list the TTD port-events queries for those codes
+struct SprinterJournalQuery
+{
+    std::string kinds;     ///< "cnf,port_1ffd" (empty = all)
+    uint64_t since = 0;    ///< events after this seq
+    int64_t frameFrom = -1;
+    int64_t frameTo = -1;
+    size_t limit = 200;
+    bool ttd = false;      ///< source=ttd
+};
+bool SprinterJournalQueryFromStrings(const std::string& kinds, const std::string& since, const std::string& from,
+                                     const std::string& to, const std::string& limit, const std::string& source,
+                                     SprinterJournalQuery& query, std::string& error);
+StateNode SprinterJournal(EmulatorContext* context, const SprinterJournalQuery& query);
+/// Switch the journal on / off (`enable` 1 / 0, -1 = keep) and / or clear it; replies with the journal's state
+StateNode SprinterJournalControl(EmulatorContext* context, int enable, bool clear);
+
 /// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
 /// guest access or frame run - reading it never advances the chip.
 /// - `MoonSound()`: NEW / NEW2, status, the guest address latches, the block

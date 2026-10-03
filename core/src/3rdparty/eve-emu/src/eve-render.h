@@ -8,6 +8,8 @@
 
 #include "eve-internal.h"
 
+#include <vector>
+
 namespace EveLib
 {
 
@@ -130,6 +132,9 @@ constexpr int32_t kFixedOneTransform = 256; // 1.0 in 8.8
 constexpr uint32_t kContextStackDepth = 4;  // SAVE_CONTEXT levels [PG §4.39]
 constexpr uint32_t kCallStackDepth = 4;     // CALL levels [PG §4.19]
 constexpr uint32_t kMaxLineWidth = 4096;    // HSIZE is 12 bits
+constexpr uint32_t kBilinearColumns = kMaxLineWidth + 2; // texel columns a BILINEAR fast span may sample
+// BILINEAR scratch: two column rows, four gathered taps per pixel, the x fractions (bytes)
+constexpr uint32_t kBilinearScratch = 2 * kBilinearColumns + 4 * kMaxLineWidth + kMaxLineWidth / 4;
 constexpr uint32_t kMaxLines = 4096;        // VSIZE is 12 bits
 static_assert(kMaxLines == kMetricsLines, "the metrics block holds one cost per line");
 constexpr uint32_t kChannels = 4;           // line buffer: R, G, B, A
@@ -154,13 +159,6 @@ struct Vertex
 };
 
 // A palette decoded for one line (memory does not change while a line is drawn).
-struct PaletteCache
-{
-    bool valid;
-    uint8_t format;
-    uint32_t source;
-    uint32_t entry[kPaletteEntries];
-};
 
 // One execution of the display list for one line.
 struct LineRun
@@ -172,6 +170,7 @@ struct LineRun
     uint8_t* stencil;
     uint8_t* tag;
     uint32_t* texels;      // scratch: a span's decoded texels (kMaxLineWidth)
+    uint32_t* bilinear;    // scratch of a BILINEAR span (kBilinearScratch)
     GraphicsContext ctx;
     GraphicsContext saved[kContextStackDepth];
     uint32_t savedCount;
@@ -182,12 +181,63 @@ struct LineRun
     uint32_t commands;
     uint64_t fillCost;     // in 1/kFillCostScale clock
     uint32_t events;       // stack misuse, unknown opcodes, cut loops
-    PaletteCache palette;
     // Probe.
     int32_t probeX;
     EvePixelSource* probe;
     uint32_t commandIndex;
     uint32_t commandWord;
+    LinePlan* recording;   // set while a line's walk is recorded (ExecuteLine)
+    // The tag buffer is read for this line: REG_TAG's line (REG_TAG_Y) or a probe. On
+    // every other line nothing reads it and nothing in the pixel pipeline tests it, so
+    // its writes are skipped (WritesTag)
+    bool tagLive;
+};
+
+inline bool WritesTag(const LineRun& run)
+{
+    return run.tagLive && run.ctx.tagMask;
+}
+
+// The walk of one line, recorded for the lines after it (eve-dl.cpp, ExecuteLine).
+//
+// What a line's walk does to the state does not depend on the line: the words of the
+// active list, REG_MACRO_0 / 1, the bitmap handles at the start of the line and the
+// context (reset every line) decide it. Only the drawing depends on the line. So a walk is
+// recorded once as its drawing steps - every vertex and CLEAR with the context, the handle
+// and the primitive state it saw - and a later line with the same inputs replays the
+// steps instead of walking the list. A bitmap step whose rows miss the line is skipped by
+// the same test DrawBitmap starts with; every other step is replayed. The line's command
+// count, its events and the handles it leaves behind come from the recording.
+struct LinePlanStep
+{
+    bool clear;              // CLEAR, else a vertex
+    bool rowTest;            // a bitmap vertex: skip when rely is outside [0, rowsSubpixel)
+    uint8_t primitive;
+    uint32_t context;        // index into LinePlan::contexts
+    uint32_t vertexCount;    // since BEGIN, before this vertex
+    uint32_t clearMask;
+    int64_t rowsSubpixel;    // the handle's height in 1/16 pixel
+    Vertex v;
+    Vertex previous;
+    BitmapHandle handle;     // handles[v.handle] when the vertex executed
+    uint32_t commandIndex;
+    uint32_t commandWord;
+};
+
+struct LinePlan
+{
+    bool valid = false;
+    uint64_t record = 0;     // counts recordings: a kept line names the walk it replayed
+    // The inputs of the recorded walk (dlVersion follows the active list's contents).
+    uint64_t dlVersion = 0;
+    uint32_t macro0 = 0, macro1 = 0;
+    BitmapHandle startHandles[kHandleCount] = {};
+    // What it did.
+    BitmapHandle endHandles[kHandleCount] = {};
+    uint32_t commands = 0;
+    uint32_t events = 0;
+    std::vector<GraphicsContext> contexts;
+    std::vector<LinePlanStep> steps;
 };
 
 // --- eve-dl.cpp --------------------------------------------------------------------------------

@@ -71,6 +71,9 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  sprinter video [page=0|1] [all=1] [squares=1] - the mode table per square (map: one letter a square)" << NEWLINE;
         ss << "  sprinter palette [0-7|all|used] - the palettes, R G B per pen as video RAM holds them" << NEWLINE;
         ss << "  sprinter ring  - the Covox-Blaster sample ring (play / write index marked)" << NEWLINE;
+        ss << "  sprinter zx [deep=0] - the ZX mode: launcher config (SP.ZX / P128.ZX ...), clock, INT, ROMs, ZX port decodes" << NEWLINE;
+        ss << "  sprinter journal [kinds=cnf,port_1ffd] [since=N] [from=F] [to=F] [limit=N] [source=live|ttd] | on | off | clear" << NEWLINE;
+        ss << "                 - who changed the PLD setup (CNF, turbo, #1FFD, #7FFD, ALL_MODE, port table ...), frame / T / PC" << NEWLINE;
         ss << "  sprinter bios [<3.04|3.06|3.07|file|-> [fast_start=0|1] [accel_int_suspend=0|1] [reset=0|1]] - BIOS images; select" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
@@ -100,6 +103,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state sprinter       - Show the Sprinter machine state (also: sp)" << NEWLINE;
         ss << "  state sprinter ports map=0 dos=0 rw=w - Show the OUT half of map 0 with TR-DOS off" << NEWLINE;
         ss << "  state sprinter port 21BC rw=w         - Which device answers OUT (#21BC)" << NEWLINE;
+        ss << "  state sprinter zx                     - Which Spectrum mode runs (SP.ZX / P128.ZX ...) and its options" << NEWLINE;
+        ss << "  state sprinter journal kinds=cnf,port_1ffd - Who turned turbo on / wrote #1FFD (source=ttd: the recording)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;

@@ -169,6 +169,7 @@ signals:
     void temporalEffectsRequested();
     void hudSettingsRequested();
     void screenshotRequested();
+    void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
@@ -304,6 +305,7 @@ private:
     QAction* _temporalEffectsAction = nullptr;
     QAction* _hudSettingsAction;
     QAction* _screenshotAction;
+    QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;
 

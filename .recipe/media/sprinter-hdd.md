@@ -61,7 +61,7 @@ emulator_manage {"action":"reset"}
 inspect_state {"aspects":["ide"]}
 #  -> [ide] SPRINTER, selected primary master, data latch #0
 #       ide0.master (disk): <image>, status #50, last READ SECTORS
-capture_media {"action":"screenshot","format":"png","mode":"full","filename":"scratch/sprinter-hdd.png"}
+capture_media {"action":"screenshot","format":"png","area":"full","filename":"scratch/sprinter-hdd.png"}
 ```
 
 - `media {"action":"targets","path":...}` lists the four IDE slots and the NeoGS SD card for a
@@ -85,7 +85,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/ide0.master/insert -H 'Content-Type
 curl -s -X POST $BASE/emulator/$EMU_ID/reset
 
 # ~10 s of emulated time later (on BIOS 3.04 the empty slave probe takes 5.7 s; tap F4 below)
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?format=png&mode=full&path=$PWD/scratch/sprinter-hdd.png" | jq -c '{saved}'
+curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/scratch/sprinter-hdd.png" | jq -c '{saved}'
 curl -s $BASE/emulator/$EMU_ID/state/ide | jq -c '{scheme, channels, selected_channel, adapter: .adapter.data_latch,
       units: [.units[] | {slot, present, status: .task_file.status, last: .command.name}]}'
 

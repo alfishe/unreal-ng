@@ -18,7 +18,10 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
+#include "base/featuremanager.h"
+#include "emulator/video/zx/screenzx.h"
 #include "sprinterfixture.h"
+#include "sprintermodetable.h"
 
 #include <memory>
 
@@ -149,6 +152,16 @@ TEST_F(ScreenSprinter_Test, Geometry_736x288_320Lines)
     EXPECT_EQ(rd.screenOffsetLeft, 48);
     EXPECT_EQ(rd.screenOffsetTop, 16);
     EXPECT_TRUE(StoresHalfHeightLines(M_SPRINTER));
+
+    // The frame's own geometry names the same picture, and it is the square grid the renderer draws: square
+    // (0, 0) sits at its top-left corner (SquareX / SquareY are measured by the pixel tests below)
+    const FrameRect window = _screen->WorkingWindow();
+    EXPECT_EQ(window.x, SquareX(0));
+    EXPECT_EQ(window.y, SquareY(0));
+    EXPECT_EQ(window.width, 640);
+    EXPECT_EQ(window.height, 256);
+    EXPECT_EQ(window.x + window.width, SquareX(40)) << "40 squares of 16 pixels";
+    EXPECT_EQ(window.y + window.height, SquareY(32)) << "32 square rows of 8 lines";
 
     // The debug mapper of the family
     EXPECT_EQ(FamilyOf(M_SPRINTER), VideoFamily::Sprinter);
@@ -474,6 +487,261 @@ TEST_F(ScreenSprinter_Test, DigestHashesTheVideoRam)
     ASSERT_NE(surface, nullptr);
     EXPECT_EQ(surface->find("memory")->s, "vram");
 }
+
+/// region <Spectrum mode: the beam against the INT (research-zx-mode §7.1)>
+
+namespace
+{
+/// Attribute j of the reference cells: paper j, ink 0 (the pixel bytes are 0: all paper)
+constexpr uint8_t RefAttr(int j) { return static_cast<uint8_t>(j << 3); }
+constexpr uint8_t kStartAttr = 0x78;  // bright white paper: none of the references
+
+/// A Spectrum multicolor race, the same program on every machine: LD (HL),A instructions (7 T, the write
+/// cycle in T 5-7) that start kRaceT after the INT + 224 x k and write attribute RefAttr(k) to #5800, the
+/// cell the beam fetches first. Pentagon timed: the Pentagon reads that cell 17 988 T after its INT, so the
+/// write comes 8 T before the fetch of line k
+constexpr int32_t kRaceT = 17980;
+constexpr int32_t kLdHlA = 7;
+}  // namespace
+
+// The launcher's Spectrum screen (squares (4, 4) on, INT squares at (40, 33)-(41, 33), FN_SYNC Pentagon):
+// the INT edge is the PLD's - CT5 rising 2 T into the first square without the pattern, 10 T before MAME's
+// beam position (SprinterIntSource) - so the video logic reads the first Spectrum square 17 990 T after the
+// INT: the Pentagon's 17 988 within the 2 T the PLD's square period gives, where MAME's place gave 17 980
+TEST_F(ScreenSprinter_Test, SpectrumScreen_IntToFirstPixel_IsThePentagons)
+{
+    SprinterModeTable::WriteSpectrumScreen(*_vram, 0);
+    SetMode(40, 33, 0, 0xFD, 0x00, 0x00);
+    SetMode(41, 33, 0, 0xFD, 0x00, 0x00);
+
+    const std::vector<uint32_t>& positions = _decoder->GetIntSource().Positions();
+    ASSERT_EQ(positions.size(), 1u);
+    EXPECT_EQ(positions[0], 287u * 224 + 192 - SprinterIntSource::kIntBeforeMameT) << "line 287, T 182 (MAME: T 192)";
+
+    // The first Spectrum pixel: square (4, 4), framebuffer (48 + 64, 16 + 32) = line 48, T 28
+    const uint32_t firstPixel = 48u * 224 + (48u + 64u) / 4u;
+    EXPECT_EQ(SprinterVideoRenderer::A16(_screen->CurrentInputs(), 112), 64u);
+    EXPECT_EQ(SprinterVideoRenderer::B8(_screen->CurrentInputs(), 48), 32u);
+    const uint32_t intToPixel = 71680u - positions[0] + firstPixel;
+    EXPECT_EQ(intToPixel, 17990u);
+    EXPECT_LE(intToPixel - 17988u, 2u) << "the Pentagon reference (INTTiming_Test.INTToFirstPixel_MatchesReferencePerModel)";
+}
+
+// The owner's report (scroller.trd, atarin.trd in P128 mode): attributes behind the pixels. One Pentagon-timed
+// multicolor race on the PENTAGON model and on the Sprinter's Spectrum screen: every line of the first cell
+// shows the attribute written for it on both machines - the same paper pixels. With MAME's INT place the
+// Sprinter read the cell 10 T earlier, before each write, and showed the previous line's attribute.
+// Builds a PENTAGON emulator beside the fixture (~10 ms): the reference is the real Pentagon renderer
+TEST_F(ScreenSprinter_Test, SpectrumScreen_MulticolorRace_SameAttributesAsPentagon)
+{
+    // Which reference cell (columns 1-8: RefAttr(0..7)) line k of the first cell looks like; -1: none
+    auto shown = [](auto pixel, uint32_t x0, uint32_t cellWidth, uint32_t y) {
+        for (int j = 0; j < 8; j++)
+            if (pixel(x0, y) == pixel(x0 + cellWidth * static_cast<uint32_t>(j + 1), y))
+                return j;
+        return -1;
+    };
+
+    // Sprinter: the launcher's table, the shadow on (ALL_MODE bit 0 = 0), the cells' bytes written as a program would
+    SprinterModeTable::WriteSpectrumScreen(*_vram, 0);
+    SetMode(40, 33, 0, 0xFD, 0x00, 0x00);
+    SetMode(41, 33, 0, 0xFD, 0x00, 0x00);
+    OpenDcp();
+    Pld().allMode = 0;
+    Pld().portY = 0;
+    for (int line = 0; line < 8; line++)
+        for (int c = 0; c < 9; c++)
+            Poke(static_cast<uint16_t>(0x4000 + line * 256 + c), 0x00);
+    for (int j = 0; j < 8; j++)
+        Poke(static_cast<uint16_t>(0x5801 + j), RefAttr(j));
+    Poke(0x5800, kStartAttr);
+
+    const uint32_t m = Multiplier();
+    const int32_t sprinterInt = static_cast<int32_t>(_decoder->GetIntSource().Positions().at(0)) - 71680;  // the frame before
+    _screen->ResetPrevTstate();
+    for (int k = 0; k < 8; k++)
+    {
+        const int32_t start = sprinterInt + kRaceT + 224 * k;
+        _z80->t = static_cast<uint32_t>(start) * m;
+        _screen->UpdateScreen();  // the instruction before
+        _z80->t = static_cast<uint32_t>(start + kLdHlA) * m;  // the write cycle's end
+        Poke(0x5800, RefAttr(k));
+        _screen->UpdateScreen();
+    }
+    _z80->t = 71680 * m;
+    _screen->UpdateScreen();
+
+    // Pentagon: INT at intstart + 1 of the frame before, the same instructions, the renderer after each
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(pentagon, nullptr);
+    EmulatorContext* pc = pentagon->GetContext();
+    pc->pFeatureManager->setFeature(Features::kScreenHQ, true);  // the beam renderer (the helper turns it off for speed)
+    Z80* pz = pc->pCore->GetZ80();
+    Memory* pm = pc->pMemory;
+    Screen* ps = pc->pScreen;
+    auto pentagonWrite = [&](uint16_t addr, uint8_t value) { (pm->*(pz->MemIf->MemoryWrite))(addr, value); };
+    for (int j = 0; j < 8; j++)
+        pentagonWrite(static_cast<uint16_t>(0x5801 + j), RefAttr(j));
+    pentagonWrite(0x5800, kStartAttr);
+    const int32_t pentagonInt = static_cast<int32_t>(pc->config.intstart + 1) - static_cast<int32_t>(pc->config.frame);
+    EXPECT_EQ(ps->GetPaperStartTstate() - pentagonInt, 17988) << "the Pentagon reference";
+    ps->ResetPrevTstate();
+    for (int k = 0; k < 8; k++)
+    {
+        const int32_t start = pentagonInt + kRaceT + 224 * k;
+        pz->t = static_cast<uint32_t>(start);
+        ps->UpdateScreen();
+        pz->t = static_cast<uint32_t>(start + kLdHlA);
+        pentagonWrite(0x5800, RefAttr(k));
+        ps->UpdateScreen();
+    }
+    pz->t = pc->config.frame - 1;
+    ps->UpdateScreen();
+    const FramebufferDescriptor& pfb = ps->GetFramebufferDescriptor();
+    ASSERT_EQ(pfb.width, 352);
+    auto pentagonPixel = [&](uint32_t x, uint32_t y) { return reinterpret_cast<const uint32_t*>(pfb.memoryBuffer)[y * pfb.width + x]; };
+    auto sprinterPixel = [&](uint32_t x, uint32_t y) { return Pixel(x, y); };
+
+    for (uint32_t k = 0; k < 8; k++)
+    {
+        SCOPED_TRACE("line " + std::to_string(k));
+        EXPECT_EQ(shown(pentagonPixel, 48, 8, 48 + k), static_cast<int>(k)) << "PENTAGON";
+        EXPECT_EQ(shown(sprinterPixel, 112, 16, 48 + k), static_cast<int>(k)) << "Sprinter P128";
+        for (uint32_t x = 1; x < 16; x++)
+            EXPECT_EQ(Pixel(112 + x, 48 + k), Pixel(112, 48 + k)) << "the whole cell, x " << x;
+    }
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+// A byte that lands inside a Spectrum square: its attribute changes from there on (the PLD reads it every half
+// T), its pixels only from the next square (the font byte is latched at the square's start, VIDEO2.TDF LD_PIC)
+TEST_F(ScreenSprinter_Test, SpectrumScreen_WriteInsideASquare_AttributeAtOncePixelsNextSquare)
+{
+    SprinterModeTable::WriteSpectrumScreen(*_vram, 0);
+    OpenDcp();
+    Pld().allMode = 0;
+    Pld().portY = 0;
+    Poke(0x4000, 0x00);  // line 0, cell 0: paper
+    Poke(0x5800, RefAttr(1));
+
+    // The cell is read at line 48, T 28-31: writes land 1 T before the write cycle's end, at T 30 (2 of its 4 T drawn)
+    const uint32_t m = Multiplier();
+    const uint32_t cell = 48u * 224 + 28;
+    _screen->ResetPrevTstate();
+    _z80->t = (cell + 2 + ScreenSprinter::kWriteLandsBeforeEndT) * m;
+    Poke(0x4000, 0xFF);       // all ink - latched too late for this square
+    Poke(0x5800, RefAttr(2)); // paper 2 from here
+    _z80->t = 71680 * m;
+    _screen->UpdateScreen();
+
+    const uint32_t paper1 = PenColor(SprinterVideoRenderer::kPenText + RefAttr(1));
+    const uint32_t paper2 = PenColor(SprinterVideoRenderer::kPenText + RefAttr(2));
+    for (uint32_t x = 0; x < 8; x++)
+        EXPECT_EQ(Pixel(112 + x, 48), paper1) << "before the write, x " << x;
+    for (uint32_t x = 8; x < 16; x++)
+        EXPECT_EQ(Pixel(112 + x, 48), paper2) << "the new attribute, the latched pixels (paper), x " << x;
+}
+
+// The owner's report (Across the Edge in P128 mode): the border one character ahead of the paper. One
+// Pentagon-timed border write - the OUT's port callback (IORQ, T2 of the I/O cycle) at INT + 17 988 +
+// 224 k + 132 + d, 4 + d T after the beam left the paper of ZX line k - on the PENTAGON model and on the
+// Sprinter's Spectrum screen, and the ZX column (0 = the first paper pixel) where the new color starts.
+// The PLD latches BORDER on /IOWR rising (SP2_ACEX.TDF:310-315), 2.5 T after IORQ, and the video logic samples
+// it with the attribute every half T (VIDEO2.TDF DCOL <- BRD): drawn at the callback the Sprinter showed it
+// 8 ZX pixels ahead of the PENTAGON model, at the latch 2. The 2 left are the machines' own: the Sprinter
+// reads the paper 2 T later after its INT (17 990 T, SpectrumScreen_IntToFirstPixel_IsThePentagons) and
+// latches the border 1 T later than the PENTAGON model draws it (2 T after the callback).
+// Builds a PENTAGON emulator beside the fixture (~10 ms): the reference is the real Pentagon renderer
+TEST_F(ScreenSprinter_Test, SpectrumScreen_BorderWrite_LatchedAtIowrLikePentagon)
+{
+    constexpr int32_t kPaperT = 17988;  // the Pentagon's INT to its first paper pixel
+    constexpr uint8_t kOld = 1;
+    constexpr uint8_t kNew = 2;
+    auto outT = [](int k) { return kPaperT + 224 * k + 128 + 4 + (k >> 1); };  // lines 0, 2, 4, 6: d = 0..3
+
+    // Sprinter: the launcher's table, INT squares at (40, 33)-(41, 33), #FE routed to the border code
+    SprinterModeTable::WriteSpectrumScreen(*_vram, 0);
+    SetMode(40, 33, 0, 0xFD, 0x00, 0x00);
+    SetMode(41, 33, 0, 0xFD, 0x00, 0x00);
+    OpenDcp();
+    SetCode(0x00FE, false, SprinterCode::Border);
+    const uint32_t m = Multiplier();
+    const int32_t sprinterInt = static_cast<int32_t>(_decoder->GetIntSource().Positions().at(0)) - 71680;  // the frame before
+    _z80->t = 0;
+    Out(0x00FE, kOld);
+    _screen->ResetPrevTstate();
+    for (int k = 0; k < 8; k += 2)
+    {
+        _z80->t = static_cast<uint32_t>(sprinterInt + outT(k)) * m;
+        Out(0x00FE, kNew);
+        _z80->t = static_cast<uint32_t>(sprinterInt + kPaperT + 224 * (k + 1) + 64) * m;  // mid paper of the next line
+        Out(0x00FE, kOld);
+    }
+    _z80->t = 71680 * m;
+    _screen->UpdateScreen();
+
+    // Pentagon: INT at intstart + 1 of the frame before, the same writes through its port decoder
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(pentagon, nullptr);
+    EmulatorContext* pc = pentagon->GetContext();
+    pc->pFeatureManager->setFeature(Features::kScreenHQ, true);  // the beam renderer (the helper turns it off for speed)
+    Z80* pz = pc->pCore->GetZ80();
+    Screen* ps = pc->pScreen;
+    const int32_t pentagonInt = static_cast<int32_t>(pc->config.intstart + 1) - static_cast<int32_t>(pc->config.frame);
+    ASSERT_EQ(ps->GetPaperStartTstate() - pentagonInt, kPaperT) << "the Pentagon reference";
+    pz->t = 0;
+    pc->pPortDecoder->DecodePortOut(0x00FE, kOld, 0);
+    ps->ResetPrevTstate();
+    for (int k = 0; k < 8; k += 2)
+    {
+        pz->t = static_cast<uint32_t>(pentagonInt + outT(k));
+        pc->pPortDecoder->DecodePortOut(0x00FE, kNew, 0);
+        pz->t = static_cast<uint32_t>(pentagonInt + kPaperT + 224 * (k + 1) + 64);
+        pc->pPortDecoder->DecodePortOut(0x00FE, kOld, 0);
+    }
+    pz->t = pc->config.frame - 1;
+    ps->UpdateScreen();
+    const FramebufferDescriptor& pfb = ps->GetFramebufferDescriptor();
+    ASSERT_EQ(pfb.width, 352);
+    auto pentagonPixel = [&](uint32_t x, uint32_t y) { return reinterpret_cast<const uint32_t*>(pfb.memoryBuffer)[y * pfb.width + x]; };
+
+    // The ZX column (0 = the first paper pixel) where the right border turns kNew on ZX line k
+    auto pentagonColumn = [&](uint32_t k) {
+        const uint32_t y = 48 + k;
+        const uint32_t fresh = pentagonPixel(pfb.width - 1, y);
+        EXPECT_NE(fresh, pentagonPixel(48 + 256, y)) << "PENTAGON line " << k << ": no border change";
+        for (uint32_t x = 48 + 256; x < pfb.width; x++)
+            if (pentagonPixel(x, y) == fresh)
+                return static_cast<int>(x) - 48;
+        return -1;
+    };
+    const uint32_t sprinterFresh = PenColor(SprinterVideoRenderer::kPenText | (kNew * 9u));
+    auto sprinterColumn = [&](uint32_t k) {
+        const uint32_t y = 48 + k;
+        for (uint32_t x = 112 + 512; x < SprinterVideoRenderer::kVisibleWidth; x++)
+            if (Pixel(x, y) == sprinterFresh)
+            {
+                EXPECT_EQ(Pixel(x + 1, y), sprinterFresh) << "a ZX pixel is two Sprinter pixels";
+                EXPECT_EQ((x - 112) % 2, 0u) << "the change on a ZX pixel boundary";
+                return static_cast<int>(x - 112) / 2;
+            }
+        return -1;
+    };
+
+    for (uint32_t k = 0; k < 8; k += 2)
+    {
+        SCOPED_TRACE("ZX line " + std::to_string(k) + ", OUT " + std::to_string(4 + (k >> 1)) + " T after the paper");
+        const int beam = 256 + 2 * (4 + static_cast<int>(k >> 1));  // the column the beam is at on the Pentagon
+        EXPECT_EQ(pentagonColumn(k), beam + 4) << "PENTAGON: 2 T after the callback";
+        // Sprinter: + 4 T (kBorderLatchAfterIorqT) - 2 T (its paper 2 T later): the Pentagon's column
+        EXPECT_EQ(sprinterColumn(k), beam + 4) << "Sprinter P128";
+        EXPECT_EQ(sprinterColumn(k), pentagonColumn(k)) << "the border lines up with the paper as on the PENTAGON";
+        EXPECT_EQ(Pixel(112 + 512, 48 + k), PenColor(SprinterVideoRenderer::kPenText | (kOld * 9u))) << "the old color first";
+    }
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+/// endregion </Spectrum mode>
 
 /// region <Temporal effects (ZX DLSS) in the Spectrum mode>
 

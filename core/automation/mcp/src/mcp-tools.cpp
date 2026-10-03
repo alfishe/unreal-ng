@@ -1106,8 +1106,8 @@ void RegisterInspectState(ToolRegistry& registry)
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
-                               "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "memory_region", "video_changes",
-                               "audio_mixer"})
+                               "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
     {
         allowed.append(aspect);
     }
@@ -1156,7 +1156,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/state/sprinter/video), 'sprinter_palette' = the palettes the picture uses (R, G, B per pen "
         "as video RAM holds them; ?k=0-7|all through invoke_api), 'sprinter_sound_ring' = the Covox-Blaster sample ring, "
         "'sprinter_bios' = the BIOS images, the one loaded (by CRC-32) and the start options (select: invoke_api POST "
-        "/api/v1/emulator/{id}/sprinter/bios {bios: 3.06, reset: true}); "
+        "/api/v1/emulator/{id}/sprinter/bios {bios: 3.06, reset: true}), 'sprinter_zx_mode' = the ZX (Spectrum) "
+        "mode report: active, the launcher configuration (each .ZX option from the hardware: CNF turbo / map / clean "
+        "bits, ALL_MODE, frame, INT; the launcher's own text and option table in RAM), the best-matching mode file "
+        "(SP.ZX, P128.ZX, ORIGIN.ZX ...) with confidence, the clock (CNF request, F12, MHz, why), the ROM set by CRC, "
+        "and the table decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F with each port's effect now, "
+        "'sprinter_pld_journal' = who changed the PLD setup and when (frame, T, PC): port table writes with the decodes "
+        "they changed, CNF / turbo, the clock, #7FFD / #1FFD by the port used, ALL_MODE, RGMOD, HOLD, frame length, the "
+        "PLD load, F12, Ctrl+Alt+Del, resets (pld_journal_kinds = 'cnf,port_1ffd' filters; pld_journal_source = 'ttd' "
+        "reads the TTD recording's OUTs to those codes instead); "
         "all unavailable on other machines. 'memory_region' = bytes of a device memory region outside the CPU's pages "
         "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list: invoke_api "
         "GET /api/v1/emulator/{id}/memory/regions; write: POST /memory/region/{name} {offset, hex}). 'video_changes' = "
@@ -1165,6 +1173,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_mixer' = the per-device mixer (source key, muted, solo, volume, gain_db, peak, active; set: invoke_api "
         "PUT /api/v1/emulator/{id}/audio/mixer/{source} {muted, solo, volume}; capture one device: capture_media "
         "audio_capture with source).";
+    schema["properties"]["pld_journal_kinds"]["type"] = "string";
+    schema["properties"]["pld_journal_kinds"]["description"] =
+        "'sprinter_pld_journal': comma list of kinds (port_table, cnf, clock, port_7ffd, port_1ffd, all_mode, rgmod, hold, "
+        "frame_lines, pld_load, pld_configured, f12, ctrl_alt_del, reset); empty = all";
+    schema["properties"]["pld_journal_source"]["type"] = "string";
+    schema["properties"]["pld_journal_source"]["description"] = "'sprinter_pld_journal': live (default) or ttd (the recording)";
     schema["properties"]["region"]["type"] = "string";
     schema["properties"]["region"]["default"] = "vram";
     schema["properties"]["region"]["description"] = "'memory_region': the region name (GET /memory/regions)";
@@ -1209,7 +1223,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
-        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring). "
+        "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
+        "sprinter_zx_mode, sprinter_pld_journal). "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -1236,11 +1251,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
+                    aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1263,12 +1279,18 @@ void RegisterInspectState(ToolRegistry& registry)
             unsigned maxBlocks = args.isMember("max_blocks") ? args["max_blocks"].asUInt() : 48u;
             if (maxBlocks < 1) maxBlocks = 1;
             const std::string region = args.isMember("region") && args["region"].isString() ? args["region"].asString() : "vram";
+            // The PLD journal query (sprinter_pld_journal)
+            std::string pldQuery = "?limit=40";
+            if (args.isMember("pld_journal_kinds") && args["pld_journal_kinds"].isString())
+                pldQuery += "&kinds=" + args["pld_journal_kinds"].asString();
+            if (args.isMember("pld_journal_source") && args["pld_journal_source"].isString())
+                pldQuery += "&source=" + args["pld_journal_source"].asString();
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1561,7 +1583,7 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "sprinter" || aspect == "sprinter_ports" || aspect == "sprinter_text" ||
                                  aspect == "sprinter_video" || aspect == "sprinter_palette" || aspect == "sprinter_sound_ring" ||
-                                 aspect == "sprinter_bios")
+                                 aspect == "sprinter_bios" || aspect == "sprinter_zx_mode" || aspect == "sprinter_pld_journal")
                         {
                             // Core DeviceState::Sprinter / SprinterPortTable / SprinterText / SprinterVideo /
                             // SprinterPalette / SprinterSoundRing via the WebAPI; 404 = not a Sprinter
@@ -1571,6 +1593,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                                      : aspect == "sprinter_palette"  ? "/state/sprinter/palette"
                                                      : aspect == "sprinter_sound_ring" ? "/state/sprinter/sound/ring"
                                                      : aspect == "sprinter_bios"     ? "/state/sprinter/bios"
+                                                     : aspect == "sprinter_zx_mode"  ? "/state/sprinter/zx-mode"
+                                                     : aspect == "sprinter_pld_journal" ? "/state/sprinter/pld-journal" + pldQuery
                                                                                      : "/state/sprinter/text";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
@@ -2083,6 +2107,45 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& image : value["images"])
                                         out << "\n  " << image["alias"].asString() << " " << image["file"].asString()
                                             << (image["present"].asBool() ? "" : " (not installed)") << (image["loaded"].asBool() ? " [loaded]" : "");
+                                }
+                            }
+                            else if (aspect == "sprinter_zx_mode")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_zx_mode] " << value["description"].asString();
+                                else
+                                {
+                                    const Json::Value& best = value["config"]["best_match"];
+                                    out << "\n[sprinter_zx_mode] " << value["summary"].asString() << "; best match "
+                                        << best["file"].asString() << " (" << best["name"].asString() << ", " << best["launcher"].asString()
+                                        << "), confidence " << best["confidence"].asString() << ": " << best["explanation"].asString();
+                                    out << "\n  options " << value["config"]["option_line"].asString() << ", CNF "
+                                        << value["config"]["cnf"].asString() << ", ALL_MODE " << value["config"]["all_mode"].asString();
+                                    out << "\n  clock " << value["clock"]["why"].asString();
+                                    out << "\n  frame " << value["frame"]["lines"].asInt() << " lines, INT "
+                                        << value["frame"]["int"]["kind"].asString() << " line " << value["frame"]["int"]["line"].asInt()
+                                        << " T " << value["frame"]["int"]["t_in_line"].asInt() << "; ROMs " << value["rom"]["set_name"].asString();
+                                    if (value["launcher"]["mode_text_found"].asBool())
+                                        out << "\n  launcher RAM: \"" << value["launcher"]["mode_name"].asString() << "\" "
+                                            << value["launcher"]["option_line"].asString();
+                                    for (const Json::Value& row : value["ports"]["rows"])
+                                        out << "\n  OUT " << row["port"].asString() << " -> " << row["tr_dos_off"]["out"]["code"].asString() << " "
+                                            << row["tr_dos_off"]["out"]["name"].asString() << ": " << row["tr_dos_off"]["out"]["effect"].asString();
+                                }
+                            }
+                            else if (aspect == "sprinter_pld_journal")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[sprinter_pld_journal] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[sprinter_pld_journal] source " << value["source"].asString() << ", "
+                                        << value["events"].size() << " event(s)";
+                                    if (value.isMember("error"))
+                                        out << ": " << value["error"].asString();
+                                    for (const Json::Value& e : value["events"])
+                                        out << "\n  frame " << e["frame"].asUInt64() << " T " << e["t"].asUInt() << " PC " << e["pc"].asString()
+                                            << " " << e["kind"].asString() << ": " << e["text"].asString();
                                 }
                             }
                             else if (aspect == "sprinter_sound_ring")
@@ -2927,31 +2990,6 @@ static std::string MakeSparkline(const std::vector<uint32_t>& values)
         spark += kBars[idx];
     }
     return spark;
-}
-
-/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
-/// literal). Labels are free-form text ("umt entry"), so they must not be
-/// spliced raw into a URL path.
-std::string UrlEncodeSegment(const std::string& text)
-{
-    static const char* kHex = "0123456789ABCDEF";
-    std::string encoded;
-    encoded.reserve(text.size());
-    for (char c : text)
-    {
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
-        {
-            encoded += c;
-        }
-        else
-        {
-            encoded += '%';
-            encoded += kHex[uc >> 4];
-            encoded += kHex[uc & 0xF];
-        }
-    }
-    return encoded;
 }
 
 /// Formats a TTD time point ({frame, tinframe}) as "frame F" or "frame F t=T".

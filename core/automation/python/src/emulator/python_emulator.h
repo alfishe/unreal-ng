@@ -35,7 +35,7 @@
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
-#include <emulator/video/screencapture.h>
+#include <emulator/video/screenshotter.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
@@ -1935,21 +1935,84 @@ namespace PythonBindings
             .def("capture_ocr", [](Emulator& self) -> std::string {
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
-            .def("capture_screen", [](Emulator& self, const std::string& format, bool fullFramebuffer) -> py::dict {
+            .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
+                                       const std::string& path, const std::string& source) -> py::dict {
                 py::dict result;
-                CaptureMode mode = fullFramebuffer ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
-                auto capture = ScreenCapture::captureScreen(self.GetId(), format, mode);
-                result["success"] = capture.success;
-                result["format"] = capture.format;
-                result["width"] = capture.width;
-                result["height"] = capture.height;
-                result["size"] = capture.originalSize;
-                result["data"] = capture.base64Data;
-                if (!capture.success) {
-                    result["error"] = capture.errorMessage;
+                auto fail = [&](const std::string& message, const char* kind) {
+                    result["success"] = false;
+                    result["error"] = message;
+                    result["kind"] = kind;
+                    return result;
+                };
+                ScreenshotOptions options;  // the whole frame, PNG
+                if (!Screenshotter::ParseFormat(format, options.format))
+                    return fail("Unknown format '" + format + "': use png or gif", "bad-parameter");
+                if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
+                    return fail("Unknown area '" + area + "': use full or screen", "bad-parameter");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return fail("Unknown source '" + source + "': use presented or live", "bad-parameter");
+                if (!fullLegacy.is_none())
+                {
+                    // Deprecated: full=True is area="full", full=False is area="screen"
+                    const ScreenshotArea fromFull = fullLegacy.cast<bool>() ? ScreenshotArea::Full : ScreenshotArea::Screen;
+                    if (!area.empty() && fromFull != options.area)
+                        return fail("area and the deprecated full= disagree", "bad-parameter");
+                    options.area = fromFull;
                 }
+                options.saveTo = path;
+
+                if (!self.GetContext() || !self.GetContext()->pScreen)
+                    return fail("The emulator has no screen", "no-frame");
+                const ScreenshotResult shot =
+                    Screenshotter::TakeFrom(*self.GetContext()->pScreen, options, self.IsEmulationParked());
+                if (!shot.ok)
+                    return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
+
+                auto rect = [](const FrameRect& r) {
+                    py::dict d;
+                    d["x"] = r.x;
+                    d["y"] = r.y;
+                    d["width"] = r.width;
+                    d["height"] = r.height;
+                    return d;
+                };
+                py::dict frame;
+                frame["width"] = shot.frame.width;
+                frame["height"] = shot.frame.height;
+                frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                                           : Screen::GetVideoModeName(shot.frame.videoMode);
+                frame["source"] = Screenshotter::SourceName(shot.frame.source);
+                frame["frame_number"] = shot.frame.frameNumber;
+                if (shot.frame.beamLine >= 0)
+                {
+                    frame["partial"] = shot.frame.partial;
+                    py::dict beam;
+                    beam["line"] = shot.frame.beamLine;
+                    beam["tstate"] = shot.frame.beamTstate;
+                    frame["beam"] = beam;
+                }
+                result["success"] = true;
+                result["source"] = Screenshotter::RequestSourceName(options.source);
+                result["format"] = Screenshotter::FormatName(shot.format);
+                result["area"] = Screenshotter::AreaName(options.area);
+                result["width"] = shot.width;
+                result["height"] = shot.height;
+                result["size"] = shot.encodedSize;
+                result["crop"] = rect(shot.crop);
+                result["screen_window"] = rect(shot.frame.screenWindow);
+                result["frame"] = frame;
+                if (!shot.savedFile.empty())
+                    result["file"] = shot.savedFile;
+                else
+                    result["data"] = Screenshotter::Base64Encode(shot.bytes);
                 return result;
-            }, "Capture screen as image", py::arg("format") = "gif", py::arg("full") = false)
+            }, "Screenshot of the presented frame: the whole frame (area='full', default) or the working picture "
+               "(area='screen'), PNG (default) or GIF; returns a dict with the image base64 in 'data' (or 'file' when "
+               "path is given), the frame geometry ('frame', 'screen_window') and the rectangle cut ('crop'). "
+               "source='live' takes the frame as drawn now instead of the presented one (a paused machine adds the beam "
+               "position and 'partial' to 'frame'). full= is a deprecated alias of area (True = 'full', False = 'screen')",
+               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
+               py::arg("source") = "")
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {
@@ -2118,6 +2181,33 @@ namespace PythonBindings
             }, py::arg("bios") = py::none(), py::arg("fast_start") = py::none(), py::arg("accel_int_suspend") = py::none(),
                py::arg("reset") = true,
                "Select the Sprinter BIOS (3.04 / 3.06 / 3.07 / a file) and start options; the image loads at the reset (now unless reset=False)")
+            .def("sprinter_zx_mode", [](Emulator& self, bool deep) -> py::object {
+                return StateNodeToPy(DeviceState::SprinterZxMode(self.GetContext(), deep));
+            }, py::arg("deep") = true,
+               "Sprinter ZX (Spectrum) mode: active, the launcher configuration (each .ZX option from the hardware, the "
+               "launcher's text in RAM), best-matching mode file with confidence, clock (CNF request, F12, MHz), frame / INT, "
+               "ROMs by CRC, the decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F; deep=False skips the whole-RAM search")
+            .def("sprinter_pld_journal", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
+                                            py::object to_frame, py::object limit, const std::string& source) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                DeviceState::SprinterJournalQuery query;
+                std::string error;
+                if (!DeviceState::SprinterJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame),
+                                                                  text(limit), source, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::SprinterJournal(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(), py::arg("from_frame") = py::none(),
+               py::arg("to_frame") = py::none(), py::arg("limit") = py::none(), py::arg("source") = "live",
+               "Sprinter PLD journal: who changed the PLD setup (port table, CNF / turbo, clock, #7FFD / #1FFD, ALL_MODE, RGMOD, "
+               "HOLD, frame length, PLD load, F12, Ctrl+Alt+Del, resets) with frame, T, PC; source='ttd' reads the recording")
+            .def("sprinter_pld_journal_control", [](Emulator& self, py::object enabled, bool clear) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::SprinterJournalControl(self.GetContext(), enable, clear));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, "Switch (enabled=True/False) or clear the Sprinter PLD journal")
             .def("sprinter_sound_ring", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterSoundRing(self.GetContext()));
             }, "Sprinter Covox-Blaster ring: 256 words, play / write index; available=False on other machines")

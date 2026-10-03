@@ -8,6 +8,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/machineeventjournal.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/sprinter/sprinterinput.h"
@@ -19,6 +20,7 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 #include "emulator/video/sprinter/sprintervramregion.h"
 
+class ScreenSprinter;
 class SprinterMemory;
 class SprinterVideoRenderer;
 namespace ttd
@@ -94,6 +96,15 @@ public:
     bool IsPagingLocked() const override { return false; }
     /// 3.5 or 21 MHz
     uint8_t TtdClockUnits() const override { return 6; }
+    /// The IM2 vector (the Z84C15 daisy chain, the PLD's INT answering #FF) and the stepped engines (PLD
+    /// resets, the loader watchdog, the CTC) follow the checkpointed state and the TTD input journal only
+    /// (s7-ttd-outcome.md): the port journals record on the Sprinter
+    bool TtdEnginesSealed() const override { return true; }
+    /// No ZX-bus until the ISA ZX-bus adapter exists (2026-10-02-sprinter-isa/tdd.md §2, phase I2): the
+    /// General Sound / NeoGS of [SOUND] GSType is not fitted
+    bool ZxBusPresent() const override { return false; }
+    /// The PLD journal (PldJournal below)
+    MachineEventJournal* GetMachineEventJournal() override { return &_journal; }
     /// The WD1793 clock and data separator follow the #BD density latch (codes #16 / #17)
     /// alone: STEP and DRQ never change them, [Beta128] TurboVG= cannot override them
     FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::Latched; }
@@ -177,6 +188,8 @@ public:
     void OnConfigurationWrite(uint8_t value);
     /// The PLD resets the CPU at the next instruction boundary
     void RequestCpuReset(SprinterResetKind kind);
+    /// SprinterMemory: a CPU write to page #A0 with #1FFD = #10 (the soft restart): journaled, then the reset
+    void OnResetPageWrite();
 
     /// Start the configured standard machine at the BIOS entry with the state
     /// the ROM loader would leave (fast start, tdd-ports-memory §6)
@@ -210,6 +223,22 @@ public:
     uint32_t BaseTstate() const;
     SprinterMemory* GetSprinterMemory() const { return _sprinterMemory; }
     /// endregion </PLD state and parts>
+
+    /// region <PLD journal (machineeventjournal.h; tdd-zx-mode.md §12)>
+public:
+    /// What changed the PLD's setup, with frame, T and PC: port table writes (one event per frame, with
+    /// the decodes of the key ZX ports it changed), CNF/SYS (turbo request, map, clean rules), the CPU
+    /// clock, ALL_MODE, RGMOD, HOLD, the frame length, #7FFD / #1FFD (on a change of the value), the
+    /// bitstream load and the module chosen, F12, Ctrl+Alt+Del, the page #A0 reset, RESET, power on.
+    /// On by default; off costs nothing (no table watch, no event built)
+    MachineEventJournal& PldJournal() { return _journal; }
+    void SetPldJournalEnabled(bool on);
+    /// SprinterMemory's write intercept: a store into page #40 (the port table) while the journal is on
+    void OnPortTableWrite(uint16_t addr);
+    /// The table codes of the key ZX ports (SprinterZxPorts) for every map, DOS state and direction
+    /// (PN5 = 0): the journal's "what a table write changed"
+    std::vector<uint8_t> KeyPortDecodes() const;
+    /// endregion
 
     /// region <TTD (phase S7; debugger/ttd/sprinter/ttdsprinter.h)>
 public:
@@ -249,9 +278,26 @@ private:
     void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
+    /// A CPU write is about to change a video RAM byte (the graphics pages, the Spectrum screen shadow, the
+    /// accelerator): the renderer draws the beam up to the moment the byte lands (ScreenSprinter::CatchUpToWrite)
+    void CatchUpScreenToWrite();
+    /// A border write: the renderer draws the beam up to the moment the PLD latches it (ScreenSprinter::CatchUpToBorderLatch)
+    void CatchUpScreenToBorderLatch();
+    /// The context's screen as a ScreenSprinter while a CPU runs it, else null
+    ScreenSprinter* SprinterScreen();
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();
+
+    /// The journal is on and the machine runs live (a TTD replay re-executes history: nothing is noted)
+    bool JournalOn() const { return _journal.Enabled() && !_context->ttdReplayActive; }
+    /// Append an event at the current frame, base T and `pc`
+    void JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
+                      std::vector<std::string> details = {});
+    /// The CPU's PC (host actions: keys, the RESET button)
+    uint16_t CpuPc() const;
+    /// The frame end: one "port_table" event for the table bytes written this frame
+    void FlushPortTableWrites();
 
     uint8_t FdcRead(uint8_t code);
     void FdcWrite(uint8_t code, uint8_t value);
@@ -264,6 +310,9 @@ private:
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
+    /// The Sprinter screen CatchUpScreenToWrite draws on (the context's screen, checked when it changes)
+    ScreenSprinter* _screen = nullptr;
+    const Screen* _screenSeen = nullptr;
     SprinterVramRegion _vramRegion{_vram};
     SprinterIntSource _intSource{_context, _vram};
     /// The standard accelerator and the one in use (hook 4)
@@ -290,4 +339,20 @@ private:
     int64_t _dcpOpenedFrame = -1;
     uint16_t _dcpOpenedPc = 0;
     uint64_t _loggedUnknownCodes[4] = {};  ///< one log line per unknown code
+
+    /// The PLD journal and what it compares against (observation only, not machine state: not in TTD)
+    MachineEventJournal _journal;
+    struct TableWrites
+    {
+        uint32_t count = 0;
+        uint32_t firstT = 0;
+        uint32_t lastT = 0;
+        uint16_t firstPc = 0;
+        uint16_t lastPc = 0;
+        uint16_t firstOffset = 0;
+        uint16_t lastOffset = 0;
+    } _tableWrites;
+    std::vector<uint8_t> _journalDecodes;  ///< KeyPortDecodes at the last port_table event (empty: none yet)
+    int _journalLast7ffd = -1;             ///< the last raw #7FFD / #1FFD value journaled
+    int _journalLast1ffd = -1;
 };

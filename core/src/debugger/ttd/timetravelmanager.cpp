@@ -44,6 +44,7 @@
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
 #include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
+#include "emulator/ports/portdecoder.h"  // PortDecoder::TtdEnginesSealed (port journal gate)
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
@@ -2083,7 +2084,10 @@ const char* TimeTravelManager::PortJournalUnsupportedReason() const
     // A machine that owns its INT logic (IInterruptSource) may put the IM2
     // vector on the bus from a device - a read the journals do not record
     // (TTD v2 FR-21). The classic machines leave it to the floating bus
-    if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    // A machine whose vector and stepped engines follow recorded state only says so (PortDecoder::
+    // TtdEnginesSealed: the Sprinter); for it the two checks below do not apply
+    const bool enginesSealed = _context->pPortDecoder && _context->pPortDecoder->TtdEnginesSealed();
+    if (const Z80* z80 = (_context->pCore && !enginesSealed) ? _context->pCore->GetZ80() : nullptr)
     {
         if (z80->GetInterruptSource())
             return "the machine's interrupt source supplies the IM2 vector, which the first version does not record";

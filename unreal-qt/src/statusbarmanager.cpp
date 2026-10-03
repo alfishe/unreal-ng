@@ -10,6 +10,7 @@
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/state/devicestate.h"
 
 #include <QCursor>
 #include <QEvent>
@@ -116,12 +117,18 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _videoMode->setStyleSheet("padding-top: 1px;");
     _videoMode->hide();
 
+    _zxMode = new QLabel(_statusBar);
+    _zxMode->setFont(fpsFont);
+    _zxMode->setStyleSheet("padding-top: 1px;");
+    _zxMode->hide();
+
     auto* separator2 = new QFrame(_statusBar);
     separator2->setFrameShape(QFrame::VLine);
     separator2->setFrameShadow(QFrame::Plain);
     separator2->setFixedHeight(13);
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
+    _statusBar->addPermanentWidget(_zxMode);
     _statusBar->addPermanentWidget(_videoMode);
     _statusBar->addPermanentWidget(_rzx);
     _statusBar->addPermanentWidget(_ttd);
@@ -407,6 +414,7 @@ void StatusBarManager::refresh()
     updateRzx(emulator);
     updateTtd(context);
     updateVideoMode(context);
+    updateZxMode(context);
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
@@ -689,6 +697,28 @@ void StatusBarManager::updateVideoMode(EmulatorContext* context)
     _videoMode->setText(mode.text);
     _videoMode->setToolTip(mode.toolTip);
     _videoMode->show();
+}
+
+void StatusBarManager::updateZxMode(EmulatorContext* context)
+{
+    // The Sprinter's Spectrum mode in a few words; the tooltip is the report (DeviceState::SprinterZxMode without the
+    // whole-RAM search). A torn read while the machine runs shows for one tick only, as with the video mode label
+    const DeviceState::SprinterZxBrief brief =
+        context ? DeviceState::SprinterZxModeBrief(context, false) : DeviceState::SprinterZxBrief{};
+    if (!brief.sprinter || !brief.active)
+    {
+        _zxMode->hide();
+        _zxModeTicks = 0;
+        return;
+    }
+    const QString text = QString::fromStdString(brief.text);
+    if (text != _zxMode->text() || _zxModeTicks++ % 5 == 0)
+    {
+        const DeviceState::SprinterZxBrief full = DeviceState::SprinterZxModeBrief(context, true);
+        _zxMode->setToolTip(QStringLiteral("<pre style=\"margin:0\">%1</pre>").arg(QString::fromStdString(full.details).toHtmlEscaped()));
+    }
+    _zxMode->setText(text);
+    _zxMode->show();
 }
 
 void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)

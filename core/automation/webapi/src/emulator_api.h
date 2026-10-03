@@ -311,6 +311,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPalette, "/api/v1/emulator/{id}/state/sprinter/palette", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterSoundRing, "/api/v1/emulator/{id}/state/sprinter/sound/ring", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterBios, "/api/v1/emulator/{id}/state/sprinter/bios", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterZxMode, "/api/v1/emulator/{id}/state/sprinter/zx-mode", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateSprinterPldJournal, "/api/v1/emulator/{id}/state/sprinter/pld-journal", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSprinterPldJournal, "/api/v1/emulator/{id}/sprinter/pld-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::postSprinterBios, "/api/v1/emulator/{id}/sprinter/bios", drogon::Post);
     // CMOS clock (implementation: api/state_device_api.cpp, core DeviceState::Rtc + RtcAccess)
     ADD_METHOD_TO(EmulatorAPI::getStateRtc, "/api/v1/emulator/{id}/state/rtc", drogon::Get);
@@ -1087,6 +1090,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                    const std::string& id) const;
     void getStateSprinterBios(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterZxMode(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateSprinterPldJournal(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postSprinterPldJournal(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postSprinterBios(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateNetwork(const drogon::HttpRequestPtr& req,

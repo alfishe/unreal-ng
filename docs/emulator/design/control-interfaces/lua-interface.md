@@ -393,6 +393,9 @@ txt = sprinter_text()       -- the screen text of the mode table's text squares 
 vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: map (G 320, g 640, T text 40, t text 80, Z Spectrum cell, B border, . blank, * INT), hold, frame, rgmod, port_y, palettes_used, squares
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
+zx = sprinter_zx_mode()           -- the ZX mode: active, config.best_match.file ("SP.ZX"), options, clock, frame.int, rom, ports; sprinter_zx_mode(false) skips the RAM search
+j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who changed the PLD setup: events {frame, t, pc, kind, port, value, text}; source="ttd": the recording
+sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
 r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
 regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter
@@ -400,6 +403,13 @@ bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write(
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
 fb, err = framebuffer("index")    -- {width, height, format, encoding, data = string}: "rgba" (R,G,B,A) or "index" (Sprinter pens)
+shot, err = screenshot{area="screen", format="png", source="live", path="scratch/shot.png"}
+          -- screenshot; every field optional: area "full" (default, the whole frame with border) or "screen" (the
+          -- working picture), format "png" (default) or "gif", source "presented" (default, the finished frame the
+          -- window shows) or "live" (as drawn now; a paused machine adds frame.partial and frame.beam = {line, tstate}). Returns {format, area, width,
+          -- height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width, height, mode, source,
+          -- frame_number}, data = the encoded image as a string of bytes} (`file` instead of `data` with a path);
+          -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG
 mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)

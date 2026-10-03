@@ -468,3 +468,61 @@ TEST_F(ScreenTSConf_Test, TIM5_DmaCramWriteLandsAtItsDot)
     EXPECT_EQ(at(420, 99), blue) << "line 99 after the write";
     EXPECT_EQ(at(120, 100), blue);
 }
+
+/// GEOM-1: the frame's working window is the V_CONFIG graphics window in frame pixels, and the rendered
+/// picture agrees: the pixel inside each corner is the graphics, the pixel just outside is the border.
+/// One 720x288 frame for every mode (2 px per raster dot, 1 px per line), so a 256x192 window is
+/// 512x192 pixels; the table's "screen = the whole frame" for TS-Conf was not the picture
+TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
+{
+    TsConfState& ts = _decoder->GetState();
+    Reg(TsConfReg::PalSel, 0x0A);
+    Out(0x00FE, 0x06);
+    // The border: green. The fixture's RAM is tagged (page 5 is all 0x05), so the ZX ink is color 5 and
+    // the paper 0: the border takes color 6, and nothing in the window is green
+    ts.cram[0xA6] = 0x03E0;
+    const uint32_t border = ScreenTSConf::CramToRgba(0x03E0);
+
+    struct Case
+    {
+        uint8_t vConfig;
+        FrameRect expected;
+    };
+    // Windows of hardware-spec §4.1, in frame pixels: x = (dot - 88) * 2, y = line - 32, width = dots * 2
+    const Case cases[] = {
+        {0x00, {104, 48, 512, 192}},  // 256x192
+        {0x40, {40, 44, 640, 200}},   // 320x200
+        {0x80, {40, 24, 640, 240}},   // 320x240
+        {0xC0, {0, 0, 720, 288}},     // 360x288: the whole frame
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(testing::Message() << "V_CONFIG " << int(c.vConfig));
+        Reg(TsConfReg::VConfig, c.vConfig);
+        PixelAfterFrame(0, 0);  // a whole frame with these registers
+        const FrameRect w = Screen()->WorkingWindow();
+        EXPECT_EQ(w.x, c.expected.x);
+        EXPECT_EQ(w.y, c.expected.y);
+        EXPECT_EQ(w.width, c.expected.width);
+        EXPECT_EQ(w.height, c.expected.height);
+
+        uint32_t* buffer = nullptr;
+        size_t size = 0;
+        Screen()->GetFramebufferData(&buffer, &size);
+        auto at = [&](int x, int y) { return buffer[y * 720 + x]; };
+        const int right = w.x + w.width - 1;
+        const int bottom = w.y + w.height - 1;
+        EXPECT_NE(at(w.x, w.y), border) << "top-left corner is graphics";
+        EXPECT_NE(at(right, bottom), border) << "bottom-right corner is graphics";
+        if (w.x > 0)
+        {
+            EXPECT_EQ(at(w.x - 1, w.y), border) << "left of the window is border";
+            EXPECT_EQ(at(right + 1, w.y), border) << "right of the window is border";
+        }
+        if (w.y > 0)
+        {
+            EXPECT_EQ(at(w.x, w.y - 1), border) << "above the window is border";
+            EXPECT_EQ(at(w.x, bottom + 1), border) << "below the window is border";
+        }
+    }
+}
