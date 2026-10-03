@@ -234,24 +234,35 @@ uint16_t PortDecoder::IoPc() const
     return z80 ? z80->m1_pc : 0;
 }
 
+int64_t PortDecoder::SessionWallMicros() const
+{
+    const int64_t wall = _context->ttdSessionWallMicros;
+    if (wall == INT64_MIN)
+        return wall;
+    return wall + static_cast<int64_t>(EmulatedMicroseconds() - _context->ttdSessionEmulatedMicros);
+}
+
 uint64_t PortDecoder::EmulatedMicroseconds() const
 {
     if (!_context)
         return 0;
 
+    // The base T-states run since power-on (t_states: every closed frame,
+    // restored with the chipset) plus the position in this frame, at the
+    // CPU's rate - the frame's duration over its length. A frame's length
+    // may change (the Sprinter's 320 / 312 lines) but not the rate, so the
+    // time never goes back; frame x the current duration did (Phase 3, Step 5)
     const CONFIG& config = _context->config;
     const EmulatorState& state = _context->emulatorState;
-    const uint64_t frameMicros = config.frame_duration_us;
     const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
     const uint64_t frameSpan = static_cast<uint64_t>(config.frame) * units;
-
+    if (!frameSpan)
+        return 0;
     const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint64_t inFrame = z80 ? state.TtdTInFrame(z80->t) : 0;
-
-    uint64_t micros = state.frame_counter * frameMicros;
-    if (frameSpan)
-        micros += inFrame * frameMicros / frameSpan;
-    return micros;
+    const uint64_t now = state.t_states * units + (z80 ? state.TtdTInFrame(z80->t) : 0);
+    // now x duration / span, exactly and without overflow: whole spans, then the rest
+    const uint64_t duration = config.frame_duration_us;
+    return (now / frameSpan) * duration + (now % frameSpan) * duration / frameSpan;
 }
 
 /// region <Interface methods>

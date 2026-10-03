@@ -104,10 +104,10 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 - [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
   - [x] Machine time from the frame table (2026-10-03): in shadow mode a frame starts where the last one started plus its measured length (`emulatorState.t_states` x `ttd_clock_units`), not frame x the current length; a change of length is a `FrameLengthChange` fact. Sprinter 320 / 312 lines: machine time never goes back
-  - [ ] CPU table, clock map (`ClockChange` facts), per-checkpoint CPU counter residuals
-  - [ ] Positions on a card CPU (seek, reverse step in card instructions)
+  - [ ] CPU table, clock map (`ClockChange` facts), per-checkpoint CPU counter residuals — deferred (owner decision 2026-10-03) to the GS debugger, its user; the card CPUs' counters are already in every checkpoint (device state, time fields)
+  - [ ] Positions on a card CPU (seek, reverse step in card instructions) — deferred with it
 - [ ] Step 4 — Configuration fingerprint and media versions (the machine ROMs of every model, the Sprinter BIOS among them)
-- [ ] Step 5 — Emulated real-time clocks
+- [x] Step 5 — Emulated real-time clocks (2026-10-03): one session time base (host wall time + emulated time at the recording start, `PortDecoder::SessionWallMicros`) for every DS12887 user; emulated microseconds from the base T-states, each frame at its own length (Sprinter 320 / 312 lines never goes back)
 - [x] Step 6 — No writes outside the session during replay (2026-10-03): write-through block media held in memory and released to their files when the replay ends (`HostWriteHold`, `MediaManager::HoldHostWrites`, engaged by v1's replay); floppy write-through waits for the next live frame; VDAC2 bus capture and the video recording's audio skip replayed frames
 - [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)
 

@@ -348,6 +348,14 @@ v1 already runs every DS12887 user on emulated time during a recording (§3.2). 
 
 The clock's `Fixed` mode (tests and the benchmark's frozen RTC) is unchanged.
 
+**As built (2026-10-03).** One time base per session, no format change:
+
+- `TimeTravelManager::StartRecording` takes the host's wall time once (`Ds12887::HostCivilMicrosNow`, local civil microseconds) together with the machine's emulated microseconds at that moment (`EmulatorContext::ttdSessionWallMicros` / `ttdSessionEmulatedMicros`), after the emulator has paused.
+- `PortDecoder::SessionWallMicros()` gives that base moved by the emulated time since. Each clock chip gets it through `Ds12887::SetSessionWall` (ATM3 / ZX-Evo AVR, Profi, Scorpion SMUC, TS-Conf, Sprinter) and anchors at it in `EnterEmulatedTime`. Two chips entering emulated time at different moments read the same time; without a session (`kNoSessionWall`) a chip anchors at the host clock as before.
+- `PortDecoder::EmulatedMicroseconds` comes from the base T-states run since power-on (`emulatorState.t_states` x `ttd_clock_units` plus the position in the frame), each frame at its own length: exact integer split division, no 128-bit arithmetic. A Sprinter switching 320 -> 312 -> 320 lines gains 20,480 / 19,968 us per frame and never goes back (v1's frame x current duration jumped back).
+- Point 3 (the base survives save and load) needs nothing new: each chip's anchor is part of its state blob, so a loaded session or a branch restores the recorded anchors; a resume does not re-anchor.
+- Tests: `Ds12887_Test.ChipsAnchorAtTheSessionWallTime`, `TimeTravelManager_FrameTable_Test.EmulatedMicrosecondsFollowEveryFrameLength` and `.SessionTimeBaseIsOneInstantForEveryClock`. Each fails with its fix reverted (mutation check).
+
 ### 4.7 Step 6 — No writes outside the session during replay
 
 FR-20 asks for one gate in the media layer, keyed by the replay state, not a flag per controller.

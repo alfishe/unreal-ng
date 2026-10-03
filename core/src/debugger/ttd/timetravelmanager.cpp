@@ -32,6 +32,7 @@
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/ide/idecontroller.h"
 
@@ -185,6 +186,13 @@ bool TimeTravelManager::StartRecording()
         emu->Pause(false);
         emu->WaitForPauseConfirmation(1000);
     }
+
+    // One time base for the session: the host's wall time now, at the
+    // machine's emulated time now. Every real-time clock anchors at it (their
+    // TTDRecordingStarted below); a resume keeps the anchors the chips restored
+    _context->ttdSessionWallMicros = Ds12887::HostCivilMicrosNow();
+    _context->ttdSessionEmulatedMicros =
+        _context->pPortDecoder ? _context->pPortDecoder->EmulatedMicroseconds() : 0;
 
     // --- Feature-flag stewardship (TDD §6.2/§6.3) ---------------------------
     // Capture requires:

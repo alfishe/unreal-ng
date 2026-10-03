@@ -28,6 +28,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/io/rtc/ds12887.h"
 
 class TimeTravelManager_Shadow_Test : public ::testing::Test
 {
@@ -306,5 +307,78 @@ TEST(TimeTravelManager_FrameTable_Test, FrameStartsFollowTheMeasuredFrameLengths
     for (const ttd::TTDEvent& e : engine.Events().Events())
         changes += e.kind == ttd::TTDEventKind::FrameLengthChange ? 1 : 0;
     EXPECT_EQ(changes, 2u) << "to 312 lines and back";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Phase 3, Step 5: the real-time clocks' emulated microseconds come from the
+/// base T-states run since power-on, at the CPU's rate. A Sprinter switching
+/// to 312 lines and back gains exactly each frame's duration (20,480 us at 320
+/// lines, 19,968 at 312) and never goes back - frame x the current duration did
+TEST(TimeTravelManager_FrameTable_Test, EmulatedMicrosecondsFollowEveryFrameLength)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* sprinter = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(sprinter, nullptr);
+    emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    std::vector<uint64_t> steps;
+    uint64_t last = sprinter->EmulatedMicroseconds();
+    auto frame = [&]() {
+        emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        const uint64_t now = sprinter->EmulatedMicroseconds();
+        ASSERT_GE(now, last) << "never back";
+        steps.push_back(now - last);
+        last = now;
+    };
+    for (int i = 0; i < 3; ++i)
+        ASSERT_NO_FATAL_FAILURE(frame());
+    sprinter->GetPldState().frameLines = 1;
+    for (int i = 0; i < 4; ++i)
+        ASSERT_NO_FATAL_FAILURE(frame());
+    sprinter->GetPldState().frameLines = 0;
+    for (int i = 0; i < 4; ++i)
+        ASSERT_NO_FATAL_FAILURE(frame());
+    // A frame ends at an instruction boundary, a few T-states past its end:
+    // each step is its frame's duration within a few microseconds
+    const auto near = [](uint64_t step, uint64_t us) { return step + 8 >= us && step <= us + 8; };
+    ASSERT_EQ(steps.size(), 11u);
+    for (size_t i = 0; i < steps.size(); ++i)
+    {
+        // The line count is latched at the next frame start: frames 4-7 are 312 lines
+        const uint64_t want = (i >= 4 && i < 8) ? 19968 : 20480;
+        EXPECT_TRUE(near(steps[i], want)) << "frame " << i << ": " << steps[i] << " us, want " << want;
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Phase 3, Step 5: the session's time base is the host's wall time when the
+/// recording starts, at the machine's emulated time then. A clock anchoring
+/// later (any frame after the start) reads that base advanced by exactly the
+/// emulated time since, so every clock of the machine agrees
+TEST(TimeTravelManager_FrameTable_Test, SessionTimeBaseIsOneInstantForEveryClock)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    PortDecoder* decoder = context->pPortDecoder;
+    EXPECT_EQ(decoder->SessionWallMicros(), Ds12887::kNoSessionWall) << "no session yet";
+
+    emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    const int64_t wall = context->ttdSessionWallMicros;
+    ASSERT_NE(wall, Ds12887::kNoSessionWall);
+    const uint64_t start = decoder->EmulatedMicroseconds();
+    EXPECT_EQ(decoder->SessionWallMicros(), wall) << "at the start: the wall time taken";
+
+    emulator->RunNFrames(7, /*skipBreakpoints=*/true);
+    const uint64_t later = decoder->EmulatedMicroseconds();
+    EXPECT_GT(later, start + 6 * 20000);
+    EXPECT_EQ(decoder->SessionWallMicros(), wall + static_cast<int64_t>(later - start))
+        << "later: the same base, moved by the emulated time only";
+    context->pTimeTravelManager->StopRecording();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

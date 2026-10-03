@@ -732,12 +732,18 @@ public:
     /// the Sprinter's video RAM), reached by name from every automation interface
     virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { (void)out; }
 
-    /// Emulated machine time in microseconds: whole frames at the model's
-    /// frame duration plus the position in the current frame (TTD time units,
-    /// so a hardware turbo switch mid-frame does not move it). Restored with
-    /// the frame counter by a TTD seek, which makes it the time base of
-    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    /// Emulated machine time in microseconds: the base T-states run since
+    /// power-on (every closed frame, whatever its length) plus the position in
+    /// the current frame (TTD time units, so a hardware turbo switch mid-frame
+    /// does not move it), at the CPU's rate. Restored with the chipset by a
+    /// TTD seek, which makes it the time base of clocks that must replay
+    /// deterministically (Ds12887 in emulated mode)
     uint64_t EmulatedMicroseconds() const;
+
+    /// The TTD session's wall time at the current emulated moment (host civil
+    /// microseconds; Ds12887::kNoSessionWall outside a session): the one time
+    /// base of every real-time clock of the machine (Phase 3, Step 5)
+    int64_t SessionWallMicros() const;
 
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.

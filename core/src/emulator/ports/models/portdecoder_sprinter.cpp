@@ -44,6 +44,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 {
     _rtc.SetCenturyRegister(0x32);
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
 

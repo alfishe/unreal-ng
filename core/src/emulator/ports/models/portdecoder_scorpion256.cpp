@@ -65,6 +65,7 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 {
     _savedP7FFDValid = false;
     _smucNvram.GetRtc().SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _smucNvram.GetRtc().SetSessionWall([this]() { return SessionWallMicros(); });
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()

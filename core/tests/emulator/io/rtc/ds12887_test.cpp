@@ -438,3 +438,40 @@ TEST(Ds12887_Test, LiveFieldWritesHoldUntilTheNextUpdate)
     EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x01);
     EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x10);
 }
+
+/// Phase 3, Step 5: one time base per TTD session. With the session's wall
+/// time set, every chip of the machine anchors its emulated time at that one
+/// instant (two chips entering emulated time at different host moments still
+/// read the same time); without it a chip anchors at the host clock
+TEST(Ds12887_Test, ChipsAnchorAtTheSessionWallTime)
+{
+    const int64_t wall = (3600 + 60 + 1) * int64_t(kSecond);   // 01:01:01 civil
+    uint64_t now = 500 * kSecond;
+    Ds12887 a, b;
+    for (Ds12887* chip : {&a, &b})
+    {
+        chip->SetEmulatedClock([&now]() { return now; });
+        chip->SetSessionWall([wall]() { return wall; });
+    }
+    auto read = [](Ds12887& chip, uint8_t index) {
+        chip.WriteAddress(index);
+        return chip.ReadData();
+    };
+    a.EnterEmulatedTime();
+    b.EnterEmulatedTime();   // later on the host: the same anchor
+    for (Ds12887* chip : {&a, &b})
+    {
+        EXPECT_EQ(read(*chip, Ds12887::kHours), 0x01);
+        EXPECT_EQ(read(*chip, Ds12887::kMinutes), 0x01);
+        EXPECT_EQ(read(*chip, Ds12887::kSeconds), 0x01);
+    }
+    now += kSecond;
+    EXPECT_EQ(read(a, Ds12887::kSeconds), 0x02);
+    EXPECT_EQ(read(b, Ds12887::kSeconds), 0x02);
+
+    Ds12887 host;   // no session wall: the host clock, as before
+    host.SetEmulatedClock([&now]() { return now; });
+    host.SetSessionWall([]() { return Ds12887::kNoSessionWall; });
+    host.EnterEmulatedTime();
+    EXPECT_EQ(host.GetTimeMode(), Ds12887::TimeMode::Emulated);
+}

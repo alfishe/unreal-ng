@@ -41,6 +41,7 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
