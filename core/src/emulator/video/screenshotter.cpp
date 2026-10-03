@@ -17,11 +17,11 @@
 namespace
 {
 /// The area's rectangle inside the frame
-bool AreaRect(const PictureGeometry& g, ScreenshotArea area, FrameRect& rect, std::string& why)
+bool AreaRect(const PictureGeometry& g, ScreenshotArea area, PictureRect& rect, std::string& why)
 {
     if (area == ScreenshotArea::Full)
     {
-        rect = FrameRect{0, 0, g.width, g.height};
+        rect = PictureRect{0, 0, g.width, g.height};
         return true;
     }
 
@@ -39,7 +39,7 @@ bool AreaRect(const PictureGeometry& g, ScreenshotArea area, FrameRect& rect, st
 }
 
 /// RGBA of `rect` out of a frame of `stride` bytes per line
-std::vector<uint8_t> Crop(const std::vector<uint8_t>& pixels, uint32_t stride, const FrameRect& rect)
+std::vector<uint8_t> Crop(const std::vector<uint8_t>& pixels, uint32_t stride, const PictureRect& rect)
 {
     std::vector<uint8_t> out(static_cast<size_t>(rect.width) * rect.height * RGBA_SIZE);
     const size_t lineBytes = static_cast<size_t>(rect.width) * RGBA_SIZE;
@@ -77,7 +77,10 @@ std::vector<uint8_t> EncodeGif(const uint8_t* rgba, uint16_t width, uint16_t hei
 {
     std::vector<uint8_t> out;
     const std::filesystem::path path = UniqueTempGif();
-    const std::string pathText = path.string();
+    // The project's path convention: UTF-8 std::string (path.string() is the ANSI code page on Windows). GifBegin and
+    // FileHelper both take UTF-8, so a temp folder with any characters works
+    const auto u8 = path.u8string();
+    const std::string pathText(u8.begin(), u8.end());
 
     GifWriter writer = {};
     if (!GifBegin(&writer, pathText.c_str(), width, height, 0))
@@ -87,7 +90,7 @@ std::vector<uint8_t> EncodeGif(const uint8_t* rgba, uint16_t width, uint16_t hei
 
     if (wrote)
     {
-        if (FILE* f = std::fopen(pathText.c_str(), "rb"))
+        if (FILE* f = FileHelper::OpenFile(pathText, "rb"))
         {
             std::fseek(f, 0, SEEK_END);
             const long size = std::ftell(f);
@@ -98,7 +101,7 @@ std::vector<uint8_t> EncodeGif(const uint8_t* rgba, uint16_t width, uint16_t hei
                 if (std::fread(out.data(), 1, out.size(), f) != out.size())
                     out.clear();
             }
-            std::fclose(f);
+            FileHelper::CloseFile(f);
         }
     }
     std::error_code ec;
@@ -121,7 +124,7 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
     if (g.width == 0 || g.height == 0 || snapshot.pixels.size() != static_cast<size_t>(g.stride) * g.height)
         return Fail(ScreenshotError::NoFrame, "The frame has no pixels or its geometry does not match them");
 
-    FrameRect rect;
+    PictureRect rect;
     std::string why;
     if (!AreaRect(g, options.area, rect, why))
         return Fail(ScreenshotError::BadGeometry, why);

@@ -186,8 +186,17 @@ struct GifWriter
 // The input GIFWriter is assumed to be uninitialized.
 // The delay value is the time between frames in hundredths of a second - note that not all viewers pay much attention
 // to this value.
+// LOCAL CHANGE (not in upstream gif-h): `filename` is UTF-8 on every platform, like every path in this project. On
+// Windows it is converted to UTF-16 and opened with _wfopen, so a path with characters outside the ANSI code page
+// (a Cyrillic or CJK folder) works; a string that is not valid UTF-8 is opened as before, as an ANSI path.
 bool GifBegin(GifWriter* writer, const char* filename, uint32_t width, uint32_t height, uint32_t delay,
               int32_t bitDepth = 8, bool dither = false);
+
+// Starts a gif on a file the caller has already opened for binary writing (any way: FileHelper::OpenFile, a
+// temporary file, ...). GifEnd closes it, as for GifBegin. LOCAL ADDITION. Returns false (the file is left open and
+// untouched) when `file` is null.
+bool GifBeginFile(GifWriter* writer, FILE* file, uint32_t width, uint32_t height, uint32_t delay,
+                  int32_t bitDepth = 8, bool dither = false);
 
 // Writes out a new frame to a GIF in progress.
 // The GIFWriter should have been created by GIFBegin.

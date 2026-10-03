@@ -51,7 +51,7 @@ public:
     void InitRaster() override;
     /// The graphics window (V_CONFIG geometry) in frame pixels: a TS frame stores 2 px per raster dot
     /// and one pixel per raster line, so the 256x192 window is 512x192 pixels at (104, 48)
-    FrameRect WorkingWindow() const override;
+    PictureRect WorkingWindow() const override;
     /// The TS mode with its geometry ("TS16 320x200"), its pixel format and
     /// the RAM pages it reads (V_PAGE based)
     ScreenState DescribeScreenState() const override;

@@ -933,7 +933,7 @@ public:
             if (!shot.ok) return mouseError(s, shot.errorMessage);
 
             sol::state_view view(s);
-            auto rect = [&view](const FrameRect& r) {
+            auto rect = [&view](const PictureRect& r) {
                 sol::table t = view.create_table();
                 t["x"] = r.x;
                 t["y"] = r.y;

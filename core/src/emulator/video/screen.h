@@ -323,7 +323,7 @@ struct FramebufferDescriptor
 };
 
 /// A rectangle inside a frame, in frame pixels
-struct FrameRect
+struct PictureRect
 {
     uint16_t x = 0;
     uint16_t y = 0;
@@ -348,7 +348,7 @@ struct PictureGeometry
     uint16_t width = 0;
     uint16_t height = 0;
     uint32_t stride = 0;
-    FrameRect screenWindow;  ///< the working picture; the whole frame when the frame has no border
+    PictureRect screenWindow;  ///< the working picture; the whole frame when the frame has no border
     VideoModeEnum videoMode = M_NUL;
     FrameSource source = FrameSource::Native;
     uint64_t frameNumber = 0;  ///< emulated frame the pixels belong to
@@ -1096,7 +1096,7 @@ public:
     /// The working picture's rectangle in the machine's own frame, for the current video mode:
     /// the raster descriptor's screen window; modes whose window moves (TS-Conf) override this.
     /// Emulation thread (it reads renderer state)
-    virtual FrameRect WorkingWindow() const;
+    virtual PictureRect WorkingWindow() const;
 
     /// The picture the monitor shows: the machine's framebuffer, or the
     /// external picture while one is active (SetExternalPicture)

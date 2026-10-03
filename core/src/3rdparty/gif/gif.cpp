@@ -1,5 +1,15 @@
 #include "gif.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 // max, min, and abs functions
 int GifIMax(int l, int r)
 {
@@ -659,19 +669,50 @@ void GifWriteLzwImage(FILE* f, uint8_t* image, uint32_t left, uint32_t top, uint
 // The input GIFWriter is assumed to be uninitialized.
 // The delay value is the time between frames in hundredths of a second - note that not all viewers pay much attention
 // to this value.
+// Opens `filename` (UTF-8) for binary writing. LOCAL ADDITION: see GifBegin in gif.h
+static FILE* GifOpenUtf8(const char* filename)
+{
+#ifdef _WIN32
+    // UTF-8 -> UTF-16 and _wfopen: the narrow fopen reads the bytes in the ANSI code page
+    const int wideLength = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, nullptr, 0);
+    if (wideLength > 0)
+    {
+        wchar_t* wide = (wchar_t*)GIF_MALLOC(sizeof(wchar_t) * wideLength);
+        if (wide)
+        {
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, wide, wideLength);
+            FILE* file = nullptr;
+            _wfopen_s(&file, wide, L"wb");
+            GIF_FREE(wide);
+            return file;
+        }
+    }
+    // Not valid UTF-8: an ANSI path, as before
+    FILE* file = nullptr;
+    fopen_s(&file, filename, "wb");
+    return file;
+#else
+    return fopen(filename, "wb");
+#endif
+}
+
 bool GifBegin(GifWriter* writer, const char* filename, uint32_t width, uint32_t height, uint32_t delay,
               int32_t bitDepth, bool dither)
 {
+    FILE* file = GifOpenUtf8(filename);
+    if (!file)
+        return false;
+    return GifBeginFile(writer, file, width, height, delay, bitDepth, dither);
+}
+
+bool GifBeginFile(GifWriter* writer, FILE* file, uint32_t width, uint32_t height, uint32_t delay, int32_t bitDepth,
+                  bool dither)
+{
     (void)bitDepth;
     (void)dither;  // Mute "Unused argument" warnings
-#if defined(_MSC_VER) && (_MSC_VER >= 1400)
-    writer->f = 0;
-    fopen_s(&writer->f, filename, "wb");
-#else
-    writer->f = fopen(filename, "wb");
-#endif
-    if (!writer->f)
+    if (!file)
         return false;
+    writer->f = file;
 
     writer->firstFrame = true;
 
