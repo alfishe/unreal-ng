@@ -403,6 +403,12 @@ bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write(
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
 fb, err = framebuffer("index")    -- {width, height, format, encoding, data = string}: "rgba" (R,G,B,A) or "index" (Sprinter pens)
+shot, err = screenshot{area="screen", format="png", path="scratch/shot.png"}
+          -- screenshot of the presented frame; every field optional: area "full" (default, the whole frame with
+          -- border) or "screen" (the working picture), format "png" (default) or "gif". Returns {format, area, width,
+          -- height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width, height, mode, source,
+          -- frame_number}, data = the encoded image as a string of bytes} (`file` instead of `data` with a path);
+          -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG
 mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)

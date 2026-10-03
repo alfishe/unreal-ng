@@ -13,11 +13,13 @@ Done:
 Verified live 2026-10-03 (TSL-VDAC2, R-Type VDAC2 running): `GET /capture/screen?format=png` returns
 256x192, `mode=full` and `/capture/framebuffer` return 1024x768. The FT812 default-crop bug is real.
 
-Phase 2 in the working tree (not committed): `Screenshotter` (`core/src/emulator/video/screenshotter.h/.cpp`:
+Phase 2 landed on master (cbf214711): `Screenshotter` (`core/src/emulator/video/screenshotter.h/.cpp`:
 `Render` / `TakeFrom` / `Take`, strict `ParseArea` / `ParseFormat`, error kinds, unique GIF temp names, file save with
 folder creation), `ScreenCapture` is now a shim over it (presented frame, the frame's own window: the FT812 default
 crop bug is gone), tests `Screenshotter_Test.*` and `ScreenshotterMachine_Test.*` (18, mutation-checked).
 Left in phase 2: `source=live` (the one-shot request served by the emulation thread, design section 6).
+
+Phase 3 (surfaces), verified on a live app 2026-10-03: WebAPI `GET /capture/screen` (area / format / path, `mode` kept as a deprecated alias, strict words, typed statuses, the geometry in the answer; the FT812 default is now the whole 1024x768 picture) and its OpenAPI entry, MCP `capture_media` screenshot (`area`, encoded `path`, the geometry in the summary; `UrlEncodeSegment` moved to `mcp-tool-utils.h`), CLI `capture screen [--area=] [--format=] [file]` (the session's own emulator), Lua `screenshot{}`, Python `capture_screen(format="png", full=None, area="", path="")`, Qt Tools > Save Screenshot As (whole frame, PNG / GIF). `Screenshotter::ParseRequestWords` holds the request-word rules (core-tested; `EmulatorAPI` is not linked into core-tests). Docs: command-interface.md, webapi / cli / lua / python interface docs, CLI and MCP READMEs. Python automation is OFF in this build: `capture_screen` was only syntax-checked against the vendored pybind11 (it compiles; three older warnings in the same header, lines 316 / 2601 / 2604, fail a `-Werror` Python build and are not from this work).
 
 Remaining:
 - Phases 1-5 of the design (geometry foundation, `Screenshotter`, surfaces, docs and recipes,

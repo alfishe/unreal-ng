@@ -245,6 +245,70 @@ TEST(Screenshotter_Test, ParametersAreStrict)
         EXPECT_FALSE(Screenshotter::ParseFormat(bad, format)) << bad;
 }
 
+TEST(Screenshotter_Test, RequestWordsDefaultToTheWholeFrameAsPng)
+{
+    ScreenshotOptions options;
+    std::string message;
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", options, message)) << message;
+    EXPECT_EQ(options.area, ScreenshotArea::Full);
+    EXPECT_EQ(options.format, ScreenshotFormat::Png);
+}
+
+TEST(Screenshotter_Test, RequestWordsAreTakenAsGiven)
+{
+    ScreenshotOptions options;
+    std::string message;
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("screen", "", "gif", options, message)) << message;
+    EXPECT_EQ(options.area, ScreenshotArea::Screen);
+    EXPECT_EQ(options.format, ScreenshotFormat::Gif);
+}
+
+TEST(Screenshotter_Test, ModeIsADeprecatedAliasOfArea)
+{
+    for (const char* word : {"full", "screen"})
+    {
+        ScreenshotOptions viaMode, viaArea;
+        std::string message;
+        ASSERT_TRUE(Screenshotter::ParseRequestWords("", word, "", viaMode, message)) << message;
+        ASSERT_TRUE(Screenshotter::ParseRequestWords(word, "", "", viaArea, message)) << message;
+        EXPECT_EQ(viaMode.area, viaArea.area) << word;
+        // The same word in both is not a conflict
+        ScreenshotOptions both;
+        EXPECT_TRUE(Screenshotter::ParseRequestWords(word, word, "", both, message)) << message;
+    }
+}
+
+TEST(Screenshotter_Test, AreaAndModeThatDisagreeAreAnErrorNamingBoth)
+{
+    ScreenshotOptions options;
+    std::string message;
+    EXPECT_FALSE(Screenshotter::ParseRequestWords("full", "screen", "", options, message));
+    EXPECT_NE(message.find("area=full"), std::string::npos) << message;
+    EXPECT_NE(message.find("mode=screen"), std::string::npos) << message;
+}
+
+TEST(Screenshotter_Test, BadRequestWordsNameTheWordAndTheAllowedOnes)
+{
+    struct Bad
+    {
+        const char *area, *mode, *format, *mentions, *allowed;
+    };
+    const Bad cases[] = {
+        {"border", "", "", "'border'", "full or screen"},
+        {"", "256x192", "", "'256x192'", "full or screen"},
+        {"", "", "bmp", "'bmp'", "png or gif"},
+        {"FULL", "", "", "'FULL'", "full or screen"},
+    };
+    for (const Bad& c : cases)
+    {
+        ScreenshotOptions options;
+        std::string message;
+        EXPECT_FALSE(Screenshotter::ParseRequestWords(c.area, c.mode, c.format, options, message)) << c.mentions;
+        EXPECT_NE(message.find(c.mentions), std::string::npos) << message;
+        EXPECT_NE(message.find(c.allowed), std::string::npos) << message;
+    }
+}
+
 TEST(Screenshotter_Test, Base64MatchesTheStandardVectors)
 {
     auto b64 = [](const char* text) {

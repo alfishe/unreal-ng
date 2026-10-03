@@ -3,6 +3,7 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
+#include "emulator/video/screenshotter.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -892,6 +893,65 @@ public:
             t["format"] = frame.format;
             t["encoding"] = frame.encoding;
             t["data"] = std::string(frame.bytes.begin(), frame.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", path = "file"}]): a screenshot of the presented
+        // frame (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF.
+        // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
+        // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
+        // instead of `data`; nil, error on a bad word, a missing emulator or no frame
+        lua.set_function("screenshot", [this](sol::this_state s, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pScreen) return mouseError(s, "The emulator has no screen");
+
+            ScreenshotOptions options;  // the whole frame, PNG
+            if (opts)
+            {
+                const std::string area = opts->get_or<std::string>("area", "");
+                const std::string format = opts->get_or<std::string>("format", "");
+                if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
+                    return mouseError(s, "Unknown area '" + area + "': use full or screen");
+                if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
+                    return mouseError(s, "Unknown format '" + format + "': use png or gif");
+                options.saveTo = opts->get_or<std::string>("path", "");
+            }
+
+            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options);
+            if (!shot.ok) return mouseError(s, shot.errorMessage);
+
+            sol::state_view view(s);
+            auto rect = [&view](const FrameRect& r) {
+                sol::table t = view.create_table();
+                t["x"] = r.x;
+                t["y"] = r.y;
+                t["width"] = r.width;
+                t["height"] = r.height;
+                return t;
+            };
+            sol::table t = view.create_table();
+            t["format"] = Screenshotter::FormatName(shot.format);
+            t["area"] = Screenshotter::AreaName(options.area);
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.encodedSize;
+            t["crop"] = rect(shot.crop);
+            t["screen_window"] = rect(shot.frame.screenWindow);
+            sol::table frame = view.create_table();
+            frame["width"] = shot.frame.width;
+            frame["height"] = shot.frame.height;
+            frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                                       : Screen::GetVideoModeName(shot.frame.videoMode);
+            frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+            frame["frame_number"] = shot.frame.frameNumber;
+            t["frame"] = frame;
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
             sol::variadic_results out;
             out.push_back(t);
             return out;

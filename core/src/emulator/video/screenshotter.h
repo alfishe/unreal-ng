@@ -80,6 +80,12 @@ public:
     static bool ParseArea(const std::string& text, ScreenshotArea& area);
     static bool ParseFormat(const std::string& text, ScreenshotFormat& format);
 
+    /// The words of one request (a WebAPI query, which MCP calls): `area`, its deprecated alias `mode`, and
+    /// `format`. An empty word keeps the default (the whole frame, PNG). A word that is not allowed, or an
+    /// area and a mode that disagree, is false with `message` saying what and which words are allowed
+    static bool ParseRequestWords(const std::string& area, const std::string& mode, const std::string& format,
+                                  ScreenshotOptions& options, std::string& message);
+
     static const char* AreaName(ScreenshotArea area);
     static const char* FormatName(ScreenshotFormat format);
     static const char* ErrorName(ScreenshotError error);
