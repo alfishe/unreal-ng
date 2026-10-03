@@ -476,6 +476,9 @@ class Z80 : public Z80State
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
+    /// The port field of an interrupt vector's record in TTD's vector journal
+    static constexpr uint16_t kTtdVectorPort = 0xFFFF;
+
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_Z80;
     const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_GENERIC;
     ModuleLogger* _logger;

@@ -131,6 +131,7 @@ struct TTDEngineCheckpoint
     uint64_t busReadCursor = 0;
     uint64_t busWriteCursor = 0;
     uint64_t mediaReadCursor = 0;   ///< ... and the media read journal
+    uint64_t busVectorCursor = 0;   ///< ... and the interrupt-vector journal
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -162,11 +163,12 @@ struct TTDEngineHeapBreakdown
     size_t portWrites = 0;          ///< the OUT bus journal
     size_t portJournalSlack = 0;    ///< allocated, not holding records
     size_t mediaReads = 0;          ///< sectors read from media images (v1 has no such journal)
+    size_t busVectors = 0;          ///< interrupt vectors taken (v1 has no such journal)
 
     size_t Total() const
     {
         return pieceVersions + piecePayload + arenaSlack + referenceTables + deltaBase + checkpoints + deviceBlobs +
-               frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads;
+               frameTable + eventLog + portReads + portWrites + portJournalSlack + mediaReads + busVectors;
     }
 };
 
@@ -289,11 +291,15 @@ public:
     const TTDPortJournal& BusWrites() const { return _busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
     /// reads hand the CPU the recorded values, writes are checked
-    void PlayBus(uint64_t readCursor, uint64_t writeCursor)
+    void PlayBus(uint64_t readCursor, uint64_t writeCursor, uint64_t vectorCursor = 0)
     {
         _busReads.StartPlayback(readCursor);
         _busWrites.StartPlayback(writeCursor);
+        _busVectors.StartPlayback(vectorCursor);
     }
+    /// Interrupt vectors the CPU took (machines with their own INT logic)
+    TTDPortJournal& BusVectors() { return _busVectors; }
+    const TTDPortJournal& BusVectors() const { return _busVectors; }
     /// The journals while they play (null when a journal has nothing left): the CPU's IN / OUT hooks
     TTDPortJournal* BusReadsForPlayback()
     {
@@ -487,6 +493,7 @@ private:
     TTDPortJournal _busReads{TTDPortJournal::Direction::Read};
     TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
     TTDMediaJournal _mediaReads;
+    TTDPortJournal _busVectors{TTDPortJournal::Direction::Read};
     TTDStreamRegistry _streams;
     /// A deque: no growth reserve (a vector held up to twice the records), and
     /// records never move

@@ -2116,6 +2116,10 @@ private:
     TTDPortJournal _portReads{TTDPortJournal::Direction::Read};
     TTDPortJournal _portWrites{TTDPortJournal::Direction::Write};
     bool _portJournalValid = false;
+    /// The journals hold every IN / OUT of the session (always while
+    /// recording, Phase 3): the engine's bus data. _portJournalValid adds
+    /// that v1's own replay may play them (its machine gate)
+    bool _portJournalRecorded = false;
     std::string _portJournalOffReason;
 
     /// Why the current configuration cannot record an isolating port-read

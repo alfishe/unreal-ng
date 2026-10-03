@@ -117,8 +117,7 @@ protected:
         // Did the CPU read the engine's bus journal (played past the checkpoint's cursor)?
         const int64_t cp = _engine.CheckpointIndexOf({0, target.frame, 0});
         ASSERT_GE(cp, 0);
-        if (_engine.BusReads().GetMode() == ttd::TTDPortJournal::Mode::Play &&
-            _engine.BusReads().Cursor() > _engine.Checkpoint(size_t(cp))->busReadCursor)
+        if (_engine.BusReads().Cursor() > _engine.Checkpoint(size_t(cp))->busReadCursor)
             ++_busPlayed;
 
         EXPECT_EQ(a.arrivedAt, b.arrivedAt);
@@ -358,3 +357,69 @@ TEST_F(TimeTravelManager_EngineSeek_Test, SectorReadsComeFromTheSessionNotTheIma
     EXPECT_GT(v1Differs, 0u) << "v1 reads the changed image: the test can see a wrong sector";
     std::remove(image.c_str());
 }
+
+/// Machines whose outside world reaches the CPU not only through IN (v1 does
+/// not play its port journals there): the engine has their bus data, vectors
+/// and media reads, and its seeks land where v1's do. Each boots its ROM
+/// under recording; the shipped configuration fits its cards (Pentagon: NeoGS)
+class TimeTravelManager_EngineSeekModels_Test : public TimeTravelManager_EngineSeek_Test,
+                                               public ::testing::WithParamInterface<const char*>
+{
+};
+
+TEST_P(TimeTravelManager_EngineSeekModels_Test, EngineSeeksLandOnV1sMachine)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine(GetParam(), GSTypeKind::Z80, false));
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(150, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    ASSERT_EQ(_engine.CheckpointCount(), _v1->GetCheckpointCount());
+    EXPECT_EQ(_engine.BusReads().Size(), _v1->GetPortReadJournal().Size()) << "every IN, on every machine";
+    if (std::string(GetParam()) != "SPRINTER")   // its BIOS reads no port in its first 150 frames
+        EXPECT_GT(_engine.BusReads().Size(), 0u) << "recorded even where v1 does not replay from them";
+
+    for (const ttd::TTDTimePoint& target : Targets(2))
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek(target));
+    if (_engine.BusReads().Size() > 0)   // the Sprinter's BIOS reads no port in its first 150 frames
+        EXPECT_GT(_busPlayed, 0u) << "the replays read the engine's IN journal";
+}
+
+/// The interrupt-vector journal: a TS-Conf program in IM 2 (its own vector
+/// table) takes an interrupt every frame; each vector the CPU took is
+/// recorded, and seeks from the engine's data (vectors handed back) land on
+/// v1's machine
+TEST_F(TimeTravelManager_EngineSeek_Test, InterruptVectorsAreRecordedAndPlayedBack)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("TSL", GSTypeKind::Z80, false));
+    // DI; LD A,#81; LD I,A; IM 2; EI; loop: HALT; INC (IX+0)... kept simple:
+    // loop: HALT; JR loop. Table #8100-#8200 = #82, ISR at #8282: EI; RETI
+    const uint8_t program[] = {0xF3, 0x3E, 0x81, 0xED, 0x47, 0xED, 0x5E, 0xFB, 0x76, 0x18, 0xFD};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    for (uint16_t a = 0x8100; a <= 0x8200; ++a)
+        _context->pMemory->DirectWriteToZ80Memory(a, 0x82);
+    const uint8_t isr[] = {0xFB, 0xED, 0x4D};
+    for (size_t i = 0; i < sizeof(isr); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8282 + i), isr[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(20, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    ASSERT_GE(_engine.BusVectors().Size(), 15u) << "about one interrupt per frame";
+    ttd::TTDPortRecord r;
+    ASSERT_TRUE(_engine.BusVectors().Get(0, r));
+    EXPECT_EQ(r.port, Z80::kTtdVectorPort);
+
+    for (const ttd::TTDTimePoint& target : Targets(2))
+        ASSERT_NO_FATAL_FAILURE(ExpectSameSeek(target));
+    EXPECT_GT(_engine.BusVectors().Cursor(), 0u) << "the replays took their vectors from the engine";
+}
+
+INSTANTIATE_TEST_SUITE_P(Machines, TimeTravelManager_EngineSeekModels_Test,
+                         ::testing::Values("PENTAGON", "TSL", "SPRINTER", "SCORPION", "PROFI", "ATM3"),
+                         [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });

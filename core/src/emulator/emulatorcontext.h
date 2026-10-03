@@ -284,6 +284,9 @@ public:
     /// (recorded, or checked). One predictable branch per IN / OUT when null
     ttd::TTDPortJournal* ttdPortReads = nullptr;
     ttd::TTDPortJournal* ttdPortWrites = nullptr;
+    /// TTD's interrupt-vector journal (Phase 3; machines with an IInterruptSource):
+    /// every vector the CPU took, recorded or played back; null when off
+    ttd::TTDPortJournal* ttdVectors = nullptr;
 
     /// The RZX player while a recording plays, else null (emulator/rzx/):
     /// Z80::in hands every IN result to it for the recorded value. Set and

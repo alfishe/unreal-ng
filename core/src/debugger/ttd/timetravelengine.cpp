@@ -157,6 +157,7 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     _syncMisses.clear();
     _busReads.StartRecording();
     _busWrites.StartRecording();
+    _busVectors.StartRecording();
     _mediaReads.StartRecording();
     _open = true;
     return true;
@@ -250,6 +251,7 @@ void TimeTravelEngine::EndSession()
     _payloads.Clear();
     _busReads.Clear();
     _busWrites.Clear();
+    _busVectors.Clear();
     _mediaReads.Clear();
     _timeLines.clear();
     _timeFields.clear();
@@ -339,6 +341,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.busReadCursor = _busReads.Size();
     cp.busWriteCursor = _busWrites.Size();
     cp.mediaReadCursor = _mediaReads.Size();
+    cp.busVectorCursor = _busVectors.Size();
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
 
@@ -704,6 +707,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.portWrites = _busWrites.HeapBytes() - _busWrites.CompressedSlackBytes();
     h.portJournalSlack = _busReads.CompressedSlackBytes() + _busWrites.CompressedSlackBytes();
     h.mediaReads = _mediaReads.HeapBytes();
+    h.busVectors = _busVectors.HeapBytes();
     return h;
 }
 

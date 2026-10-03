@@ -1638,7 +1638,15 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         {
             // Wired-OR: the machine's logic drives its vector when it asserts;
             // a device alone drives none, the bus reads #FF
-            HandleINT(sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF);
+            uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            // TTD (Phase 3): every vector the CPU took, recorded (a check and a
+            // search key); a replay from the engine hands back the recorded one
+            if (ttd::TTDPortJournal* journal = _context->ttdVectors) [[unlikely]]
+            {
+                const EmulatorState& st = _context->emulatorState;
+                vector = journal->OnRead(kTtdVectorPort, vector, st.frame_counter, st.TtdTInFrame(cpu.t), cpu.pc);
+            }
+            HandleINT(vector);
             return true;
         }
         return false;
