@@ -457,6 +457,7 @@ struct EveChip
     std::unique_ptr<uint8_t[]> lineStencil;
     std::unique_ptr<uint8_t[]> lineTag;
     std::unique_ptr<uint32_t[]> lineTexels;  // a span's decoded texels (kMaxLineWidth)
+    std::unique_ptr<uint32_t[]> lineBilinear; // a BILINEAR span's scratch (kBilinearScratch)
     std::unique_ptr<uint8_t[]> probeColor;   // the same for EveProbePixel
     std::unique_ptr<uint8_t[]> probeStencil;
     std::unique_ptr<uint8_t[]> probeTag;

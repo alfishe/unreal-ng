@@ -93,6 +93,7 @@ set(EVE_SOURCES
     src/eve-state.cpp
     src/eve-debug.cpp
     src/eve-decoders.cpp
+    src/eve-profile.cpp
 )
 
 set(EVE_VENDOR_SOURCES)
@@ -163,4 +164,24 @@ if(EVE_BUILD_TOOLS)
     add_executable(eve-replay tools/replay/eve-replay.cpp)
     target_link_libraries(eve-replay PRIVATE eve::emu)
     target_compile_options(eve-replay PRIVATE ${EVE_WARNING_FLAGS})
+
+    # eve-replay-profile: eve-replay on a library built with the profiling counters
+    # (EVE_PROFILE, src/eve-profile.h): what a capture's frames cost by bitmap format,
+    # filter and path. Not part of the default build
+    add_library(eve-emu-profile STATIC EXCLUDE_FROM_ALL ${EVE_SOURCES} ${EVE_VENDOR_SOURCES})
+    target_include_directories(eve-emu-profile
+        PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor ${CMAKE_CURRENT_SOURCE_DIR}/vendor/config)
+    target_compile_features(eve-emu-profile PUBLIC cxx_std_17)
+    if(NOT EVE_SIMD)
+        target_compile_definitions(eve-emu-profile PRIVATE EVE_NO_SIMD=1)
+    endif()
+    target_compile_definitions(eve-emu-profile PUBLIC EVE_PROFILE=1
+        EVE_HAS_BUILTIN_INFLATE=$<STREQUAL:${EVE_DECODER_INFLATE},BUILTIN>
+        EVE_HAS_BUILTIN_PNG=$<STREQUAL:${EVE_DECODER_PNG},BUILTIN>
+        EVE_HAS_BUILTIN_JPEG=$<STREQUAL:${EVE_DECODER_JPEG},BUILTIN>)
+    set_target_properties(eve-emu-profile PROPERTIES CXX_EXTENSIONS OFF)
+    add_executable(eve-replay-profile EXCLUDE_FROM_ALL tools/replay/eve-replay.cpp)
+    target_link_libraries(eve-replay-profile PRIVATE eve-emu-profile)
+    target_compile_options(eve-replay-profile PRIVATE ${EVE_WARNING_FLAGS})
 endif()

@@ -1,5 +1,6 @@
 // eve-emu - line executor, context, flow control, line cost, drawing in step with the
 // beam (spec §5.1, §5.2, §6.1-6.3, arch §8.4).
+#include "eve-profile.h"
 #include "eve-render.h"
 
 #include <new>
@@ -78,6 +79,7 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
     run.stencil = probe ? chip.probeStencil.get() : chip.lineStencil.get();
     run.tag = probe ? chip.probeTag.get() : chip.lineTag.get();
     run.texels = chip.lineTexels.get();
+    run.bilinear = chip.lineBilinear.get();
     run.savedCount = 0;
     run.palette.valid = false;
     run.primitive = kPrimNone;
@@ -140,7 +142,15 @@ void DrawVisibleLine(EveChip& chip, uint32_t screenLine)
     const uint32_t logicalLine = LogicalLine(chip, screenLine, mirrorX);
     LineRun run;
     PrepareRun(chip, run, logicalLine, screenLine == 0);
+#ifdef EVE_PROFILE
+    const uint64_t lineStart = ProfileNow();
+#endif
     ExecuteLine<LineMode::Draw>(run);
+#ifdef EVE_PROFILE
+    Profile().lines.calls++;
+    Profile().lines.pixels += run.commands;
+    Profile().lines.nanos += ProfileNow() - lineStart;
+#endif
     FinishRun(chip, run, screenLine);
     // REG_TAG: the tag buffer at (REG_TAG_X, REG_TAG_Y) of the drawn frame (spec §3.3).
     if (logicalLine == RegGet(chip, Reg::TagY))
@@ -165,6 +175,9 @@ void Vertex2(LineRun& run, const Vertex& v)
     }
     else
     {
+#ifdef EVE_PROFILE
+    const uint64_t primitiveStart = run.primitive != kPrimBitmaps && Mode == LineMode::Draw ? ProfileNow() : 0;
+#endif
     switch (run.primitive)
     {
     case kPrimBitmaps:
@@ -195,6 +208,14 @@ void Vertex2(LineRun& run, const Vertex& v)
     default:
         break;
     }
+#ifdef EVE_PROFILE
+    if (primitiveStart != 0)
+    {
+        ProfileCell& cell = Profile().primitives[run.primitive];
+        ++cell.calls;
+        cell.nanos += ProfileNow() - primitiveStart;
+    }
+#endif
     }
 }
 
@@ -594,11 +615,12 @@ bool InitDrawing(EveChip& chip)
     chip.lineStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineTexels.reset(new (std::nothrow) uint32_t[kMaxLineWidth]());
+    chip.lineBilinear.reset(new (std::nothrow) uint32_t[kBilinearScratch]());
     chip.probeColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.probeStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.probeTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineCosts.reset(new (std::nothrow) EveLineCost[kMaxLines]());
-    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.probeColor && chip.probeStencil &&
+    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.probeColor && chip.probeStencil &&
            chip.probeTag && chip.lineCosts;
 }
 

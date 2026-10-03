@@ -1,5 +1,6 @@
 // eve-emu - scissor, alpha test, stencil, blend, color mask, tag (spec §6.6).
 #include "eve-render.h"
+#include "eve-simd.h"
 
 namespace EveLib
 {
@@ -76,30 +77,33 @@ bool BlendSpanFast(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t c
         for (uint32_t i = 0; i < count; ++i, dst += kChannels)
             dst[kChannelAlpha] = Saturate((rgba[i] & kChannelMax) + dst[kChannelAlpha]);
     }
-    else if (src == kBlendDstAlpha && dstFactor == kBlendZero && ctx.colorMask == kRgb)
+    else if (src == kBlendDstAlpha && dstFactor == kBlendZero && ctx.colorMask == kRgb && kMultiplyRoundDiv255)
     {
         // dst.rgb = src.rgb x dst.a
-        // SIMD-CANDIDATE: three channels times one per pixel.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
-        {
-            const uint32_t p = rgba[i];
-            const uint32_t da = dst[kChannelAlpha];
-            dst[0] = Multiply((p >> kPackRed) & kChannelMax, da);
-            dst[1] = Multiply((p >> kPackGreen) & kChannelMax, da);
-            dst[2] = Multiply((p >> kPackBlue) & kChannelMax, da);
-        }
+        Simd::MultiplyRgbByDstAlpha(dst, rgba, count);
     }
-    else if (src == kBlendOneMinusDstAlpha && dstFactor == kBlendOne && ctx.colorMask == kRgb)
+    else if (src == kBlendOneMinusDstAlpha && dstFactor == kBlendOne && ctx.colorMask == kRgb && kMultiplyRoundDiv255)
     {
         // dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255)
-        // SIMD-CANDIDATE: three channels times one plus the destination, saturated.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+        Simd::AddRgbTimesInverseDstAlpha(dst, rgba, count);
+    }
+    else if (src == kBlendOne && dstFactor == kBlendZero)
+    {
+        // dst = src on the channels COLOR_MASK lets through (x 255 / 255 and x 0 are exact);
+        // Zuma's masks write alpha alone this way
+        if (ctx.colorMask == kMaskAlpha)
         {
-            const uint32_t p = rgba[i];
-            const uint32_t inverse = kChannelMax - dst[kChannelAlpha];
-            dst[0] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackRed) & kChannelMax, inverse)) + dst[0]);
-            dst[1] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackGreen) & kChannelMax, inverse)) + dst[1]);
-            dst[2] = Saturate(static_cast<uint32_t>(Multiply((p >> kPackBlue) & kChannelMax, inverse)) + dst[2]);
+            for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+                dst[kChannelAlpha] = static_cast<uint8_t>(rgba[i] & kChannelMax);
+        }
+        else
+        {
+            const uint8_t mask[kChannels] = {kMaskRed, kMaskGreen, kMaskBlue, kMaskAlpha};
+            const uint32_t shift[kChannels] = {kPackRed, kPackGreen, kPackBlue, 0};
+            for (uint32_t i = 0; i < count; ++i, dst += kChannels)
+                for (uint32_t c = 0; c < kChannels; ++c)
+                    if (ctx.colorMask & mask[c])
+                        dst[c] = static_cast<uint8_t>((rgba[i] >> shift[c]) & kChannelMax);
         }
     }
     else

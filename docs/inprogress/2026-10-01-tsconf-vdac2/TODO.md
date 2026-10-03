@@ -43,6 +43,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] Performance: the library optimized on the replay stream (R-Type 0.61x -> 4.5x real time on one core)
 - [x] Acceleration experiments (CPU line threads, native GPU, three profiles): results in
   [acceleration-experiments.md](acceleration-experiments.md), experiments in `tools/poc/021-eve-accel/`
-- [ ] Build the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
-  graphics memory writes, skip unchanged frames, SIMD BILINEAR; then the GPU backend per batch
+- [x] BILINEAR fast path + SIMD masking blends + skipped empty glyphs (eve-emu `61a3f19`): Zuma 0.48x -> 2.74x real time ([acceleration-experiments.md](acceleration-experiments.md) §3.6)
+- [ ] Rotated bitmaps on a fast path (Zuma play ~50 %), then the display list walk
+- [ ] Build the rest of the recommendation of acceleration-experiments.md into eve-emu: line threads, deferred
+  graphics memory writes, skip unchanged frames; then the GPU backend per batch
 - [ ] Integration I3-I5; the TO VERIFY list in design §12.1
