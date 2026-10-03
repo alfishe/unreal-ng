@@ -43,6 +43,7 @@ public:
 
     /// The stored bytes of @p ref (valid until the payload is released)
     const uint8_t* Data(const TTDArenaRef& ref) const { return _chunks[ref.chunk]->bytes.get() + ref.offset; }
+    uint8_t* MutableData(const TTDArenaRef& ref) { return _chunks[ref.chunk]->bytes.get() + ref.offset; }
 
     /// Release a payload; its chunk is returned when nothing in it is live
     void Release(const TTDArenaRef& ref);

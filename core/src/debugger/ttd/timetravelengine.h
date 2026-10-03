@@ -75,6 +75,11 @@ struct TTDRestoreIssue
     TTDDeviceKey device;   ///< empty instance for machine-wide issues
     TTDLiveStateAction action = TTDLiveStateAction::NotApplicable;
     std::string detail;
+    /// DataDamaged, DeviceMissingState in CheckSession: the frames the issue
+    /// reaches (a damaged version: from the change that stored it to the
+    /// piece's next change that does not depend on it)
+    uint64_t firstFrame = 0;
+    uint64_t lastFrame = 0;
 };
 
 struct TTDRestoreResult
@@ -300,6 +305,22 @@ public:
 
     /// endregion </Restore>
 
+    /// The whole session checked without touching the machine: every stored
+    /// version against its checksum (DataDamaged, with the frames it reaches),
+    /// every device with frames that hold no state (DeviceMissingState, with
+    /// the frames), state for devices this machine lacks (DeviceNotPresent),
+    /// and each live device's firmware against the recorded one. At most 64
+    /// issues are listed; the message counts the rest
+    TTDRestoreResult CheckSession() const;
+
+    /// Tests only: damage the stored version of @p piece of @p region at
+    /// checkpoint @p index (one flipped bit)
+    bool DamageForTesting(size_t index, uint32_t region, uint32_t piece)
+    {
+        const uint32_t id = VersionAt(index, region, piece);
+        return id != kAbsent && _store->FlipBitForTesting(id, 1);
+    }
+
     TTDEngineHeapBreakdown HeapBreakdown() const;
 
     /// Bytes the reference tables store: change records plus full tables
@@ -336,6 +357,19 @@ private:
 
     /// The version of every piece of @p region at checkpoint @p index
     void BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const;
+    /// A DataDamaged issue for @p piece of @p region, which failed to decode
+    /// at checkpoint @p index: the frames around it whose version fails too
+    TTDRestoreIssue DamageIssue(size_t index, uint32_t region, uint32_t piece) const;
+    /// The device table entry whose state region is @p region, or null
+    const TTDDeviceEntry* DeviceOfRegion(uint32_t region) const;
+    enum class DeviceStateRead : uint8_t
+    {
+        Ok,
+        Missing,   ///< no state in this checkpoint (length 0), or no such device
+        Damaged,   ///< a piece failed its integrity check: *damagedPiece
+    };
+    DeviceStateRead ReadDeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out,
+                                    uint32_t* damagedPiece = nullptr) const;
     /// Checkpoint @p index's entry for @p region, or null when it has none
     const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
     {

@@ -92,6 +92,17 @@ public:
     uint32_t PayloadSize(TTDPieceId id) const { return _versions[id].payload.size; }
 
     size_t LiveVersions() const { return _liveVersions; }
+
+    /// Tests only: flip one bit of @p id's stored payload (damage, as a bad
+    /// disk sector would). False for a version without payload (Zero)
+    bool FlipBitForTesting(TTDPieceId id, uint32_t byte)
+    {
+        Version& v = _versions[id];
+        if (v.payload.size == 0)
+            return false;
+        _arena.MutableData(v.payload)[byte % v.payload.size] ^= 0x10;
+        return true;
+    }
     size_t PayloadBytes() const { return _arena.LiveBytes(); }
     /// Heap: version table, free list, arena chunks, decode scratch
     size_t HeapBytes() const;

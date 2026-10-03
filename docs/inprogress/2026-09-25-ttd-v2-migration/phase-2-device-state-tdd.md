@@ -421,6 +421,8 @@ Phase 2 builds and tests the engine API. Users are on v1 until Phase 5 ([phase-5
 
 The automation contract test (`ttdautomationcontract_test.cpp`) gains a case per surface.
 
+**As built (2026-10-03), damage and the session check.** Every stored version (pieces and device states alike) carries its CRC32C in the piece store. A version that fails it is a `DataDamaged` issue with `firstFrame` / `lastFrame`: the checkpoints around the failing one whose version of that piece fails too (the same version, or differences built on it), so the range ends at the piece's next change that does not depend on it. A device state that fails is reported as `DataDamaged` with the device named (before, it read as "no state"), and the device resets to power-on or keeps its live state as for a missing state. `TimeTravelEngine::CheckSession()` checks the whole session without touching the machine: every version decoded once (walking the change records, not every checkpoint), damage ranges, frames in which a device had no state (`DeviceMissingState` with its frames), state for devices this machine lacks, and each live device's firmware; at most 64 issues listed, the rest counted. Tests: `TimeTravelEngine_Damage_Test` (a damaged piece and the frames it reaches; a device's damage and missing frames). Mutation: dropping the forward extension of the range fails them.
+
 ### 5.4 Step 4 — Sound devices on the contract (FR-19); the device set fixed for a session (D38, FR-4)
 
 #### 5.4.1 Every device under the declare / implement check

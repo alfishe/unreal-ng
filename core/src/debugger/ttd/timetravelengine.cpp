@@ -487,9 +487,7 @@ TTDRestoreResult TimeTravelEngine::RestoreRegion(size_t index, uint32_t region, 
             continue;
         if (!_store->Decode(map[p], out + size_t(p) * kTTDPieceSize))
         {
-            result.status = TTDRestoreStatus::Damaged;
-            result.message = "piece " + std::to_string(p) + " of region '" + _regions[region].name +
-                             "' failed its integrity check";
+            result.Add(DamageIssue(index, region, p));
             continue;
         }
         if (present)
@@ -552,8 +550,7 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
             uint8_t* dst = (desc.restorePiece || partial) ? piece : desc.memory + offset;
             if (!_store->Decode(target, dst))
             {
-                result.status = TTDRestoreStatus::Damaged;
-                result.message = "piece " + std::to_string(p) + " of region '" + desc.name + "' failed its integrity check";
+                result.Add(DamageIssue(index, r, p));
                 _inMemory[r][p] = kUnknown;
                 continue;
             }
@@ -613,20 +610,34 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
 
 bool TimeTravelEngine::DeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out) const
 {
+    return ReadDeviceState(index, id, out) == DeviceStateRead::Ok;
+}
+
+TimeTravelEngine::DeviceStateRead TimeTravelEngine::ReadDeviceState(size_t index, uint8_t id,
+                                                                    std::vector<uint8_t>& out,
+                                                                    uint32_t* damagedPiece) const
+{
     out.clear();
     const int32_t r = _deviceRegionOf[id];
     if (r < 0 || index >= _checkpoints.size())
-        return false;
+        return DeviceStateRead::Missing;
     const TTDRegionDesc& desc = _regions[static_cast<size_t>(r)];
     std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize, 0);
-    if (!RestoreRegion(index, static_cast<uint32_t>(r), bytes.data()).Ok())
-        return false;
+    std::vector<TTDPieceId> map;
+    BuildMap(index, static_cast<uint32_t>(r), map);
+    for (uint32_t p = 0; p < map.size(); ++p)
+        if (map[p] != TTDPieceStore::kNone && !_store->Decode(map[p], bytes.data() + size_t(p) * kTTDPieceSize))
+        {
+            if (damagedPiece)
+                *damagedPiece = p;
+            return DeviceStateRead::Damaged;
+        }
     const std::vector<TTDTimeField>& fields = _timeFields[static_cast<size_t>(r)];
     const size_t anchors = desc.bytes - fields.size() * kTimeAnchorBytes;
     uint32_t length = 0;
     std::memcpy(&length, bytes.data(), 4);
     if (length == 0 || length + 4 > anchors)
-        return false;
+        return DeviceStateRead::Missing;
     // Time fields back from their line: anchor + (frame - anchor frame) x step + residual
     const uint64_t frame = _checkpoints[index].position.frame;
     for (size_t f = 0; f < fields.size(); ++f)
@@ -643,7 +654,184 @@ bool TimeTravelEngine::DeviceState(size_t index, uint8_t id, std::vector<uint8_t
         WriteLE(at, tf.width, (value + (frame - from) * step + ReadLE(at, tf.width)) & WidthMask(tf.width));
     }
     out.assign(bytes.begin() + 4, bytes.begin() + 4 + length);
-    return true;
+    return DeviceStateRead::Ok;
+}
+
+const TTDDeviceEntry* TimeTravelEngine::DeviceOfRegion(uint32_t region) const
+{
+    for (const TTDDeviceEntry& e : _devices.Entries())
+        if (_deviceRegionOf[static_cast<uint8_t>(e.descriptor.legacyId)] == static_cast<int32_t>(region))
+            return &e;
+    return nullptr;
+}
+
+TTDRestoreIssue TimeTravelEngine::DamageIssue(size_t index, uint32_t region, uint32_t piece) const
+{
+    // The neighbouring checkpoints whose version of the piece fails too: the
+    // same version, or a difference that depends on it (decoded once per version)
+    std::vector<uint8_t> scratch(kTTDPieceSize);
+    auto fails = [&](size_t i, uint32_t& lastId, bool& lastFails) {
+        const uint32_t id = VersionAt(i, region, piece);
+        if (id != lastId)
+        {
+            lastId = id;
+            lastFails = id != kAbsent && !_store->Decode(id, scratch.data());
+        }
+        return lastFails;
+    };
+    size_t first = index, last = index;
+    uint32_t id = kAbsent;
+    bool bad = false;
+    while (first > 0 && fails(first - 1, id, bad))
+        --first;
+    id = kAbsent;
+    bad = false;
+    while (last + 1 < _checkpoints.size() && fails(last + 1, id, bad))
+        ++last;
+
+    TTDRestoreIssue issue;
+    issue.kind = TTDRestoreIssueKind::DataDamaged;
+    issue.severity = TTDRestoreStatus::Damaged;
+    issue.firstFrame = _checkpoints[first].position.frame;
+    issue.lastFrame = _checkpoints[last].position.frame;
+    const std::string frames = " (frames " + std::to_string(issue.firstFrame) + "-" + std::to_string(issue.lastFrame) + ")";
+    if (const TTDDeviceEntry* e = DeviceOfRegion(region))
+    {
+        issue.device = e->descriptor.Key();
+        issue.detail = "stored state failed its integrity check" + frames;
+    }
+    else
+        issue.detail = "piece " + std::to_string(piece) + " of region '" + _regions[region].name +
+                       "' failed its integrity check" + frames;
+    return issue;
+}
+
+TTDRestoreResult TimeTravelEngine::CheckSession() const
+{
+    TTDRestoreResult result;
+    size_t unlisted = 0;
+    auto add = [&](TTDRestoreIssue issue) {
+        if (result.issues.size() < 64)
+            result.Add(std::move(issue));
+        else
+        {
+            if (static_cast<uint8_t>(issue.severity) > static_cast<uint8_t>(result.status))
+                result.status = issue.severity;
+            ++unlisted;
+        }
+    };
+    if (_checkpoints.empty())
+        return result;
+    const size_t count = _checkpoints.size();
+    std::vector<uint8_t> scratch(kTTDPieceSize);
+    std::unordered_map<TTDPieceId, bool> decodes;   // version -> decodes (each checked once)
+    auto ok = [&](TTDPieceId id) {
+        if (id == TTDPieceStore::kNone)
+            return true;
+        auto it = decodes.find(id);
+        if (it != decodes.end())
+            return it->second;
+        return decodes[id] = _store->Decode(id, scratch.data());
+    };
+    auto frameOf = [&](size_t i) { return _checkpoints[i].position.frame; };
+
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+    {
+        const TTDDeviceEntry* device = DeviceOfRegion(r);
+        std::vector<TTDPieceId> map;
+        BuildMap(0, r, map);
+        std::vector<int64_t> damagedFrom(map.size(), -1);
+        int64_t missingFrom = -1;   // a device region: checkpoints whose state length is 0
+        auto close = [&](uint32_t p, size_t lastIndex) {
+            TTDRestoreIssue issue = DamageIssue(static_cast<size_t>(damagedFrom[p]), r, p);
+            issue.firstFrame = frameOf(static_cast<size_t>(damagedFrom[p]));
+            issue.lastFrame = frameOf(lastIndex);
+            add(std::move(issue));
+            damagedFrom[p] = -1;
+        };
+        auto lengthIsZero = [&]() {
+            if (map.empty() || map[0] == TTDPieceStore::kNone || !ok(map[0]))
+                return false;
+            _store->Decode(map[0], scratch.data());
+            uint32_t length = 0;
+            std::memcpy(&length, scratch.data(), 4);
+            return length == 0;
+        };
+        auto closeMissing = [&](size_t lastIndex) {
+            TTDRestoreIssue issue;
+            issue.kind = TTDRestoreIssueKind::DeviceMissingState;
+            issue.device = device->descriptor.Key();
+            issue.firstFrame = frameOf(static_cast<size_t>(missingFrom));
+            issue.lastFrame = frameOf(lastIndex);
+            issue.detail = "no state in frames " + std::to_string(issue.firstFrame) + "-" + std::to_string(issue.lastFrame);
+            add(std::move(issue));
+            missingFrom = -1;
+        };
+        for (uint32_t p = 0; p < map.size(); ++p)
+            if (!ok(map[p]))
+                damagedFrom[p] = 0;
+        if (device && lengthIsZero())
+            missingFrom = 0;
+        for (size_t i = 1; i < count; ++i)
+        {
+            const TTDEngineCheckpoint::RegionRefs* refs = RefsOf(i, r);
+            if (!refs || refs->changeCount == 0)
+                continue;
+            for (uint32_t k = 0; k < refs->changeCount; ++k)
+            {
+                const PieceChange& c = _changes[refs->firstChange + k];
+                map[c.piece] = c.id;
+                const bool bad = !ok(c.id);
+                if (bad && damagedFrom[c.piece] < 0)
+                    damagedFrom[c.piece] = static_cast<int64_t>(i);
+                else if (!bad && damagedFrom[c.piece] >= 0)
+                    close(c.piece, i - 1);
+            }
+            if (device)
+            {
+                const bool zero = lengthIsZero();
+                if (zero && missingFrom < 0)
+                    missingFrom = static_cast<int64_t>(i);
+                else if (!zero && missingFrom >= 0)
+                    closeMissing(i - 1);
+            }
+        }
+        for (uint32_t p = 0; p < map.size(); ++p)
+            if (damagedFrom[p] >= 0)
+                close(p, count - 1);
+        if (device && missingFrom >= 0)
+            closeMissing(count - 1);
+    }
+
+    // State recorded for devices this machine lacks
+    std::array<bool, 256> unclaimed{};
+    for (const TTDEngineCheckpoint& cp : _checkpoints)
+        for (uint8_t id : cp.unclaimedDevices)
+            unclaimed[id] = true;
+    for (uint32_t id = 0; id < 256; ++id)
+        if (unclaimed[id])
+        {
+            TTDRestoreIssue issue;
+            issue.kind = TTDRestoreIssueKind::DeviceNotPresent;
+            issue.device.type = static_cast<TTDDeviceType>(id);
+            issue.device.instance = "device " + std::to_string(id);
+            issue.detail = "state recorded for a device this machine does not have";
+            add(std::move(issue));
+        }
+    // Firmware the live devices run against the recorded one
+    for (const TTDDeviceEntry& e : _devices.Entries())
+        if (e.device && e.device->TTDDescribe().firmwareFingerprint != e.descriptor.firmwareFingerprint)
+        {
+            TTDRestoreIssue issue;
+            issue.kind = TTDRestoreIssueKind::FirmwareDiffers;
+            issue.severity = TTDRestoreStatus::NotBitExact;
+            issue.device = e.descriptor.Key();
+            issue.detail = "recorded with another firmware image";
+            add(std::move(issue));
+        }
+    if (unlisted > 0)
+        result.message += "; " + std::to_string(unlisted) + " more issue(s) not listed";
+    return result;
 }
 
 TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestoreContext& context)
@@ -669,7 +857,19 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
         TTDRestoreIssue issue;
         issue.device = d.Key();
         std::vector<uint8_t> state;
-        if (!DeviceState(index, id, state) || state.empty())
+        uint32_t damagedPiece = 0;
+        const DeviceStateRead read = ReadDeviceState(index, id, state, &damagedPiece);
+        if (read == DeviceStateRead::Damaged)
+        {
+            TTDRestoreIssue damage = DamageIssue(index, static_cast<uint32_t>(_deviceRegionOf[id]), damagedPiece);
+            damage.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
+                                                          : TTDLiveStateAction::KeptLive;
+            damage.detail += damage.action == TTDLiveStateAction::ResetToPowerOn ? ", reset to power-on"
+                                                                                 : ", kept its live state";
+            result.Add(damage);
+            continue;
+        }
+        if (read != DeviceStateRead::Ok || state.empty())
         {
             issue.kind = TTDRestoreIssueKind::DeviceMissingState;
             issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn

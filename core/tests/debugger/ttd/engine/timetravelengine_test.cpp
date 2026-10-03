@@ -648,3 +648,115 @@ TEST(TimeTravelEngine_Sync_Test, ADeviceNotAtTheBoundaryIsReportedAtCaptureAndRe
     EXPECT_EQ(result.issues[0].device.instance, "card");
     EXPECT_FALSE(result.Ok());
 }
+
+/// Damage (FR-7): a stored version that fails its checksum is reported as
+/// DataDamaged with the frames it reaches - from the change that stored it,
+/// through the differences built on it, to the next change that does not
+/// depend on it; checkpoints outside that range restore exactly.
+/// CheckSession finds the same range without restoring anything
+TEST(TimeTravelEngine_Damage_Test, ADamagedPieceIsReportedWithTheFramesItReaches)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(4 * kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 4;
+    r.bytes = 4 * kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {}, err)) << err;
+    uint32_t noise = 77;
+    for (uint64_t f = 0; f < 10; ++f)
+    {
+        uint8_t* piece = ram.data() + kTTDPieceSize;
+        if (f == 3)
+            for (size_t i = 0; i < kTTDPieceSize; ++i)
+                piece[i] = static_cast<uint8_t>((noise = noise * 1664525u + 1013904223u) >> 24);
+        if (f == 4)
+            piece[100] ^= 1;   // a difference on frame 3's version
+        if (f == 7)
+            std::memset(piece, 0, kTTDPieceSize);   // depends on nothing
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        for (uint32_t p = 0; p < 4; ++p)
+            in.changed.push_back({0, p, ram.data() + size_t(p) * kTTDPieceSize});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    ASSERT_TRUE(engine.DamageForTesting(3, 0, 1));
+
+    std::vector<uint8_t> out(4 * kTTDPieceSize);
+    for (size_t i : {size_t(0), size_t(2), size_t(7), size_t(9)})
+        EXPECT_EQ(engine.RestoreRegion(i, 0, out.data()).status, TTDRestoreStatus::Exact) << "checkpoint " << i;
+    const TTDRestoreResult damaged = engine.RestoreRegion(5, 0, out.data());
+    EXPECT_EQ(damaged.status, TTDRestoreStatus::Damaged);
+    ASSERT_EQ(damaged.issues.size(), 1u) << damaged.message;
+    EXPECT_EQ(damaged.issues[0].kind, TTDRestoreIssueKind::DataDamaged);
+    EXPECT_EQ(damaged.issues[0].firstFrame, 3u);
+    EXPECT_EQ(damaged.issues[0].lastFrame, 6u);
+    EXPECT_NE(damaged.issues[0].detail.find("piece 1"), std::string::npos) << damaged.issues[0].detail;
+
+    const TTDRestoreResult check = engine.CheckSession();
+    EXPECT_EQ(check.status, TTDRestoreStatus::Damaged);
+    ASSERT_EQ(check.issues.size(), 1u) << check.message;
+    EXPECT_EQ(check.issues[0].firstFrame, 3u);
+    EXPECT_EQ(check.issues[0].lastFrame, 6u);
+}
+
+/// A device's damaged state is DataDamaged with the device named (not "no
+/// state"); frames in which a device gave no state are listed by
+/// CheckSession as DeviceMissingState with their frames
+TEST(TimeTravelEngine_Damage_Test, DeviceDamageAndMissingStateAreNamedWithTheirFrames)
+{
+    struct Device : TTDSerializable
+    {
+        uint8_t state[16] = {};
+        size_t TTDStateSize() const override { return sizeof(state); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+        std::string TTDDeviceName() const override { return "Probe"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::Covox; }
+    } dev;
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const auto id = static_cast<uint8_t>(PeripheralId::Covox);
+    for (uint64_t f = 0; f < 12; ++f)
+    {
+        dev.state[0] = static_cast<uint8_t>(f < 6 ? 1 : 2);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        if (f < 8 || f > 9)   // frames 8 and 9: the device gives no state
+            in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    uint32_t region = 0;
+    for (uint32_t i = 0; i < engine.Regions().size(); ++i)
+        if (engine.IsDeviceStateRegion(i))
+            region = i;
+    ASSERT_TRUE(engine.DamageForTesting(6, region, 0));
+
+    const TTDRestoreResult restore = engine.RestoreDevices(7, {});
+    ASSERT_EQ(restore.issues.size(), 1u) << restore.message;
+    EXPECT_EQ(restore.issues[0].kind, TTDRestoreIssueKind::DataDamaged);
+    EXPECT_EQ(restore.issues[0].device.instance, "probe");
+    EXPECT_EQ(restore.issues[0].action, TTDLiveStateAction::KeptLive);
+    EXPECT_EQ(restore.issues[0].firstFrame, 6u);
+    EXPECT_EQ(restore.issues[0].lastFrame, 7u);
+    EXPECT_EQ(engine.RestoreDevices(3, {}).status, TTDRestoreStatus::Exact);
+
+    const TTDRestoreResult check = engine.CheckSession();
+    ASSERT_EQ(check.issues.size(), 2u) << check.message;
+    EXPECT_EQ(check.issues[0].kind, TTDRestoreIssueKind::DataDamaged);
+    EXPECT_EQ(check.issues[0].firstFrame, 6u);
+    EXPECT_EQ(check.issues[0].lastFrame, 7u);
+    EXPECT_EQ(check.issues[1].kind, TTDRestoreIssueKind::DeviceMissingState);
+    EXPECT_EQ(check.issues[1].device.instance, "probe");
+    EXPECT_EQ(check.issues[1].firstFrame, 8u);
+    EXPECT_EQ(check.issues[1].lastFrame, 9u);
+}
