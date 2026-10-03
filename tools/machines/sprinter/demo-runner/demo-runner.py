@@ -83,7 +83,7 @@ class Emu:
         return d.get("digest") or d.get("hash") or json.dumps(d, sort_keys=True)
 
     def shot(self, path):
-        self.call("GET", f"/capture/screen?format=png&mode=full&path={path}")
+        self.call("GET", f"/capture/screen?area=full&format=png&path={path}")
 
     def cbl(self):
         cb = self.call("GET", "/state/sprinter").get("sound", {}).get("covox_blaster", {})

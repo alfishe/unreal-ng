@@ -42,8 +42,15 @@ load_software {"path":".../program.spg"}              # a TS-Conf SDK program
 #     switched to TSL first (media kept): the answer's emulator_id is the NEW
 #     instance - use it from then on (model_switched, previous_emulator_id)
 
-capture_media {"type":"screenshot"}                  # 720x288 for every TS mode
+capture_media {"action":"screenshot"}                # whole frame: 720x288 for every TS mode
+capture_media {"action":"screenshot","area":"screen"} # only the graphics window (below)
 ```
+
+`area=screen` returns the graphics window named by `V_CONFIG`: 512x192, 640x200,
+640x240 or 720x288 pixels. These are pixel counts of the saved image: a TS frame
+stores 2 pixels per raster dot, so the window is twice as wide as the dot count.
+Example: a 256x192 TS-Conf mode gives a 512x192 `area=screen` image. Details:
+[agent-screenshot-view.md](../media/agent-screenshot-view.md).
 
 ## WebAPI
 

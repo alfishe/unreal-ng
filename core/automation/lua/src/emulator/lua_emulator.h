@@ -897,8 +897,10 @@ public:
             out.push_back(t);
             return out;
         });
-        // screenshot([{area = "full"|"screen", format = "png"|"gif", path = "file"}]): a screenshot of the presented
-        // frame (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF.
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
+        // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
+        // frame.beam = {line, tstate}).
         // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
         // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
         // instead of `data`; nil, error on a bad word, a missing emulator or no frame
@@ -913,14 +915,17 @@ public:
             {
                 const std::string area = opts->get_or<std::string>("area", "");
                 const std::string format = opts->get_or<std::string>("format", "");
+                const std::string source = opts->get_or<std::string>("source", "");
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return mouseError(s, "Unknown area '" + area + "': use full or screen");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
                 if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
                     return mouseError(s, "Unknown format '" + format + "': use png or gif");
                 options.saveTo = opts->get_or<std::string>("path", "");
             }
 
-            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options);
+            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
             if (!shot.ok) return mouseError(s, shot.errorMessage);
 
             sol::state_view view(s);
@@ -935,6 +940,7 @@ public:
             sol::table t = view.create_table();
             t["format"] = Screenshotter::FormatName(shot.format);
             t["area"] = Screenshotter::AreaName(options.area);
+            t["source"] = Screenshotter::RequestSourceName(options.source);
             t["width"] = shot.width;
             t["height"] = shot.height;
             t["size"] = shot.encodedSize;
@@ -945,8 +951,16 @@ public:
             frame["height"] = shot.frame.height;
             frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
                                                                        : Screen::GetVideoModeName(shot.frame.videoMode);
-            frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+            frame["source"] = Screenshotter::SourceName(shot.frame.source);
             frame["frame_number"] = shot.frame.frameNumber;
+            if (shot.frame.beamLine >= 0)
+            {
+                frame["partial"] = shot.frame.partial;
+                sol::table beam = view.create_table();
+                beam["line"] = shot.frame.beamLine;
+                beam["tstate"] = shot.frame.beamTstate;
+                frame["beam"] = beam;
+            }
             t["frame"] = frame;
             if (!shot.savedFile.empty())
                 t["file"] = shot.savedFile;

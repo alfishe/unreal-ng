@@ -212,8 +212,8 @@ class Emulator:
     def framebuffer(self, format="rgba") -> dict:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
 
-    def capture_screen(self, format="png", full=None, area="", path="") -> dict:
-        """Screenshot of the presented frame. area="full" (default, the whole frame with border) or "screen" (the
+    def capture_screen(self, format="png", full=None, area="", path="", source="") -> dict:
+        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame). area="full" (default, the whole frame with border) or "screen" (the
         working picture); format "png" (default) or "gif"; path writes the file on the machine running the
         emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
         | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""

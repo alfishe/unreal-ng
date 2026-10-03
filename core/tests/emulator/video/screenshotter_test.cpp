@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <atomic>
 #include <fstream>
 #include <thread>
 #include <vector>
@@ -249,7 +250,7 @@ TEST(Screenshotter_Test, RequestWordsDefaultToTheWholeFrameAsPng)
 {
     ScreenshotOptions options;
     std::string message;
-    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", options, message)) << message;
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "", options, message)) << message;
     EXPECT_EQ(options.area, ScreenshotArea::Full);
     EXPECT_EQ(options.format, ScreenshotFormat::Png);
 }
@@ -258,7 +259,7 @@ TEST(Screenshotter_Test, RequestWordsAreTakenAsGiven)
 {
     ScreenshotOptions options;
     std::string message;
-    ASSERT_TRUE(Screenshotter::ParseRequestWords("screen", "", "gif", options, message)) << message;
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("screen", "", "gif", "", options, message)) << message;
     EXPECT_EQ(options.area, ScreenshotArea::Screen);
     EXPECT_EQ(options.format, ScreenshotFormat::Gif);
 }
@@ -269,12 +270,12 @@ TEST(Screenshotter_Test, ModeIsADeprecatedAliasOfArea)
     {
         ScreenshotOptions viaMode, viaArea;
         std::string message;
-        ASSERT_TRUE(Screenshotter::ParseRequestWords("", word, "", viaMode, message)) << message;
-        ASSERT_TRUE(Screenshotter::ParseRequestWords(word, "", "", viaArea, message)) << message;
+        ASSERT_TRUE(Screenshotter::ParseRequestWords("", word, "", "", viaMode, message)) << message;
+        ASSERT_TRUE(Screenshotter::ParseRequestWords(word, "", "", "", viaArea, message)) << message;
         EXPECT_EQ(viaMode.area, viaArea.area) << word;
         // The same word in both is not a conflict
         ScreenshotOptions both;
-        EXPECT_TRUE(Screenshotter::ParseRequestWords(word, word, "", both, message)) << message;
+        EXPECT_TRUE(Screenshotter::ParseRequestWords(word, word, "", "", both, message)) << message;
     }
 }
 
@@ -282,7 +283,7 @@ TEST(Screenshotter_Test, AreaAndModeThatDisagreeAreAnErrorNamingBoth)
 {
     ScreenshotOptions options;
     std::string message;
-    EXPECT_FALSE(Screenshotter::ParseRequestWords("full", "screen", "", options, message));
+    EXPECT_FALSE(Screenshotter::ParseRequestWords("full", "screen", "", "", options, message));
     EXPECT_NE(message.find("area=full"), std::string::npos) << message;
     EXPECT_NE(message.find("mode=screen"), std::string::npos) << message;
 }
@@ -303,9 +304,26 @@ TEST(Screenshotter_Test, BadRequestWordsNameTheWordAndTheAllowedOnes)
     {
         ScreenshotOptions options;
         std::string message;
-        EXPECT_FALSE(Screenshotter::ParseRequestWords(c.area, c.mode, c.format, options, message)) << c.mentions;
+        EXPECT_FALSE(Screenshotter::ParseRequestWords(c.area, c.mode, c.format, "", options, message)) << c.mentions;
         EXPECT_NE(message.find(c.mentions), std::string::npos) << message;
         EXPECT_NE(message.find(c.allowed), std::string::npos) << message;
+    }
+}
+
+TEST(Screenshotter_Test, SourceWordsArePresentedOrLive)
+{
+    ScreenshotOptions options;
+    std::string message;
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "", options, message)) << message;
+    EXPECT_EQ(options.source, ScreenshotSource::Presented) << "the default";
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "live", options, message)) << message;
+    EXPECT_EQ(options.source, ScreenshotSource::Live);
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "presented", options, message)) << message;
+    EXPECT_EQ(options.source, ScreenshotSource::Presented);
+    for (const char* bad : {"Live", "now", "latest", "1"})
+    {
+        EXPECT_FALSE(Screenshotter::ParseRequestWords("", "", "", bad, options, message)) << bad;
+        EXPECT_NE(message.find("presented or live"), std::string::npos) << message;
     }
 }
 
@@ -396,6 +414,114 @@ TEST_F(ScreenshotterMachine_Test, ExternalPictureIsNotCroppedToASpectrumScreen)
         }
         _screen->ClearExternalPicture();
     }
+}
+
+/// The live frame is what the buffer holds now; the presented one is the last latched, a few frames old
+TEST_F(ScreenshotterMachine_Test, LiveFrameOfAParkedMachineIsReadDirectlyAndNotTheLatchedOne)
+{
+    const FramebufferDescriptor& fb = _screen->GetFramebufferDescriptor();
+    ASSERT_NE(fb.memoryBuffer, nullptr);
+    const uint32_t marker = 0xFF123456u;
+    reinterpret_cast<uint32_t*>(fb.memoryBuffer)[0] = marker;  // drawn after the last latch
+
+    ScreenshotOptions live = Options(ScreenshotArea::Full);
+    live.source = ScreenshotSource::Live;
+    const ScreenshotResult now = Screenshotter::TakeFrom(*_screen, live, /*emulationParked=*/true);
+    ASSERT_TRUE(now.ok) << now.errorMessage;
+    EXPECT_EQ(now.width, 352);
+
+    FrameSnapshot presented;
+    ASSERT_TRUE(_screen->SnapshotPresented(presented));
+    EXPECT_NE(reinterpret_cast<const uint32_t*>(presented.pixels.data())[0], marker)
+        << "the presented frame was latched before the marker was drawn";
+
+    FrameSnapshot liveSnap;
+    ASSERT_TRUE(_screen->SnapshotLive(liveSnap, true, 100));
+    EXPECT_EQ(reinterpret_cast<const uint32_t*>(liveSnap.pixels.data())[0], marker);
+    EXPECT_GE(liveSnap.geometry.beamLine, 0) << "a stopped machine says where the beam stood";
+    EXPECT_GE(liveSnap.geometry.beamTstate, 0);
+}
+
+/// A running machine: the caller's thread never touches the buffer. The emulation thread serves the request at its
+/// frame end (here a thread that calls ServeLiveRequest the way MainLoop does, once per frame)
+TEST_F(ScreenshotterMachine_Test, LiveFrameOfARunningMachineIsServedByTheEmulationThread)
+{
+    const FramebufferDescriptor& fb = _screen->GetFramebufferDescriptor();
+    const uint32_t marker = 0xFF654321u;
+    reinterpret_cast<uint32_t*>(fb.memoryBuffer)[0] = marker;
+
+    std::atomic<bool> stop{false};
+    std::thread emulation([&] {
+        while (!stop.load())
+        {
+            _screen->ServeLiveRequest();
+            std::this_thread::yield();
+        }
+    });
+
+    FrameSnapshot snap;
+    const bool ok = _screen->SnapshotLive(snap, /*emulationParked=*/false, 5000);
+    stop = true;
+    emulation.join();
+
+    ASSERT_TRUE(ok) << "the request was not served";
+    EXPECT_EQ(reinterpret_cast<const uint32_t*>(snap.pixels.data())[0], marker);
+    EXPECT_EQ(snap.geometry.beamLine, -1) << "served at a frame end: the frame is finished, no beam to report";
+    EXPECT_FALSE(snap.geometry.partial);
+}
+
+TEST_F(ScreenshotterMachine_Test, LiveFrameThatNeverComesIsAnErrorNotAHang)
+{
+    // Nobody serves the request: no emulation thread, as with a stuck emulator
+    ScreenshotOptions live = Options(ScreenshotArea::Full);
+    live.source = ScreenshotSource::Live;
+    live.liveTimeoutMs = 30;
+    const ScreenshotResult r = Screenshotter::TakeFrom(*_screen, live, /*emulationParked=*/false);
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error, ScreenshotError::NoFrame);
+    EXPECT_NE(r.errorMessage.find("30 ms"), std::string::npos) << r.errorMessage;
+
+    // The abandoned request does not leak into the next one
+    std::atomic<bool> stop{false};
+    std::thread emulation([&] {
+        while (!stop.load())
+        {
+            _screen->ServeLiveRequest();
+            std::this_thread::yield();
+        }
+    });
+    live.liveTimeoutMs = 5000;
+    const ScreenshotResult again = Screenshotter::TakeFrom(*_screen, live, false);
+    stop = true;
+    emulation.join();
+    EXPECT_TRUE(again.ok) << again.errorMessage;
+}
+
+TEST_F(ScreenshotterMachine_Test, ConcurrentLiveRequestsAreServedOneByOne)
+{
+    std::atomic<bool> stop{false};
+    std::thread emulation([&] {
+        while (!stop.load())
+        {
+            _screen->ServeLiveRequest();
+            std::this_thread::yield();
+        }
+    });
+    std::atomic<int> good{0};
+    std::vector<std::thread> callers;
+    for (int i = 0; i < 6; i++)
+    {
+        callers.emplace_back([&] {
+            FrameSnapshot snap;
+            if (_screen->SnapshotLive(snap, false, 5000) && snap.geometry.width == 352 && snap.pixels.size() == 352u * 288u * 4u)
+                good++;
+        });
+    }
+    for (auto& c : callers)
+        c.join();
+    stop = true;
+    emulation.join();
+    EXPECT_EQ(good.load(), 6);
 }
 
 /// endregion </Real frames>

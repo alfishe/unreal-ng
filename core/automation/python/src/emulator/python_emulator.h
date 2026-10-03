@@ -1934,7 +1934,7 @@ namespace PythonBindings
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
             .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
-                                       const std::string& path) -> py::dict {
+                                       const std::string& path, const std::string& source) -> py::dict {
                 py::dict result;
                 auto fail = [&](const std::string& message, const char* kind) {
                     result["success"] = false;
@@ -1947,6 +1947,8 @@ namespace PythonBindings
                     return fail("Unknown format '" + format + "': use png or gif", "bad-parameter");
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return fail("Unknown area '" + area + "': use full or screen", "bad-parameter");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return fail("Unknown source '" + source + "': use presented or live", "bad-parameter");
                 if (!fullLegacy.is_none())
                 {
                     // Deprecated: full=True is area="full", full=False is area="screen"
@@ -1959,7 +1961,8 @@ namespace PythonBindings
 
                 if (!self.GetContext() || !self.GetContext()->pScreen)
                     return fail("The emulator has no screen", "no-frame");
-                const ScreenshotResult shot = Screenshotter::TakeFrom(*self.GetContext()->pScreen, options);
+                const ScreenshotResult shot =
+                    Screenshotter::TakeFrom(*self.GetContext()->pScreen, options, self.IsEmulationParked());
                 if (!shot.ok)
                     return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
 
@@ -1976,9 +1979,18 @@ namespace PythonBindings
                 frame["height"] = shot.frame.height;
                 frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
                                                                            : Screen::GetVideoModeName(shot.frame.videoMode);
-                frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+                frame["source"] = Screenshotter::SourceName(shot.frame.source);
                 frame["frame_number"] = shot.frame.frameNumber;
+                if (shot.frame.beamLine >= 0)
+                {
+                    frame["partial"] = shot.frame.partial;
+                    py::dict beam;
+                    beam["line"] = shot.frame.beamLine;
+                    beam["tstate"] = shot.frame.beamTstate;
+                    frame["beam"] = beam;
+                }
                 result["success"] = true;
+                result["source"] = Screenshotter::RequestSourceName(options.source);
                 result["format"] = Screenshotter::FormatName(shot.format);
                 result["area"] = Screenshotter::AreaName(options.area);
                 result["width"] = shot.width;
@@ -1995,8 +2007,10 @@ namespace PythonBindings
             }, "Screenshot of the presented frame: the whole frame (area='full', default) or the working picture "
                "(area='screen'), PNG (default) or GIF; returns a dict with the image base64 in 'data' (or 'file' when "
                "path is given), the frame geometry ('frame', 'screen_window') and the rectangle cut ('crop'). "
-               "full= is a deprecated alias of area (True = 'full', False = 'screen')",
-               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "")
+               "source='live' takes the frame as drawn now instead of the presented one (a paused machine adds the beam "
+               "position and 'partial' to 'frame'). full= is a deprecated alias of area (True = 'full', False = 'screen')",
+               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
+               py::arg("source") = "")
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {

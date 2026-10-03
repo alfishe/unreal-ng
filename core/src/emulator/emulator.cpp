@@ -3338,6 +3338,11 @@ bool Emulator::IsPaused()
     return _isPaused;
 }
 
+bool Emulator::IsEmulationParked()
+{
+    return !_isRunning || !_mainloop || (_isPaused && _mainloop->IsPauseConfirmed());
+}
+
 bool Emulator::IsDestroying()
 {
     return _state == StateDestroying || _isReleased;

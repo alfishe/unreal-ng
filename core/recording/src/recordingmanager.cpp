@@ -380,6 +380,17 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
         return false;
     }
 
+    // MainScreen: the frame's own working window (the geometry every screenshot uses), locked now
+    _mainScreenX = _mainScreenY = _mainScreenWidth = _mainScreenHeight = 0;
+    if (_captureRegion == VideoCaptureRegion::MainScreen && _context && _context->pScreen)
+    {
+        const FrameRect window = _context->pScreen->DescribeCurrentFrame().screenWindow;
+        _mainScreenX = window.x;
+        _mainScreenY = window.y;
+        _mainScreenWidth = window.width;
+        _mainScreenHeight = window.height;
+    }
+
     // Use capture-region dimensions if not explicitly set
     if (_videoEnabled && (_videoWidth == 0 || _videoHeight == 0))
     {
@@ -391,11 +402,10 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
 
             if (_captureRegion == VideoCaptureRegion::MainScreen)
             {
-                const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[fb.videoMode];
-                if (rd.screenWidth > 0 && rd.screenHeight > 0)
+                if (_mainScreenWidth > 0 && _mainScreenHeight > 0)
                 {
-                    _videoWidth = rd.screenWidth;
-                    _videoHeight = rd.screenHeight;
+                    _videoWidth = _mainScreenWidth;
+                    _videoHeight = _mainScreenHeight;
                 }
             }
             else if (_captureRegion == VideoCaptureRegion::Viewport)
@@ -823,25 +833,25 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     FramebufferDescriptor stretched;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context->pScreen && framebuffer.memoryBuffer)
     {
-        const RasterDescriptor& rd = _context->pScreen->rasterDescriptors[framebuffer.videoMode];
-        if (rd.screenWidth > 0 && rd.screenHeight > 0 &&
-            rd.screenOffsetLeft + rd.screenWidth <= framebuffer.width &&
-            rd.screenOffsetTop + rd.screenHeight <= framebuffer.height)
+        // The window locked at recording start (the frame's own geometry); a frame it no longer fits is encoded whole
+        if (_mainScreenWidth > 0 && _mainScreenHeight > 0 &&
+            _mainScreenX + _mainScreenWidth <= framebuffer.width &&
+            _mainScreenY + _mainScreenHeight <= framebuffer.height)
         {
-            size_t rowBytes = static_cast<size_t>(rd.screenWidth) * 4;
-            _cropBuffer.resize(rowBytes * rd.screenHeight);
+            size_t rowBytes = static_cast<size_t>(_mainScreenWidth) * 4;
+            _cropBuffer.resize(rowBytes * _mainScreenHeight);
 
             const uint8_t* src = framebuffer.memoryBuffer +
-                (static_cast<size_t>(rd.screenOffsetTop) * framebuffer.width + rd.screenOffsetLeft) * 4;
-            for (uint16_t y = 0; y < rd.screenHeight; y++)
+                (static_cast<size_t>(_mainScreenY) * framebuffer.width + _mainScreenX) * 4;
+            for (uint16_t y = 0; y < _mainScreenHeight; y++)
             {
                 memcpy(_cropBuffer.data() + y * rowBytes, src, rowBytes);
                 src += static_cast<size_t>(framebuffer.width) * 4;
             }
 
             cropped.videoMode = framebuffer.videoMode;
-            cropped.width = rd.screenWidth;
-            cropped.height = rd.screenHeight;
+            cropped.width = _mainScreenWidth;
+            cropped.height = _mainScreenHeight;
             cropped.memoryBuffer = _cropBuffer.data();
             cropped.memoryBufferSize = _cropBuffer.size();
             toEncode = &cropped;

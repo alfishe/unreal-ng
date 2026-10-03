@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <vector>
 
@@ -335,6 +336,7 @@ enum class FrameSource : uint8_t
 {
     Native,    ///< the machine's own renderer
     External,  ///< a video card's picture (the FT812 of the TS-Conf VDAC2 card)
+    Composed,  ///< a group's composed picture: the ZX-Poly display frame (2x, the four modules' paper)
 };
 
 /// What a consumer needs to know about a frame to use its pixels: its size and where the
@@ -350,6 +352,10 @@ struct PictureGeometry
     VideoModeEnum videoMode = M_NUL;
     FrameSource source = FrameSource::Native;
     uint64_t frameNumber = 0;  ///< emulated frame the pixels belong to
+    // Only a live snapshot of a stopped machine (Screen::SnapshotLive): where the beam stood
+    bool partial = false;      ///< the frame is half drawn: the beam is inside it and the raster is drawn per T-state
+    int32_t beamLine = -1;     ///< raster line of the beam, -1 when not known
+    int32_t beamTstate = -1;   ///< frame T-state of the beam, -1 when not known
 };
 
 /// One presented frame: pixels and geometry taken together, under one lock
@@ -951,6 +957,18 @@ protected:
     std::atomic<bool> _externalActive{false};  // read by GUI threads (descriptor, present delay)
     FramebufferDescriptor _external;
     uint32_t _externalFramePeriodUs = 0;
+    /// The monitor's current picture and its geometry (the external picture while one is active); emulation
+    /// thread, or a thread that knows it is parked
+    bool CaptureCurrentFrame(FrameSnapshot& out) const;
+    // SnapshotLive: one request at a time, served by the emulation thread
+    std::mutex _liveRequestMutex;
+    std::mutex _liveMutex;
+    std::condition_variable _liveCv;
+    std::atomic<bool> _livePending{false};
+    bool _liveDone = false;
+    bool _liveOk = false;
+    FrameSnapshot _liveResult;
+
     /// Geometry of the frame in each present slot (under _presentMutex)
     PictureGeometry _presentSlotGeometry[PRESENT_SLOTS];
     /// The geometry of the machine's own frame as it is now / of the external picture (emulation thread)
@@ -1050,6 +1068,29 @@ public:
     /// cannot give a size that disagrees with the pixels
     /// @return false when there is no presented frame
     bool SnapshotPresented(FrameSnapshot& out);
+
+    /// @brief The frame as drawn right now: no present delay, no post-processing (ZX DLSS).
+    /// The live buffer belongs to the emulation thread, so a caller's thread never reads it while that thread
+    /// runs:
+    ///  - `emulationParked` (stopped, or paused and confirmed parked): copied directly, with the beam position
+    ///    and `partial` when the stop is inside a frame drawn per T-state;
+    ///  - otherwise a one-shot request, served by the emulation thread at the end of its next rendered frame
+    ///    (ServeLiveRequest), where the finished frame is copied; the caller waits up to `timeoutMs`
+    /// @return false when the frame does not arrive in time (no frames: stuck emulation, no feature) or there is
+    ///         no buffer
+    bool SnapshotLive(FrameSnapshot& out, bool emulationParked, uint32_t timeoutMs);
+
+    /// Emulation thread, frame end, before the frame is latched: serve a waiting SnapshotLive. One atomic read
+    /// when nobody waits
+    void ServeLiveRequest();
+
+    /// Geometry of what the monitor shows now: the external picture while one is active, else the machine's own
+    /// frame (size, working window, mode, source). Emulation thread, or a thread that knows it is parked: it reads
+    /// renderer state. Recording and every other consumer that cuts "the screen" asks this, not the raster table
+    PictureGeometry DescribeCurrentFrame() const
+    {
+        return IsExternalPictureActive() ? DescribeExternalFrame() : DescribeNativeFrame();
+    }
 
     /// The working picture's rectangle in the machine's own frame, for the current video mode:
     /// the raster descriptor's screen window; modes whose window moves (TS-Conf) override this.

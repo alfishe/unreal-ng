@@ -643,7 +643,11 @@ void MainLoop::OnFrameEnd()
             _frameEndHook(true);
 
         if (!_context->ttdReplayActive)
+        {
+            // A waiting screenshot of the live frame (source=live): this finished frame, before it is latched
+            _context->pScreen->ServeLiveRequest();
             _context->pScreen->LatchFramebuffer();
+        }
     }
     else if (_frameEndHook && !_context->ttdReplayActive)
     {
