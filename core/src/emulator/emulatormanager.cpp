@@ -515,7 +515,9 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
         identity.VideoMode = Screen::GetVideoModeName(context->pScreen->GetVideoMode());
         identity.HasVideoMode = true;
     }
-    identity.SpeedMultiplier = context->emulatorState.current_z80_frequency_multiplier;
+    // CPU T per base T: the multiplier over the clock denominator (the Profi in hi-res runs 10/7 of 3.5 MHz)
+    identity.SpeedMultiplier = static_cast<double>(context->emulatorState.current_z80_frequency_multiplier) /
+                               static_cast<double>(context->emulatorState.ClockDen());
     identity.ConfigFolder = Config::GetConfigFolderForModel(config.mem_model, config.ramsize);
     identity.RamPowerOn = Config::RamPowerOnName(config.ramPowerOn);
 

@@ -246,6 +246,7 @@ PERIPHERAL_ID_NAMES = {
     41: "CdDrive",
     42: "Vdac2Memory",
     43: "Vdac2",
+    44: "ProfiXtKbc",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

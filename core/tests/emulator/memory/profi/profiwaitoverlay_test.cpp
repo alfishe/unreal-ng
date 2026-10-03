@@ -242,6 +242,66 @@ TEST_F(ProfiWaitOverlay_Test, V5TurboSwitchToo)
 
 /// endregion </v3: the TURBO switch and its waits>
 
+/// region <Hi-res waits (design-hires.md H3)>
+
+/// v5 at 5 MHz (ZQ3 20 MHz): a RAM access waits 1 T when its T1 starts 130 ns before to 40 ns after a video request
+/// edge. The first request of paper line 0 falls at CPU clock 15387.6 (200 ns clocks): T1 at 15387 (-124 ns) waits,
+/// 15386 (-324 ns) and 15388 (+76 ns) do not
+TEST_F(ProfiWaitOverlay_Test, V5HiresWaitsAroundAVideoRequest)
+{
+    Create("PROFI");
+    _decoder->DecodePortOut(0xDFFD, 0x80, 0x0000);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency, 5'000'000u);
+    ASSERT_TRUE(_decoder->AreWaitsInstalled());
+    Poke(0x8000, {0x00});
+    EXPECT_EQ(Run(0x8000, 15387, 1), (std::vector<uint32_t>{5}));
+    EXPECT_EQ(Run(0x8000, 15386, 1), (std::vector<uint32_t>{4}));
+    EXPECT_EQ(Run(0x8000, 15388, 1), (std::vector<uint32_t>{4}));
+    EXPECT_EQ(Run(0x8000, 1000, 1), (std::vector<uint32_t>{4})) << "top border: no requests";
+}
+
+/// #7FFD bit 5 keeps the requests running all line long in hi-res: the same edge phase reaches the border
+TEST_F(ProfiWaitOverlay_Test, V5HiresBcmrRunsTheRequestsEverywhere)
+{
+    Create("PROFI");
+    _decoder->DecodePortOut(0xDFFD, 0x80, 0x0000);
+    Poke(0x8000, {0x00});
+    // 1000 requests before line 0's first one: 2 410 857 ns = CPU clock 12054.3; T1 at 12054 is 57 ns before it
+    EXPECT_EQ(Run(0x8000, 12054, 1), (std::vector<uint32_t>{4})) << "outside the window without BCMR";
+    _context->emulatorState.p7FFD |= 0x20;
+    EXPECT_EQ(Run(0x8000, 12054, 1), (std::vector<uint32_t>{5}));
+    _context->emulatorState.p7FFD &= ~0x20;
+}
+
+/// v5 hi-res turbo (10 MHz): every RAM access 1 T, 3 when T1 starts up to 90 ns before a request, 2 up to 90 ns after
+TEST_F(ProfiWaitOverlay_Test, V5HiresTurboWaitsOneToThree)
+{
+    Create("PROFI");
+    ASSERT_TRUE(_emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
+    _decoder->DecodePortOut(0xDFFD, 0x80, 0x0000);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency, 10'000'000u);
+    Poke(0x8000, {0x00});
+    EXPECT_EQ(Run(0x8000, 30775, 1), (std::vector<uint32_t>{7})) << "-24 ns: 3";
+    EXPECT_EQ(Run(0x8000, 30776, 1), (std::vector<uint32_t>{6})) << "+76 ns: 2";
+    EXPECT_EQ(Run(0x8000, 30780, 1), (std::vector<uint32_t>{5})) << "+476 ns: 1";
+}
+
+/// v3 hi-res: no waits at 3 MHz; in turbo (6 MHz) the Spectrum-mode slot rule, 2 from an even clock, 3 from an odd
+TEST_F(ProfiWaitOverlay_Test, V3HiresWaitsOnlyInTurbo)
+{
+    Create("PROFI3");
+    _decoder->DecodePortOut(0xDFFD, 0x80, 0x0000);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency, 3'000'000u);
+    Poke(0x8000, {0x00});
+    EXPECT_EQ(Run(0x8000, 15000, 1), (std::vector<uint32_t>{4}));
+    ASSERT_TRUE(_emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency, 6'000'000u);
+    EXPECT_EQ(Run(0x8000, 30000, 1), (std::vector<uint32_t>{6}));
+    EXPECT_EQ(Run(0x8000, 30001, 1), (std::vector<uint32_t>{7}));
+}
+
+/// endregion </Hi-res waits>
+
 /// A machine without a TURBO switch answers -1 and refuses to set it
 TEST(ProfiFrontPanelSwitch_Test, MachinesWithoutTheSwitchSayNo)
 {

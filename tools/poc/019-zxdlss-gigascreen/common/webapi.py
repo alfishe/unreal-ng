@@ -25,7 +25,8 @@ class Emulator:
 
     def frame_rgb(self):
         """Current output framebuffer, full frame with border, as HxWx3 uint8."""
-        data = self.call("GET", "/capture/screen?format=png&mode=full")["data"]
+        # area=full&format=png is also the server default now; spelled out so the 352x288 full frame stays explicit.
+        data = self.call("GET", "/capture/screen?area=full&format=png")["data"]
         return np.asarray(Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB"))
 
     @staticmethod

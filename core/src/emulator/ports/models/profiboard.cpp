@@ -48,3 +48,78 @@ const char* ProfiSyncPromName(ProfiSyncProm prom)
     }
     return "default";
 }
+
+namespace
+{
+    struct KeyboardName
+    {
+        const char* name;
+        ProfiKeyboard keyboard;
+    };
+
+    constexpr KeyboardName kKeyboardNames[] = {
+        {"default", ProfiKeyboard::Default},
+        {"matrix", ProfiKeyboard::Matrix},
+        {"xt", ProfiKeyboard::Xt},
+        {"xttable", ProfiKeyboard::XtTable},
+    };
+
+    bool SameTextIgnoringCase(const char* a, const char* b)
+    {
+        for (; *a && *b; ++a, ++b)
+        {
+            const char x = (*a >= 'A' && *a <= 'Z') ? static_cast<char>(*a + 32) : *a;
+            const char y = (*b >= 'A' && *b <= 'Z') ? static_cast<char>(*b + 32) : *b;
+            if (x != y)
+                return false;
+        }
+        return *a == '\0' && *b == '\0';
+    }
+}
+
+bool ParseProfiKeyboard(const char* text, ProfiKeyboard& out)
+{
+    if (text == nullptr || text[0] == '\0')
+    {
+        out = ProfiKeyboard::Default;
+        return true;
+    }
+    for (const KeyboardName& entry : kKeyboardNames)
+    {
+        if (SameTextIgnoringCase(text, entry.name))
+        {
+            out = entry.keyboard;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* ProfiKeyboardName(ProfiKeyboard keyboard)
+{
+    for (const KeyboardName& entry : kKeyboardNames)
+    {
+        if (entry.keyboard == keyboard)
+            return entry.name;
+    }
+    return "default";
+}
+
+std::function<void(CONFIG&)> ProfiKeyboardOverride(ProfiKeyboard keyboard)
+{
+    if (keyboard == ProfiKeyboard::Default)
+        return {};
+    return [keyboard](CONFIG& config) { config.profi_keyboard = static_cast<uint8_t>(keyboard); };
+}
+
+std::function<void(CONFIG&)> ProfiClockOverride(uint8_t zq3MHz, int ayClockNew)
+{
+    if (zq3MHz == 0 && ayClockNew < 0)
+        return {};
+    return [zq3MHz, ayClockNew](CONFIG& config) {
+        if (zq3MHz)
+            config.profi_zq3_mhz = ProfiClampZq3(zq3MHz);
+        if (ayClockNew >= 0)
+            config.profi_ay_clock_new = ayClockNew ? 1 : 0;
+    };
+}

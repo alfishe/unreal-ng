@@ -56,7 +56,7 @@ xxd -s 0x216 -l 64 -c 64 -p testdata/machines/sprinter/software/acctest.exe   # 
 #   → 0D 0D 0D 02 05 06 06 08 06 06 ...
 
 # 5. The screen: a stone texture at the top left (the rest is what the BIOS left in video RAM)
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?format=png&mode=full&path=$PWD/scratch/acctest.png" | jq -r .saved
+curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/scratch/acctest.png" | jq -r .saved
 ```
 
 All 64 rows: read pages `#50`-`#53` (`/memory/ram/80/0?len=16384` ... `/memory/ram/83/0?len=16384`)

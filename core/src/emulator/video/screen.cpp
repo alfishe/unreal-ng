@@ -744,7 +744,7 @@ uint32_t Screen::GetCurrentTstate()
     // but ULA/screen expects unscaled t-states based on base 3.5MHz clock
     // Video signal timing is independent of CPU speed
     uint32_t scaledTstate = cpu->t;
-    uint32_t unscaledTstate = scaledTstate / state.current_z80_frequency_multiplier;
+    uint32_t unscaledTstate = state.CpuToBaseT(scaledTstate);
 
     return unscaledTstate;
 }
@@ -1085,6 +1085,62 @@ PictureGeometry Screen::DescribeExternalFrame() const
     g.source = FrameSource::External;
     g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     return g;
+}
+
+bool Screen::CaptureCurrentFrame(FrameSnapshot& out) const
+{
+    const FramebufferDescriptor& fb = IsExternalPictureActive() ? _external : _framebuffer;
+    if (fb.memoryBuffer == nullptr || fb.width == 0 || fb.height == 0)
+        return false;
+    out.geometry = IsExternalPictureActive() ? DescribeExternalFrame() : DescribeNativeFrame();
+    out.pixels.assign(fb.memoryBuffer, fb.memoryBuffer + static_cast<size_t>(out.geometry.stride) * out.geometry.height);
+    return true;
+}
+
+bool Screen::SnapshotLive(FrameSnapshot& out, bool emulationParked, uint32_t timeoutMs)
+{
+    if (emulationParked)
+    {
+        if (!CaptureCurrentFrame(out))
+            return false;
+        // Where the beam stopped: the pixels it has not reached are still the previous frame's
+        if (_context && _context->pCore && _context->pCore->GetZ80() && out.geometry.source == FrameSource::Native)
+        {
+            const uint64_t tacts = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+            const uint32_t perLine = GetTstatesPerLine();
+            out.geometry.beamTstate = static_cast<int32_t>(tacts);
+            out.geometry.beamLine = perLine ? static_cast<int32_t>(tacts / perLine) : -1;
+            out.geometry.partial = IsScreenHQEnabled() && tacts > 0 && tacts < GetMaxFrameTiming();
+        }
+        return true;
+    }
+
+    std::lock_guard<std::mutex> oneAtATime(_liveRequestMutex);
+    std::unique_lock<std::mutex> lock(_liveMutex);
+    _liveDone = false;
+    _liveOk = false;
+    _livePending.store(true, std::memory_order_release);
+    if (!_liveCv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return _liveDone; }))
+    {
+        _livePending.store(false, std::memory_order_release);  // under the lock: the server takes it too
+        return false;
+    }
+    if (!_liveOk)
+        return false;
+    out = std::move(_liveResult);
+    return true;
+}
+
+void Screen::ServeLiveRequest()
+{
+    if (!_livePending.load(std::memory_order_acquire))
+        return;
+    std::lock_guard<std::mutex> lock(_liveMutex);
+    if (!_livePending.exchange(false, std::memory_order_acq_rel))
+        return;  // the waiter gave up in between
+    _liveOk = CaptureCurrentFrame(_liveResult);
+    _liveDone = true;
+    _liveCv.notify_all();
 }
 
 bool Screen::SnapshotPresented(FrameSnapshot& out)

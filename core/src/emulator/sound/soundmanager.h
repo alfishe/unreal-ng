@@ -362,6 +362,19 @@ public:
     {
         return _turboSound;
     }
+    /// The AY clock of the TurboSound slot, set by the machine (the Profi in
+    /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see
+    /// ITurboSoundDevice::SetPsgClock. False when the slot is empty or its
+    /// device keeps a fixed clock
+    bool SetPsgClock(uint32_t hz)
+    {
+        return _turboSound && _turboSound->SetPsgClock(hz);
+    }
+    /// The clock the AY generators run at now (PSG_CLOCK_RATE with no slot device)
+    uint32_t GetPsgClock() const
+    {
+        return _turboSound ? _turboSound->GetPsgClock() : static_cast<uint32_t>(PSG_CLOCK_RATE);
+    }
     /// HUD audio nudges: every source's LED held for a second
     const AudioActivityIndicators& getActivityIndicators() const
     {

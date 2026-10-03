@@ -49,7 +49,7 @@ StateNode Unavailable(const char* description)
 
 /// One AY chip, fully decoded. Same keys as the WebAPI has always returned
 /// for /state/audio/ay/{chip}, so existing clients keep working.
-StateNode AyChipNode(SoundChip_AY8910* chip, int index)
+StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
 {
     StateNode ret = StateNode::Object();
     ret["available"] = true;
@@ -78,7 +78,7 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
         channel["period"] = int(period);
         channel["fine"] = int(fine);
         channel["coarse"] = int(coarse);
-        channel["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
+        channel["frequency_hz"] = clockHz / (16.0 * (period + 1));
         const uint8_t volumeReg = regs[8 + ch];
         channel["volume"] = int(volumeReg & 0x0F);
         channel["tone_enabled"] = (regs[7] & (0x01 << ch)) == 0;
@@ -94,13 +94,13 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
     envelope["shape"] = int(envShape);
     envelope["period"] = int(envPeriod);
     envelope["current_output"] = int(chip->getEnvelopeGenerator().out());
-    envelope["frequency_hz"] = 1750000.0 / (256.0 * (envPeriod + 1));
+    envelope["frequency_hz"] = clockHz / (256.0 * (envPeriod + 1));
     ret["envelope"] = envelope;
 
     StateNode noise = StateNode::Object();
     const uint8_t noisePeriod = regs[6] & 0x1F;
     noise["period"] = int(noisePeriod);
-    noise["frequency_hz"] = 1750000.0 / (16.0 * (noisePeriod + 1));
+    noise["frequency_hz"] = clockHz / (16.0 * (noisePeriod + 1));
     ret["noise"] = noise;
 
     StateNode mixer = StateNode::Object();
@@ -586,6 +586,9 @@ StateNode Ay(EmulatorContext* context)
     ITurboSoundDevice* ts = sm->getTurboSound();
     const bool fm = ts && ts->hasFm();
     ret["slot_device"] = !ts ? "None" : (fm ? "TSFM" : "TurboSound");
+    // The AY input clock the generators run at now: 1750000 except where the machine switches it (the Profi in
+    // hi-res: 1500000, [PROFI] AyClock)
+    ret["psg_clock_hz"] = static_cast<int64_t>(sm->GetPsgClock());
     if (ayCount == 0)
         ret["description"] = "No AY chips available";
     else if (ayCount == 1)
@@ -624,7 +627,7 @@ StateNode AyChip(EmulatorContext* context, int chip)
     SoundChip_AY8910* ay = sm->getAYChip(chip);
     if (!ay)
         return Unavailable("AY chip not available");
-    return AyChipNode(ay, chip);
+    return AyChipNode(ay, chip, double(sm->GetPsgClock()));
 }
 
 StateNode Fm(EmulatorContext* context)

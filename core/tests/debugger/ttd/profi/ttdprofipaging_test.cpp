@@ -28,16 +28,19 @@ protected:
 TEST_F(TTDProfiPaging_Test, DecoderDeclaresProfiPaging)
 {
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 2u);
+    ASSERT_EQ(ids.size(), 3u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
     EXPECT_EQ(ids[1], ttd::PeripheralId::Ds12887) << "the RTC (PLAN #13a RTC in TTD, built by #60(c))";
+    EXPECT_EQ(ids[2], ttd::PeripheralId::ProfiXtKbc) << "the PROFI-XT keyboard controller, fitted by default on v5";
 
     auto serializers = _context->pPortDecoder->CreateTTDSerializers();
-    ASSERT_EQ(serializers.size(), 2u);
+    ASSERT_EQ(serializers.size(), 3u);
     EXPECT_EQ(serializers[0]->TTDPeripheralId(), ttd::PeripheralId::ProfiPaging);
     EXPECT_EQ(serializers[0]->TTDDeviceName(), "ProfiPaging");
     EXPECT_EQ(serializers[1]->TTDPeripheralId(), ttd::PeripheralId::Ds12887);
     EXPECT_EQ(serializers[1]->TTDDeviceName(), "Ds12887");
+    EXPECT_EQ(serializers[2]->TTDPeripheralId(), ttd::PeripheralId::ProfiXtKbc);
+    EXPECT_EQ(serializers[2]->TTDDeviceName(), "ProfiXtKbc");
 }
 
 /// @brief Save -> mutate -> load restores #DFFD and every palette entry
@@ -233,7 +236,7 @@ TEST(TTDProfiTurboSwitch_Test, FlipIsJournaledAndReplayed)
     ASSERT_TRUE(emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
     EXPECT_EQ(context->emulatorState.hw_turbo_ratio_applied, 2);
     emulator->RunTStates(10000);
-    const ttd::TTDTimePoint afterFlip{flipFrame, context->pCore->GetZ80()->t};
+    const ttd::TTDTimePoint afterFlip{flipFrame, ttd->TInFrameNow()};   // TTD time units, not CPU T
     const uint16_t livePc = context->pCore->GetZ80()->pc;
 
     size_t flips = 0;

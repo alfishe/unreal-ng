@@ -3,6 +3,8 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
@@ -897,8 +899,10 @@ public:
             out.push_back(t);
             return out;
         });
-        // screenshot([{area = "full"|"screen", format = "png"|"gif", path = "file"}]): a screenshot of the presented
-        // frame (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF.
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
+        // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
+        // frame.beam = {line, tstate}).
         // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
         // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
         // instead of `data`; nil, error on a bad word, a missing emulator or no frame
@@ -913,14 +917,17 @@ public:
             {
                 const std::string area = opts->get_or<std::string>("area", "");
                 const std::string format = opts->get_or<std::string>("format", "");
+                const std::string source = opts->get_or<std::string>("source", "");
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return mouseError(s, "Unknown area '" + area + "': use full or screen");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
                 if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
                     return mouseError(s, "Unknown format '" + format + "': use png or gif");
                 options.saveTo = opts->get_or<std::string>("path", "");
             }
 
-            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options);
+            const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
             if (!shot.ok) return mouseError(s, shot.errorMessage);
 
             sol::state_view view(s);
@@ -935,6 +942,7 @@ public:
             sol::table t = view.create_table();
             t["format"] = Screenshotter::FormatName(shot.format);
             t["area"] = Screenshotter::AreaName(options.area);
+            t["source"] = Screenshotter::RequestSourceName(options.source);
             t["width"] = shot.width;
             t["height"] = shot.height;
             t["size"] = shot.encodedSize;
@@ -945,8 +953,16 @@ public:
             frame["height"] = shot.frame.height;
             frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
                                                                        : Screen::GetVideoModeName(shot.frame.videoMode);
-            frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+            frame["source"] = Screenshotter::SourceName(shot.frame.source);
             frame["frame_number"] = shot.frame.frameNumber;
+            if (shot.frame.beamLine >= 0)
+            {
+                frame["partial"] = shot.frame.partial;
+                sol::table beam = view.create_table();
+                beam["line"] = shot.frame.beamLine;
+                beam["tstate"] = shot.frame.beamTstate;
+                frame["beam"] = beam;
+            }
             t["frame"] = frame;
             if (!shot.savedFile.empty())
                 t["file"] = shot.savedFile;
@@ -1380,6 +1396,15 @@ public:
             }
             out.push_back(sol::make_object(s, std::string(Keyboard::HostRouteName(keyboard->EffectiveHostRoute()))));
             return out;
+        });
+
+        // keyboard_controller() -> the PS/2 / XT keyboard controller's name ("PROFI-XT firmware 1.27", ...), "" when the
+        // machine has none or it has no name (GET .../keyboard/status keyboard_controller)
+        lua.set_function("keyboard_controller", [this]() -> std::string {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            Keyboard* keyboard = ctx ? ctx->pKeyboard : nullptr;
+            return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
@@ -4599,6 +4624,18 @@ public:
             ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
 
             result["model"] = Config::GetModelFullName(config.mem_model);
+            if (IsProfiModel(config.mem_model))
+            {
+                // The board, its sync PROM and the keyboard on its connector (as GET /state/paging)
+                result["profi_board"] = config.mem_model == MM_PROFI3 ? "v3" : "v5";
+                result["profi_sync_prom"] = ProfiSyncPromName(
+                    ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+                result["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+                // The hi-res clocks (design-hires.md): the CPU clock there (no turbo), the v5's ZQ3 and SB7
+                result["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+                result["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+                result["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
+            }
             result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 

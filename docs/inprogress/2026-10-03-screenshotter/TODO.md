@@ -21,6 +21,13 @@ Left in phase 2: `source=live` (the one-shot request served by the emulation thr
 
 Phase 3 (surfaces), verified on a live app 2026-10-03: WebAPI `GET /capture/screen` (area / format / path, `mode` kept as a deprecated alias, strict words, typed statuses, the geometry in the answer; the FT812 default is now the whole 1024x768 picture) and its OpenAPI entry, MCP `capture_media` screenshot (`area`, encoded `path`, the geometry in the summary; `UrlEncodeSegment` moved to `mcp-tool-utils.h`), CLI `capture screen [--area=] [--format=] [file]` (the session's own emulator), Lua `screenshot{}`, Python `capture_screen(format="png", full=None, area="", path="")`, Qt Tools > Save Screenshot As (whole frame, PNG / GIF). `Screenshotter::ParseRequestWords` holds the request-word rules (core-tested; `EmulatorAPI` is not linked into core-tests). Docs: command-interface.md, webapi / cli / lua / python interface docs, CLI and MCP READMEs. Python automation is OFF in this build: `capture_screen` was only syntax-checked against the vendored pybind11 (it compiles; three older warnings in the same header, lines 316 / 2601 / 2604, fail a `-Werror` Python build and are not from this work).
 
+Phase 1 and 2 leftovers, working tree (not committed): marker checks for ATM, Profi, Sprinter; the ZX-Poly composed frame
+(`ZXPolyGroup::SnapshotDisplay`, `FrameSource::Composed`, `Screenshotter::SourceName`); `source=live`
+(`Screen::SnapshotLive` / `ServeLiveRequest` called from `MainLoop::OnFrameEnd` before the latch,
+`Emulator::IsEmulationParked`, `ScreenshotSource`, a `source` word on WebAPI / MCP / CLI / Lua / Python, the beam
+position and `partial` of a paused machine; checked live on a running and a paused machine); recording
+`MainScreen` takes the frame's own window, locked at the start; docs and recipes for all of it.
+
 Remaining:
 - Phases 1-5 of the design (geometry foundation, `Screenshotter`, surfaces, docs and recipes,
   recording/viewport).
@@ -31,6 +38,9 @@ Remaining:
   `Screen::SnapshotPresented`, per-slot geometry latch, `Screen::WorkingWindow()` (TS-Conf override);
   tests `FrameGeometry_Test.*` and `ScreenTSConf_Test.GEOM1_*`. Left in phase 1: marker tests for ATM,
   Profi, Sprinter and ZX-Poly (the composed display frame as its own geometry).
-- P384 is NOT a bug: measured, the table row (paper at 48,48) is right. The survey's claim and the
-  comment in `zxgeometry.h` ("the paper is 16 lines lower") are wrong; that comment should be corrected.
-  The Qt viewport presets (paper y=56) do not match the measured 48: noted, not in scope.
+- P384 WAS a bug (an earlier note here said the opposite, from a measurement on the batch renderer only):
+  the per-T-state renderer (the default) draws the paper at (48,64), the batch one drew it at (48,48), the
+  table said 48 and the Qt viewport presets assumed 56. Fixed in the working tree: table row (48,64), batch
+  renderer (reads the row), `TransformTstateToFramebufferCoords`, the video mapper (no double +16), the
+  viewport presets and their test, the `zxgeometry.h` and `screenzx.cpp` comments. The owner checked the
+  overscan picture in the running app.

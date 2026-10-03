@@ -50,6 +50,7 @@ built.
 | R20 | Mouse at `#FADF/#FBDF/#FFDF` with CP/M off | yes | yes | H | P15 |
 | R21 | Floating bus: the pixel byte the video latch holds, on an undecoded `IN` with A0 = 1 (design 4.4) | **yes** | none | M (form from the schematic, E3) | P16 |
 | R22 | PSG is an AY-3-8910 | yes | yes | H | P17 |
+| R23 | Keyboard (`[PROFI] Keyboard=`): the matrix, or the PROFI-XT controller running its firmware (or its key table); with the controller, `#FE` bit 5 is KD5 (EXT on half-row A14), a key held makes every read wait, Ctrl + Alt + Del resets (design 9) | matrix by default; XT allowed (EXT on bit 7) | PROFI-XT by default | H (research) / M (the 5 reconstructed firmware bytes) | research-profi-keyboard.md |
 
 ### 2.3 Video timing and CPU clock
 

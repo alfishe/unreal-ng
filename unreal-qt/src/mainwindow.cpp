@@ -382,7 +382,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // unbinds one queued event later): both handlers go through a context lease
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
         if (const auto view = HostKeyboardMenu::Read(m_binding))
-            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller, view->controller);
     });
     connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
         std::string error;
@@ -390,7 +390,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (!error.empty())
             statusBar()->showMessage(tr("Host keyboard: %1").arg(QString::fromStdString(error)), 5000);
         if (view)
-            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller, view->controller);
     });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);

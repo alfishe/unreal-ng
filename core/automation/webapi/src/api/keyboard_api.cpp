@@ -598,6 +598,8 @@ void EmulatorAPI::keyStatus(const HttpRequestPtr& req, std::function<void(const 
         ret["host_route"] = Keyboard::HostRouteName(keyboard->GetHostRoute());
         ret["host_route_effective"] = Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
         ret["ps2_controller"] = keyboard->HasPs2Sink();
+        // Which controller, when it has a name (Profi: "PROFI-XT firmware 1.27" / "PROFI-XT table")
+        ret["keyboard_controller"] = keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
     }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -682,5 +684,6 @@ void EmulatorAPI::keyRoute(const HttpRequestPtr& req, std::function<void(const H
     ret["host_route"] = Keyboard::HostRouteName(keyboard->GetHostRoute());
     ret["host_route_effective"] = Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
     ret["ps2_controller"] = keyboard->HasPs2Sink();
+    ret["keyboard_controller"] = keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
     reply(HttpStatusCode::k200OK, ret);
 }

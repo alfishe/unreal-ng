@@ -86,7 +86,11 @@ void CLIProcessor::HandleKey(const ClientSession& session, const std::vector<std
         }
         session.SendResponse(std::string("Keyboard route: ") + Keyboard::HostRouteName(keyboard->GetHostRoute()) +
                              " (in force: " + Keyboard::HostRouteName(keyboard->EffectiveHostRoute()) +
-                             (keyboard->HasPs2Sink() ? ", PS/2 controller fitted)" : ", no PS/2 controller)") + NEWLINE);
+                             (keyboard->HasPs2Sink() ? ", PS/2 controller fitted" : ", no PS/2 controller") +
+                             (keyboard->HasPs2Sink() && !keyboard->GetPs2Sink()->ControllerName().empty()
+                                  ? ": " + keyboard->GetPs2Sink()->ControllerName()
+                                  : std::string()) +
+                             ")" + NEWLINE);
     }
     else if (subcommand == "clear" || subcommand == "reset")
     {

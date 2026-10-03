@@ -512,6 +512,80 @@ TEST_F(Z80ClockRatio_Test, ImmediateApplyRescalesTheInFramePosition)
     EXPECT_EQ(_z80->t, 1000u);
 }
 
+/// A fractional ratio (EmulatorState::hw_clock_den): the Profi's hi-res clock is 5 MHz = 10/7 and 3 MHz = 6/7 of
+/// the base clock (docs/inprogress/2026-10-01-profi-v3-v5/design-hires.md section 2). The frame keeps its base
+/// length and duration; the CPU runs 10/7 as many T-states in it, and every descale returns base T
+TEST_F(Z80ClockRatio_Test, FractionalRatioRunsTenSeventhsOfTheFrame)
+{
+    EmulatorState& state = _context->emulatorState;
+    ASSERT_EQ(_context->config.frame, 71680u);
+
+    state.hw_turbo_ratio = 10;
+    state.hw_clock_den = 7;
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+
+    EXPECT_EQ(_hook.rollovers.back(), 102400u) << "71 680 x 10 / 7";
+    EXPECT_EQ(_context->GetFrameTStates(), 102400u);
+    EXPECT_EQ(state.current_z80_frequency, 5'000'000u) << "3.5 MHz x 10 / 7";
+    EXPECT_EQ(state.ClockDen(), 7u);
+    EXPECT_EQ(state.HostSpeedMultiplier(), 1);
+    EXPECT_EQ(state.AudioTstate(102400u), 71680u) << "the audio and the devices see base T";
+    EXPECT_EQ(state.CpuToBaseT(102400u), 71680u);
+    EXPECT_EQ(state.BaseToCpuT(71680u), 102400u);
+    EXPECT_EQ(_context->config.frame_duration_us, 20480u) << "the frame time does not move";
+
+    // Back to the base clock at the next boundary
+    state.hw_turbo_ratio = 1;
+    state.hw_clock_den = 1;
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+    EXPECT_EQ(_hook.rollovers.back(), 71680u);
+    EXPECT_EQ(state.ClockDen(), 1u);
+    EXPECT_EQ(state.current_z80_frequency, 3'500'000u);
+}
+
+TEST_F(Z80ClockRatio_Test, FractionalRatioComposesWithHostSpeedAndTtdUnits)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.next_z80_frequency_multiplier = 2;   // host 2x
+    state.hw_turbo_ratio = 6;                  // 3 MHz: 6/7
+    state.hw_clock_den = 7;
+    state.ttd_clock_units = 12;                // the v3's numerators: 1, 2, 6, 12
+    _mainLoop->RunFramePublic();
+    _mainLoop->RunFramePublic();
+
+    EXPECT_EQ(_hook.rollovers.back(), 71680u * 12u / 7u) << "host 2x x 6/7";
+    EXPECT_EQ(state.HostSpeedMultiplier(), 2);
+    EXPECT_EQ(state.AudioTstate(61440u), 71680u) << "6/7: 61 440 CPU T are a whole base frame";
+    EXPECT_EQ(state.TtdUnitsPerTState(), 14u) << "12 units x 7 / 6: a 3 MHz T is 7/6 base T";
+}
+
+TEST_F(Z80ClockRatio_Test, ImmediateFractionalApplyKeepsTheRasterInstant)
+{
+    EmulatorState& state = _context->emulatorState;
+    _mainLoop->RunFramePublic();
+    _z80->t = 7000;
+
+    state.hw_turbo_ratio = 10;
+    state.hw_clock_den = 7;
+    _z80->ApplyHardwareTurboNow();
+    EXPECT_EQ(_z80->t, 10000u) << "7000 base T = 10 000 CPU T at 5 MHz";
+    EXPECT_EQ(state.ClockDen(), 7u);
+    EXPECT_EQ(state.current_z80_frequency, 5'000'000u);
+
+    // 10/7 -> 20/7 (the hi-res turbo): the same instant, twice the T
+    state.hw_turbo_ratio = 20;
+    _z80->ApplyHardwareTurboNow();
+    EXPECT_EQ(_z80->t, 20000u);
+
+    state.hw_turbo_ratio = 1;
+    state.hw_clock_den = 1;
+    _z80->ApplyHardwareTurboNow();
+    EXPECT_EQ(_z80->t, 7000u);
+    EXPECT_EQ(state.ClockDen(), 1u);
+}
+
 /// endregion </Hardware clock ratio>
 
 /// region <Instruction engine seam (Z80::SetEngine, ICpuEngine)>

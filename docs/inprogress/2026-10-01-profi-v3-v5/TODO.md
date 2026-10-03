@@ -55,3 +55,32 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   modeled - the hi-res frame timing is open (design 5.3)
 - [x] Emulated test programs ([test-programs.md](test-programs.md)): Tact Meter reproduces the v3.2 turbo
   measurement to four digits; TEST 4.30 reads the expected ports, frame and memory class
+- [x] Keyboard (branch `profi-xt-kbd`, design section 9): `[PROFI] Keyboard=Matrix|XT|XTTable` (v5 XT, v3 Matrix);
+  the MCS-48 core (`core/src/emulator/cpu/mcs48/`), `ProfiXtKbc` running the reconstructed PROFI-XT firmware
+  (`data/rom/profixt/`), the table engine (`profixtkeymap`), `pckey::XtSet1Bytes`, `#FE` bit 5 = KD5 on v5, Auto route
+  = the controller alone, the automation reverse map, TTD id 44, all automation surfaces + Qt, the 8035 simulator in
+  `tools/machines/profi/xtkbd/`. Tests: `mcs48_test.cpp`, `profixtkbc_test.cpp` (BIOS 2.0 reads F1 as 75h)
+- [ ] Keyboard: a clean re-dump of the PROFI-XT v1.27 EPROM (confirms the 5 reconstructed bytes 02Eh-032h)
+- [ ] Keyboard: the v3.2 on-board XT pads (`#FE` bit 7 + the XT clock on /INT) - not built until software for it turns up
+- [ ] Keyboard: the native v5 mechanical keyboard's EXT / MODE / GRAF keys (two-contact combinations, sheet 9)
+- [x] H1 (branch `profi-hires-xt`): the fractional clock ratio (`hw_clock_den`) through every CPU / base T conversion;
+  no machine changes ([design-hires.md](design-hires.md))
+- [x] H2a: hi-res CPU clock (v3 3 MHz, v5 ZQ3 / 4, `[PROFI] ZQ3MHz`), frame and INT from the sync PROM's upper half,
+  switched at the #DFFD write; the Profi TTD time grid (`TtdClockUnits`) - it was 1, so turbo halves were lost
+- [x] H2b (branch `profi-ay-clock`): AY clock 1.5 MHz in hi-res (v3 always, v5 unless `[PROFI] AyClock=new`): a
+  run-time AY clock on the TurboSound device, switched at its T-state, TTD-exact without new bytes, `psg_clock_hz`
+  in the AY state ([design-hires.md](design-hires.md) 3.1)
+- [x] The shipped Profi configs fit `TurboSound=Single` (the boards' one AY) instead of TSFM, so the hi-res AY clock
+  is what users hear
+- [ ] TSFM, if chosen, keeps 1.75 MHz in hi-res; the DSD native tap assumes 218.75 kHz
+- [x] TTD across a v3 hi-res switch replays exactly: the "divergence" was the test's stop condition on z80.t, which
+  a v3 entering hi-res rescales down (6/7); positions compare in TTD units (`V3HiresFrameSwitchesReplayExactly`)
+- [x] H3: hi-res waits (v5: 0-1 T around each video request at ZQ3/4, 1-3 T in turbo, ROM one-shot; #7FFD bit 5
+  runs the requests all line long; v3: none at 3 MHz, the 2/3 rule in turbo) and the v3 hi-res floating bus (the
+  cell's two bytes by tick half; which latch holds which page is open)
+- [x] H4: create-time `zq3_mhz` / `ay_clock` (WebAPI + OpenAPI, CLI `--profi-zq3` / `--profi-ay-clock`, MCP),
+  `profi_hires_cpu_hz` / `profi_zq3_mhz` / `profi_ay_clock` in the paging state (WebAPI, CLI, Lua, Python), the
+  machine list's `speed_multiplier` as a fraction (1.43 in hi-res); recipe verified live
+- [ ] Check against the forum's hi-res speed-test figures (5.06: 1.50 / 2.45) once the BIOS speed-test loop is found
+- [x] A/B of H1-H4 and the AY clock: no measurable cost on 48K / Pentagon / Scorpion / TurboSound ([design-hires.md](design-hires.md) 5)
+

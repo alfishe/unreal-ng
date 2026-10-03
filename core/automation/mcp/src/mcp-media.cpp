@@ -179,6 +179,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["seconds"]["description"] = "audio_capture duration in emulated seconds (0.01-30)";
     schema["properties"]["source"]["type"] = "string";
     schema["properties"]["source"]["description"] =
+        "screenshot: presented (default: the finished frame the window shows, a couple of frames behind) or live "
+        "(the frame as drawn now, no delay, no ZX DLSS; a paused machine also reports where the beam stopped). "
         "audio_capture: one mixer device instead of the master mix - beeper, ay1, ay2, fm1, fm2, covox (also the "
         "Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm (inspect_state aspect audio_mixer lists "
         "the fitted ones); its own buffer, before mute / volume";
@@ -232,6 +234,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         {
                             query += "mode=" + UrlEncodeSegment(args["mode"].asString()) + "&";
                         }
+                        if (args.isMember("source") && args["source"].isString() && !args["source"].asString().empty())
+                        {
+                            query += "source=" + UrlEncodeSegment(args["source"].asString()) + "&";
+                        }
                         if (!pathArg.empty())
                         {
                             query += "path=" + UrlEncodeSegment(pathArg) + "&";
@@ -254,6 +260,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             // What the image is: the area, the frame it was cut from and where the working picture is
                             std::ostringstream what;
                             what << body.get("area", "").asString();
+                            if (body.get("source", "presented").asString() == "live")
+                                what << ", live frame";
                             if (body.isMember("frame") && body.isMember("screen_window"))
                             {
                                 const Json::Value& frame = body["frame"];
@@ -262,6 +270,12 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                      << " " << frame.get("mode", "").asString() << " frame, screen window "
                                      << window.get("width", 0).asUInt() << "x" << window.get("height", 0).asUInt() << " at ("
                                      << window.get("x", 0).asUInt() << "," << window.get("y", 0).asUInt() << ")";
+                                if (frame.isMember("beam"))
+                                {
+                                    what << ", beam stopped at line " << frame["beam"].get("line", 0).asInt() << " T "
+                                         << frame["beam"].get("tstate", 0).asInt()
+                                         << (frame.get("partial", false).asBool() ? " (half-drawn frame)" : "");
+                                }
                             }
                             if (body.get("saved", false).asBool() && body.isMember("file"))
                             {

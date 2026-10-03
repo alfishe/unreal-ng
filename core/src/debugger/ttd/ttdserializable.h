@@ -92,6 +92,8 @@ enum class PeripheralId : uint8_t
                           // page 0Eh volume / routing, the READ CD sector waiting for the data buffer; boards with a CD unit only
     Vdac2Memory = 42,     // TS-Conf VDAC2 card: the FT812's memory regions (RAM_G, display lists, REG, CMD, ...), zero runs dropped, until TTD v2 regions
     Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
+    ProfiXtKbc = 44,      // Profi PROFI-XT keyboard controller: the MCS-48 (RAM, registers, ports, timer), output latch, WAIT
+                          // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
     // Future: SAA1099, GS512, etc.
     Count
 };

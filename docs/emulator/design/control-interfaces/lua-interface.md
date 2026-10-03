@@ -370,7 +370,7 @@ The same reports the WebAPI, Python, CLI and MCP return
 as Lua tables (arrays are 1-based sequences):
 
 ```lua
-ay  = audio_ay_state()      -- overview: available_chips, slot_device, chips[]
+ay  = audio_ay_state()      -- overview: available_chips, slot_device, psg_clock_hz, chips[]
 ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise, mixer, io_ports
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
@@ -403,9 +403,10 @@ bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write(
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
 fb, err = framebuffer("index")    -- {width, height, format, encoding, data = string}: "rgba" (R,G,B,A) or "index" (Sprinter pens)
-shot, err = screenshot{area="screen", format="png", path="scratch/shot.png"}
-          -- screenshot of the presented frame; every field optional: area "full" (default, the whole frame with
-          -- border) or "screen" (the working picture), format "png" (default) or "gif". Returns {format, area, width,
+shot, err = screenshot{area="screen", format="png", source="live", path="scratch/shot.png"}
+          -- screenshot; every field optional: area "full" (default, the whole frame with border) or "screen" (the
+          -- working picture), format "png" (default) or "gif", source "presented" (default, the finished frame the
+          -- window shows) or "live" (as drawn now; a paused machine adds frame.partial and frame.beam = {line, tstate}). Returns {format, area, width,
           -- height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width, height, mode, source,
           -- frame_number}, data = the encoded image as a string of bytes} (`file` instead of `data` with a path);
           -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG

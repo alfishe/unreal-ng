@@ -91,6 +91,8 @@
     // Audio state endpoints
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["description"] =
+        "AY / SSG overview: chip count, slot device (TurboSound / TSFM / None), `psg_clock_hz` (the clock the AY generators run at now: 1750000, or 1500000 on a Profi in hi-res with the AY slot, [PROFI] AyClock) and a per-chip summary. Same report as the CLI `state audio ay`, Lua / Python `audio_ay_state()` and MCP `inspect_state` aspect `audio_ay`.";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["required"] = true;

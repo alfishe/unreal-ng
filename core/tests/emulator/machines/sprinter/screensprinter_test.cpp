@@ -153,6 +153,16 @@ TEST_F(ScreenSprinter_Test, Geometry_736x288_320Lines)
     EXPECT_EQ(rd.screenOffsetTop, 16);
     EXPECT_TRUE(StoresHalfHeightLines(M_SPRINTER));
 
+    // The frame's own geometry names the same picture, and it is the square grid the renderer draws: square
+    // (0, 0) sits at its top-left corner (SquareX / SquareY are measured by the pixel tests below)
+    const FrameRect window = _screen->WorkingWindow();
+    EXPECT_EQ(window.x, SquareX(0));
+    EXPECT_EQ(window.y, SquareY(0));
+    EXPECT_EQ(window.width, 640);
+    EXPECT_EQ(window.height, 256);
+    EXPECT_EQ(window.x + window.width, SquareX(40)) << "40 squares of 16 pixels";
+    EXPECT_EQ(window.y + window.height, SquareY(32)) << "32 square rows of 8 lines";
+
     // The debug mapper of the family
     EXPECT_EQ(FamilyOf(M_SPRINTER), VideoFamily::Sprinter);
     EXPECT_STREQ(videomap::VideoMapService::MapperFor(VideoFamily::Sprinter).Family(), "sprinter");
