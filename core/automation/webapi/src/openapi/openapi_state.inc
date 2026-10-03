@@ -217,7 +217,7 @@
             "(ROM_RG, SYS_PG, ALL_MODE decoded, PORT_Y, RGMOD, HOLD, SCALE, CBL control), cells (#C0-#FF as hex "
             "rows), clock (turbo requested, front-panel switch, ratio 1 or 6, MHz, waits: the 21 MHz rule and the windows "
             "it applies to; original_waits: the ZX mode's PLD WAIT_ORIG with ALL_MODE bit 2 = 0 at 3.5 MHz - active, "
-            "all_mode_bit2, rule, period_t 4, phase_t (a placeholder until measured), windows_waiting), tape (time_base "
+            "all_mode_bit2, rule, period_t 4, ct5_rise_t (frame T mod 4 of the CT5 rise = every INT edge), waits_by_t1_from_int [0, 2, 1, 0], phase_note, windows_waiting), tape (time_base "
             "base_clock: the tape input counts real time, 21 MHz cannot load), frame (320 / 312 lines, base "
             "T-states 71680 / 69888), video (mode page, the picture's dominant square kind, square counts by kind, "
             "HOLD offsets, frame INT positions from the mode table), sound (the AY: 1.75 MHz, chips, stereo from the AY config; the "

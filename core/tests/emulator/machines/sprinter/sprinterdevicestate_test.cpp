@@ -113,7 +113,9 @@ TEST_F(SprinterDeviceState_Test, OriginalWaitsAndTapeAreReported)
     EXPECT_TRUE(Bool(waits, "active")) << DeviceState::ToText(report);
     EXPECT_FALSE(Bool(waits, "all_mode_bit2"));
     EXPECT_EQ(Int(waits, "period_t"), 4);
-    EXPECT_EQ(Int(waits, "phase_t"), 0);
+    EXPECT_EQ(Int(waits, "ct5_rise_t"), 2);
+    ASSERT_EQ(Member(waits, "waits_by_t1_from_int").items.size(), 4u);
+    EXPECT_EQ(Member(waits, "waits_by_t1_from_int").items[1].i, 2);
     ASSERT_EQ(Member(waits, "windows_waiting").items.size(), 4u);
     EXPECT_FALSE(Member(waits, "windows_waiting").items[0].b);
     EXPECT_TRUE(Member(waits, "windows_waiting").items[1].b);

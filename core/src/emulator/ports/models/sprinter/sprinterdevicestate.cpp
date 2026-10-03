@@ -563,8 +563,13 @@ StateNode OrigWaitsSummary(PortDecoder_Sprinter& decoder)
                 "waits while CT5 = 0 - 2 T when its T2 falls on the first low T of the 4-T CT5 period, 1 T on the second, "
                 "none on the high half (PLD WAIT_ORIG; ORIGIN.ZX)";
     w["period_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPeriod);
-    w["phase_t"] = static_cast<uint64_t>(SprinterOrigWaits::kPhase);
-    w["phase_note"] = "placeholder until measured on a real board (testdata/machines/sprinter/zx-timing, tdd-zx-mode Q1)";
+    w["ct5_rise_t"] = static_cast<uint64_t>(SprinterOrigWaits::kCt5RiseT);
+    StateNode byT = StateNode::Array();
+    for (uint8_t waits : SprinterOrigWaits::kWaitsFromRise)
+        byT.push(static_cast<uint64_t>(waits));
+    w["waits_by_t1_from_int"] = byT;
+    w["phase_note"] = "derived from the PLD: INT and the 4-T CT5 wave share the CT5 rise (frame T mod 4 = ct5_rise_t); "
+                      "waits by an access's T1 from INT mod 4 (tdd-zx-mode Q1; a board measurement would confirm it)";
     StateNode windows = StateNode::Array();
     for (uint8_t window = 0; window < 4; window++)
         windows.push(active && SprinterOrigWaits::WindowWaits(window, pld.pn));

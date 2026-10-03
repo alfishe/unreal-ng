@@ -28,8 +28,9 @@ come the ISA slots and the network cards (section 3).
   INT is never applied. A bug in the launcher or the mode files: report upstream.
 - Owner reports not reproduced: `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del; "Disk Error after
   the catalog" from a RAM-disk TRD (needs the image).
-- Against a real board: the border latch (4 T after IORQ by owner decision, the PLD sources give 3 T) and the
-  CT phase (zxtime reports only the average).
+- Against a real board: the border latch (4 T after IORQ by owner decision, the PLD sources give 3 T). The CT
+  phase of the original waits is derived from the PLD since 2026-10-03 (INT is a `CT5` rise: 0, 2, 1, 0 T by T1
+  from INT, tdd-zx-mode §3.3); a board would only confirm it.
 - Keyboard: a TTD replay that hands input back while the host holds other keys than the journal left held
   is not reconciled; the PLD's own ZX matrix decoder (code `#40` from the wire) is still the host's matrix keys.
 

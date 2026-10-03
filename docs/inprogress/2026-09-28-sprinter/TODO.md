@@ -182,8 +182,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     BASIC's `LOAD ""` loads at 3.5 MHz and fails at 21 MHz (T-ZX-7, T-ZX-8)
   - [x] Z3 (M) "original waits" (2026-10-02): `SprinterOrigWaits`, the PLD's 4-T CT5 period (not 5.33 T), windows 1 and
     3 with `#7FFD` bit 2; A/B in tdd-zx-mode §11.1
-  - [ ] Z3 follow-up (Q1): the CT phase from a real board - zxtime (testdata/machines/sprinter/zx-timing) reports the
-    average; an INT-relative 1-T probe is needed for the phase once a board confirms the waits
+  - [x] Z3 follow-up (Q1): the CT phase - **derived from the PLD** (2026-10-03, branch `sprinter-origwait-demos`): INT is
+    a `CT5` rise, so the waits are 0, 2, 1, 0 T by T1 from INT mod 4 (tdd-zx-mode §3.3, §10 Q1; T-ZX-9
+    `OrigWaits_ExactPatternFromInt`). Open, low: a board report (zxtime's average, an INT-relative probe) would confirm it
   - [ ] BIOS 3.06 Hotfix 2: DSS text does not scroll at the bottom line (MAME too; BIOS 3.06 of 2025 scrolls): find
     out whether HF2 needs a newer PLD bitstream or has a bug; ask the BIOS author
   - [ ] Owner's report (a), `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del: not reproduced (tdd-zx-mode §11
