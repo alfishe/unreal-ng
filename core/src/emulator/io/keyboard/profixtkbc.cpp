@@ -140,13 +140,9 @@ uint64_t ProfiXtKbc::NowBase() const
 
 uint64_t ProfiXtKbc::CpuTToBaseT(uint64_t cpuT) const
 {
-    // The ONE place CPU clocks of the current frame become base T-states (1 / base_z80_frequency, 3.5 MHz). It must
-    // follow the board's clock ratio: the Profi's hi-res mode runs the CPU at a non-integer ratio of 3.5 MHz
-    // (v5 5 MHz = 10/7, v3 3 MHz = 6/7) - point this at the EmulatorState conversion helper once it exists
-    const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier
-                                    ? _context->emulatorState.current_z80_frequency_multiplier
-                                    : 1u;
-    return cpuT / multiplier;
+    // The ONE place CPU clocks of the current frame become base T-states (1 / base_z80_frequency, 3.5 MHz). It
+    // follows the board's clock ratio, a fraction in hi-res (v5 5 MHz = 10/7, v3 3 MHz = 6/7): EmulatorState::CpuToBaseT
+    return _context->emulatorState.CpuToBaseT(static_cast<uint32_t>(cpuT));
 }
 
 uint64_t ProfiXtKbc::McuClockAt(uint64_t baseT) const
