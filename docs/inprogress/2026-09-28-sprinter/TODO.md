@@ -194,6 +194,14 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
     Across the Edge: paper plane B identical to a Pentagon on the same frames
     ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [x] Spectrum mode: the border one character (8 ZX pixels) ahead of the paper (owner report 2026-10-03, Across
+    the Edge in P128; branch `sprinter-zx-border-phase`): the border color was drawn from the port callback (IORQ);
+    the PLD latches it on `/IOWR` rising, at the I/O cycle's end (`SP2_ACEX.TDF:310-315`), and samples it with the
+    attribute every half T. Now drawn from IORQ + 4 T (`ScreenSprinter::CatchUpToBorderLatch`): Across's split-screen
+    border edge 168 -> 176 against the paper's 176, as the PENTAGON model ([research-zx-mode.md](research-zx-mode.md) §7.1).
+    The PLD sources give IORQ + 3 T (edge 174, still visibly 2 ZX pixels ahead); the owner chose the PENTAGON picture
+  - [ ] Check the border latch against a board (a photo / capture of Across the Edge's split screen on a Sprinter):
+    `kBorderLatchAfterIorqT` is 4 T by owner decision, 1 T beyond the PLD's latch; one constant if a board says 3
   - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
     border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
     change 8 lines off in the bottom border

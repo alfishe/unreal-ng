@@ -100,6 +100,22 @@ public:
     void CatchUpToWrite();
     static constexpr uint32_t kWriteLandsBeforeEndT = 1;
 
+    /// A border write (#FE, code #C2) is about to change the border color: draw the beam up to the moment the
+    /// PLD latches it, with the old color. The port callback runs at IORQ (T2 of the 4-T I/O cycle, op_D3);
+    /// the PLD clocks BORDER on /IOWR rising (SP2_ACEX.TDF:310-315: /IOWR = /WR or /IO, preset when /IO
+    /// goes high), i.e. when /IORQ ends at T3's falling edge, 2.5 T after the callback, and the video logic
+    /// samples it every half T with the attribute (VIDEO2.TDF DCOL <- BRD on LWR_COL). In the rounding of
+    /// kWriteLandsBeforeEndT (a byte stored 1.5 T into its cycle lands at T 2) that is the I/O cycle's end,
+    /// 3 T after the callback: drawn at the callback, the border ran 3 T (6 ZX pixels) ahead of the paper
+    /// of a Pentagon-timed program (Across the Edge in P128 mode).
+    /// The constant is 4, one T more than the PLD sources give: the Sprinter's first paper pixel comes 2 T
+    /// later after its INT than the Pentagon's (17 990 vs 17 988 T), so with the PLD's 3 T a Pentagon-timed
+    /// border split still ended 2 ZX pixels before the paper edge - visible in Across the Edge. Owner
+    /// decision (2026-10-03): the picture must match the PENTAGON model exactly, so the border keeps the
+    /// Pentagon's position relative to the paper. Revisit with a capture from a real board
+    void CatchUpToBorderLatch();
+    static constexpr uint32_t kBorderLatchAfterIorqT = 4;
+
 private:
     /// Draw [_prevTstate, end) - every beam position before `end` - with the state of now
     void DrawTo(uint32_t end);
