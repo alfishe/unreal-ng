@@ -283,6 +283,40 @@ TEST_F(ProfiBoot_Test, MenuEntriesStartWhatTheyName)
     }
 }
 
+/// @brief The BIOS 2.0 "Тест быстродействия" in hi-res reads 1.50 and, with TURBO, 2.45 - the figures a real 5.06
+///        with its 20 MHz ZQ3 showed (termik, zx-pk 21644 p.11, 2014; solegstar: the test is scaled to the 12 MHz
+///        crystal, "1.5 + the waits"). Without the hi-res waits it reads 1.65 / 3.35, so this checks the CPU clock
+///        and the wait model together (design-hires.md H3). The result bar ends at x = 63 + 80 x the figure
+static uint32_t SpeedTestBarEnd(EmulatorContext* context)
+{
+    FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+    const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+    const uint32_t y = 164;   // the result bar's row; the 1.00 reference bar is at y 153
+    const uint32_t background = pixels[140 * fb.width + 300] & 0x00FFFFFF;   // the panel's grey, inside the frame
+    uint32_t end = 0;
+    for (uint32_t x = 60; x < 548; x++)
+        if ((pixels[y * fb.width + x] & 0x00FFFFFF) != background)
+            end = x;
+    return end;
+}
+
+TEST_F(ProfiBoot_Test, BiosSpeedTestReadsWhatARealBoardReads)
+{
+    // Slower than the 50 ms guideline on purpose: the real BIOS boots, then runs its own timing loop
+    for (const bool turbo : {false, true})
+    {
+        SCOPED_TRACE(turbo ? "TURBO" : "normal");
+        _emulator->Reset(true);
+        _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, turbo);
+        _emulator->RunNFrames(600, true);                  // the BIOS menu
+        TapKeys("C6,C6,C6,C6,C6,ENT");                     // the test menu
+        TapKeys("C6,C6,C6,C6,C6,C6,ENT");                  // Тест быстродействия
+        _emulator->RunNFrames(400, true);
+        const uint32_t end = SpeedTestBarEnd(_emulator->GetContext());
+        EXPECT_EQ(end, turbo ? 63u + 196u : 63u + 120u) << "bar end " << end << " = speed " << (end - 63) / 80.0;
+    }
+}
+
 /// @brief The CP/M switch at power-on: the board holds #DFFD at #00 (research-profi-v5-open-items.md Q6), so the
 ///        BIOS cannot raise its hi-res menu and goes straight to Spectrum 128 - what the v5.0 manual says the switch
 ///        does ("pressed = Spectrum 128"). No other emulator models the switch; the behavior comes from the BIOS alone

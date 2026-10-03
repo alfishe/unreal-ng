@@ -90,7 +90,8 @@ TurboSound device that the machine sets at run time:
 ## 4. Open
 
 - The v3 DS80 floating bus: which screen page each of the two latches holds (O).
-- The v5 DS80 wait rule is a model (M); the forum's speed-test figures fit it but do not prove it.
+- The v5 DS80 wait rule is a model of the 5.06 netlist; BIOS 2.0's speed test reproduces a real 5.06's figures exactly
+  (1.50 / 2.45 with the waits; 1.65 / 3.35 without them), see test-programs.md.
 - 5.0-5.02 unmodified boards select ZQ3 with the CP/M button, not with DS80; two-crystal 5.0/5.01 builds stay at
   3.5 MHz in DS80. Board variants for these come later if anyone needs them.
 - The AY clock reaches the AY / TurboSound slot. The shipped Profi configs fit `TurboSound=Single`, the boards' one
