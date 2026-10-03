@@ -35,8 +35,8 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | Sprinter video RAM | Sprinter | whole blob (id 28) | region 6 `SprinterVideoRam` | R | | | ok | `debugger/ttd/sprinter/ttdsprinter.cpp` |
 | Sprinter fast RAM | Sprinter | whole blob (id 30) | region 7 `SprinterFastRam` | R | | | ok | same |
 | FT812 RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT | TSL-VDAC2 | zero-run blob (id 42) | regions 8–14 `Vdac2*` | R | | | ok | `debugger/ttd/tsconf/ttdvdac2.cpp` |
-| ZX-Evo AVR EEPROM | ATM3, TSL | — | region 15 `EvoAvrEeprom` (planned) | R | | | gap 10 | `memory/atm/evoavr.h:177` |
-| SMUC NVRAM | Scorpion with SMUC | — | region 16 `SmucEeprom` (planned) | R | | | gap 8 | `io/rtc/smucnvram.h:20-40` |
+| ZX-Evo AVR EEPROM | ATM3, TSL | — (v1 only: not recorded) | region 15 `EvoAvrEeprom`, compared at each capture | R | | | ok in the engine | `memory/atm/evoavr.cpp` `TTDRegions` |
+| SMUC NVRAM (EEPROM contents) | Scorpion, ProfScorpion | — (v1 only: not recorded) | region 16 `SmucEeprom`, compared at each capture | R | | | ok in the engine | `io/rtc/smucnvram.cpp` `TTDRegions` |
 | ZX-Evo font RAM | ATM3 | whole blob (id 22) | blob (region candidate) | R | | | ok | |
 | Disk sectors written while recording | all with disks | barrier marker only | per [decision 25](engine-decisions.md#e-machines-and-devices): a media version per checkpoint (planned) | R | | | gap 11 | `emulator/media/mediamanager.cpp:651` |
 
@@ -183,7 +183,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 7 | *Fixed 2026-10-02:* `current_z80_frequency` not restored | ATM2 keyboard-controller waits use a stale frequency | breaks replay |
 | 8 | *Fixed 2026-10-02 except the contents (gap 10):* SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state and contents not stored | RTC and IDE writes routed wrongly after a seek | breaks replay |
 | 9 | *Fixed 2026-10-02:* TS-Conf has no serializer for the ZX-Evo AVR volatile bytes | EEPROM window and ext type wrong after a seek | breaks replay |
-| 10 | ZX-Evo AVR EEPROM and SMUC EEPROM not recorded (region ids 15, 16 reserved) | NVRAM writes survive a seek back | breaks replay |
+| 10 | *Engine: fixed 2026-10-02 (regions 15, 16); v1 only otherwise:* ZX-Evo AVR EEPROM and SMUC EEPROM not recorded | NVRAM writes survive a seek back in v1 | v1 only |
 | 11 | Sectors written while recording are only barriers; host-side image changes reach replay | A backward seek reads post-write sectors | breaks replay |
 | 12 | Write-protect toggles not recorded; ATA protect switch in no checkpoint | | breaks replay |
 | 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |

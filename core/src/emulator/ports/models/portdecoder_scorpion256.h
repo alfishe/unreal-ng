@@ -96,6 +96,7 @@ public:
     /// Turbo+ runs the CPU at 3.5 or 7 MHz
     uint8_t TtdClockUnits() const override { return 2; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_smucNvram); }
     /// endregion </TTD model-specific state>
 
     /// SMUC EEPROM backing store (verification tests / debug UI)

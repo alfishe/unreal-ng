@@ -7,6 +7,7 @@
 #include <fstream>
 
 #include "common/filehelper.h"
+#include "debugger/ttd/ttdserializable.h"
 
 namespace
 {
@@ -26,6 +27,21 @@ EvoAvr::EvoAvr() : Ds12887(256)
     // Power-on (main.c: ps2keyboard_init, ps2keyboard_reset_log)
     _ps2.lastScancodeE0 = 1;  // "impossible scancode: E0 00"
     ResetPs2Log();
+}
+
+void EvoAvr::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+    _eepromTracker.Bind(_eeprom.data(), kEepromSize);
+    ttd::TTDDeviceRegion r;
+    r.desc.id = ttd::TTDRegionId::EvoAvrEeprom;
+    r.desc.name = "evo-avr.eeprom";
+    r.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::Ds12887);   // the AVR's clock blob is its state
+    r.desc.memory = _eeprom.data();
+    r.desc.bytes = static_cast<uint32_t>(kEepromSize);
+    r.desc.pieces = _eepromTracker.Pieces();
+    r.tracker = &_eepromTracker;
+    r.compareEachCapture = true;
+    out.push_back(r);
 }
 
 void EvoAvr::WriteRegister(uint8_t index, uint8_t val)

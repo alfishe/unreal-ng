@@ -23,6 +23,10 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/atm/evoavr.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
+#include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/ports/portdecoder.h"
 
 namespace
@@ -235,3 +239,122 @@ TEST_F(TimeTravelManager_ShadowModels_Fixture, Vdac2MemoryWrittenWhileRecording)
 }
 
 #endif  // ENABLE_VDAC2
+
+namespace
+{
+/// The engine region of @p name at checkpoint @p i, its real bytes
+std::vector<uint8_t> RegionAt(const ttd::TimeTravelEngine& engine, size_t i, const std::string& name)
+{
+    for (uint32_t r = 0; r < engine.Regions().size(); ++r)
+        if (engine.Regions()[r].name == name)
+        {
+            std::vector<uint8_t> mem(size_t(engine.Regions()[r].pieces) * ttd::kTTDPieceSize, 0);
+            EXPECT_TRUE(engine.RestoreRegion(i, r, mem.data()).Ok());
+            mem.resize(engine.Regions()[r].bytes);
+            return mem;
+        }
+    ADD_FAILURE() << "no region " << name;
+    return {};
+}
+
+/// #FFBA writes of one I2C byte write to the SMUC EEPROM: START, select,
+/// address, data, each with its ACK clock, STOP (SDA = bit 4, SCL = bit 6)
+std::vector<uint8_t> SmucWriteByte(uint16_t address, uint8_t value)
+{
+    std::vector<uint8_t> out;
+    auto lines = [&](bool sda, bool scl) { out.push_back(static_cast<uint8_t>((sda ? 0x10 : 0) | (scl ? 0x40 : 0))); };
+    auto byte = [&](uint8_t b) {
+        for (int bit = 7; bit >= 0; --bit)
+        {
+            const bool sda = (b >> bit) & 1;
+            lines(sda, false);
+            lines(sda, true);
+            lines(sda, false);
+        }
+        lines(true, false);
+        lines(true, true);
+        lines(true, false);
+    };
+    lines(true, true);
+    lines(false, true);
+    lines(false, false);
+    byte(static_cast<uint8_t>(0xA0 | ((address >> 7) & 0x0E)));
+    byte(static_cast<uint8_t>(address & 0xFF));
+    byte(value);
+    lines(false, false);
+    lines(false, true);
+    lines(true, true);
+    return out;
+}
+}  // namespace
+
+/// The ZX-Evo AVR EEPROM (ATM3, TS-Conf) and the SMUC EEPROM (Scorpion) are
+/// engine regions v1 does not record: written every frame while recording,
+/// each checkpoint's region holds the EEPROM as it was at that frame
+TEST_F(TimeTravelManager_ShadowModels_Fixture, EepromsAreRegionsOfEveryCheckpoint)
+{
+    struct Case
+    {
+        const char* model;
+        const char* region;
+    };
+    for (const Case c : {Case{"ATM3", "evo-avr.eeprom"}, Case{"TSL", "evo-avr.eeprom"}, Case{"SCORPION", "smuc.eeprom"}})
+    {
+        SCOPED_TRACE(c.model);
+        ASSERT_NO_FATAL_FAILURE(Start(c.model));
+        PortDecoder* decoder = _emulator->GetContext()->pPortDecoder;
+        EvoAvr* avr = nullptr;
+        if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(decoder))
+            avr = &atm3->GetEvoAvr();
+        if (auto* tsconf = dynamic_cast<PortDecoder_TSConf*>(decoder))
+            avr = &tsconf->GetEvoAvr();
+        auto* scorpion = dynamic_cast<PortDecoder_Scorpion256*>(decoder);
+        ASSERT_TRUE(avr || scorpion);
+
+        auto contents = [&]() {
+            if (avr)
+                return std::vector<uint8_t>(avr->EepromData(), avr->EepromData() + EvoAvr::kEepromSize);
+            std::vector<uint8_t> bytes(0x800);
+            for (uint16_t a = 0; a < bytes.size(); ++a)
+                bytes[a] = scorpion->GetSMUCNvram().GetEEPROMByte(a);
+            return bytes;
+        };
+
+        _v1->SetShadowEngine(&_engine);
+        ASSERT_TRUE(_v1->StartRecording());
+        std::vector<std::vector<uint8_t>> expected = {contents()};
+        for (uint8_t f = 0; f < 12; ++f)
+        {
+            const uint16_t address = static_cast<uint16_t>((f * 0x155) % (avr ? 0x1000 : 0x800));
+            const uint8_t value = static_cast<uint8_t>(0x30 + f);
+            if (avr)
+            {
+                avr->SetVolatileState(EvoAvr::kExtFirmwareVersion, static_cast<uint8_t>(address >> 4), 0x01);   // EEPROM mode
+                avr->WriteRegister(static_cast<uint8_t>(0xF0 + (address & 0x0F)), value);
+            }
+            else
+            {
+                for (uint8_t v : SmucWriteByte(address, value))
+                    scorpion->GetSMUCNvram().WriteSerialLink(v);
+            }
+            if (f % 3 != 2)   // some frames write nothing
+                _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+            else
+                _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+            expected.push_back(contents());
+            if (f % 3 == 2)
+                expected.insert(expected.end() - 1, expected.back());   // the frame in between saw the same contents
+        }
+        _v1->StopRecording();
+        _v1->SetShadowEngine(nullptr);
+
+        ASSERT_EQ(_engine.CheckpointCount(), expected.size());
+        ASSERT_NE(expected.front(), expected.back()) << "the writes changed the EEPROM";
+        for (size_t i = 0; i < _engine.CheckpointCount(); ++i)
+            ASSERT_TRUE(RegionAt(_engine, i, c.region) == expected[i]) << "checkpoint " << i;
+
+        TearDown();
+        _emulator = nullptr;
+        _v1 = nullptr;
+    }
+}

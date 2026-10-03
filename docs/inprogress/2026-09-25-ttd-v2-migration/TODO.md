@@ -33,6 +33,7 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [x] Region records per checkpoint only for regions that changed (an idle card costs nothing per frame; references below v1 on every model, 48K 96 → 60 B per frame)
   - [x] Sprinter video RAM (256 KB) and fast RAM (64 KB): compared at each capture (no write hook: the fast RAM is written through the generic CPU path); restore rebuilds the palette and the INT list; the engine's blobs hold the version byte only. Sprinter per frame v1 → engine: 13,290 → 1,611 bytes, capture p50 367 → 17.8 µs, memory restore 754 → 169 µs
   - [x] VDAC2 (FT812): the chip's seven memory regions (RAM_G 1 MB, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT 1.06 MB) from eve-emu's own dirty bitmap; restore = copy + `EveMemoryRestored`, as v1's blob; the engine's `Vdac2Memory` blob is the 8-byte header. Test writes RAM_G / display list / FIFO every frame through #77/#57 and checks each checkpoint against v1's blob (a mutation dropping the bitmap fails it). TSL-VDAC2 idle, 600 frames, v1 → engine: capture p50 603 → 5.7 µs (v1 encodes 2 MB per frame), memory restore 585 → 53 µs, resident 23.7 → 12.8 MB
+  - [x] ZX-Evo AVR EEPROM (4 KB) and SMUC EEPROM (2 KB): regions 15, 16, compared at each capture (one write path each, rarely used; the comparison costs a fraction of a microsecond per frame while recording). Test: EepromsAreRegionsOfEveryCheckpoint (ATM3, TS-Conf, Scorpion)
   - [ ] Each region keeps a delta-base copy of its memory (the engine's working memory, fixed: 2.3 MB for VDAC2): look at dropping it for regions whose pieces are mostly zero
   - [ ] ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model
@@ -50,7 +51,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [x] 7 `current_z80_frequency` restored (derived from the multiplier)
 - [x] 8 SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state (id 44); the contents go with gap 10
 - [x] 9 TS-Conf: ZX-Evo AVR volatile bytes (id 45)
-- [ ] 10 ZX-Evo AVR and SMUC EEPROMs as regions 15, 16
+- [x] 10 ZX-Evo AVR and SMUC EEPROMs as regions 15, 16 (engine; compared at each capture, no write hook; decoders hand them over through `PortDecoder::CollectTTDRegionSources`)
 - [ ] 11–13 Media: written sectors, write-protect toggles, queued swaps as events and media versions (decision 25)
 - [x] 14 ESP module `_zxLine`
 - [ ] 15 ZX-Evo F12 timer on emulated time

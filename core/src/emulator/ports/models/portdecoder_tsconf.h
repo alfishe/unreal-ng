@@ -107,6 +107,7 @@ public:
         return true;
     }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_evoAvr); }
 
     /// region <SD card (hardware-spec §8.1)>
     /// The card is the media manager's slot "sd.zc", as on the ZX-Evo

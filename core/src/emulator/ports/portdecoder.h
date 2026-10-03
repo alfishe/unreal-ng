@@ -16,6 +16,11 @@
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
+namespace ttd
+{
+class ITTDRegionSource;
+}
+
 // Opaque declaration (defined in emulator/memory/memory.h): the base decoder
 // interface only passes ROMModeEnum by value
 enum ROMModeEnum : uint8_t;
@@ -739,6 +744,14 @@ public:
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
     {
         return {};
+    }
+
+    /// Model devices whose memory the time-travel engine records as regions
+    /// but that are no serializer of their own (the ZX-Evo AVR EEPROM, the
+    /// SMUC EEPROM). They stay owned by the decoder
+    virtual void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out)
+    {
+        (void)out;
     }
     /// endregion </TTD model-specific state>
 

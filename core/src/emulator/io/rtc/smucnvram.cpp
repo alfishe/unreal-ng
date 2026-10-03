@@ -2,6 +2,8 @@
 
 #include "smucnvram.h"
 
+#include "debugger/ttd/ttdserializable.h"
+
 #include <cstring>
 
 //
@@ -180,6 +182,21 @@ void SMUCNvram::ResetSerialLinkState()
 	_writePos = 0;
 	_sda = 1;
 	_scl = 1;
+}
+
+void SMUCNvram::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
+{
+	_eepromTracker.Bind(_nvram, sizeof(_nvram));
+	ttd::TTDDeviceRegion r;
+	r.desc.id = ttd::TTDRegionId::SmucEeprom;
+	r.desc.name = "smuc.eeprom";
+	r.desc.ownerType = static_cast<uint16_t>(ttd::PeripheralId::Smuc);
+	r.desc.memory = _nvram;
+	r.desc.bytes = static_cast<uint32_t>(sizeof(_nvram));
+	r.desc.pieces = _eepromTracker.Pieces();
+	r.tracker = &_eepromTracker;
+	r.compareEachCapture = true;
+	out.push_back(r);
 }
 
 SMUCNvram::LinkState SMUCNvram::GetLinkState() const

@@ -175,6 +175,12 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         ownedSerializers.push_back(std::move(serializer));
     }
 
+    // Model memories the engine records as regions without a serializer of their own
+    std::vector<ITTDRegionSource*> modelRegionSources;
+    decoder->CollectTTDRegionSources(modelRegionSources);
+    for (ITTDRegionSource* source : modelRegionSources)
+        registry.RegisterRegionSource(source);
+
     // A declared id with no serializer behind it means this model's state
     // would be dropped silently - a recording that looks correct and restores
     // wrong. Refuse instead, naming what is missing.
