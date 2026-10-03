@@ -62,75 +62,53 @@ The rest is similar to *nix:
 
 ## Downloadable builds
 
-In GitHub Actions, run **Release Build** to publish a rolling `continuous`
-prerelease. No version bump or tag is required. Pull requests build the same
-packages without publishing them; pushing a `v*` tag still creates an optional
-milestone release.
+In GitHub Actions, run **Release Build** on `master` to publish a rolling `continuous`
+prerelease (no version bump or tag needed); on any other branch the same run builds and
+verifies the packages without publishing. Pull requests that touch the build build all
+packages; pushing a `v*` tag creates a milestone release.
 
-| Platform | Download |
-|----------|----------|
-| Ubuntu 24.04, x86-64 | `.deb` (bundled Qt 6.9.3) |
-| Ubuntu 25.10, x86-64 | `.deb` (system Qt 6.9.2 or newer) |
-| Fedora 43, x86-64 | `.rpm` (system Qt dependencies) |
-| Linux x86-64, glibc 2.39 or newer | `.AppImage` (bundled Qt) |
-| macOS Intel / Apple Silicon | Separate `.dmg` files |
-| Windows x86-64 / ARM64 | Separate portable `.zip` files containing executables, Qt and compiler runtime DLLs |
+| Platform | File |
+|----------|------|
+| Linux x86_64, portable (glibc 2.39+) | `UnrealNG-Suite-Linux-x86_64.AppImage` |
+| Linux x86_64, Ubuntu 24.04+ / Debian 13+ | `UnrealNG-Suite-Linux-x86_64.deb` |
+| macOS 12+, Apple Silicon / Intel | `UnrealNG-Suite-macOS-arm64.dmg` / `UnrealNG-Suite-macOS-x86_64.dmg` |
+| Windows x86_64 / ARM64 | `UnrealNG-Suite-Windows-x86_64.zip` / `UnrealNG-Suite-Windows-arm64.zip` |
+| Windows x86_64, MinGW build | `UnrealNG-Suite-Windows-x86_64-MinGW.zip` |
 
-DEB/RPM metadata requires a version. CI generates `YYYYMMDD.HHMMSS` in UTC
-once per run; download filenames stay stable. Existing application version
-constants are unchanged. The release identifies the source commit and includes
-SHA-256 checksums. Linux packages are installed and checked in fresh containers
-before publishing. macOS builds use the existing ad-hoc signing, without Apple
-notarization; Windows builds are unsigned.
+Every package carries its own private Qt (from the cached Qt SDK); all other dependencies
+are vendored and linked statically, so nothing has to be installed on the user's system.
+Release builds disable TLS (`-DTRANTOR_USE_TLS=none -DBUILD_C-ARES=OFF`): the WebAPI
+serves plain HTTP on localhost, so neither OpenSSL nor c-ares is needed.
 
-The two DEBs are alternatives: `UnrealNG-Suite-Ubuntu-24.04-Qt-bundled-x86_64.deb`
-includes Qt privately; `UnrealNG-Suite-Ubuntu-25.10-x86_64.deb` uses the system Qt.
-Install the appropriate one with `sudo apt install ./<filename>.deb`, or install
-the RPM with `sudo dnf install ./UnrealNG-Suite-Linux-x86_64.rpm`. For AppImage, mark the
-file executable and run it. If FUSE is unavailable, use
-`./UnrealNG-Suite-Linux-x86_64.AppImage --appimage-extract-and-run`.
+The DEB package version is the build time, `YYYYMMDD.HHMMSS` UTC; file names stay stable.
+macOS builds use ad-hoc signing without notarization; Windows builds are unsigned.
+Install the DEB with `sudo apt install ./UnrealNG-Suite-Linux-x86_64.deb`; for the
+AppImage, mark it executable and run it (without FUSE: `--appimage-extract-and-run`).
 Extract the entire Windows ZIP before launching `unreal-qt.exe`.
 
 ### Local Linux packaging
 
-The GUI source requires **Qt 6.7 or newer**. Install development packages for
-Core, Widgets, OpenGL, Multimedia, SVG and Core5Compat, plus OpenSSL, zlib, UUID,
-Brotli, CMake, Ninja, and the platform packaging
-tools (`dpkg-dev` or `rpm-build`). System Qt is discovered automatically.
-For an SDK installation, pass `-DCMAKE_PREFIX_PATH=/path/to/Qt`. Both
-`-DQt6_DIR=/path/to/Qt6` and the older `-DQT_INSTALL_PATH=...` accept a directory
-containing `Qt6Config.cmake`. A requested GUI build fails if Qt is unavailable;
-use `-DBUILD_QT_APPS=OFF` for a deliberate headless build.
+The GUI requires **Qt 6.7 or newer**. A requested GUI build fails if Qt is not found;
+use `-DBUILD_QT_APPS=OFF` for a deliberate headless build. Point CMake at a Qt SDK with
+`-DCMAKE_PREFIX_PATH=/path/to/Qt`, `-DQt6_DIR=...` or `-DQT_INSTALL_PATH=...`.
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-jobs=$(( $(nproc) / 2 )); jobs=$(( jobs > 0 ? jobs : 1 ))
-cmake --build build --parallel "$jobs"
-cpack --config build/CPackConfig.cmake -G DEB  # use RPM on Fedora
-```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=$HOME/Qt/6.9.3/gcc_64 -DUNREAL_BUNDLE_QT=ON \
+  -DTRANTOR_USE_TLS=none -DBUILD_C-ARES=OFF
+cmake --build build --parallel
+cpack --config build/CPackConfig.cmake -G DEB      # DEB with private Qt
 
-For a DEB that bundles Qt, configure with `-DUNREAL_BUNDLE_QT=ON` and an SDK
-prefix. CI uses the official Qt 6.9.3 SDK on Ubuntu 24.04, whose system Qt is too
-old. The bundled libraries and plugins stay private under `/usr/lib/unreal-ng`;
-no additional package repository is needed. The smaller system-Qt DEB is built
-on Ubuntu 25.10 and installation-tested on both Ubuntu 25.10 and 26.04.
-RPM builds use Fedora’s system Qt. CI includes the
-Ubuntu baseline in each DEB filename; local builds can set
-`-DUNREAL_PACKAGE_BASENAME=...` to choose a filename without the extension.
-
-For AppImage, install `linuxdeploy-x86_64.AppImage` and
-`linuxdeploy-plugin-qt-x86_64.AppImage` on `PATH`, then run:
-
-```bash
-cmake --build build --parallel "$jobs" --target package_suite_linux
+# AppImage: linuxdeploy-x86_64.AppImage and linuxdeploy-plugin-qt-x86_64.AppImage on PATH
+cmake --build build --parallel 1 --target package_suite_linux
 UNREAL_PACKAGE_VERSION=$(date -u +%Y%m%d.%H%M%S) \
-  QMAKE=/path/to/Qt/bin/qmake bash tools/package-appimage.sh build
+  QMAKE=$HOME/Qt/6.9.3/gcc_64/bin/qmake bash tools/package-appimage.sh build
 ```
 
-Outputs go to `build/packages`. Build AppImages on the oldest supported system;
-bundling Qt does not remove the host glibc requirement. The AppImage launches
-the emulator; its extracted `usr/bin` also contains the display utilities and
-MCP bridge. Native packages install these utilities on `PATH`.
+Outputs go to `build/packages`. Build on the oldest distribution you want to support:
+bundling Qt does not remove the host glibc requirement. The AppImage launches the
+emulator; its `usr/bin` also contains the display utilities and the MCP bridge. The DEB
+installs everything under `/usr/lib/unreal-ng` with launchers on `PATH`.
 
 ## License
 

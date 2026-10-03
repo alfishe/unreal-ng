@@ -80,12 +80,17 @@ sequenceDiagram
    - Go to **Releases** page
    - Find the draft release (marked with "Draft" badge)
    - Check all artifacts are present:
-     - `UnrealNG-Suite-Linux.tar.gz`
-     - `UnrealNG-Suite-Windows-MSVC.zip`
-     - `UnrealNG-Suite-Windows-MinGW.zip`
-     - `UnrealNG-Suite-macOS-x64.dmg`
-     - `UnrealNG-Suite-macOS-ARM64.dmg`
+     - `UnrealNG-Suite-Linux-x86_64.AppImage`
+     - `UnrealNG-Suite-Linux-x86_64.deb`
+     - `UnrealNG-Suite-macOS-x86_64.dmg`
+     - `UnrealNG-Suite-macOS-arm64.dmg`
+     - `UnrealNG-Suite-Windows-x86_64.zip`
+     - `UnrealNG-Suite-Windows-x86_64-MinGW.zip`
+     - `UnrealNG-Suite-Windows-arm64.zip`
      - `SHA256SUMS.txt`
+
+   Running the workflow on a branch other than `master` builds and verifies all
+   packages (download them from the run's **Artifacts**) without publishing a release.
 
 5. **Clean up**
    - Delete the draft release from the Releases page when testing is complete

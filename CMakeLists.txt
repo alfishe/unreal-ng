@@ -541,10 +541,6 @@ if (BUILD_QT_APPS)
             # A portable ZIP must carry the compiler runtime, including on ARM64.
             set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
             include(InstallRequiredSystemLibraries)
-            if(CMAKE_MSVC_ARCH STREQUAL "arm64")
-                include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FilterArm64RuntimeLibraries.cmake)
-                unrealng_filter_arm64_runtime_libraries(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-            endif()
             if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
                 message(FATAL_ERROR "MSVC redistributable DLLs were not found")
             endif()
@@ -605,13 +601,7 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libwinpthread-1.dll"
                     "${SUITE_STAGING_DIR}/"
-                # Copy OpenSSL DLLs (required for WebAPI/network features)
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
-                    "${SUITE_STAGING_DIR}/"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${MINGW_BIN_DIR}/libssl-3-x64.dll"
-                    "${SUITE_STAGING_DIR}/"
+                # Any further DLLs the binaries import (e.g. OpenSSL when TLS is on)
                 COMMAND ${CMAKE_COMMAND}
                     "-DSTAGING_DIR=${SUITE_STAGING_DIR}"
                     "-DMINGW_BIN_DIR=${MINGW_BIN_DIR}"
@@ -651,7 +641,9 @@ if (BUILD_QT_APPS)
     
     # Linux: Combined tarball with all apps and shared resources
     if(UNIX AND NOT APPLE)
-        include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinuxPackaging.cmake)
+        if(UNREAL_BUNDLE_QT)
+            include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinuxPackaging.cmake)
+        endif()
         set(LINUX_PACKAGE_COMMANDS
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"

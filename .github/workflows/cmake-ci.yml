@@ -56,8 +56,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DTESTS=ON
-          jobs=$(( $(nproc) / 2 ))
-          cmake --build build --target core-tests --parallel "$(( jobs > 0 ? jobs : 1 ))"
+          cmake --build build --target core-tests --parallel
 
 
       - name: Run TTD regression tests
