@@ -45,6 +45,8 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <unordered_map>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -982,6 +984,18 @@ public:
     /// @param kind   Source classification (UI / automation hint).
     /// @param reason Short human-readable description. May be nullptr.
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason);
+
+    /// A tool's edit of the machine while recording (Emulator::EditMemoryFromTool,
+    /// Phase 3): BeginToolEdit before the edit, EndToolEdit after it. The edit
+    /// is a DebuggerEdit marker for v1 (a barrier) and, with its bytes - the
+    /// RAM pages and device-memory pieces written since the last checkpoint,
+    /// and every device state the edit changed - an input event the engine's
+    /// replay applies (no barrier)
+    void BeginToolEdit();
+    void EndToolEdit(const char* source);
+
+    /// The bytes of the tool edit recorded as v1 marker @p markerIndex (empty: none)
+    const std::unordered_map<size_t, std::vector<uint8_t>>& ToolEditPayloads() const { return _toolEditPayloads; }
 
     /// @brief Read-only access to the marker journal. Used by tests, the UI,
     /// and automation surfaces that surface the marker list.
@@ -1923,6 +1937,11 @@ private:
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
     TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
+    std::map<uint8_t, std::vector<uint8_t>> _toolEditBefore;   ///< device states when a tool edit began
+    bool _toolEditOpen = false;
+    std::unordered_map<size_t, std::vector<uint8_t>> _toolEditPayloads;   ///< v1 marker index -> edit bytes
+    /// Apply a tool edit's bytes (a replay crossing it)
+    void ApplyToolEdit(const std::vector<uint8_t>& payload);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowBusReads = 0;     ///< ... and v1's port journals

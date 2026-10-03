@@ -222,3 +222,44 @@ TEST_F(TimeTravelManager_EngineSeek_Test, RecordedFixtures_EngineSeeksLandOnV1sM
         _engine.EndSession();
     }
 }
+
+/// A tool edit while recording (Emulator::EditMemoryFromTool, mid-frame):
+/// v1 keeps it as a barrier and stops before it; the engine has its bytes and
+/// replays through it, landing on the machine the recording had at the target
+TEST_F(TimeTravelManager_EngineSeek_Test, AToolEditReplaysWithItsBytes)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("PENTAGON", GSTypeKind::Z80, true));
+    // loop: LD A,(#C000); LD (#C001),A; OUT (#FE),A; JR loop
+    const uint8_t program[] = {0xF3, 0x3A, 0x00, 0xC0, 0x32, 0x01, 0xC0, 0xD3, 0xFE, 0x18, 0xF6};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pMemory->DirectWriteToZ80Memory(0xC000, 0x01);
+    _context->pCore->GetZ80()->pc = 0x8000;
+
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    _emulator->RunTStates(20000, /*skipBreakpoints=*/true);
+    _emulator->EditMemoryFromTool("test edit", [&] { _context->pMemory->ToolWriteToZ80Memory(0xC000, 0x5A); });
+    _emulator->RunTStates(10000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint target{_context->emulatorState.frame_counter,
+                                   _context->emulatorState.TtdTInFrame(_context->pCore->GetZ80()->t)};
+    const MachineState recorded = Capture();
+    ASSERT_EQ(_context->pMemory->DirectReadFromZ80Memory(0xC001), 0x5A) << "the program copied the edited byte";
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+
+    ttd::TimeTravelManager::TTDSeekResult result;
+    EXPECT_FALSE(_v1->SeekTo(target, &result)) << "v1 stops at the edit's marker";
+
+    _v1->SetReplaySource(&_engine);
+    ASSERT_TRUE(_v1->SeekTo(target, &result)) << "the engine replays through the edit";
+    const MachineState replayed = Capture();
+    _v1->SetReplaySource(nullptr);
+    EXPECT_EQ(std::memcmp(&recorded.cpu, &replayed.cpu, sizeof(recorded.cpu)), 0) << "CPU";
+    EXPECT_EQ(recorded.t, replayed.t);
+    EXPECT_TRUE(recorded.ram == replayed.ram) << "RAM";
+    for (const auto& [id, bytes] : recorded.devices)
+        EXPECT_TRUE(replayed.devices.at(id) == bytes) << "device " << int(id);
+}

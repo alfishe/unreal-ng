@@ -9,6 +9,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 namespace ttd
 {
@@ -28,7 +30,11 @@ struct TTDV1EventCursor
 /// merged in time order (input before a marker at the same instant), and
 /// advance the cursor. Returns how many were appended; an entry the engine
 /// refuses (before its first frame) is skipped and counted in @p refused
+/// @p editData: a debugger edit's bytes by marker index (live recording,
+/// TimeTravelManager::ToolEditPayloads); such an edit becomes input with its
+/// bytes, one without them (v1 files) a barrier
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,
-                    TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused = nullptr);
+                    TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused = nullptr,
+                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData = nullptr);
 
 }  // namespace ttd

@@ -695,9 +695,12 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
         WaitForPauseConfirmation(1000);
     }
 
+    // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
     if (recording)
-        ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, source);
+        ttd->BeginToolEdit();
     edit();
+    if (recording)
+        ttd->EndToolEdit(source);
 
     if (park)
         Resume(false);

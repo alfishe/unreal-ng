@@ -10,7 +10,8 @@ namespace ttd
 {
 
 size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, const TTDExternalEventJournal& external,
-                    TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused)
+                    TTDV1EventCursor& cursor, uint64_t throughFrame, size_t* refused,
+                    const std::unordered_map<size_t, std::vector<uint8_t>>* editData)
 {
     const std::vector<TTDInputEvent>& inputs = input.Events();
     const std::vector<TTDExternalEvent> markers = external.SnapshotEvents();
@@ -41,12 +42,22 @@ size_t FeedV1Events(TimeTravelEngine& engine, const TTDInputJournal& input, cons
         }
         else
         {
-            const TTDExternalEvent& m = markers[cursor.external++];
+            const size_t index = cursor.external++;
+            const TTDExternalEvent& m = markers[index];
             at = m.time;
             ev.kind = static_cast<TTDEventKind>(0x0100 + static_cast<uint16_t>(m.kind));
-            const size_t length = strnlen(m.reason, sizeof(m.reason));
-            if (length)
-                ev.payload = engine.Payloads().Store(reinterpret_cast<const uint8_t*>(m.reason), length);
+            const auto edit = editData ? editData->find(index) : decltype(editData->end()){};
+            if (ev.kind == TTDEventKind::DebuggerEdit && editData && edit != editData->end())
+            {
+                ev.args[0] = kEditCarriesData;   // the payload is the edit itself
+                ev.payload = engine.Payloads().Store(edit->second.data(), edit->second.size());
+            }
+            else
+            {
+                const size_t length = strnlen(m.reason, sizeof(m.reason));
+                if (length)
+                    ev.payload = engine.Payloads().Store(reinterpret_cast<const uint8_t*>(m.reason), length);
+            }
         }
         if (engine.AppendEvent(at.frame, at.tInFrame, ev))
             ++appended;

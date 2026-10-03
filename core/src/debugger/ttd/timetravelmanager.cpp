@@ -250,6 +250,7 @@ bool TimeTravelManager::StartRecording()
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
         DisarmInputPlayback();
         _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
+        _toolEditPayloads.clear();
         _bookmarks.Clear();  // TD-4 — prior bookmarks point into wiped history
         if (_writeJournal)
             _writeJournal->Clear();  // Phase 4 — drop any prior write records
@@ -377,7 +378,8 @@ void TimeTravelManager::StopRecording()
             for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
                 _shadowEngine->AppendBusWrite(r);
         }
-        FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX);
+        FeedV1Events(*_shadowEngine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr,
+                     &_toolEditPayloads);
     }
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
@@ -483,6 +485,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     DisarmInputPlayback();
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
+    _toolEditPayloads.clear();
     _bookmarks.Clear();  // TD-4 — bookmarks invalidate with the timeline
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
@@ -2018,6 +2021,11 @@ void TimeTravelManager::ServiceInput()
             while (_engineEventCursor < log.Count() && log.At(_engineEventCursor).machineTime <= start + now.tInFrame)
             {
                 const TTDEvent& ev = log.At(_engineEventCursor++);
+                if (ev.kind == TTDEventKind::DebuggerEdit && TTDEventLog::RoleOf(ev) == TTDEventRole::Input)
+                {
+                    ApplyToolEdit(_replayEngine->Payloads().Bytes(ev.payload));
+                    continue;
+                }
                 if (!IsInputKind(ev.kind))
                     continue;
                 TTDInputEvent in;
@@ -2264,6 +2272,129 @@ TTDPortSearchResult TimeTravelManager::SearchPortEvents(const TTDPortQuery& q) c
 // ---------------------------------------------------------------------------
 // External-event markers (Phase 2 Item 6; parent TDD §5.1)
 // ---------------------------------------------------------------------------
+
+// A tool edit's bytes, as records: kind u8, id u16, index u32, length u32, bytes.
+// Kinds: 1 a machine RAM page (index = page), 2 a device-memory piece (id =
+// TTDRegionId, index = piece), 3 a device's whole state (id = v1 id)
+namespace
+{
+enum : uint8_t
+{
+    kEditRamPage = 1,
+    kEditRegionPiece = 2,
+    kEditDeviceState = 3,
+};
+void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
+                   uint32_t length)
+{
+    const size_t at = out.size();
+    out.resize(at + 11 + length);
+    out[at] = kind;
+    std::memcpy(out.data() + at + 1, &id, 2);
+    std::memcpy(out.data() + at + 3, &index, 4);
+    std::memcpy(out.data() + at + 7, &length, 4);
+    std::memcpy(out.data() + at + 11, bytes, length);
+}
+}  // namespace
+
+void TimeTravelManager::BeginToolEdit()
+{
+    _toolEditBefore.clear();
+    _toolEditOpen = _state == TTDSessionState::Recording;
+    if (!_toolEditOpen)
+        return;
+    for (const auto& [id, device] : _peripherals.Devices())
+        if (device && device->TTDStateSize() != 0)
+            device->TTDSaveStateTo(_toolEditBefore[id]);
+}
+
+void TimeTravelManager::EndToolEdit(const char* source)
+{
+    if (!_toolEditOpen || _state != TTDSessionState::Recording)
+    {
+        _toolEditOpen = false;
+        return;
+    }
+    _toolEditOpen = false;
+
+    // Everything written since the last checkpoint, whole: the RAM pages and
+    // device-memory pieces marked dirty (the edit's among them) and every
+    // device state the edit changed. A replay reaches the edit with the same
+    // contents as when recording, so writing these is the state after it
+    std::vector<uint8_t> payload;
+    if (_dirtyTracker && _memory)
+        for (uint16_t page = 0; page < _modelRamPages; ++page)
+            if (_dirtyTracker->IsDirty(page))
+                PutEditRecord(payload, kEditRamPage, 0, page, _memory->RAMPageAddress(page), 0x4000);
+    std::vector<TTDDeviceRegion> regions;
+    for (ITTDRegionSource* src : _peripherals.RegionSources())
+        src->TTDRegions(regions);
+    for (const TTDDeviceRegion& r : regions)
+    {
+        if (!r.desc.memory)
+            continue;
+        for (uint32_t p = 0; p < r.desc.pieces; ++p)
+        {
+            if (r.tracker && !r.compareEachCapture && !r.tracker->IsDirty(p))
+                continue;
+            const size_t offset = size_t(p) * kTTDPieceSize;
+            const uint32_t length = static_cast<uint32_t>(std::min<size_t>(kTTDPieceSize, r.desc.bytes - offset));
+            PutEditRecord(payload, kEditRegionPiece, static_cast<uint16_t>(r.desc.id), p, r.desc.memory + offset, length);
+        }
+    }
+    std::vector<uint8_t> after;
+    for (const auto& [id, device] : _peripherals.Devices())
+    {
+        if (!device || device->TTDStateSize() == 0)
+            continue;
+        device->TTDSaveStateTo(after);
+        const auto it = _toolEditBefore.find(id);
+        if (it == _toolEditBefore.end() || it->second != after)
+            PutEditRecord(payload, kEditDeviceState, id, 0, after.data(), static_cast<uint32_t>(after.size()));
+    }
+    _toolEditBefore.clear();
+
+    const size_t before = _externalEvents.Size();
+    RecordExternalEvent(TTDExternalEventKind::DebuggerEdit, source);
+    if (_externalEvents.Size() > before)
+        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+}
+
+void TimeTravelManager::ApplyToolEdit(const std::vector<uint8_t>& payload)
+{
+    std::vector<TTDRegionDesc> regions = LiveRegions();
+    size_t at = 0;
+    while (at + 11 <= payload.size())
+    {
+        const uint8_t kind = payload[at];
+        uint16_t id = 0;
+        uint32_t index = 0, length = 0;
+        std::memcpy(&id, payload.data() + at + 1, 2);
+        std::memcpy(&index, payload.data() + at + 3, 4);
+        std::memcpy(&length, payload.data() + at + 7, 4);
+        const uint8_t* bytes = payload.data() + at + 11;
+        at += 11 + length;
+        if (at > payload.size())
+            break;
+        if (kind == kEditRamPage && _memory && index < _modelRamPages && length == 0x4000)
+            std::memcpy(_memory->RAMPageAddress(static_cast<uint16_t>(index)), bytes, length);
+        else if (kind == kEditRegionPiece)
+        {
+            for (const TTDRegionDesc& r : regions)
+                if (static_cast<uint16_t>(r.id) == id && r.memory && size_t(index) * kTTDPieceSize + length <= r.bytes)
+                    std::memcpy(r.memory + size_t(index) * kTTDPieceSize, bytes, length);
+        }
+        else if (kind == kEditDeviceState)
+        {
+            const auto it = _peripherals.Devices().find(static_cast<uint8_t>(id));
+            if (it != _peripherals.Devices().end() && it->second &&
+                (it->second->TTDStateSize() == length || it->second->TTDVariableSize()))
+                it->second->TTDLoadState(bytes);
+        }
+    }
+    if (_memory)
+        _memory->UpdateZ80Banks();
+}
 
 void TimeTravelManager::RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
 {
@@ -2666,7 +2797,28 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // replay, the chosen checkpoint already reflects any markers at or
     // before that frame boundary.
     // ------------------------------------------------------------------
-    if (target.tInFrame > restoredTInFrame)
+    // The engine's data: a sealed replay has no barrier but a v1 record without its data
+    if (_replayEngine && target.tInFrame > restoredTInFrame)
+    {
+        TTDMachineTime start = 0;
+        _replayEngine->Frames().Start(cp.time.frame, start);
+        if (const TTDEvent* barrier = _replayEngine->Events().FirstBarrierIn(start, start + target.tInFrame))
+        {
+            const uint32_t at = static_cast<uint32_t>(barrier->machineTime - start);
+            if (at > 0)
+                ReplayWithinFrame(cp.time.frame, at);
+            SetState(TTDSessionState::Detached);
+            if (outResult)
+            {
+                outResult->reached = false;
+                outResult->arrivedAt = TTDTimePoint{cp.time.frame, at};
+                outResult->haltReason = TTDSeekHaltReason::ExternalEvent;
+            }
+            return false;
+        }
+        ReplayWithinFrame(cp.time.frame, target.tInFrame);
+    }
+    else if (target.tInFrame > restoredTInFrame)
     {
         if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, target))
         {
@@ -3070,6 +3222,8 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     const TTDTimePoint cut = (from < here) ? here : from;
     _inputJournal.DropAfter(cut);
     _externalEvents.DropAfter(cut);  // Phase 2 Item 6 — markers past the resume point are dead future
+    for (auto it = _toolEditPayloads.begin(); it != _toolEditPayloads.end();)
+        it = it->first >= _externalEvents.Size() ? _toolEditPayloads.erase(it) : std::next(it);
     _bookmarks.DropAfter(cut);  // TD-4 — bookmarks past the resume point are dead future
 
     // Coverage of the discarded future must go too, or reverse search prunes
@@ -3486,7 +3640,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         return;
     }
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
-    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame);
+    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads);
 }
 
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
@@ -4987,6 +5141,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _inputJournal.Assign(std::move(stagedInputs), std::move(stagedNet), std::move(stagedNetPayload));
     DisarmInputPlayback();
     _externalEvents.Clear();
+    _toolEditPayloads.clear();
     for (const TTDExternalEvent& marker : stagedMarkers)
         _externalEvents.Record(marker);
     _inputHistoryComplete = hasInputJournal && hasExternalEvents;
