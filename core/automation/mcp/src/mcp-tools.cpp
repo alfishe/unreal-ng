@@ -925,6 +925,17 @@ void RegisterControlExecution(ToolRegistry& registry)
 
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
                     caller.Call(method, path, bodyPtr, [summary, &caller, id, done](int status, Json::Value response) mutable {
+                        // A breakpoint that ended a step says so (the structured result carries `stop`)
+                        if (response.isObject() && response.isMember("stop") &&
+                            response["stop"].get("reason", "").asString() == "breakpoint")
+                        {
+                            const Json::Value& stop = response["stop"];
+                            char where[96];
+                            std::snprintf(where, sizeof(where), "Stopped at breakpoint #%u (%s) at $%04X after %u instruction(s). ",
+                                          stop.get("breakpoint_id", 0).asUInt(), stop.get("access", "").asString().c_str(),
+                                          stop.get("address", 0).asUInt(), response.get("executed", 0).asUInt());
+                            summary = where;
+                        }
                         if (status < 200 || status >= 300)
                         {
                             std::string hint;

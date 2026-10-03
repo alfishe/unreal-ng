@@ -7,7 +7,9 @@ accepted. **What the chip does** is defined in
 [ft812-behavior-spec.md](ft812-behavior-spec.md) (cited as "spec §n"); this document
 decides how that behavior is organized in code.
 
-Date: 2026-10-01. Status: draft for review; no code exists.
+Date: 2026-10-01. Status: built as `eve-emu` (own repository; vendored into unreal-ng at
+`core/src/3rdparty/eve-emu`). This is the design it was built from; the library's code and its
+`docs/` are authoritative where they differ.
 
 Decisions by the user, 2026-10-01:
 

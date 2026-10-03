@@ -161,8 +161,12 @@ end:
     return g_have_simd - 1;
 #endif /* MINIMP3_ONLY_SIMD */
 }
-#elif defined(__ARM_NEON) || defined(__aarch64__)
+#elif defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#include <arm64_neon.h>
+#else
 #include <arm_neon.h>
+#endif
 #define HAVE_SIMD 1
 #define VSTORE vst1q_f32
 #define VLD vld1q_f32

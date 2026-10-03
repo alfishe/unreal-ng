@@ -1,5 +1,7 @@
 # TODO: ATM Turbo 2+ v7.10 RAM waits at 7 MHz
 
+Status 2026-10-03: implemented on master (`atm710turbooverlay`, `5ffa5cc7b`, the WD1793 port wait in `portdecoder_atm710.cpp`, tests, the contention report); left: the A/B benchmark on a quiet machine, the NedoOS browser check at 7 MHz in Qt, a frame-loop measurement on a real v7.10 (none exists). PLAN #61 follow-up 4.
+
 **Plan:** PLAN #61 follow-up 4 · [README.md](README.md)
 
 | Step | Status |

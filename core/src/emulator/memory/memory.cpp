@@ -369,24 +369,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         uint16_t breakpointID = brk.HandleMemoryRead(addr);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            // Pause emulator (single source of truth)
-            emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-            // Wait until emulator resumed externally
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::MemoryRead);
         }
     }
     /// endregion </Read breakpoint logic>
@@ -488,24 +472,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         uint16_t breakpointID = brk.HandleMemoryWrite(addr);
         if (breakpointID != BRK_INVALID)
         {
-            bool isHidden = false;
-            auto* bp = brk.GetBreakpointById(breakpointID);
-            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
-            {
-                isHidden = true;
-            }
-
-            // Pause emulator (single source of truth)
-            emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-            // Wait until emulator resumed externally
-            emulator.WaitWhilePaused();
+            // Pause and park, or during a direct run end it after this instruction
+            emulator.OnBreakpointHit(breakpointID, addr, BreakpointHitKind::MemoryWrite);
         }
     }
     /// endregion </Write breakpoint logic>

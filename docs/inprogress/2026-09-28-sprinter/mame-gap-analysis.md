@@ -103,7 +103,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | T6 | An acknowledged on-chip interrupt (CTC / SIO / PIO) | also clears the PLD's frame, keyboard and Covox-Blaster requests (§3 item 3) | the PLD INT sits behind the chip's daisy chain (`portdecoder_sprinter.cpp:368-373`) | **MAME wrong** | done |
 | T7 | Keyboard INT (ALL_MODE `& #09 == #09`) | per 11 keyboard clock edges, 32 T pulse (`:1706-1718`) | per received byte, latched until the acknowledge (`sprinterintsource.h:42-46`; PLD `KBD.TDF`) | **ours better** | done (S4) |
 | T9 | ZX-mode timing per launcher mode (frame, clock, INT position, INT count, 21 MHz loop speed) | zxtime, `-bios v3.06`, 2026-10-02 ([tdd-zx-mode.md](tdd-zx-mode.md) §4.1) | the same run: every number equal, the mode tables byte-identical, the 128 menu picture pixel-identical | **equal** | done (S8 Z1) |
-| T10 | "Original waits" (ALL_MODE bit 2 = 0, PLD `WAIT_ORIG`, ORIGIN.ZX) | none (zxtime: 0 extra T per screen read) | `SprinterOrigWaits`: 4-T CT5 period, windows 1 and 3 with `#7FFD` bit 2, phase placeholder (zxtime: 1.000 T per read every 13 T) | **MAME missing** | done (S8 Z3); phase: Q1 |
+| T10 | "Original waits" (ALL_MODE bit 2 = 0, PLD `WAIT_ORIG`, ORIGIN.ZX) | none (zxtime: 0 extra T per screen read) | `SprinterOrigWaits`: 4-T CT5 period, windows 1 and 3 with `#7FFD` bit 2, phase derived from the PLD: 0, 2, 1, 0 T by T1 from INT (zxtime: 1.000 T per read every 13 T) | **MAME missing** | done (S8 Z3; phase Q1 closed 2026-10-03) |
 | T8 | Covox-Blaster INT every 128 samples | `:1760-1764`, request 2 | `CovoxBlaster` (CNT bit 6 falling, PLD `CBL_INT`) through `SprinterIntSource`, vector `#FF` | **equal** | done (S6) |
 
 ### 2.3 PLD port table and codes

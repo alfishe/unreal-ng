@@ -6,7 +6,8 @@ card. The chip itself is the `eve-emu` library
 [ft812-behavior-spec.md](ft812-behavior-spec.md) ("spec §n"). Hardware facts are in the
 design's §2 ("tdd §n").
 
-Date: 2026-10-01. Status: draft for review; no code exists.
+Date: 2026-10-01. Status: implemented, I1-I4 on master (the library vendored instead of a
+submodule; TTD as blobs until TTD v2 regions exist); open: §15 C1-C2.
 
 ## 1. Scope and dependencies
 

@@ -42,8 +42,18 @@ public:
     static constexpr uint32_t kPulseTStates = 32;
     static constexpr uint32_t kLineTStates = 224;
     static constexpr uint8_t kSquareColumns = 56;
-    /// The PLD's INT edge before MAME's beam position of the square (see above)
-    static constexpr uint32_t kIntBeforeMameT = 10;
+    /// The renderer reads square a at T kSquareReadT + 4a of the line (HOLD #77)
+    static constexpr uint32_t kSquareReadT = 12;
+    /// CT5 rises this many T into each 4-T square period (VIDEO2.TDF:297-298: CT[5..3] steps on CT[2..0] 6 -> 0)
+    static constexpr uint32_t kCt5RiseInSquareT = 2;
+    /// The PLD's INT edge before MAME's beam position of the square (see above): 24 + 4a - (14 + 4a)
+    static constexpr uint32_t kIntBeforeMameT = 24 - (kSquareReadT + kCt5RiseInSquareT);
+    /// Base T-state of the frame, mod 4, at which CT5 rises: every INT edge sits here (INTT is clocked by CT5), and so
+    /// does the PLD's 4-T CT5 square wave that the original waits follow (SprinterOrigWaits). Lines (224 T) and both
+    /// frames (71 680 / 69 888 T) are multiples of 4, so one value holds for every line and frame
+    static constexpr uint32_t kCt5RiseT = (kSquareReadT + kCt5RiseInSquareT) % 4;
+    static_assert(kIntBeforeMameT == 10, "MAME's place is 10 T after the PLD's edge (research-zx-mode §7.1)");
+    static_assert(kLineTStates % 4 == 0, "the CT5 period divides a line");
 
     SprinterIntSource(EmulatorContext* context, const SprinterVideoRam& vram);
 

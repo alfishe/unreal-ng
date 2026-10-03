@@ -1,6 +1,6 @@
 # TODO — ZX-meta-db (2026-09-28)
 
-**Status:** concept, no code, no data. A separate project (own repository and
+**Status:** concept only (2026-09-28, checked 2026-10-03): no code, no data, no schema in the repository; the open questions (hosting, primary id space, source terms, corpus storage) are undecided and D0 has not started. A separate project (own repository and releases); unreal-ng consumes its releases. PLAN T4.
 releases); unreal-ng consumes its releases.
 
 Concept: [concept.md](concept.md) — what it knows, sources to merge, the

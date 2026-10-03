@@ -6,6 +6,10 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
 
 /// region <Constructors / destructors>
@@ -1597,6 +1601,12 @@ void BreakpointManager::RebuildFilters()
             _hotState.hasPortOut = 1;
         }
     }
+
+    // Every mutation ends here: tell the surfaces (WebAPI events breakpoints_changed). A manager without
+    // an emulator (unit tests) has nobody to tell
+    if (_context && _context->pEmulator)
+        MessageCenter::DefaultMessageCenter().Post(NC_BREAKPOINTS_CHANGED,
+                                                   new BreakpointsChangedPayload(_context->pEmulator->GetId()), true);
 }
 
 /// endregion </Helper methods>

@@ -1,4 +1,4 @@
-# TODO: ATM2IOESP
+# DONE: ATM2IOESP
 
 **Plan:** network adapters · [README.md](README.md)
 
@@ -14,3 +14,8 @@
 | Open questions researched (7.10 schematic, 8.0+ netlist, the card's Rev 2 gerbers, forums) | done 2026-10-02: 5 of 8 answered, 3 in part (reference) |
 | From the answers: #FB read = #FF (printer status), the card's MSR with only CTS wired | done 2026-10-02 |
 | Still open: UniProg / Z-Contact bus addresses, TASiTERM's driver (iS-DOS archive), the ATM 4.50 connector | open |
+
+## Closed 2026-10-03
+
+Done on master (2026-10-02): the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector with its bus, TTD blobs, config, every automation surface, the Qt Network window and tests; NedoOS `wget` 20 of 20 (`29a7686ab`, `2a8ef4e55`). Open research only: the UniProg / Z-Contact bus addresses, TASiTERM's driver, the ATM 4.50 connector (PLAN #78, network adapters N4).
+

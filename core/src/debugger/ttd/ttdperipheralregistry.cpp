@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace ttd {
@@ -171,7 +172,10 @@ std::vector<uint8_t> TTDPeripheralRegistry::EncodeBlob(uint8_t id,
                                                        const uint8_t* state,
                                                        size_t size)
 {
-    if (size == 0 || !state)
+    // Blob sizes are 32-bit on disk; the header addition must also fit size_t.
+    // Reject invalid sizes before compression can read the source buffer.
+    if (size == 0 || !state || size > std::numeric_limits<uint32_t>::max() ||
+        size > std::numeric_limits<size_t>::max() - sizeof(PeripheralBlobHeader))
         return {};
 
     PeripheralBlobHeader header{};

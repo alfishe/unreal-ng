@@ -323,11 +323,12 @@ class Emulator:
     def resume(self):
         """Resume emulation"""
         
-    def step(self) -> int:
-        """Execute one instruction, return PC"""
+    def step(self, skip_breakpoints: bool = True) -> dict:
+        """Execute one instruction; returns {executed, stopped, breakpoint_id, address, access}
+        (with skip_breakpoints=False an execution breakpoint stops before its instruction)"""
         
-    def steps(self, count: int) -> int:
-        """Execute N instructions, return final PC"""
+    def steps(self, count: int, skip_breakpoints: bool = False) -> dict:
+        """Execute up to N instructions; a breakpoint ends the run early. Returns the same dict"""
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""

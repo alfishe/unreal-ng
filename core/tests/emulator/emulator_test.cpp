@@ -19,6 +19,10 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/testwaithelper.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include <memory>
+#include <thread>
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -570,3 +574,177 @@ TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
 }
 
 /// endregion </Blank disks>
+
+/// region <Breakpoints during a direct run (Emulator::OnBreakpointHit)>
+
+// A control thread stepping a paused emulator (WebAPI /step, CLI, DeZog, Lua, Python) must never park on a
+// breakpoint: nothing would resume it. The breakpoint ends the run instead, and the caller learns which
+namespace
+{
+// $8000 LD A,1 / $8002 LD ($9000),A / $8005 LD A,2 / $8007 XOR A / $8008 OUT ($FE),A / $800A NOP / $800B JR $
+constexpr uint16_t kProgram = 0x8000;
+constexpr uint16_t kLdA2 = 0x8005;
+constexpr uint16_t kTarget = 0x9000;
+const uint8_t kProgramBytes[] = {0x3E, 0x01, 0x32, 0x00, 0x90, 0x3E, 0x02, 0xAF, 0xD3, 0xFE, 0x00, 0x18, 0xFE};
+
+std::unique_ptr<Emulator> DirectRunEmulator()
+{
+    auto emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
+    if (!emulator->Init())
+        return nullptr;
+    emulator->DebugOn();
+    // Memory breakpoints need the breakpoints feature too (Memory's feature cache)
+    EmulatorContext* context = emulator->GetContext();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+    Memory* memory = emulator->GetMemory();
+    memory->UpdateFeatureCache();
+    for (size_t i = 0; i < sizeof(kProgramBytes); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(kProgram + i), kProgramBytes[i]);
+    Z80State* z80 = emulator->GetZ80State();
+    z80->pc = kProgram;
+    z80->iff1 = z80->iff2 = 0;  // no frame interrupt in the way
+    return emulator;
+}
+
+uint16_t AddBreakpoint(Emulator& emulator, BreakpointTypeEnum type, uint8_t access, uint16_t address)
+{
+    auto* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = type;
+    if (type == BreakpointTypeEnum::BRK_IO)
+        breakpoint->ioType = access;
+    else
+        breakpoint->memoryType = access;
+    breakpoint->z80address = address;
+    return emulator.GetBreakpointManager()->AddBreakpoint(breakpoint);
+}
+}  // namespace
+
+TEST(Emulator_DirectRunBreakpoint_Test, ExecutionBreakpointStopsBeforeItsInstruction)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t id = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kLdA2);
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 2u);
+    Z80State* z80 = emulator->GetZ80State();
+    EXPECT_EQ(z80->pc, kLdA2);
+    EXPECT_EQ(z80->a, 1) << "LD A,2 must not have run";
+    const auto& stop = emulator->LastDirectStop();
+    EXPECT_TRUE(stop.hit);
+    EXPECT_EQ(stop.breakpointId, id);
+    EXPECT_EQ(stop.address, kLdA2);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::Execute);
+
+    // Stepping on from the breakpoint it stopped at runs LD A,2; nothing stops the next steps
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kLdA2 + 2);
+    EXPECT_EQ(z80->a, 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    EXPECT_EQ(emulator->RunNCPUCycles(2, false), 2u);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, BreakpointAtTheStartIsHitWhenNotStoppedThere)
+{
+    // A fresh machine sits at $8000 without having stopped there: the breakpoint fires first,
+    // then the next step passes it
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kProgram);
+    Z80State* z80 = emulator->GetZ80State();
+
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kProgram);
+    EXPECT_TRUE(emulator->LastDirectStop().hit);
+
+    emulator->RunSingleCPUCycle(false);
+    EXPECT_EQ(z80->pc, kProgram + 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, MemoryAndPortBreakpointsEndTheRunAfterTheirInstruction)
+{
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t write = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_WRITE, kTarget);
+    const uint16_t out = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_IO, BRK_IO_OUT, 0xFE);
+    Z80State* z80 = emulator->GetZ80State();
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 2u) << "LD ($9000),A completes, then the run ends";
+    EXPECT_EQ(z80->pc, kLdA2);
+    EXPECT_EQ(emulator->GetMemory()->DirectReadFromZ80Memory(kTarget), 1);
+    EXPECT_EQ(emulator->LastDirectStop().breakpointId, write);
+    EXPECT_EQ(emulator->LastDirectStop().kind, BreakpointHitKind::MemoryWrite);
+    EXPECT_EQ(emulator->LastDirectStop().address, kTarget);
+
+    EXPECT_EQ(emulator->RunNCPUCycles(10, false), 3u) << "LD A,2 / XOR A / OUT ($FE),A";
+    EXPECT_EQ(z80->pc, 0x800A);
+    EXPECT_EQ(emulator->LastDirectStop().breakpointId, out);
+    EXPECT_EQ(emulator->LastDirectStop().kind, BreakpointHitKind::PortOut);
+    emulator->Release();
+}
+
+TEST(Emulator_DirectRunBreakpoint_Test, StepFromABreakpointPauseNeverParksTheCaller)
+{
+    // The emulation thread runs into an execution breakpoint and parks there (the emulator's own run). A step
+    // from a control thread then used to park the caller on the same breakpoint forever (WebAPI's workers);
+    // now it runs the instruction and returns. The pause carries its cause, the step's end its outcome
+    auto emulator = DirectRunEmulator();
+    ASSERT_NE(emulator, nullptr);
+    const uint16_t id = AddBreakpoint(*emulator, BreakpointTypeEnum::BRK_MEMORY, BRK_MEM_EXECUTE, kLdA2);
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::atomic<int> pauseCause{-1};
+    std::atomic<int> pauseAddress{-1};
+    std::atomic<int> stepPayloads{0};
+    std::atomic<int> stepStopped{-1};
+    const std::string emulatorId = emulator->GetId();
+    const uint64_t stateObserver = messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<EmulatorStateChangePayload*>(message->obj) : nullptr;
+        if (payload && payload->_payloadNumber == StatePaused && payload->emulatorId.toString() == emulatorId)
+        {
+            pauseCause.store(static_cast<int>(payload->pauseCause));
+            pauseAddress.store(payload->address);
+        }
+    });
+    const uint64_t stepObserver = messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<CpuStepPayload*>(message->obj) : nullptr;
+        if (payload && payload->emulatorId.toString() == emulatorId)
+        {
+            stepStopped.store(payload->stopped ? 1 : 0);
+            stepPayloads.fetch_add(1);
+        }
+    });
+
+    emulator->StartAsync();
+    Z80State* z80 = emulator->GetZ80State();
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsPaused() && z80->pc == kLdA2; }, std::chrono::seconds(2)));
+    EXPECT_TRUE(TestWait::For([&] { return pauseCause.load() >= 0; }, std::chrono::milliseconds(500)));
+    EXPECT_EQ(pauseCause.load(), static_cast<int>(PauseCause::Breakpoint));
+    EXPECT_EQ(pauseAddress.load(), kLdA2);
+
+    std::atomic<bool> returned{false};
+    std::thread control([&] {
+        emulator->RunSingleCPUCycle(false);
+        returned.store(true);
+    });
+    const bool done = TestWait::For([&] { return returned.load(); }, std::chrono::seconds(2));
+    if (!done)
+        emulator->Resume();  // unpark the caller so the thread can be joined
+    control.join();
+    EXPECT_TRUE(done) << "the step parked on the breakpoint";
+    EXPECT_EQ(z80->pc, kLdA2 + 2);
+    EXPECT_FALSE(emulator->LastDirectStop().hit);
+    EXPECT_TRUE(TestWait::For([&] { return stepPayloads.load() > 0; }, std::chrono::milliseconds(500)));
+    EXPECT_EQ(stepStopped.load(), 0);
+    EXPECT_EQ(emulator->GetBreakpointManager()->GetBreakpointById(id) != nullptr, true);
+
+    messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, stateObserver);
+    messageCenter.RemoveObserverById(NC_EXECUTION_CPU_STEP, stepObserver);
+    emulator->Stop();
+    emulator->Release();
+}
+
+/// endregion </Breakpoints during a direct run>

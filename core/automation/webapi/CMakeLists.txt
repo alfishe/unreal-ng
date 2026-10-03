@@ -26,6 +26,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     message(STATUS "[automation_webapi] Building for iOS: disabling OpenSSL/TLS and c-ares")
     set(TRANTOR_USE_TLS none CACHE STRING "" FORCE)
     set(BUILD_C-ARES OFF CACHE BOOL "" FORCE)
+elseif (TRANTOR_USE_TLS STREQUAL "none")
+    # Release packages: the WebAPI serves plain HTTP on localhost, so TLS (and
+    # with it a system or bundled OpenSSL) is not needed.
+    message(STATUS "[automation_webapi] TLS disabled (TRANTOR_USE_TLS=none): no OpenSSL dependency")
 else()
     # Find OpenSSL (required by Drogon/Trantor)
     # Try to find OpenSSL, and if it fails, set the root directory explicitly
@@ -260,6 +264,8 @@ set(COMMON_SOURCES
     src/api/ttd_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
+    src/debug-event-hub.cpp
+    src/debug-event-hub.h
     src/automation-webapi.cpp
     src/automation-webapi.h
 )
@@ -424,6 +430,5 @@ if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
 endif()
-
 
 

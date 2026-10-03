@@ -54,7 +54,7 @@ struct ProfiBoard
 | Item | v3 | v5 |
 |:--|:--|:--|
 | Config folder | `data/configs/profi3/unreal.ini` (new, from `profi/`) | `data/configs/profi/unreal.ini` (unchanged) |
-| `[ROM]` key | `PROFI3=rom\profi\kramis-v02.rom` (`config.profi3_rom_path`) | `PROFI=rom\profi.rom` |
+| `[ROM]` key | `PROFI3=rom\profi\kramis-v03.rom` (`config.profi3_rom_path`; V0.2 until 2026-10-03, see roms.md) | `PROFI=rom\profi.rom` |
 | `RAMSize` | 512 (1024 allowed) | 1024 (512 allowed) |
 | `[HDD] Scheme` | `NONE` (`PROFI` is refused with a log line: the board has no IDE) | `PROFI` |
 | ROM roles (`rom.cpp`) | SYS/Menu (Kramis), TR-DOS, 128K Editor, 48K BASIC | today's |

@@ -59,6 +59,7 @@ matches; it names the recipe(s) for that action.
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | everything else |
+| Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
@@ -118,6 +119,7 @@ call.
 |:--|:--|
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, gaming vs development journal, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
+| [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | Breakpoints and what they stop, `/step` / `/steps` with the stop reason, the `/api/v1/websocket` debugger events (subscribe, `paused` / `resumed` / `step_done` / `breakpoints_changed`), CLI / MCP / Lua / Python |
 | [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side, internal port codes (ZX-Evo, Sprinter) |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | Memory access counters: profiler start/stop, per-page summaries, per-address counters, YAML export |
 | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | Detect custom loaders (port-PC attribution, fastdisk litmus, structural pre-scan), trace hangs and crashes |
@@ -141,6 +143,7 @@ call.
 | [machines/sprinter-accelerator.md](machines/sprinter-accelerator.md) | Sprinter Sp2000 block accelerator: run `ACCTEST.EXE` from a DSS floppy, check its picture in the graphics RAM, the accelerator state |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
+| [machines/sprinter-software.md](machines/sprinter-software.md) | Sprinter Sp2000: run software the shortest way - a native `.EXE` from Flex Navigator's command line, a Spectrum TRD in the SP (21 MHz) and P128 (3.5 MHz) launcher modes from the hard disk, the Scorpion SC256 mode from a floppy; TTD first |
 | [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS selection at create / runtime and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, accelerator, waits, Z84C15), video modes per square, palettes, video RAM (`vram` region), the video change log, digest / raw framebuffer, the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs
