@@ -67,7 +67,13 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   no machine changes ([design-hires.md](design-hires.md))
 - [x] H2a: hi-res CPU clock (v3 3 MHz, v5 ZQ3 / 4, `[PROFI] ZQ3MHz`), frame and INT from the sync PROM's upper half,
   switched at the #DFFD write; the Profi TTD time grid (`TtdClockUnits`) - it was 1, so turbo halves were lost
-- [ ] H2b: AY clock 1.5 MHz in hi-res (`[PROFI] AyClock`, parsed; the AY engine's clock is a compile-time constant)
+- [x] H2b (branch `profi-ay-clock`): AY clock 1.5 MHz in hi-res (v3 always, v5 unless `[PROFI] AyClock=new`): a
+  run-time AY clock on the TurboSound device, switched at its T-state, TTD-exact without new bytes, `psg_clock_hz`
+  in the AY state ([design-hires.md](design-hires.md) 3.1)
+- [ ] H2b follow-up: the TSFM (the shipped Profi configs' `TurboSound=FM`) keeps 1.75 MHz in hi-res; the DSD
+  native tap assumes 218.75 kHz
+- [ ] H4: TTD across a v3 hi-res switch (320-line frame) diverges in the CPU on replay (the v5 replays exactly);
+  found by the H2b replay test
 - [ ] H3: hi-res waits (v5 model rule, v3 turbo) and the v3 hi-res floating bus
 - [ ] H4: automation surfaces for ZQ3MHz / AyClock and the hi-res clock in state; recipes; checks against the forum's
   speed-test figures and the CP/M disk

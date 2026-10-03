@@ -197,6 +197,9 @@ void PortDecoder_Profi::SyncTurbo()
     // (design-hires.md): the frame and INT first, so the clock change below rescales against the new geometry
     const bool hires = (_state->pDFFD & 0x80) != 0;
     SyncFrame(hires);
+    // The AY clock comes from the same video divider (CLCAY): 1.5 MHz in hi-res unless the v5's SB7 says "new"
+    if (_context->pSoundManager)
+        _context->pSoundManager->SetPsgClock(ProfiAyClockHz(_board.palette, _context->config.profi_ay_clock_new != 0, hires));
 
     uint8_t ratio = turbo ? 2 : 1;
     uint8_t den = 1;

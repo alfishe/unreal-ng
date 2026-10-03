@@ -752,6 +752,7 @@ void CLIProcessor::HandleStateAudioAY(const ClientSession& session, EmulatorCont
         ss << "ZX Next (triple AY-3-8912)";
 
     ss << ")" << NEWLINE;
+    ss << "AY Clock: " << soundManager->GetPsgClock() << " Hz" << NEWLINE;
     ss << NEWLINE;
 
     // Show brief info for each chip

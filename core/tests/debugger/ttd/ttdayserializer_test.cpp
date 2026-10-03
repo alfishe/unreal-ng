@@ -26,7 +26,13 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "common/modulelogger.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttdcheckpoint.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
@@ -396,3 +402,140 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
 }
 
 /// endregion </TimeTravelManager integration>
+
+/// region <AY clock switch replay (Profi hi-res, design-hires.md H2b)>
+
+namespace
+{
+/// Profi driver, interrupts off, forever: channel A's tone period follows E, and every 16th pass flips #DFFD bit 7
+/// (hi-res: the AY at 1.5 MHz, the CPU at its hi-res clock) - several AY clock switches per frame, at every position
+constexpr uint16_t kAyClockDriverAddress = 0x8000;
+const uint8_t kAyClockDriver[] = {
+    0xF3,              // 8000 DI
+    0x1E, 0x00,        // 8001 LD E,0
+    0x16, 0x00,        // 8003 LD D,0             #DFFD shadow
+    0x01, 0xFD, 0xFF,  // 8005 loop: LD BC,#FFFD
+    0xAF,              // 8008 XOR A              register 0: tone A fine <- E
+    0xED, 0x79,        // 8009 OUT (C),A
+    0x06, 0xBF,        // 800B LD B,#BF
+    0xED, 0x59,        // 800D OUT (C),E
+    0x06, 0xFF,        // 800F LD B,#FF           register 8: volume A <- 15
+    0x3E, 0x08,        // 8011 LD A,8
+    0xED, 0x79,        // 8013 OUT (C),A
+    0x06, 0xBF,        // 8015 LD B,#BF
+    0x3E, 0x0F,        // 8017 LD A,15
+    0xED, 0x79,        // 8019 OUT (C),A
+    0x7B,              // 801B LD A,E             every 16th pass: flip hi-res
+    0xE6, 0x0F,        // 801C AND #0F
+    0x20, 0x09,        // 801E JR NZ,+9 (#8029)
+    0x7A,              // 8020 LD A,D
+    0xEE, 0x80,        // 8021 XOR #80
+    0x57,              // 8023 LD D,A
+    0x01, 0xFD, 0xDF,  // 8024 LD BC,#DFFD
+    0xED, 0x79,        // 8027 OUT (C),A
+    0x1C,              // 8029 INC E
+    0x06, 0x30,        // 802A LD B,#30
+    0x10, 0xFE,        // 802C DJNZ $
+    0x18, 0xD5,        // 802E JR loop (#8005)
+};
+
+struct AyReplayPoint
+{
+    uint64_t frame = 0;
+    uint32_t tInFrame = 0;
+    ttd::TTDCpuState cpu;
+    uint64_t ramHash = 0;
+    std::vector<uint8_t> turboSound;
+};
+
+AyReplayPoint ObserveAyReplay(EmulatorContext* context)
+{
+    const Z80* z80 = context->pCore->GetZ80();
+    AyReplayPoint point;
+    point.frame = context->emulatorState.frame_counter;
+    point.tInFrame = z80->t;
+    point.cpu = ttd::CaptureCpuState(*static_cast<const Z80State*>(z80));
+    point.ramHash = ttd::HashBytes(context->pMemory->RAMBase(), static_cast<size_t>(context->config.ramsize) * 1024u);
+    ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
+    point.turboSound.resize(device->TTDStateSize());
+    device->TTDSaveState(point.turboSound.data());
+    return point;
+}
+
+
+/// Records the driver (optionally without its #DFFD flips) and replays it from the session start, a per-frame
+/// checkpoint and a mid-frame seek; each must reach the recorded end with the same CPU, RAM and TurboSound bytes
+void RunAyClockReplay(const char* model, bool flipHires, bool ayClockNew, int* hiresFrames)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(model, TurboSoundKind::AY);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->config.profi_ay_clock_new = ayClockNew ? 1 : 0;
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    features->setFeature(Features::kSoundGeneration, true);
+    features->setFeature(Features::kSoundHQ, true);  // the FIR decimators follow the clock too
+    context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    auto* device = dynamic_cast<SoundChip_TurboSound*>(context->pSoundManager->getTurboSound());
+    ASSERT_NE(device, nullptr);
+
+    emulator->RunNFrames(3);
+    Z80* z80 = context->pCore->GetZ80();
+    for (size_t i = 0; i < sizeof(kAyClockDriver); i++)
+        z80->DirectWrite(static_cast<uint16_t>(kAyClockDriverAddress + i), kAyClockDriver[i]);
+    if (!flipHires)
+        z80->DirectWrite(kAyClockDriverAddress + 0x1E, 0x18);  // JR NZ -> JR: never flip
+    z80->pc = kAyClockDriverAddress;
+    emulator->RunNCPUCycles(4321);
+
+    ASSERT_TRUE(ttd->StartRecording());
+    const uint64_t startFrame = ttd->GetCheckpoint(0)->time.frame;
+    *hiresFrames = 0;
+    for (int f = 0; f < 24; f++)
+    {
+        emulator->RunNFrames(1);
+        *hiresFrames += device->GetPsgClock() == 1'500'000u ? 1 : 0;
+    }
+    emulator->RunNCPUCycles(777);
+    const AyReplayPoint recorded = ObserveAyReplay(context);
+    ttd->StopRecording();
+
+    const ttd::TTDTimePoint starts[] = {{startFrame, 0}, {startFrame + 11, 0}, {startFrame + 17, 23456}};
+    for (const ttd::TTDTimePoint& start : starts)
+    {
+        SCOPED_TRACE("from frame " + std::to_string(start.frame) + " unit " + std::to_string(start.tInFrame));
+        ASSERT_TRUE(ttd->SeekTo(start));
+        const EmulatorState* state = &context->emulatorState;
+        const uint64_t frame = recorded.frame;
+        const uint32_t t = recorded.tInFrame;
+        emulator->RunUntilCondition([state, frame, t](const Z80State& cpu)
+                                    { return state->frame_counter > frame || (state->frame_counter == frame && cpu.t >= t); });
+        const AyReplayPoint replayed = ObserveAyReplay(context);
+        EXPECT_EQ(replayed.frame, recorded.frame);
+        EXPECT_EQ(replayed.tInFrame, recorded.tInFrame);
+        EXPECT_EQ(std::memcmp(&replayed.cpu, &recorded.cpu, sizeof(replayed.cpu)), 0) << "CPU state";
+        EXPECT_EQ(replayed.ramHash, recorded.ramHash) << "RAM";
+        EXPECT_EQ(replayed.turboSound, recorded.turboSound) << "TurboSound state (AY clock, cursor, queued writes)";
+    }
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+}  // namespace
+
+/// A recording on a Profi v5 (SB7 "old") whose program flips hi-res - the CPU between 3.5 and 5 MHz, the AY between
+/// 1.75 and 1.5 MHz - several times a frame replays byte for byte from the session start, a per-frame checkpoint and
+/// a mid-frame seek: the clock, the cursor's fraction and any switch still queued at a checkpoint come back with the
+/// TurboSound blob, and the machine re-derives the same clock from #DFFD after the restore.
+/// (The v3 is not used: its hi-res switch also changes the frame to 320 lines, and a recording across that switch
+/// does not replay exactly yet, with or without the AY - design-hires.md phase H4)
+TEST(TTD_AyClock_Replay_Test, HiresAyClockSwitchesReplayExactly)
+{
+    int hiresFrames = 0;
+    RunAyClockReplay("PROFI", true, false, &hiresFrames);
+    EXPECT_GT(hiresFrames, 0) << "the AY must have run at 1.5 MHz";
+    EXPECT_LT(hiresFrames, 24) << "and at 1.75 MHz";
+}
+
+/// endregion </AY clock switch replay>
