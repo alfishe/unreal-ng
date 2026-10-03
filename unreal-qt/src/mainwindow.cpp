@@ -84,6 +84,14 @@
 
 namespace
 {
+/// The keyboard of a bound emulator, null when there is none: a bound emulator can have no context
+/// (being torn down), and the menu handlers must not crash on it
+Keyboard* KeyboardOf(Emulator* emulator)
+{
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context ? context->pKeyboard : nullptr;
+}
+
 /// Where a quick drop goes when the plan has no default and nobody can be asked: a folder goes to a
 /// card, hard disk or CD (a TS-Conf game folder is an SD card, not a TR-DOS disk) when the machine
 /// has one; anything else to the first target of the plan's order (the boot slot first)
@@ -348,14 +356,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
         Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
+        Keyboard* keyboard = KeyboardOf(emulator);
         if (keyboard)
             _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
                                                Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
     });
     connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
         Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
+        Keyboard* keyboard = KeyboardOf(emulator);
         if (!keyboard)
             return;
         std::string error;
