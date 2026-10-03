@@ -228,7 +228,7 @@ void ScreenZX::CreateTstateLUT()
 
         // For standard mode: visible starts at line 32 (after vSync+vBlank)
         // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
-        const int visibleStartLine = timing.vSyncLines + timing.vBlankLines - overscanExtraLines;
+        const int visibleStartLine = FirstStoredRasterLine();
         const int framebufferY = lineInFrame - visibleStartLine;
 
         // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
@@ -496,6 +496,12 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
     return result;
 }
 
+uint16_t ScreenZX::FirstStoredRasterLine() const
+{
+    const uint16_t first = Screen::FirstStoredRasterLine();
+    return _mode == M_P384 ? static_cast<uint16_t>(first - ZxGeometry::kP384ExtraTopLines) : first;
+}
+
 /// Transform t-state timing position to coordinates in framebuffer (if drawing position is within framebuffer)
 /// \param tstate
 /// \param x
@@ -512,11 +518,8 @@ bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, 
     // Horizontal: borders at 2 px/T around the display window, the window at its own
     // pixel clock, stored where the mode's framebuffer keeps it (ATM stores the
     // window only, Profi hires 512 px between 48 px borders).
-    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
     const RasterDescriptor& storage = rasterDescriptors[_mode];
-    // P384 stores 16 lines more on top: its first stored line is 16 raster lines earlier
-    const int extraTop = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
-    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - (timing.vSyncLines + timing.vBlankLines) + extraTop;
+    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - FirstStoredRasterLine();
     const int t = static_cast<int>(tstate % _rasterState.tstatesPerLine);
     const int paperStart = _rasterState.screenLineAreaStart;
     const int paperEnd = _rasterState.screenLineAreaEnd + 1;
