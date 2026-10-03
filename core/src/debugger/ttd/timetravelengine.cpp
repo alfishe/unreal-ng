@@ -47,13 +47,14 @@ int64_t SignExtend(uint64_t v, uint8_t width)
 }
 
 /// A residual kept on the line (wrapping at the field's width): within two
-/// bytes for 4- and 8-byte fields, +-2047 for 2-byte ones; a 1-byte field
-/// stays on its line whatever it does. A larger one starts a new line. Wide
-/// enough for a clock quantized to a period that does not divide the frame
-/// (NeoGS timers on a 48K frame step N or N-1 periods: +-3,200 ticks)
+/// bytes for 4- and 8-byte fields, +-2047 for 2-byte ones, +-15 for 1-byte
+/// ones. A larger one starts a new line. Wide enough for a clock quantized to
+/// a period that does not divide the frame (NeoGS timers on a 48K frame step
+/// N or N-1 periods: +-3,200 ticks); narrow enough that a 1-byte timer gets
+/// its step (with no limit its first line, step 0, would never be replaced)
 bool SmallResidual(uint64_t residual, uint8_t width)
 {
-    const uint64_t limit = width >= 4 ? 32767 : width == 2 ? 2047 : ~uint64_t(0);
+    const uint64_t limit = width >= 4 ? 32767 : width == 2 ? 2047 : 15;
     const uint64_t mask = WidthMask(width);
     const uint64_t negative = (0 - residual) & mask;
     return residual <= limit || negative <= limit;

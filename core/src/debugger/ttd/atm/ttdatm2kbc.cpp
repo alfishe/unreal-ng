@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <memory>
+#include <vector>
 
 #include "emulator/io/keyboard/atm2kbc.h"
 
@@ -50,6 +51,27 @@ TTDDeviceDescriptor TTDAtm2Kbc::TTDDescribe() const
 {
     TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
     d.firmwareFingerprint = _kbc.FirmwareHash();
+    // Offsets taken from the structure itself, so a layout change moves them along
+    static const std::vector<TTDTimeField> fields = [] {
+        auto s = std::make_unique<Atm2Kbc::State>();
+        const auto* base = reinterpret_cast<const uint8_t*>(s.get());
+        auto at = [base](const void* field, uint8_t width) {
+            return TTDTimeField{static_cast<uint16_t>(static_cast<const uint8_t*>(field) - base), width};
+        };
+        std::vector<TTDTimeField> f = {
+            at(&s->tBase, 8),       at(&s->mcuBase, 8),          at(&s->lastNow, 8),
+            at(&s->answerClock, 8), at(&s->reads, 8),            at(&s->cpu.clock, 8),
+            at(&s->cpu.instructions, 8),
+            at(&s->cpu.sfr[0x8A - 0x80], 1),   // TL0
+            at(&s->cpu.sfr[0x8C - 0x80], 1),   // TH0
+            at(&s->cpu.sfr[0xCC - 0x80], 1),   // TL2
+            at(&s->cpu.sfr[0xCD - 0x80], 1),   // TH2
+        };
+        for (const uint64_t& v : s->cpu.visibleAt)
+            f.push_back(at(&v, 8));
+        return f;
+    }();
+    d.timeFields = fields;
     return d;
 }
 
