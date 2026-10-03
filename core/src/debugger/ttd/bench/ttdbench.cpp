@@ -245,6 +245,15 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
     const uint32_t frames = MeasuredFrames(c, options);
     size_t nextInput = 0;
     frameUs.reserve(frames);
+    struct Slow
+    {
+        double us;
+        uint64_t frame;
+        CaptureWork work;
+    };
+    std::vector<Slow> slow;
+    const char* slowEnv = std::getenv("UNREAL_TTD_BENCH_SLOW_FRAMES");
+    const size_t slowFrames = slowEnv ? static_cast<size_t>(std::strtoul(slowEnv, nullptr, 10)) : 0;
     for (uint32_t f = 0; f < frames; f++)
     {
         // Scripted input through the live-input path: applied at once in the
@@ -266,6 +275,25 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
             captureUs->push_back(static_cast<double>(engine->LastCaptureNs()) / 1000.0);
         if (engine && work)
             *work += engine->LastCaptureWork();
+        if (engine && slowFrames)
+        {
+            const CaptureWork w = engine->LastCaptureWork();
+            slow.push_back({static_cast<double>(engine->LastCaptureNs()) / 1000.0, f, w});
+        }
+    }
+    // UNREAL_TTD_BENCH_SLOW_FRAMES=N: the N slowest captures with their work (diagnostics, stderr)
+    if (slowFrames && !slow.empty())
+    {
+        std::sort(slow.begin(), slow.end(), [](const Slow& a, const Slow& b) { return a.us > b.us; });
+        for (size_t i = 0; i < slow.size() && i < slowFrames; ++i)
+            std::fprintf(stderr, "slow capture %.1f us frame %llu: scanned %llu B (ram %llu), compressed %llu B in %llu calls, delta base %llu B, state %llu B\n",
+                         slow[i].us, static_cast<unsigned long long>(slow[i].frame),
+                         static_cast<unsigned long long>(slow[i].work.bytesScanned),
+                         static_cast<unsigned long long>(slow[i].work.bytesScannedRam),
+                         static_cast<unsigned long long>(slow[i].work.compressInputBytes),
+                         static_cast<unsigned long long>(slow[i].work.compressCalls),
+                         static_cast<unsigned long long>(slow[i].work.deltaBaseBytes),
+                         static_cast<unsigned long long>(slow[i].work.deviceStateBytes));
     }
 }
 

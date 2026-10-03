@@ -13,7 +13,7 @@ Measured 2026-10-02 on branch `ttd-engine`, commit `d7c609051`, Release, on the 
 | Memory not larger than v1 | Yes, on all 46, for the parts both engines have |
 | Counted capture work not larger than v1 | Yes, on all 46: 2× to 50× less |
 | Seek time within PR-5 (p99 ≤ 5 ms) | Yes, even under heavy load: the worst memory restore p99 is 1.8 ms (Sprinter), measured at load 17–139 |
-| Capture time p99 ≤ 3 × p50 (PR-3) | To be measured on an idle host (see [Timings](#timings)) |
+| Capture time p99 ≤ 3 × p50 (PR-3) | Not as a ratio on 25 of 46 configurations (v1: 39): the slow captures are frames with more changed content, the time follows the work (see [Timings](#timings)); p99 at most 280 µs after the first frame |
 
 The check is a tool: `tools/verification/ttd-bench/ttd_engine_d33.py` (exit status 1 when a condition fails). The baseline is `testdata/ttd/bench/engine-phase1-full.json`.
 
@@ -103,7 +103,68 @@ Timings depend on the host's load and are not judged by the tool. The run above 
 
 ### Idle host
 
-Pending: the host stayed above load 12 (21–40) through the check on 2026-10-02. A run is queued to start once the load falls below 12; its results go here.
+Run 2026-10-02 at load 5.7–12.4 (one-minute average at the start and the end), 600 frames, 200 seeks per configuration. `*`: p99 above 3 × p50.
+
+| Configuration / workload | Capture p50 v1 → engine, µs | Engine capture p99, µs | p99 / p50 | Memory restore p50 v1 → engine, µs | Engine restore p99, µs |
+|---|---|---|---|---|---|
+| 128K/idle | 63.5 → 3.5 | 11.5 | 3.2 * | 57 → 30 | 59 |
+| 48K/idle | 48.5 → 6.4 | 16.8 | 2.6 | 74 → 55 | 110 |
+| ATM3+ay/idle | 356.8 → 13.2 | 53.0 | 4.0 * | 780 → 131 | 230 |
+| ATM3+beta/idle | 263.6 → 13.8 | 56.8 | 4.1 * | 758 → 131 | 232 |
+| ATM3+covox/idle | 585.3 → 14.2 | 54.0 | 3.8 * | 777 → 131 | 230 |
+| ATM3+gs128/idle | 580.7 → 13.5 | 53.0 | 3.9 * | 784 → 130 | 231 |
+| ATM3+gs512/idle | 758.0 → 14.1 | 56.2 | 4.0 * | 784 → 130 | 228 |
+| ATM3+moon/idle | 608.3 → 13.9 | 53.9 | 3.9 * | 780 → 130 | 229 |
+| ATM3+mouse/idle | 402.8 → 13.6 | 52.8 | 3.9 * | 758 → 127 | 226 |
+| ATM3+noay/idle | 218.5 → 10.4 | 41.3 | 4.0 * | 739 → 93 | 169 |
+| ATM3+tsfm/idle | 550.7 → 13.8 | 56.2 | 4.1 * | 776 → 124 | 223 |
+| ATM3/idle | 319.1 → 13.8 | 53.0 | 3.8 * | 745 → 127 | 235 |
+| ATM450/idle | 63.2 → 4.2 | 13.3 | 3.1 * | 137 → 57 | 111 |
+| ATM710-turbo/idle | 162.2 → 7.0 | 22.5 | 3.2 * | 227 → 83 | 248 |
+| ATM710/idle | 194.5 → 6.9 | 25.2 | 3.6 * | 212 → 78 | 233 |
+| PENTAGON+ay/idle | 149.7 → 3.8 | 9.5 | 2.5 | 59 → 30 | 58 |
+| PENTAGON+beta/disk-loading | 102.0 → 5.6 | 77.3 | 13.9 * | 102 → 98 | 329 |
+| PENTAGON+beta/idle | 147.6 → 4.0 | 11.9 | 3.0 | 59 → 30 | 58 |
+| PENTAGON+covox/idle | 326.0 → 3.9 | 12.8 | 3.3 * | 60 → 29 | 56 |
+| PENTAGON+covox/music-covox | 106.0 → 6.8 | 20.2 | 3.0 | 204 → 57 | 112 |
+| PENTAGON+gs128/idle | 176.3 → 3.9 | 9.8 | 2.5 | 61 → 29 | 57 |
+| PENTAGON+gs512/gs-upload | 424.3 → 18.6 | 64.5 | 3.5 * | 122 → 208 | 554 |
+| PENTAGON+gs512/idle | 448.2 → 3.5 | 9.2 | 2.7 | 59 → 29 | 64 |
+| PENTAGON+moon/idle | 317.0 → 4.0 | 11.4 | 2.8 | 60 → 30 | 66 |
+| PENTAGON+moon/moon-upload | 176.7 → 17.1 | 78.5 | 4.6 * | 126 → 237 | 527 |
+| PENTAGON+mouse/idle | 63.3 → 4.0 | 10.0 | 2.5 | 58 → 30 | 58 |
+| PENTAGON+noay/idle | 33.5 → 3.2 | 9.3 | 2.9 | 56 → 28 | 56 |
+| PENTAGON+tsfm/idle | 197.5 → 3.8 | 9.5 | 2.5 | 60 → 29 | 57 |
+| PENTAGON+tsfm/music-tsfm | 144.2 → 8.3 | 44.1 | 5.3 * | 219 → 76 | 147 |
+| PENTAGON/demo | 205.5 → 7.5 | 62.5 | 8.3 * | 271 → 246 | 386 |
+| PENTAGON/demo-eyeache | 141.1 → 6.6 | 26.5 | 4.0 * | 223 → 67 | 142 |
+| PENTAGON/demo2 | 381.0 → 38.4 | 85.2 | 2.2 | 317 → 186 | 433 |
+| PENTAGON/game | 424.2 → 60.2 | 74.2 | 1.2 | 321 → 335 | 573 |
+| PENTAGON/idle | 95.6 → 3.8 | 10.2 | 2.7 | 56 → 30 | 58 |
+| PENTAGON1024/idle | 113.4 → 4.2 | 11.0 | 2.6 | 180 → 30 | 58 |
+| PENTAGON512/idle | 80.2 → 4.2 | 17.5 | 4.2 * | 107 → 30 | 58 |
+| PLUS2/idle | 67.1 → 4.0 | 11.2 | 2.8 | 56 → 30 | 57 |
+| PLUS2A/idle | 75.1 → 3.8 | 10.0 | 2.6 | 78 → 28 | 55 |
+| PLUS3/idle | 68.4 → 3.5 | 10.0 | 2.8 | 80 → 34 | 68 |
+| PROFI/idle | 199.4 → 3.9 | 31.4 | 8.0 * | 194 → 39 | 246 |
+| PROFSCORP/idle | 151.6 → 4.6 | 13.6 | 2.9 | 90 → 34 | 59 |
+| SCORPION-3.5MHz/idle | 111.6 → 5.0 | 13.7 | 2.7 | 85 → 34 | 59 |
+| SCORPION/idle | 209.7 → 4.3 | 12.7 | 3.0 | 85 → 34 | 59 |
+| SPRINTER/idle | 574.5 → 16.9 | 271.6 | 16.1 * | 750 → 65 | 1775 |
+| TSCONF/idle | 201.5 → 5.2 | 20.2 | 3.9 * | 589 → 36 | 87 |
+| TSL-VDAC2/idle | 728.8 → 5.6 | 16.6 | 2.9 | 593 → 54 | 82 |
+
+**PR-5 holds**: the engine's memory restore p99 is at most 1.8 ms (Sprinter), within 5 ms on every configuration.
+
+**PR-3, read as a ratio, does not hold on 25 of 46 configurations** (v1: 39 of 46). The slowest captures were looked at one by one (`UNREAL_TTD_BENCH_SLOW_FRAMES=N` prints them with their work): the time follows the work of the frame, not the engine:
+
+- frame 0 is the first full snapshot of every region (up to 7.8 MB scanned, 150-170 compressions, 1.3-3 ms), one of the 600 frames and so inside p99;
+- on the Sprinter the BIOS fills memory in frames 1-3 and 22-24 (500 KB changed, 130 compressions, 280-900 µs);
+- on the ZX-Evo every 50th frame changes 64 KB (the clock in RAM);
+- demos and disk loading have frames with 8-11 compressions against 1-2 in a quiet frame;
+- one capture was host noise: Profi frame 447, 2.4 ms for a single compression.
+
+With full reference tables switched off (snapshot interval 1,000,000) the p99 stays the same, so the periodic full table is not the cause. The engine's capture p99 is at most 280 µs after the first frame (1.4% of a 20 ms frame). Whether PR-3 should be judged per unit of work or against an absolute budget instead of the ratio is open.
 
 ## Migration v1 → engine
 
@@ -113,4 +174,4 @@ Pending: the host stayed above load 12 (21–40) through the check on 2026-10-02
 
 - The delta base of mostly-zero regions (TODO).
 - Media versions: written sectors, write-protect toggles, queued swaps (registry gaps 11–13; decision 25, Phase 3).
-- Timings on an idle host, twice (this page).
+- PR-3: decide whether it is judged per unit of work or against an absolute budget (the ratio follows the workload).

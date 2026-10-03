@@ -64,7 +64,8 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 
 - [x] Full matrix against decision 33: bytes, memory, counted work not above v1 on all 46 configurations (`tools/verification/ttd-bench/ttd_engine_d33.py`; baseline `testdata/ttd/bench/engine-phase1-full.json`). Fixed on the way: checkpoint records in a deque, arena chunks growing from 64 KB
 - [x] v1 → engine oracle on the whole corpus (9 sessions)
-- [ ] Timings on an idle host (load < 12), twice: PR-3 capture p99 ≤ 3 × p50; PR-5 holds already under load
+- [x] Timings on an idle host (load 5.7-12.4): PR-5 holds (restore p99 ≤ 1.8 ms); PR-3 as a ratio fails on 25 of 46 (v1: 39), the slow captures follow the frame's work
+- [ ] PR-3: judged per unit of work or against an absolute budget instead of the ratio (decision needed)
 
 ## Phase 2 — Device state with versions
 
