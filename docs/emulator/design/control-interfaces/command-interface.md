@@ -1408,7 +1408,10 @@ The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
 `video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
 actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
-when off), `active`, `inactive_reason`, `correcting` (a detector fired in the
+when off), `active`, `inactive_reason`, `applicable` (false while the machine
+shows no ZX screen: a Sprinter native mode or a frame that is no ZX raster - the
+reason then starts with `not applicable:`; the Sprinter's Spectrum mode is
+applicable), `correcting` (a detector fired in the
 frame on screen and an averaging mask formed - the Qt dialog's LED; every frame
 is analyzed, but a frame with nothing detected passes unchanged),
 `showing_processed` (the frame on screen went through the algorithm, changed

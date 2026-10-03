@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "emulator/video/screen.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
 namespace
@@ -207,17 +208,44 @@ uint32_t SprinterVideoRenderer::PenAt(const SprinterVideoInputs& in, uint32_t x,
     return SprinterSquare::IsSymbol(mode[0]) ? SymbolPen(in, mode, a16 & 15, b8 & 7) : GraphicsPen(in, mode, a16 & 15, b8 & 7);
 }
 
-void SprinterVideoRenderer::DrawSpan(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out) const
+namespace
+{
+/// Plane B (Screen::kPlaneB*) of a symbol / border / blank pixel: the meaning of what SymbolPen drew
+/// (`latchedFont` >= 0: the font byte the video logic latched, SprinterVideoInputs::FontLatch)
+uint16_t SymbolPlaneB(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t sub, uint32_t row, int latchedFont)
+{
+    const uint8_t* mode = SprinterVideoRenderer::SymbolMode(line1, sub);
+    const uint8_t m0 = mode[0];
+    if (SprinterSquare::IsBlank(m0))
+        return Screen::kPlaneBRoleBorder;  // text paper colour 0: black
+    if (SprinterSquare::IsBorder(m0))
+        return static_cast<uint16_t>(Screen::kPlaneBRoleBorder | ((in.border & 7u) << 8));
+    if (!SprinterSquare::IsSpectrumCell(m0, mode[1], mode[2]))
+        return 0;  // text: no ZX picture
+    // As the ZX renderer's plane B: the attribute's ink or paper by the bitmap bit (flash not applied)
+    const uint8_t attr = in.vram[SprinterVideoRenderer::AttrAddress(in, mode)];
+    const uint8_t symbol = latchedFont >= 0 ? static_cast<uint8_t>(latchedFont)
+                                            : in.vram[SprinterVideoRenderer::FontAddress(in, mode, row)];
+    const bool ink = (symbol & (1u << (7 - ((sub >> 1) & 7)))) != 0;
+    const uint16_t bright = (attr & 0x40) ? 8 : 0;
+    const uint16_t color = static_cast<uint16_t>((ink ? (attr & 7) : ((attr >> 3) & 7)) + bright);
+    return static_cast<uint16_t>(Screen::kPlaneBRoleScreen | (ink ? Screen::kPlaneBInk : 0) | (color << 8) | attr);
+}
+
+/// DrawSpan's loop; PlaneB = true also writes plane B (two instantiations: the plain path is unchanged)
+template <bool PlaneB>
+void DrawSpanImpl(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out,
+                  [[maybe_unused]] uint16_t* planeB)
 {
     // Naive v1 (performance guidelines rule 5): the mode bytes are read once per
     // square segment, the pixel's bytes per pixel. The idea of caching decoded
     // squares (MAME's tilemap) is in the Sprinter TODO with a benchmark
-    const uint32_t b8 = B8(in, y);
+    const uint32_t b8 = SprinterVideoRenderer::B8(in, y);
     const uint32_t row = b8 & 7;
     uint32_t x = x0;
     while (x < x1)
     {
-        const uint32_t a16 = A16(in, x);
+        const uint32_t a16 = SprinterVideoRenderer::A16(in, x);
         const uint32_t sub0 = a16 & 15;
         const uint32_t end = std::min(x1, x + (16 - sub0));
         const uint8_t* mode = ModeBytes(in, a16, b8);
@@ -227,8 +255,23 @@ void SprinterVideoRenderer::DrawSpan(const SprinterVideoInputs& in, uint32_t y, 
         for (uint32_t sub = sub0; x < end; x++, sub++)
         {
             const int font = (latched && x >= latch.x0 && x < latch.x1) ? latch.font : -1;
-            const uint32_t pen = symbol ? SymbolPen(in, mode, sub, row, font) : GraphicsPen(in, mode, sub, row);
+            const uint32_t pen = symbol ? SprinterVideoRenderer::SymbolPen(in, mode, sub, row, font)
+                                        : SprinterVideoRenderer::GraphicsPen(in, mode, sub, row);
             *out++ = in.palette[pen & (SprinterVideoRam::kPens - 1)];
+            if constexpr (PlaneB)
+                *planeB++ = symbol ? SymbolPlaneB(in, mode, sub, row, font) : uint16_t(0);
         }
     }
+}
+}  // namespace
+
+void SprinterVideoRenderer::DrawSpan(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out) const
+{
+    DrawSpanImpl<false>(in, y, x0, x1, out, nullptr);
+}
+
+void SprinterVideoRenderer::DrawSpanPlaneB(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1,
+                                           uint32_t* out, uint16_t* planeB) const
+{
+    DrawSpanImpl<true>(in, y, x0, x1, out, planeB);
 }

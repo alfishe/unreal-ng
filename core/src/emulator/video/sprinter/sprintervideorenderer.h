@@ -239,6 +239,13 @@ public:
 
     /// Visible pixels [x0, x1) of visible line y into out[0 .. x1 - x0)
     virtual void DrawSpan(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out) const;
+    /// DrawSpan that also writes what it drew as ZX DLSS plane B (Screen::kPlaneB*) into
+    /// planeB[0 .. x1 - x0), in the same pass: a Spectrum square's pixel is screen role with its
+    /// attribute, ink bit and ZX color index; border and blank squares are border role (the border
+    /// color, blank = 0); text and graphics squares are 0 (not a ZX picture). Called instead of
+    /// DrawSpan only while plane B is on. A module with its own DrawSpan overrides this one too
+    virtual void DrawSpanPlaneB(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out,
+                                uint16_t* planeB) const;
 
     /// The pen of one visible pixel (the debugger, tests); DrawSpan draws exactly these
     static uint32_t PenAt(const SprinterVideoInputs& in, uint32_t x, uint32_t y);

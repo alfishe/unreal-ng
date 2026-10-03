@@ -7,12 +7,11 @@
 
 #ifdef ENABLE_VDAC2
 
-#include "tsconffixture.h"
+#include "vdac2cardfixture.h"
 
 #include <vector>
 
 #include "emulator/platforms/tsconf/vdac2card.h"
-#include "emulator/platforms/tsconf/vdac2control.h"
 #include "emulator/video/screen.h"
 
 #include <eve/eve.h>
@@ -20,219 +19,10 @@
 #include <cstring>
 #include <filesystem>
 
-namespace
+using namespace Vdac2Test;
+
+class Vdac2Card_Test : public Vdac2Test::Vdac2CardFixture
 {
-
-// Ports and #77 values: D1 = SD /CS (kept high: SD deselected), D2 = FT812 CS
-constexpr uint16_t kPortConfig = 0x77;
-constexpr uint16_t kPortData = 0x57;
-constexpr uint8_t kDeselectAll = 0x02;
-constexpr uint8_t kSelectFt812 = 0x06;
-
-// FT812 host commands and registers (behavior spec §2.2, §3)
-constexpr uint8_t kHostActive = 0x00;
-constexpr uint8_t kHostSleep = 0x42;
-constexpr uint8_t kHostPowerDown = 0x43;
-constexpr uint8_t kHostClkExt = 0x44;
-constexpr uint8_t kHostClkSel = 0x61;
-constexpr uint8_t kHostRstPulse = 0x68;
-constexpr uint8_t kClkSelRangeBits = 0x40;
-constexpr uint32_t kRegId = 0x302000;
-constexpr uint32_t kRegClock = 0x302008;
-constexpr uint32_t kRegCpuReset = 0x302020;
-constexpr uint8_t kRegIdValue = 0x7C;
-constexpr uint32_t kRamDl = 0x300000;
-constexpr uint32_t kRegHcycle = 0x30202C;
-constexpr uint32_t kRegHoffset = 0x302030;
-constexpr uint32_t kRegHsize = 0x302034;
-constexpr uint32_t kRegVcycle = 0x302040;
-constexpr uint32_t kRegVoffset = 0x302044;
-constexpr uint32_t kRegVsize = 0x302048;
-constexpr uint32_t kRegDlswap = 0x302054;
-constexpr uint32_t kRegPclk = 0x302070;
-constexpr uint32_t kRegIntFlags = 0x3020A8;
-constexpr uint32_t kRegIntEn = 0x3020AC;
-constexpr uint32_t kRegIntMask = 0x3020B0;
-constexpr uint32_t kIntSwap = 0x01;
-constexpr uint32_t kDlswapFrame = 2;
-constexpr uint32_t kDlClear = 0x26000007;    // CLEAR(1, 1, 1)
-constexpr uint32_t kDlDisplay = 0x00000000;  // DISPLAY
-constexpr uint32_t kDlClearColorRed = 0x02FF0000;  // CLEAR_COLOR_RGB(255, 0, 0)
-constexpr uint8_t kMsel = 0x04;              // V_CONFIG bit 2: the monitor shows the FT812
-// One FT812 frame of the small scan in raster tacts, rounded up
-constexpr uint32_t kSmallFrameTacts = static_cast<uint32_t>((100ull * 50 * 3500000 + 48000000 - 1) / 48000000);
-constexpr uint32_t kRamG = 0x000000;
-
-constexpr uint8_t kMul48MHz = 6;  // 8 MHz crystal x 6 (TS-Labs modes 0, 5, ...)
-constexpr uint64_t kHz48MHz = 48'000'000;
-constexpr uint32_t kPollTacts = 1000;
-constexpr int kMaxPolls = 1000;
-
-constexpr uint8_t kStatusRegister = 0x00;  // TS register #00 read: STATUS
-constexpr uint8_t kVdacVersionMask = 0x07;
-
-} // namespace
-
-class Vdac2Card_Test : public TsConfFixture
-{
-protected:
-    void SetUp() override
-    {
-        TsConfFixture::SetUp();
-        _context->config.ts_vdac = 7;
-        _context->config.vdac2_rom_path[0] = '\0';  // the ROM image is the user's; not needed here
-        _decoder->reset();
-        _position = 0;
-        _z80->t = 0;
-    }
-
-    Vdac2Card* Card() { return _decoder->GetVdac2Card(); }
-
-    /// region <Raster time>
-
-    /// Move the CPU on by `tacts` raster tacts (crossing frames as Core does:
-    /// Z80::t rebased, the engine rolled over)
-    void Tick(uint64_t tacts)
-    {
-        const uint32_t multiplier = Multiplier();
-        while (tacts > 0)
-        {
-            const uint64_t room = TsConfEngine::kFrameTacts - _position;
-            if (tacts < room)
-            {
-                _position += static_cast<uint32_t>(tacts);
-                break;
-            }
-            tacts -= room;
-            _z80->t = TsConfEngine::kFrameTacts * multiplier;
-            _decoder->CatchUpEngine();
-            _decoder->GetEngine().OnMachineFrameRollover(TsConfEngine::kFrameTacts * multiplier);
-            _position = 0;
-        }
-        _z80->t = _position * multiplier;
-    }
-
-    uint32_t Multiplier() const
-    {
-        const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier;
-        return multiplier ? multiplier : 1;
-    }
-
-    /// endregion
-
-    /// region <The FT812 through #77 / #57, as the TS-Labs SDK drives it>
-
-    void HostCommand(uint8_t command, uint8_t parameter = 0)
-    {
-        Out(kPortConfig, kSelectFt812);
-        Out(kPortData, command);
-        Out(kPortData, parameter);
-        Out(kPortData, 0x00);
-        Out(kPortConfig, kDeselectAll);
-    }
-
-    void Write(uint32_t address, const std::vector<uint8_t>& bytes)
-    {
-        Out(kPortConfig, kSelectFt812);
-        Out(kPortData, static_cast<uint8_t>(0x80 | ((address >> 16) & 0x3F)));
-        Out(kPortData, static_cast<uint8_t>(address >> 8));
-        Out(kPortData, static_cast<uint8_t>(address));
-        for (uint8_t value : bytes)
-            Out(kPortData, value);
-        Out(kPortConfig, kDeselectAll);
-    }
-
-    /// Memory read: address, one dummy byte, then the data. A read of #57
-    /// returns the byte of the PREVIOUS exchange, so the first IN only clocks
-    std::vector<uint8_t> Read(uint32_t address, size_t count)
-    {
-        Out(kPortConfig, kSelectFt812);
-        Out(kPortData, static_cast<uint8_t>((address >> 16) & 0x3F));
-        Out(kPortData, static_cast<uint8_t>(address >> 8));
-        Out(kPortData, static_cast<uint8_t>(address));
-        Out(kPortData, 0x00);  // dummy
-        In(kPortData);
-        std::vector<uint8_t> bytes(count);
-        for (uint8_t& value : bytes)
-            value = In(kPortData);
-        Out(kPortConfig, kDeselectAll);
-        return bytes;
-    }
-
-    uint32_t Read32(uint32_t address)
-    {
-        const std::vector<uint8_t> b = Read(address, 4);
-        return static_cast<uint32_t>(b[0] | (b[1] << 8) | (b[2] << 16) | (static_cast<uint32_t>(b[3]) << 24));
-    }
-
-    void Write32(uint32_t address, uint32_t value)
-    {
-        Write(address, {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8), static_cast<uint8_t>(value >> 16),
-                        static_cast<uint8_t>(value >> 24)});
-    }
-
-    /// A tiny FT812 scan (100 x 50 clocks, PCLK = system clock: one frame =
-    /// 5000 clocks, 364.6 raster tacts at 48 MHz), a cleared display list,
-    /// a frame swap requested and INT_N enabled for SWAP only
-    void StartSmallScanWithSwapInterrupt()
-    {
-        Write32(kRegHcycle, 100);
-        Write32(kRegHoffset, 20);
-        Write32(kRegHsize, 40);
-        Write32(kRegVcycle, 50);
-        Write32(kRegVoffset, 10);
-        Write32(kRegVsize, 20);
-        Write32(kRamDl + 0, kDlClear);
-        Write32(kRamDl + 4, kDlDisplay);
-        Write32(kRegPclk, 1);
-        Write32(kRegIntMask, kIntSwap);
-        Write32(kRegIntEn, 1);
-        Write32(kRegDlswap, kDlswapFrame);
-    }
-
-    /// One CPU step's worth of interrupt and engine work at the current tact
-    /// (TsConfEngine::OnMachineStep, as Z80 calls it after an instruction)
-    void Step() { _decoder->GetEngine().OnMachineStep(_z80->t); }
-    bool LineIntPending() { return (_decoder->GetState().intPending & TsConfInt::Line) != 0; }
-
-    /// Tick in steps of `stride` tacts until the line INT latches (max `limit` tacts)
-    /// @return tacts it took, or UINT32_MAX
-    uint32_t TactsUntilLineInt(uint32_t limit, uint32_t stride = 1)
-    {
-        for (uint32_t elapsed = 0; elapsed <= limit; elapsed += stride)
-        {
-            Step();
-            if (LineIntPending())
-                return elapsed;
-            Tick(stride);
-        }
-        return UINT32_MAX;
-    }
-
-    /// ft_init's power-up: external clock x `mul`, reset pulse, wait for
-    /// REG_ID = 0x7C and REG_CPURESET = 0
-    void Boot(uint8_t mul = kMul48MHz)
-    {
-        HostCommand(kHostPowerDown);
-        HostCommand(kHostActive);
-        HostCommand(kHostSleep);
-        HostCommand(kHostClkExt);
-        HostCommand(kHostClkSel, static_cast<uint8_t>(mul | kClkSelRangeBits));
-        HostCommand(kHostActive);
-        HostCommand(kHostRstPulse);
-        int polls = 0;
-        while (Read(kRegId, 1)[0] != kRegIdValue && polls++ < kMaxPolls)
-            Tick(kPollTacts);
-        ASSERT_EQ(Read(kRegId, 1)[0], kRegIdValue);
-        polls = 0;
-        while (Read32(kRegCpuReset) != 0 && polls++ < kMaxPolls)
-            Tick(kPollTacts);
-        ASSERT_EQ(Read32(kRegCpuReset), 0u);
-    }
-
-    /// endregion
-
-    uint32_t _position = 0;  // raster tact inside the frame
 };
 
 /// The card exists exactly in the VDAC2 firmware build; STATUS[2:0] says 7
@@ -583,40 +373,6 @@ TEST_F(Vdac2Card_Test, CaptureOnARunningChipReplaysExactly)
     EXPECT_EQ(frames, stats.frames);
 }
 
-/// Vdac2Control, what every automation surface calls: the capture through
-/// it, and the reasons it gives without a card
-TEST_F(Vdac2Card_Test, ControlStartsStopsAndExplainsRefusals)
-{
-    Boot();
-    const std::string path = TestPathHelper::GetUniqueTestScratchPath("vdac2card_test_control.evr");
-    std::string error;
-    Vdac2Control::CaptureStatus status;
-    EXPECT_TRUE(Vdac2Control::HasCard(_context, &error)) << error;
-    EXPECT_FALSE(Vdac2Control::StopCapture(_context, &error)) << "nothing runs yet";
-    EXPECT_FALSE(Vdac2Control::StartCapture(_context, "", &error)) << "no path";
-
-    ASSERT_TRUE(Vdac2Control::StartCapture(_context, path, &error)) << error;
-    Write(kRamG, {1, 2, 3, 4});
-    ASSERT_TRUE(Vdac2Control::GetCaptureStatus(_context, status, &error)) << error;
-    EXPECT_TRUE(status.capturing);
-    EXPECT_EQ(status.path, path);
-    EXPECT_GT(status.exchanges, 0u);
-    EXPECT_GT(status.bytesWritten, Vdac2Capture::kHeaderSize) << "counts what is still buffered";
-    ASSERT_TRUE(Vdac2Control::StopCapture(_context, &error)) << error;
-    ASSERT_TRUE(Vdac2Control::GetCaptureStatus(_context, status, &error));
-    EXPECT_FALSE(status.capturing);
-    EXPECT_EQ(std::filesystem::file_size(path), status.bytesWritten);
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
-
-    // Without the card: the reason names the configuration
-    _context->config.ts_vdac = 0;
-    _decoder->reset();
-    EXPECT_FALSE(Vdac2Control::StartCapture(_context, path, &error));
-    EXPECT_NE(error.find("TS_VDAC2"), std::string::npos) << error;
-    EXPECT_FALSE(Vdac2Control::GetCaptureStatus(_context, status, &error));
-}
-
 /// DMA RAM -> SPI (the SDK's ft_load_cfifo_dma path) delivers the bytes to
 /// the selected FT812
 TEST_F(Vdac2Card_Test, DmaRamToSpiReachesTheChip)
@@ -653,8 +409,6 @@ TEST_F(Vdac2Card_Test, DmaRamToSpiReachesTheChip)
 
     EXPECT_EQ(Read(0x002000, expected.size()), expected);
 }
-
-#endif // ENABLE_VDAC2
 
 /// The TTD memory blob drops zero runs of 64+ bytes (vdac2-integration-design.md §9.1):
 /// every byte of every region comes back exactly, wherever the zero runs are -
@@ -748,3 +502,5 @@ TEST_F(Vdac2Card_Test, TtdMemoryBlobRestoresEveryByteWhereverTheZerosAre)
     blob[0] ^= 0xFF;
     EXPECT_FALSE(card->TtdLoadMemory(blob.data())) << "wrong magic";
 }
+
+#endif // ENABLE_VDAC2

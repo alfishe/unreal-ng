@@ -74,36 +74,60 @@ it was measured with, so a restored block reads the same as when it was made.
 
 ### 3.3 In unreal-ng
 
-- **Vdac2Card:** reads the block (`EveGetFrameMetrics`), owns `[VDAC2] LineBudgetMargin=`
-  (percent, default 10) and the "measure every frame" flag: on while the FT812 Debug window
-  is open or automation asked for metrics in the last seconds, and while capturing.
-- **Vdac2Control** (the facade every surface calls): `GetFrameMetrics(withLines)`,
-  `SetLineBudgetMargin(percent)`, `SetMetricsAlways(on)`.
-- **Automation (all five surfaces, same data):**
-  - WebAPI: `GET /api/v1/emulator/{id}/vdac2/metrics[?lines=1]`,
-    `PUT /api/v1/emulator/{id}/vdac2/metrics` `{"margin":10,"always":true}`; OpenAPI.
-  - MCP: `inspect_state` aspect `vdac2_metrics`.
-  - CLI: `vdac2 metrics [lines]`, `vdac2 metrics margin <percent>`.
-  - Lua `vdac2_metrics(lines)`, Python `emu.vdac2_metrics(lines=False)`.
-  - Recipe: `.recipe/machines/tsconf-vdac2.md`.
-- **Qt: Debug -> FT812 Debug** (a tool window). The menu item exists only while the active
-  machine is TS-Conf with the VDAC2 card (`TSL-VDAC2`); for every other machine it is hidden,
-  not grayed out, and an open window closes when the active machine changes to one without
-  the card:
-  - the line cost histogram of the frame, one bar per line, with the soft and hard budget
-    marked (green below soft, orange above soft, red above hard);
-  - the summary: frame, worst line and its cost, lines over soft / hard, budget, margin;
-  - **always the same moment as the main screen**, in every state: running, paused, at a
-    breakpoint, single-stepping, and TTD scrubbing. It refreshes on the same signal the main
-    screen does (frame presented, `refreshViewport` after a step, a pause or a seek), never on
-    its own timer, so the two never show different moments.
-  - What "the same moment" means follows the screen's rule (§3.4): at a frame boundary (a
-    running machine's presented frame, a seek by frame number) the window shows that frame's
-    finished block; at an exact moment inside a frame (a breakpoint, a step, a seek by T-state
-    or time point) it shows the FT812 frame in flight: the lines measured up to that moment
-    (`EveGetLineCost`, marked "in progress") and the rest of the lines from the previous
-    finished block, with the boundary line marked, as the screen shows the picture drawn so
-    far over the previous frame.
+- **Vdac2Card** (built, L2): reads the block (`EveGetFrameMetrics`), owns
+  `[VDAC2] LineBudgetMargin=` (percent, default 10) and the "measure always" switch (the
+  chip draws every frame, shown or not; the FT812 Debug window turns it on while open).
+  Both setters are atomic and safe from any thread: the margin is applied at the next
+  FT812 frame end, the drawing switch at the card's next advance. A frame is also drawn
+  while capturing and during a TTD replay.
+- **Vdac2Control** (the facade every surface calls): `GetFrameMetrics(withLines, inFlight)`,
+  `SetLineBudgetMargin(percent)`, `SetMeasureAlways(on)`. The frame in flight
+  (`EveFrameLinesPassed` + `EveGetLineCost`, lines passed without drawing read -1) is read
+  only on a paused machine (or without an emulator running it), because reading it
+  brings the chip up to the machine's position.
+- **Automation (all five surfaces, same data; built):**
+  - WebAPI: `GET /api/v1/emulator/{id}/vdac2/metrics[?lines=1&in_flight=1]`,
+    `PUT /api/v1/emulator/{id}/vdac2/metrics` `{"margin":10,"measure_always":true}`; OpenAPI.
+  - MCP: `analyze_performance` actions `vdac2_line_budget` (`lines`, `in_flight`) and
+    `vdac2_line_budget_set` (`margin`, `measure_always`), next to `frame_cost`.
+  - CLI: `vdac2 metrics [lines] [inflight]`, `vdac2 metrics margin <percent>`,
+    `vdac2 metrics always on|off`.
+  - Lua `vdac2_metrics(lines, in_flight)`, `vdac2_metrics_set(margin, always)`; Python
+    `emu.vdac2_metrics(lines=False, in_flight=False)`, `emu.vdac2_metrics_set(margin=, measure_always=)`.
+  - Recipe: `.recipe/machines/tsconf-vdac2.md` (section "Line budget metrics").
+- **Qt: Debug -> FT812 Debug** (built, L3: `unreal-qt/src/debugger/vdac2/`). The menu item
+  exists only while the active machine has the VDAC2 card (`TSL-VDAC2`); for every other
+  machine it is hidden, not grayed out, and an open window closes when the active machine
+  changes to one without the card:
+  - one horizontal bar per screen line, its length the line's clocks, **in the main
+    screen's vertical scale** (the picture's on-screen height per its framebuffer rows,
+    `DeviceScreenWrapper::pictureGlobalRect` / `pictureSourceRect`), and level with the
+    picture's lines when the window is docked beside it; dark strip, green within the soft
+    budget, orange over it, red over the hard budget, gray not drawn; the soft and hard
+    budgets as vertical lines labeled at the top; a tooltip per line;
+  - **docked level with the picture**: opening it docks it to the main window's right edge
+    at the height where its chart's lines meet the screen's lines, sized to the picture
+    (`MainWindow::placeFt812DebugWindow`, `DockingManager::dockAt`); a resize of the main
+    window resizes and repositions it the same way; on macOS it is a native child window
+    (`useNativeChildWindow`), so it rides with the main window without lag. Dragged away it
+    stays where it is (still in the screen's scale) until it is opened again;
+  - below the chart: the summary (frame, worst line and its cost, lines over soft / hard,
+    budget, margin) and the margin setting; while open the window turns measure-always on
+    (and back off unless automation had it on);
+  - **always the same moment as the main screen**: it refreshes on the screen's own refresh
+    (`DeviceScreenWrapper::refreshed`: a presented frame, a debugger step, a TTD seek),
+    never on a timer, and it draws the metrics the card kept **with the picture it
+    published** (`Vdac2Card::PresentedFrameMetrics`): an FT812 frame latched to the Screen,
+    or a TTD-composed picture (a frame target: the FT812 frame that finished last by the end
+    of that machine frame; a moment inside a frame: plus the lines of the frame in flight
+    drawn so far, above a blue line, the previous frame's lines faded below it). Paused at a
+    breakpoint the screen shows the last latched FT812 frame, and so does the window. While
+    the monitor shows the Evo the window shows the chip's last finished frame and says so.
+  - Tests: `unreal-qt-tests` `Ft812LineBudgetView_Test` (classes, composition) and
+    `Ft812LineChart_Test` (bar colors and lengths, the screen's scale); core
+    `TTDVdac2_Test.PresentedMetricsFollowTheScreen` (latched, seek inside a frame, seek by
+    frame, each equal to the live run at that moment; the session's first frame has no
+    lead-in checkpoint and is not composed).
 - **TTD:** the block is part of the chip state, so a checkpoint carries it and a seek
   brings back the metrics of that frame without drawing it again (§3.4).
 

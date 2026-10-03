@@ -94,6 +94,6 @@ built.
 | Q3 | ~~v3 floating-bus form~~ **settled** by E3: the pixel byte only, one tick ahead of the display, `IN` with A0 = 1 ([research-profi-v3-turbo-floatbus.md](research-profi-v3-turbo-floatbus.md) B, design 4.4) | - | - |
 | Q4 | ~~v3 turbo wait rule~~ **settled** by E3: RAM waits 2 / 3 7 MHz clocks by the start clock's parity, ROM none; reproduces the 88208 T Tact Meter figure (design 6.2) | - | - |
 | Q5 | ~~v5 palette gate~~ **settled**: DS80 alone, A7=0, A0=0; the manual's sentence contradicts its own schematic ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)) | - | - |
-| Q6 | ~~v5 front-panel CP/M switch~~ **settled** for the processor board: it holds #DFFD at #00 (built as `FrontPanelSwitch::Cpm`); whether it also changes the start ROM page (manual) is open - the periphery board or a BIOS trace would settle it | - | - |
+| Q6 | ~~v5 front-panel CP/M switch~~ **settled** for the processor board: it holds #DFFD at #00 (built as `FrontPanelSwitch::Cpm`); the manual's "pressed = Spectrum 128" comes from the BIOS, which cannot raise its hi-res menu with #DFFD held at #00 (checked on the emulated BIOS; no emulator models the switch) | - | - |
 | Q7 | ~~Does the SYS ROM see the extended map on v5 (Karabas)~~ **settled: no** ([decoder-prom.md](decoder-prom.md)) | - | - |
 | Q8 | 256K / 768K v3 boards | R5 | the v3.2 manual p6 memory map, the BOM |

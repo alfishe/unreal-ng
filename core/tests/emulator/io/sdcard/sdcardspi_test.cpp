@@ -219,6 +219,75 @@ TEST(SdCardSpi_Test, SingleAndMultiBlockReadWithStop)
     }
 }
 
+/// EndTransfer (a shell finished with the card before starting a program): a
+/// stream in flight stops, its queued bytes go, and the next command answers at
+/// once on the still initialized card
+TEST(SdCardSpi_Test, EndTransferLeavesAnIdleInitializedCard)
+{
+    const ImageFile image = makeImage(64);
+    SdCardSpi card;
+    ASSERT_TRUE(card.open(image, SdCardSpi::WriteMode::Session, SdCardSpi::Type::SDHC));
+    card.select(true);
+    Host host{card};
+    ASSERT_TRUE(host.init());
+
+    std::vector<uint8_t> data;
+    ASSERT_EQ(host.command(18, 10), 0x00);
+    ASSERT_TRUE(host.readData(data));
+    for (int i = 0; i < 100; i++)
+        host.xfer(0xFF);  // part way through the next block
+    ASSERT_TRUE(card.InTransfer());
+
+    card.EndTransfer();
+    EXPECT_FALSE(card.InTransfer());
+    EXPECT_EQ(host.command(17, 20), 0x00) << "the first answer is the new command's, not the old stream";
+    ASSERT_TRUE(host.readData(data));
+    EXPECT_EQ(data[0], 20);
+    EXPECT_EQ(data[511], 20);
+}
+
+/// CMD0 is accepted in every state: during a CMD18 stream it drops the stream and
+/// answers idle at once, so firmware can recover a card it lost track of
+TEST(SdCardSpi_Test, Cmd0DuringAStreamResetsTheCard)
+{
+    const ImageFile image = makeImage(64);
+    SdCardSpi card;
+    ASSERT_TRUE(card.open(image, SdCardSpi::WriteMode::Session, SdCardSpi::Type::SDHC));
+    card.select(true);
+    Host host{card};
+    ASSERT_TRUE(host.init());
+    std::vector<uint8_t> data;
+    ASSERT_EQ(host.command(18, 10), 0x00);
+    ASSERT_TRUE(host.readData(data));
+    for (int i = 0; i < 100; i++)
+        host.xfer(0xFF);
+
+    EXPECT_EQ(host.command(0, 0, 0x95), 0x01) << "idle, answered at once, not after the rest of the stream";
+    EXPECT_FALSE(card.InTransfer());
+    ASSERT_TRUE(host.init()) << "and the card initializes again";
+    ASSERT_EQ(host.command(17, 3), 0x00);
+    ASSERT_TRUE(host.readData(data));
+    EXPECT_EQ(data[0], 3);
+}
+
+/// LeaveForProgram: the card as a shell leaves it - a card that was mid-reset or
+/// never initialized is ready for reads, a stream in flight is gone
+TEST(SdCardSpi_Test, LeaveForProgramGivesAnInitializedIdleCard)
+{
+    const ImageFile image = makeImage(64);
+    SdCardSpi card;
+    ASSERT_TRUE(card.open(image, SdCardSpi::WriteMode::Session, SdCardSpi::Type::SDHC));
+    card.select(true);
+    Host host{card};
+    ASSERT_EQ(host.command(0, 0, 0x95), 0x01);  // the firmware only got as far as CMD0
+
+    card.LeaveForProgram();
+    std::vector<uint8_t> data;
+    ASSERT_EQ(host.command(17, 7), 0x00) << "reads work without the program initializing the card";
+    ASSERT_TRUE(host.readData(data));
+    EXPECT_EQ(data[0], 7);
+}
+
 TEST(SdCardSpi_Test, WritesSessionPersistAndOff)
 {
     const ImageFile image = makeImage(32);

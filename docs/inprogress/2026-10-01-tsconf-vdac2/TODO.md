@@ -22,8 +22,8 @@ Status 2026-10-01: research done, design written, nothing implemented.
 - [x] TTD for the FT812 (design §9): `Vdac2Memory` (regions, zero runs dropped) + `Vdac2` blobs, the picture after a seek by frame / T-state, tests `ttdvdac2_test.cpp`
 - [x] TTD history limit (frames / bytes, every automation surface, Qt TTD panel "Keep N GB"): long VDAC2 sessions (~0.6 MB per frame with content) stay in memory; a file saved after a release replays its remaining frames
 - [x] Line budget metrics L1: metrics block in the chip state (eve-emu `db828d0`, state version 8); design [line-budget-metrics.md](line-budget-metrics.md), the model explained in [line-budget-model.md](line-budget-model.md)
-- [ ] Line budget metrics L2: Vdac2Control metrics API, `[VDAC2] LineBudgetMargin`, the five automation surfaces, OpenAPI, recipe
-- [ ] Line budget metrics L3: Debug -> FT812 Debug window (TSL-VDAC2 only, same moment as the main screen)
+- [x] Line budget metrics L2: Vdac2Control metrics API (+ the frame in flight, eve-emu `125876d` `EveFrameLinesPassed`), `[VDAC2] LineBudgetMargin`, measure-always, the five automation surfaces, OpenAPI, recipe
+- [x] Line budget metrics L3: Debug -> FT812 Debug window (TSL-VDAC2 only, bars in the main screen's scale, the metrics kept with the presented picture)
 - [ ] Line budget metrics L4: calibration on a card (line overhead, fill rates, the look of an overflow)
 - [ ] When TTD v2 memory regions exist: `Vdac2Memory` as changed pages only
 - [x] I1 parts that need no library, on master 2026-10-01: VDAC2 LUT `b115af790`, IDE off

@@ -744,10 +744,20 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.h"
+        # The FT812 Debug window's rows (line-budget-metrics.md §3.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ft812linebudgetview_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linebudgetview.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linebudgetview.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/vdac2/ft812linechart.h"
         # The status bar's video mode label (Sprinter: Spectrum mode vs native modes)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
+        # Focus out releases the held keys (physical and matrix)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/keyboardmanager_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

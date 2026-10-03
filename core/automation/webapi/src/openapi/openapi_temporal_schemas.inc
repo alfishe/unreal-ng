@@ -9,6 +9,9 @@
         field("algorithm", "string", "Selected algorithm, \"\" when off");
         field("active", "boolean", "The algorithm processes frames now");
         field("inactive_reason", "string", "Why a selected algorithm is not active (e.g. a mode without a ZX raster)");
+        field("applicable", "boolean",
+              "false: the machine shows no ZX screen now (a Sprinter native mode, a frame that is no ZX raster); "
+              "inactive_reason starts with \"not applicable:\". The Sprinter's Spectrum mode is applicable");
         field("video_delay_frames", "integer", "Frames the picture is shown after emulation (the A/V delay, more while active)");
         field("video_delay_ms", "number", "The same delay in milliseconds");
         field("audio_extra_delay_frames", "integer", "Frames added to the sound so it stays in sync with the delayed picture");

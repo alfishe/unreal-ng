@@ -427,6 +427,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStart, "/api/v1/emulator/{id}/vdac2/capture/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStop, "/api/v1/emulator/{id}/vdac2/capture/stop", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStatus, "/api/v1/emulator/{id}/vdac2/capture/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::vdac2Metrics, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::vdac2MetricsSet, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Put);
 
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
@@ -1397,6 +1399,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void vdac2CaptureStatus(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    void vdac2Metrics(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void vdac2MetricsSet(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // endregion Profiler Commands Methods
 

@@ -19,11 +19,16 @@
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "base/featuremanager.h"
-#include "emulator/emulator.h"
 #include "emulator/video/zx/screenzx.h"
-#include "_helpers/emulatortesthelper.h"
 #include "sprinterfixture.h"
 #include "sprintermodetable.h"
+
+#include <memory>
+
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
+#include "emulator/emulator.h"
+#include "emulator/video/zxdlss/algorithm.h"
 
 namespace
 {
@@ -628,3 +633,252 @@ TEST_F(ScreenSprinter_Test, SpectrumScreen_WriteInsideASquare_AttributeAtOncePix
 }
 
 /// endregion </Spectrum mode>
+
+/// region <Temporal effects (ZX DLSS) in the Spectrum mode>
+
+namespace
+{
+/// One frame of a synthetic GigaScreen flicker on a ZX screen: a box of character cells whose
+/// ink alternates between red and yellow every frame over a checkerboard, white paper elsewhere,
+/// a cyan border. Written into a Pentagon's page 5 and into the Sprinter's Spectrum squares alike
+struct ZxFlickerFrame
+{
+    uint8_t bitmap[24][32][8] = {};  // character row, column, pixel row
+    uint8_t attr[24][32] = {};
+    uint8_t border = 5;
+
+    explicit ZxFlickerFrame(uint64_t n)
+    {
+        for (int r = 0; r < 24; r++)
+            for (int c = 0; c < 32; c++)
+            {
+                const bool box = r >= 6 && r < 18 && c >= 6 && c < 26;
+                attr[r][c] = box ? static_cast<uint8_t>((7 << 3) | ((n & 1) ? 2 : 6)) : static_cast<uint8_t>(7 << 3);
+                for (int row = 0; row < 8; row++)
+                    bitmap[r][c][row] = box ? static_cast<uint8_t>((row & 1) ? 0x55 : 0xAA) : 0;
+            }
+    }
+
+    /// The Pentagon's screen: page 5, the ZX address of (r, c, row)
+    void WriteZx(uint8_t* page5) const
+    {
+        for (int r = 0; r < 24; r++)
+            for (int c = 0; c < 32; c++)
+            {
+                for (int row = 0; row < 8; row++)
+                    page5[((r >> 3) << 11) | (row << 8) | ((r & 7) << 5) | c] = bitmap[r][c][row];
+                page5[0x1800 + r * 32 + c] = attr[r][c];
+            }
+    }
+};
+}  // namespace
+
+class ScreenSprinterTemporal_Test : public ScreenSprinter_Test
+{
+protected:
+    static constexpr uint8_t kZxA0 = 4;  // the launcher's table: character cell (0, 0) at square (4, 4)
+    static constexpr uint8_t kZxB0 = 4;
+
+    /// The Spectrum mode's mode table (what the launcher writes): border squares round 32 x 24
+    /// Spectrum squares in ZX order (tdd-zx-mode; SprinterSquare::IsSpectrumCell)
+    void SpectrumModeTable()
+    {
+        for (uint8_t a = 0; a < 56; a++)
+            for (uint8_t b = 0; b < 40; b++)
+                SetMode(a, b, 0, 0xF0, 0x00, 0x00);  // border
+        for (uint8_t r = 0; r < 24; r++)
+            for (uint8_t c = 0; c < 32; c++)
+            {
+                const uint8_t m1 = static_cast<uint8_t>(((r & 7) << 5) | c);
+                SetMode(static_cast<uint8_t>(kZxA0 + c), static_cast<uint8_t>(kZxB0 + r), 0,
+                        static_cast<uint8_t>(((r >> 3) << 6) | 0x30), m1, m1);
+            }
+    }
+
+    /// The text palettes in the 16 ZX colors (paper pens #400 + attr, ink pens #500 + attr)
+    void ZxTextPalette(const uint32_t* zx16)
+    {
+        for (uint32_t a = 0; a < 256; a++)
+        {
+            const uint32_t bright = (a & 0x40) ? 8 : 0;
+            SetPen(0x400 + a, zx16[((a >> 3) & 7) + bright]);
+            SetPen(0x500 + a, zx16[(a & 7) + bright]);
+        }
+    }
+
+    /// The Spectrum shadow in video RAM as the renderer reads it (font row m1, block 0, text page 0)
+    void WriteSprinter(const ZxFlickerFrame& f)
+    {
+        uint8_t* vram = _vram->Data();
+        for (int r = 0; r < 24; r++)
+            for (int c = 0; c < 32; c++)
+            {
+                const uint32_t m1 = static_cast<uint32_t>(((r & 7) << 5) | c);
+                const uint32_t third = static_cast<uint32_t>(r >> 3);
+                for (int row = 0; row < 8; row++)
+                    vram[(m1 << 10) | (third << 3) | static_cast<uint32_t>(row)] = f.bitmap[r][c][row];
+                vram[(m1 << 10) | 0x18u | third] = f.attr[r][c];
+            }
+        _screen->SetBorderColor(f.border);
+    }
+
+    const uint32_t* Presented(std::vector<uint8_t>& buffer, Screen* screen)
+    {
+        const FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
+        buffer.assign(static_cast<size_t>(fb.width) * fb.height * 4, 0);
+        EXPECT_TRUE(screen->CopyPresentedFramebuffer(buffer.data(), buffer.size()));
+        return reinterpret_cast<const uint32_t*>(buffer.data());
+    }
+};
+
+// The launcher's Spectrum table: the ZX frame is 352 x 288 at (16, 0), two pixels per ZX pixel;
+// a native picture (the fixture's graphics 320) is not applicable, and says so
+TEST_F(ScreenSprinterTemporal_Test, SpectrumWindow_LauncherTableAndNativeMode)
+{
+    Screen::TemporalWindow window;
+    std::string why;
+    EXPECT_FALSE(_screen->SpectrumWindow(_screen->CurrentInputs(), window, why));
+    EXPECT_NE(why.find("native mode (320x256 256c)"), std::string::npos) << why;
+
+    SpectrumModeTable();
+    why.clear();
+    ASSERT_TRUE(_screen->SpectrumWindow(_screen->CurrentInputs(), window, why)) << why;
+    EXPECT_EQ(window.x0, 16);
+    EXPECT_EQ(window.y0, 0);
+    EXPECT_EQ(window.scaleX, 2);
+    EXPECT_EQ(window.width, 352);
+    EXPECT_EQ(window.height, 288);
+
+    // HOLD moves the picture two pixels left: the window follows
+    WriteCode(SprinterCode::Hold, 0x78);
+    ASSERT_TRUE(_screen->SpectrumWindow(_screen->CurrentInputs(), window, why)) << why;
+    EXPECT_EQ(window.x0, 14);
+    // ... one line down: no 48-line top border inside the 288 lines any more
+    WriteCode(SprinterCode::Hold, 0x67);
+    EXPECT_FALSE(_screen->SpectrumWindow(_screen->CurrentInputs(), window, why));
+    EXPECT_NE(why.find("no full ZX border"), std::string::npos) << why;
+}
+
+// Plane B changes nothing in the picture, and describes the Spectrum squares as the ZX renderer would
+TEST_F(ScreenSprinterTemporal_Test, PlaneB_PixelsIdenticalAndSpectrumCellsDescribed)
+{
+    SpectrumModeTable();
+    WriteSprinter(ZxFlickerFrame(1));
+    Render();
+    std::vector<uint32_t> off(736 * 288);
+    for (uint32_t i = 0; i < off.size(); i++)
+        off[i] = Pixel(i % 736, i / 736);
+
+    _screen->SetPlaneBEnabled(true);
+    Render();
+    size_t count = 0;
+    const uint16_t* planeB = _screen->GetPlaneB(&count);
+    ASSERT_NE(planeB, nullptr);
+    ASSERT_EQ(count, off.size());
+    for (uint32_t i = 0; i < off.size(); i++)
+        ASSERT_EQ(Pixel(i % 736, i / 736), off[i]) << "plane B changed pixel " << i;
+
+    // Cell (6, 6) (box: attr paper 7, ink 2): its first pixel row is #AA - ink, ink, paper, paper ...
+    const uint32_t x = 112 + 6 * 16;
+    const uint32_t y = 48 + 6 * 8;
+    const uint8_t attr = (7 << 3) | 2;
+    EXPECT_EQ(planeB[y * 736 + x], Screen::kPlaneBRoleScreen | Screen::kPlaneBInk | (2 << 8) | attr);
+    EXPECT_EQ(planeB[y * 736 + x + 1], planeB[y * 736 + x]) << "a ZX pixel is two 14 MHz pixels";
+    EXPECT_EQ(planeB[y * 736 + x + 2], Screen::kPlaneBRoleScreen | (7 << 8) | attr);
+    EXPECT_EQ(planeB[10 * 736 + 300], Screen::kPlaneBRoleBorder | (5 << 8)) << "border square";
+}
+
+// The temporal pipeline on a Sprinter in the Spectrum mode gets what a Pentagon gets for the same ZX
+// screen (plane B, palette) and its presented frame is the Pentagon's processed frame, every ZX pixel
+// two pixels wide. Both machines run the frames through their own latch, worker and present queue.
+// 16 frames of mod-tpgwafsd on each machine: ~150 ms, the algorithm's 6 frames of look-ahead + 7 of delay
+TEST_F(ScreenSprinterTemporal_Test, SpectrumMode_ProcessedFramesEqualPentagons)
+{
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    Screen* zx = pentagon->GetContext()->pScreen;
+    uint8_t* page5 = pentagon->GetContext()->pMemory->RAMPageAddress(5);
+    uint32_t palette[16];
+    zx->GetRGBAPalette16(palette);
+
+    SpectrumModeTable();
+    ZxTextPalette(palette);
+    const std::string algorithm = "mod-tpgwafsd";
+    ASSERT_TRUE(zx->SetTemporalAlgorithm(algorithm));
+    ASSERT_TRUE(_screen->SetTemporalAlgorithm(algorithm));
+    zx->SetPlaneBEnabled(true);
+    _screen->SetPlaneBEnabled(true);
+
+    constexpr uint64_t kFrames = 16;
+    for (uint64_t n = 0; n < kFrames; n++)
+    {
+        const ZxFlickerFrame frame(n);
+        frame.WriteZx(page5);
+        zx->SetBorderColor(frame.border);
+        zx->InitFrame();
+        zx->DrawRange(0, zx->GetMaxFrameTiming() - 1);
+        WriteSprinter(frame);
+        Render();
+
+        // The input the Sprinter hands over is the Pentagon's
+        Screen::TemporalFrame sprinterIn;
+        _screen->TemporalInput(sprinterIn);
+        ASSERT_NE(sprinterIn.planeB, nullptr) << sprinterIn.notApplicable;
+        ASSERT_EQ(sprinterIn.width, 352);
+        ASSERT_EQ(sprinterIn.height, 288);
+        size_t count = 0;
+        const uint16_t* zxPlaneB = zx->GetPlaneB(&count);
+        ASSERT_EQ(count, 352u * 288u);
+        for (size_t i = 0; i < count; i++)
+            ASSERT_EQ(sprinterIn.planeB[i], zxPlaneB[i]) << "frame " << n << " plane B pixel (" << i % 352 << ", "
+                                                         << i / 352 << ")";
+        for (int c = 0; c < 16; c++)
+            ASSERT_EQ(sprinterIn.palette[c], palette[c]) << "ZX color " << c;
+
+        zx->LatchFramebuffer();
+        _screen->LatchFramebuffer();
+        ASSERT_TRUE(TestWait::For([&] {
+            return zx->GetTemporalStats().processed == n + 1 && _screen->GetTemporalStats().processed == n + 1;
+        })) << "frame " << n << ": " << _screen->GetTemporalStats().inactiveReason;
+    }
+
+    const TemporalEffects::Stats stats = _screen->GetTemporalStats();
+    EXPECT_TRUE(stats.active) << stats.inactiveReason;
+    EXPECT_TRUE(stats.applicable);
+    EXPECT_GT(stats.correctedFrames, 0u) << "the box flickers: the algorithm corrects it";
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), zx->GetEffectivePresentDelayFrames());
+
+    std::vector<uint8_t> zxBuffer;
+    std::vector<uint8_t> spBuffer;
+    const uint32_t* zxShown = Presented(zxBuffer, zx);
+    const uint32_t* spShown = Presented(spBuffer, _screen);
+    EXPECT_TRUE(zx->GetTemporalStats().showingProcessed);
+    EXPECT_TRUE(_screen->GetTemporalStats().showingProcessed);
+    EXPECT_TRUE(_screen->GetTemporalStats().correcting) << "the flicker is being corrected on screen";
+    for (uint32_t y = 0; y < 288; y++)
+        for (uint32_t x = 0; x < 736; x++)
+        {
+            const uint32_t zxX = x < 16 ? 0 : std::min<uint32_t>((x - 16) / 2, 351);
+            ASSERT_EQ(spShown[y * 736 + x], zxShown[y * 352 + zxX]) << "pixel (" << x << ", " << y << ")";
+        }
+
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+// A native picture: the effect stays off and reports "not applicable" (automation, the dialog)
+TEST_F(ScreenSprinterTemporal_Test, NativeMode_NotApplicable)
+{
+    ASSERT_TRUE(_screen->SetTemporalAlgorithm("mod-tpgwafsd"));
+    _screen->SetPlaneBEnabled(true);
+    Render();
+    _screen->LatchFramebuffer();
+    const TemporalEffects::Stats stats = _screen->GetTemporalStats();
+    EXPECT_FALSE(stats.active);
+    EXPECT_FALSE(stats.applicable);
+    EXPECT_EQ(stats.inactiveReason.rfind("not applicable: Sprinter native mode", 0), 0u) << stats.inactiveReason;
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), _screen->GetPresentDelayFrames()) << "no delay for nothing";
+    ASSERT_TRUE(_screen->SetTemporalAlgorithm(""));
+    EXPECT_TRUE(_screen->GetTemporalStats().applicable) << "off: nothing to apply";
+}
+
+/// endregion </Temporal effects (ZX DLSS) in the Spectrum mode>

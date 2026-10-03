@@ -292,7 +292,10 @@ void TemporalEffectsDialog::refreshDlssStatus()
     }
     if (!s.active)
     {
-        setLed(false, tr("Waiting: %1").arg(QString::fromStdString(s.inactiveReason)));
+        // Not applicable: the machine shows no ZX screen now (a Sprinter native mode); the
+        // reason already says so. Otherwise the effect waits for its input (plane B next frame)
+        setLed(false, s.applicable ? tr("Waiting: %1").arg(QString::fromStdString(s.inactiveReason))
+                                   : QString::fromStdString(s.inactiveReason));
         _dlssStatus->clear();
         _dlssDetectors->clear();
         return;

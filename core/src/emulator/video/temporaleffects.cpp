@@ -65,6 +65,7 @@ bool TemporalEffects::SetAlgorithm(const std::string& name)
         return true;
     _algorithmName = name;
     _algorithmDelay = delay;
+    _enabled.store(!name.empty(), std::memory_order_release);
     _queue.clear();
     _generation++;
     _stats = Stats{};
@@ -78,7 +79,7 @@ std::string TemporalEffects::GetAlgorithm() const
 }
 
 int TemporalEffects::Submit(uint64_t serial, const uint16_t* planeB, int width, int height,
-                            const uint32_t* palette)
+                            const uint32_t* palette, const std::string* notApplicable)
 {
     int paperX = 0;
     int paperY = 0;
@@ -86,14 +87,24 @@ int TemporalEffects::Submit(uint64_t serial, const uint16_t* planeB, int width, 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _active = false;
+        _applicable = true;
         if (_algorithmName.empty())
             _inactiveReason.clear();
+        else if (!planeB && notApplicable && !notApplicable->empty())
+        {
+            _inactiveReason = "not applicable: " + *notApplicable;
+            _applicable = false;
+        }
         else if (!palette)
             _inactiveReason = "no palette";
         else if (!planeB)
             _inactiveReason = "no plane B (needs the zxdlss and screenhq features and a ZX screen mode)";
         else if (!PaperOrigin(width, height, paperX, paperY))
-            _inactiveReason = "frame " + std::to_string(width) + "x" + std::to_string(height) + " is not a ZX screen";
+        {
+            _inactiveReason = "not applicable: frame " + std::to_string(width) + "x" + std::to_string(height) +
+                              " is not a ZX screen";
+            _applicable = false;
+        }
         else
         {
             _active = true;
@@ -146,6 +157,7 @@ TemporalEffects::Stats TemporalEffects::GetStats() const
     s.algorithm = _algorithmName;
     s.active = _active;
     s.inactiveReason = _inactiveReason;
+    s.applicable = _algorithmName.empty() || _applicable;
     s.videoDelayFrames = _videoDelay.load(std::memory_order_acquire);
     return s;
 }

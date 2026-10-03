@@ -216,6 +216,24 @@ After a panel switch FN 1.10 re-reads the floppy for about 0.6 s with
 interrupts off; keys sent in that time overrun the SIO's 3-byte FIFO
 (`sprinter.z84c15.keyboard.overruns`). Wait a moment between keys.
 
+**Keyboard overrun, as on the board.** Nothing holds the AT keyboard off: while
+the CPU reads nothing (DI, a long ISR, a Spectrum-mode program), every byte
+after the third overwrites the newest one in the SIO FIFO. Then
+`sprinter.z84c15.sio[0]` shows `overrun_in_fifo: true` (a written-over byte
+still queued) and, once that byte reaches the top, `overrun: true` (RR1 bit 5,
+until the program's Error Reset). BIOS 3.04 / 3.05 and DSS 1.62 take one key
+per frame and never clear it, so a lost `F0` turns a break into another make
+there; BIOS 3.06 / 3.07 and DSS 1.71 empty the FIFO and forget the shift keys on
+an overrun. The keyboard itself sends only what the keys did: it repeats a key only
+while it is held (500 ms, then 10.9 per second).
+
+**F12 and Ctrl+Alt+Del** act in the PLD, which reads the keyboard wire, not the
+SIO: an overrun never switches the turbo. Each F12 make byte without Shift /
+Ctrl / Alt flips the turbo switch (`clock` in `/state/sprinter`), so holding F12
+past half a second flips it again with every typematic repeat, as on the board.
+In the GUI, keys held when the screen loses focus are released (the PS/2 keys
+and the ZX matrix keys alike).
+
 ### 3b. Demos paced by the CTC (Bad Apple, dontBlink)
 
 Some DSS 1.71 programs run their playback on a Z84C15 CTC interrupt instead of
@@ -537,6 +555,24 @@ and core reports as Lua.)
   both floppies before the boot.
 - **Uploads**: MCP `load_software` uploads a file that exists on the MCP host;
   floppies up to 4 MB are accepted (1.44 MB PC images included).
+
+### ZX DLSS de-flicker in the Spectrum mode
+
+Verified 2026-10-03 (WebAPI on a spare port, BIOS 3.06, the MAME-pack disk): in Flex Navigator type
+`\zx\spectrum.exe \zx\p128.zx \trd\across\0.trd`, ENTER, ENTER on TR-DOS, `R` ENTER, ENTER on ACROSS.
+
+```bash
+curl -s -X PUT $BASE/emulator/$EMU/video/temporal -H 'Content-Type: application/json' -d '{"algorithm":"mod-tpgwafsd"}' |
+  jq -c '{active, applicable, inactive_reason, video_delay_frames}'
+#   Spectrum mode → {"active":true,"applicable":true,"inactive_reason":"","video_delay_frames":7}
+#   Flex Navigator → {"active":false,"applicable":false,
+#                     "inactive_reason":"not applicable: Sprinter native mode (640x256 16c): ZX DLSS works in the Spectrum mode only", ...}
+```
+
+The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen` is the raw
+one). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
+of its 704 x 288 window at (16, 0). CLI `video temporal`, MCP `capture_media` `temporal_status`, Lua / Python
+`video_temporal()` report the same fields. Design: `docs/inprogress/2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md` §7.
 
 ### ZX-mode timing: the zxtime program
 

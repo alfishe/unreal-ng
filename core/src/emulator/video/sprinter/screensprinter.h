@@ -71,7 +71,18 @@ public:
     void CaptureFamilyLatches(videomap::VideoLatches& latches) const override;
     bool DigestSurface(ScreenDigestSurface& out) const override;
     bool IndexedFrame(std::vector<uint16_t>& pens, uint16_t& width, uint16_t& height, std::string& encoding) const override;
+    void TemporalInput(TemporalFrame& frame) override;
     /// endregion </Screen>
+
+    /// Temporal effects (ZX DLSS) in the Spectrum mode: where the 352 x 288 ZX frame (256 x 192
+    /// paper + 48 of border all round, as a Pentagon draws it) sits in the 736 x 288 framebuffer.
+    /// The Spectrum mode is the mode table the launcher writes (SprinterPicture: Spectrum, not
+    /// mixed): 32 x 24 Spectrum squares in ZX order, square (a0 + c, b0 + r) = character cell
+    /// (r, c), each ZX pixel two 14 MHz pixels. Worked example: the launcher's table has cell
+    /// (0, 0) at square (4, 4): paper at (48 + 64, 16 + 32) = (112, 48), the ZX frame at
+    /// (112 - 96, 48 - 48) = (16, 0). False with the reason when there is no such picture
+    /// (a native mode) or it does not leave the ZX border inside the frame
+    bool SpectrumWindow(const SprinterVideoInputs& in, TemporalWindow& window, std::string& why) const;
 
     /// The frame height the raster runs with now: 320 or 312 lines
     uint16_t FrameLines() const { return _frameLines; }
@@ -108,4 +119,5 @@ private:
     uint64_t _fontLatchFrame = 0;  ///< the frame _fontLatch belongs to (frame_counter)
     uint32_t _fontLatchCheckedT = ~0u;  ///< the last moment LatchFont looked at, and its frame
     uint64_t _fontLatchCheckedFrame = 0;
+    std::vector<uint16_t> _zxPlaneB;  // the ZX frame's plane B for the temporal effect (only while it runs)
 };

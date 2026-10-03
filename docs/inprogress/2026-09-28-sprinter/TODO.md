@@ -112,6 +112,13 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
   window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
   (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
+- [x] Keyboard overrun, stuck keys, F12 (2026-10-03, branch `sprinter-ps2-overrun`;
+  [s4-input-outcome.md](s4-input-outcome.md) last section): the board never holds the keyboard off (PLD KBD_CX =
+  KBD_DX = GND), so unread bytes are lost in the SIO as on the board; the Z84C15 SIO now overruns as the data sheets
+  and MAME do (newest entry overwritten, RR1 bit 5 when it reaches the top, latched until Error Reset); F12 and
+  Ctrl+Alt+Del come from the PLD's keyboard block decoding the wire (typematic F12 repeats toggle again; an SIO
+  overrun cannot switch the turbo), TTD blob 31 v3, `boot.ttd` re-recorded; focus out releases the ZX matrix keys
+  as well as the PS/2 keys
 
 - [x] Spectrum mode: attributes lagged behind the pixels in Pentagon multicolor demos (owner report 2026-10-03,
   `scroller.trd`, `atarin.trd` in P128; branch `sprinter-zx-shadow-squares`; [research-zx-mode.md](research-zx-mode.md)
@@ -181,6 +188,15 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     clears RGMOD / PORT_Y (PLD), BIOS 3.07 BETA 1 reads ALL_MODE back; MAME gap B8
   - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
     the image. The "comdos" catalog was TWIX's disk (finding 4)
+  - [x] Temporal effects in the Spectrum mode (2026-10-03, branch `sprinter-temporal-effects`; owner report "ZX DLSS
+    does not work on the Sprinter"): the ZX DLSS input came only from the ZX per-T renderer's plane B; now the
+    Sprinter renderer writes plane B too (`DrawSpanPlaneB`), `ScreenSprinter::TemporalInput` hands over the 352 x 288
+    ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
+    Across the Edge: paper plane B identical to a Pentagon on the same frames
+    ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
+    border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
+    change 8 lines off in the bottom border
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided
@@ -217,7 +233,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
     `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
-  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed. (The board
+    cannot send them either: the PLD drives KBD_CX = KBD_DX = GND, hardware-reference §13.)
+  - Keyboard, open (2026-10-03): the owner's live GUI check of the overrun / focus fixes; a TTD replay that hands
+    input back while the host holds other keys than the journal left held is not reconciled (the keyboard keeps
+    the recorded keys down until the host presses and releases them); the PLD's own ZX matrix decoder (code `#40`
+    from the wire, disabled while ALL_MODE bit 0 is set) is still the host's matrix keys - S.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
   developer interest in §10; priority order, functional items only):**
   - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT

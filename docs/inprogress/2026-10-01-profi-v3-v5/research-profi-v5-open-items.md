@@ -231,6 +231,14 @@ RAM speed ("15-17 mHz ... 23-25 mHz" against RAM grades, p.20).
 
 ---
 
+## Follow-up (2026-10-02): the start ROM page
+
+No other emulator or RTL models the CP/M switch: ZXMAK2 (`memory-profi1024.cs` BusReset: SYSEN, CMR0 = CMR1 = 0),
+Xpeccy, xpeccy-plus, UnrealSpeccy, pico-spec and Karabas-Pro all reset into the SYS ROM. Running the BIOS on the
+emulator with the switch held settles the open point without a ROM-page link: #DFFD stays #00, the BIOS cannot
+raise its hi-res menu and starts Spectrum 128 (the STS / Power of Sound menu, ROM page 2), which is what the manual
+describes for the pressed switch.
+
 ## Sources
 
 - `materials/v5-wait-netlist/netdump.txt`: parts DD1, DD2, DD5, DD8, DD9, DD10, DD12, DD18,

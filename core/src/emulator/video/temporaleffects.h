@@ -57,6 +57,9 @@ public:
         std::string algorithm;       ///< selected algorithm ("" = off)
         bool active = false;         ///< processing frames now
         std::string inactiveReason;  ///< why a selected algorithm is not active
+        /// false: the machine shows no ZX screen now (a native mode of another machine, a frame
+        /// that is no ZX raster) - the effect does not apply until it does; inactiveReason says why
+        bool applicable = true;
         int videoDelayFrames = 0;    ///< frames the output trails emulation (0 while inactive)
         uint64_t processed = 0;      ///< frames the algorithm processed
         uint64_t written = 0;        ///< outputs written into their present slot in time
@@ -87,9 +90,14 @@ public:
     /// with the 16 ZX colors the emulator draws it in now (RGBA8888, 0xAABBGGRR -
     /// Screen::GetRGBAPalette16; the algorithm mixes in these).
     /// planeB == nullptr (plane B off) or an unsupported frame size makes the
-    /// effect inactive. Returns the video delay the present queue must apply
-    /// (0 while inactive).
-    int Submit(uint64_t serial, const uint16_t* planeB, int width, int height, const uint32_t* palette);
+    /// effect inactive. `notApplicable` (with planeB == nullptr): the machine shows
+    /// no ZX screen now, and why (the inactive reason; Stats::applicable = false).
+    /// Returns the video delay the present queue must apply (0 while inactive).
+    int Submit(uint64_t serial, const uint16_t* planeB, int width, int height, const uint32_t* palette,
+               const std::string* notApplicable = nullptr);
+
+    /// An algorithm is selected (any thread; cheap: the caller skips preparing a frame when not)
+    bool IsEnabled() const { return _enabled.load(std::memory_order_acquire); }
 
     /// Emulation thread: the frame sequence broke (seek, reset): restart the algorithm.
     void Reset();
@@ -127,9 +135,11 @@ private:
     bool _stop = false;
     std::string _inactiveReason;
     bool _active = false;
+    bool _applicable = true;
     Stats _stats;
 
     std::atomic<int> _videoDelay{0};
+    std::atomic<bool> _enabled{false};
 
     // Worker state (worker thread only)
     std::unique_ptr<zxdlss::Algorithm> _algorithm;

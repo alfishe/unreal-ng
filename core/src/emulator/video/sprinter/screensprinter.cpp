@@ -281,6 +281,10 @@ void ScreenSprinter::DrawRange(uint32_t fromTstate, uint32_t toTstate)
     const SprinterVideoInputs in = CurrentInputs();
     const SprinterVideoRenderer& renderer = decoder->VideoRenderer();
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    // ZX DLSS plane B (feature zxdlss): written in the same pass, the same size as the framebuffer
+    uint16_t* const planeB =
+        (_planeBEnabled && _planeB.size() == static_cast<size_t>(_framebuffer.width) * _framebuffer.height) ? _planeB.data()
+                                                                                                             : nullptr;
 
     // One span per raster line of the range
     for (uint32_t t = fromTstate; t <= toTstate;)
@@ -292,8 +296,11 @@ void ScreenSprinter::DrawRange(uint32_t fromTstate, uint32_t toTstate)
         t = lineStart + kLineTStates;
         if (first > last)
             continue;
-        uint32_t* out = fb + line * SprinterVideoRenderer::kVisibleWidth + first * 4;
-        renderer.DrawSpan(in, line, first * 4, (last + 1) * 4, out);
+        const size_t offset = line * SprinterVideoRenderer::kVisibleWidth + first * 4;
+        if (planeB)
+            renderer.DrawSpanPlaneB(in, line, first * 4, (last + 1) * 4, fb + offset, planeB + offset);
+        else
+            renderer.DrawSpan(in, line, first * 4, (last + 1) * 4, fb + offset);
     }
 }
 
@@ -314,6 +321,113 @@ void ScreenSprinter::FillBorderWithColor([[maybe_unused]] uint8_t color)
 }
 
 /// endregion </Drawing>
+
+/// region <Temporal effects>
+
+bool ScreenSprinter::SpectrumWindow(const SprinterVideoInputs& in, TemporalWindow& window, std::string& why) const
+{
+    constexpr int kZxWidth = 352;
+    constexpr int kZxHeight = 288;
+    constexpr int kZxBorder = 48;
+    constexpr int kScale = 2;  // a ZX pixel (7 MHz) is two 14 MHz pixels
+    if (!in.vram)
+    {
+        why = "no Sprinter video";
+        return false;
+    }
+    const SprinterPicture picture = SprinterPicture::Of(in.vram, in.modePage);
+    using Kind = SprinterSquare::Kind;
+    if (picture.mode != Kind::Spectrum || picture.mixed || picture.Count(Kind::Spectrum) != 32 * 24)
+    {
+        why = "Sprinter native mode (" + picture.Brief(in.textPage) + "): ZX DLSS works in the Spectrum mode only";
+        return false;
+    }
+
+    // The square of character cell (0, 0), then every cell in ZX order from it
+    int a0 = -1;
+    int b0 = -1;
+    for (uint8_t b = 0; b < SprinterPicture::kRows && a0 < 0; b++)
+        for (uint8_t a = 0; a < SprinterPicture::kColumns; a++)
+        {
+            const SprinterSquare sq = SprinterSquare::Decode(in.vram + SprinterVideoRam::ModeAddress(a, b, in.modePage));
+            if (sq.kind == Kind::Spectrum && sq.ZxRow() == 0 && sq.ZxColumn() == 0)
+            {
+                a0 = a;
+                b0 = b;
+                break;
+            }
+        }
+    bool ordered = a0 >= 0 && a0 + 32 <= SprinterPicture::kColumns && b0 + 24 <= SprinterPicture::kRows;
+    for (int r = 0; ordered && r < 24; r++)
+        for (int c = 0; ordered && c < 32; c++)
+        {
+            const SprinterSquare sq = SprinterSquare::Decode(
+                in.vram + SprinterVideoRam::ModeAddress(static_cast<uint8_t>(a0 + c), static_cast<uint8_t>(b0 + r), in.modePage));
+            ordered = sq.kind == Kind::Spectrum && sq.ZxRow() == r && sq.ZxColumn() == c;
+        }
+    if (!ordered)
+    {
+        why = "Sprinter Spectrum squares are not one 256x192 screen in ZX order";
+        return false;
+    }
+
+    // The framebuffer pixel of the square's corner (SprinterVideoRenderer::A16 / B8 inverted)
+    const int paperX = static_cast<int>(SprinterVideoRenderer::kBorderLeft) + in.holdX + 16 * a0;
+    const int paperY = static_cast<int>(SprinterVideoRenderer::kBorderTop) + in.holdY + 8 * b0;
+    window.x0 = paperX - kZxBorder * kScale;
+    window.y0 = paperY - kZxBorder;
+    window.scaleX = kScale;
+    window.width = kZxWidth;
+    window.height = kZxHeight;
+    if (window.x0 < 0 || window.y0 < 0 || window.x0 + kZxWidth * kScale > static_cast<int>(SprinterVideoRenderer::kVisibleWidth) ||
+        window.y0 + kZxHeight > static_cast<int>(kVisibleLines))
+    {
+        why = "Sprinter Spectrum screen at (" + std::to_string(paperX) + ", " + std::to_string(paperY) +
+              ") leaves no full ZX border inside the frame";
+        window = TemporalWindow{};
+        return false;
+    }
+    return true;
+}
+
+void ScreenSprinter::TemporalInput(TemporalFrame& frame)
+{
+    // The ZX screen of the Spectrum mode, as a Pentagon would hand it over: 352 x 288 plane B
+    // (every second 14 MHz pixel of the window: a ZX pixel is two), the 16 ZX colors from the
+    // text palettes the picture is drawn with. Native modes: not applicable
+    const SprinterVideoInputs in = CurrentInputs();
+    TemporalWindow window;
+    if (!SpectrumWindow(in, window, frame.notApplicable))
+    {
+        _zxPlaneB.clear();
+        _zxPlaneB.shrink_to_fit();
+        return;
+    }
+    frame.width = window.width;
+    frame.height = window.height;
+    frame.window = window;
+    // ZX color c (bright x 8 + color) is the ink pen of attribute (bright, ink c, paper 0)
+    for (uint32_t c = 0; c < 16; c++)
+    {
+        const uint32_t attr = ((c & 8) << 3) | (c & 7);
+        frame.palette[c] = in.palette ? in.palette[SprinterVideoRenderer::kPenText + 0x100 + attr] : 0xFF000000u;
+    }
+    if (!_planeBEnabled || _planeB.size() != static_cast<size_t>(_framebuffer.width) * _framebuffer.height)
+        return;  // plane B starts at the next frame: "no plane B" for now
+
+    _zxPlaneB.resize(static_cast<size_t>(window.width) * window.height);
+    const uint32_t fbWidth = _framebuffer.width;
+    for (int y = 0; y < window.height; y++)
+    {
+        const uint16_t* src = _planeB.data() + static_cast<size_t>(window.y0 + y) * fbWidth + window.x0;
+        uint16_t* dst = _zxPlaneB.data() + static_cast<size_t>(y) * window.width;
+        for (int x = 0; x < window.width; x++)
+            dst[x] = src[x * window.scaleX];
+    }
+    frame.planeB = _zxPlaneB.data();
+}
+
+/// endregion </Temporal effects>
 
 /// region <Description>
 

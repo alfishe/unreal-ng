@@ -5,6 +5,7 @@
 #include <QMessageBox>
 #include <set>
 
+#include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 
 #include "base/featuremanager.h"
@@ -545,6 +546,12 @@ void MenuManager::setNetworkWindowChecked(bool checked)
         _networkWindowAction->setChecked(checked);
 }
 
+void MenuManager::setFt812DebugChecked(bool checked)
+{
+    if (_ft812DebugAction)
+        _ft812DebugAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -1032,6 +1039,15 @@ void MenuManager::createDebugMenu()
     _debuggerAction->setChecked(false);
     connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
 
+    // FT812 line budget (line-budget-metrics.md §3.3): exists only while the active
+    // machine has the VDAC2 card (TSL-VDAC2); hidden, not grayed out, otherwise
+    _ft812DebugAction = _debugMenu->addAction(tr("&FT812 Debug"));
+    _ft812DebugAction->setStatusTip(tr("Show/hide the VDAC2 card's FT812 line budget: each screen line's cost against the clocks it has"));
+    _ft812DebugAction->setCheckable(true);
+    _ft812DebugAction->setChecked(false);
+    _ft812DebugAction->setVisible(false);
+    connect(_ft812DebugAction, &QAction::triggered, this, &MenuManager::ft812DebugToggled);
+
     _debugMenu->addSeparator();
 
     // Step In
@@ -1272,6 +1288,10 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     bool emulatorExists = (activeEmulator != nullptr);
     bool isRunning = emulatorExists && activeEmulator->IsRunning();
     bool isPaused = emulatorExists && activeEmulator->IsPaused();
+
+    // Debug -> FT812 Debug: only for a machine with the VDAC2 card
+    if (_ft812DebugAction)
+        _ft812DebugAction->setVisible(emulatorExists && Ft812DebugWindow::Offered(activeEmulator->GetContext()));
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);
