@@ -92,6 +92,11 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 
 - [ ] Step 1 — One event stream (input, external events, markers, port reads, bus data, DMA, network)
+  - [x] Event log and payload store; no barriers in a sealed replay (only v1 records without data) (2026-10-03)
+  - [x] v1's input, network and markers reach the engine: live in shadow mode at every frame boundary, and from v1 files (`FeedV1Events`); the corpus imports one for one (2026-10-03)
+  - [ ] `IN` / `OUT` bus journals with per-checkpoint cursors
+  - [ ] The engine replays a frame from its own data (seek inside a frame) and matches v1: the first full-scenario A/B
+  - [ ] Interrupt-vector and DMA taps (Sprinter, TS-Conf, NeoGS); debugger edits with their bytes
 - [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
 - [ ] Step 4 — Configuration fingerprint and media versions (the machine ROMs of every model, the Sprinter BIOS among them)

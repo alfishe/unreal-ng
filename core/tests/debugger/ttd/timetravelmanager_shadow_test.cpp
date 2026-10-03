@@ -15,6 +15,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdeventscompare.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
@@ -207,4 +208,35 @@ TEST_F(TimeTravelManager_Shadow_Test, RestoreToMemoryWritesOnlyWhatDiffers_AndMa
     ASSERT_TRUE(_engine.RestoreToMemory(at, nullptr, &stats).Ok());
     EXPECT_GT(stats.piecesDecoded, 0u);
     EXPECT_EQ(stats.piecesSkipped, 0u);
+}
+
+/// Phase 3, Step 1: while recording, the shadow engine gets what v1 journals -
+/// key presses and releases, a marker with its reason - each at the same time
+TEST_F(TimeTravelManager_Shadow_Test, EveryJournaledEventReachesTheEngineAtItsTime)
+{
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    ttd::TTDInputEvent key;
+    key.kind = ttd::TTDInputKind::Key;
+    key.key = 12;
+    key.pressed = true;
+    ASSERT_TRUE(_v1->SubmitLiveInput(key));
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    _v1->RecordExternalEvent(ttd::TTDExternalEventKind::TapeControl, "tape play (test)");
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    key.pressed = false;
+    ASSERT_TRUE(_v1->SubmitLiveInput(key));
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+
+    ASSERT_GE(_v1->GetInputJournal().Size(), 2u);
+    ASSERT_EQ(_v1->GetExternalEvents().Size(), 1u);
+    ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectEventsEqualV1(
+        _engine, _v1->GetInputJournal(), _v1->GetExternalEvents(), 0, 0, [this](uint64_t frame) {
+            ttd::TTDMachineTime start = 0;
+            EXPECT_TRUE(_engine.Frames().Start(frame, start)) << "frame " << frame;
+            return start;
+        }));
+    EXPECT_EQ(_engine.Events().FirstBarrierIn(0, ~ttd::TTDMachineTime(0)), nullptr) << "a tape command is input";
 }

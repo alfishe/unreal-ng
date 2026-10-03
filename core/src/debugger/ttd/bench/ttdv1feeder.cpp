@@ -1,5 +1,7 @@
 #include "ttdv1feeder.h"
 
+#include "debugger/ttd/ttdv1events.h"
+
 #include <array>
 #include <cstring>
 #include <unordered_map>
@@ -222,6 +224,10 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
         prevSlots.swap(slots);
         local.checkpoints++;
     }
+    // The session's events: input, network, markers (Phase 3, Step 1)
+    TTDV1EventCursor cursor;
+    local.events = FeedV1Events(engine, v1.GetInputJournal(), v1.GetExternalEvents(), cursor, UINT64_MAX,
+                                &local.eventsRefused);
     if (stats)
         *stats = local;
     return true;

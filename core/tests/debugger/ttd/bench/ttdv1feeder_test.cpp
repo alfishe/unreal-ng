@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 
+#include "_helpers/ttdeventscompare.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -41,7 +43,7 @@ std::vector<fs::path> CorpusFiles()
 {
     std::vector<fs::path> files;
     const fs::path root = TestPathHelper::FindProjectRoot() / "testdata";
-    std::vector<fs::path> dirs = {root / "ttd"};
+    std::vector<fs::path> dirs = {root / "ttd", root / "ttd" / "port-journals"};   // the latter: keys, a tape load
     if (fs::exists(root / "machines"))
         for (const auto& machine : fs::directory_iterator(root / "machines"))
             dirs.push_back(machine.path() / "ttd");
@@ -208,4 +210,32 @@ TEST_F(TTDV1Feeder_Test, FeedsOnlyRealChanges)
     }
     ASSERT_GE(_v1->GetCheckpointCount(), 100u) << "the session must span key frames";
     EXPECT_LT(stats.changedRamPieces, newSlots) << "the key frames' re-stores must not be fed as changes";
+}
+
+/// Phase 3, Step 1: every v1 session's input journal (network records and
+/// received bytes included) and external events go into the engine's event
+/// log, each at its time, kind numbers kept; nothing is refused
+TEST_F(TTDV1Feeder_Test, EveryEventOfTheCorpusImportsIntoTheEventLog)
+{
+    size_t total = 0, markers = 0, net = 0;
+    for (const fs::path& file : CorpusFiles())
+    {
+        SCOPED_TRACE(file.filename().string());
+        ASSERT_NO_FATAL_FAILURE(LoadIntoV1(file));
+        ttd::TimeTravelEngine engine;
+        std::string err;
+        ttd::bench::FeedStats stats;
+        ASSERT_TRUE(ttd::bench::FeedV1Session(*_v1, engine, err, &stats)) << err;
+        EXPECT_EQ(stats.eventsRefused, 0u);
+        const uint64_t span = _v1->FrameSpan();
+        ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectEventsEqualV1(engine, _v1->GetInputJournal(), _v1->GetExternalEvents(), 0,
+                                                             0, [span](uint64_t frame) { return frame * span; }));
+        total += stats.events;
+        markers += _v1->GetExternalEvents().Size();
+        for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
+            net += e.kind == ttd::TTDInputKind::NetEvent ? 1 : 0;
+    }
+    EXPECT_GT(total, 0u) << "the corpus holds input";
+    EXPECT_GT(markers, 0u) << "the corpus holds markers";
+    (void)net;
 }

@@ -32,6 +32,8 @@ struct FeedStats
     size_t checkpoints = 0;
     size_t changedPieces = 0;   ///< pieces handed to the engine, the first frame's included
     size_t changedRamPieces = 0;   ///< of which machine RAM (region 0)
+    size_t events = 0;          ///< input, network and marker events fed
+    size_t eventsRefused = 0;   ///< events before the first checkpoint
 };
 
 /// Machine RAM of v1 checkpoint @p index, decoded: @p ram gets pieces × 4 KB,

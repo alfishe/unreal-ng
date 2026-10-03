@@ -3259,6 +3259,9 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         }
         ArmShadowRegions(true);
         _shadowRescan = true;
+        // Events the engine gets from here on: what v1 journals after this point
+        _shadowEvents.input = _inputJournal.Size();
+        _shadowEvents.external = _externalEvents.Size();
     }
 
     TTDFrameInput in;
@@ -3345,7 +3348,10 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     {
         MLOGWARNING("TimeTravelManager: shadow engine capture failed: %s", error.c_str());
         engine.EndSession();
+        return;
     }
+    // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
+    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame);
 }
 
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)

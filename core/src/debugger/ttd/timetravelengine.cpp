@@ -159,8 +159,47 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     return true;
 }
 
+bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent ev)
+{
+    TTDMachineTime start = 0;
+    if (!_open || _frames.Empty())
+    {
+        _payloads.Release(ev.payload);
+        return false;
+    }
+    if (!_frames.Start(frame, start))
+    {
+        // After the last recorded frame: placed by the last frame's length
+        const uint64_t last = _frames.LastFrame();
+        TTDMachineTime lastStart = 0, before = 0;
+        _frames.Start(last, lastStart);
+        if (frame < last || _frames.Count() < 2 || !_frames.Start(_frames.FirstFrame(), before))
+        {
+            _payloads.Release(ev.payload);
+            return false;
+        }
+        const uint64_t frames = last - _frames.FirstFrame();
+        const TTDMachineTime length = frames ? (lastStart - before) / frames : 0;
+        start = lastStart + (frame - last) * length;
+    }
+    ev.machineTime = start + tInFrame;
+    return _events.Append(ev);
+}
+
+bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
+{
+    uint64_t frame = 0;
+    TTDMachineTime start = 0;
+    if (!_frames.FrameAt(t, frame) || !_frames.Start(frame, start))
+        return false;
+    out = TTDPosition{0, frame, t - start};
+    return true;
+}
+
 void TimeTravelEngine::EndSession()
 {
+    _events.Clear();
+    _payloads.Clear();
     _timeLines.clear();
     _timeFields.clear();
     _deviceRegionOf.fill(-1);

@@ -78,7 +78,8 @@ TTDEventRole TTDEventLog::RoleOf(const TTDEvent& ev)
         case TTDEventKind::MediaWrite:
             return TTDEventRole::Fact;
         case TTDEventKind::DebuggerEdit:
-            return ev.payload ? TTDEventRole::Input : TTDEventRole::Barrier;   // a v1 edit has no bytes
+            // A v1 edit has only its reason, not the bytes
+            return ev.payload && ev.args[0] == kEditCarriesData ? TTDEventRole::Input : TTDEventRole::Barrier;
         case TTDEventKind::SnapshotLoad:
         case TTDEventKind::MediaChange:
         case TTDEventKind::ConfigChange:

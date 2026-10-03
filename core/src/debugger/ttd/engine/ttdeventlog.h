@@ -77,6 +77,10 @@ enum class TTDCpuId : uint16_t
     Vdac2Ft812 = 4,
 };
 
+/// args[0] of a DebuggerEdit whose payload is the edit itself (target and
+/// bytes); a v1 edit's payload is only its reason text
+constexpr uint8_t kEditCarriesData = 1;
+
 struct TTDEvent
 {
     TTDMachineTime machineTime = 0;

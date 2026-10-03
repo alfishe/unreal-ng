@@ -69,7 +69,10 @@ TEST(TTDEventLog_Test, ASealedReplayHasNoBarriers_OnlyV1RecordsWithoutData)
     EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "a v1 edit carries no bytes";
     const uint8_t bytes[] = {0x3E, 0x01};
     ev.payload = payloads.Store(bytes, 2);
+    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "a v1 edit's payload is its reason text";
+    ev.args[0] = kEditCarriesData;
     EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Input) << "an edit with its bytes replays";
+    ev.args[0] = 0;
     payloads.Release(ev.payload);
     ev.payload = {};
     ev.kind = TTDEventKind::HardwareReset;

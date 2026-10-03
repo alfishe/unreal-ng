@@ -26,6 +26,8 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttddevicetable.h"
+#include "debugger/ttd/engine/ttdeventlog.h"
+#include "debugger/ttd/engine/ttdpayloadstore.h"
 #include "debugger/ttd/engine/ttdframeinput.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdreftable.h"
@@ -240,6 +242,22 @@ public:
 
     const std::vector<TTDRegionDesc>& Regions() const { return _regions; }
     const TTDFrameTable& Frames() const { return _frames; }
+
+    /// region <Events (Phase 3)>
+
+    /// Append an event at (@p frame, @p tInFrame): its machine time is the
+    /// frame's start plus the offset. A frame not recorded yet (an event after
+    /// the last checkpoint) is placed by the last frame's length. False, and
+    /// the payload released, when there is no session or the event lies
+    /// before the last one
+    bool AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent ev);
+    const TTDEventLog& Events() const { return _events; }
+    TTDPayloadStore& Payloads() { return _payloads; }
+    const TTDPayloadStore& Payloads() const { return _payloads; }
+    /// The position of machine time @p t (frame, offset); false before the first frame
+    bool PositionOf(TTDMachineTime t, TTDPosition& out) const;
+
+    /// endregion </Events (Phase 3)>
     TTDStreamRegistry& Streams() { return _streams; }
 
     /// endregion </Session>
@@ -417,6 +435,8 @@ private:
     /// piece arrives), the base each new difference is computed against
     std::vector<std::vector<uint8_t>> _deltaBase;
     TTDFrameTable _frames;
+    TTDPayloadStore _payloads;
+    TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it
     TTDStreamRegistry _streams;
     /// A deque: no growth reserve (a vector held up to twice the records), and
     /// records never move

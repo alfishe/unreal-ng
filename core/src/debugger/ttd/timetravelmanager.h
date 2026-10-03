@@ -58,6 +58,7 @@
 #include "ttdfileinfo.h"
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
+#include "ttdv1events.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcodecpagestore.h"
@@ -1914,6 +1915,7 @@ private:
     bool _shadowArmed = false;
     /// Start or stop the devices marking their memory writes for the shadow engine
     void ArmShadowRegions(bool on);
+    TTDV1EventCursor _shadowEvents;   ///< how far the shadow engine has v1's journals
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
     void FeedShadow(const TTDCheckpoint& out, bool baseline);
