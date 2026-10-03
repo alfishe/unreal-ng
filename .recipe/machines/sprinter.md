@@ -178,8 +178,15 @@ mouse_input {"action":"move","dx":100,"dy":-20}      # + right, + up (Kempston a
 mouse_input {"action":"click","button":"left"}       # inactive panel: activates it; on a row: the bar goes there
 mouse_input {"action":"click","button":"right"}      # marks the file under the bar, the bar moves down
 inspect_state {"aspects":["sprinter"]}
-#   → sprinter.z84c15.mouse: {"buttons":"0xFF","packet_in_flight":false,"sio_b_fifo":"","x":43,"y":67}
+#   → sprinter.z84c15.mouse: {"buttons":"0xFF","framing_errors":0,"mouse_baud":1200,"packet_in_flight":false,
+#      "sio_b_baud":1215.2777777777778,"sio_b_fifo":"","sio_b_in_tune":true,"x":31,"y":85}
 ```
+
+SIO B receives the mouse with CTC ZC/TO0 as its clock: DSS 1.71 programs CTC 0
+`#55` with 45 and SIO B x16 (WR4 `#44`), 875 kHz / 45 / 16 = 1 215 baud. A
+program that leaves SIO B off 1 200 baud by more than 5 % gets no mouse
+characters (`sio_b_in_tune: false`, `framing_errors` counts them), as on the
+board.
 
 Buttons: D0 left, D1 right, D2 middle (active low). The Kempston view shows all
 three; the serial packet has left and right only; FN ignores the middle button.
@@ -201,6 +208,33 @@ renderer with FN 1.15 (BIOS 3.07 beta 1, `sp_hdd_sys.chd`), 2026-10-02.
 After a panel switch FN 1.10 re-reads the floppy for about 0.6 s with
 interrupts off; keys sent in that time overrun the SIO's 3-byte FIFO
 (`sprinter.z84c15.keyboard.overruns`). Wait a moment between keys.
+
+### 3b. Demos paced by the CTC (Bad Apple, dontBlink)
+
+Some DSS 1.71 programs run their playback on a Z84C15 CTC interrupt instead of
+the frame INT: CTC 2 counts the board's 875 kHz TRG2 by 112, ZC/TO2 drives
+TRG3, CTC 3 counts by 160 and interrupts at 48.83 Hz with vector `#06` (IM 2).
+On the owner's DSS 1.71 disk (BIOS 3.06, `sp_hdd_sys.chd` as above), from
+Flex Navigator (the left panel on the root of C:):
+
+```bash
+tap() { curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -H 'Content-Type: application/json' \
+             -d "{\"key\":\"$1\",\"frames\":3}" >/dev/null; sleep 0.3; }
+tap down; tap down; tap enter; sleep 2          # C:\DEMOS
+tap down; tap enter; sleep 2                     # BADAPPLE (DNTBLINK: 4 x down)
+for k in b a d a p p l e period e x e; do tap $k; done; tap enter
+sleep 15
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.z84c15.ctc.channels[3] | {control, mode, count, zero_counts, zc_to_hz, trigger_input}'
+#   → {"control":"0xD5","mode":"counter","count":28,"zero_counts":479,"zc_to_hz":48.828125,
+#      "trigger_input":{"kind":"cascade","source":"ZC/TO2"}}
+curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.sound.covox_blaster | {mode, rate_hz, ticks, ring_writes}'
+#   → {"mode":"covox-blaster","rate_hz":21875.0,"ticks":377447,"ring_writes":755072}
+```
+
+`zero_counts` grows by one per 20.48 ms frame; `count` is the live
+down-counter. MCP: `inspect_state {"aspects":["sprinter"]}`, the same
+`z84c15.ctc` tree (CLI `state sprinter`, Lua / Python `sprinter_state`).
+Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
 
 ### 4. Spectrum mode and TR-DOS
 
@@ -273,7 +307,7 @@ What `sprinter` carries (the WebAPI JSON is the same tree):
 | `video` | `picture_mode` (the dominant square kind of the 640 x 256 picture), `squares` by kind, HOLD offsets, `int_positions` (frame INTs the mode table places); per square: step 6 |
 | `accelerator` | `enabled`, `mode_name`, `length`, `function`, `blocked`, `operations`, `buffer_crc32` ([sprinter-accelerator.md](sprinter-accelerator.md)) |
 | `sound` | the AY (chips, clock, stereo from its config) and the Covox-Blaster (control, rate, indices, counters; the ring: `sprinter_sound_ring`) - [sprinter-sound.md](sprinter-sound.md) |
-| `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, CTC channels, SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
+| `z84c15` | WCR / MWBR / CSBR / MCR, `wait_generator` (WCR / MWBR decoded), `daisy_chain` (priority order, IP / IUS per source), watchdog with `deadline_clock`, `ctc` (`time_base_hz`, `cpu_clock_hz`; per channel the mode, prescaler, edge, timer start, `trigger_input` - `clock` 875 kHz / `cascade` ZC/TO2 -, the live `count`, `zero_counts`, `zc_to_hz` and what ZC/TO drives), SIO A (keyboard) / B (mouse) with their FIFOs, PIO, `keyboard` (INT on, bytes on the way, overruns) |
 | `fdc` | `density_latch` (720 KB code `#16` / 1.44 MB code `#17`), the WD1793 `clock` (1 / 2 MHz) and `data_rate` (250 / 500 kbit/s), `drive` |
 | `cmos`, `ide` | links: the CMOS report is `rtc`; `ide` shows the selected channel and data latch, the drives are in `state/ide` (see [sprinter-hdd.md](../media/sprinter-hdd.md)) |
 | `bios` | the configured ROM file, `loaded` (by CRC-32), the pages identified by signature, the shipped images, `options`, `reload_pending`, how to select (also `sprinter_bios`) |

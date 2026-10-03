@@ -60,6 +60,14 @@ the PC keys exactly as it does for ZX-Evo; no automation change was needed.
   Microsoft Natural keyboard device ROM (`natural.bin`) is missing; a keyboard capture from MAME
   needs that ROM.
 
+## Mouse baud from CTC ZC/TO0 (2026-10-02, branch `sprinter-ctc-trg`)
+
+SIO B now receives with the clock the board gives it, CTC ZC/TO0 (MAME `sprinter.cpp:2006-2007`): the mouse still
+sends at 1 200 baud, and its characters arrive only while ZC/TO0 / the WR4 clock mode is within 5 % of that
+(DSS 1.71: CTC 0 `#55` with 45, x16 = 1 215 baud, seen live). Otherwise they are lost and counted
+(`z84c15.mouse.framing_errors`). Tests: `SprinterInput_Test.MouseNeedsSioBClockedAt1200Baud`; the other serial-mouse
+tests program the clock as DSS 1.71 does.
+
 ## Flex Navigator follow-up (2026-10-02, branch `sprinter-fn-input`)
 
 The owner's report: in the GUI, Tab did not switch FN's panels and the mouse did nothing.

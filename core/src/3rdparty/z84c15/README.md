@@ -11,7 +11,7 @@ Sprinter uses it; every other machine runs on the native interpreter in
 - **Origin:** forked from unreal-z80 commit `a0433ec` (library version 0.5.0),
   the same version vendored at `core/src/3rdparty/unreal-z80/` for the General
   Sound card. MIT license - see `LICENSE`. `Z84CpuVersion()` reports
-  `0.5.0-z84c15.1`.
+  `0.5.0-z84c15.2`.
 - **Public headers:** `z84cpu.h` (the core, C API, prefix `Z84Cpu`) and
   `z84c15.h` (the on-chip block, C++ class `Z84Lib::Z84C15`). Nothing outside
   this folder includes anything else.
@@ -30,6 +30,7 @@ Sprinter uses it; every other machine runs on the native interpreter in
 | The wait generator (`Z84WaitGen` in `Z84CPU`, `z84waits.cpp`) in the memory, M1, I/O, INTA, NMI and halted cycles | `z84cpu-internal.h`, `opcodes-callback.cpp`, `z84cpu.cpp`, `z84waits.cpp` | the chip's programmed waits (research section 4.1) |
 | The chip's RETI watcher before the host's RETI callback | `opcodes-ed.inc`, `z84cpu-internal.h` | the on-chip daisy chain |
 | `Z84C15::SaveState` / `LoadState` (`kStateSize` bytes, fixed little-endian layout), `Z84Ctc::SetVector` | `z84c15.h`, `z84c15.cpp` | time travel and snapshots: the chip's state beside the register file (Sprinter S7) |
+| The CTC's counter mode and CLK/TRG inputs (`Z84Ctc::SetTrigger`: none, a fixed-frequency clock in real time, a lower channel's ZC/TO), timer trigger start (control bit 3), a time constant written while counting loads at the next zero, a software reset keeps the count; the clock is a time base of the owner's choice with the CPU clock's length in it (`SetSystemClockPeriod`, folded at a speed change; the watchdog too); lazy: counts, zero counts and the next interrupt are derived when read or polled (`Poll` is one clock read and a compare until a zero is due) | `z84c15.h`, `z84ctc.cpp`, `z84c15.cpp` | the Sprinter's playback tick: TRG2 875 kHz, ZC/TO2 -> TRG3, channel 3 interrupting at 48.83 Hz (Bad Apple, dontBlink); ZC/TO0 as SIO B's baud clock |
 | New: `z84c15.h`, `z84c15.cpp`, `z84ctc.cpp`, `z84sio.cpp`, `z84pio.cpp` | | the on-chip block; the CTC / SIO / PIO models moved here from unreal-ng's `core/src/emulator/io/z84c15/` (Sprinter S1) and gained their interrupts |
 
 The opcode bodies (`opcodes-*.inc`) differ from unreal-z80 only by the renames

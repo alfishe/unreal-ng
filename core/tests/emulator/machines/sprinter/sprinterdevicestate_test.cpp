@@ -496,6 +496,40 @@ TEST_F(SprinterDeviceState_Test, AcceleratorAndWaitsAreReported)
     EXPECT_TRUE(Member(z84, "wait_generator").find("memory") != nullptr);
 }
 
+// The CTC in the z84c15 section: programming, the board's CLK/TRG wiring, the live count and the ZC/TO rate;
+// SIO B's receive clock from ZC/TO0 next to the mouse
+TEST_F(SprinterDeviceState_Test, CtcShowsInputsCountsAndRates)
+{
+    Out(0x0012, 0x57);  // channel 2: counter, 112
+    Out(0x0012, 112);
+    Out(0x0013, 0xD7);  // channel 3: interrupt, counter, 160
+    Out(0x0013, 160);
+    Out(0x0010, 0x55);  // channel 0: counter, 45 (the mouse clock)
+    Out(0x0010, 45);
+    Out(0x001B, 0x04);  // SIO B WR4: x16
+    Out(0x001B, 0x44);
+    _context->emulatorState.t_states += 4 * 112 * 10;  // channel 3 counted 10 pulses
+
+    const StateNode z84 = Member(DeviceState::Sprinter(_context), "z84c15");
+    const StateNode& ctc = Member(z84, "ctc");
+    EXPECT_EQ(Int(ctc, "time_base_hz"), 42000000);
+    EXPECT_DOUBLE_EQ(Member(ctc, "cpu_clock_hz").d, 3500000.0);
+    const std::vector<StateNode>& channels = Member(ctc, "channels").items;
+    ASSERT_EQ(channels.size(), 4u);
+    EXPECT_EQ(Str(Member(channels[2], "trigger_input"), "kind"), "clock");
+    EXPECT_EQ(Int(Member(channels[2], "trigger_input"), "hz"), 875000);
+    EXPECT_EQ(Str(Member(channels[3], "trigger_input"), "kind"), "cascade");
+    EXPECT_EQ(Str(Member(channels[3], "trigger_input"), "source"), "ZC/TO2");
+    EXPECT_EQ(Str(channels[3], "mode"), "counter");
+    EXPECT_TRUE(Bool(channels[3], "running"));
+    EXPECT_EQ(Int(channels[3], "count"), 150);
+    EXPECT_NEAR(Member(channels[3], "zc_to_hz").d, 48.828125, 1e-9);
+    EXPECT_NEAR(Member(channels[0], "zc_to_hz").d, 875000.0 / 45, 1e-6);
+    const StateNode& mouse = Member(z84, "mouse");
+    EXPECT_NEAR(Member(mouse, "sio_b_baud").d, 875000.0 / 45 / 16, 1e-6);
+    EXPECT_TRUE(Bool(mouse, "sio_b_in_tune"));
+}
+
 // The Covox-Blaster ring: 256 words, the play and write entries marked
 TEST_F(SprinterDeviceState_Test, SoundRingMarksPlayAndWrite)
 {

@@ -168,8 +168,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - Two extended Sega-style pads (8 directions, A/B/C/X/Y/Z, Start, Select): pad 1 selected by SIO B DTR toggles,
     pad 2 read on PIO A with PIO B bit 7, the select counters reset at each frame INT (gap I10, C13) - S-M; host
     gamepads through the shared input path, journaled for TTD, all five automation surfaces.
-  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) and the mouse baud rate from CTC ZC0; CTC
-    counter-mode inputs and ZC outputs (gap I7, C11) - S.
+  - Serial mouse variants (Logitech 3-button, wheel, Mouse Systems) (gap I7) - S.
+  - [x] CTC counter mode, TRG inputs and ZC/TO outputs (gap C11), the mouse baud from CTC ZC0 (gap I7) - done
+    2026-10-02 (branch `sprinter-ctc-trg`): TRG0-2 = 875 kHz in real time, ZC/TO2 -> TRG3, ZC/TO0 -> SIO B;
+    Bad Apple and dontBlink (both wait for the 48.83 Hz CTC 3 tick, vector #06) play with sound
+    (`SprinterCtcDemo_Test`, env `UNREAL_SPRINTER_HDD`); TTD blob 29 v2; `state sprinter` z84c15.ctc shows the
+    inputs, live counts and ZC/TO rates.
   - ATAPI CD on the Sprinter's IDE (S7 remainder: wire the shared ATAPI CD-ROM into `IDE_SPRINTER`, `ide0.slave`
     as in MAME); CD audio comes from the shared CDDA work, PLAN #83. **Recommended P2** (survey §10): include
     media change, eject and ATAPI boot (BIOS 3.06+), and test the DSS CD file system (`beta_cdfs`) and CDX 2025.

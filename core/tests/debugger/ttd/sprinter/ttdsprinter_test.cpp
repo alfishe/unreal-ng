@@ -796,6 +796,13 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidPs2ByteAndMidMousePacket)
         _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
     for (uint16_t a = 0x9000; a < 0x9400; a++)
         _context->pMemory->DirectWriteToZ80Memory(a, 0);
+    // SIO B's receive clock as DSS 1.71 sets it (CTC ZC/TO0: 875 kHz / 45, x16 = 1 215 baud): the mouse's
+    // characters are received only in tune
+    Z84Lib::Z84C15& chip = _decoder->GetZ84();
+    chip.Write(0x10, 0x55);
+    chip.Write(0x10, 45);
+    chip.Write(0x1B, 0x04);
+    chip.Write(0x1B, 0x44);
     _z80->pc = 0x8000;
     RunToBoundary();
 

@@ -60,14 +60,18 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
             _context->pScreen->NoteVideoTableWrite(palette ? videomap::VideoTable::Palette : videomap::VideoTable::ModeTable, address);
     });
 
-    // The Z84C15's CTC and watchdog count the CPU clock: base T-states x the current ratio.
-    // The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
+    // The Z84C15's time base: ticks of the board's 42 MHz crystal (X_SP) in real time, from the machine's base
+    // T-states (3.5 MHz = X_SP / 12) and the in-frame CPU position descaled by the current clock multiplier, so
+    // it runs on unchanged through a 3.5 / 21 MHz switch. The CPU clock (the CTC timers' prescaler input and
+    // the watchdog) lasts 12 / multiplier ticks (SyncChipClock); TRG0-TRG2 are X_SP / 48 = 875 kHz whatever
+    // the CPU runs at, ZC/TO2 drives TRG3 (MAME sprinter.cpp:1993-1995, 2008), ZC/TO0 clocks SIO B
+    // (SprinterInput). The watchdog's /WDTOUT is not connected: its wiring on the board is unknown
     // (research-cpu-z84c15.md Q3) and BIOS 3.04 never clears it
-    _z84.SetClock([this]() -> uint64_t {
-        const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
-        return _state->t_states * multiplier + (z80 ? z80->t : 0);
-    });
+    _z84.SetClock([this]() -> uint64_t { return ChipClock(); });
+    _z84.SetUnitsPerSecond(kChipClockHz);
+    for (uint8_t channel = 0; channel < 3; channel++)
+        _z84.ctc.SetTrigger(channel, {Z84Lib::Z84Ctc::TriggerKind::Clock, kCtcTriggerHz, 0});
+    _z84.ctc.SetTrigger(3, {Z84Lib::Z84Ctc::TriggerKind::Cascade, 0, 2});
 
     // The AT keyboard: the host's physical keys reach SIO A (and the PLD's reset and turbo keys)
     _input.SetResetHandler([this]() { RequestCpuReset(SprinterResetKind::SoftReset); });
@@ -487,6 +491,27 @@ void PortDecoder_Sprinter::OnMachineFrameRollover([[maybe_unused]] uint32_t fram
         FinishLoad(true);
 }
 
+uint64_t PortDecoder_Sprinter::ChipClock() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
+    return _state->t_states * kChipTicksPerBaseT + (z80 ? static_cast<uint64_t>(z80->t) * kChipTicksPerBaseT / multiplier : 0);
+}
+
+void PortDecoder_Sprinter::SyncChipClock(uint8_t multiplier)
+{
+    _z84.SetSystemClockPeriod(kChipTicksPerBaseT, multiplier ? multiplier : 1);
+}
+
+void PortDecoder_Sprinter::OnFrameEnd()
+{
+    // The host speed control's queued multiplier takes effect at the frame start that follows (Z80::BeginFrame);
+    // the CTC timers and the watchdog switch rate at this instant, the frame boundary
+    const uint8_t ratio = _state->hw_turbo_ratio ? _state->hw_turbo_ratio : 1;
+    const uint8_t next = _state->next_z80_frequency_multiplier ? _state->next_z80_frequency_multiplier : 1;
+    SyncChipClock(static_cast<uint8_t>(next * ratio));
+}
+
 void PortDecoder_Sprinter::ApplyTurbo()
 {
     const uint8_t ratio = (_pld.turbo && _pld.turboHard) ? 6 : 1;
@@ -497,6 +522,8 @@ void PortDecoder_Sprinter::ApplyTurbo()
         if (core && core->GetZ80())
             core->GetZ80()->ApplyHardwareTurboNow();
     }
+    // The CPU clock the CTC timers and the watchdog count changed with it (same instant: the switch rescaled z80.t)
+    SyncChipClock(_state->current_z80_frequency_multiplier);
 
     // Turbo waits (technical-design §4): an overlay only while the CPU runs at 21 MHz
     if (core && _waits)

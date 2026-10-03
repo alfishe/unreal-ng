@@ -134,7 +134,7 @@ typedef enum
 } Z84CpuReg;
 
 // Library version string: the unreal-z80 version it was forked from and the
-// fork's own revision, e.g. "0.5.0-z84c15.1".
+// fork's own revision, e.g. "0.5.0-z84c15.2".
 const char* Z84CpuVersion(void);
 
 // Lifecycle. The CPU starts in the post-reset state with no bus wired:

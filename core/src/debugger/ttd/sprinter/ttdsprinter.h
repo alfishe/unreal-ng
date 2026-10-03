@@ -14,7 +14,7 @@
 ///   | 25 SprinterPld | SprinterPldState, the decoder's own latches, the INT source, the frame height the raster runs with, the active configuration module (name + state), the accelerator | 177 + module state + accelerator |
 ///   | 18 Ds12887 | the CMOS (shared serializer, ttdds12887.h) | |
 ///   | 28 SprinterVideoRam | the 256 KB video RAM | 1 + 262 144 |
-///   | 29 Z84C15 | the chip beside its register file (Z84C15::SaveState) | 1 + 171 |
+///   | 29 Z84C15 | the chip beside its register file (Z84C15::SaveState; v2: the CTC's anchors, triggered timers and clock rate, the watchdog's folded clocks) | 1 + 227 |
 ///   | 30 SprinterFastRam | the 64 KB fast RAM | 1 + 65 536 |
 ///   | 31 SprinterInput | the AT keyboard's byte stream and the serial mouse's packet generator | 85 |
 ///   | 32 SprinterCovoxBlaster | the Covox / Covox-Blaster: ring (256 x 16 bit), control, play / write indices, 16-bit phase, INT request, DAC words, the next play tick, statistics (phase S6) | 1 + 544 |
@@ -78,7 +78,9 @@ private:
 class TTDSprinterZ84 : public TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 1;
+    /// v2: the CTC counter mode (anchor, count, zero counts, triggered timers, the system clock period) and the
+    /// watchdog's clocks before a speed change; v1 blobs (timer-only CTC) are not loaded
+    static constexpr uint8_t kVersion = 2;
 
     explicit TTDSprinterZ84(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
 
