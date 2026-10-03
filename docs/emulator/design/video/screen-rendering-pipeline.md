@@ -323,6 +323,20 @@ featureManager->setFeature(Features::kScreenHQ, false);
 
 ---
 
+## Screenshots
+
+A screenshot is taken from the **presented** frame (the finished, tear-free
+frame the Qt window shows; it lags the machine by the present delay, 2 frames
+by default), not from the live buffer the renderer is still drawing into. One
+core class (`Screenshotter`) serves the WebAPI, MCP, CLI, Lua, Python and the Qt
+window. `area=full` (default) is the whole frame with border; `area=screen` is
+the working picture named by the frame's own geometry (the 256x192 paper of a
+Spectrum, the graphics window of a TS-Conf, and so on). Details:
+[screenshotter design](../../../inprogress/2026-10-03-screenshotter/design.md);
+usage: [agent-screenshot-view.md](../../../../.recipe/media/agent-screenshot-view.md).
+
+---
+
 ## Related Files
 
 | File | Description |

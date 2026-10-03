@@ -262,9 +262,9 @@ framebuffer. Both use the 312-line x 224 T raster; the frame length and INT posi
 `inspect_state aspects:["video"]` reports `video_mode` = PROFI or PROFIHR with resolution.
 
 ## State
-`inspect_state aspects:["paging"]` reports `profi_board` (v3 / v5), `profi_sync_prom` and the tagged latches: p7FFD and pDFFD with
+`inspect_state aspects:["paging"]` reports `profi_board` (v3 / v5), `profi_sync_prom`, `profi_keyboard` and the tagged latches: p7FFD and pDFFD with
 decoded fields `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and
-palette as PeripheralId ProfiPaging (9); v5 adds the clock (Ds12887).
+palette as PeripheralId ProfiPaging (9); v5 adds the clock (Ds12887); a fitted PROFI-XT controller adds ProfiXtKbc (44).
 
 ## Peripherals
 Covox DAC (8255): #5F left, #3F right while the disk interface is off the bus; on v5, #C7 left / #A7 right in the
@@ -280,6 +280,25 @@ it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a load
 the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
 `OUT (n),A`).
 
+## Keyboard (`[PROFI] Keyboard=`)
+| Value | Keyboard |
+|:--|:--|
+| `xt` (v5 default) | the PROFI-XT controller: an 8035 running its firmware on the MCS-48 core. The image `rom/profixt/profi-xt-v1.27.rom` is a reconstruction (5 bytes patched: the only dump never enables interrupts; `data/rom/profixt/README.md`) |
+| `xttable` | the same controller from its key table, no MCU |
+| `matrix` (v3 default) | the 40-key Spectrum matrix (host Shift = Caps Shift) |
+
+At create: `emulator_manage action=create model=PROFI profi_keyboard=xttable`. `inspect_state aspects:["paging"]`
+reports `profi_keyboard`; the keyboard status (`invoke_api GET /api/v1/emulator/{id}/keyboard/status`) reports
+`keyboard_controller`. With a controller the host keyboard goes to it alone (route `auto` = `ps2`).
+PC keys: Ctrl = Caps Shift, Shift = Symbol Shift, Alt = SS + Enter, Esc = Caps Shift + 1, arrows = Caps Shift + 5..8.
+F1-F10 = A..J + EXT, Home / End = K / L + EXT, PgUp / PgDn = M / N + EXT, Ins / Del = O / P + EXT, where EXT is
+`#BFFE` bit 5 (KD5 of half-row A14; v5 only - on v3 it lands on bit 7). BIOS 2.0 / CP/M read EXT. Press one with
+`type_input` / `invoke_api POST .../keyboard/tap {"key":"f1"}`. While a key is held every #FE read waits
+~50-110 us for the controller; `#00FE` (all half-rows) ANDs them; two half-rows in A8..A11 (e.g. `#FCFE`) read
+"no key". Ctrl + Alt + Del resets the machine. Scroll Lock (or a read of `#AAFE` / `#55FE`) toggles the second mode
+(Left Shift becomes the key at `#7FFE` bit 5); Num Lock turns the keypad into the cursor block. TTD: PeripheralId
+ProfiXtKbc (44).
+
 ## Wait states and the floating bus (feature `contention`)
 | Board, clock | Waits |
 |:--|:--|
@@ -291,9 +310,16 @@ the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0)
 v3 floating bus: an unanswered `IN` with A0=1 reads the pixel byte the video latch holds (one 4-T tick ahead of the
 displayed byte, page 5 or 7 per #7FFD bit 3), `#FF` in the border; no attribute bytes. The v5 reads `#FF`.
 
+## Hi-res timing (#DFFD bit 7)
+The write switches at once: CPU v3 3 MHz, v5 ZQ3 / 4 (5 MHz with the default 20 MHz crystal; TURBO doubles); frame
+and INT from the sync PROM's upper half (v3 320 lines, 48.83 Hz; v5 312 lines); AY 1.5 MHz (v5 `[PROFI]
+AyClock=new`: 1.75 MHz always). Waits: v5 0-1 T around each video request (1-3 in turbo), v3 none at 3 MHz. The v3
+floating bus reads the hi-res cell bytes. Create with `profi_zq3_mhz` / `profi_ay_clock`; `inspect_state
+aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clock`.
+
 ## Known limitations
-The 512x240 hi-res mode (DS80) has no waits, no floating bus and no 15 MHz third crystal. The v5 turbo waits are an
-approximation. The BIOS menu entries (TR-DOS, Sinclair, 128) are verified on both boards; CP/M boots from a disk.
+The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
+are verified on both boards; CP/M boots from a disk.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)

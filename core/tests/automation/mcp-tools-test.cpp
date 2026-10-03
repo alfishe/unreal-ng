@@ -1527,6 +1527,26 @@ TEST_F(McpTools_Test, CaptureMedia_Screenshot_IncludeImageKeepsTheData)
     EXPECT_EQ(result.structured["data"].asString(), "iVBORw0KGgo=");
 }
 
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_LiveFrameIsAskedForAndTheBeamIsReported)
+{
+    Json::Value body = ScreenshotBody();
+    body["source"] = "live";
+    body["frame"]["partial"] = true;
+    body["frame"]["beam"]["line"] = 120;
+    body["frame"]["beam"]["tstate"] = 26880;
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?source=live"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["source"] = "live";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/capture/screen?source=live"));
+    EXPECT_NE(result.text.find("live frame"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("beam stopped at line 120 T 26880 (half-drawn frame)"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_Screenshot_AServerRefusalIsAnErrorWithItsReason)
 {
     Json::Value refusal;

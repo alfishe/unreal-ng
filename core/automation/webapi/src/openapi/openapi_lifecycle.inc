@@ -143,6 +143,17 @@
         sprinter["description"] =
             "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
     }
+    {
+        Json::Value& profi = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
+                                  ["schema"]["properties"]["profi"];
+        profi["type"] = "object";
+        profi["properties"]["keyboard"]["type"] = "string";
+        for (const char* value : {"default", "matrix", "xt", "xttable"})
+            profi["properties"]["keyboard"]["enum"].append(value);
+        profi["description"] =
+            "A PROFI / PROFI3's keyboard ([PROFI] Keyboard=): matrix, xt (the PROFI-XT controller on its reconstructed "
+            "firmware), xttable (the controller from its key table) or default (v5 xt, v3 matrix). 400 on an unknown name";
+    }
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["select"]["type"] = "boolean";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]

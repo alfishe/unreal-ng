@@ -469,17 +469,18 @@ POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line 
 ### Screenshots
 
 ```
-GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&path=<file>
+GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live&path=<file>
 GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64   (raw pixels of the same frame)
 ```
 
-`capture/screen` is a screenshot of the **presented frame** (the finished, tear-free frame the window shows, a couple of frames behind the machine, more with ZX DLSS). `area=full` (default) is the whole frame with its border (352x288 on a Spectrum, 736x288 on the Sprinter, the whole picture of an FT812 card, e.g. 1024x768); `area=screen` is the working picture the frame's own geometry names (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture; on a hires mode it can be the whole frame, then both give the same image). `format=png` (default, lossless) or `gif` (256 colors). `path=` (alias `filename=`) writes the image on the server (folders are created) instead of returning it. `mode=full|screen` is a deprecated alias of `area`; the pair must not disagree.
+`capture/screen` is a screenshot of the **presented frame** (the finished, tear-free frame the window shows, a couple of frames behind the machine, more with ZX DLSS). `area=full` (default) is the whole frame with its border (352x288 on a Spectrum, 736x288 on the Sprinter, the whole picture of an FT812 card, e.g. 1024x768); `area=screen` is the working picture the frame's own geometry names (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture; on a hires mode it can be the whole frame, then both give the same image). `format=png` (default, lossless) or `gif` (256 colors). `path=` (alias `filename=`) writes the image on the server (folders are created) instead of returning it. `mode=full|screen` is a deprecated alias of `area`; the pair must not disagree. `source=presented` (default) is the frame above; `source=live` is the frame as drawn right now (no present delay, no ZX DLSS): a running machine's emulation thread copies it at the end of its next frame (409 `no-frame` if none arrives within 1 s), a paused machine is read directly and the answer adds `frame.beam {line, tstate}` and `frame.partial` (the beam stopped inside a frame drawn per T-state). The master of a ZX-Poly group answers with the group's composed display frame (`frame.source: composed`, 2x, the working picture 512x384).
 
 ```bash
 curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen" | jq 'del(.data)'
 # {"status":"success","format":"png","area":"full","width":352,"height":288,"size":2331,
 #  "crop":{"x":0,"y":0,"width":352,"height":288},
 #  "screen_window":{"x":48,"y":48,"width":256,"height":192},
+#  "source":"presented",
 #  "frame":{"width":352,"height":288,"mode":"Pentagon128K","source":"native","frame_number":4711}}
 curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?area=screen&path=scratch/shot.png" | jq .
 ```

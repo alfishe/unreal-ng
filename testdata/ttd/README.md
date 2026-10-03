@@ -173,7 +173,7 @@ but a flipped byte that still decodes is not.
 ## Status
 
 2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone again: the default NE2000 in ISA slot 2 adds the
-Ethernet cards' blob (id 44, `EthernetNics`: DP8390, packet RAM, EEPROM, the Ethernet gateway) to every checkpoint;
+Ethernet cards' blob (id 45, `EthernetNics`: DP8390, packet RAM, EEPROM, the Ethernet gateway) to every checkpoint;
 the other fixtures are unchanged.
 
 2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone: the ISA slots' blob (id 33, `SprinterIsa`, ISA

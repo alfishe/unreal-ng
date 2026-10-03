@@ -103,7 +103,7 @@ the journal through `invoke_api`.
 
 ## Time travel
 
-A TTD recording carries the card (blob 44 `EthernetNics`: the DP8390, the packet RAM, the EEPROM, the gateway's ARP /
+A TTD recording carries the card (blob 45 `EthernetNics`: the DP8390, the packet RAM, the EEPROM, the gateway's ARP /
 TCP / UDP tables and queued frames) and the virtual network's tables; every host answer is a journaled input. A replay
 needs no host and reproduces every frame byte for byte (checked by `SprinterNetworkKit_Test.TtdReplaysTheFetchWithoutTheHost`).
 A recording made with another slot population is refused at load ("ISA slot 2 mismatch: ...").

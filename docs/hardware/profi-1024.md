@@ -142,7 +142,9 @@ address latch, time base) as `PeripheralId::Ds12887` (id 18); see
 
 ## Known limitations
 
-- The hi-res mode (DS80) has no wait states and no floating bus, and the v5's 15 MHz third crystal is not modeled.
+- Hi-res (DS80) runs its own timing: the CPU at 3 MHz (v3) or ZQ3 / 4 (v5, `[PROFI] ZQ3MHz`, 5 MHz by default),
+  the frame and INT from the sync PROM's upper half, the AY at 1.5 MHz, model waits on v5 and the hi-res floating
+  bus on v3 ([design-hires.md](../inprogress/2026-10-01-profi-v3-v5/design-hires.md)).
 - The BIOS drive probe polls the WD1793 for BUSY after every command, so the FDC must show authentic timing while the
   SYS ROM runs: fast disk loading is disarmed there, and a Type II command on a not-ready drive keeps BUSY set for
   64 T-states before ending. With both in place the BIOS reaches its main menu with or without a disk (menu entries:

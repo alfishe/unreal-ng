@@ -482,6 +482,14 @@ public:
     uint8_t getCurrentRegisterIndex() const { return _currentRegister; }
 
     // User-configurable audio settings
+    /// The generator (updateMixer) rate when the owner runs the AY at another clock than 1.75 MHz
+    /// (SoundChip_TurboSound::SetPsgClock): the output DC blocker keeps its cutoff in Hz, its state carries on
+    void setGeneratorRate(double rate)
+    {
+        _filterDCLeft.configure(rate, OUTPUT_HIGHPASS_HZ);
+        _filterDCRight.configure(rate, OUTPUT_HIGHPASS_HZ);
+    }
+
     void setStereoMode(AYStereoMode mode);
     void setChipModel(AYChipModel model);
     void setChannelMuted(uint8_t channel, bool muted);

@@ -1,9 +1,9 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-6 done (eve-emu `abf8aca`, vendored); next round open.
+**Created:** 2026-10-03. **Status:** rounds 0-10 done, live profile taken. Round 10 came from the TS-Labs SDK test programs; further rounds wait for captures of other usage patterns.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
-speed of the real card to more than five times faster than it. Each round records what we
+speed of the real card to twenty times faster than it. Each round records what we
 started from, what was slow and why, what we changed, and what the numbers mean.
 Background on the drawing model: [acceleration-experiments.md](acceleration-experiments.md),
 line costs: [line-budget-model.md](line-budget-model.md).
@@ -215,6 +215,171 @@ the formula as before.
 (the palette lookups, ~31 % of the time) and the remaining blends (~18 %) are now the main
 costs, both per pixel and close to what scalar code can do.
 
+## Round 7: lines that did not change are not drawn again
+
+**Start.** **25.4 s, 5.75x** (measured right before, on a quieter machine than round 6).
+Splitting the capture showed the slowest parts were no longer the gameplay: the first 1300
+frames (power-on, Wild Commander) ran at 2.8x and the loading screen at 3.0x, against 5.5x on
+average. Both draw the same full-screen background in three passes every frame (the BILINEAR
+mask and two masked RGB565 passes, Zuma's `DrawBootDxtBackground`): 5.2 and 7.2 ms per frame.
+
+**What was slow and why.** Those frames are the same picture again and again. Counting the
+frames whose inputs did not change at all since the previous one (no graphics memory write,
+no new display list, no write to a register drawing reads): 79 % of the power-on frames, 29 %
+of the loading screen, 18 % of the gameplay, 41 % of R-Type's play. Every one of them was
+drawn completely, to produce the pixels already in the frame buffer.
+
+**Change.** A screen line remembers the inputs it was drawn with; while none changed, it is
+left in the frame buffer instead of being drawn again. The inputs of a line:
+
+- graphics memory: a counter of changes of its contents (a write of the same value does not
+  count);
+- the registers drawing reads (the 14 marked "drawing", among them the mode, rotation, pin
+  order, macros): a counter of value changes;
+- the display list: a swap to a list with the same words does not count (the game rewrites
+  and swaps the same list every frame);
+- the output: another buffer, size, or drawing switched off and on (the host may clear the
+  buffer then);
+- the recorded walk of round 4 with the handles it starts from.
+
+A kept line still does what drawing it does besides the pixels: the handles become what the
+walk leaves, its cost stays in the line metrics, an overflowing line is counted. The line
+`REG_TAG_Y` names is always drawn. Lines that passed while drawing was off, a restored state,
+a portrait mode: nothing is kept. Tests: an unchanged frame keeps its lines with the same
+picture; a pin order change, drawing off and on with a cleared buffer, memory and macro
+changes mid-frame, a new list: picture and line costs equal with keeping on and off. Each
+input check was removed once to see the tests fail.
+
+**Result.** Drawing per frame: power-on **5.22 -> 0.31 ms** (94 % of the lines kept), loading
+screen **7.2 -> 1.06 ms** (87 %), gameplay 2.59 -> 2.22 ms (18 %). Whole capture **25.4 ->
+11.0 s, 5.75x -> 13.3x**; rtype-boot **6.9x -> 12.6x**. **Meaning:** static and slowly changing
+screens cost almost nothing now; Zuma's gameplay (balls moving on every line of the track)
+is what remains, at 2.2 ms per frame.
+
+## Round 8: a line is kept when its own steps did not change
+
+**Start.** **11.3 s, 12.9x.** Gameplay drew 2.22 ms per frame and kept only 18 % of its lines:
+round 7 keeps a line only while nothing at all changed, and Zuma rewrites its display list
+every frame (the balls move) and writes a little graphics memory every frame. Counting the
+gameplay lines whose own steps (the steps of the recorded walk that reach the line) were the
+same as when the line was last drawn: 54 % of them, but only 16 % with the graphics memory
+unchanged.
+
+**What was slow and why.** Two inputs were too coarse. The display list as a whole: a ball
+moving on line 300 made line 600 count as changed. And graphics memory as a whole: Zuma
+writes about 1.2 KB per frame at 0x80400 - 0x808FF (game data, not drawn), next to the ball
+palettes at 0x80000 and 0x80200; any write made every line count as changed.
+
+**Change.** A line drawn from the recorded walk remembers the steps that reached it (each
+with its context and handle), its fill cost and the graphics memory change count. A later
+line is left in the frame buffer when its reaching steps are equal to those and none of the
+graphics memory those steps read changed since:
+
+- equal steps: the same vertex, handle and context as drawing reads them (the display list
+  position, the vertex count and the previous vertex do not matter to bitmaps and points);
+- the memory a step reads, a superset: the bitmap rows its sample positions fall on (the
+  whole layout under a rotation or REPEAT in y) and its palette (512 bytes, 1 KB for
+  PALETTED8); text and bargraph formats count any write;
+- graphics memory changes are tracked per 4 KB page and, inside a changed page, per 256-byte
+  block: the first attempt used pages only and kept nothing more, because the game's data
+  shares a page with the palettes; the first palette size was 1 KB for every format and
+  reached into that data.
+
+The line's command count comes from the new list (it depends on the whole list). A line
+drawn without remembering (the tag line, no recorded walk) forgets what it was drawn from.
+Tests: a moved bitmap leaves the other lines alone (a mark written into the frame buffer
+stays), a bitmap moved sideways on the same lines, a palette change, a write next to the
+palette (kept), the tag line forgetting; each check (memory reads, vertex, tag line, palette
+size) was removed once to see the tests fail.
+
+**Result.** Drawing per frame: gameplay **2.22 -> 1.26 ms** (543 000 more lines kept),
+loading screen 1.06 -> 0.44 ms, power-on 0.31 -> 0.05 ms. Whole capture **11.3 -> 7.05 s,
+12.9x -> 20.7x**; rtype-boot **12.5x -> 24x**. **Meaning:** what a line costs now follows what
+changes on it; Zuma's remaining drawing is the lines with a moving or fading sprite.
+
+## Round 9: rectangles, points and lines reach only the lines near them
+
+**Start.** In the recorded walk a bitmap step reaches only its own rows, but a point, line
+or rectangle step reached every line: one moving rectangle (a progress bar, a HUD element)
+made every line of the frame count as changed for round 8.
+
+**Change.** Such a step gets the range of line centers it can reach: its vertices (both for
+a line or rectangle) widened by its radius (`POINT_SIZE` / `LINE_WIDTH`) plus the
+antialiasing reach, rounded up (`ShapeReach`), the same bound `DrawPoint`, `DrawLine` and
+`DrawRect` test before drawing. Lines outside are skipped when replaying and are not part of
+the line's steps. Edge strips still reach every line (they fill to the screen edge). Test:
+a thick rectangle, a large point and a line moved by 3 pixels: picture and costs equal with
+keeping on and off, a far line kept; shrinking the reach fails eight tests.
+
+**Result.** Small on these captures: Zuma's gameplay rectangles do not move (543 000 ->
+555 000 lines kept by their steps, 1.26 -> 1.25 ms per frame). **Meaning:** a safeguard for
+games with moving shapes, not a speedup for these two.
+
+## Live profile: where unreal-qt spends its time now
+
+R-Type in unreal-qt (TSL-VDAC2, demo, 600 frames at the real frame rate, `sample` on the
+process): the emulation thread is busy about **33 % of real time** (6.8 of 20.5 ms per frame);
+the Qt main thread about 3 %, audio about 2 %. Of the emulation thread:
+
+| Part | Share | ms per frame |
+|:--|--:|--:|
+| Z80 and TS-Conf (CPU, memory, interrupts, video) | ~50 % | ~3.4 |
+| FT812 (eve-emu) | ~33 % | ~2.3 |
+| Frame end (sound: TurboSound FM, OPL4, NeoGS mixing) | ~15 % | ~1.0 |
+
+The FT812 is no longer the largest part. What remains of it in R-Type is real drawing: the
+background scrolls, so every line changes every frame and nothing can be kept.
+
+## Round 10: the TS-Labs SDK test programs
+
+**Start.** The first captures that are not Zuma or R-Type: the eight `.spg` programs of the
+TS-Labs FT812 SDK (`testdata/machines/tsconf/vdac2-sdk/`), 30 s each, recorded in unreal-qt
+without the FT81x ROM image. Five draw a still picture once (test1, test3 and test-sd do not
+touch the FT812 after that; test2, test4 and test5 cost 0.00 - 0.03 ms per frame: every line
+kept). Two were slow, and slower than the card in unreal-qt itself (test9 drew 548 FT812
+frames in 20 s instead of about 1180):
+
+| Program | What it draws | Drawing per frame | Real-time factor |
+|:--|:--|--:|--:|
+| test6 | a 1940 x 768 picture scrolled every frame, four full-screen passes | 10.2 ms | 1.59x |
+| test9 | ROM-font text, `CMD_NUMBER`, a full-screen `CMD_GRADIENT` | 21.3 ms | **0.83x** |
+
+**What was slow and why.**
+
+- test9, 89 %: `CMD_GRADIENT` draws an L8 ramp stored in the chip's ROM (address 0x200065),
+  scaled and rotated over the screen. The fast paths read layouts from graphics memory only,
+  so every pixel took the general path at 13.4 ns. Without the ROM image those bytes read as
+  zero, the picture is the same, the cost was not.
+- test9's second pass, `BLEND_FUNC(DST_ALPHA, ONE)` onto RGB, had no fast blend (its twin
+  `ONE_MINUS_DST_ALPHA, ONE` from round 2 did).
+- test6: one of its four passes is `BLEND_FUNC(ONE, ONE)` on all channels; only the alpha
+  channel alone had a fast blend.
+- Both: every pixel is multiplied by `COLOR_RGB` / `COLOR_A` (in Zuma 10 % of the pixels
+  are), and that multiplication was the last scalar loop of the fast path's tail.
+
+**Change.**
+
+- The fast paths take a layout's bytes from wherever they are contiguous: graphics memory,
+  the ROM image, or - without the image - a block of zeros, exactly as the byte-by-byte
+  reads give them (`LayoutBytes`).
+- `Simd::AddSaturate` (`ONE, ONE` on any color mask), `Simd::AddRgbTimesDstAlpha` (both
+  destination-alpha additions) and `Simd::Modulate` (the `COLOR_RGB` / `COLOR_A`
+  multiplication), each NEON, SSE2 and plain C++ with the general path's rounding.
+- Test: the fast path against the general path for a ROM layout with and without the image
+  (axis-aligned, rotated, BILINEAR), `ONE, ONE` on all and some channels, both
+  destination-alpha additions over a varied alpha, modulation; each change was broken once
+  to see the test fail (one of them first passed: the destination alpha under the pass was
+  0, which hides a wrong factor - the test now writes a varied alpha first).
+- `eve-replay --all-mismatches` lists every mismatching picture. The first test9 capture
+  differed in its first two frames: it began while the chip was still drawing the previous
+  program's frame (lines drawn before the capture started), not an emulation error - fresh
+  captures match every frame, with keeping lines on and off.
+
+**Result.** test9 **0.83x -> 3.75x**, test6 **1.59x -> 2.94x**;
+Zuma 21.1x -> 21.4x, R-Type boot 24.7x -> 26.0x. **Meaning:** both programs now run with
+room to spare in unreal-qt; text, gradients and additive full-screen passes - typical of
+menus and effects - are on the fast path.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -225,19 +390,29 @@ costs, both per pixel and close to what scalar code can do.
 | 3. rotated sprites + palettes | 38.3 s | 3.8x | 7.5 ms | 4.67 ms |
 | 4. display list walked once | 30.8 s | 4.73x | 7.4 ms | 3.18 ms |
 | 5. tag buffer where read | ~30 s | ~4.86x | 7.2 ms | |
-| 6. opaque / transparent shortcut | 26.7 s | **5.46x** | | 2.59 ms |
+| 6. opaque / transparent shortcut | 26.7 s | 5.46x | | 2.59 ms |
+| 7. unchanged lines kept | 11.0 s | 13.3x | 1.06 ms | 2.22 ms |
+| 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
+| 9. shapes reach only nearby lines | 7.05 s | 20.7x | 0.44 ms | 1.25 ms |
+| 10. SDK programs: ROM layouts, adding blends, SIMD modulation | 6.8 s | 21.4x | | |
 
-From 305 to 26.7 seconds: the same capture now needs 11 times less CPU. Picture and line
+From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes
 `eve-replay`'s own timing of every call (about 5 %); the library alone is a little faster.
 
-## Next round
+## Next round (paused)
 
-- **Span setup** (`DrawBitmap` before the pixels, ~12 %): per step the handle's size,
-  stride, layout, the span's first and last pixel are the same on every line; the recorded
-  walk can keep them. It also removes the cost of the loading screen's transparent spans
-  (their line cost must still be counted).
-- **Decoding** (~31 %): palette lookups have no SIMD gather on NEON / SSE2; candidates are
-  magnified spans (transform A 100 and 160 in Zuma: one texel covers 1.6 - 2.6 pixels).
-- **R-Type**: profile its loader and demo the same way.
-- The rest of the acceleration brief: line threads, skipping unchanged frames.
+The optimization is paused here: the two games measured (Zuma, R-Type) no longer show a
+single dominant cost, and choosing the next round needs captures of other usage patterns:
+other games, the TS-Labs SDK demos, programs drawing text, shapes or video. Candidates
+known so far:
+
+
+- **Parts of lines**: a line changes where a ball moves; the rest of it is drawn again too.
+  Helps Zuma's gameplay, not R-Type (its whole background scrolls).
+- **Fading and moving sprites**: the drawing itself (decoding ~0.5 ns and blending ~0.4 ns
+  per pixel), close to what scalar code does.
+- **Outside the FT812**: Z80 and TS-Conf are now half of the emulation time in the live
+  profile, the sound mixing at the frame end another 15 %.
+- The rest of the acceleration brief: line threads (less to gain now that a frame costs
+  little).

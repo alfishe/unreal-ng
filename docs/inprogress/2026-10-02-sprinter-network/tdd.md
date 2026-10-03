@@ -651,7 +651,7 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
   `#4000`), UM9003 (ID `#20 #01`, page 3 mirrors page 1, reading the reset port stalls the bus: the CPU hangs until
   RESET DRV, `StallCpuOnIsa`) and NE1000 (8 KB at `#2000`). PROM: the MAC doubled, `#57 #57` at 28-31. MAC
   `02:53:50:00:<instance>:<slot>` unless `Slot2Mac=` (instance = lowest free number, taken at decoder construction).
-- **TTD**: blob **44 `EthernetNics`** (variable size; 39-43 went to ZiFi / CD audio on master meanwhile): per card
+- **TTD**: blob **45 `EthernetNics`** (variable size; 39-44 went to ZiFi, CD audio, VDAC2 and the Profi XT keyboard controller on master meanwhile; SN3 picks new ids): per card
   its port key, chip, the DP8390 and board state with the packet RAM and EEPROM, then the gateway's state (length
   + bytes). Registered only when slot cards exist. ISA blob 33 keeps the slot kinds; a recording with another
   population is refused at load.

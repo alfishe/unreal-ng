@@ -318,7 +318,7 @@ class CaptureVerifier:
         print(f"\n{Colors.BOLD}[Test]{Colors.END} Screen capture ({step_name})...")
         
         url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/capture/screen"
-        params = {"format": format, "mode": mode}
+        params = {"format": format, "area": mode}  # "area" replaces the deprecated "mode" parameter
         
         try:
             response = self.session.get(url, params=params, timeout=30)
@@ -344,7 +344,7 @@ class CaptureVerifier:
             if mode == "screen":
                 expected_w, expected_h = 256, 192
             else:
-                expected_w, expected_h = 352, 288  # Approximate full frame
+                expected_w, expected_h = 352, 288  # Approximate full frame (Pentagon)
                 
             self.print_success(f"Captured {width}x{height} {resp_format.upper()}, {size} bytes")
             

@@ -148,7 +148,7 @@ inspect_state {"aspects":["sprinter_text"]}
 #       ZX            <DIR>          22.03.21  17:01
 #               6 file(s)       364,060 bytes
 #       B:\>
-capture_media {"action":"screenshot","format":"png","mode":"full","filename":"/abs/path/scratch/dss-dir.png"}
+capture_media {"action":"screenshot","format":"png","area":"full","filename":"/abs/path/scratch/dss-dir.png"}
 #   → Screenshot saved to .../scratch/dss-dir.png (736x288 ...)
 ```
 
@@ -443,7 +443,7 @@ curl -s "$BASE/emulator/$EMU/state/sprinter/ports/lookup?port=7FFD" | jq -c '.re
 curl -s "$BASE/emulator/$EMU/state/paging" | jq -c '.banks[] | {bank, type, page}'      # the Sprinter windows
 curl -s "$BASE/emulator/$EMU/state/memory/rom" | jq '.total_rom_pages'                  # 16
 curl -s "$BASE/emulator/$EMU/ports" | jq '.live.sprinter_port_table'                    # map, DOS, PN5 now
-curl -s "$BASE/emulator/$EMU/capture/screen?format=png&mode=full&path=$PWD/scratch/sprinter.png" | jq -c .
+curl -s "$BASE/emulator/$EMU/capture/screen?area=full&format=png&path=$PWD/scratch/sprinter.png" | jq -c .
 #   {"file":".../scratch/sprinter.png","format":"png","height":288,"saved":true,"size":...,"status":"success","width":736}
 
 # Video (step 6), BIOS (step 1), raw pixels
@@ -569,8 +569,8 @@ curl -s -X PUT $BASE/emulator/$EMU/video/temporal -H 'Content-Type: application/
 #                     "inactive_reason":"not applicable: Sprinter native mode (640x256 16c): ZX DLSS works in the Spectrum mode only", ...}
 ```
 
-The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen` is the raw
-one). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
+The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen?area=full` is the same
+pixels, encoded). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
 of its 704 x 288 window at (16, 0). CLI `video temporal`, MCP `capture_media` `temporal_status`, Lua / Python
 `video_temporal()` report the same fields. Design: `docs/inprogress/2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md` §7.
 

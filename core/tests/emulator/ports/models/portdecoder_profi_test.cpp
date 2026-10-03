@@ -6,6 +6,9 @@
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/profifixture.h"
+#include "emulator/video/profi/profigeometry.h"
+#include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/soundmanager.h"
 
 #include <fstream>
 #include <iterator>
@@ -809,3 +812,108 @@ TEST_F(ProfiV3PortDecoder_Test, NoCpmSwitchOnV3)
 }
 
 /// endregion </Phase 7>
+
+/// region <Hi-res timing (design-hires.md, phase H2)>
+
+/// v5: #DFFD bit 7 runs the CPU from ZQ3 / 4 (20 MHz -> 5 MHz = 10/7 of the base clock) and the sync PROM's upper
+/// half: the same 312-line frame, INT 12553 base T before the hi-res paper
+TEST_F(ProfiPortDecoder_Test, HiresRunsTheCpuAtFiveMegahertz)
+{
+    // [PROFI] ZQ3MHz unset (0) means the 5.06's 20 MHz
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(State().hw_turbo_ratio_applied, 10);
+    EXPECT_EQ(State().ClockDen(), 7u);
+    EXPECT_EQ(State().current_z80_frequency, 5'000'000u);
+    EXPECT_EQ(_context->config.frame, 69888u);
+    EXPECT_EQ(_context->GetFrameTStates(), 99840u) << "320 T lines x 312";
+    EXPECT_EQ(_context->config.intstart, ProfiHiresIntStart(ProfiSyncPromFrameHires(ProfiSyncProm::V503, MM_PROFI)));
+
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(State().current_z80_frequency, 3'500'000u);
+    EXPECT_EQ(State().ClockDen(), 1u);
+    EXPECT_EQ(_context->config.intstart, ProfiIntStart(ProfiSyncPromFrame(ProfiSyncProm::V503, MM_PROFI)));
+}
+
+/// v3: 3 MHz (12 MHz / 4) and the 0a1d PROM's 320-line hi-res frame (48.83 Hz)
+TEST_F(ProfiV3PortDecoder_Test, HiresRunsTheCpuAtThreeMegahertzOnA320LineFrame)
+{
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(State().current_z80_frequency, 3'000'000u);
+    EXPECT_EQ(_context->config.frame, 71680u);
+    EXPECT_EQ(_context->GetFrameTStates(), 61440u) << "192 T lines x 320";
+    EXPECT_EQ(_context->config.frame_duration_us, 20480u);
+
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(_context->config.frame, 69888u);
+    EXPECT_EQ(State().current_z80_frequency, 3'500'000u);
+}
+
+/// The TTD time grid covers every clock the board selects: 12 units per base T on v3 (1, 2, 6/7, 12/7), 20 on a
+/// v5 with ZQ3 = 20 MHz (1, 2, 10/7, 20/7)
+TEST_F(ProfiPortDecoder_Test, TtdUnitsCoverTheHiresClock)
+{
+    EXPECT_EQ(_context->pPortDecoder->TtdClockUnits(), 20);
+    State().ttd_clock_units = _context->pPortDecoder->TtdClockUnits();
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(State().TtdUnitsPerTState(), 14u) << "a 5 MHz T is 7/10 base T: 20 x 7 / 10";
+}
+
+/// The AY clock (CLCAY) comes from the video divider: 1.5 MHz in hi-res, 1.75 MHz in Spectrum mode (design-hires.md
+/// H2b). The request lands on the AY's render timeline, so the requested clock is what the decoder controls
+static uint32_t RequestedAyClock(EmulatorContext* context)
+{
+    auto* device = dynamic_cast<SoundChip_TurboSound*>(context->pSoundManager->getTurboSound());
+    return device ? device->GetRequestedPsgClock() : 0;
+}
+
+/// v5, jumper SB7 in "CLCAY OLD" (the default): 1.5 MHz in hi-res; turbo does not touch it
+TEST_F(ProfiPortDecoder_Test, HiresClocksTheAyAtOneAndAHalfMegahertz)
+{
+    ASSERT_EQ(RequestedAyClock(_context), 1'750'000u) << "the fixture's AY slot";
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u);
+    EXPECT_TRUE(Decoder()->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true));
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u) << "turbo is a CPU clock, not CLCAY";
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
+}
+
+/// v5, SB7 in "CLCAY NEW" ([PROFI] AyClock=new): 1.75 MHz in both modes
+TEST_F(ProfiPortDecoder_Test, AyClockNewKeepsOneSeventyFiveInHires)
+{
+    _context->config.profi_ay_clock_new = 1;
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
+}
+
+/// v3: no jumper, always 1.5 MHz in hi-res (AyClock=new is a v5 option)
+TEST_F(ProfiV3PortDecoder_Test, HiresClocksTheAyAtOneAndAHalfMegahertz)
+{
+    _context->config.profi_ay_clock_new = 1;
+    WritePort(0xDFFD, 0x80);
+    EXPECT_EQ(RequestedAyClock(_context), 1'500'000u);
+    WritePort(0xDFFD, 0x00);
+    EXPECT_EQ(RequestedAyClock(_context), 1'750'000u);
+}
+
+/// endregion </Hi-res timing>
+
+/// v3 hi-res floating bus (design-hires.md H3): in the fetch window the first half of each 1333 ns tick reads the
+/// cell's second byte, the second half its first byte; #FF outside. Line 0's window starts at 3 077 524 ns; at 3 MHz
+/// (333 ns clocks) T3 = t + 2
+TEST_F(ProfiV3PortDecoder_Test, HiresFloatingBusAlternatesTheCellBytes)
+{
+    DosLatchOff();
+    WritePort(0xDFFD, 0x80);
+    ASSERT_EQ(State().current_z80_frequency, 3'000'000u);
+    uint8_t* page = _memory->RAMPageAddress(ProfiGeometry::PixelPage(State().p7FFD));
+    page[ProfiGeometry::ByteOffset(0, 1)] = 0x5A;   // the cell's second byte
+    page[ProfiGeometry::ByteOffset(0, 0)] = 0xA5;   // its first byte (+#2000)
+    Z80* z80 = _core->GetZ80();
+    z80->t = 9233 - 2;   // T3 at 3 077 667 ns: 143 ns into the tick
+    EXPECT_EQ(ReadPort(0x00FF), 0x5A);
+    z80->t = 9235 - 2;   // 810 ns: the second half
+    EXPECT_EQ(ReadPort(0x00FF), 0xA5);
+    z80->t = 100;
+    EXPECT_EQ(ReadPort(0x00FF), 0xFF) << "top border";
+}

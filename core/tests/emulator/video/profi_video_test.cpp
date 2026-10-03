@@ -384,6 +384,13 @@ TEST_F(ProfiVideo_Test, Hires_FrameExtents_512Columns240Rows)
         ASSERT_EQ(At(row, 607), border) << "row " << row;
     }
 
+    // The frame's own geometry names exactly the picture measured above (what a screenshot cuts for area=screen)
+    const FrameRect window = Screen()->WorkingWindow();
+    EXPECT_EQ(window.x, 48);
+    EXPECT_EQ(window.y, 24);
+    EXPECT_EQ(window.width, 512);
+    EXPECT_EQ(window.height, 240);
+
     // Full-width scans: top/bottom border rows and sample paper rows
     for (uint32_t row : {0u, 23u, 264u, 287u})
         for (uint32_t col = 0; col < fb.width; ++col)

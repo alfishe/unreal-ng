@@ -81,7 +81,7 @@ nc localhost 8765
 ### Capture
 | Command | Description |
 |---------|-------------|
-| `capture screen [--area=full\|screen] [--format=png\|gif] [file]` | Screenshot of the presented frame of the session's emulator. `--area=full` (default): the whole frame with its border; `screen`: the working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture). PNG (default) or GIF. Prints the geometry and a data URI, or saves to `file`. |
+| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator; `--source=live` takes the frame as drawn now instead of the presented one. `--area=full` (default): the whole frame with its border; `screen`: the working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture). PNG (default) or GIF. Prints the geometry and a data URI, or saves to `file`. |
 | `capture framebuffer <file> [rgba\|index]` | Raw pixels of the same frame |
 | `capture ocr` | OCR text from the screen |
 

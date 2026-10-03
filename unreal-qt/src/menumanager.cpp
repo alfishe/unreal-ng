@@ -929,7 +929,8 @@ void MenuManager::createMachineMenu()
     connect(_machineMenu, &QMenu::aboutToShow, this, &MenuManager::machineMenuAboutToShow);
 }
 
-void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller)
+void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
+                                       const QString& controller)
 {
     if (!_hostKeyboardGroup)
         return;
@@ -940,7 +941,11 @@ void MenuManager::setHostKeyboardRoute(const QString& route, const QString& effe
         // Without a PS/2 controller only the matrix is there to choose
         action->setEnabled(ps2Controller || name == "auto" || name == "matrix");
     }
-    _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    // The controller by name when it has one (Profi: "PROFI-XT firmware 1.27" / "PROFI-XT table")
+    if (controller.isEmpty())
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1)").arg(effective.toLower()));
+    else
+        _hostKeyboardMenu->setTitle(tr("Host &Keyboard (%1: %2)").arg(effective.toLower(), controller));
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)

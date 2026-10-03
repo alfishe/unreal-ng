@@ -164,7 +164,7 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
        `SprinterIsaBus`, window-3 routing, the `#9FBD` latch, `[ISA]` slots, TTD blob 33, `state/isa` /
        `control/isa` on every surface, recipe `.recipe/machines/sprinter-isa.md`; ISA tdd §14). **Network SN0-SN2 done
        2026-10-03** (same branch): NE2000 RTL8019AS in ISA slot 2 by default, the Ethernet gateway, the RTL8019AS kit
-       end to end, TTD blob 44; recipe `.recipe/machines/sprinter-network.md`, network tdd §18.
+       end to end, TTD blob 45; recipe `.recipe/machines/sprinter-network.md`, network tdd §18.
      - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
        the BIOS / DSS developer's main work since 2024-10.
      - The Centronics printer drops to P4.

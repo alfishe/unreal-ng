@@ -63,7 +63,7 @@ emulator_manage {"action":"create","model":"TSL-VDAC2"}
 invoke_api      {"method":"POST","path":"/api/v1/emulator/{id}/media/sd.zc/insert",
                  "body":{"path":"/path/to/R-Type VDAC2"}}
 load_software   {"path":"/path/to/R-Type VDAC2/rtype_vdac2.spg"}
-capture_media   {"action":"screenshot","format":"png"}      # the FT812 picture while V_CONFIG bit 2 is set
+capture_media   {"action":"screenshot"}                      # the FT812 picture (1024x768 in the games) while V_CONFIG bit 2 is set; PNG, area full
 
 # Bus capture: everything on the FT812's bus, to an .evr replay stream
 capture_media   {"action":"vdac2_capture_start","filename":"scratch/rtype.evr"}
@@ -176,4 +176,8 @@ an overflow looks like: [line-budget-model.md](../../docs/inprogress/2026-10-01-
   end record is written then.
 - The monitor switches per machine frame, as the last line latched `V_CONFIG` bit 2.
 - The Qt window, screenshots and recordings take the FT812 picture's size
-  (`HSIZE × VSIZE`, 1024×768 in the games) while it is shown.
+  (`HSIZE × VSIZE`, 1024×768 in the games) while it is shown. A screenshot
+  needs no special parameter for it: the default `area=full` returns the
+  whole FT812 picture, and `area=screen` is the same image (the picture has
+  no border). Before the screenshot rewrite it returned a 256x192 piece cut
+  from the middle.

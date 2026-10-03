@@ -166,6 +166,24 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
             "refused in the slot report /state/isa); fixed for the instance's lifetime";
     }
+    schema["properties"]["profi_keyboard"]["type"] = "string";
+    schema["properties"]["profi_keyboard"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* value : {"default", "matrix", "xt", "xttable"})
+        schema["properties"]["profi_keyboard"]["enum"].append(value);
+    schema["properties"]["profi_keyboard"]["description"] =
+        "'create' with model PROFI / PROFI3: the keyboard on the board's connector - xt (the PROFI-XT controller on its "
+        "reconstructed firmware: PC keys, F1-F10 / Home / End / PgUp / PgDn / Ins / Del as letter + EXT), xttable (the "
+        "same from its key table), matrix (the Spectrum matrix), default (v5 xt, v3 matrix). See unreal://machine/profi";
+    schema["properties"]["profi_zq3_mhz"]["type"] = "integer";
+    schema["properties"]["profi_zq3_mhz"]["description"] =
+        "'create' with model PROFI: the v5's third crystal, an even 16-24 MHz (default 20): the hi-res CPU clock is "
+        "ZQ3 / 4 (5 MHz), ZQ3 / 2 with TURBO";
+    schema["properties"]["profi_ay_clock"]["type"] = "string";
+    schema["properties"]["profi_ay_clock"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["profi_ay_clock"]["enum"].append("old");
+    schema["properties"]["profi_ay_clock"]["enum"].append("new");
+    schema["properties"]["profi_ay_clock"]["description"] =
+        "'create' with model PROFI: jumper SB7 - old = the AY at 1.5 MHz in hi-res (default), new = 1.75 MHz always";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -279,6 +297,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["sprinter"]["isa_slot1"] = args["sprinter_isa_slot1"].asString();
                 if (args.isMember("sprinter_isa_slot2") && args["sprinter_isa_slot2"].isString())
                     body["sprinter"]["isa_slot2"] = args["sprinter_isa_slot2"].asString();
+                if (args.isMember("profi_keyboard") && args["profi_keyboard"].isString())
+                    body["profi"]["keyboard"] = args["profi_keyboard"].asString();
+                if (args.isMember("profi_zq3_mhz") && args["profi_zq3_mhz"].isInt())
+                    body["profi"]["zq3_mhz"] = args["profi_zq3_mhz"].asInt();
+                if (args.isMember("profi_ay_clock") && args["profi_ay_clock"].isString())
+                    body["profi"]["ay_clock"] = args["profi_ay_clock"].asString();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {

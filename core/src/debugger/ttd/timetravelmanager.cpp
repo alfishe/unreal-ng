@@ -2663,9 +2663,7 @@ void TimeTravelManager::RunToFrameEnd()
     // boundary, so the remainder is one frame's worth of T-states (scaled by
     // the restored CPU frequency multiplier). Crossing the limit runs the
     // frame-end processing, which completes the frame's picture.
-    const uint32_t frameT = _context->config.frame;
-    const uint32_t mult = _context->emulatorState.current_z80_frequency_multiplier;
-    const uint32_t frameTStates = frameT * (mult ? mult : 1);
+    const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
     const uint32_t startT = static_cast<uint32_t>(z80->t);
     if (startT < frameTStates)
         _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
@@ -5982,8 +5980,7 @@ void TimeTravelManager::BuildFrameCache(uint64_t frame, TTDFrameCache& out)
     // the fill never reallocates mid-capture; on a reused cache block these are
     // no-ops (capacity retained). The arena is one pre-allocated segment packed
     // sequentially each build — no fragmentation to manage.
-    const uint32_t mult = _context->emulatorState.current_z80_frequency_multiplier;
-    const size_t frameTStates = static_cast<size_t>(frameT) * (mult ? mult : 1);
+    const size_t frameTStates = _context->emulatorState.BaseToCpuT(frameT);
     // Ceiling division (an instruction can straddle the frame boundary) + margin.
     const size_t maxInstrPerFrame =
         (frameTStates + kMinInstructionTStates - 1) / kMinInstructionTStates + kFrameReserveMargin;

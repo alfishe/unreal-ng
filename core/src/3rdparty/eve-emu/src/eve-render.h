@@ -191,6 +191,9 @@ struct LineRun
     // every other line nothing reads it and nothing in the pixel pipeline tests it, so
     // its writes are skipped (WritesTag)
     bool tagLive;
+    int32_t keepLine;      // the screen line, when its pixels may be left in the frame buffer; else -1
+    bool pixelsKept;       // the line's pixels were left in the frame buffer: no output
+    bool remembered;       // RememberSteps wrote the line's signature
 };
 
 inline bool WritesTag(const LineRun& run)
@@ -212,6 +215,8 @@ struct LinePlanStep
 {
     bool clear;              // CLEAR, else a vertex
     bool rowTest;            // a bitmap vertex: skip when rely is outside [0, rowsSubpixel)
+    bool extentTest;         // a point, line or rectangle: skip lines outside [yFirst, yLast]
+    int64_t yFirst, yLast;   // 1/16 pixel, the line centers it can reach (a superset)
     uint8_t primitive;
     uint32_t context;        // index into LinePlan::contexts
     uint32_t vertexCount;    // since BEGIN, before this vertex
@@ -224,11 +229,25 @@ struct LinePlanStep
     uint32_t commandWord;
 };
 
+// What a drawn screen line was drawn from (eve-dl.cpp, KeepLineBySteps): the steps of the
+// recorded walk that reached it, with their contexts, and the RAM_G change count then. A
+// later line whose reaching steps are equal and whose RAM_G pages read by them did not
+// change has the same pixels and fill cost, whatever else the display list changed.
+struct LineSignature
+{
+    bool valid = false;
+    bool readsAnyMemory = false;  // a step whose reads are not bounded (text, bargraph)
+    uint64_t ramGMark = 0, drawRegChanges = 0, outputVersion = 0;
+    uint64_t fillCost = 0;
+    std::vector<LinePlanStep> steps;
+    std::vector<GraphicsContext> contexts;  // one per step
+};
+
 struct LinePlan
 {
     bool valid = false;
-    // The inputs of the recorded walk.
-    uint32_t activeDl = 0;
+    uint64_t record = 0;     // counts recordings: a kept line names the walk it replayed
+    // The inputs of the recorded walk (dlVersion follows the active list's contents).
     uint64_t dlVersion = 0;
     uint32_t macro0 = 0, macro1 = 0;
     BitmapHandle startHandles[kHandleCount] = {};
@@ -238,6 +257,7 @@ struct LinePlan
     uint32_t events = 0;
     std::vector<GraphicsContext> contexts;
     std::vector<LinePlanStep> steps;
+    std::vector<LineSignature> lines;  // per screen line (kMaxLines), kept across recordings
 };
 
 // --- eve-dl.cpp --------------------------------------------------------------------------------
@@ -252,6 +272,10 @@ uint32_t HandleStride(const BitmapHandle& h);
 uint32_t HandleLayoutHeight(const BitmapHandle& h);
 
 // --- eve-raster.cpp: points, lines, rectangles, edge strips --------------------------------------
+
+// How far a point, line or rectangle of this radius (POINT_SIZE / LINE_WIDTH, 1/16 pixel)
+// can reach beyond its vertices, 1/16 pixel, rounded up: lines farther away are not drawn
+int64_t ShapeReach(uint32_t radius);
 
 template <LineMode Mode>
 void DrawPoint(LineRun& run, const Vertex& v);

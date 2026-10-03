@@ -305,6 +305,13 @@ TEST_F(ATMVideoModesSuite_Test, Geometry_ATMDescriptorsAndTiming)
         EXPECT_EQ(rd.screenOffsetLeft, c.ol);
         EXPECT_EQ(rd.screenOffsetTop, c.ot);
 
+        // The frame's own geometry names the same working picture (what a screenshot cuts for area=screen)
+        const FrameRect window = _screen->WorkingWindow();
+        EXPECT_EQ(window.x, c.ol);
+        EXPECT_EQ(window.y, c.ot);
+        EXPECT_EQ(window.width, c.sw);
+        EXPECT_EQ(window.height, c.sh);
+
         // ATM timing invariant: 224 T/line, 16 vSync + 8 vBlank + 288 = 312 lines
         EXPECT_EQ(_screen->GetTstatesPerLine(), 224u);
         EXPECT_EQ(_screen->GetMaxFrameTiming(), 69888u);

@@ -39,7 +39,9 @@ constexpr void DecodePixelOffset(uint16_t offset, uint8_t& y, uint8_t& col)
 
 /// Pentagon 384x304 overscan (M_P384): the framebuffer starts right after
 /// vsync (16 lines of vblank more on top) and extends 32 pixels to the right;
-/// the paper is 16 lines lower in the framebuffer than in the other ZX modes
+/// the paper is 16 lines lower in the framebuffer than in the other ZX modes:
+/// (48, 64) against (48, 48) (the raster table row says so; FrameGeometry_Test
+/// measures it on the batch and the per-T-state renderer)
 constexpr int kP384ExtraTopLines = 16;
 constexpr int kP384ExtraPixels = 32;
 

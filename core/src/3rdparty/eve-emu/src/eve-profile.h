@@ -51,12 +51,14 @@ struct ProfileCounters
     std::map<uint8_t, ProfileCell> primitives;  // by BEGIN value, bitmaps excluded
     ProfileCell lines;                           // every drawn line: commands in `pixels`
     std::map<std::string, uint64_t> fastRejects; // why the fast path declined a span
-    uint64_t opcodes[256] = {};
+    uint64_t opcodes[256] = {};                  // display list words executed, by opcode byte
     uint64_t bitmapVertices = 0, bitmapMissY = 0, bitmapMissX = 0;
     uint64_t planReplays = 0;                    // lines drawn from a recorded walk
+    uint64_t linesKept = 0;                      // lines left in the frame buffer (inputs unchanged)
+    uint64_t linesKeptBySteps = 0;               // lines whose own steps and reads did not change
     uint64_t finishPixels = 0, modulatePixels = 0, simdBlendPixels = 0; // fast span tails
-    uint64_t decodeNanos = 0, finishNanos = 0;
-    std::map<int64_t, uint64_t> scaleAPixels;    // fast NEAREST axis-aligned rows: pixels by transform A   // fast NEAREST spans: decode vs tail                  // display list words executed, by opcode byte
+    uint64_t decodeNanos = 0, finishNanos = 0;   // fast NEAREST spans: decode vs tail
+    std::map<int64_t, uint64_t> scaleAPixels;    // fast NEAREST axis-aligned rows: pixels by transform A
 };
 
 ProfileCounters& Profile();

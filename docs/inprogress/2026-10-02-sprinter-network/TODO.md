@@ -29,7 +29,7 @@ on), SN0, SN1, SN2 - the RTL8019AS kit runs end to end (`IFUP`, `PING`, `NSLOOKU
 - [ ] MAME-fork reference captures (T-NET-16): not cheap (the fork's RTL8019AS / SprinterESP cards need a MAME build
   of `witchcraft2001/mame_sprinter`); deferred, the kit programs on the emulator are the acceptance instead
 - [x] SN1 (2026-10-03): `IIoBusDevice` (ATM INTERNAL bus migrated), slots in `DescribeNetwork()`, `Dp8390` +
-  `Ne2000Board` (RTL8019AS / UM9003 / NE1000), TTD blob **44** `EthernetNics` (39-43 were taken on master), slot
+  `Ne2000Board` (RTL8019AS / UM9003 / NE1000), TTD blob **45** `EthernetNics` (39-44 were taken on master; 44 = Profi XT keyboard controller), slot
   report + ISA resources / conflicts / access journal on all five surfaces and in Qt. The guest registry is minimal
   (fixed guest 6 for the gateway); the key registry of Q10 is open
 - [x] SN2 (2026-10-03): `EthernetGateway` (ARP / IPv4 / ICMP / UDP / TCP, DHCP + DNS + forwards shared), RTL kit end

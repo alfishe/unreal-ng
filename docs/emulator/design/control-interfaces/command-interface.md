@@ -722,7 +722,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 
 | Report | CLI | WebAPI | Lua | Python | MCP `inspect_state` aspect |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| AY / SSG overview | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
+| AY / SSG overview (chip count, slot device, `psg_clock_hz` = the AY clock now, 1500000 on a Profi in hi-res) | `state audio ay` | `GET /state/audio/ay` | `audio_ay_state()` | `audio_ay_state()` | `audio_ay` (overview + every chip) |
 | AY / SSG chip N | `state audio ay N` | `GET /state/audio/ay/N` | `audio_ay_state(N)` | `audio_ay_state(N)` | `audio_ay` |
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
@@ -751,6 +751,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter BIOS / start options select (loads at the reset) | `state sprinter bios 3.06 [fast_start=0\|1] [accel_int_suspend=0\|1] [reset=0\|1]` | `POST /sprinter/bios {bios, fast_start, accel_int_suspend, reset}` | `sprinter_bios_select{bios="3.06"}` | `sprinter_bios_select(bios="3.06")` | `invoke_api` POST `/sprinter/bios` |
 | Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
 | Sprinter ISA slot population at create (default `[ISA]`: slot 1 none, slot 2 NE2000; fixed for the instance) | `create SPRINTER --isa-slot1 <kind> --isa-slot2 <kind>` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}` | - | - | `emulator_manage` create `sprinter_isa_slot1`, `sprinter_isa_slot2` |
+| Profi keyboard at create (`[PROFI] Keyboard=`: v5 `xt`, v3 `matrix`) and in force | `create PROFI --profi-keyboard xt\|xttable\|matrix` (also `start`); `state` (Profi keyboard), `keyboard route` (controller name) | `POST /emulator/create\|start {"model":"PROFI","profi":{"keyboard":"xttable"}}`; `GET /state/paging` `profi_keyboard`, `GET /keyboard/status` `keyboard_controller` | `paging_state().profi_keyboard`, `keyboard_controller()` | `paging_state()['profi_keyboard']`, `keyboard_controller()` | `emulator_manage` create `profi_keyboard`; `inspect_state` aspect `paging` |
 | Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
@@ -759,7 +760,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Pixel sources (memory, registers, palette behind a pixel; `t=` the beam point at a frame T) | `video pixel <x> <y> [layer]`, `video pixel t <tstate>` | `GET /video/pixel?x=&y=&layer=` / `?t=` | `video_pixel(...)`, `video_pixel_at(t)` | `video_pixel(...)`, `video_pixel_at(t)` | `invoke_api` |
 | Pixels a byte feeds (RAM page, Z80 address, palette cell, sprite word, device video RAM) | `video address <page> <off>`, `video address z80\|palette\|sprite_ram\|vram <n>` | `GET /video/address?page=&offset=` / `?z80=` / `?space=vram&offset=` | `video_address(...)`, `video_address_in(space, off)` | the same | `invoke_api` |
 | Text grid of a text mode (ATM / ZX-Evo / TS-Conf, the Sprinter's text squares) | `video text [layer]` | `GET /video/text` | `video_text()` | `video_text()` | `video_text` |
-| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [file]` | `GET /capture/screen?area=&format=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, path=}` | `capture_screen(format="png", area="", path="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `path` |
+| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | `GET /capture/screen?area=&format=&source=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, source=, path=}` | `capture_screen(format="png", area="", path="", source="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `source`, `path` |
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
@@ -3661,8 +3662,10 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 | :--- | :--- | :--- | :--- |
 | `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
 | `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
-| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [file]` | Screenshot of the presented frame of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default. Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
+| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default; the presented frame by default, `--source=live` the frame as drawn now. Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
 | `capture framebuffer` | `<file> [rgba\|index]` | Raw pixels of the same presented frame (RGBA, or the Sprinter's u16 pens with `index`). | ✅ Implemented |
+
+`source=presented` (default) is the finished frame the window shows, a couple of frames behind the machine. `source=live` is the frame as drawn right now, with no present delay and no ZX DLSS processing: on a running machine the emulation thread copies it at the end of its next frame (an answer within one frame time; 409 `no-frame` if none comes within 1 s), on a paused one it is read directly and the answer says where the beam stopped (`frame.beam.line`, `frame.beam.tstate`) and whether the frame is half drawn (`frame.partial`: the beam is inside a frame drawn per T-state, so the lines it has not reached are still the previous frame's). The master of a ZX-Poly group shows the group's composed display frame (2x, `frame.source: composed`, the working picture 512x384); a slave keeps its own frame.
 
 A screenshot is one frame snapshot: the pixels and the frame's own geometry, taken together from the presented frame (the tear-free frame the window shows, a couple of frames behind the machine; more with ZX DLSS). `area=screen` cuts the frame geometry's screen window: the paper of a Spectrum, the graphics window of a TS-Conf (from V_CONFIG), the whole picture of an FT812 card, and on a hires mode the whole frame when the picture fills it. The old per-page (`5` / `7` / `shadow`) capture was never implemented and is not planned: the picture is what the monitor shows. Design: [`docs/inprogress/2026-10-03-screenshotter/design.md`](../../../inprogress/2026-10-03-screenshotter/design.md).
 
@@ -3678,6 +3681,7 @@ A screenshot is one frame snapshot: the pixels and the frame's own geometry, tak
   "status": "success",
   "format": "png",
   "area": "full",
+  "source": "presented",
   "width": 352,
   "height": 288,
   "size": 12345,
@@ -3687,7 +3691,7 @@ A screenshot is one frame snapshot: the pixels and the frame's own geometry, tak
   "data": "base64encodeddata..."
 }
 ```
-`crop` is the returned image's rectangle inside the frame, `screen_window` the working picture inside the frame, `frame.source` is `external` for a video card's picture (the FT812). With `path=` the image is written on the server and `saved: true, file` replace `data`.
+`crop` is the returned image's rectangle inside the frame, `screen_window` the working picture inside the frame, `frame.source` is `native` (the machine's own frame), `external` (a video card's picture: the FT812) or `composed` (a ZX-Poly group's display frame). With `path=` the image is written on the server and `saved: true, file` replace `data`.
 
 **Errors** (JSON `{error, message, kind}`): 400 `bad-parameter` for an unknown `area`, `mode` or `format` (the message lists the allowed words) or an `area` and `mode` that disagree; 404 `not-found`; 409 `no-frame` when the emulator has not presented a frame yet; 500 `bad-geometry` (the screen window does not fit the frame, the message has both sizes), `encode-failed`, `io-failed`; 503 while the emulator shuts down.
 

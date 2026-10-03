@@ -84,10 +84,13 @@ Problems that this design removes:
 4. The table does not describe everything the renderer produces:
    TS-Conf (descriptor says the screen window is the whole 720x288, the real graphics window
    is set by a register); ZX-Poly (the user sees a 2x frame, the screenshot gets the 256x192
-   downsample of it). The survey also suspected P384 (paper at y=64 against the table's 48);
-   **measured 2026-10-03: the table is right** (paper at (48,48) in the 384x304 frame), so there is
-   nothing to fix there. The Qt viewport presets assume y=56, which does not match: noted, out of
-   scope here.
+   downsample of it); P384 (the table said the paper is at (48,48) in the 384x304 frame; the per-T-state
+   renderer, the shipped default, draws it at (48,64), the batch renderer at (48,48), the Qt viewport
+   presets assumed y=56: three answers for one picture). **Measured on both renderers 2026-10-03** (the
+   first measurement used only the batch one and wrongly concluded "the table is right"): the truth is
+   (48,64). Fixed: the table row, the batch renderer (it reads the row), the beam-to-pixel mapping and the
+   viewport presets (Standard now crops 16 lines off the top and none off the bottom: symmetric 48 / 48;
+   Screen only is exactly the paper). The per-T-state picture did not change.
 5. `mode` accepts only the word `full`; any other value silently means "crop".
    Any `format` except `png` silently becomes GIF (256 colors, lossy for true-colour pictures),
    written through a fixed `/tmp/unreal_capture_<address>.gif` name.
@@ -212,11 +215,22 @@ thread with no lock (problem 3). The live source never does that:
   the switch.
 - A timeout (emulation stuck, no frames) returns an error kind `no-frame` instead of hanging.
 
+### 7. ZX-Poly (decision 4, implemented)
+
+`ZXPolyGroup` latches the geometry of its display frame with the pixels at every composed frame
+(`SnapshotDisplay`): the master's frame at 2x (704x576 for a Pentagon), the working picture doubled
+(512x384 at (96,96)), `source: composed`. `Screenshotter::Take` uses it for the group's master (for `live`
+too: the group composes at every master frame end, its latest is also its live frame); a slave keeps its
+own native frame. The header comment of `ZXPolyGroup` used to say the master's 1:1 frame stays "for
+screenshots and recording": that was the earlier intent, decision 4 changes it for screenshots; recording
+keeps the master's own frame.
+
 ## Phases
 
-1. **Foundation**: `PictureGeometry`, `SnapshotPresented` with geometry latched per present slot,
-   the TS-Conf window; tests that find a marker pattern in every video mode (landed for the ZX family,
-   P384, TS-Conf and the FT812 picture; ATM, Profi, Sprinter and ZX-Poly markers still to add).
+1. **Foundation** (done): `PictureGeometry`, `SnapshotPresented` with geometry latched per present
+   slot, the TS-Conf window, the P384 fix; tests that find a marker pattern: the ZX family and P384 on
+   both renderers, the four TS-Conf windows, the FT812 picture; the ATM, Profi and Sprinter suites assert
+   the window next to the extents they already measure by pixel; the ZX-Poly composed frame.
 2. **`Screenshotter`** with PNG/GIF encoders, error kinds, `ScreenCapture` shim; unit tests for
    crop, FT812 (smaller and larger than 256x192), error cases, mode switch during capture.
 3. **Surfaces**: WebAPI + OpenAPI, MCP, CLI, Lua, Python, Qt; endpoint tests (none exist today).

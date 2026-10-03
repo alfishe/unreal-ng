@@ -304,6 +304,47 @@ std::vector<uint8_t> Ps2Set2Bytes(PcKey key, bool pressed)
     return bytes;
 }
 
+std::vector<uint8_t> XtSet1Bytes(PcKey key, bool pressed)
+{
+    if (key == PcKey::Pause)
+    {
+        // Make only, as Ctrl + NumLock with the E1 prefix
+        if (pressed)
+            return {0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5};
+        return {};
+    }
+    if (key == PcKey::PrintScreen)
+    {
+        // A fake Left Shift around E0 37
+        if (pressed)
+            return {0xE0, 0x2A, 0xE0, 0x37};
+        return {0xE0, 0xB7, 0xE0, 0xAA};
+    }
+
+    // The Windows table is set 1 with bit 8 = E0 - except Num Lock, which Windows reports as 145h (the keyboard
+    // sends a plain 45), and Pause (handled above)
+    uint16_t code = key == PcKey::NumLock ? 0x45 : 0x00;
+    if (!code)
+    {
+        for (const CodeMap& entry : kWindows)
+        {
+            if (entry.key == key)
+            {
+                code = entry.code;
+                break;
+            }
+        }
+    }
+    if (!code)
+        return {};
+
+    std::vector<uint8_t> bytes;
+    if (code & 0x100)
+        bytes.push_back(0xE0);
+    bytes.push_back(static_cast<uint8_t>((code & 0x7F) | (pressed ? 0x00 : 0x80)));
+    return bytes;
+}
+
 PcKey FromMacVirtualKey(uint32_t virtualKey)
 {
     return Lookup(kMac, virtualKey);
@@ -413,3 +454,13 @@ std::vector<PcKey> FromCharacter(char c)
 }
 
 }  // namespace pckey
+
+std::vector<PcKey> IPs2KeySink::PcKeysForZxKey(ZXKeysEnum key) const
+{
+    return pckey::FromZxKey(key);
+}
+
+std::vector<PcKey> IPs2KeySink::PcKeysForCharacter(char c, [[maybe_unused]] const std::vector<ZXKeysEnum>& zxKeys) const
+{
+    return pckey::FromCharacter(c);
+}

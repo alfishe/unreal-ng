@@ -4,6 +4,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/ports/models/profiboard.h"
 
 namespace
 {
@@ -22,10 +23,74 @@ bool ProfiWaitOverlay::WaitsApply() const
 {
     if (!_core->IsContentionSwitchOn())
         return false;
+    if (_state->pDFFD & 0x80)
+    {
+        // Hi-res: the v5 arbiter on its third crystal, SB8 or not (design-hires.md H3); the v3 only in turbo (6 MHz)
+        return _setup.v5 || _state->hw_turbo_ratio_applied == ProfiHiresClockNum(false, 0, true);
+    }
     if (_state->hw_turbo_ratio_applied == 2)
-        return !(_setup.v5 && (_state->pDFFD & 0x80));   // v5 hi-res runs from its third crystal: not modeled
+        return true;
     // 3.5 MHz: only the v5 board's video WAIT, in the Spectrum raster, with SB8 in its PROFI3+ position
-    return _setup.v5 && !_setup.pentagonJumper && !(_state->pDFFD & 0x80);
+    return _setup.v5 && !_setup.pentagonJumper;
+}
+
+bool ProfiWaitOverlay::DistanceToRequestNs(double tNs, double& d) const
+{
+    const double rel0 = tNs - ProfiHiresWindowStartNs(0);
+    if (_state->p7FFD & 0x20)
+    {
+        // #7FFD bit 5 (BCMR) in hi-res: NET00194 keeps the requests running the whole line, every line, on one phase
+        const double k = rel0 / kProfiHiresRequestNs;
+        const double nearest = static_cast<double>(static_cast<int64_t>(k + (k >= 0 ? 0.5 : -0.5)));
+        d = rel0 - nearest * kProfiHiresRequestNs;
+        return true;
+    }
+    // Only in the fetch window: 32 ticks, 64 requests, of each of the 240 paper lines. An access just before a
+    // window's first request still counts, so the line is found with a margin
+    const double shifted = rel0 + 200.0;
+    if (shifted < 0)
+        return false;
+    const uint32_t line = static_cast<uint32_t>(shifted / kProfiLineNs);
+    if (line >= kProfiHiresPaperLines)
+        return false;
+    const double rel = tNs - ProfiHiresWindowStartNs(line);
+    double k = rel / kProfiHiresRequestNs;
+    k = k < 0 ? 0 : (k > 2 * kProfiHiresTicksPerWindow - 1 ? 2 * kProfiHiresTicksPerWindow - 1 : k + 0.5);
+    const double edge = static_cast<double>(static_cast<uint32_t>(k)) * kProfiHiresRequestNs;
+    d = rel - edge;
+    return true;
+}
+
+uint32_t ProfiWaitOverlay::HiresExtraClocks(bool rom, uint32_t start) const
+{
+    const uint32_t num = _state->hw_turbo_ratio_applied;
+    if (!_setup.v5)
+    {
+        // v3 turbo (6 MHz): the Spectrum-mode slot rule in 6 MHz clocks (research-profi-hires-timing.md, M)
+        if (rom)
+            return 0;
+        return (start & 1) ? 3u : 2u;
+    }
+
+    // v5.06 model (research-profi-hires-timing.md 3, M): around each video request edge
+    const bool turbo = num >= _setup.zq3MHz;
+    if (rom)
+    {
+        // The ROM one-shot (200 ns): 1 T at 5-6 MHz, none at 4 MHz; 2 / 1 in turbo
+        const bool slow = _setup.zq3MHz <= 16;
+        return turbo ? (slow ? 1u : 2u) : (slow ? 0u : 1u);
+    }
+    const double tNs = static_cast<double>(start) * ProfiHiresCpuPeriodNs(num);
+    double d = 0;
+    const bool request = DistanceToRequestNs(tNs, d);
+    if (!turbo)
+        return (request && d >= -130.0 && d <= 40.0) ? 1u : 0u;
+    // Turbo: the DRAM ring restarts on every CPU request (1 T), and a request edge close by costs 1-2 more
+    if (request && d >= -90.0 && d < 0.0)
+        return 3;
+    if (request && d >= 0.0 && d <= 90.0)
+        return 2;
+    return 1;
 }
 
 bool ProfiWaitOverlay::InFetchWindow(uint32_t t) const
@@ -62,6 +127,8 @@ uint32_t ProfiWaitOverlay::ExtraClocks(bool rom, uint32_t start) const
     const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
     const uint32_t host = multiplier > ratio ? multiplier / ratio : 1;
     start /= host;
+    if (_state->pDFFD & 0x80)
+        return HiresExtraClocks(rom, start);
     const bool turbo = ratio == 2;
     if (!_setup.v5)
     {

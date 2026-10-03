@@ -571,8 +571,8 @@ uint64_t Tape::ClockCount() const
 {
     const EmulatorState& state = _context->emulatorState;
     uint64_t inFrame = _context->pCore->GetZ80()->t;
-    if (_baseClockTimeBase && state.hw_turbo_ratio_applied > 1)
-        inFrame /= state.hw_turbo_ratio_applied;
+    if (_baseClockTimeBase && (state.hw_turbo_ratio_applied > 1 || state.hw_clock_den_applied > 1))
+        inFrame = state.AudioTstate(static_cast<uint32_t>(inFrame));
     return state.t_states + inFrame;
 }
 

@@ -70,22 +70,23 @@ bool BlendSpanFast(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t c
     uint8_t* dst = run.color + kChannels * static_cast<uint32_t>(first);
     const uint8_t src = ctx.blendSrc;
     const uint8_t dstFactor = ctx.blendDst;
-    if (src == kBlendOne && dstFactor == kBlendOne && ctx.colorMask == kMaskAlpha)
+    if (src == kBlendOne && dstFactor == kBlendOne)
     {
-        // dst.a = min(src.a + dst.a, 255)
-        // SIMD-CANDIDATE: saturating byte add on every fourth byte.
-        for (uint32_t i = 0; i < count; ++i, dst += kChannels)
-            dst[kChannelAlpha] = Saturate((rgba[i] & kChannelMax) + dst[kChannelAlpha]);
+        // dst = min(src + dst, 255) on the channels COLOR_MASK lets through (R-Type's masks
+        // accumulate alpha alone, the SDK's test6 adds whole pixels)
+        Simd::AddSaturate(dst, rgba, count, ctx.colorMask);
     }
     else if (src == kBlendDstAlpha && dstFactor == kBlendZero && ctx.colorMask == kRgb && kMultiplyRoundDiv255)
     {
         // dst.rgb = src.rgb x dst.a
         Simd::MultiplyRgbByDstAlpha(dst, rgba, count);
     }
-    else if (src == kBlendOneMinusDstAlpha && dstFactor == kBlendOne && ctx.colorMask == kRgb && kMultiplyRoundDiv255)
+    else if ((src == kBlendOneMinusDstAlpha || src == kBlendDstAlpha) && dstFactor == kBlendOne && ctx.colorMask == kRgb &&
+             kMultiplyRoundDiv255)
     {
-        // dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255)
-        Simd::AddRgbTimesInverseDstAlpha(dst, rgba, count);
+        // dst.rgb = min(src.rgb x (255 - dst.a) + dst.rgb, 255), or x dst.a (the SDK's
+        // CMD_GRADIENT test draws its ramp through the alpha this way)
+        Simd::AddRgbTimesDstAlpha(dst, rgba, count, src == kBlendOneMinusDstAlpha);
     }
     else if (src == kBlendOne && dstFactor == kBlendZero)
     {

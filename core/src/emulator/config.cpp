@@ -348,6 +348,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.profi_rom_wait = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "RomWait", 0) ? 1 : 0);
 	config.profi_turbo = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "Turbo", 0) ? 1 : 0);
+	config.profi_zq3_mhz = ProfiClampZq3(inimanager.GetLongValue("PROFI", "ZQ3MHz", kProfiZq3DefaultMHz));
+	{
+		const char* ayClock = inimanager.GetValue("PROFI", "AyClock", "old");
+		config.profi_ay_clock_new = 0;
+		if (ayClock && StringHelper::CompareCaseInsensitive(ayClock, "new", 3) == 0)
+			config.profi_ay_clock_new = 1;
+		else if (ayClock && StringHelper::CompareCaseInsensitive(ayClock, "old", 3) != 0)
+			MLOGWARNING("Config: unknown [PROFI] AyClock=%s, old (1.5 MHz in hi-res) used", ayClock);
+	}
 	config.profi_cpm = static_cast<uint8_t>(inimanager.GetLongValue("PROFI", "CpmSwitch", 0) ? 1 : 0);
 	{
 		const char* decode = inimanager.GetValue("PROFI", "DffdDecode", "emulators");
@@ -358,6 +367,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.profi_dffd_decode = 2;
 		else if (decode && StringHelper::CompareCaseInsensitive(decode, "emulators", 9) != 0)
 			MLOGWARNING("Config: unknown [PROFI] DffdDecode=%s, emulators (A15=1, A13=0, A1=0) used", decode);
+	}
+
+	{
+		// The keyboard on the connector X9 / KEYB (design section "Keyboard"): matrix | xt | xttable
+		const char* keyboard = inimanager.GetValue("PROFI", "Keyboard", nullptr);
+		ProfiKeyboard parsed = ProfiKeyboard::Default;
+		if (!ParseProfiKeyboard(keyboard, parsed))
+			MLOGWARNING("Config: unknown [PROFI] Keyboard=%s, the board's own used (v5: xt, v3: matrix; MATRIX | XT | XTTABLE)",
+			            keyboard);
+		config.profi_keyboard = static_cast<uint8_t>(parsed);
 	}
 
 	// SPRINTER section (Sprinter tdd-integration §1.1): start mode, front-panel turbo, CMOS image
@@ -417,6 +436,8 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI3", nullptr), config.profi3_rom_path, sizeof config.profi3_rom_path);
+    config.profi_xt_rom_path[0] = '\0';  // empty = the reconstructed image rom/profixt/profi-xt-v1.27.rom
+    CopyStringValue(inimanager.GetValue(rom, "PROFIXT", nullptr), config.profi_xt_rom_path, sizeof config.profi_xt_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);

@@ -6,12 +6,15 @@
 #include "portdecoder_profi.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
+#include "debugger/ttd/profi/ttdprofixtkbc.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/audio.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -41,10 +44,49 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    FitKeyboard();
+}
+
+void PortDecoder_Profi::FitKeyboard()
+{
+    const CONFIG& config = _context->config;
+    _keyboardKind = ProfiResolveKeyboard(static_cast<ProfiKeyboard>(config.profi_keyboard), config.mem_model);
+    if (_keyboardKind == ProfiKeyboard::Matrix)
+        return;
+
+    // The PROFI-XT controller (research-profi-keyboard.md sections 2, 5). The firmware image is a reconstruction:
+    // the only known dump (CRC 9A8E2686) has no EN I and never calls its get-byte routine, so it receives no key;
+    // rom/profixt/profi-xt-v1.27.rom has the 5 bytes at 02Eh..032h replaced by 05 14 5F 00 00 (EN I; CALL 05Fh;
+    // NOP; NOP) - data/rom/profixt/README.md. [ROM] PROFIXT= takes a clean re-dump when one turns up
+    _xtKbc = std::make_unique<ProfiXtKbc>(_context);
+    std::string error;
+    const ProfiXtKbc::Engine engine =
+        _keyboardKind == ProfiKeyboard::XtTable ? ProfiXtKbc::Engine::Table : ProfiXtKbc::Engine::Firmware;
+    if (!_xtKbc->Load(engine, config.profi_xt_rom_path, error))
+    {
+        // No image: the controller's key table keeps the extra keys working
+        MLOGWARNING("PortDecoder_Profi: %s - the PROFI-XT key table is used instead", error.c_str());
+        _keyboardKind = ProfiKeyboard::XtTable;
+        _xtKbc->Load(ProfiXtKbc::Engine::Table, "", error);
+    }
+    if (!_xtKbc->ImageNote().empty())
+        MLOGWARNING("PortDecoder_Profi: %s", _xtKbc->ImageNote().c_str());
+    // X9 takes one keyboard: the host's keys reach the controller alone (Auto route, IPs2KeySink::ReplacesMatrix)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(_xtKbc.get());
+}
+
+void PortDecoder_Profi::OnFrameEnd()
+{
+    if (_xtKbc)
+        _xtKbc->OnFrameEnd();
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
+    if (_xtKbc && _context->pKeyboard && _context->pKeyboard->GetPs2Sink() == _xtKbc.get())
+        _context->pKeyboard->SetPs2Sink(nullptr);
+
     Core* core = _context->pCore;
     if (core && core->GetZ80() && core->GetZ80()->GetMachineStepHook() == this)
         core->GetZ80()->SetMachineStepHook(nullptr);
@@ -150,12 +192,54 @@ void PortDecoder_Profi::SyncTurbo()
     }
 
     const bool headLoaded = followHld && _context->pBetaDisk && _context->pBetaDisk->IsHeadLoaded();
-    const uint8_t ratio = (pressed && !headLoaded) ? 2 : 1;
-    if (_state->hw_turbo_ratio == ratio)
+    const bool turbo = pressed && !headLoaded;
+
+    // Hi-res (#DFFD bit 7) switches the sync PROM to its upper half and the CPU to its other crystal at once
+    // (design-hires.md): the frame and INT first, so the clock change below rescales against the new geometry
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    SyncFrame(hires);
+    // The AY clock comes from the same video divider (CLCAY): 1.5 MHz in hi-res unless the v5's SB7 says "new"
+    if (_context->pSoundManager)
+        _context->pSoundManager->SetPsgClock(ProfiAyClockHz(_board.palette, _context->config.profi_ay_clock_new != 0, hires));
+
+    uint8_t ratio = turbo ? 2 : 1;
+    uint8_t den = 1;
+    if (hires)
+    {
+        ratio = ProfiHiresClockNum(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz), turbo);
+        den = kProfiHiresClockDen;
+    }
+    const uint8_t currentDen = _state->hw_clock_den > 1 ? _state->hw_clock_den : 1;
+    if (_state->hw_turbo_ratio == ratio && currentDen == den)
         return;
     _state->hw_turbo_ratio = ratio;
+    _state->hw_clock_den = den;
     if (z80)
         z80->ApplyHardwareTurboNow();
+}
+
+void PortDecoder_Profi::SyncFrame(bool hires)
+{
+    // The sync PROM's lower half in Spectrum mode, its upper half in hi-res (ProfiSyncPromFrameHires): the v3's
+    // 0a1d PROM gives 320 lines there, so the frame length itself changes, not only the INT position
+    CONFIG& config = _context->config;
+    const ProfiSyncProm prom = static_cast<ProfiSyncProm>(config.profi_sync_prom);
+    const ProfiFrame f = hires ? ProfiSyncPromFrameHires(prom, config.mem_model) : ProfiSyncPromFrame(prom, config.mem_model);
+    const uint32_t intstart = hires ? ProfiHiresIntStart(f) : ProfiIntStart(f);
+    if (config.frame == f.frame && config.intstart == intstart && config.intlen == f.intLength)
+        return;
+    config.frame = f.frame;
+    config.t_line = f.tLine;
+    config.intstart = intstart;
+    config.intlen = f.intLength;
+    config.frame_duration_us = CalculateFrameDurationUs(f.frame);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->RecomputeFrameTiming();
+}
+
+uint8_t PortDecoder_Profi::TtdClockUnits() const
+{
+    return ProfiTtdClockUnits(_board.palette, ProfiClampZq3(_context->config.profi_zq3_mhz));
 }
 
 void PortDecoder_Profi::OnMachineStep([[maybe_unused]] uint32_t t)
@@ -172,7 +256,9 @@ void PortDecoder_Profi::SyncWaits()
     // v5: the video WAIT at 3.5 MHz (unless SB8 is in its PENTAGON position) and the turbo waits; v3: turbo only
     const CONFIG& config = _context->config;
     const bool pressed = _state->profi_turbo_switch != 0;
-    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed) : pressed;
+    // In hi-res the v5 arbiter waits whatever SB8 says (design-hires.md H3)
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed || hires) : pressed;
     if (wanted == _waitsInstalled)
         return;
 
@@ -184,6 +270,7 @@ void PortDecoder_Profi::SyncWaits()
         setup.pentagonJumper = config.profi_wait_pentagon != 0;
         setup.romWait = config.profi_rom_wait != 0;
         setup.paperStartT = kProfiPaperStartT;
+        setup.zq3MHz = ProfiClampZq3(config.profi_zq3_mhz);
         _waitOverlay = std::make_unique<ProfiWaitOverlay>(core, core->GetZ80(), _context->pMemory, _state, setup);
         _waitsInstalled = core->AddBusOverlay(_waitOverlay.get());
         if (!_waitsInstalled)
@@ -194,6 +281,28 @@ void PortDecoder_Profi::SyncWaits()
         core->RemoveBusOverlay(_waitOverlay.get());
         _waitsInstalled = false;
     }
+}
+
+uint8_t PortDecoder_Profi::FloatingBusV3Hires(double t3Ns) const
+{
+    // research-profi-hires-timing.md 4.1: in hi-res U9 and U10 take turns on the bus within each tick of the fetch
+    // window (FLD1), which leads the displayed dots by one tick: the first half of a tick U10 (the cell's second
+    // fetch), the second half U9 (its first fetch); #FF outside FLD1. Which page each latch holds is not traced (O):
+    // this returns the pixel bytes of the cell the window is fetching (M)
+    const double rel0 = t3Ns - ProfiHiresWindowStartNs(0);
+    if (rel0 < 0)
+        return 0xFF;
+    const uint32_t line = static_cast<uint32_t>(rel0 / kProfiLineNs);
+    if (line >= kProfiHiresPaperLines)
+        return 0xFF;
+    const double rel = t3Ns - ProfiHiresWindowStartNs(line);
+    const uint32_t tick = static_cast<uint32_t>(rel / kProfiHiresTickNs);
+    if (tick >= kProfiHiresTicksPerWindow)
+        return 0xFF;
+    const bool firstHalf = (rel - tick * kProfiHiresTickNs) < kProfiHiresRequestNs;
+    const uint32_t byteIndex = tick * 2 + (firstHalf ? 1u : 0u);   // ByteOffset: even = the cell's first byte
+    const uint16_t offset = ProfiGeometry::ByteOffset(line, byteIndex);
+    return _context->pMemory->RAMPageAddress(ProfiGeometry::PixelPage(_state->p7FFD))[offset];
 }
 
 uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
@@ -313,6 +422,20 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     else if (IsFEPort(port))
     {
         result = Default_Port_FE_In(port, pc);
+        // The PROFI-XT controller answers on the keyboard lines (and holds the Z80 while it does)
+        if (_xtKbc)
+        {
+            const uint8_t lines = _xtKbc->ReadPort(port);
+            if (_board.palette)
+                result &= static_cast<uint8_t>(lines | 0xC0);   // v5 X9: KD0..KD5, KD5 = bit 5 (pull-up R10)
+            else
+            {
+                // v3 KEYB: KD0..KD4; no KD5 line (bit 5 reads 1), the controller's DK5 lands on pin 2 = bit 7
+                result &= static_cast<uint8_t>(lines | 0xE0);
+                if (!(lines & 0x20))
+                    result &= 0x7F;
+            }
+        }
         // GX0 (bit 7): "palette exists" detector read by Profi 5.xx software (UniCopy).
         // Default_Port_FE_In leaves bit 7 = 1 (keyboard/tape never touch it), so only
         // override it in DS80, and only on the v5 board: the v3 has no palette, bit 7 reads 1
@@ -350,13 +473,19 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     }
     // The v3 board's floating bus: an IN (A0 = 1) that no device answers reads the video's pixel latch in the
     // Spectrum raster. The lookup runs at T2 of the I/O cycle; the Z80 takes the data at T3, one T later at 3.5 MHz
-    if (!_lastPortDecoded && !_board.palette && (port & 0x0001) && !(_state->pDFFD & 0x80))
+    if (!_lastPortDecoded && !_board.palette && (port & 0x0001))
     {
         // Z80::t counts CPU clocks of the scaled frame (x the clock multiplier): T3 starts 2 clocks after T2
         const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
-        if (z80)
-            result = FloatingBusV3((z80->t + 2u) / multiplier);
+        if (z80 && !(_state->pDFFD & 0x80))
+            result = FloatingBusV3(_state->CpuToBaseT(z80->t + 2u));
+        else if (z80)
+        {
+            // Hi-res: the instant in ns at the hi-res clock (num / 7 of 3.5 MHz, host speed stripped)
+            const uint32_t num = _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1u;
+            const uint32_t host = _state->HostSpeedMultiplier() ? _state->HostSpeedMultiplier() : 1u;
+            result = FloatingBusV3Hires(static_cast<double>((z80->t + 2u) / host) * ProfiHiresCpuPeriodNs(num));
+        }
     }
 
     disp.wasDecoded = _lastPortDecoded;
@@ -600,10 +729,13 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
-    // The clock is on the v5 board only
-    if (!_board.extendedPorts)
-        return {ttd::PeripheralId::ProfiPaging};
-    return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};
+    // The clock is on the v5 board only; the PROFI-XT controller when fitted
+    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging};
+    if (_board.extendedPorts)
+        ids.push_back(ttd::PeripheralId::Ds12887);
+    if (_xtKbc)
+        ids.push_back(ttd::PeripheralId::ProfiXtKbc);
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDSerializers() const
@@ -612,6 +744,8 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDS
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
     if (_board.extendedPorts)
         serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+    if (_xtKbc)
+        serializers.push_back(std::make_unique<ttd::TTDProfiXtKbc>(*_xtKbc));
     return serializers;
 }
 
@@ -777,3 +911,10 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
     if (changed & 0x80)
         _context->pScreen->InitRaster();
 }
+
+ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
+{
+    const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;
+    return decoder ? decoder->GetKeyboardKind() : ProfiKeyboard::Default;
+}
+

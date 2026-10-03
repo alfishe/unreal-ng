@@ -259,13 +259,14 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
     const std::string areaText = req->getParameter("area");
     const std::string modeText = req->getParameter("mode");
     const std::string formatText = req->getParameter("format");
+    const std::string sourceText = req->getParameter("source");
     std::string path = req->getParameter("path");
     if (path.empty())
         path = req->getParameter("filename");
 
     ScreenshotOptions options;  // whole frame, PNG
     std::string badWord;
-    if (!Screenshotter::ParseRequestWords(areaText, modeText, formatText, options, badWord))
+    if (!Screenshotter::ParseRequestWords(areaText, modeText, formatText, sourceText, options, badWord))
     {
         callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", badWord,
                                          Screenshotter::ErrorName(ScreenshotError::BadParameter)));
@@ -303,6 +304,7 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
     ret["status"] = "success";
     ret["format"] = Screenshotter::FormatName(shot.format);
     ret["area"] = Screenshotter::AreaName(options.area);
+    ret["source"] = Screenshotter::RequestSourceName(options.source);  // which frame was asked for
     ret["width"] = shot.width;
     ret["height"] = shot.height;
     ret["size"] = static_cast<Json::UInt64>(shot.encodedSize);
@@ -313,8 +315,16 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
     frame["height"] = shot.frame.height;
     frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
                                                                : Screen::GetVideoModeName(shot.frame.videoMode);
-    frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+    frame["source"] = Screenshotter::SourceName(shot.frame.source);
     frame["frame_number"] = static_cast<Json::UInt64>(shot.frame.frameNumber);
+    if (shot.frame.beamLine >= 0)
+    {
+        // A live frame of a stopped machine: where the beam stood. The pixels it has not reached are the
+        // previous frame's, so `partial` says whether this frame is part old, part new
+        frame["partial"] = shot.frame.partial;
+        frame["beam"]["line"] = shot.frame.beamLine;
+        frame["beam"]["tstate"] = shot.frame.beamTstate;
+    }
     ret["frame"] = frame;
     if (!shot.savedFile.empty())
     {

@@ -5,6 +5,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/profi/profiwaitoverlay.h"
+#include "emulator/io/keyboard/profixtkbc.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
@@ -48,6 +49,13 @@ public:
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+
+    /// The keyboard on the connector ([PROFI] Keyboard=, resolved for the board): Matrix, Xt or XtTable
+    ProfiKeyboard GetKeyboardKind() const { return _keyboardKind; }
+    /// The PROFI-XT controller when it is fitted (Xt / XtTable), else nullptr
+    ProfiXtKbc* GetKeyboardController() const { return _xtKbc ? _xtKbc.get() : nullptr; }
+    /// Frame end: the PROFI-XT controller runs between reads
+    void OnFrameEnd() override;
     RtcBinding GetRtcBinding() override;
     /// endregion </Interface methods>
 
@@ -79,6 +87,9 @@ public:
     /// The front-panel TURBO switch (both boards): 7 MHz while it is pressed and, on v3, while the VG93's HLD is low
     /// (the HLD pin drives the board's /TURBO; research-profi-v3-turbo-floatbus.md A2)
     /// TURBO on both boards; the CP/M switch on v5 (the v3 drawings have none)
+    /// TTD units per base T: the numerators the board can select (ProfiTtdClockUnits)
+    uint8_t TtdClockUnits() const override;
+
     bool HasFrontPanelSwitch(FrontPanelSwitch sw) const override
     {
         return sw == FrontPanelSwitch::Turbo || (sw == FrontPanelSwitch::Cpm && _board.palette);
@@ -90,6 +101,8 @@ public:
 
     /// The clock the board runs at now, from the switch and (v3) the HLD pin; applies a change at once
     void SyncTurbo();
+    /// The frame and INT of the sync PROM half in use (hi-res: the upper half) into CONFIG
+    void SyncFrame(bool hires);
     /// Installs or removes the wait-state overlay (ProfiWaitOverlay) for the board's mode and clock
     void SyncWaits();
     bool AreWaitsInstalled() const { return _waitsInstalled; }
@@ -98,6 +111,8 @@ public:
     /// The v3 floating bus (research-profi-v3-turbo-floatbus.md B): what an IN that no device answers reads when
     /// its T3 starts at frame T `t3` - the pixel byte the video latched, #FF outside the read window
     uint8_t FloatingBusV3(uint32_t t3) const;
+    /// The v3 floating bus in hi-res, at T3 given in ns from the frame start (design-hires.md H3)
+    uint8_t FloatingBusV3Hires(double t3Ns) const;
 
     /// IMachineStepHook: on v3 with the switch pressed, follows the HLD pin
     void OnMachineStep(uint32_t t) override;
@@ -128,6 +143,12 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    /// The keyboard on X9 (v5) / KEYB (v3), fixed at power-on; the PROFI-XT controller when fitted. Every even-port
+    /// read that reaches the #FE arm is its /CSKBD (design section "Keyboard")
+    ProfiKeyboard _keyboardKind = ProfiKeyboard::Matrix;
+    std::unique_ptr<ProfiXtKbc> _xtKbc;
+    /// Fit the keyboard the config asks for (constructor)
+    void FitKeyboard();
     std::unique_ptr<ProfiWaitOverlay> _waitOverlay;
     bool _waitsInstalled = false;
     bool _switchFromConfig = false;  // [PROFI] Turbo read once, at power-on (the switch is not touched by a reset)

@@ -485,6 +485,11 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
                 ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model);
             ss << "  Profi board:      " << (config.mem_model == MM_PROFI3 ? "v3" : "v5") << " (sync PROM "
                << ProfiSyncPromName(prom) << ")" << NEWLINE;
+            ss << "  Profi hi-res:     CPU " << ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz) / 1000
+               << " kHz, AY " << ((config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "1.75" : "1.5") << " MHz"
+               << (config.mem_model == MM_PROFI ? " (ZQ3 " + std::to_string(ProfiClampZq3(config.profi_zq3_mhz)) + " MHz)" : std::string())
+               << NEWLINE;
+            ss << "  Profi keyboard:   " << ProfiKeyboardName(ProfiKeyboardInForce(context)) << NEWLINE;
             ss << "  Port 0xDFFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.pDFFD
                << std::dec << NEWLINE;
             ss << "  RAM High Bits:    " << (int)(state.pDFFD & 0x07) << NEWLINE;
@@ -762,6 +767,7 @@ void CLIProcessor::HandleStateAudioAY(const ClientSession& session, EmulatorCont
         ss << "ZX Next (triple AY-3-8912)";
 
     ss << ")" << NEWLINE;
+    ss << "AY Clock: " << soundManager->GetPsgClock() << " Hz" << NEWLINE;
     ss << NEWLINE;
 
     // Show brief info for each chip

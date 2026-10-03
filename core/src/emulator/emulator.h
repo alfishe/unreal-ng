@@ -600,6 +600,11 @@ public:
     // Status methods
     bool IsRunning();
     bool IsPaused();
+
+    /// True when no emulation thread is drawing: not running, or paused and confirmed parked (the pause loop
+    /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another
+    /// thread. False while the thread runs, or between a pause request and its confirmation
+    bool IsEmulationParked();
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
     bool IsDestroying();  // Thread-safe check for destruction state

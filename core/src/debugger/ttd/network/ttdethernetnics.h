@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file ttdethernetnics.h
-/// @brief TTD serializer of the frame-level network cards (PeripheralId::EthernetNics = 44; network tdd §13): every
+/// @brief TTD serializer of the frame-level network cards (PeripheralId::EthernetNics = 45; network tdd §13): every
 /// NE2000 in an expansion slot - its port key, the DP8390 registers, the remote / local DMA pointers, the packet RAM
 /// (bytes until TTD v2 memory regions), the 93C46 EEPROM, the RTL8019AS page 3, the transmit in flight and the
 /// station address. Registered while NetworkManager has slot cards; looks them up at every call.

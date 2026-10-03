@@ -164,15 +164,15 @@ TEST_F(ViewportCapture_Test, ViewportPresetValues)
     // cropBottom = BOTTOM_BORDER - 48 = 56 - 48 = 8
     EXPECT_EQ(ViewportPresets::STANDARD.cropLeft, 0);
     EXPECT_EQ(ViewportPresets::STANDARD.cropRight, 32);
-    EXPECT_EQ(ViewportPresets::STANDARD.cropTop, 8);
-    EXPECT_EQ(ViewportPresets::STANDARD.cropBottom, 8);
+    EXPECT_EQ(ViewportPresets::STANDARD.cropTop, 16) << "the paper is at y=64: 16 lines off the top leave 48";
+    EXPECT_EQ(ViewportPresets::STANDARD.cropBottom, 0) << "the bottom border is 48 already";
 
     // Screen only - crop to 256x192 paper area
-    // Uses SCREEN_OFFSET_TOP (56) and BOTTOM_BORDER (56)
+    // Uses SCREEN_OFFSET_TOP (64) and BOTTOM_BORDER (48): the paper is at (48, 64) in the 384x304 frame
     EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropLeft, 48);
     EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropRight, 80);
-    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropTop, 56);
-    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropBottom, 56);
+    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropTop, 64);
+    EXPECT_EQ(ViewportPresets::SCREEN_ONLY.cropBottom, 48);
 }
 
 /// Test VideoCaptureRegion enum has expected values

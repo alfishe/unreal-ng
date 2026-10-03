@@ -398,6 +398,13 @@ protected:
     uint16_t _encodedHeight = 0;
     bool _sizeChangeLogged = false;
 
+    // MainScreen window (the frame's working window, locked at recording start: the encoders take one size per
+    // file, and a window that moves, like the TS-Conf graphics window, must not change the size mid-recording)
+    uint16_t _mainScreenX = 0;
+    uint16_t _mainScreenY = 0;
+    uint16_t _mainScreenWidth = 0;
+    uint16_t _mainScreenHeight = 0;
+
     // Viewport crop offsets (captured at recording start for Viewport mode)
     uint16_t _viewportCropLeft = 0;
     uint16_t _viewportCropRight = 0;

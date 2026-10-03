@@ -24,7 +24,7 @@ control_execution {"action":"step"}                      # single instruction
 control_execution {"action":"resume"}                    # free-run
 inspect_state    {"aspects":["screen_ocr"]}              # "did the menu appear?"
 inspect_state    {"aspects":["screen_digest"]}           # deterministic frame digest
-capture_media    {"action":"screenshot"}                 # PNG/GIF + metadata
+capture_media    {"action":"screenshot"}                 # PNG (default) or GIF + metadata; area full|screen
 emulator_manage {"action":"destroy"}                     # frees TTD history, traces, counters
 ```
 
@@ -186,8 +186,9 @@ curl -s "$BASE/emulator/$EMU_ID/capture/ocr" | jq '.text'
 # Deterministic content digest — great for "same frame as last run?"
 curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq '.digest'
 
-# Screen image capture (GIF by default; add ?format=png&mode=full for PNG with border)
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?format=png" | jq '{format, width, height, size}'
+# Screen image capture of the presented frame: PNG and the whole frame with border by default
+# (area=screen = the working picture only, format=gif = 256 colors): media/agent-screenshot-view.md
+curl -s "$BASE/emulator/$EMU_ID/capture/screen" | jq '{format, width, height, size}'
 # the base64 image bytes are in the "data" field of the same response
 ```
 

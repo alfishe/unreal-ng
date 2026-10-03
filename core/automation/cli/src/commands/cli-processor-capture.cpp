@@ -138,6 +138,15 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
                 return;
             }
         }
+        else if (arg.rfind("--source=", 0) == 0)
+        {
+            word = arg.substr(9);
+            if (!Screenshotter::ParseSource(word, options.source))
+            {
+                session.SendResponse("Error: unknown source '" + word + "': use presented or live" + NEWLINE);
+                return;
+            }
+        }
         else if (arg.rfind("--format=", 0) == 0)
         {
             word = arg.substr(9);
@@ -170,7 +179,7 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
         }
     }
 
-    const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options);
+    const ScreenshotResult shot = Screenshotter::TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
     if (!shot.ok)
     {
         session.SendResponse(std::string("Error: ") + shot.errorMessage + NEWLINE);
@@ -181,6 +190,12 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
     ss << "Screenshot:" << NEWLINE;
     ss << "  Format: " << Screenshotter::FormatName(shot.format) << NEWLINE;
     ss << "  Area: " << Screenshotter::AreaName(options.area) << NEWLINE;
+    ss << "  Source: " << Screenshotter::RequestSourceName(options.source) << NEWLINE;
+    if (shot.frame.beamLine >= 0)
+    {
+        ss << "  Beam: line " << shot.frame.beamLine << ", T " << shot.frame.beamTstate
+           << (shot.frame.partial ? " (the frame is half drawn)" : "") << NEWLINE;
+    }
     ss << "  Size: " << shot.width << "x" << shot.height << " (at " << shot.crop.x << "," << shot.crop.y
        << " of the " << shot.frame.width << "x" << shot.frame.height << " frame)" << NEWLINE;
     ss << "  Screen window: " << shot.frame.screenWindow.width << "x" << shot.frame.screenWindow.height << " at "
@@ -209,10 +224,10 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "================" << NEWLINE;
     ss << NEWLINE;
     ss << "  capture ocr                     OCR text from screen (ROM font)" << NEWLINE;
-    ss << "  capture screen [--area=full|screen] [--format=png|gif] [file]" << NEWLINE;
-    ss << "                                  Screenshot of the presented frame: the whole frame (default)" << NEWLINE;
-    ss << "                                  or the working picture; PNG (default) or GIF; to a file or" << NEWLINE;
-    ss << "                                  printed as a data URI" << NEWLINE;
+    ss << "  capture screen [--area=full|screen] [--format=png|gif] [--source=presented|live] [file]" << NEWLINE;
+    ss << "                                  Screenshot: the whole frame (default) or the working picture;" << NEWLINE;
+    ss << "                                  PNG (default) or GIF; the presented frame (default) or the live" << NEWLINE;
+    ss << "                                  one as drawn now; to a file or printed as a data URI" << NEWLINE;
     ss << "  capture romtext                 Capture ROM print output (TODO)" << NEWLINE;
     ss << "  capture framebuffer <file> [rgba|index]  Raw pixels (RGBA, or u16 pens on the Sprinter)" << NEWLINE;
     ss << NEWLINE;
@@ -222,6 +237,7 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "  capture screen --area=screen    The working picture only (no border)" << NEWLINE;
     ss << "  capture screen scratch/shot.png Save the whole frame to a file" << NEWLINE;
     ss << "  capture screen --format=gif     256-color GIF instead of PNG" << NEWLINE;
+    ss << "  capture screen --source=live    The frame as drawn now (a paused machine reports where the beam stopped)" << NEWLINE;
     ss << NEWLINE;
 
     session.SendResponse(ss.str());

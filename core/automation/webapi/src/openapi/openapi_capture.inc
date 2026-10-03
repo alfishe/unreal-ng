@@ -31,7 +31,7 @@
             "working picture can be the whole frame, then both give the same image. The answer always carries the "
             "frame's geometry (`frame`, `screen_window`) and the rectangle that was cut (`crop`), so the caller never "
             "has to guess. The image is returned base64-encoded in `data`, or written to `path` on the server. "
-            "An unknown `area`, `mode` or `format` is 400 with the allowed words; a screen window that does not fit "
+            "An unknown `area`, `mode`, `format` or `source` is 400 with the allowed words; a screen window that does not fit "
             "the frame is 500 with the sizes. The frame lags the machine by the present delay (2 frames by default, "
             "more with ZX DLSS); GIF has 256 colors and loses colors on true-colour pictures. "
             "Raw pixels without encoding: /capture/framebuffer.";
@@ -50,6 +50,12 @@
              "full (default): the whole frame with its border. screen: the working picture of the frame's geometry",
              {"full", "screen"}},
             {"format", "query", false, "png (default, lossless) or gif (256 colors)", {"png", "gif"}},
+            {"source", "query", false,
+             "presented (default): the finished, tear-free frame the window shows, a couple of frames behind. live: "
+             "the frame as drawn right now, no delay and no ZX DLSS: a running machine's emulation thread copies it at "
+             "the end of its next frame (409 no-frame if none arrives within 1 s); a paused one is read directly and "
+             "answers where the beam stopped",
+             {"presented", "live"}},
             {"mode", "query", false, "Deprecated alias of area (full / screen); a conflicting pair is 400",
              {"full", "screen"}},
             {"path", "query", false, "Save the image to this server-side path instead of returning it (folders are created)",
@@ -77,6 +83,8 @@
         props["format"]["description"] = "png or gif";
         props["area"]["type"] = "string";
         props["area"]["description"] = "The area that was asked for: full or screen";
+        props["source"]["type"] = "string";
+        props["source"]["description"] = "The frame that was asked for: presented or live";
         props["width"]["type"] = "integer";
         props["width"]["description"] = "Width of the returned image";
         props["height"]["type"] = "integer";
@@ -101,8 +109,21 @@
         props["frame"]["properties"]["source"]["type"] = "string";
         props["frame"]["properties"]["source"]["enum"].append("native");
         props["frame"]["properties"]["source"]["enum"].append("external");
+        props["frame"]["properties"]["source"]["enum"].append("composed");
+        props["frame"]["properties"]["source"]["description"] =
+            "native: the machine's own frame; external: a video card's picture (FT812); composed: a ZX-Poly group's "
+            "display frame (2x, what the window shows)";
         props["frame"]["properties"]["frame_number"]["type"] = "integer";
         props["frame"]["properties"]["frame_number"]["description"] = "Emulated frame the pixels belong to";
+        props["frame"]["properties"]["partial"]["type"] = "boolean";
+        props["frame"]["properties"]["partial"]["description"] =
+            "Only for a live frame of a paused machine: true when the beam stopped inside a frame drawn per T-state, so "
+            "the lines it has not reached are still the previous frame's";
+        props["frame"]["properties"]["beam"]["type"] = "object";
+        props["frame"]["properties"]["beam"]["description"] =
+            "Only for a live frame of a paused machine: where the beam stopped";
+        props["frame"]["properties"]["beam"]["properties"]["line"]["type"] = "integer";
+        props["frame"]["properties"]["beam"]["properties"]["tstate"]["type"] = "integer";
         props["data"]["type"] = "string";
         props["data"]["description"] = "Base64 image (absent when saved to a path)";
         props["saved"]["type"] = "boolean";

@@ -2,6 +2,7 @@
 // beam (spec §5.1, §5.2, §6.1-6.3, arch §8.4).
 #include "eve-profile.h"
 #include "eve-render.h"
+#include <cstdio>
 
 #include <new>
 
@@ -83,6 +84,9 @@ void PrepareRun(EveChip& chip, LineRun& run, uint32_t logicalLine, bool firstLin
     run.savedCount = 0;
     run.recording = nullptr;
     run.tagLive = probe || logicalLine == RegGet(chip, Reg::TagY);
+    run.keepLine = -1;
+    run.pixelsKept = false;
+    run.remembered = false;
     run.primitive = kPrimNone;
     run.vertexCount = 0;
     run.previous = Vertex{};
@@ -138,12 +142,62 @@ void DrawPortraitFrame(EveChip& chip)
     }
 }
 
+constexpr bool kLinePlanUsable = kContextReset == ContextReset::PerLine;
+bool PlanMatches(const EveChip& chip, const LinePlan& plan);
+
+// --- Kept lines (EveChip::lineKept) ------------------------------------------------------------
+
+bool LineInputsUnchanged(const EveChip& chip, const LineKept& k)
+{
+    return k.valid && k.ramGChanges == chip.ramGWrites && k.drawRegChanges == chip.drawRegChanges &&
+           k.dlVersion == chip.dlVersion && k.outputVersion == chip.outputVersion &&
+           k.planRecord == chip.linePlan->record && PlanMatches(chip, *chip.linePlan);
+}
+
+// A line whose inputs did not change since it was drawn into the frame buffer is still
+// there: only what drawing it does besides the pixels happens - the handles become what
+// the walk leaves (the recorded walk's), the overflow count counts it. REG_TAG's line is
+// always drawn (REG_TAG_X / Y are not inputs of the other lines).
+bool KeepLine(EveChip& chip, uint32_t screenLine, uint32_t logicalLine)
+{
+    if constexpr (!kLinePlanUsable)
+        return false;
+    if (!chip.lineKeepEnabled || !chip.linePlanEnabled || screenLine >= kMaxLines ||
+        logicalLine == RegGet(chip, Reg::TagY) || !LineInputsUnchanged(chip, chip.lineKept[screenLine]))
+        return false;
+    std::memcpy(chip.state.handles, chip.linePlan->endHandles, sizeof(chip.state.handles));
+    if (chip.lineCosts[screenLine].overflow)
+        ++chip.overflowLines;
+#ifdef EVE_PROFILE
+    Profile().linesKept++;
+#endif
+    return true;
+}
+
+// After drawing a line from the recorded walk: the inputs it was drawn with
+void RememberLine(EveChip& chip, uint32_t screenLine)
+{
+    if (screenLine >= kMaxLines)
+        return;
+    LineKept& k = chip.lineKept[screenLine];
+    k.valid = chip.lineFromPlan && chip.linePlan->valid;
+    k.ramGChanges = chip.ramGWrites;
+    k.drawRegChanges = chip.drawRegChanges;
+    k.dlVersion = chip.dlVersion;
+    k.outputVersion = chip.outputVersion;
+    k.planRecord = chip.linePlan->record;
+}
+
 void DrawVisibleLine(EveChip& chip, uint32_t screenLine)
 {
     bool mirrorX = false;
     const uint32_t logicalLine = LogicalLine(chip, screenLine, mirrorX);
+    if (KeepLine(chip, screenLine, logicalLine))
+        return;
     LineRun run;
     PrepareRun(chip, run, logicalLine, screenLine == 0);
+    if (screenLine < kMaxLines && chip.lineKeepEnabled && !run.tagLive)
+        run.keepLine = static_cast<int32_t>(screenLine);
 #ifdef EVE_PROFILE
     const uint64_t lineStart = ProfileNow();
 #endif
@@ -161,7 +215,15 @@ void DrawVisibleLine(EveChip& chip, uint32_t screenLine)
         if (tagX < run.width)
             RegSet(chip, Reg::Tag, run.tag[tagX]);
     }
-    OutputLine(chip, screenLine, run.color, run.width, mirrorX);
+    if (!run.pixelsKept)
+    {
+        OutputLine(chip, screenLine, run.color, run.width, mirrorX);
+        // Drawn without a signature (REG_TAG's line, no recorded walk): an older one no
+        // longer describes the frame buffer
+        if (!run.remembered && screenLine < chip.linePlan->lines.size())
+            chip.linePlan->lines[screenLine].valid = false;
+    }
+    RememberLine(chip, screenLine);
 }
 
 // --- Execution ----------------------------------------------------------------------------
@@ -251,7 +313,6 @@ enum class Flow { Next, Jump, Stop };
 
 // --- Line plan (eve-render.h LinePlan) ------------------------------------------------------
 
-constexpr bool kLinePlanUsable = kContextReset == ContextReset::PerLine;
 
 void RecordStep(LineRun& run, const Vertex& v, bool clear, uint32_t clearMask)
 {
@@ -273,13 +334,25 @@ void RecordStep(LineRun& run, const Vertex& v, bool clear, uint32_t clearMask)
         step.handle = run.chip->state.handles[v.handle];
         step.rowTest = run.primitive == kPrimBitmaps;
         step.rowsSubpixel = static_cast<int64_t>(HandleHeight(step.handle)) * kSubpixel;
+        // Points, lines and rectangles draw only near their vertices (DrawPoint / DrawLine /
+        // DrawRect return early beyond the radius); edge strips reach to the screen edge
+        const bool pair = run.primitive == kPrimLines || run.primitive == kPrimLineStrip || run.primitive == kPrimRects;
+        if (run.primitive == kPrimPoints || pair)
+        {
+            const int64_t reach = ShapeReach(run.primitive == kPrimPoints ? run.ctx.pointSize : run.ctx.lineWidth);
+            const int64_t y0 = pair && run.vertexCount > 0 && run.previous.y < v.y ? run.previous.y : v.y;
+            const int64_t y1 = pair && run.vertexCount > 0 && run.previous.y > v.y ? run.previous.y : v.y;
+            step.extentTest = true;
+            step.yFirst = y0 - reach;
+            step.yLast = y1 + reach;
+        }
     }
     plan.steps.push_back(step);
 }
 
 bool PlanMatches(const EveChip& chip, const LinePlan& plan)
 {
-    return plan.valid && plan.activeDl == chip.state.scan.activeDl && plan.dlVersion == chip.dlVersion &&
+    return plan.valid && plan.dlVersion == chip.dlVersion &&
            plan.macro0 == RegGet(chip, Reg::Macro0) && plan.macro1 == RegGet(chip, Reg::Macro1) &&
            std::memcmp(plan.startHandles, chip.state.handles, sizeof(plan.startHandles)) == 0;
 }
@@ -288,7 +361,6 @@ void StartRecording(LineRun& run, LinePlan& plan)
 {
     const EveChip& chip = *run.chip;
     plan.valid = false;
-    plan.activeDl = chip.state.scan.activeDl;
     plan.dlVersion = chip.dlVersion;
     plan.macro0 = RegGet(chip, Reg::Macro0);
     plan.macro1 = RegGet(chip, Reg::Macro1);
@@ -298,29 +370,223 @@ void StartRecording(LineRun& run, LinePlan& plan)
     run.recording = &plan;
 }
 
+void RememberSteps(LineRun& run, LinePlan& plan);
+
 void FinishRecording(LineRun& run)
 {
     LinePlan& plan = *run.recording;
     std::memcpy(plan.endHandles, run.chip->state.handles, sizeof(plan.endHandles));
     plan.commands = run.commands;
     plan.events = run.events;
+    ++plan.record;
     plan.valid = true;
     run.recording = nullptr;
+    RememberSteps(run, plan);
 }
 
-void ReplayPlan(LineRun& run, const LinePlan& plan)
+// --- Lines kept by their steps (eve-render.h LineSignature) -----------------------------------
+
+bool StepReachesLine(const LinePlanStep& s, int64_t lineSubpixel)
+{
+    if (s.extentTest)
+        return lineSubpixel >= s.yFirst && lineSubpixel <= s.yLast;
+    if (!s.rowTest)
+        return true;
+    const int64_t rely = lineSubpixel - s.v.y;
+    return rely >= 0 && rely < s.rowsSubpixel;
+}
+
+bool SameVertex(const Vertex& a, const Vertex& b)
+{
+    return a.x == b.x && a.y == b.y && a.handle == b.handle && a.cell == b.cell;
+}
+
+// The context as drawing reads it: the vertex already carries the handle, the cell, the
+// vertex format and the translation
+GraphicsContext DrawingContext(const GraphicsContext& c)
+{
+    GraphicsContext d = c;
+    d.handle = 0;
+    d.cell = 0;
+    d.vertexFormat = 0;
+    d.translateX = 0;
+    d.translateY = 0;
+    return d;
+}
+
+// Equal drawing: everything the drawing functions read. The display list position and word
+// only name the command for a probe; the vertex count and the previous vertex matter only
+// to the primitives drawn between two vertices (Vertex2)
+bool SameStep(const LinePlanStep& a, const GraphicsContext& ca, const LinePlanStep& b, const GraphicsContext& cb)
+{
+    if (a.clear != b.clear || a.rowTest != b.rowTest || a.primitive != b.primitive || a.clearMask != b.clearMask ||
+        !SameVertex(a.v, b.v))
+        return false;
+    const bool pairs = !a.clear && a.primitive != kPrimBitmaps && a.primitive != kPrimPoints;
+    if (pairs && (a.vertexCount != b.vertexCount || !SameVertex(a.previous, b.previous)))
+        return false;
+    if (!a.clear && a.primitive == kPrimBitmaps && std::memcmp(&a.handle, &b.handle, sizeof(BitmapHandle)) != 0)
+        return false;
+    const GraphicsContext da = DrawingContext(ca), db = DrawingContext(cb);
+    return std::memcmp(&da, &db, sizeof(GraphicsContext)) == 0;
+}
+
+bool PagesUnchanged(const EveChip& chip, uint64_t start, uint64_t end, uint64_t mark)
+{
+    if (start >= kRamGSize || end <= start)
+        return true; // ROM or nothing: constant
+    if (end > kRamGSize)
+        end = kRamGSize;
+    for (uint64_t page = start >> kPageShift; page <= (end - 1) >> kPageShift; ++page)
+    {
+        if (chip.ramGPageChanges[page] <= mark)
+            continue;
+        // The page changed: which of its blocks within [start, end)
+        const uint64_t lo = start > (page << kPageShift) ? start : (page << kPageShift);
+        const uint64_t hi = end < ((page + 1) << kPageShift) ? end : ((page + 1) << kPageShift);
+        for (uint64_t block = lo >> kChangeBlockShift; block <= (hi - 1) >> kChangeBlockShift; ++block)
+            if (chip.ramGBlockChanges[block] > mark)
+                return false;
+    }
+    return true;
+}
+
+// RAM_G a bitmap step can read on this line, a superset: the rows its sample positions
+// fall on (the whole layout under a rotation or REPEAT in y) and the palette. Returns false
+// for reads that are not bounded this way (text, bargraph)
+bool StepReadsUnchanged(const EveChip& chip, const LinePlanStep& s, const GraphicsContext& c, int64_t lineSubpixel,
+                        uint64_t mark)
+{
+    if (s.clear || s.primitive != kPrimBitmaps)
+        return true;
+    const BitmapHandle& h = s.handle;
+    if (h.format == kFormatText8x8 || h.format == kFormatTextVga || h.format == kFormatBargraph)
+        return false;
+    const uint64_t stride = HandleStride(h);
+    const uint64_t rows = HandleLayoutHeight(h);
+    const uint64_t base = static_cast<uint64_t>(h.source) + static_cast<uint64_t>(s.v.cell) * stride * rows;
+    uint64_t start = base, end = base + stride * rows;
+    if (c.transform[3] == 0 && !h.wrapY && rows > 0)
+    {
+        // Rows do not change along the line: y' = E y + F (+ the next row for BILINEAR)
+        const int64_t rely = lineSubpixel - s.v.y;
+        const int64_t sy = ((static_cast<int64_t>(c.transform[4]) * rely) >> kSubpixelShift) + c.transform[5] -
+                           (h.filter ? kBilinearOffset : 0);
+        int64_t first = sy >> kFixedShift;
+        int64_t last = first + (h.filter ? 1 : 0);
+        if (first < 0)
+            first = 0;
+        if (last >= static_cast<int64_t>(rows))
+            last = static_cast<int64_t>(rows) - 1;
+        if (first > last)
+            start = end = 0; // BORDER: no row read
+        else
+        {
+            start = base + static_cast<uint64_t>(first) * stride;
+            end = base + static_cast<uint64_t>(last + 1) * stride;
+        }
+    }
+    if (!PagesUnchanged(chip, start, end, mark))
+        return false;
+    // The palette: 2 bytes per entry, 4 for PALETTED8
+    if (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+    {
+        const uint64_t entryBytes = h.format == kFormatPaletted8 ? 4 : 2;
+        return PagesUnchanged(chip, c.paletteSource, c.paletteSource + entryBytes * kPaletteEntries, mark);
+    }
+    return true;
+}
+
+// The line's pixels are in the frame buffer already: its reaching steps are those it was
+// drawn from and nothing they read changed since
+bool KeepLineBySteps(LineRun& run, const LinePlan& plan)
+{
+    if (run.keepLine < 0 || static_cast<size_t>(run.keepLine) >= plan.lines.size())
+        return false;
+    const EveChip& chip = *run.chip;
+    const LineSignature& sig = plan.lines[static_cast<size_t>(run.keepLine)];
+    if (!sig.valid || sig.drawRegChanges != chip.drawRegChanges || sig.outputVersion != chip.outputVersion ||
+        (sig.readsAnyMemory && sig.ramGMark != chip.ramGWrites))
+        return false;
+    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
+    size_t k = 0;
+    for (const LinePlanStep& s : plan.steps)
+    {
+        if (!StepReachesLine(s, lineSubpixel))
+            continue;
+        const GraphicsContext& c = plan.contexts[s.context];
+        if (k == sig.steps.size() || !SameStep(s, c, sig.steps[k], sig.contexts[k]))
+            return false;
+        if (!sig.readsAnyMemory && !StepReadsUnchanged(chip, s, c, lineSubpixel, sig.ramGMark))
+        {
+            return false;
+        }
+        ++k;
+    }
+    return k == sig.steps.size();
+}
+
+// After drawing a line from the plan: what it was drawn from
+void RememberSteps(LineRun& run, LinePlan& plan)
+{
+    if (run.keepLine < 0)
+        return;
+    run.remembered = true;
+    const EveChip& chip = *run.chip;
+    if (plan.lines.size() < kMaxLines)
+        plan.lines.resize(kMaxLines);
+    LineSignature& sig = plan.lines[static_cast<size_t>(run.keepLine)];
+    sig.steps.clear();
+    sig.contexts.clear();
+    sig.readsAnyMemory = false;
+    const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
+    for (const LinePlanStep& s : plan.steps)
+    {
+        if (!StepReachesLine(s, lineSubpixel))
+            continue;
+        const GraphicsContext& c = plan.contexts[s.context];
+        if (!s.clear && s.primitive == kPrimBitmaps &&
+            (s.handle.format == kFormatText8x8 || s.handle.format == kFormatTextVga || s.handle.format == kFormatBargraph))
+            sig.readsAnyMemory = true;
+        sig.steps.push_back(s);
+        sig.contexts.push_back(c);
+    }
+    sig.ramGMark = chip.ramGWrites;
+    sig.drawRegChanges = chip.drawRegChanges;
+    sig.outputVersion = chip.outputVersion;
+    sig.fillCost = run.fillCost;
+    sig.valid = true;
+}
+
+void ReplaySteps(LineRun& run, const LinePlan& plan);
+
+void ReplayPlan(LineRun& run, LinePlan& plan)
+{
+    if (KeepLineBySteps(run, plan))
+    {
+        std::memcpy(run.chip->state.handles, plan.endHandles, sizeof(plan.endHandles));
+        run.commands = plan.commands;
+        run.events = plan.events;
+        run.fillCost = plan.lines[static_cast<size_t>(run.keepLine)].fillCost;
+        run.pixelsKept = true;
+#ifdef EVE_PROFILE
+        Profile().linesKeptBySteps++;
+#endif
+        return;
+    }
+    ReplaySteps(run, plan);
+    RememberSteps(run, plan);
+}
+
+void ReplaySteps(LineRun& run, const LinePlan& plan)
 {
     EveChip& chip = *run.chip;
     const int64_t lineSubpixel = static_cast<int64_t>(run.y) * kSubpixel + kPixelCenter;
     uint32_t context = UINT32_MAX;
     for (const LinePlanStep& s : plan.steps)
     {
-        if (s.rowTest)
-        {
-            const int64_t rely = lineSubpixel - s.v.y;
-            if (rely < 0 || rely >= s.rowsSubpixel)
-                continue; // DrawBitmap's first test: no row of the bitmap on this line
-        }
+        if (!StepReachesLine(s, lineSubpixel))
+            continue; // the drawing's own first test: nothing of it on this line
         if (s.context != context)
         {
             context = s.context;
@@ -678,6 +944,8 @@ void ContextDefaults(GraphicsContext& ctx)
 template <LineMode Mode>
 void ExecuteLine(LineRun& run)
 {
+    if constexpr (Mode == LineMode::Draw)
+        run.chip->lineFromPlan = false;
     if constexpr (Mode == LineMode::Draw && kLinePlanUsable)
     {
         EveChip& chip = *run.chip;
@@ -689,6 +957,7 @@ void ExecuteLine(LineRun& run)
                 Profile().planReplays++;
 #endif
                 ReplayPlan(run, *chip.linePlan);
+                chip.lineFromPlan = true;
                 return;
             }
             StartRecording(run, *chip.linePlan);
@@ -723,7 +992,10 @@ void ExecuteLine(LineRun& run)
     }
     if constexpr (Mode == LineMode::Draw)
         if (run.recording != nullptr)
+        {
             FinishRecording(run);
+            run.chip->lineFromPlan = true;
+        }
 }
 
 template void ExecuteLine<LineMode::Draw>(LineRun&);
@@ -749,11 +1021,14 @@ bool InitDrawing(EveChip& chip)
     chip.lineBilinear.reset(new (std::nothrow) uint32_t[kBilinearScratch]());
     chip.palettes.reset(new (std::nothrow) PaletteCache[kPaletteCacheEntries]());
     chip.linePlan.reset(new (std::nothrow) LinePlan());
+    chip.lineKept.reset(new (std::nothrow) LineKept[kMaxLines]());
+    chip.ramGPageChanges.reset(new (std::nothrow) uint64_t[kRamGSize >> kPageShift]());
+    chip.ramGBlockChanges.reset(new (std::nothrow) uint64_t[kRamGSize >> kChangeBlockShift]());
     chip.probeColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.probeStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.probeTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.lineCosts.reset(new (std::nothrow) EveLineCost[kMaxLines]());
-    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.palettes && chip.linePlan && chip.probeColor && chip.probeStencil &&
+    return chip.lineColor && chip.lineStencil && chip.lineTag && chip.lineTexels && chip.lineBilinear && chip.palettes && chip.linePlan && chip.lineKept && chip.ramGPageChanges && chip.ramGBlockChanges && chip.probeColor && chip.probeStencil &&
            chip.probeTag && chip.lineCosts;
 }
 
@@ -776,13 +1051,23 @@ void CatchUp(EveChip& chip)
         // Lines passed without drawing are not measured: their costs from an earlier
         // frame must not count for this one (the frame's metrics block, the in-flight view)
         for (uint32_t line = chip.drawnLines; line < due && line < kMaxLines; ++line)
+        {
             chip.lineCosts[line].valid = 0;
+            chip.lineKept[line].valid = false; // the frame buffer keeps an older picture there
+            if (line < chip.linePlan->lines.size())
+                chip.linePlan->lines[line].valid = false;
+        }
         if (chip.drawnLines < due)
             chip.drawnLines = due;
         return;
     }
     if (Portrait(chip))
     {
+        // Portrait frames are drawn whole and transposed: no screen line is kept
+        for (uint32_t line = 0; line < kMaxLines; ++line)
+            chip.lineKept[line].valid = false;
+        for (LineSignature& s : chip.linePlan->lines)
+            s.valid = false;
         if (chip.drawnLines == 0 && due > 0)
             DrawPortraitFrame(chip);
         chip.drawnLines = due;
@@ -798,9 +1083,10 @@ void FrameStart(EveChip& chip)
     chip.overflowLines = 0;
 }
 
-void DisplayListSwapped(EveChip& chip)
+void DisplayListSwapped(EveChip& chip, bool changed)
 {
-    ++chip.dlVersion;
+    if (changed)
+        ++chip.dlVersion; // a swap to the same words changes nothing drawn
     if (!chip.drawing)
         StatePass(chip);
 }
@@ -812,7 +1098,12 @@ void DrawingInvalidate(EveChip& chip)
     // The current frame is drawn again from line 0 by the next catch-up (arch §7.4).
     chip.drawnLines = 0;
     for (uint32_t i = 0; i < kMaxLines; ++i)
+    {
         chip.lineCosts[i] = EveLineCost{};
+        chip.lineKept[i].valid = false;
+    }
+    for (LineSignature& s : chip.linePlan->lines)
+        s.valid = false;
 }
 
 void FoldFrameMetrics(EveChip& chip)

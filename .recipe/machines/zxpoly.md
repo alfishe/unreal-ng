@@ -55,7 +55,7 @@ emulator_manage {"action":"zxpoly_status"}
 #   → modules (ids, platform registers R0-R3), #3D00, locked, video_mode,
 #     slaves_running, parallel_slaves, pipelined_slaves, divergence {diverged, module, what}
 
-capture_media {"what":"screenshot"}   # the master's framebuffer carries the composed picture
+capture_media {"action":"screenshot"}   # the composed display frame the window shows: 704x576 (2x), the four modules' paper 512x384 at (96,96); area "screen" cuts that paper; a slave answers with its own 352x288 frame
 type_input {"text":"1"}               # keys reach all four modules at the frame boundary
 emulator_manage {"action":"destroy"}  # removes the whole group
 ```

@@ -74,6 +74,11 @@ private:
     std::shared_ptr<const PhaseTable> _table;
     size_t _taps;
     double _samplesPerOutput;
+    // The design's parameters (setInputRate redesigns with the others kept)
+    double _outputRate = 44100.0;
+    double _inputRate = INPUT_RATE;
+    Quality _quality = Quality::Reference;
+    bool _extendedBandwidth = false;
 
     /// Slave-mode master (§6.3): when set, this decimator keeps no phase of
     /// its own and produces output exactly when the master does. nullptr =
@@ -124,23 +129,8 @@ private:
         return table;
     }
 
-public:
-    FilterDecimator()
-    {
-        configure(44100.0);
-    }
-
-    /// Design the anti-alias FIR and set the phase step for outputRate.
-    /// Default cutoff is 20 kHz at every rate (identical tonal character).
-    /// extendedBandwidth opens the passband for archival capture at high
-    /// rates: 40 kHz at >=88.2k output, 80 kHz at >=176.4k.
-    /// inputRate redesigns the filter for a different input side (TSFM FM
-    /// decimation runs at 437.5 kHz, §6.3): taps scale with it so the
-    /// transition width in Hz stays constant — at the default INPUT_RATE the
-    /// tap counts stay 96/192 and the (44100, Reference) design stays
-    /// bit-identical to the shipped table.
-    void configure(double outputRate, Quality quality = Quality::Reference, bool extendedBandwidth = false,
-                   double inputRate = INPUT_RATE)
+    /// The anti-alias FIR and the phase step (configure / setInputRate)
+    void design(double outputRate, Quality quality, bool extendedBandwidth, double inputRate)
     {
         double fc = 20000.0;
         if (extendedBandwidth)
@@ -163,10 +153,51 @@ public:
         _coeffs = FirDesigner::kaiser(_taps, fc, inputRate, beta);
         _table = phaseTableFor(_taps, fc, inputRate, beta);
         _samplesPerOutput = inputRate / outputRate;
+        _outputRate = outputRate;
+        _inputRate = inputRate;
+        _quality = quality;
+        _extendedBandwidth = extendedBandwidth;
+    }
 
+public:
+    FilterDecimator()
+    {
+        configure(44100.0);
+    }
+
+    /// Design the anti-alias FIR and set the phase step for outputRate.
+    /// Default cutoff is 20 kHz at every rate (identical tonal character).
+    /// extendedBandwidth opens the passband for archival capture at high
+    /// rates: 40 kHz at >=88.2k output, 80 kHz at >=176.4k.
+    /// inputRate redesigns the filter for a different input side (TSFM FM
+    /// decimation runs at 437.5 kHz, §6.3): taps scale with it so the
+    /// transition width in Hz stays constant — at the default INPUT_RATE the
+    /// tap counts stay 96/192 and the (44100, Reference) design stays
+    /// bit-identical to the shipped table.
+    void configure(double outputRate, Quality quality = Quality::Reference, bool extendedBandwidth = false,
+                   double inputRate = INPUT_RATE)
+    {
+        design(outputRate, quality, extendedBandwidth, inputRate);
         _master = nullptr;  // a redesigned filter is its own clock again
         reset();
     }
+
+    /// Change the input (generator) rate in flight - a switched AY clock
+    /// (SoundChip_TurboSound::SetPsgClock): the filter is redesigned for the
+    /// new rate (the same cutoff in Hz), while the history and the resampling
+    /// phase stay, so the output carries on without a gap or a click. The
+    /// phase needs no conversion: it counts input samples since the last
+    /// output instant, and the next output now falls samplesPerOutput() of
+    /// the new rate after it. The history keeps the samples taken at the old
+    /// rate - a transient of one filter length, inaudible
+    void setInputRate(double inputRate)
+    {
+        if (inputRate == _inputRate)
+            return;
+        design(_outputRate, _quality, _extendedBandwidth, inputRate);
+    }
+
+    double inputRate() const { return _inputRate; }
 
     void reset()
     {

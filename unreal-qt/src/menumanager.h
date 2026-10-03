@@ -46,7 +46,8 @@ public:
     void setTapeManagerChecked(bool checked);
     void setMediaPanelChecked(bool checked);
     /// The route as set ("AUTO" .. "BOTH"), the route in force, and whether a PS/2 controller is fitted
-    void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller);
+    void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller,
+                              const QString& controller = QString());
     void setNetworkWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 

@@ -12,6 +12,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 
 namespace
 {
@@ -170,11 +171,21 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
     return r;
 }
 
-ScreenshotResult Screenshotter::TakeFrom(Screen& screen, const ScreenshotOptions& options)
+ScreenshotResult Screenshotter::TakeFrom(Screen& screen, const ScreenshotOptions& options, bool emulationParked)
 {
     FrameSnapshot snapshot;
-    if (!screen.SnapshotPresented(snapshot))
+    if (options.source == ScreenshotSource::Live)
+    {
+        if (!screen.SnapshotLive(snapshot, emulationParked, options.liveTimeoutMs))
+            return Fail(ScreenshotError::NoFrame,
+                        emulationParked ? "The emulator has no frame buffer"
+                                        : "The emulation thread did not finish a frame within " +
+                                              std::to_string(options.liveTimeoutMs) + " ms");
+    }
+    else if (!screen.SnapshotPresented(snapshot))
+    {
         return Fail(ScreenshotError::NoFrame, "The emulator has not presented a frame yet");
+    }
     return Render(snapshot, options);
 }
 
@@ -191,7 +202,19 @@ ScreenshotResult Screenshotter::Take(const std::string& emulatorId, const Screen
     EmulatorContext* context = emulator->GetContext();
     if (!context || !context->pScreen)
         return Fail(ScreenshotError::NoFrame, "The emulator has no screen");
-    return TakeFrom(*context->pScreen, options);
+
+    // The master of a ZX-Poly group shows the group's composed frame (2x, the four modules' paper): that is what
+    // the user sees, so that is the screenshot. The slaves keep their own frames
+    // (the group composes its frame at every master frame end: its latest is also the live one)
+    ZXPolyGroup* group = manager->GetZXPolyGroup(emulatorId);
+    if (group && group->GetContext(0) == context)
+    {
+        FrameSnapshot snapshot;
+        if (!group->SnapshotDisplay(snapshot))
+            return Fail(ScreenshotError::NoFrame, "The ZX-Poly group has not composed a frame yet");
+        return Render(snapshot, options);
+    }
+    return TakeFrom(*context->pScreen, options, emulator->IsEmulationParked());
 }
 
 bool Screenshotter::ParseArea(const std::string& text, ScreenshotArea& area)
@@ -216,8 +239,19 @@ bool Screenshotter::ParseFormat(const std::string& text, ScreenshotFormat& forma
     return true;
 }
 
+bool Screenshotter::ParseSource(const std::string& text, ScreenshotSource& source)
+{
+    if (text == "presented")
+        source = ScreenshotSource::Presented;
+    else if (text == "live")
+        source = ScreenshotSource::Live;
+    else
+        return false;
+    return true;
+}
+
 bool Screenshotter::ParseRequestWords(const std::string& area, const std::string& mode, const std::string& format,
-                                      ScreenshotOptions& options, std::string& message)
+                                      const std::string& source, ScreenshotOptions& options, std::string& message)
 {
     if (!area.empty() && !ParseArea(area, options.area))
     {
@@ -244,6 +278,11 @@ bool Screenshotter::ParseRequestWords(const std::string& area, const std::string
         message = "Unknown format '" + format + "': use png or gif";
         return false;
     }
+    if (!source.empty() && !ParseSource(source, options.source))
+    {
+        message = "Unknown source '" + source + "': use presented or live";
+        return false;
+    }
     return true;
 }
 
@@ -252,9 +291,25 @@ const char* Screenshotter::AreaName(ScreenshotArea area)
     return area == ScreenshotArea::Full ? "full" : "screen";
 }
 
+const char* Screenshotter::RequestSourceName(ScreenshotSource source)
+{
+    return source == ScreenshotSource::Presented ? "presented" : "live";
+}
+
 const char* Screenshotter::FormatName(ScreenshotFormat format)
 {
     return format == ScreenshotFormat::Png ? "png" : "gif";
+}
+
+const char* Screenshotter::SourceName(FrameSource source)
+{
+    switch (source)
+    {
+        case FrameSource::Native: return "native";
+        case FrameSource::External: return "external";
+        case FrameSource::Composed: return "composed";
+    }
+    return "unknown";
 }
 
 const char* Screenshotter::ErrorName(ScreenshotError error)

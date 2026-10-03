@@ -1,0 +1,29 @@
+=== VR3-0A1DFAFD.ROM (CRC 0A1DFAFD), v3 wiring, DS80 half (A10 = 1)
+  ticks: line 48, lines 320, frame 15360 (20480 us, 48.828 Hz); FLD1 (paper fetch) 33 ticks of each line, 240 lines; vertical P240 b16 B15 V17 B15 b17
+  INT: falls at h=44 (line counter 240); INT -> first paper tick 3844 ticks; INT length 12 ticks (DA3 model)
+    CPU 3 MHz (12/4)            : 4 T/tick, line 192 T, frame 61440 T, INT->paper 15376 T, INT length 48 T, paper fetch 132 T/line
+    CPU 6 MHz turbo (12/2)      : 8 T/tick, line 384 T, frame 122880 T, INT->paper 30752 T, INT length 96 T, paper fetch 264 T/line
+=== VR3-15E9B638.ROM (CRC 15E9B638), v3 wiring, DS80 half (A10 = 1)
+  ticks: line 48, lines 312, frame 14976 (19968 us, 50.080 Hz); FLD1 (paper fetch) 33 ticks of each line, 240 lines; vertical P240 b16 B7 V17 B15 b17
+  INT: falls at h=44 (line counter 240); INT -> first paper tick 3460 ticks; INT length 12 ticks (DA3 model)
+    CPU 3 MHz (12/4)            : 4 T/tick, line 192 T, frame 59904 T, INT->paper 13840 T, INT length 48 T, paper fetch 132 T/line
+    CPU 6 MHz turbo (12/2)      : 8 T/tick, line 384 T, frame 119808 T, INT->paper 27680 T, INT length 96 T, paper fetch 264 T/line
+=== VR3-5A0AB56B.ROM (CRC FB0579B6), v3 wiring, DS80 half (A10 = 1)
+  ticks: line 48, lines 320, frame 15360 (20480 us, 48.828 Hz); FLD1 (paper fetch) 48 ticks of each line, 240 lines; vertical P240 b16 B16 V16 B15 b17
+  INT: falls at h=46 (line counter 304); INT -> first paper tick 770 ticks; INT length 10 ticks (DA3 model)
+    CPU 3 MHz (12/4)            : 4 T/tick, line 192 T, frame 61440 T, INT->paper 3080 T, INT length 40 T, paper fetch 192 T/line
+    CPU 6 MHz turbo (12/2)      : 8 T/tick, line 384 T, frame 122880 T, INT->paper 6160 T, INT length 80 T, paper fetch 384 T/line
+=== VR5-D2D4A7C8.ROM (CRC D2D4A7C8), v5 wiring, DS80 half (A10 = 1)
+  ticks: line 48, lines 312, frame 14976 (19968 us, 50.080 Hz); FLD1 (paper fetch) 32 ticks of each line, 240 lines; vertical P240 b16 B7 V17 B15 b17
+  INT: falls at h=62 (line counter 256); INT -> first paper tick 2690 ticks; INT length 10 ticks (DA3 model)
+    CPU 4 MHz (ZQ3 16/4)        : 5.33 T/tick, line 256 T, frame 79872 T, INT->paper 14346.67 T, INT length 53.33 T, paper fetch 170.67 T/line
+    CPU 5 MHz (ZQ3 20/4)        : 6.67 T/tick, line 320 T, frame 99840 T, INT->paper 17933.33 T, INT length 66.67 T, paper fetch 213.33 T/line
+    CPU 6 MHz (ZQ3 24/4)        : 8 T/tick, line 384 T, frame 119808 T, INT->paper 21520 T, INT length 80 T, paper fetch 256 T/line
+    CPU 10 MHz turbo (ZQ3 20/2) : 13.33 T/tick, line 640 T, frame 199680 T, INT->paper 35866.67 T, INT length 133.33 T, paper fetch 426.67 T/line
+=== VR5-57D728AD.ROM (CRC 88AF40E9), v5 wiring, DS80 half (A10 = 1)
+  ticks: line 48, lines 312, frame 14976 (19968 us, 50.080 Hz); FLD1 (paper fetch) 32 ticks of each line, 240 lines; vertical P240 b16 B7 V17 B15 b17
+  INT: falls at h=62 (line counter 256); INT -> first paper tick 2690 ticks; INT length 10 ticks (DA3 model)
+    CPU 4 MHz (ZQ3 16/4)        : 5.33 T/tick, line 256 T, frame 79872 T, INT->paper 14346.67 T, INT length 53.33 T, paper fetch 170.67 T/line
+    CPU 5 MHz (ZQ3 20/4)        : 6.67 T/tick, line 320 T, frame 99840 T, INT->paper 17933.33 T, INT length 66.67 T, paper fetch 213.33 T/line
+    CPU 6 MHz (ZQ3 24/4)        : 8 T/tick, line 384 T, frame 119808 T, INT->paper 21520 T, INT length 80 T, paper fetch 256 T/line
+    CPU 10 MHz turbo (ZQ3 20/2) : 13.33 T/tick, line 640 T, frame 199680 T, INT->paper 35866.67 T, INT length 133.33 T, paper fetch 426.67 T/line

@@ -2,6 +2,8 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/ports/models/profiboard.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -1954,7 +1956,7 @@ namespace PythonBindings
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
             .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
-                                       const std::string& path) -> py::dict {
+                                       const std::string& path, const std::string& source) -> py::dict {
                 py::dict result;
                 auto fail = [&](const std::string& message, const char* kind) {
                     result["success"] = false;
@@ -1967,6 +1969,8 @@ namespace PythonBindings
                     return fail("Unknown format '" + format + "': use png or gif", "bad-parameter");
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return fail("Unknown area '" + area + "': use full or screen", "bad-parameter");
+                if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
+                    return fail("Unknown source '" + source + "': use presented or live", "bad-parameter");
                 if (!fullLegacy.is_none())
                 {
                     // Deprecated: full=True is area="full", full=False is area="screen"
@@ -1979,7 +1983,8 @@ namespace PythonBindings
 
                 if (!self.GetContext() || !self.GetContext()->pScreen)
                     return fail("The emulator has no screen", "no-frame");
-                const ScreenshotResult shot = Screenshotter::TakeFrom(*self.GetContext()->pScreen, options);
+                const ScreenshotResult shot =
+                    Screenshotter::TakeFrom(*self.GetContext()->pScreen, options, self.IsEmulationParked());
                 if (!shot.ok)
                     return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
 
@@ -1996,9 +2001,18 @@ namespace PythonBindings
                 frame["height"] = shot.frame.height;
                 frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
                                                                            : Screen::GetVideoModeName(shot.frame.videoMode);
-                frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+                frame["source"] = Screenshotter::SourceName(shot.frame.source);
                 frame["frame_number"] = shot.frame.frameNumber;
+                if (shot.frame.beamLine >= 0)
+                {
+                    frame["partial"] = shot.frame.partial;
+                    py::dict beam;
+                    beam["line"] = shot.frame.beamLine;
+                    beam["tstate"] = shot.frame.beamTstate;
+                    frame["beam"] = beam;
+                }
                 result["success"] = true;
+                result["source"] = Screenshotter::RequestSourceName(options.source);
                 result["format"] = Screenshotter::FormatName(shot.format);
                 result["area"] = Screenshotter::AreaName(options.area);
                 result["width"] = shot.width;
@@ -2015,8 +2029,10 @@ namespace PythonBindings
             }, "Screenshot of the presented frame: the whole frame (area='full', default) or the working picture "
                "(area='screen'), PNG (default) or GIF; returns a dict with the image base64 in 'data' (or 'file' when "
                "path is given), the frame geometry ('frame', 'screen_window') and the rectangle cut ('crop'). "
-               "full= is a deprecated alias of area (True = 'full', False = 'screen')",
-               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "")
+               "source='live' takes the frame as drawn now instead of the presented one (a paused machine adds the beam "
+               "position and 'partial' to 'frame'). full= is a deprecated alias of area (True = 'full', False = 'screen')",
+               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
+               py::arg("source") = "")
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {
@@ -3084,6 +3100,10 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
             }, py::arg("route") = "", "Where host and injected keys go: route='auto'|'matrix'|'ps2'|'both' (the ZX matrix, the PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force")
+            .def("keyboard_controller", [](Emulator& self) -> std::string {
+                Keyboard* keyboard = self.GetContext() ? self.GetContext()->pKeyboard : nullptr;
+                return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
+            }, "The PS/2 / XT keyboard controller's name ('PROFI-XT firmware 1.27', ...); '' when there is none or it has no name")
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
@@ -4413,6 +4433,18 @@ namespace PythonBindings
             ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
 
             d["model"] = Config::GetModelFullName(config.mem_model);
+            if (IsProfiModel(config.mem_model))
+            {
+                // The board, its sync PROM and the keyboard on its connector (as GET /state/paging)
+                d["profi_board"] = config.mem_model == MM_PROFI3 ? "v3" : "v5";
+                d["profi_sync_prom"] = ProfiSyncPromName(
+                    ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+                d["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+                // The hi-res clocks (design-hires.md): the CPU clock there (no turbo), the v5's ZQ3 and SB7
+                d["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+                d["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+                d["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
+            }
             d["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             d["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 

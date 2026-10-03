@@ -507,12 +507,21 @@ types:
           overshoot). Restored with the checkpoint so a replayed frame runs
           with the original instruction timing. Taken from the former
           reserved tail; sessions recorded before it read 0.
+      - id: hw_clock_den
+        type: u1
+        doc: |
+          Denominator of the hardware clock ratio, queued (CPU T per base T =
+          hw_turbo_ratio / hw_clock_den). 0 means 1: only the Profi in hi-res
+          (3 / 5 MHz = 6/7, 10/7) writes a 7. Taken from the reserved tail.
+      - id: hw_clock_den_applied
+        type: u1
+        doc: The denominator as composed into the running clock; 0 means 1.
       - id: reserved
-        size: 3
+        size: 1
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
           (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above, three for cpu_t_in_frame). The C++ side copies these objects by member-wise
+          fields above, three for cpu_t_in_frame, two for the clock denominator). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 
@@ -580,8 +589,13 @@ types:
           REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
           43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
           u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
-          restored after 42).
-          44 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000: u1 version 1,
+          restored after 42),
+          44 ProfiXtKbc (the Profi PROFI-XT keyboard controller: ProfiXtKbc::State - u4 version 1, u1 engine (0 firmware,
+          1 table), the output latch, WAIT flip-flop, read in progress, reset line, the time base, the MCS-48 (clock, PC,
+          A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
+          state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
+          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted),
+          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000: u1 version 1,
           u1 card count, per card u1 key length, the key ("isa2.eth"), then the board: u1 version 1, u1 variant
           (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB packet RAM, 8 bytes
           RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card).

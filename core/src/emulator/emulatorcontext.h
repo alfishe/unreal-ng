@@ -394,7 +394,7 @@ public:
     ///          same frame is 286720 T-states long.
     /// @return T-states per frame at the current CPU clock
     /// @see GetBaseFrameTStates, GetCpuClockMultiplier
-    uint32_t GetFrameTStates() const { return config.frame * GetCpuClockMultiplier(); }
+    uint32_t GetFrameTStates() const { return emulatorState.BaseToCpuT(config.frame); }
 
     /// @brief Raster base T-states per frame, unscaled by the clock multiplier
     /// @details Pentagon 71680; ZX48/128 and Scorpion ZS-256 69888. This is the
