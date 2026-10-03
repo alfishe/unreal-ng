@@ -22,6 +22,7 @@
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/sprinter/sprinteraccelerator.h>
+#include <emulator/sound/sprinter/covoxblaster.h>
 #include <emulator/ports/models/portdecoder_sprinter.h>
 #include <emulator/video/screen.h>
 #include <gtest/gtest.h>
@@ -1393,3 +1394,147 @@ TEST_F(SprinterFlexNavigator_Test, RealHdd_Fn115KeysAndMouse)
 }
 
 /// endregion </Flex Navigator input>
+
+/// region <CTC playback tick (Bad Apple, dontBlink)>
+
+// Demos on the owner's DSS 1.71 system disk (UNREAL_SPRINTER_HDD, the raw sp_hdd_sys.img of the MAME pack; not in the
+// repo) that pace themselves with the Z84C15's CTC: channel 2 counts the 875 kHz TRG2 by 112, its ZC/TO2 drives TRG3,
+// channel 3 counts by 160 and interrupts at 48.83 Hz with vector #06 (IM2, a table with only that entry). The main
+// loop waits at EI / HALT / LD A,#00 / AND A / JR Z for the handler to patch the LD's operand: before the counter
+// mode had its inputs the tick never came and the demos hung on a black screen after their logo.
+class SprinterCtcDemo_Test : public SprinterFlexNavigator_Test
+{
+protected:
+    /// A command typed into Flex Navigator's command line, then Enter
+    void Command(const std::string& text)
+    {
+        for (char c : text)
+        {
+            std::string key;
+            if (c == ' ')
+                key = "space";
+            else if (c == '\\')
+                key = "backslash";
+            else if (c == '.')
+                key = "period";
+            else
+                key = std::string(1, c);
+            Tap(key, 3);
+        }
+        Tap("enter", 20);
+    }
+
+    /// The left panel: the directory on row `first` of the root (BIN, C, DEMOS ...), then the one on row `second`
+    /// of it (".." is row 0); Flex Navigator's current directory is the program's
+    void OpenDirectory(int first, int second)
+    {
+        for (int i = 0; i < first; i++)
+            Tap("down", 3);
+        Tap("enter", 60);
+        for (int i = 0; i < second; i++)
+            Tap("down", 3);
+        Tap("enter", 60);
+    }
+
+    struct Playback
+    {
+        uint64_t ticks = 0;       ///< CTC channel 3 zero counts turned into interrupt requests
+        uint64_t frames = 0;
+        int pictures = 0;         ///< distinct pictures among the samples
+        uint32_t ringWrites = 0;  ///< Covox-Blaster ring words written
+        uint32_t cblTicks = 0;    ///< Covox-Blaster play ticks
+    };
+
+    /// `seconds` of the demo, a picture every half second
+    Playback Watch(int seconds)
+    {
+        Playback p;
+        const Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+        const CovoxBlasterState& cbl = _decoder->GetCovoxBlaster().State();
+        const uint64_t seen = ctc.GetChannel(3).zeroSeen;
+        const uint64_t frame = Frame();
+        const uint32_t writes = cbl.ringWrites;
+        const uint32_t ticks = cbl.ticks;
+        std::vector<std::vector<uint32_t>> pictures;
+        for (int i = 0; i < seconds * 2; i++)
+        {
+            EmulatorTestHelper::RunFramesFast(_emulator.get(), 24);
+            std::vector<uint32_t> picture = Picture();
+            if (std::find(pictures.begin(), pictures.end(), picture) == pictures.end())
+                pictures.push_back(std::move(picture));
+        }
+        p.ticks = ctc.GetChannel(3).zeroSeen - seen;
+        p.frames = Frame() - frame;
+        p.pictures = static_cast<int>(pictures.size());
+        p.ringWrites = cbl.ringWrites - writes;
+        p.cblTicks = cbl.ticks - ticks;
+        return p;
+    }
+
+    bool BootDss171()
+    {
+        const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+        if (!path || !FileHelper::FileExists(path))
+            return false;
+        if (!UseBios("sp2k-3.06-hf2.rom"))
+            return false;
+        InsertHdd(path);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Shell version"); }, 1200, 1);
+        EXPECT_TRUE(ScreenHas("Shell version")) << ScreenText();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 1500);  // Flex Navigator up
+        return true;
+    }
+
+    void Report(const char* name, const Playback& p)
+    {
+        std::printf("[ CTC demo ] %-10s %4llu ticks in %4llu frames, %3d pictures, CBL %u ring writes, %u play ticks\n",
+                    name, static_cast<unsigned long long>(p.ticks), static_cast<unsigned long long>(p.frames), p.pictures,
+                    p.ringWrites, p.cblTicks);
+        RecordProperty(std::string(name) + "_ticks", std::to_string(p.ticks));
+        RecordProperty(std::string(name) + "_pictures", std::to_string(p.pictures));
+    }
+};
+
+// Bad Apple (C:\DEMOS\BADAPPLE): its logo, then the video in 1-bit frames with the Covox-Blaster. One CTC tick per
+// 20.48 ms frame. Boot-bound (BIOS 3.06, DSS 1.71, Flex Navigator, the demo from the hard disk): ~6 s host time
+TEST_F(SprinterCtcDemo_Test, RealHdd_BadApplePlays)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 1);  // C:\DEMOS, then BADAPPLE
+    Command("badapple.exe");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 500);  // the logo, then the playback
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("badapple.png"));
+    const Playback p = Watch(10);
+    Report("badapple", p);
+    const Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+    EXPECT_EQ(ctc.GetChannel(3).control & 0xC0, 0xC0) << "channel 3: interrupt, counter";
+    EXPECT_NEAR(ctc.OutputHz(3), 48.828125, 1e-6);
+    EXPECT_NEAR(static_cast<double>(p.ticks), static_cast<double>(p.frames), 2.0) << "48.83 Hz: one tick per 20.48 ms frame";
+    EXPECT_GE(p.pictures, 10) << "video frames";
+    EXPECT_GT(p.ringWrites, 0u) << "the Covox-Blaster is fed";
+    EXPECT_GT(p.cblTicks, 0u) << "and plays";
+    EXPECT_GE(p.ringWrites, p.cblTicks) << "fed as fast as it plays (stereo: two words a tick): no gap";
+}
+
+// deMarche's dontBlink (C:\DEMOS\DNTBLINK, DSS 1.70.998+): a progress bar, then the demo; it streams its music from
+// the disk into the Covox-Blaster in the CTC handler (I = #3E, table #3E00, vector #06), so the sound plays only
+// while the tick comes. Boot-bound like Bad Apple: ~9 s host time
+TEST_F(SprinterCtcDemo_Test, RealHdd_DontBlinkPlays)
+{
+    if (!BootDss171())
+        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) or BIOS 3.06 not available";
+    OpenDirectory(2, 4);  // C:\DEMOS, then DNTBLINK
+    Command("dntblink.exe");
+    EmulatorTestHelper::RunFramesFast(_emulator.get(), 1000);  // the progress bar, then the demo
+    SaveScreen(TestPathHelper::GetUniqueTestScratchPath("dntblink.png"));
+    const Playback p = Watch(10);
+    Report("dntblink", p);
+    EXPECT_NEAR(static_cast<double>(p.ticks), static_cast<double>(p.frames), 2.0);
+    EXPECT_GE(p.pictures, 10);
+    EXPECT_GT(p.ringWrites, 0u) << "the music streams from the disk in the CTC handler";
+    EXPECT_GT(p.cblTicks, 0u);
+    EXPECT_GE(p.ringWrites, p.cblTicks) << "fed as fast as it plays: continuous";
+}
+
+/// endregion </CTC playback tick>

@@ -67,6 +67,11 @@ public:
     /// Port trace internal codes: the PLD codes #00-#FF as they are; the
     /// Z84C15's own ports as kTraceZ84Base + the low address byte
     static constexpr uint16_t kTraceZ84Base = 0x100;
+    /// The Z84C15's time base: the board crystal X_SP = 42 MHz, 12 ticks per base T-state (3.5 MHz = X_SP / 12)
+    static constexpr uint32_t kChipTicksPerBaseT = 12;
+    static constexpr uint64_t kChipClockHz = 42'000'000;
+    /// CTC TRG0-TRG2: X_SP / 48 = 875 kHz, independent of the CPU clock (MAME sprinter.cpp:1993-1995)
+    static constexpr uint32_t kCtcTriggerHz = 875'000;
 
     /// region <Constructors / Destructors>
 public:
@@ -121,6 +126,9 @@ public:
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
     /// endregion
+
+    /// The frame boundary: the host speed control's next multiplier reaches the Z84C15's clock
+    void OnFrameEnd() override;
 
     /// region <PLD state and parts>
 public:
@@ -230,6 +238,10 @@ private:
     void PerformPendingReset();
     void FinishLoad(bool watchdog);
     void ApplyTurbo();
+    /// The Z84C15's clock: ticks of the 42 MHz crystal since the machine's power-on (monotonic, real time)
+    uint64_t ChipClock() const;
+    /// The CPU clock the Z84C15 counts (CTC timers, watchdog) at `multiplier` x 3.5 MHz
+    void SyncChipClock(uint8_t multiplier);
     void AddPortWait();
     void RefreshStepHook();
     void InstallHooks();

@@ -172,6 +172,9 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-02: the Sprinter fixture (`sprinter_boot`) re-recorded alone after the Z84C15 blob (id 29) went to v2
+(the CTC counter mode, 1 + 227 bytes); the other fixtures carry no Sprinter blob and are unchanged.
+
 2026-10-02: the Sprinter fixture added (`sprinter_boot`, phase S7); the other fixtures are unchanged
 and still pass (device blobs are now restored in ascending id order). When Sprinter phase S6 adds its
 sound / ISA / pad blobs (reserved ids 32-34), only this fixture is re-recorded: the existing Sprinter

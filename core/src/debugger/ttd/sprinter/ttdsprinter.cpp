@@ -241,8 +241,8 @@ uint64_t TTDSprinterPld::TTDHashState() const
 
 /// region <TTDSprinterZ84>
 
-// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob): version, then Z84C15::SaveState (z84c15.h: system registers, wait generator, watchdog,
-// CTC, SIO with its receive FIFOs, PIO; every daisy-chain source's IP / IUS)
+// Layout (v2; v1 had the timer-only CTC): version, then Z84C15::SaveState (z84c15.h: system registers, wait generator,
+// watchdog, CTC with its clock period, SIO with its receive FIFOs, PIO; every daisy-chain source's IP / IUS)
 
 size_t TTDSprinterZ84::TTDStateSize() const
 {

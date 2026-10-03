@@ -269,6 +269,51 @@ TEST_F(PortDecoderSprinter_Test, Turbo_SysBit1SelectsRatio6)
     EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 1);
 }
 
+// The Z84C15's CTC on the board (MAME sprinter.cpp:1993-2008): TRG0-TRG2 are X_SP / 48 = 875 kHz in real time and
+// ZC/TO2 drives TRG3, so the 48.83 Hz tick of channels 2 + 3 (Bad Apple, dontBlink) is the same at 3.5 and 21 MHz;
+// a timer counts the CPU clock (MAME derives the CTC clock from the scaled CPU clock) and runs six times faster
+TEST_F(PortDecoderSprinter_Test, Ctc_TriggersAreRealTimeTimersFollowTheCpuClock)
+{
+    Z84Lib::Z84Ctc& ctc = _decoder->GetZ84().ctc;
+    const auto wait = [&](uint64_t baseT) { _context->emulatorState.t_states += baseT; };
+    _z80->t = 0;  // the load on an edge of the 875 kHz grid (an edge every 4 base T-states from the power-on)
+    Out(0x0010, 0x00);  // vector base
+    Out(0x0012, 0x57);
+    Out(0x0012, 112);
+    Out(0x0013, 0xD7);
+    Out(0x0013, 160);
+    Out(0x0011, 0x05);  // timer, prescaler 16, 256
+    Out(0x0011, 0x00);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 3500000.0 / 16 / 256);
+
+    constexpr uint64_t kTickT = 112 * 160 * 4;  // 71 680 base T-states = 20.48 ms
+    const uint64_t zeros = ctc.ZeroCounts(3);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
+    _decoder->GetZ84().OnReti();
+
+    // 21 MHz: the same tick in real time; the timer six times faster, its count kept through the switch
+    const uint8_t before = ctc.Read(1);
+    OpenDcp();
+    SetCode(0x007C, false, 0xC6);
+    Out(0x007C, 0x03);
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 6);
+    EXPECT_EQ(ctc.Read(1), before);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(3), 875000.0 / 112 / 160);
+    EXPECT_DOUBLE_EQ(ctc.OutputHz(1), 21000000.0 / 16 / 256);
+    wait(kTickT - 1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 1);
+    wait(1);
+    EXPECT_EQ(ctc.ZeroCounts(3), zeros + 2);
+    EXPECT_TRUE(_decoder->GetZ84().IntPending());
+    EXPECT_EQ(_decoder->GetZ84().AcknowledgeInterrupt(), 0x06);
+}
+
 /// endregion </T-MEM-1 / T-MEM-2>
 
 /// region <T-FDD: the floppy controller behind the port table (phase S3a)>

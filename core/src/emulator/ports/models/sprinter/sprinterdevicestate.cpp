@@ -295,19 +295,51 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     wd["output"] = "not connected (/WDTOUT, research-cpu-z84c15.md Q3)";
     z["watchdog"] = wd;
 
+    // The CTC: programming, the board's CLK/TRG wiring and the live count (Z84Ctc's lazy view, no side effects)
+    const Z84Lib::Z84Ctc& c84 = chip.ctc;
     StateNode ctc = StateNode::Object();
-    ctc["vector"] = Hex8(chip.ctc.Vector());
+    ctc["vector"] = Hex8(c84.Vector());
+    ctc["time_base_hz"] = c84.UnitsPerSecond();
+    ctc["cpu_clock_hz"] = c84.SystemClockNum() ? static_cast<double>(c84.UnitsPerSecond()) * c84.SystemClockDen() / c84.SystemClockNum() : 0.0;
     StateNode channels = StateNode::Array();
+    static const char* const kZcUse[4] = {"SIO B receive / transmit clock (serial mouse)", "not connected", "TRG3",
+                                          "no ZC/TO pin"};
     for (uint8_t c = 0; c < 4; c++)
     {
-        const Z84Lib::Z84Ctc::ChannelState& ch = chip.ctc.GetChannel(c);
+        const Z84Lib::Z84Ctc::ChannelState& ch = c84.GetChannel(c);
+        const Z84Lib::Z84Ctc::Trigger& trg = c84.GetTrigger(c);
         StateNode n = StateNode::Object();
         n["channel"] = int(c);
         n["control"] = Hex8(ch.control);
         n["mode"] = (ch.control & 0x40) ? "counter" : "timer";
         n["interrupt"] = (ch.control & 0x80) != 0;
+        n["prescaler"] = (ch.control & 0x20) ? 256 : 16;
+        n["edge"] = (ch.control & 0x10) ? "rising" : "falling";
+        n["timer_start"] = (ch.control & 0x08) ? "trigger edge" : "time constant";
         n["time_constant"] = ch.timeConstant ? int(ch.timeConstant) : 256;
-        n["running"] = ch.running != 0;
+        n["running"] = ch.running != 0 && !ch.waitingTrigger;
+        n["waiting_trigger"] = ch.running != 0 && ch.waitingTrigger != 0;
+        const uint8_t count = c84.Count(c);
+        n["count"] = count ? int(count) : 256;
+        n["zero_counts"] = c84.ZeroCounts(c);
+        StateNode input = StateNode::Object();
+        switch (trg.kind)
+        {
+            case Z84Lib::Z84Ctc::TriggerKind::Clock:
+                input["kind"] = "clock";
+                input["hz"] = trg.hz;
+                break;
+            case Z84Lib::Z84Ctc::TriggerKind::Cascade:
+                input["kind"] = "cascade";
+                input["source"] = StringHelper::Format("ZC/TO%u", static_cast<unsigned>(trg.source));
+                break;
+            default:
+                input["kind"] = "none";
+                break;
+        }
+        n["trigger_input"] = input;
+        n["zc_to_hz"] = c84.OutputHz(c);
+        n["zc_to_drives"] = kZcUse[c];
         n["ip"] = ch.ip != 0;
         n["ius"] = ch.ius != 0;
         channels.push(n);
@@ -316,7 +348,7 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     z["ctc"] = ctc;
 
     StateNode sio = StateNode::Array();
-    static const char* const kSioUse[2] = {"AT keyboard (set 2 scan codes)", "serial mouse (Microsoft, 1200 baud)"};
+    static const char* const kSioUse[2] = {"AT keyboard (set 2 scan codes)", "serial mouse (Microsoft, 1200 baud; clock: CTC ZC/TO0)"};
     for (uint8_t c = 0; c < 2; c++)
     {
         const Z84Lib::Z84Sio::Channel& ch = chip.sio.GetChannel(c);
@@ -352,6 +384,10 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
     mouse["buttons"] = Hex8(board.buttons);
     mouse["packet_in_flight"] = serial.sent < 3;
     mouse["sio_b_fifo"] = HexRow(chip.sio.GetChannel(1).fifo, chip.sio.GetChannel(1).fifoCount);
+    mouse["mouse_baud"] = int(MsSerialMouse::kBaud);
+    mouse["sio_b_baud"] = input.MouseReceiverBaud();  // CTC ZC/TO0 / the WR4 clock mode
+    mouse["sio_b_in_tune"] = input.MouseReceiverInTune();
+    mouse["framing_errors"] = input.MouseFramingErrors();
     z["mouse"] = mouse;
 
     StateNode pio = StateNode::Array();

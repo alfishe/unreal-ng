@@ -552,7 +552,7 @@ types:
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
           keyboard controller's RS-232: netstate::Com, the peer part only),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
-          memory regions), 29 Z84C15 (u1 version 1, then the Z84C15's on-chip block, 171 bytes: z84c15_blob below),
+          memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
           32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
@@ -720,13 +720,25 @@ types:
         type: u1
       - id: watchdog_start
         type: u8
+        doc: The clock (the board's units; the Sprinter's 42 MHz crystal ticks) the current watchdog count started at.
+      - id: watchdog_clocks_before
+        type: u8
+        doc: System clocks the watchdog counted before watchdog_start (a clock speed change folds them).
+      - id: ctc_clock_num
+        type: u4
+        doc: One system clock lasts ctc_clock_num / ctc_clock_den clock units (the Sprinter - 12 / multiplier).
+      - id: ctc_clock_den
+        type: u4
       - id: ctc_vector
         type: u1
       - id: ctc_channels
-        size: 22
+        size: 32
         repeat: expr
         repeat-expr: 4
-        doc: control, time constant, awaiting constant, running, load clock u8, zero counts u8, IP, IUS.
+        doc: |
+          control, time constant, awaiting constant, running, waiting for the trigger edge, count at the
+          anchor (0 = 256), anchor u8 (timer - the clock; counter or waiting - the input edges counted),
+          zero counts before the anchor u8, zero counts turned into requests u8, IP, IUS.
       - id: sio_channels
         size: 18
         repeat: expr
