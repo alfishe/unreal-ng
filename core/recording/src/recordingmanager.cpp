@@ -384,7 +384,7 @@ bool RecordingManager::StartRecording(const std::string& filename, const std::st
     _mainScreenX = _mainScreenY = _mainScreenWidth = _mainScreenHeight = 0;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context && _context->pScreen)
     {
-        const FrameRect window = _context->pScreen->DescribeCurrentFrame().screenWindow;
+        const PictureRect window = _context->pScreen->DescribeCurrentFrame().screenWindow;
         _mainScreenX = window.x;
         _mainScreenY = window.y;
         _mainScreenWidth = window.width;

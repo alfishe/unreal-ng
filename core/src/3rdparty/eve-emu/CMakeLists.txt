@@ -184,4 +184,16 @@ if(EVE_BUILD_TOOLS)
     add_executable(eve-replay-profile EXCLUDE_FROM_ALL tools/replay/eve-replay.cpp)
     target_link_libraries(eve-replay-profile PRIVATE eve-emu-profile)
     target_compile_options(eve-replay-profile PRIVATE ${EVE_WARNING_FLAGS})
+    # eve-tests-profile: the golden cases on the library with the profiling counters (not
+    # built by default): per case, the pixels the fast paths left to the general path
+    if(TARGET eve-test-images)
+        add_executable(eve-tests-profile EXCLUDE_FROM_ALL tests/eve-golden_test.cpp tests/eve-test-host.cpp)
+        target_link_libraries(eve-tests-profile PRIVATE eve-emu-profile eve-test-images gtest_main)
+        target_include_directories(eve-tests-profile PRIVATE ${PROJECT_SOURCE_DIR}/tests ${PROJECT_SOURCE_DIR}/src)
+        target_compile_options(eve-tests-profile PRIVATE ${EVE_WARNING_FLAGS})
+        target_compile_definitions(eve-tests-profile PRIVATE
+            EVE_TESTDATA_DIR="${PROJECT_SOURCE_DIR}/testdata"
+            EVE_TEST_OUTPUT_DIR="${PROJECT_BINARY_DIR}/profile")
+        set_target_properties(eve-tests-profile PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
+    endif()
 endif()

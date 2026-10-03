@@ -369,7 +369,7 @@ const uint32_t* LuminanceTableFor(uint8_t format)
 bool FastFormat(uint8_t format)
 {
     return format == kFormatArgb4 || format == kFormatRgb565 || format == kFormatArgb1555 ||
-           format == kFormatPaletted4444 || format == kFormatPaletted565 || format == kFormatL1 ||
+           format == kFormatPaletted4444 || format == kFormatPaletted565 || format == kFormatPaletted8 || format == kFormatL1 ||
            format == kFormatL2 || format == kFormatL4 || format == kFormatL8 || format == kFormatRgb332 ||
            format == kFormatArgb2;
 }
@@ -394,6 +394,23 @@ const uint32_t* LinePalette(LineRun& run, uint8_t format)
     }
     PaletteCache& cache = chip.palettes[chip.paletteNext];
     chip.paletteNext = (chip.paletteNext + 1) % kPaletteCacheEntries;
+    if (format == kFormatPaletted8)
+    {
+        // One byte per entry, 4 bytes apart (PALETTE_SOURCE's offset picks the channel
+        // byte), in every channel: Rgba{v, v, v, v} as the general path samples it
+        const bool inRamG = static_cast<uint64_t>(source) + kPalette32Bytes * (kPaletteEntries - 1) + 1 <= kRamGSize;
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+        {
+            const uint32_t v = inRamG ? chip.regions[RegionRamG].base[source + kPalette32Bytes * i]
+                                      : ReadByte(chip, source + kPalette32Bytes * i);
+            cache.entry[i] = v * 0x01010101u;
+        }
+        cache.valid = inRamG;
+        cache.source = source;
+        cache.format = format;
+        cache.ramGWrites = chip.ramGWrites;
+        return cache.entry;
+    }
     // The 16-bit decode tables hold exactly Pack(Direct(v, layout)) for every v
     const uint32_t* table = TableFor(format == kFormatPaletted565 ? kFormatRgb565 : kFormatArgb4);
     const bool inRamG = static_cast<uint64_t>(source) + kPalette16Bytes * kPaletteEntries <= kRamGSize;
@@ -511,7 +528,9 @@ void WithRowFetch(LineRun& run, const BitmapHandle& h, const uint8_t* row, Sink 
     const uint32_t* table8 = ByteTableFor(h.format);
     const uint32_t* luminance = LuminanceTableFor(h.format);
     const uint32_t* palette =
-        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565) ? LinePalette(run, h.format) : nullptr;
+        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+            ? LinePalette(run, h.format)
+            : nullptr;
     const uint32_t bpp = BitsPerPixel(h.format);
     if (table16 != nullptr)
         sink([row, table16](uint32_t u) { return table16[row[2 * u] | (static_cast<uint32_t>(row[2 * u + 1]) << kBitsPerByte)]; });
@@ -543,7 +562,9 @@ void WithLayoutFetch(LineRun& run, const BitmapHandle& h, const uint8_t* layout,
     const uint32_t* table8 = ByteTableFor(h.format);
     const uint32_t* luminance = LuminanceTableFor(h.format);
     const uint32_t* palette =
-        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565) ? LinePalette(run, h.format) : nullptr;
+        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+            ? LinePalette(run, h.format)
+            : nullptr;
     const uint32_t bpp = BitsPerPixel(h.format);
     if (table16 != nullptr)
         sink([layout, stride, table16](uint32_t u, uint32_t v) {
@@ -574,14 +595,13 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
 {
     const GraphicsContext& ctx = run.ctx;
     const bool modulate = ctx.colorRgb != kWhiteRgb || ctx.colorA != kChannelMax;
-    const bool simple = DefaultPipeline(ctx);
     const uint32_t colorR = (ctx.colorRgb >> kRedShift) & kChannelMax;
     const uint32_t colorG = (ctx.colorRgb >> kGreenShift) & kChannelMax;
     const uint32_t colorB = ctx.colorRgb & kChannelMax;
 #ifdef EVE_PROFILE
     Profile().finishPixels += count;
     Profile().modulatePixels += modulate ? count : 0;
-    Profile().simdBlendPixels += simple && kMultiplyRoundDiv255 ? count : 0;
+    Profile().simdBlendPixels += DefaultPipeline(ctx) && kMultiplyRoundDiv255 ? count : 0;
 #endif
     if (modulate && kMultiplyRoundDiv255)
         Simd::Modulate(texels, count, colorR, colorG, colorB, ctx.colorA);
@@ -594,19 +614,7 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
                                   Multiply(c.a, ctx.colorA)});
         }
     }
-    if (simple && kMultiplyRoundDiv255)
-    {
-        if (WritesTag(run))
-            std::memset(run.tag + first, ctx.tag, count);
-        Simd::BlendSrcAlpha(run.color + kChannels * static_cast<uint32_t>(first), texels, count);
-    }
-    else if (simple)
-    {
-        for (uint32_t i = 0; i < count; ++i)
-            BlendDefault(run, first + static_cast<int32_t>(i), texels[i]);
-    }
-    else
-        ShadeSpan(run, first, texels, count);
+    BlendSpan(run, first, texels, count);
 }
 
 // One layout row's texels for the columns lo .. lo + n - 1: BORDER leaves columns outside
@@ -833,6 +841,25 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
 
 } // namespace
 
+void BlendSpan(LineRun& run, int32_t first, const uint32_t* texels, uint32_t count)
+{
+    const GraphicsContext& ctx = run.ctx;
+    const bool simple = DefaultPipeline(ctx);
+    if (simple && kMultiplyRoundDiv255)
+    {
+        if (WritesTag(run))
+            std::memset(run.tag + first, ctx.tag, count);
+        Simd::BlendSrcAlpha(run.color + kChannels * static_cast<uint32_t>(first), texels, count);
+    }
+    else if (simple)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+            BlendDefault(run, first + static_cast<int32_t>(i), texels[i]);
+    }
+    else
+        ShadeSpan(run, first, texels, count);
+}
+
 void InitBitmapTables()
 {
     // Build the shared decode tables now, inside EveCreate, not on the first frame.
@@ -925,13 +952,16 @@ void DrawBitmap(LineRun& run, const Vertex& v)
     const uint32_t colorR = (ctx.colorRgb >> kRedShift) & kChannelMax;
     const uint32_t colorG = (ctx.colorRgb >> kGreenShift) & kChannelMax;
     const uint32_t colorB = ctx.colorRgb & kChannelMax;
-    if (Mode == LineMode::Draw && run.chip->bitmapFastPath &&
-        DrawBitmapFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, v.x))
+    if constexpr (Mode == LineMode::Draw)
     {
+        if (run.chip->bitmapFastPath &&
+            DrawBitmapFast(run, h, base, stride, layoutWidth, layoutHeight, rely, first, last, v.x))
+        {
 #ifdef EVE_PROFILE
-        spanProfile.key.fast = 1;
+            spanProfile.key.fast = 1;
 #endif
-        return;
+            return;
+        }
     }
 
     // x' = A x + B y + C, y' = D x + E y + F [PG §2.5.5], in 1/256 texel. Pixel x moves
@@ -968,13 +998,16 @@ void DrawBitmap(LineRun& run, const Vertex& v)
         // Every bitmap pixel is multiplied by COLOR_RGB and COLOR_A (spec §6.5, V3).
         Shade<Mode>(run, x, Multiply(t.r, colorR), Multiply(t.g, colorG), Multiply(t.b, colorB),
                     Multiply(t.a, ctx.colorA));
-        if (Mode == LineMode::Probe && x == run.probeX && run.probe->written)
+        if constexpr (Mode == LineMode::Probe)
         {
-            run.probe->handle = v.handle;
-            run.probe->cell = v.cell;
-            run.probe->commandIndex = v.index;
-            run.probe->command = v.word;
-            run.probe->sampleAddress = base;
+            if (x == run.probeX && run.probe->written)
+            {
+                run.probe->handle = v.handle;
+                run.probe->cell = v.cell;
+                run.probe->commandIndex = v.index;
+                run.probe->command = v.word;
+                run.probe->sampleAddress = base;
+            }
         }
     }
 }

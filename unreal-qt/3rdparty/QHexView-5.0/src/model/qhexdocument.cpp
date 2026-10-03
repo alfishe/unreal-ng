@@ -70,8 +70,8 @@ uchar QHexDocument::at(int offset) const { return m_buffer->at(offset); }
 
 QHexDocument* QHexDocument::fromFile(QString filename, QObject* parent) {
     QFile f(filename);
-    f.open(QFile::ReadOnly);
-    return QHexDocument::fromMemory<QMemoryBuffer>(f.readAll(), parent);
+    const QByteArray data = f.open(QFile::ReadOnly) ? f.readAll() : QByteArray();
+    return QHexDocument::fromMemory<QMemoryBuffer>(data, parent);
 }
 
 void QHexDocument::undo() {

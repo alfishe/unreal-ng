@@ -314,6 +314,9 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
 // Shade a span of pixels [first, first + count) with packed RGBA texels (R in bits 31..24,
 // A in 7..0): the same per-pixel rules as Shade<Draw>, the pipeline decided once per span
 void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count);
+// A span of packed texels (R in bits 31..24, A in 7..0) through the pipeline, as Shade
+// does pixel by pixel: SIMD for the default blend, ShadeSpan for the rest (eve-bitmap.cpp)
+void BlendSpan(LineRun& run, int32_t first, const uint32_t* texels, uint32_t count);
 template <LineMode Mode>
 void ClearLine(LineRun& run, uint32_t mask);
 // Pixel range of the line inside the scissor rectangle and the line: [first, last).

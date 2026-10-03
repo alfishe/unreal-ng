@@ -385,7 +385,7 @@ TEST_F(ProfiVideo_Test, Hires_FrameExtents_512Columns240Rows)
     }
 
     // The frame's own geometry names exactly the picture measured above (what a screenshot cuts for area=screen)
-    const FrameRect window = Screen()->WorkingWindow();
+    const PictureRect window = Screen()->WorkingWindow();
     EXPECT_EQ(window.x, 48);
     EXPECT_EQ(window.y, 24);
     EXPECT_EQ(window.width, 512);

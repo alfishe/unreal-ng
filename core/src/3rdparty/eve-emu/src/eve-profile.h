@@ -59,6 +59,7 @@ struct ProfileCounters
     uint64_t finishPixels = 0, modulatePixels = 0, simdBlendPixels = 0; // fast span tails
     uint64_t decodeNanos = 0, finishNanos = 0;   // fast NEAREST spans: decode vs tail
     std::map<int64_t, uint64_t> scaleAPixels;    // fast NEAREST axis-aligned rows: pixels by transform A
+    std::map<std::string, uint64_t> generalBlends; // pixels through ShadeSpan's per-pixel loop, by pipeline
 };
 
 ProfileCounters& Profile();

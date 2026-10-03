@@ -1,5 +1,6 @@
 // eve-emu - scissor, alpha test, stencil, blend, color mask, tag (spec §6.6).
 #include "eve-render.h"
+#include "eve-profile.h"
 #include "eve-simd.h"
 
 namespace EveLib
@@ -160,13 +161,16 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
             dst[c] = out[c];
     if (WritesTag(run))
         run.tag[x] = ctx.tag;
-    if (Mode == LineMode::Probe && x == run.probeX)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = run.primitive;
+        if (x == run.probeX)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = run.primitive;
+        }
     }
 }
 
@@ -188,6 +192,14 @@ void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count
     // DST_ALPHA / ZERO and ONE_MINUS_DST_ALPHA / ONE), the same arithmetic per pixel
     if (!alphaTest && !stencilActive && BlendSpanFast(run, first, rgba, count))
         return;
+#ifdef EVE_PROFILE
+    {
+        char key[96];
+        std::snprintf(key, sizeof key, "blend %u/%u mask %X%s%s", ctx.blendSrc, ctx.blendDst, ctx.colorMask,
+                      alphaTest ? " alpha-test" : "", stencilActive ? " stencil" : "");
+        Profile().generalBlends[key] += count;
+    }
+#endif
     const uint8_t mask[kChannels] = {kMaskRed, kMaskGreen, kMaskBlue, kMaskAlpha};
     // SIMD-CANDIDATE: the blend of a span, four channels per pixel.
     for (uint32_t i = 0; i < count; ++i)
@@ -281,13 +293,16 @@ void ClearLine(LineRun& run, uint32_t mask)
     }
     if ((mask & kClearTag) && WritesTag(run))
         std::memset(run.tag + first, ctx.clearTag, count);
-    if (Mode == LineMode::Probe && (mask & kClearColor) && run.probeX >= first && run.probeX < last)
+    if constexpr (Mode == LineMode::Probe)
     {
-        EvePixelSource& p = *run.probe;
-        p.written = 1;
-        p.commandIndex = run.commandIndex;
-        p.command = run.commandWord;
-        p.primitive = kPrimNone;
+        if ((mask & kClearColor) && run.probeX >= first && run.probeX < last)
+        {
+            EvePixelSource& p = *run.probe;
+            p.written = 1;
+            p.commandIndex = run.commandIndex;
+            p.command = run.commandWord;
+            p.primitive = kPrimNone;
+        }
     }
     run.fillCost += static_cast<uint64_t>(last - first) * (kFillCostScale / kPrimitivePixelsPerClock);
 }
