@@ -1594,6 +1594,12 @@ uint16_t Screen::GetDisplayHeight() const
 
 /// endregion </Display viewport>
 
+uint16_t Screen::FirstStoredRasterLine() const
+{
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
+    return static_cast<uint16_t>(timing.vSyncLines + timing.vBlankLines);
+}
+
 const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
 {
     const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&

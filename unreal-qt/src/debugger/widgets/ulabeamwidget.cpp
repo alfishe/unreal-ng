@@ -70,11 +70,15 @@ void ULABeamWidget::refresh()
     _totalPixelsPerLine = timing.pixelsPerLine;
     _totalLines = timing.vSyncLines + timing.vBlankLines + timing.fullFrameHeight;
     _visibleWidth = (mode == M_P384) ? rd.fullFrameWidth : (rs.rightBorderAreaEnd + 1) * rs.pixelsPerTState;
-    _visibleHeight = timing.fullFrameHeight;
+    // The stored picture starts at the first stored raster line: after vSync + vBlank, 16 lines earlier in the
+    // Pentagon overscan (it stores 16 lines more on top). The image rows are the framebuffer's rows, so the
+    // visible window and the paper outline are placed from that line, not from the timing row
+    const int firstStoredLine = screen->FirstStoredRasterLine();
+    _visibleHeight = rd.fullFrameHeight;
     _visibleOffsetX = 0;
-    _visibleOffsetY = timing.vSyncLines + timing.vBlankLines;
+    _visibleOffsetY = firstStoredLine;
     _paperOffsetX = rs.screenLineAreaStart * rs.pixelsPerTState;
-    _paperOffsetY = timing.screenOffsetTop;
+    _paperOffsetY = timing.vSyncLines + timing.vBlankLines + timing.screenOffsetTop - firstStoredLine;
     _paperWidth = (rs.screenLineAreaEnd - rs.screenLineAreaStart + 1) * rs.pixelsPerTState;
     _paperHeight = timing.screenHeight;
     _fbPaperOffsetX = rd.screenOffsetLeft;

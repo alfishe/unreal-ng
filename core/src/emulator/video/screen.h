@@ -1209,6 +1209,11 @@ public:
     /// lines fewer - docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
     const RasterDescriptor& GetTimingDescriptor(VideoModeEnum mode) const;
 
+    /// The raster line (0 = start of vSync) the framebuffer's first stored row is drawn from: after vSync + vBlank in
+    /// every mode; the Pentagon overscan stores 16 lines more on top, so its first row is 16 lines earlier. Every
+    /// beam-to-pixel mapping (the T-state LUT, TransformTstateToFramebufferCoords, the ULA beam widget) uses it
+    virtual uint16_t FirstStoredRasterLine() const;
+
     /// Beam position, zones and the mode pixel under the beam for a frame T
     /// Virtual: a family whose raster is not blank-first (the Sprinter) describes its own zones
     virtual BeamPosition DescribeBeam(uint32_t tInFrame) const;
