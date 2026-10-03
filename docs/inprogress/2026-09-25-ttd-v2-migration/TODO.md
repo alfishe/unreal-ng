@@ -85,6 +85,8 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
   - [x] Every device checked against its descriptor and the engine's device table built at registration (refused by name); `TTDSyncedTime` on TSFM, MoonSound, GS and NeoGS, checked at every capture and after every restore (2026-10-03)
   - [x] ~~Device-set change as an event~~ — dropped 2026-10-03: the device set is fixed for a session (D38); a change while recording stays refused
 
+- [x] Phase 2 results against the quality bar (D33): [phase-2-results.md](phase-2-results.md), baseline `testdata/ttd/bench/engine-phase2-full.json` (2026-10-03)
+
 ## Phase 3 — Everything a replay needs
 
 Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).

@@ -66,7 +66,10 @@ namespace
 {
 /// The non-zero runs of a difference: [start, end) each, runs closer than
 /// 4 zero bytes merged (a 3-byte header costs more than the gap), split at
-/// 255 bytes (the length is one byte)
+/// 255 bytes (the length is one byte). A changed piece's difference is mostly
+/// zero: zeros are skipped 8 bytes at a time (byte by byte this scan cost more
+/// than compressing the difference). SIMD-CANDIDATE(ttd-ranges-scan): the
+/// zero skip and the run walk are a vector compare-to-zero and a mask scan
 template <typename F>
 void ForEachRun(const uint8_t* diff, size_t size, F&& f)
 {
@@ -76,6 +79,14 @@ void ForEachRun(const uint8_t* diff, size_t size, F&& f)
         if (diff[i] == 0)
         {
             ++i;
+            while (i + 8 <= size)
+            {
+                uint64_t word;
+                std::memcpy(&word, diff + i, 8);
+                if (word != 0)
+                    break;
+                i += 8;
+            }
             continue;
         }
         size_t end = i + 1;
