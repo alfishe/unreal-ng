@@ -111,3 +111,15 @@ std::function<void(CONFIG&)> ProfiKeyboardOverride(ProfiKeyboard keyboard)
         return {};
     return [keyboard](CONFIG& config) { config.profi_keyboard = static_cast<uint8_t>(keyboard); };
 }
+
+std::function<void(CONFIG&)> ProfiClockOverride(uint8_t zq3MHz, int ayClockNew)
+{
+    if (zq3MHz == 0 && ayClockNew < 0)
+        return {};
+    return [zq3MHz, ayClockNew](CONFIG& config) {
+        if (zq3MHz)
+            config.profi_zq3_mhz = ProfiClampZq3(zq3MHz);
+        if (ayClockNew >= 0)
+            config.profi_ay_clock_new = ayClockNew ? 1 : 0;
+    };
+}

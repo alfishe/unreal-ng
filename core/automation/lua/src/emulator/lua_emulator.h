@@ -4509,6 +4509,10 @@ public:
                 result["profi_sync_prom"] = ProfiSyncPromName(
                     ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
                 result["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+                // The hi-res clocks (design-hires.md): the CPU clock there (no turbo), the v5's ZQ3 and SB7
+                result["profi_hires_cpu_hz"] = ProfiHiresCpuHz(config.mem_model == MM_PROFI, config.profi_zq3_mhz);
+                result["profi_zq3_mhz"] = static_cast<int>(ProfiClampZq3(config.profi_zq3_mhz));
+                result["profi_ay_clock"] = (config.mem_model == MM_PROFI && config.profi_ay_clock_new) ? "new" : "old";
             }
             result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;

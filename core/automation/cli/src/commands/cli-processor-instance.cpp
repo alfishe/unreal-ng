@@ -93,6 +93,50 @@ bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONF
 /// WebAPI's "profi": {"keyboard"}), added to `machine` (the other model options); removed from args
 bool TakeProfiOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& machine, std::string& error)
 {
+    // --profi-zq3 <16..24> and --profi-ay-clock <old|new>: the hi-res clocks ([PROFI] ZQ3MHz / AyClock)
+    uint8_t zq3 = 0;
+    int ayNew = -1;
+    for (size_t i = 0; i < args.size();)
+    {
+        if (args[i] == "--profi-zq3" || args[i] == "--profi-ay-clock")
+        {
+            const bool isZq3 = args[i] == "--profi-zq3";
+            const std::string value = i + 1 < args.size() ? args[i + 1] : "";
+            if (isZq3)
+            {
+                const int mhz = std::atoi(value.c_str());
+                if (mhz < 16 || mhz > 24 || (mhz % 2) != 0)
+                {
+                    error = "--profi-zq3 expects an even 16..24 (MHz)";
+                    return false;
+                }
+                zq3 = static_cast<uint8_t>(mhz);
+            }
+            else
+            {
+                if (value != "old" && value != "new")
+                {
+                    error = "--profi-ay-clock expects old | new";
+                    return false;
+                }
+                ayNew = value == "new" ? 1 : 0;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            continue;
+        }
+        i++;
+    }
+    if (std::function<void(CONFIG&)> clocks = ProfiClockOverride(zq3, ayNew))
+    {
+        if (!machine)
+            machine = std::move(clocks);
+        else
+            machine = [first = machine, clocks](CONFIG& config) {
+                first(config);
+                clocks(config);
+            };
+    }
+
     for (size_t i = 0; i < args.size(); i++)
     {
         if (args[i] != "--profi-keyboard")

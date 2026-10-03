@@ -310,9 +310,16 @@ ProfiXtKbc (44).
 v3 floating bus: an unanswered `IN` with A0=1 reads the pixel byte the video latch holds (one 4-T tick ahead of the
 displayed byte, page 5 or 7 per #7FFD bit 3), `#FF` in the border; no attribute bytes. The v5 reads `#FF`.
 
+## Hi-res timing (#DFFD bit 7)
+The write switches at once: CPU v3 3 MHz, v5 ZQ3 / 4 (5 MHz with the default 20 MHz crystal; TURBO doubles); frame
+and INT from the sync PROM's upper half (v3 320 lines, 48.83 Hz; v5 312 lines); AY 1.5 MHz (v5 `[PROFI]
+AyClock=new`: 1.75 MHz always). Waits: v5 0-1 T around each video request (1-3 in turbo), v3 none at 3 MHz. The v3
+floating bus reads the hi-res cell bytes. Create with `profi_zq3_mhz` / `profi_ay_clock`; `inspect_state
+aspects:["paging"]` reports `profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clock`.
+
 ## Known limitations
-The 512x240 hi-res mode (DS80) has no waits, no floating bus and no 15 MHz third crystal. The v5 turbo waits are an
-approximation. The BIOS menu entries (TR-DOS, Sinclair, 128) are verified on both boards; CP/M boots from a disk.
+The v5 turbo and hi-res wait rules are models of the 5.06 arbiter (M). The BIOS menu entries (TR-DOS, Sinclair, 128)
+are verified on both boards; CP/M boots from a disk.
 )md";
 
 const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)

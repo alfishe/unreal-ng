@@ -74,6 +74,15 @@
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";
     for (const char* value : {"default", "matrix", "xt", "xttable"})
         schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["enum"].append(value);
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["zq3_mhz"]["type"] = "integer";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["zq3_mhz"]["description"] =
+        "v5: the third crystal ZQ3, 16-24 MHz, even ([PROFI] ZQ3MHz, default 20): the hi-res CPU clock is ZQ3 / 4, "
+        "ZQ3 / 2 with TURBO";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["enum"].append("old");
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["enum"].append("new");
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["ay_clock"]["description"] =
+        "v5 jumper SB7 ([PROFI] AyClock): old = the AY at 1.5 MHz in hi-res (default), new = 1.75 MHz always";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["description"] =
         "A PROFI / PROFI3's keyboard ([PROFI] Keyboard=): matrix (the 40-key Spectrum matrix), xt (the PROFI-XT "
         "controller running its reconstructed firmware on the MCS-48 core: PC keys, F1-F10 / Home / End / PgUp / PgDn / "

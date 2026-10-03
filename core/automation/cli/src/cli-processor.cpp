@@ -585,6 +585,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  create [model] [--ram-power-on random|zero] - Create an emulator instance without starting it" << NEWLINE;
     oss << "                (--ram-power-on zero: every RAM page reads 0; random: noise in the screen pages like real DRAM;" << NEWLINE;
     oss << "                default: [MISC] RAMPowerOn of the model's unreal.ini)" << NEWLINE;
+    oss << "                Profi: --profi-keyboard matrix|xt|xttable|default, --profi-zq3 16..24 (v5 hi-res crystal, MHz)," << NEWLINE;
+    oss << "                --profi-ay-clock old|new (v5 SB7: the AY at 1.5 MHz in hi-res, or 1.75 always)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;

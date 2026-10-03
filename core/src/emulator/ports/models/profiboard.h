@@ -207,6 +207,16 @@ const char* ProfiKeyboardName(ProfiKeyboard keyboard);
 /// CLI --profi-keyboard, MCP profi_keyboard, Lua / Python profi_keyboard); Default = no override
 std::function<void(CONFIG&)> ProfiKeyboardOverride(ProfiKeyboard keyboard);
 
+/// Create-time override of the hi-res clocks: `zq3MHz` 0 = keep [PROFI] ZQ3MHz (else 16-24, even); `ayClockNew` -1 =
+/// keep [PROFI] AyClock, 0 = old (1.5 MHz in hi-res), 1 = new (1.75 MHz always). Empty when nothing changes
+std::function<void(CONFIG&)> ProfiClockOverride(uint8_t zq3MHz, int ayClockNew);
+
+/// The CPU clock in hi-res for a board (Hz, no turbo): v3 3 MHz, v5 ZQ3 / 4
+constexpr uint32_t ProfiHiresCpuHz(bool v5, uint8_t zq3MHz)
+{
+    return static_cast<uint32_t>(ProfiHiresClockNum(v5, ProfiClampZq3(zq3MHz), false)) * 500000u;
+}
+
 class EmulatorContext;
 /// The keyboard a running Profi has fitted (after a fallback: no firmware image -> XtTable); Default when the
 /// machine is no Profi. The one source every automation surface reports (paging.profi_keyboard)

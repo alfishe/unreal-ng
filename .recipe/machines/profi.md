@@ -75,8 +75,37 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | v5 video WAIT at 3.5 MHz (`[PROFI] WaitPhase` / `WaitConfig` / `RomWait`), v3 turbo waits, v5 turbo waits (approximation) | implemented (feature `contention`) |
 | v3 floating bus (pixel byte on an unanswered `IN` with A0 = 1) | implemented |
 | PROFI-XT keyboard controller (`[PROFI] Keyboard=XT`, v5 default): PC keys, EXT on `#BFFE` bit 5, the Z80 wait, Ctrl + Alt + Del; `XTTable` (no firmware), `Matrix` (v3 default) | implemented — see [Keyboard](#keyboard) |
-| The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads, the 15 MHz third crystal, DS80 waits | not implemented |
+| Hi-res (`#DFFD` bit 7) timing: the CPU on its hi-res clock (v3 3 MHz, v5 ZQ3 / 4 = 5 MHz; turbo doubles), frame and INT from the sync PROM's upper half (v3: 320 lines, 48.83 Hz), hi-res waits (v5 model), v3 hi-res floating bus | implemented — see [Hi-res](#hi-res-512x240) |
+| The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards; CP/M boots from a disk |
+
+### Hi-res (512x240)
+
+Writing `#DFFD` bit 7 switches the machine at once: the CPU clock, the frame and the INT position (and the AY clock).
+
+| | v3 (`PROFI3`) | v5 (`PROFI`) |
+|:--|:--|:--|
+| CPU | 3 MHz (6 with TURBO) | ZQ3 / 4: 5 MHz with the 5.06's 20 MHz crystal (10 with TURBO); `[PROFI] ZQ3MHz=16..24` |
+| Frame | 320 lines (0a1d PROM), 61440 T at 3 MHz | 312 lines, 99840 T at 5 MHz |
+| AY | 1.5 MHz | 1.5 MHz, or 1.75 with `[PROFI] AyClock=new` (jumper SB7) |
+
+Create-time: WebAPI `"profi": {"zq3_mhz": 16, "ay_clock": "new"}`, CLI `create PROFI --profi-zq3 16 --profi-ay-clock
+new`, MCP `emulator_manage action=create model=PROFI profi_zq3_mhz=16`. The paging state reports
+`profi_hires_cpu_hz`, `profi_zq3_mhz`, `profi_ay_clock`; the status line and `current_z80_frequency` show the clock
+in force.
+
+The v5 BIOS draws its menu in hi-res, so a freshly started `PROFI` shows it a few seconds after power-on:
+
+```bash
+ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"PROFI"}' | jq -r .id)
+sleep 8
+curl -s "$BASE/emulator/$ID/state/paging" | jq '{profi_hires_cpu_hz, profi_zq3_mhz, profi_ay_clock}'
+curl -s "$BASE/emulator" | jq '.emulators[] | {model, video_mode, speed_multiplier}'
+```
+
+Expected (verified 2026-10-03): `profi_hires_cpu_hz` 5000000, `profi_zq3_mhz` 20, `profi_ay_clock` `"old"`;
+`video_mode` `"PROFIHR"` and `speed_multiplier` 1.43 (5 MHz / 3.5 MHz) while the BIOS menu is up. With
+`"profi": {"zq3_mhz": 16, "ay_clock": "new"}` at create: 4000000, 16, `"new"`.
 
 ### Keyboard
 

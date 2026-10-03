@@ -71,7 +71,9 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] H3: hi-res waits (v5: 0-1 T around each video request at ZQ3/4, 1-3 T in turbo, ROM one-shot; #7FFD bit 5
   runs the requests all line long; v3: none at 3 MHz, the 2/3 rule in turbo) and the v3 hi-res floating bus (the
   cell's two bytes by tick half; which latch holds which page is open)
-- [ ] H4: automation surfaces for ZQ3MHz / AyClock and the hi-res clock in state; recipes; checks against the forum's
-  speed-test figures and the CP/M disk
+- [x] H4: create-time `zq3_mhz` / `ay_clock` (WebAPI + OpenAPI, CLI `--profi-zq3` / `--profi-ay-clock`, MCP),
+  `profi_hires_cpu_hz` / `profi_zq3_mhz` / `profi_ay_clock` in the paging state (WebAPI, CLI, Lua, Python), the
+  machine list's `speed_multiplier` as a fraction (1.43 in hi-res); recipe verified live
+- [ ] Check against the forum's hi-res speed-test figures (5.06: 1.50 / 2.45) once the BIOS speed-test loop is found
 - [ ] A/B of H1 (the screen descale gained a branch)
 
