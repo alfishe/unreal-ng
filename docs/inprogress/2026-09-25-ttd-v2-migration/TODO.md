@@ -37,6 +37,28 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [ ] ZX-Evo AVR and Scorpion SMUC EEPROMs
 - [ ] Phase check: D33 on the matrix, bytes per stream against the E6 model
 
+## State registry gaps ([state-registry.md](state-registry.md#gaps))
+
+Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fixed in v1 (it runs the emulator until Phase 5) and carried into the engine. Order follows severity.
+
+- [ ] 1 Network payload references inside checkpoints survive eviction (absolute ids, as the port journal)
+- [ ] 2 GS lightweight blob: variable size; its store becomes region 2
+- [ ] 3 Region-only memories restored (NeoGS, MoonSound): needs the engine restore path, or v1 blobs until Phase 5
+- [ ] 4 WD1793 command context on every Beta machine (re-record the TTD fixtures)
+- [ ] 5 ZX keyboard matrix in the checkpoint
+- [ ] 6 `scorpion_turbo` stored, waits resynced after a restore
+- [ ] 7 `current_z80_frequency` restored
+- [ ] 8 SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state and contents
+- [ ] 9 TS-Conf: ZX-Evo AVR volatile bytes
+- [ ] 10 ZX-Evo AVR and SMUC EEPROMs as regions 15, 16
+- [ ] 11–13 Media: written sectors, write-protect toggles, queued swaps as events and media versions (decision 25)
+- [ ] 14 ESP module `_zxLine`
+- [ ] 15 ZX-Evo F12 timer on emulated time
+- [ ] 16 Edge cases (NMI pending count, +3 floating-bus byte, disk autostart, RZX cursor, "incomplete" network state)
+- [ ] 17 Telemetry streams (decision 35), starting with the VDAC2 line-budget metrics if emulation does not read them
+- [ ] 18 `ttd.ksy:532` NeoGS memory note
+- [ ] Fill the registry's Size and Variability columns from per-stream benchmark measurements
+
 ## Phase 2 — Device state with versions
 
 Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).

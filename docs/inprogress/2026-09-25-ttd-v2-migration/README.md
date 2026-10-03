@@ -4,7 +4,7 @@ This folder plans the move of the time-travel debugger (TTD) from the engine on 
 
 ## 1. Roadmap
 
-v2 is a new engine, `ttd::TimeTravelEngine`, built next to v1 and checked against it byte for byte ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Users keep v1 until Phase 5 switches the emulator to the engine. What the engine supports from its first commit, and the conflicts settled before coding, are in [engine-decisions.md](engine-decisions.md) (decisions 1–33, cited below as D1…D33).
+v2 is a new engine, `ttd::TimeTravelEngine`, built next to v1 and checked against it byte for byte ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Users keep v1 until Phase 5 switches the emulator to the engine. What the engine supports from its first commit, and the conflicts settled before coding, are in [engine-decisions.md](engine-decisions.md) (decisions 1–36, cited below as D1…D36). Every item of state time travel records, rebuilds or leaves out, with its class (required, derived, telemetry, host-facing) and the known gaps: [state-registry.md](state-registry.md).
 
 | Phase | Name | Status | Size | Design |
 |---|---|---|---|---|

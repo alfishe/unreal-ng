@@ -111,6 +111,28 @@ Fixed as part of this change, without further discussion:
 
 Sizes and counted work run in the CI gate; times in a manual run of the matrix, as the benchmark rules already require.
 
+## H. Classes of recorded data
+
+Decided 2026-10-02. Every item the engine records belongs to exactly one class, and the class decides how the engine treats it. The full list of items, with their class, is the [state registry](state-registry.md).
+
+| # | Decision |
+|---|---|
+| 34 | Recorded data has three classes, declared per item by the device that owns it: **required**, **derived** and **telemetry** |
+| 35 | Telemetry is an optional frame-boundary stream (decision 19), one stream per kind, switched on and off at run time. It is never part of the state a restore needs |
+| 36 | The [state registry](state-registry.md) lists every item the engine records or deliberately leaves out, with its class, its stream and its size. A device change that adds or drops state updates the registry in the same commit |
+
+| Class | What it is | Examples | How the engine treats it |
+|---|---|---|---|
+| **Required** | State without which replay from a checkpoint diverges: memory, registers, latches, internal counters of chips (timers, dividers, FIFO positions), the emulated time base of real-time clocks, media versions | RAM pages, AY registers and envelope counters, WD1793 command phase, FT812 memory and its control state | Stored in every checkpoint that changed it; included in integrity checks and in the determinism comparison (QR-3); a missing item is a restore error, never a silent default |
+| **Derived** | Caches a device rebuilds from required state | Sprinter palette RGBA cache and INT list; FT812 state rebuilt by `EveMemoryRestored`; decoded page tables; renderer lookup tables | Not stored. After a restore the engine calls the device's after-restore hook (`onRestored`, decision 23), which rebuilds it |
+| **Telemetry** | Values that emulation never reads back but that a user or a debugger wants to see at a past position | VDAC2 line-budget metrics of the last frame, drive and IDE activity LEDs, per-frame statistics (port accesses, contended cycles), audio peak levels | An optional stream (decision 19): off by default, one mask check per frame when off; outside integrity checks and determinism comparison; dropped first when the memory budget is reached; a position without it shows "no data", and a file without it loads without error |
+
+**How a device decides.** If the emulation of any later instruction can read a value, directly or through a computation, it is *required*. If it can be recomputed from required state at any moment, it is *derived*. Only what neither applies to is *telemetry*. When in doubt, required: a wrong "telemetry" label breaks replay, a wrong "required" label only costs bytes.
+
+**Host-facing state is none of the three.** The audio ring, the host framebuffer, open host files of disk images, network sockets and host timers are not recorded. A restore reconnects them to the restored state (the picture is composed by replay, `ttddisplayparticipant.h`; media are versions per decision 25; network input comes from the event journal, decision 24).
+
+**Existing items to reclassify.** The VDAC2 card blob (`Vdac2`, id 43) carries the line-budget metrics of the last finished frame next to the chip's control state. If emulation does not read them back they move to a telemetry stream when the device blobs move to the engine (Phase 2). The registry marks every such case.
+
 ## Devices that cannot be recorded yet
 
-Not decisions for the core, but work for the steps that add them: NeoGS RAM and flash, MoonSound wave memory, both EEPROMs (Phase 1 device regions); VDAC2 (refuses to record until regions exist); ZX-Poly (refuses per instance; decision 22); the WD1793 context outside the Sprinter; ids 33 and 34 reserved without a serializer.
+Not decisions for the core, but work for the steps that add them: both EEPROMs (Phase 1 device regions; NeoGS RAM and flash, MoonSound wave memory, Sprinter video and fast RAM and the VDAC2 chip memory are engine regions since Step 6); ZX-Poly (refuses per instance; decision 22); the WD1793 context outside the Sprinter; ids 33 and 34 reserved without a serializer.
