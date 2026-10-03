@@ -82,5 +82,5 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   `profi_hires_cpu_hz` / `profi_zq3_mhz` / `profi_ay_clock` in the paging state (WebAPI, CLI, Lua, Python), the
   machine list's `speed_multiplier` as a fraction (1.43 in hi-res); recipe verified live
 - [ ] Check against the forum's hi-res speed-test figures (5.06: 1.50 / 2.45) once the BIOS speed-test loop is found
-- [ ] A/B of H1 (the screen descale gained a branch)
+- [x] A/B of H1-H4 and the AY clock: no measurable cost on 48K / Pentagon / Scorpion / TurboSound ([design-hires.md](design-hires.md) 5)
 

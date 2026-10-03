@@ -100,3 +100,22 @@ TurboSound device that the machine sets at run time:
 - TTD across a v3 hi-res switch replays exactly (`V3HiresFrameSwitchesReplayExactly`). What first looked like a
   divergence was the test stopping on z80.t, which a v3 entering hi-res rescales down by 6/7: positions inside a
   frame compare in TTD units (`EmulatorState::TtdTInFrame`), never in CPU T.
+
+## 5. Cost (A/B)
+
+`BM_HostFrame_*` and `BM_TurboSoundFrame_*`, A = master ecb6e0608, B = the branch at 5a6b0af96 (H1-H4, the AY
+clock, the XT keyboard), Release, 2026-10-03, interleaved rounds. The machine was loaded (1-minute load 10-25), so
+only paired differences count; round-to-round noise was about +-2 %.
+
+| Benchmark | Paired differences B / A | Mean |
+|:--|:--|:--|
+| 48K fast (12 rounds) | +0.9 +1.9 +0.8 +4.8 -3.1 -3.2 | +0.4 % |
+| 48K debug (12 rounds) | +0.2 +0.4 +0.3 +0.7 -2.1 -2.4 | -0.5 % |
+| Pentagon fast (12 rounds) | -0.2 +0.5 +0.6 -1.9 +1.0 -0.4 | -0.1 % |
+| Scorpion fast (10 rounds) | -0.3 -1.7 -0.1 +0.1 +0.6 | -0.3 % |
+| TurboSound frame, player load (10 rounds) | -1.7 -1.6 -5.2 -0.9 -0.6 | -2.0 % |
+
+No measurable cost on the other machines: the clock denominator and the AY clock sit behind `den == 1` / default
+clock fast paths. The Profi itself got 12-21 % faster in the same run, because its shipped config moved from TSFM to
+one AY (`TurboSound=Single`).
+
