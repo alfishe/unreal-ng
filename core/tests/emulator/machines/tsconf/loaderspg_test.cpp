@@ -21,6 +21,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/storage/memorydisk.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/screen.h"
 #include "loaders/snapshot/loaderspg.h"
@@ -169,6 +171,62 @@ TEST(LoaderSPG_Test, LoadsAndRunsOnTsConf)
     EXPECT_EQ(ts.regs[TsConfReg::Page0], 0x14);
     EXPECT_EQ(ts.regs[TsConfReg::MemConfig], 0x0F) << "RAM at #0000, writable, normal mode";
     EXPECT_EQ(ts.regs[TsConfReg::VConfig], 0x41);
+    manager->RemoveEmulator(emulator->GetUUID());
+}
+
+/// A program starts with the SD card initialized and idle, as the shell leaves it: a
+/// load that lands while the TS-BIOS initializes or streams from the card (it boots
+/// from SD by default) must not hand the program the rest of that stream or a card
+/// it has to initialize first. Seen as R-Type VDAC2's loader dying in its
+/// error loop when the game was opened right after its folder went into sd.zc
+TEST(LoaderSPG_Test, ProgramStartsWithTheSdCardIdle)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("spg-sd", "TSL", 4096, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    auto* decoder = dynamic_cast<PortDecoder_TSConf*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    SdCardSpi& card = decoder->GetSdCard();
+    ASSERT_TRUE(card.insert(std::make_unique<MemoryDisk>(64), SdCardSpi::WriteMode::Session, SdCardSpi::Type::SDHC));
+
+    // The firmware's side: initialize the card and start a multi-block read
+    card.select(true);
+    auto command = [&card](uint8_t index, uint32_t arg, uint8_t crc) {
+        for (uint8_t byte : {static_cast<uint8_t>(0x40 | index), static_cast<uint8_t>(arg >> 24), static_cast<uint8_t>(arg >> 16),
+                             static_cast<uint8_t>(arg >> 8), static_cast<uint8_t>(arg), crc})
+            card.exchange(byte);
+        for (int i = 0; i < 16; i++)
+            if (const uint8_t r = card.exchange(0xFF); r != 0xFF)
+                return r;
+        return uint8_t{0xFF};
+    };
+    ASSERT_EQ(command(0, 0, 0x95), 0x01);
+    ASSERT_EQ(command(8, 0x1AA, 0x87), 0x01);
+    for (int i = 0; i < 4; i++)
+        card.exchange(0xFF);
+    uint8_t ready = 0xFF;
+    for (int tries = 0; tries < 100 && ready != 0x00; tries++)
+    {
+        command(55, 0, 0xFF);
+        ready = command(41, 0x40000000, 0xFF);
+    }
+    ASSERT_EQ(ready, 0x00);
+    ASSERT_EQ(command(18, 4, 0xFF), 0x00);
+    for (int i = 0; i < 300; i++)
+        card.exchange(0xFF);  // part way into the stream
+    ASSERT_TRUE(card.InTransfer());
+
+    const std::string path = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "tsconf" / "spg" / "empty.spg").string();
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_FALSE(card.InTransfer()) << "the stream stopped, nothing queued";
+    card.select(true);
+    EXPECT_EQ(command(17, 9, 0xFF), 0x00) << "the program's first command is answered at once, the card still initialized";
+
+    // A card the firmware only reset (CMD0, no ACMD41 yet) starts the program initialized
+    ASSERT_EQ(command(0, 0, 0x95), 0x01);
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    card.select(true);
+    EXPECT_EQ(command(17, 9, 0xFF), 0x00) << "initialized, as the shell leaves it";
     manager->RemoveEmulator(emulator->GetUUID());
 }
 

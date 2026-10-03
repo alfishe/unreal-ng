@@ -132,6 +132,12 @@ bool LoaderSPG::Commit(EmulatorContext* context, const Image& image, std::string
     }
 
     context->pCore->Reset();
+    // A program is started by the shell (Wild Commander), which leaves the SD card
+    // initialized and idle. The reset above keeps the card's state (its power is
+    // not cut), so a load that lands while the TS-BIOS is initializing or streaming
+    // from the card (it boots from SD by default) would hand the program a card
+    // mid-transfer or not initialized, which its driver does not expect
+    decoder->GetSdCard().LeaveForProgram();
 
     // The memory map a TS-Conf SPG expects: BASIC-48 at #0000, RAM 5 / 2 / page 3
     decoder->WriteRegister(TsConfReg::MemConfig, 0x01);
