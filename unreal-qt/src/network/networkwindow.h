@@ -24,6 +24,7 @@
 class EmulatorBinding;
 class QCheckBox;
 class QComboBox;
+class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -131,6 +132,8 @@ private:
     QPushButton* _revert = nullptr;
     QLabel* _message = nullptr;
     QLabel* _notFitted = nullptr;
+    QGroupBox* _slotsBox = nullptr;     ///< expansion slots (the Sprinter's ISA slots): what is plugged, what it uses
+    QLabel* _slots = nullptr;
     QTreeWidget* _tree = nullptr;
     QSet<QString> _expanded;
     QWidget* _settingsPage = nullptr;

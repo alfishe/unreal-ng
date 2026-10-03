@@ -205,8 +205,7 @@ bool KindAvailable(CardKind kind, std::string* why)
             reason = "the ISA RAM card is ISA phase I3, not built yet";
             break;
         case CardKind::Ne2000:
-            reason = "the NE2000 card is network phase SN1, not built yet";
-            break;
+            break;   // network phase SN1: NetworkManager builds the board, the Sprinter fits it
         case CardKind::El3c509b:
             reason = "the 3C509B card is network phase SN5, not built yet";
             break;

@@ -116,6 +116,8 @@ public:
 
     void ApplyHostEvent(const ttd::TTDNetInput& net, const uint8_t* payload);
     void ApplyLinkReset();
+    /// A guest stream (TCP connected or connecting, a serial line) a link reset would end
+    bool HasResettableStreams() const;
 
     // --- State (automation, tests) ----------------------------------------
 

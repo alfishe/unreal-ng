@@ -56,6 +56,7 @@
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -2943,6 +2944,27 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Isa(emulator->GetContext()));
+        });
+        // Ethernet frames of the frame-level cards (EthernetAccess): the capture, a frame towards a card
+        lua.set_function("network_frames", [this](sol::this_state s, sol::optional<std::string> link, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!EthernetAccess::Inject(emulator->GetContext(), link, hex, "Lua network_inject_frame", error))
+                return mouseError(s, error);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, true));
+            return results;
+        });
+        lua.set_function("isa_journal", [this](sol::this_state s, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::IsaJournal(emulator->GetContext(), static_cast<unsigned>(last.value_or(64))));
         });
         auto isaCycle = [this](sol::this_state s, const std::string& action, int slot, sol::object address,
                                int value) -> sol::variadic_results {

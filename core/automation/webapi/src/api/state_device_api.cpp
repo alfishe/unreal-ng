@@ -10,6 +10,7 @@
 #include <emulator/io/rtc/ds12887.h>
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/io/network/networkmanager.h>
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
@@ -819,6 +820,68 @@ void EmulatorAPI::postControlIsa(const HttpRequestPtr& req, std::function<void(c
     }
     Json::Value ret = StateNodeToJson(result);
     ret["success"] = true;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/isa/journal?last=N - the ISA access journal (DeviceState::IsaJournal)
+void EmulatorAPI::getStateIsaJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    const std::string last = req->getParameter("last");
+    const unsigned count = last.empty() ? 64u : static_cast<unsigned>(std::strtoul(last.c_str(), nullptr, 10));
+    ReplyState(DeviceState::IsaJournal(emulator->GetContext(), count), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/network/frames?link=isa2.eth&last=N&format=json|pcap - the gateway's capture
+void EmulatorAPI::getNetworkFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    const std::string link = req->getParameter("link");
+    if (req->getParameter("format") == "pcap")
+    {
+        std::vector<uint8_t> pcap;
+        std::string error;
+        if (!EthernetAccess::Pcap(emulator->GetContext(), link, pcap, error))
+            return ReplyNotFound(error, callback);
+        auto resp = HttpResponse::newHttpResponse();
+        resp->setContentTypeString("application/vnd.tcpdump.pcap");
+        resp->setBody(std::string(pcap.begin(), pcap.end()));
+        resp->addHeader("Content-Disposition", "attachment; filename=\"frames.pcap\"");
+        addCorsHeaders(resp);
+        return callback(resp);
+    }
+    const std::string last = req->getParameter("last");
+    ReplyState(EthernetAccess::Frames(emulator->GetContext(), link,
+                                      last.empty() ? 64u : static_cast<unsigned>(std::strtoul(last.c_str(), nullptr, 10))),
+               callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/network/frame {"link": "isa2.eth", "hex": "..."} - a frame towards a card
+void EmulatorAPI::postNetworkFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("link") || !body->isMember("hex"))
+        return ReplyNotFound("Body must be {\"link\": \"isa2.eth\", \"hex\": \"FFFFFFFFFFFF...\"}", callback,
+                             HttpStatusCode::k400BadRequest);
+    std::string error;
+    if (!EthernetAccess::Inject(emulator->GetContext(), (*body)["link"].asString(), (*body)["hex"].asString(),
+                                "WebAPI network frame", error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    Json::Value ret;
+    ret["success"] = true;
+    ret["note"] = "queued: offered to the card at the next frame boundary";
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

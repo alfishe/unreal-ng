@@ -28,6 +28,16 @@
             "firmware programmed it), frame_bits, rts, dtr, bytes_in, bytes_out, lost (frames the MCU had no room for). "
             "atm2ioesp: the ATM2IOESP card (machine.internal_io says the machine has the connector): fitted, address (its bus "
             "address), the peer fields and the 16550 registers as in com_port. "
+            "slots (machines with expansion slots, the Sprinter's ISA slots): id (isa1 / isa2), bus, label, configured, card, "
+            "not_fitted (why a configured card is missing) and the card's report - an NE2000: chip (RTL8019AS / UM9003 / NE1000), "
+            "base, irq, mac, port_key, link (ethernet-gateway | none), running, irq_level, stalled, registers (cr, isr, imr, rcr, "
+            "tcr, dcr, pstart, pstop, bnry, curr, tpsr, tbcr, rsar, rbcr, crda, par, config1-3), counters (tx_frames, rx_frames, "
+            "rx_filtered, rx_missed, rx_ring_full_waits, tx_no_link, reset_port_reads). ethernet_gateway (with a frame-level "
+            "card): mode nat, router_mac, router_ip, dns_ip, ports (port, mac, queued_frames, dhcp_lease), arp (mac, ip), tcp "
+            "(guest, remote, state, socket, queued_bytes, unacked, guest_window, guest_mss, guest_fin, host_fin, retries), udp, "
+            "forwarded_guest_ports, counters (frames both ways, switched, arp_replies, dhcp, dns, udp, icmp, tcp_connections, "
+            "tcp_refused, retransmits, resets, unsupported, fragments, bad_checksum, runts, queue_drops, ring_full_waits), "
+            "captured_frames. "
             "zifi: the TS AVR firmware's ZiFi (machine.zifi: TS-Conf, a ZX-Evo with avr_firmware ts2016-02 / ts2016-04): "
             "fitted, avr_firmware, api (0 off, 1 on), data_register (zifi | rs232: what #00EF..#BFEF reaches, the last "
             "ZIFR / ZOFR or RIFR / ROFR read decides), er, imr, isr, zibtr, zitor_ms, ribtr, ritor_ms, zifi_rx / zifi_tx "
@@ -84,3 +94,45 @@
         paths[kConfig]["post"]["responses"]["404"]["description"] = "Emulator not found";
         paths[kConfig]["post"]["responses"]["409"]["description"] = "A TTD recording is running";
     }
+    // Ethernet frames of the frame-level cards (core EthernetAccess): the capture and a frame towards a card
+    {
+        const char* kFrames = "/api/v1/emulator/{id}/network/frames";
+        paths[kFrames]["get"]["summary"] = "Get the Ethernet frame capture";
+        paths[kFrames]["get"]["tags"].append("Network");
+        paths[kFrames]["get"]["description"] =
+            "The Ethernet gateway keeps the last 256 frames of the frame-level cards (the Sprinter's NE2000), both ways. "
+            "format=json (default): frames[] with index, frame (the machine frame), direction (to_card / from_card), port, "
+            "length, summary (\"ARP who-has 10.0.2.2 tell 10.0.2.15\", \"IPv4 10.0.2.15:1025 > 192.0.2.10:80 TCP S ...\"), "
+            "hex; link=isa2.eth picks one card, last=N the newest N (default 64). format=pcap: a pcap file "
+            "(LINKTYPE_ETHERNET, timestamps = machine frame x 20 ms) for Wireshark / tcpdump. 404 without a frame-level card.";
+        paths[kFrames]["get"]["parameters"][0]["name"] = "id";
+        paths[kFrames]["get"]["parameters"][0]["in"] = "path";
+        paths[kFrames]["get"]["parameters"][0]["required"] = true;
+        paths[kFrames]["get"]["parameters"][0]["schema"]["type"] = "string";
+        for (const char* q : {"link", "last", "format"})
+        {
+            Json::Value p;
+            p["name"] = q;
+            p["in"] = "query";
+            p["schema"]["type"] = "string";
+            paths[kFrames]["get"]["parameters"].append(p);
+        }
+        paths[kFrames]["get"]["responses"]["200"]["description"] = "The capture (JSON, or a pcap file)";
+        paths[kFrames]["get"]["responses"]["404"]["description"] = "Emulator not found, or no frame-level card";
+
+        const char* kFrame = "/api/v1/emulator/{id}/network/frame";
+        paths[kFrame]["post"]["summary"] = "Inject an Ethernet frame towards a card";
+        paths[kFrame]["post"]["tags"].append("Network");
+        paths[kFrame]["post"]["description"] =
+            "Body {\"link\": \"isa2.eth\", \"hex\": \"FFFFFFFFFFFF525...\"}: a whole frame (14-1514 bytes, no CRC) offered to "
+            "the card at the next frame boundary, as if from the wire (the card's address filter and ring apply). A tool "
+            "edit while TTD records.";
+        paths[kFrame]["post"]["parameters"][0]["name"] = "id";
+        paths[kFrame]["post"]["parameters"][0]["in"] = "path";
+        paths[kFrame]["post"]["parameters"][0]["required"] = true;
+        paths[kFrame]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kFrame]["post"]["responses"]["200"]["description"] = "Queued";
+        paths[kFrame]["post"]["responses"]["400"]["description"] = "Bad body, hex or link";
+        paths[kFrame]["post"]["responses"]["404"]["description"] = "Emulator not found";
+    }
+

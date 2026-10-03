@@ -3,9 +3,13 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_sprinter.h"
+#include "emulator/emulator.h"
+#include "emulator/io/sprinter/isa/cards/isabusdevicecard.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 
+#include <array>
 #include <cstring>
+#include <mutex>
 
 #include "debugger/ttd/sprinter/ttdsprinter.h"
 #include "debugger/ttd/ttdds12887.h"
@@ -45,6 +49,34 @@ constexpr uint16_t kFastRamStreamStart = 0x1000;
 }  // namespace
 
 /// region <Constructors / Destructors>
+
+namespace
+{
+/// The instance numbers of the live Sprinters (the automatic MAC's instance byte): the lowest free one is taken at
+/// construction, so the first machine is 0 whatever ran before (no EmulatorManager lock on the machine thread)
+std::mutex g_instanceMutex;
+std::array<bool, 256> g_instanceUsed{};
+
+uint8_t TakeInstanceNumber()
+{
+    std::lock_guard<std::mutex> lock(g_instanceMutex);
+    for (size_t i = 0; i < g_instanceUsed.size(); ++i)
+    {
+        if (!g_instanceUsed[i])
+        {
+            g_instanceUsed[i] = true;
+            return static_cast<uint8_t>(i);
+        }
+    }
+    return 0xFF;
+}
+
+void ReleaseInstanceNumber(uint8_t number)
+{
+    std::lock_guard<std::mutex> lock(g_instanceMutex);
+    g_instanceUsed[number] = false;
+}
+}  // namespace
 
 PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecoder(context)
 {
@@ -100,6 +132,13 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
         TraceIsaCycle(write, space, slot, address, value);
     });
+    _isaBus.SetClock([this](uint64_t& frame, uint32_t& t, uint16_t& pc) {
+        frame = _state->frame_counter;
+        t = BaseTstate();
+        pc = CpuPc();
+    });
+    _isaBus.SetStallHandler([this](int slot) { StallCpuOnIsa(slot); });
+    _instanceNumber = TakeInstanceNumber();
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_input);
 
@@ -129,6 +168,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 
 PortDecoder_Sprinter::~PortDecoder_Sprinter()
 {
+    ReleaseInstanceNumber(_instanceNumber);
     if (_context->pTape)
         _context->pTape->SetBaseClockTimeBase(false);  // the next model's decoder decides again
 
@@ -1388,6 +1428,68 @@ std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
     if (_sprinterMemory)
         ids.push_back(ttd::PeripheralId::SprinterFastRam);
     return ids;
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.zxBus = false;   // ZX-bus network cards through the adapter: no software (ISA open question Q7)
+    for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
+    {
+        const sprinterisa::SlotConfig& config = _isaBus.Configured(n);
+        const auto kind = static_cast<sprinterisa::CardKind>(config.kind);
+        NetworkCapabilities::Slot slot;
+        slot.id = "isa" + std::to_string(n + 1);
+        slot.bus = "isa";
+        slot.label = StringHelper::Format("ISA slot %d (%s), page #%02X", n + 1, n == 0 ? "J6" : "J7",
+                                          SprinterIsaBus::SlotPage(SprinterIsaBus::Space::Io, n));
+        slot.configured = kind == sprinterisa::CardKind::None ? std::string() : sprinterisa::KindKey(kind);
+        slot.networkCard = kind == sprinterisa::CardKind::Ne2000 || kind == sprinterisa::CardKind::El3c509b ||
+                           kind == sprinterisa::CardKind::SprinterEsp || kind == sprinterisa::CardKind::Modem ||
+                           kind == sprinterisa::CardKind::Dual16552;
+        slot.chip = sprinterisa::ChipName(static_cast<sprinterisa::Ne2000Chip>(config.chip));
+        slot.base = config.base;
+        slot.irq = config.irq;
+        uint8_t mac[6];
+        sprinterisa::EffectiveMac(config, n, NetworkInstanceIndex(), mac);
+        std::copy(mac, mac + 6, slot.mac.begin());
+        slot.portKey = slot.id + ".eth";
+        slot.fit = [this, n](IIoBusDevice* device, std::string& why) {
+            (void)why;
+            if (!device)
+            {
+                _isaBus.Fit(n, nullptr);
+                return true;
+            }
+            _isaBus.Fit(n, std::make_unique<sprinterisa::IsaBusDeviceCard>(*device));
+            return true;
+        };
+        slot.notFitted = [this, n](const std::string& why) { _isaBus.SetRefusal(n, why); };
+        caps.expansionSlots.push_back(std::move(slot));
+    }
+    return caps;
+}
+
+
+uint8_t PortDecoder_Sprinter::NetworkInstanceIndex() const
+{
+    return _instanceNumber;
+}
+
+void PortDecoder_Sprinter::StallCpuOnIsa(int slot)
+{
+    // The card never answers IOCHRDY: the PLD keeps WAIT asserted, the CPU never completes the cycle. Modeled as a
+    // CPU that idles with interrupts off until a reset (Ctrl+Alt+Del, the RESET button) - network open question Q5 A
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80)
+        return;
+    z80->iff1 = 0;
+    z80->iff2 = 0;
+    z80->halted = 1;
+    if (JournalOn())
+        JournalEvent("isa_stall", CpuPc(), -1, slot + 1, -1,
+                     StringHelper::Format("ISA slot %d hangs the bus (a cycle the card never finishes): the CPU waits for RESET",
+                                          slot + 1));
 }
 
 bool PortDecoder_Sprinter::TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,

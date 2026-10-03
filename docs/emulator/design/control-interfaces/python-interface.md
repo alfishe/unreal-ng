@@ -275,6 +275,17 @@ class Emulator:
         isa_latch(value). A cycle with an effect is a tool edit while TTD records. ValueError for
         a bad slot / address / value or on a machine without ISA slots"""
 
+    def isa_journal(self, last: int = 64) -> dict:
+        """The ISA access journal: entries[] (frame, t, pc, slot, access, space, isa_address,
+        cpu_address, what = the card's register name, value)"""
+
+    def network_frames(self, link: str = "", last: int = 32) -> dict:
+        """The Ethernet gateway's frame capture (frame-level cards such as the Sprinter's NE2000):
+        frames[] (index, frame, direction to_card / from_card, port, length, summary, hex).
+        Also network_frames_pcap(link='') -> bytes (a pcap file) and
+        network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
+        ValueError without a gateway / bad hex / unknown link)"""
+
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).

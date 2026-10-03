@@ -36,7 +36,8 @@ come the ISA slots and the network cards (section 3).
 ## 3. Devices, in the owner's order of 2026-10-02
 
 - **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
-  the gateway (SN0-SN2), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
+  zero-window probes, PIO IRQ lines I4), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.

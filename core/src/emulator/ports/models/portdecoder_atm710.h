@@ -1,4 +1,6 @@
 #pragma once
+
+#include "emulator/io/iiobusdevice.h"
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
@@ -38,17 +40,6 @@ class Atm710TurboOverlay;
 /// strobe IORD' / IOWR'. A device answers the addresses it decodes from the
 /// latch (docs/inprogress/2026-10-02-atm2ioesp/reference-atm2ioesp.md).
 /// No interrupt and no wait line on the connector
-class IAtmIoDevice
-{
-public:
-    virtual ~IAtmIoDevice() = default;
-    virtual bool Matches(uint8_t busAddress) const = 0;
-    virtual uint8_t Read(uint8_t busAddress) = 0;
-    virtual void Write(uint8_t busAddress, uint8_t value) = 0;
-    /// The connector's RS line (machine reset)
-    virtual void Reset() = 0;
-};
-
 class PortDecoder_ATM710 : public PortDecoder
 {
     /// region <Constants>
@@ -103,10 +94,10 @@ public:
 
     /// The INTERNAL I/O connector (v7.10 board only): devices plug in by address
     bool HasInternalIo() const { return _v710Board; }
-    void AttachIoDevice(IAtmIoDevice* device);
+    void AttachIoDevice(IIoBusDevice* device);
     /// v7.10 at 7 MHz: one wait state on the WD1793's ports (#1F / #3F / #5F / #7F)
     void AddFdcTurboWait(uint16_t decodedPort);
-    void DetachIoDevice(IAtmIoDevice* device);
+    void DetachIoDevice(IIoBusDevice* device);
     /// The #FB latch: the bus address (TTD; not readable by the Z80 - an IN #FB is the printer status)
     uint8_t IoBusAddress() const { return _ioBusAddress; }
     void SetIoBusAddress(uint8_t address) { _ioBusAddress = address; }
@@ -207,5 +198,5 @@ protected:
     std::unique_ptr<Atm710TurboOverlay> _turboRamOverlay;   ///< created on the first switch to turbo
     bool _turboRamWaitsInstalled = false;
     uint8_t _ioBusAddress = 0x00;                     ///< the #FB latch (CT0..CT7)
-    std::vector<IAtmIoDevice*> _ioDevices;            ///< on the INTERNAL I/O connector
+    std::vector<IIoBusDevice*> _ioDevices;            ///< on the INTERNAL I/O connector
 };

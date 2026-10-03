@@ -80,7 +80,7 @@ struct W5300Socket
 struct NetSocket
 {
     uint16_t id, hostId;
-    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer
+    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer, 6 the Ethernet gateway
     uint32_t cookie;
     uint32_t remoteAddr;
     uint16_t remotePort, listenPort;

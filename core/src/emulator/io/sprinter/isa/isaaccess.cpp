@@ -92,7 +92,7 @@ bool Execute(EmulatorContext* context, const std::string& rawAction, int slot, u
     for (char c : rawAction)
         action.push_back(c == '-' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
 
-    const bool needsSlot = action != "reset" && action != "latch";
+    const bool needsSlot = action != "reset" && action != "latch" && action.rfind("journal", 0) != 0;
     if (needsSlot && slot != 1 && slot != 2)
     {
         error = "slot: 1 or 2";
@@ -129,6 +129,10 @@ bool Execute(EmulatorContext* context, const std::string& rawAction, int slot, u
             bus->WriteLatch(static_cast<uint8_t>(latch & ~SprinterIsaBus::kLatchReset));
         };
     }
+    else if (action == "journal_clear")
+        bus->ClearJournal();
+    else if (action == "journal_on" || action == "journal_off")
+        bus->SetJournalEnabled(action == "journal_on");
     else if (action == "latch")
     {
         edit = [&]() {
@@ -139,7 +143,8 @@ bool Execute(EmulatorContext* context, const std::string& rawAction, int slot, u
     }
     else
     {
-        error = "action: io_read | io_write | io_peek | mem_read | mem_write | mem_peek | reset | latch";
+        error = "action: io_read | io_write | io_peek | mem_read | mem_write | mem_peek | reset | latch | journal_clear | "
+                "journal_on | journal_off";
         return false;
     }
 
@@ -167,6 +172,49 @@ bool Execute(EmulatorContext* context, const std::string& rawAction, int slot, u
 }
 
 }  // namespace IsaAccess
+
+StateNode DeviceState::IsaJournal(EmulatorContext* context, unsigned last)
+{
+    std::string why;
+    SprinterIsaBus* bus = IsaAccess::Find(context, &why);
+    StateNode ret = StateNode::Object();
+    if (!bus)
+    {
+        ret["available"] = false;
+        ret["description"] = why;
+        return ret;
+    }
+    ret["available"] = true;
+    ret["enabled"] = bus->JournalEnabled();
+    ret["capacity"] = static_cast<uint64_t>(SprinterIsaBus::kJournalLength);
+    const auto& journal = bus->Journal();
+    const size_t count = last == 0 || last > journal.size() ? journal.size() : last;
+    StateNode entries = StateNode::Array();
+    for (size_t i = journal.size() - count; i < journal.size(); ++i)
+    {
+        const SprinterIsaBus::JournalEntry& e = journal[i];
+        StateNode n = StateNode::Object();
+        n["frame"] = e.frame;
+        n["t"] = static_cast<uint64_t>(e.t);
+        n["pc"] = Hex(e.pc, 4);
+        if (e.slot >= 0)
+        {
+            n["slot"] = e.slot + 1;
+            n["space"] = e.io ? "io" : "memory";
+            n["access"] = e.write ? "write" : "read";
+            n["address"] = Hex(e.address, 5);
+            n["cpu_address"] = Hex(0xC000 | (e.address & 0x3FFF), 4);
+        }
+        else
+            n["event"] = "bus";
+        n["value"] = Hex(e.value, 2);
+        if (!e.what.empty())
+            n["what"] = e.what;
+        entries.push(std::move(n));
+    }
+    ret["entries"] = entries;
+    return ret;
+}
 
 StateNode DeviceState::Isa(EmulatorContext* context)
 {

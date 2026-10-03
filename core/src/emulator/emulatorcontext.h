@@ -47,6 +47,7 @@ class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 class MediaManager;
+class EthernetGateway;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
@@ -136,6 +137,7 @@ public:
 	Atm2IoEsp* pAtm2IoEsp = nullptr;
 	// The TS AVR firmware's ZiFi block beside the #xxEF COM port (TS-Conf, ZX-Evo + TS firmware); NetworkManager owns it
 	ZiFi* pZiFi = nullptr;
+	EthernetGateway* pEthernetGateway = nullptr;   // the virtual network's switch + router for frame-level cards
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

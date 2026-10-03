@@ -630,3 +630,62 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
   answer is a host event the virtual network journals at the frame boundary. Test: `scriptedhostnet_test.cpp`.
 - **Not done:** the MAME-fork reference captures (T-NET-16) - building the fork with its RTL8019AS card is not cheap;
   the kit's own programs on the emulator are the acceptance (T-NET-8, 9).
+
+### SN1 (2026-10-03, branch `sprinter-isa-network`)
+
+- **`IIoBusDevice`** (`core/src/emulator/io/iiobusdevice.h`): the one card interface of every expansion bus (kind,
+  decode, read / write / peek, reset, I/O range, IRQ line, register names, stall, frame hook, report). The ATM
+  INTERNAL bus moved onto it (`IAtmIoDevice` is gone; `Atm2IoEsp::Peek` reads its UART without side effects); the
+  Sprinter ISA bus wraps it in `IsaBusDeviceCard` (`isa/cards/isabusdevicecard.h`), so a card written once plugs into
+  either.
+- **Slots in the network report**: `NetworkCapabilities::expansionSlots` (not `slots`: Qt's macro). The Sprinter's
+  `DescribeNetwork()` lists `isa1` / `isa2` (bus, label, configured kind, why a card is not fitted); `zxBus` stays
+  false until ISA I2. `NetworkManager` fits the slot cards (`FitSlotCards`) and keeps them across a settings refit:
+  the card is hardware, the feature `network` only takes the cable away (`tx_no_link` counts the lost frames).
+- **`Dp8390`** (`io/network/ethernet/dp8390.*`): pages 0-2 (page 3 to the board), remote DMA both ways with the
+  receive-ring wrap, send packet, the receive ring with its 4-byte header, the address filter (physical, broadcast,
+  multicast hash = top 6 bits of the reflected CRC-32, promiscuous), loopback (datasheet: the frame comes back
+  through the FIFO only), the wire time of a transmit (`((bytes + 20) * 28 + 9) / 10` T at the base clock, computed
+  lazily on the next access). **`Ne2000Board`** (`ne2000board.*`): the three chips of the ISA design -
+  RTL8019AS (ID `'P' 'p'`, page 3 with CONFIG0-4 and the 9346CR bit-bang to the `Eeprom93c46`, byte mode, 16 KB at
+  `#4000`), UM9003 (ID `#20 #01`, page 3 mirrors page 1, reading the reset port stalls the bus: the CPU hangs until
+  RESET DRV, `StallCpuOnIsa`) and NE1000 (8 KB at `#2000`). PROM: the MAC doubled, `#57 #57` at 28-31. MAC
+  `02:53:50:00:<instance>:<slot>` unless `Slot2Mac=` (instance = lowest free number, taken at decoder construction).
+- **TTD**: blob **44 `EthernetNics`** (variable size; 39-43 went to ZiFi / CD audio on master meanwhile): per card
+  its port key, chip, the DP8390 and board state with the packet RAM and EEPROM, then the gateway's state (length
+  + bytes). Registered only when slot cards exist. ISA blob 33 keeps the slot kinds; a recording with another
+  population is refused at load.
+- **Report**: `slots[]` in `state/network` (card report: chip, base, irq, mac, port key, link, the DP8390 registers,
+  counters) on all five surfaces + OpenAPI; `state/isa` adds resources, the Z80 path to them, conflicts and a journal
+  (`state/isa/journal`, 512 entries: frame, T, PC, cycle, register name, value); Qt Network window "Expansion slots".
+- **Tests**: `dp8390_test.cpp` (16), `ne2000board_test.cpp` (7), `sprinternetwork_test.cpp` (7).
+
+### SN2 (2026-10-03, branch `sprinter-isa-network`)
+
+- **`EthernetGateway`** (`io/network/vnet/ethernetgateway.*`, Q9 = A): a switch and a home router on the virtual
+  network's socket API, shared by every frame-level card (`IEthernetLink` / `IEthernetPort`). ARP (router MAC
+  `52:55:0A:00:02:02` answers for every off-card address), IPv4 (checksums checked, fragments counted and dropped),
+  ICMP echo (the router itself, or the virtual network's ping = host ping), UDP flows per (guest IP, port) incl.
+  DHCP (the shared `DhcpServer`, replies broadcast like slirp) and DNS (the virtual network's resolver), TCP
+  terminated per connection (ISN from a hash, MSS / window honored, retransmit after 25 frames doubling, 5 tries,
+  inbound `Forward=` through the vnet listener). Guest id 6 (`SerialGuests::ethernet`) in the virtual network's
+  tables, kept across a refit. Frames wait in the gateway while the card's ring is full (a switch buffer).
+- **Determinism**: everything happens at the frame boundary in a fixed order - the cards' `OnFrame`, the gateway's
+  `OnFrame` (timers, queued frames), then `VirtualNetwork::Pump`, whose host answers the gateway handles at once
+  (`OnNetEvent` -> pump the TCP flow -> deliver). A TTD replay applies the same answers from the journal at the same
+  point, so nothing order-dependent may run after `Pump` (that was the replay divergence found by T-NET-10).
+  `dnsHostQueries` is counted in a replay too (checkpointed state). Leaving the recorded past resets the links only
+  when a guest stream is open (no reset input otherwise: a resumed recording continues exactly).
+- **Frames**: a capture of the last 256 frames both ways; `GET /network/frames` (JSON with a one-line summary per
+  frame, or `format=pcap`), `POST /network/frame` (inject towards a card); CLI `network frames [link] [file.pcap]`,
+  `network frame`; Lua / Python `network_frames`, `network_inject_frame` (Python `network_frames_pcap`); MCP via
+  `invoke_api` (`core/src/emulator/io/network/vnet/ethernetaccess.*` serves all of them).
+- **Tests**: `ethernetgateway_test.cpp` (20: ARP, DHCP, DNS, ICMP, UDP, TCP open / data / close / refused /
+  retransmit / window / forwards / link reset, capture, TTD state round trip); `sprinternetworkkit_test.cpp` (env
+  `UNREAL_SPRINTER_HDD`: DSS 1.71 + the RTL kit from a floppy: `NICINFO` / `NETCFG`, `IFUP` (lease 10.0.2.15), `PING`,
+  `NSLOOKUP`, `WGET` 5000 bytes byte-exact from the scripted server, and a TTD replay of the fetch without the host,
+  every blob equal). Live (2026-10-03): the same plus `NSLOOKUP example.com` and a 20 000-byte `WGET` from a real
+  HTTP server on the host; recipe `.recipe/machines/sprinter-network.md`.
+- **Open**: host-side receive pause (a guest that stops reading is reset above 256 KB queued), zero-window probes,
+  the full guest-key registry (Q10; fixed guest numbers for now), the MAME-fork captures (T-NET-16), PIO IRQ lines
+  (ISA I4; the kit polls), the host-LAN bridge SN6.

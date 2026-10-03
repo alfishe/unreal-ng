@@ -423,6 +423,9 @@ ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time reg
 isa = isa_state()           -- ISA slots (Sprinter): latch, window, slots[] (configured, card, not_fitted, counters); available=false elsewhere
 v, err = isa_io_read(2, "#30A")      -- one ISA I/O cycle in slot 2 at ISA #30A (the RTL8019AS ID byte #50); isa_io_write(slot, addr, v), isa_io_peek(slot, addr)
 ok, err = isa_reset()                -- one RESET DRV pulse to both slots; isa_mem_read / isa_mem_write, isa_latch(v) as well
+j = isa_journal(16)                  -- the last 16 ISA accesses: entries[] (frame, t, pc, access, cpu_address, what = register name, value)
+f = network_frames("isa2.eth", 8)    -- the Ethernet gateway's capture: frames[] (index, frame, direction, port, summary, hex); "" = every card
+ok, err = network_inject_frame("isa2.eth", "FFFFFFFFFFFF...")   -- a frame towards the card, offered at the next frame boundary
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], even_m1, scorpion_turbo_logic (Scorpion), atm710_turbo_waits (ATM Turbo 2+ v7.10: active / off / contention_off), statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD

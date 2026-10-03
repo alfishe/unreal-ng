@@ -27,9 +27,14 @@ Part of the Sprinter program ([2026-09-28-sprinter](../2026-09-28-sprinter/READM
 - [ ] I2 ZX-bus adapter + GS / NeoGS, ProPlay end to end vs MAME (M)
 - [ ] I3 ISA RAM (S), I4 PIO IRQ lines (S)
 - [ ] Network cards (NE2000 Ethernet first, owner decision 2026-10-02; SprinterESP, 3C509B, modem, SprinterSerial):
-  [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4
+  [2026-10-02-sprinter-network](../2026-10-02-sprinter-network/TODO.md), phases SN0-SN6; SN1 needs I1, SN4 needs I4.
+  **SN0-SN2 built 2026-10-03**: the NE2000 sits in slot 2 by default (`IsaBusDeviceCard` over `IIoBusDevice`); the
+  ISA report gained resources, the Z80 path, conflicts and an access journal (`state/isa/journal`)
 - [ ] Deferred: I5 ZX-bus seam + MoonSound, I6 ESS688 / SB Pro, I7 SprinterJoy, I8 Sprinter-FT
 - [x] When I1 lands: research §10 corrections applied to the Sprinter `hardware-reference.md` §11; this folder linked
   from the Sprinter `TODO.md`
-- [ ] T-ISA-15 A/B (`BM_HostFrame_*_Fast`): run with the network phase SN1 (the default NE2000 changes the Sprinter's
-  frame cost); I1 itself touches no shared hot path (window 3's ISA branch sits behind the Sprinter's `_anyRedirect`)
+- [x] T-ISA-15 A/B (`BM_HostFrame_*_Fast`, 2026-10-03, base f00ff9f17 vs the SN2 tree, interleaved, 3 rounds x 3
+  repetitions, load 8-12): 48K 1120-1125 vs 1121-1126 us, Pentagon 1506-1523 vs 1525-1530 us (+0.3 %, inside the run
+  spread), Sprinter 3321-3350 vs 3301-3338 us (no cost from the fitted NE2000). I1 touches no shared hot path
+  (window 3's ISA branch sits behind the Sprinter's `_anyRedirect`); the ATM INTERNAL bus moved to `IIoBusDevice`
+  with the same virtual call

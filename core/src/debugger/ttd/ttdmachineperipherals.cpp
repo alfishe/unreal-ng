@@ -8,6 +8,9 @@
 #include "network/ttdserialport.h"
 #include "network/ttdzifi.h"
 #include "network/ttdzxnetusb.h"
+#include "network/ttdethernetnics.h"
+#include "emulator/cpu/core.h"
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -131,6 +134,13 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         auto zifi = std::make_unique<TTDZiFi>(context);
         registry.Register(PeripheralId::ZiFi, zifi.get());
         ownedSerializers.push_back(std::move(zifi));
+    }
+    // Network cards in expansion slots (the Sprinter's ISA NE2000): hardware, there with the network off too
+    if (context->pCore && context->pCore->GetNetworkManager() && !context->pCore->GetNetworkManager()->SlotCards().empty())
+    {
+        auto nics = std::make_unique<TTDEthernetNics>(context);
+        registry.Register(PeripheralId::EthernetNics, nics.get());
+        ownedSerializers.push_back(std::move(nics));
     }
     if (context->pMachineSerialPeer)
     {

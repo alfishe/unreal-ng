@@ -63,6 +63,33 @@ public:
     /// The card's interrupt request level (ISA phase I4 routes it to the Z84C15 PIO port B)
     virtual bool Irq() const { return false; }
 
+    /// What the card occupies on the ISA bus (the slot report's resources): its I/O range and memory window as
+    /// first..last ISA addresses (false: none), the IRQ line its configuration names (-1: none)
+    virtual bool IoRange(uint32_t& first, uint32_t& last) const
+    {
+        (void)first;
+        (void)last;
+        return false;
+    }
+    virtual bool MemRange(uint32_t& first, uint32_t& last) const
+    {
+        (void)first;
+        (void)last;
+        return false;
+    }
+    virtual int IrqLine() const { return -1; }
+    /// The register a cycle reaches, for the access journal ("CR", "data port"; empty: unnamed). Asked before the
+    /// cycle runs (a page switch in that cycle names the old page's register, as the card decoded it)
+    virtual const char* RegisterName(bool io, uint32_t address, bool write) const
+    {
+        (void)io;
+        (void)address;
+        (void)write;
+        return "";
+    }
+    /// Whether the card hangs the bus (a cycle it never finishes)
+    virtual bool Stalled() const { return false; }
+
     /// The frame boundary
     virtual void FrameEnd() {}
 

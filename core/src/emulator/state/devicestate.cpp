@@ -2061,6 +2061,28 @@ StateNode Network(EmulatorContext* context)
     machine["internal_io"] = st.internalIo;
     machine["zifi"] = st.zifiMachine;
     ret["cards"] = st.cards;
+    // Expansion slots (the Sprinter's ISA slots): what the config puts there, the network card fitted, its report
+    if (!st.expansionSlots.empty())
+    {
+        StateNode& slots = ret["slots"];
+        slots = StateNode::Array();
+        for (const NetworkManager::Status::Slot& s : st.expansionSlots)
+        {
+            StateNode row = StateNode::Object();
+            row["id"] = s.id;
+            row["bus"] = s.bus;
+            row["label"] = s.label;
+            row["configured"] = s.configured.empty() ? std::string("none") : s.configured;
+            row["card"] = s.card.empty() ? std::string("none") : s.card;
+            if (!s.note.empty())
+                row["not_fitted"] = s.note;
+            for (const auto& member : s.details.members)
+                row[member.first] = member.second;
+            slots.push(std::move(row));
+        }
+    }
+    if (st.ethernetGateway.isObject())
+        ret["ethernet_gateway"] = st.ethernetGateway;
     if (!st.notes.empty())
     {
         StateNode& notes = ret["not_fitted"];

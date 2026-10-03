@@ -1121,12 +1121,17 @@ void RegisterInspectState(ToolRegistry& registry)
         "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
+        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers) and the "
+        "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
+        "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
+        "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
         "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; unavailable on other machines - run an "
         "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
-        "mem_write|mem_peek|reset|latch, slot, address, value}), "
+        "mem_write|mem_peek|reset|latch, slot, address, value}; the access journal - who touched which card register, "
+        "frame / T / PC - with invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
@@ -1946,6 +1951,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() + ", MAC " + slot["mac"].asString()
+                                                                      : std::string());
+                                    if (value.isMember("ethernet_gateway"))
+                                    {
+                                        const Json::Value& gw = value["ethernet_gateway"];
+                                        out << "\n[network] ethernet gateway " << gw["router_ip"].asString() << ": "
+                                            << gw["tcp"].size() << " TCP, " << gw["udp"].size() << " UDP flows, frames "
+                                            << gw["counters"]["frames_from_cards"].asUInt64() << " from / "
+                                            << gw["counters"]["frames_to_cards"].asUInt64() << " to the cards";
+                                        for (const Json::Value& port : gw["ports"])
+                                            out << "; " << port["port"].asString() << " lease " << port["dhcp_lease"].asString();
+                                    }
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
@@ -1968,6 +1987,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& slot : value["slots"])
                                         out << "; slot " << slot["slot"].asInt() << ": " << slot["card"].asString()
                                             << (slot.isMember("not_fitted") ? " (" + slot["configured"].asString() + " not fitted: " + slot["not_fitted"].asString() + ")" : std::string());
+                                    // What each card uses and how the Z80 reaches it; conflicts; the access journal's size
+                                    for (const Json::Value& slot : value["slots"])
+                                    {
+                                        if (!slot["enabled"].asBool())
+                                            continue;
+                                        out << "\n[isa] slot " << slot["slot"].asInt() << " " << slot["card"].asString() << ": I/O "
+                                            << slot["resources"]["io"].asString() << ", memory " << slot["resources"]["memory"].asString()
+                                            << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
+                                        if (slot["z80_access"].isMember("io"))
+                                            out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                    }
+                                    for (const Json::Value& conflict : value["conflicts"])
+                                        out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
+                                    out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
                                 }
                             }
                             else if (aspect == "rtc")

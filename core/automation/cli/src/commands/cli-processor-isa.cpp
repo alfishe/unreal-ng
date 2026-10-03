@@ -45,8 +45,26 @@ void CLIProcessor::HandleIsa(const ClientSession& session, const std::vector<std
         ss << "  isa peek <slot> <address> [mem]  - What the card shows (I/O, or memory with 'mem'), no side effect" << NEWLINE;
         ss << "  isa reset                        - One RESET DRV pulse to both slots" << NEWLINE;
         ss << "  isa latch <value>                - Write the #9FBD latch (A19-A14, AEN bit 6, RESET bit 7)" << NEWLINE;
+        ss << "  isa journal [n | clear | on | off] - Who touched which card register (frame, T, PC, register)" << NEWLINE;
         ss << "  Addresses: 20-bit ISA address, decimal, 0x.., #.. or ..h (the NE2000 at #300: isa io 2 #30A)" << NEWLINE;
         session.SendResponse(ss.str());
+        return;
+    }
+
+    if (sub == "journal")
+    {
+        if (args.size() > 1 && (args[1] == "clear" || args[1] == "on" || args[1] == "off"))
+        {
+            StateNode result;
+            std::string error;
+            if (!IsaAccess::Execute(context, "journal_" + args[1], 0, 0, -1, "CLI isa", result, error))
+                session.SendResponse("Error: " + error + NEWLINE);
+            else
+                session.SendResponse("ISA journal " + args[1] + NEWLINE);
+            return;
+        }
+        const unsigned last = args.size() > 1 ? static_cast<unsigned>(std::strtoul(args[1].c_str(), nullptr, 10)) : 32u;
+        session.SendResponse(DeviceState::ToText(DeviceState::IsaJournal(context, last)));
         return;
     }
 

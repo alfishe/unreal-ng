@@ -110,6 +110,10 @@ public:
     /// No ZX-bus until the ISA ZX-bus adapter exists (2026-10-02-sprinter-isa/tdd.md §2, phase I2): the
     /// General Sound / NeoGS of [SOUND] GSType is not fitted
     bool ZxBusPresent() const override { return false; }
+    /// No ZX-bus for network cards (ZXNETUSB / ZX-WiFi refused with the reason), no serial port of its own; the two
+    /// ISA slots take the network cards of [ISA] (network tdd §5.2): NetworkManager builds them, the slot wrapper
+    /// (IsaBusDeviceCard) reaches them
+    NetworkCapabilities DescribeNetwork() override;
     /// The PLD journal (PldJournal below)
     MachineEventJournal* GetMachineEventJournal() override { return &_journal; }
     /// The WD1793 clock and data separator follow the #BD density latch (codes #16 / #17)
@@ -347,6 +351,11 @@ private:
     CovoxBlaster _cbl{_context};
     /// The ISA-8 slots and the #9FBD latch; the population comes from [ISA] at creation
     SprinterIsaBus _isaBus;
+    uint8_t _instanceNumber = 0;   ///< among the live Sprinters (the automatic MAC)
+    /// A card hung its ISA cycle (UM9003 reset port): the CPU waits for RESET - halted, interrupts off
+    void StallCpuOnIsa(int slot);
+    /// The instance's place among the running emulators (the automatic MAC 02:53:50:00:<instance>:<slot>)
+    uint8_t NetworkInstanceIndex() const;
     /// An ISA cycle into the port trace (only while a capture runs)
     void TraceIsaCycle(bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value);
     uint16_t _pc = 0;             ///< PC of the I/O in progress (border writes)

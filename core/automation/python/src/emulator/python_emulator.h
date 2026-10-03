@@ -78,6 +78,7 @@
 #include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
@@ -2305,6 +2306,25 @@ namespace PythonBindings
             .def("isa_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Isa(self.GetContext()));
             }, "ISA slots (Sprinter): the #9FBD latch, window 3, slots with the configured and fitted cards, counters; available=False elsewhere")
+            .def("network_frames", [](Emulator& self, const std::string& link, unsigned last) -> py::object {
+                return StateNodeToPy(EthernetAccess::Frames(self.GetContext(), link, last));
+            }, py::arg("link") = "", py::arg("last") = 32,
+               "The Ethernet gateway's capture of the frame-level cards (index, frame, direction, port, summary, hex)")
+            .def("network_frames_pcap", [](Emulator& self, const std::string& link) -> py::bytes {
+                std::vector<uint8_t> pcap;
+                std::string error;
+                if (!EthernetAccess::Pcap(self.GetContext(), link, pcap, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(pcap.data()), pcap.size());
+            }, py::arg("link") = "", "The capture as a pcap file (bytes)")
+            .def("network_inject_frame", [](Emulator& self, const std::string& link, const std::string& hex) {
+                std::string error;
+                if (!EthernetAccess::Inject(self.GetContext(), link, hex, "Python network_inject_frame", error))
+                    throw py::value_error(error);
+            }, py::arg("link"), py::arg("hex"), "A frame towards the card `link` (hex), offered at the next frame boundary")
+            .def("isa_journal", [](Emulator& self, unsigned last) -> py::object {
+                return StateNodeToPy(DeviceState::IsaJournal(self.GetContext(), last));
+            }, py::arg("last") = 64, "ISA access journal: the last N card accesses and bus events (frame, t, pc, slot, register)")
             .def("isa_io_read", [](Emulator& self, int slot, py::object address) { return PyIsaCycle(self, "io_read", slot, address, -1); },
                  py::arg("slot"), py::arg("address"), "One ISA I/O read cycle (slot 1 or 2, 20-bit ISA address as int or '#30A' text); returns the byte")
             .def("isa_io_write", [](Emulator& self, int slot, py::object address, int value) { return PyIsaCycle(self, "io_write", slot, address, value); },

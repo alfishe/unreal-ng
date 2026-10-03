@@ -1,5 +1,6 @@
 #include "networkpanelmodel.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
@@ -248,4 +249,67 @@ std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices()
 std::vector<uint32_t> NetworkSerialBaudChoices()
 {
     return {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
+}
+
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network)
+{
+    std::vector<NetworkSlotRow> rows;
+    const StateNode* slots = network.find("slots");
+    if (!slots)
+        return rows;
+    auto text = [](const StateNode& node, const char* key) {
+        const StateNode* v = node.find(key);
+        if (!v)
+            return std::string();
+        if (v->kind == StateNode::Kind::String)
+            return v->s;
+        if (v->kind == StateNode::Kind::Int)
+            return std::to_string(v->i);
+        return std::string();
+    };
+    for (const StateNode& slot : slots->items)
+    {
+        NetworkSlotRow row;
+        row.id = text(slot, "id");
+        row.label = text(slot, "label");
+        const std::string card = text(slot, "card");
+        if (card.empty() || card == "none")
+        {
+            const std::string configured = text(slot, "configured");
+            const std::string why = text(slot, "not_fitted");
+            row.line = configured.empty() || configured == "none" ? "empty"
+                                                                  : configured + " not fitted" + (why.empty() ? "" : ": " + why);
+        }
+        else
+        {
+            std::string kind = card;
+            for (char& c : kind)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            row.line = kind;
+            const std::string chip = text(slot, "chip");
+            if (!chip.empty())
+                row.line += " " + chip;
+            const std::string base = text(slot, "base");
+            if (!base.empty() && base.size() > 1)
+            {
+                const unsigned first = static_cast<unsigned>(std::strtoul(base.c_str() + 1, nullptr, 16));
+                char range[32];
+                std::snprintf(range, sizeof(range), ", I/O #%03X-#%03X", first, first + 0x1F);
+                row.line += range;
+            }
+            const std::string irq = text(slot, "irq");
+            if (!irq.empty())
+                row.line += ", IRQ " + irq;
+            const std::string mac = text(slot, "mac");
+            if (!mac.empty())
+                row.line += ", MAC " + mac;
+            const std::string link = text(slot, "link");
+            if (!link.empty())
+                row.line += ", cable: " + link;
+            if (!text(slot, "stalled").empty())
+                row.line += " - STALLED (the ISA cycle hangs until RESET)";
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
 }

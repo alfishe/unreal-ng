@@ -57,4 +57,26 @@
         paths[kControl]["post"]["responses"]["200"]["description"] = "Cycle done";
         paths[kControl]["post"]["responses"]["400"]["description"] = "Bad body, slot, address or value";
         paths[kControl]["post"]["responses"]["404"]["description"] = "Emulator not found, or no ISA slots";
+        body["properties"]["action"]["enum"].append("journal_clear");
+        body["properties"]["action"]["enum"].append("journal_on");
+        body["properties"]["action"]["enum"].append("journal_off");
+
+        const char* kJournal = "/api/v1/emulator/{id}/state/isa/journal";
+        paths[kJournal]["get"]["summary"] = "Get the ISA access journal";
+        paths[kJournal]["get"]["tags"].append("ISA Slots");
+        paths[kJournal]["get"]["description"] =
+            "Who touched which card register: the last `last` ISA cycles and bus events (default 64, 0 = all, up to "
+            "512 kept), oldest first - frame, t (base T-state in the frame), pc, slot, space (io / memory), access "
+            "(read / write), address (20-bit ISA), cpu_address (window 3), value, what (the card's register: CR, ISR, "
+            "data port, ...; or RESET DRV, a stall). Recorded live and while a TTD recording replays; control/isa "
+            "journal_clear / journal_on / journal_off.";
+        paths[kJournal]["get"]["parameters"][0]["name"] = "id";
+        paths[kJournal]["get"]["parameters"][0]["in"] = "path";
+        paths[kJournal]["get"]["parameters"][0]["required"] = true;
+        paths[kJournal]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kJournal]["get"]["parameters"][1]["name"] = "last";
+        paths[kJournal]["get"]["parameters"][1]["in"] = "query";
+        paths[kJournal]["get"]["parameters"][1]["schema"]["type"] = "integer";
+        paths[kJournal]["get"]["responses"]["200"]["description"] = "The journal";
+        paths[kJournal]["get"]["responses"]["404"]["description"] = "Emulator not found, or no ISA slots";
     }

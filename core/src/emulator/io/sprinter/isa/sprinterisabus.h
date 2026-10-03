@@ -24,6 +24,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -118,8 +119,38 @@ public:
     using Tracer = std::function<void(bool write, Space space, int slot, uint32_t address, uint8_t value)>;
     void SetTracer(Tracer tracer) { _tracer = std::move(tracer); }
 
-    /// The slot report every automation surface prints (DeviceState::Isa): latch, slots, cards, counters
+    /// The slot report every automation surface prints (DeviceState::Isa): latch, slots, cards, their resources
+    /// (ISA I/O range, memory window, IRQ) and how the Z80 reaches them now, conflicts, counters
     StateNode Describe() const;
+
+    // --- Access journal (observation, not machine state) ------------------------------------------
+
+    /// One ISA cycle or bus event with its time: frame, base T-state in the frame, PC
+    struct JournalEntry
+    {
+        uint64_t frame = 0;
+        uint32_t t = 0;
+        uint16_t pc = 0;
+        int8_t slot = -1;        ///< 0 / 1; -1 for a bus event (RESET)
+        bool io = true;
+        bool write = false;
+        uint32_t address = 0;
+        uint8_t value = 0;
+        std::string what;        ///< the card's register name, or the event ("reset asserted", "stall")
+    };
+    static constexpr size_t kJournalLength = 512;
+    /// Who touched which card register, newest last (every cycle while the machine runs or replays a recording)
+    const std::deque<JournalEntry>& Journal() const { return _journal; }
+    void ClearJournal() { _journal.clear(); }
+    void SetJournalEnabled(bool on) { _journalOn = on; }
+    bool JournalEnabled() const { return _journalOn; }
+    /// Where the time comes from (the decoder: frame counter, base T, the PC of the access)
+    using Clock = std::function<void(uint64_t& frame, uint32_t& t, uint16_t& pc)>;
+    void SetClock(Clock clock) { _clock = std::move(clock); }
+
+    /// A card that never finishes a cycle (UM9003 reset port): the decoder hangs the CPU
+    using StallHandler = std::function<void(int slot)>;
+    void SetStallHandler(StallHandler handler) { _stall = std::move(handler); }
 
     // --- TTD (PeripheralId::SprinterIsa = 33) -----------------------------------
 
@@ -143,7 +174,14 @@ private:
 
     sprinterisa::CardKind FittedKind(int slot) const;
 
+    void Note(int slot, bool io, bool write, uint32_t address, uint8_t value, std::string what);
+    void AfterCycle(int slot);
+
     std::array<Slot, kSlots> _slots;
     uint8_t _latch = 0;
     Tracer _tracer;
+    Clock _clock;
+    StallHandler _stall;
+    bool _journalOn = true;
+    std::deque<JournalEntry> _journal;
 };

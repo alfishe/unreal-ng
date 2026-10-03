@@ -26,6 +26,9 @@
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
 #include "emulator/io/network/atm2ioesp.h"
+#include "emulator/io/network/ethernet/ne2000board.h"
+#include "emulator/io/network/vnet/ethernetgateway.h"
+#include "emulator/state/statenode.h"
 #include "emulator/io/network/zifi.h"
 #include "emulator/io/serial/comport.h"
 
@@ -97,6 +100,18 @@ public:
     ComPort* Com() const { return _com.get(); }
     Atm2IoEsp* Atm2IoEspCard() const { return _atm2IoEsp.get(); }
     ZiFi* ZiFiBlock() const { return _zifi.get(); }
+
+    /// The network cards in expansion slots (the Sprinter's ISA slots; network tdd §5.2), by slot id
+    struct SlotCard
+    {
+        std::string slotId;                 ///< "isa2"
+        std::unique_ptr<Ne2000Board> ne2000;
+    };
+    const std::vector<SlotCard>& SlotCards() const { return _slotCards; }
+    /// The frame card with this port key ("isa2.eth"), or null
+    Ne2000Board* EthernetCard(const std::string& portKey) const;
+    /// The switch + router of the frame-level cards (null without one, or with the network off)
+    EthernetGateway* Gateway() const { return _gateway.get(); }
 
     /// Build a virtual-network config from the machine config (hosts, forwards, DNS mode)
     static VirtualNetworkConfig BuildConfig(const EmulatorContext* context);
@@ -184,6 +199,19 @@ public:
         Com zifi;
         ZiFi::View zifiRegisters;
         bool zifiMachine = false;         ///< the machine has the ZiFi block (TS-Conf, ZX-Evo + TS firmware)
+
+        /// Expansion slots a network card can take (network tdd §14): what the config puts there, what is fitted
+        struct Slot
+        {
+            std::string id, bus, label;
+            std::string configured;       ///< the card kind of the config ("" = none)
+            std::string card;             ///< the network card fitted ("" = none)
+            std::string note;             ///< why a configured network card is not fitted
+            StateNode details;            ///< the card's own report (chip, base, MAC, registers, counters)
+        };
+        std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro
+        /// The Ethernet gateway (EthernetGateway::Describe): ports, leases, ARP, TCP / UDP, counters
+        StateNode ethernetGateway;
     };
     Status GetStatus() const;
 
@@ -202,18 +230,35 @@ private:
         uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
         bool zifi = false;                ///< the AVR firmware's ZiFi block (with the EvoAvr port)
         std::string zifiPeer;             ///< ComPortSpec of its UART's peer
+        /// Network cards for expansion slots (the NE2000 so far)
+        struct SlotCard
+        {
+            std::string slotId, kind, chip, portKey;
+            uint16_t base = 0;
+            uint8_t irq = 0;
+            std::array<uint8_t, 6> mac{};
+            bool operator==(const SlotCard& o) const
+            {
+                return slotId == o.slotId && kind == o.kind && chip == o.chip && portKey == o.portKey && base == o.base &&
+                       irq == o.irq && mac == o.mac;
+            }
+        };
+        std::vector<SlotCard> slotCards;
+        bool ethernetLink = false;        ///< the slot cards get the gateway (the network feature is on)
         std::vector<std::string> notes;
         bool operator==(const Plan& o) const
         {
             return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer &&
                    machineSerial == o.machineSerial && machinePeer == o.machinePeer && atm2IoEsp == o.atm2IoEsp &&
                    atm2IoEspPeer == o.atm2IoEspPeer && atm2IoEspAddress == o.atm2IoEspAddress && zifi == o.zifi &&
-                   zifiPeer == o.zifiPeer;
+                   zifiPeer == o.zifiPeer && slotCards == o.slotCards && ethernetLink == o.ethernetLink;
         }
     };
     Plan MakePlan() const;
     void Refit();
-    void Unplug();
+    /// `keepSlotCards`: the cards in expansion slots stay (hardware: a settings change re-cables them, the chip
+    /// keeps its registers and packet RAM)
+    void Unplug(bool keepSlotCards = false);
     /// What a refit keeps of the AVR (the cable changes, not the chip): its UARTs' registers and the ZiFi block
     struct AvrKeep
     {
@@ -229,6 +274,8 @@ private:
     /// Plug `_machinePeer` into the machine's own non-16550 port
     void FitMachineSerial(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
+    void FitSlotCards(const Plan& plan);
+    void UnplugSlotCards();
     void FillPeerStatus(const ISerialPeer* peer, Status::Com& c) const;
 
     EmulatorContext* _context = nullptr;
@@ -238,6 +285,8 @@ private:
     std::unique_ptr<ISerialPeer> _machinePeer;   ///< on the machine's own non-16550 port (Atm2Kbc)
     std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
     std::unique_ptr<ZiFi> _zifi;                 ///< the TS AVR firmware's ZiFi block (on `_com`'s #xxEF)
+    std::vector<SlotCard> _slotCards;            ///< network cards in expansion slots (they outlive a network-off refit)
+    std::unique_ptr<EthernetGateway> _gateway;   ///< the slot cards' wire to the virtual network
     Plan _plan;                           ///< what is fitted
     std::atomic<bool> _refitPending{false};
     bool _forceRefit = false;

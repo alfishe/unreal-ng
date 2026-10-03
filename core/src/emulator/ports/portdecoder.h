@@ -359,7 +359,7 @@ typedef void (PortDevice::* PortDeviceOutMethod)(uint16_t port, uint8_t value); 
 
 /// Base class for all model port decoders
 class ISerialPeer;
-class IAtmIoDevice;
+class IIoBusDevice;
 class PortDecoder
 {
 
@@ -874,7 +874,7 @@ public:
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector
-        std::function<void(IAtmIoDevice* device, bool attach)> internalIo;
+        std::function<void(IIoBusDevice* device, bool attach)> internalIo;
 
         /// Atm2Kbc: the RS-232 line as the firmware set it (baud), and a refit
         /// of the firmware from the config ([ATM] Kbc=); false + reason
@@ -892,6 +892,29 @@ public:
         bool zifi = false;
         /// The TS-Conf wait-port interrupt (vector #F9, INTMASK bit 3); empty: none (BaseConf FPGA)
         std::function<void()> waitPortInterrupt;
+
+        /// Expansion slots a network card can take (network tdd §5.2; the Sprinter's two ISA slots). The machine
+        /// config names what each holds; NetworkManager builds a network card configured there and plugs it with
+        /// `fit`. Empty on every machine without such slots
+        struct Slot
+        {
+            std::string id;                   ///< "isa1", "isa2"
+            std::string bus;                  ///< "isa"
+            std::string label;                ///< "ISA slot 2 (J7), page #D6"
+            std::string configured;           ///< the card kind the config puts there ("ne2000"; "" = none)
+            bool networkCard = false;         ///< `configured` is a network card NetworkManager builds
+            // The configured card's settings (network cards)
+            std::string chip;                 ///< NE2000: "RTL8019AS" | "UM9003" | "NE1000"
+            uint16_t base = 0;
+            uint8_t irq = 0;
+            std::array<uint8_t, 6> mac{};
+            std::string portKey;              ///< "isa2.eth"
+            /// Plug the device in (nullptr pulls it); false with the reason when the slot refuses it
+            std::function<bool(IIoBusDevice* device, std::string& why)> fit;
+            /// Why a configured card is not there (shown in the machine's own slot report)
+            std::function<void(const std::string& why)> notFitted;
+        };
+        std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro, and the GUI includes this header
     };
     virtual NetworkCapabilities DescribeNetwork() { return NetworkCapabilities(); }
 

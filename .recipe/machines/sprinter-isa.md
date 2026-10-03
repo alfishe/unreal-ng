@@ -40,19 +40,27 @@ ID=$(curl -s -X POST $B/start -H 'Content-Type: application/json' \
        -d '{"model":"SPRINTER","sprinter":{"fast_start":true}}' | jq -r .id)
 
 # The slot report: #9FBD latch, what window 3 shows, both slots (configured, fitted card, why not, counters)
-curl -s $B/$ID/state/isa | jq '{latch, window, slots: [.slots[] | {slot, card, configured, not_fitted}]}'
+curl -s $B/$ID/state/isa | jq '{summary, latch, window, slots: [.slots[] | {slot, card, configured, enabled, not_fitted}]}'
+# summary: "slot 1: empty; slot 2: ne2000 I/O #300-#31F IRQ 3" (the default NE2000, recipe sprinter-network.md)
+# What a card uses and how the Z80 reaches it; conflicts (none possible between the slots: each has its own select)
+curl -s $B/$ID/state/isa | jq '.slots[1] | {resources, z80_access}, .conflicts'
+# resources: io "#300-#31F", memory "none", irq 3, irq_route "Z84C15 PIO port B bit 1 (not wired yet: ISA phase I4)", dma none
+# z80_access.io: "#1FFD bit 4 set, window 3 page #D6, #9FBD AEN = 0: CPU #C300-#C31F (A9-A0 decoded: ...)"
+# Who touched which card register (512 entries): frame, t, pc, slot, access, isa / cpu address, register name, value
+curl -s "$B/$ID/state/isa/journal?last=4" | jq -c '.entries[]'
+# {"access":"read","address":"#0030A","cpu_address":"#C30A","frame":26,"pc":"#339E","slot":2,"space":"io","value":"#50","what":"ID0",...}
 # The same section inside the Sprinter report
 curl -s $B/$ID/state/sprinter | jq .isa.latch
 
 # One ISA cycle at a 20-bit address: io_read | io_write | io_peek | mem_read | mem_write | mem_peek
 curl -s -X POST $B/$ID/control/isa -H 'Content-Type: application/json' \
-     -d '{"action":"io_read","slot":2,"address":"#30A"}'      # {"value":"#FF"} with an empty slot
+     -d '{"action":"io_read","slot":2,"address":"#30A"}'      # {"value":"#50"}: the RTL8019AS ID; #FF in an empty slot
 # One RESET DRV pulse to both slots; write the latch
 curl -s -X POST $B/$ID/control/isa -H 'Content-Type: application/json' -d '{"action":"reset"}'
 curl -s -X POST $B/$ID/control/isa -H 'Content-Type: application/json' -d '{"action":"latch","value":"#37"}'
 ```
 
-Answers checked: an empty slot reads `#FF`; `"slot": 3` -> 400 `slot: 1 or 2`; a Pentagon -> 404 `no ISA slots on
+Answers checked (again 2026-10-03 with the NE2000 fitted): slot 2 `#30A` reads `#50`, the empty slot 1 reads `#FF`; `"slot": 3` -> 400 `slot: 1 or 2`; a Pentagon -> 404 `no ISA slots on
 this machine (the Sprinter has two)`; an unknown `isa_slot2` at create -> 400 with the list of kinds.
 
 ## CLI (verified)
@@ -64,12 +72,14 @@ isa io 2 #30A             # one I/O read cycle in slot 2 at ISA #30A (isa io 2 #
 isa mem 1 0xDC000         # one memory cycle; isa peek 2 #30A [mem] shows what the card answers, no side effect
 isa latch 0x37            # #9FBD: A19-A14 = #37 -> window 3 addresses ISA #DC000-#DFFFF
 isa reset                 # one RESET DRV pulse to both slots
+isa journal 8             # the last 8 accesses (frame, T, PC, register name, value); isa journal clear | on | off
 ```
 
 ## Lua (verified)
 
 ```lua
-local s = isa_state()                 -- s.latch.value, s.window.mapped, s.slots[2].card, s.slots[2].not_fitted
+local s = isa_state()                 -- s.summary, s.latch.value, s.window.mapped, s.slots[2].card, s.slots[2].resources
+local j = isa_journal(8)              -- j.entries[1].what = "ID0", .cpu_address, .pc
 print(isa_io_read(2, "#30A"))         -- one I/O cycle; isa_io_write(2, 0x300, 0x21), isa_io_peek(2, 778)
 print(isa_reset())                    -- true; isa_mem_read / isa_mem_write, isa_latch(0x37)
 ```
