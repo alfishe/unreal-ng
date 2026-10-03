@@ -402,7 +402,9 @@ void StatusBarManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
 void StatusBarManager::refresh()
 {
     std::shared_ptr<Emulator> emulator = _emulator.lock();
-    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    // Leased for this handler: an automation thread may remove the instance
+    const Emulator::ContextLease lease = emulator ? emulator->LeaseContext() : Emulator::ContextLease{};
+    EmulatorContext* context = lease.get();
 
     bool tapePlaying = false;
     bool soundOn = false;
@@ -793,7 +795,8 @@ void StatusBarManager::updateTtd(EmulatorContext* context)
         return;
     }
 
-    const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+    // The published snapshot: this poll runs beside the machine's thread
+    const ttd::TTDSessionInfo info = ttd->GetPublishedSessionInfo();
     const uint64_t frame = ttd->CurrentPosition().frame;
     const uint64_t span = info.currentEndFrame > info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
     const uint64_t done = frame > info.sessionStartFrame ? std::min(frame - info.sessionStartFrame, span) : 0;

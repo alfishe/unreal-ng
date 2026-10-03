@@ -141,6 +141,7 @@ void TimeTravelManager::SetUnavailableReason(const std::string& reason)
     if (!reason.empty() && _state != TTDSessionState::Idle)
         InvalidateSession(reason.c_str());
     _unavailableReason = reason;
+    PublishSessionInfo();
 }
 
 bool TimeTravelManager::StartRecording()
@@ -327,10 +328,15 @@ bool TimeTravelManager::StartRecording()
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
     _loadedRecordedBy.clear();
+    _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
     MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
              static_cast<unsigned>(_modelRamPages), _pageStore.GetCapacityBytes(),
              (_toggledDebugModeOn ? "switched-on" : "already-on"));
+
+    // Published while the machine is still parked: once it resumes it
+    // records, and only its own thread may read the session then
+    PublishSessionInfo();
 
     // Resume the emulator if we paused it. The recording OnFrameBoundary
     // hook will now see dirty bits being set correctly.
@@ -342,13 +348,31 @@ bool TimeTravelManager::StartRecording()
 
 void TimeTravelManager::StopRecording()
 {
-    // Compress whatever coverage is still accumulating, so size reporting and
-    // any later serialization see the whole session rather than all-but-the-
-    // last block.
+    if (_state != TTDSessionState::Recording)
+    {
+        // Compress whatever coverage is still accumulating, so size reporting
+        // and any later serialization see the whole session rather than
+        // all-but-the-last block. Not recording: the machine adds nothing
+        _coverageIndex.FlushOpenBlocks();
+        return;  // Idempotent
+    }
+
+    // Park the machine BEFORE touching the session: while it records, its
+    // thread appends to the coverage index, the journals and the timeline, so
+    // the flush, the state change and the journal stop below must not run
+    // beside a frame (same pause discipline as StartRecording, TDD section
+    // 7.2). From the machine's own thread the wait returns at once.
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    if (wasRunning)
+    {
+        emu->Pause(false);
+        emu->WaitForPauseConfirmation(1000);
+    }
+
+    // Compress whatever coverage is still accumulating (see above)
     _coverageIndex.FlushOpenBlocks();
 
-    if (_state != TTDSessionState::Recording)
-        return;  // Idempotent
     if (_context)
     {
         const TTDTimePoint stoppedAt = CurrentPosition();
@@ -362,19 +386,9 @@ void TimeTravelManager::StopRecording()
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
-    // Pause the emulator while we restore feature flags (same race concern
-    // as StartRecording — MemIf swap must not race with CPU execution).
-    Emulator* emu = _context ? _context->pEmulator : nullptr;
-    const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
-    if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
-
     // Restore feature flags we toggled in StartRecording. Only flip back the
     // ones we actually turned ON — pre-existing user/debugger debug mode is
-    // left intact.
+    // left intact. (The MemIf swap must not race with CPU execution either.)
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
     if (fm)
     {
@@ -390,6 +404,8 @@ void TimeTravelManager::StopRecording()
         // and leaving it on lets the next StartRecording skip the toggle.
         _toggledTimeTravelOn = false;
     }
+
+    PublishSessionInfo();
 
     if (wasRunning && emu)
         emu->Resume(false);
@@ -443,6 +459,7 @@ void TimeTravelManager::EndDebuggerLiveHistory()
 
 void TimeTravelManager::InvalidateSession(const char* reason)
 {
+    const PublishOnExit publish{*this};
     ClearFrameCache();
 
     if (_timeline.empty() && _state == TTDSessionState::Idle)
@@ -661,7 +678,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     {
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
-        info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : ComputeRomSignature();
+        info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
         for (const auto& blob : _timeline.front().peripheralBlobs)
             if (blob.first < 64)
                 info.machine.peripheralMask |= uint64_t(1) << blob.first;
@@ -733,7 +750,37 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.journalGapHasPosition = _journalGapHasPosition;
     info.journalGapAt = _journalGapAt;
 
+    PublishSessionInfo(info);
     return info;
+}
+
+TTDSessionInfo TimeTravelManager::GetPublishedSessionInfo() const
+{
+    // An observer is looking: the machine's thread publishes again at its next
+    // frame boundary once the interval has passed
+    _publishRequested.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    return _published;
+}
+
+void TimeTravelManager::PublishSessionInfo(const TTDSessionInfo& info) const
+{
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    _published = info;
+}
+
+void TimeTravelManager::MaybePublishAtFrameBoundary()
+{
+    // Throwaway replays (display composition, frame-cache builds) cross frame
+    // boundaries on a restored machine: nothing to report from there
+    if (_inReplayMode || !_publishRequested.load(std::memory_order_acquire))
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - _lastPublish < std::chrono::milliseconds(kPublishIntervalMs))
+        return;
+    _lastPublish = now;
+    _publishRequested.store(false, std::memory_order_release);
+    PublishSessionInfo();
 }
 
 bool TimeTravelManager::SetEnableWriteJournal(bool enable)
@@ -958,6 +1005,7 @@ void TimeTravelManager::OnFrameBoundary()
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
+        MaybePublishAtFrameBoundary();
         return;
     }
 
@@ -994,6 +1042,7 @@ void TimeTravelManager::OnFrameBoundary()
             if (_context->pEmulator)
                 _context->pEmulator->Pause();
         }
+        MaybePublishAtFrameBoundary();
     }
 }
 
@@ -2027,6 +2076,7 @@ void TimeTravelManager::DisarmInputPlayback()
 
 void TimeTravelManager::OnMachineReset()
 {
+    const PublishOnExit publish{*this};
     DisarmInputPlayback();
     if (_portReads.GetMode() == TTDPortJournal::Mode::Play || _portWrites.GetMode() == TTDPortJournal::Mode::Play)
     {
@@ -2260,6 +2310,7 @@ TTDTimePoint TimeTravelManager::SessionEndPosition() const
 
 bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    const PublishOnExit publish{*this};
     // Each new Detached window starts with a clean auto-pause signal.
     // The flag is set by OnFrameBoundary when execution runs past
     // SessionEndPosition(); clearing here means callers can poll
@@ -2462,7 +2513,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     {
         MLOGWARNING("TimeTravelManager::SeekToInternal — timeline is empty "
                     "(state=%s)",
-                    TTDSessionStateToString(_state));
+                    TTDSessionStateToString(_state.load()));
         return false;
     }
 
@@ -2874,6 +2925,7 @@ bool TimeTravelManager::StepForwardFrame()
 
 bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
 {
+    const PublishOnExit publish{*this};  // the caller resumes the machine afterwards
     // Returning to live recording ends the browse scope: free the decode cache.
     ClearFrameCache();
 
@@ -3105,6 +3157,9 @@ bool TimeTravelManager::ResumeRecordingLive()
              static_cast<unsigned long long>(recordedEnd.frame),
              static_cast<unsigned>(recordedEnd.tInFrame));
 
+    // Published while the machine is still parked (it records once resumed)
+    PublishSessionInfo();
+
     if (wasRunning && emu)
         emu->Resume(false);
 
@@ -3113,10 +3168,27 @@ bool TimeTravelManager::ResumeRecordingLive()
 
 void TimeTravelManager::SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes)
 {
-    _historyLimitFrames = maxFrames;
-    _historyLimitBytes = maxBytes;
-    if (_state == TTDSessionState::Recording)
-        EnforceHistoryLimit();
+    _historyLimitFrames.store(maxFrames, std::memory_order_release);
+    _historyLimitBytes.store(maxBytes, std::memory_order_release);
+    if (_state != TTDSessionState::Recording)
+    {
+        PublishSessionInfo();
+        return;
+    }
+
+    // While the loop runs, the recording belongs to the machine's thread:
+    // evicting from here would free checkpoints beside its capture (the Qt
+    // history combo calls this while recording). That thread enforces the new
+    // limit at its next frame boundary, as it does after every capture
+    const bool loopRunning = _context && _context->pEmulator && _context->pEmulator->IsRunning();
+    const bool onLoopThread = _context && _context->pMainLoop && _context->pMainLoop->IsRunThread();
+    if (loopRunning && !onLoopThread)
+    {
+        _publishRequested.store(true, std::memory_order_release);
+        return;
+    }
+    EnforceHistoryLimit();
+    PublishSessionInfo();
 }
 
 uint64_t TimeTravelManager::BlobBytes(const TTDCheckpoint& cp)
@@ -3764,7 +3836,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!out) { err = "stream write failed (emulator_id)"; return false; }
     }
 
-    const uint8_t sessionState = static_cast<uint8_t>(_state);
+    const uint8_t sessionState = static_cast<uint8_t>(_state.load());
     if (!WritePod(out, sessionState, err)) return false;
 
     const uint64_t sessionStart = _timeline.empty() ? 0 : _timeline.front().time.frame;
@@ -4046,6 +4118,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         err = _unavailableReason;
         return false;
     }
+    const PublishOnExit publish{*this};
     return DeserializeSessionImpl(in, err, nullptr);
 }
 
