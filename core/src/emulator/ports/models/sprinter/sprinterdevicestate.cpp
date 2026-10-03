@@ -361,7 +361,8 @@ StateNode Z84Summary(PortDecoder_Sprinter& decoder, EmulatorContext* context)
         n["rx_enabled"] = (ch.wr[3] & 0x01) != 0;
         n["fifo_count"] = int(ch.fifoCount);
         n["fifo"] = HexRow(ch.fifo, ch.fifoCount);
-        n["overrun"] = ch.overrun != 0;
+        n["overrun"] = chip.sio.OverrunLatched(c);  // RR1 bit 5
+        n["overrun_in_fifo"] = (ch.overrun & 0x0E) != 0;  // a written-over character still waits to be read
         sio.push(n);
     }
     z["sio"] = sio;

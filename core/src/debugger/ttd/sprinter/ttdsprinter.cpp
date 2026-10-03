@@ -96,7 +96,7 @@ uint64_t HashOf(const TTDSerializable& device)
 
 /// region <TTDSprinterPld>
 
-// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob):
+// Layout (v3; v2 had no PLD keyboard flags, v1 no board mouse counters, which lived in the Kempston interface's blob):
 //    0    1  version
 //    1  112  SprinterPldState (fixed-width fields, no padding: sprinterpldstate.h)
 //  113    1  code #89 Covox-Blaster control (CovoxBlaster's; its blob, id 32, carries it too)
@@ -274,7 +274,7 @@ uint64_t TTDSprinterZ84::TTDHashState() const
 
 /// region <TTDSprinterInput>
 
-// Layout (v2; v1 had no board mouse counters, which lived in the Kempston interface's blob):
+// Layout (v3; v2 had no PLD keyboard flags, v1 no board mouse counters, which lived in the Kempston interface's blob):
 //    0   1  version
 //    1  16  keyboard: the bytes on the way (ring)
 //   17   1  ring head
@@ -296,6 +296,7 @@ uint64_t TTDSprinterZ84::TTDHashState() const
 //   85   1  board mouse counters: X
 //   86   1  Y
 //   87   1  buttons (active low)
+//   88   1  the PLD's keyboard block watching the wire (SprinterInput::kPld*: E0, F0, Ctrl, Alt, Shift)
 
 void TTDSprinterInput::TTDSaveState(uint8_t* dst) const
 {
@@ -328,6 +329,7 @@ void TTDSprinterInput::TTDSaveState(uint8_t* dst) const
     w.U8(board.x);
     w.U8(board.y);
     w.U8(board.buttons);
+    w.U8(input.PldKeyboardFlags());
 }
 
 void TTDSprinterInput::TTDLoadState(const uint8_t* src)
@@ -361,6 +363,7 @@ void TTDSprinterInput::TTDLoadState(const uint8_t* src)
     board.y = r.U8();
     board.buttons = r.U8();
     input.SetBoardMouse(board);
+    input.SetPldKeyboardFlags(r.U8());
 
     input.KeyboardStream().SetState(k);
     input.SerialMouse().SetState(m);

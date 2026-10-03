@@ -112,6 +112,22 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
   window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
   (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
+- [x] Keyboard overrun, stuck keys, F12 (2026-10-03, branch `sprinter-ps2-overrun`;
+  [s4-input-outcome.md](s4-input-outcome.md) last section): the board never holds the keyboard off (PLD KBD_CX =
+  KBD_DX = GND), so unread bytes are lost in the SIO as on the board; the Z84C15 SIO now overruns as the data sheets
+  and MAME do (newest entry overwritten, RR1 bit 5 when it reaches the top, latched until Error Reset); F12 and
+  Ctrl+Alt+Del come from the PLD's keyboard block decoding the wire (typematic F12 repeats toggle again; an SIO
+  overrun cannot switch the turbo), TTD blob 31 v3, `boot.ttd` re-recorded; focus out releases the ZX matrix keys
+  as well as the PS/2 keys
+
+- [x] Spectrum mode: attributes lagged behind the pixels in Pentagon multicolor demos (owner report 2026-10-03,
+  `scroller.trd`, `atarin.trd` in P128; branch `sprinter-zx-shadow-squares`; [research-zx-mode.md](research-zx-mode.md)
+  §7.1): the frame INT sat at MAME's place, 10 T after the PLD's edge (`CT5` rising 2 T into the first square
+  after the INT run), so the Sprinter read each cell 17 980 T after the INT where a Pentagon reads it after
+  17 988; now 17 990. With it: a video RAM byte lands 1 T before the write cycle's end, a `#7FFD` write catches
+  the beam up (bit 3 picks the screen), and a text / Spectrum square keeps the font byte latched at its start
+  (the attribute is read every half T). The shadow copy was right: the same conditions and address as MAME, the
+  address as the PLD's `VXA` (`VIDEO2.TDF`), and both demos' pixels equal the PENTAGON model's frame for frame. Open: mode bytes written inside a square are not latched (no known program needs it)
 
 ## Remaining
 
@@ -217,7 +233,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     plugin's Stop / Pause / skip buttons are unimplemented, and its Eject was ignored by the drive - fixed on branch
     `cd-plugin-int` (START STOP UNIT stops the play, the tray opens).
   - Tape input `#FE` bit 6 on the Sprinter: a test through the shared tape path (gap I5) - S.
-  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed.
+  - Not planned: commands to the keyboard (LEDs, reset, typematic rate; gap I2) - owner: not needed. (The board
+    cannot send them either: the PLD drives KBD_CX = KBD_DX = GND, hardware-reference §13.)
+  - Keyboard, open (2026-10-03): the owner's live GUI check of the overrun / focus fixes; a TTD replay that hands
+    input back while the host holds other keys than the journal left held is not reconciled (the keyboard keeps
+    the recorded keys down until the host presses and releases them); the PLD's own ZX matrix decoder (code `#40`
+    from the wire, disabled while ALL_MODE bit 0 is set) is still the host's matrix keys - S.
 - **Peripherals not yet planned (from [peripherals-survey.md](peripherals-survey.md) §8, 2026-10-02, re-ranked by
   developer interest in §10; priority order, functional items only):**
   - P2: CompactFlash identity check: DSS 1.71 boots from a disk that reports itself as a CF card (BIOS-TT

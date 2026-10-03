@@ -18,7 +18,7 @@ reaches the machine only through the TTD input journal.
 | Video RAM, 256 KB | `SprinterVideoRam` | 28, 1 + 262 144 |
 | Z84C15 beside the registers: WCR / MWBR / CSBR / MCR, the wait generator (power-on M1 counter, the RETI rule's after-ED flag), watchdog, CTC, SIO (receive FIFOs), PIO, daisy chain IP / IUS | `Z84C15` (`Z84C15::SaveState`) | 29, 1 + 227 (v2 since 2026-10-02: the CTC counter mode - anchors, triggered timers, the CPU clock period - and the watchdog's folded clocks; v1 was 1 + 171) |
 | Fast RAM, 64 KB | `SprinterFastRam` | 30, 1 + 65 536 |
-| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 88 (v2: + the board mouse counters) |
+| AT keyboard stream (bytes on the wire, typematic, held keys), serial mouse (packet in flight, last sample) | `SprinterInput` | 31, 89 (v2: + the board mouse counters; v3: + the PLD keyboard flags) |
 | WD1793 command in flight beyond the BetaDisk blob: queued steps (as tags), transfer pointers (drive, track, offset), byte cell, rotational delay, rate-retry search, read-track noise seed | `Wd1793Context` | 35, 1 + 112 |
 | CMOS, IDE (two channels, adapter latch), WD1793 + drives, AY / TSFM, Kempston mouse and joystick | shared serializers | 18, 17, 1, 0 / 4, 7, 23 |
 

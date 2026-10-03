@@ -752,9 +752,9 @@ types:
 
   sprinter_input_blob:
     doc: |
-      Payload of peripheral 31 SprinterInput (88 bytes, version 2; version 1 was 85 bytes, without
-      the board mouse counters). Times are base (3.5 MHz) T-states of the
-      machine's cumulative clock.
+      Payload of peripheral 31 SprinterInput (89 bytes, version 3; version 2 was 88 bytes, without
+      the PLD keyboard flags; version 1 was 85 bytes, without the board mouse counters). Times are
+      base (3.5 MHz) T-states of the machine's cumulative clock.
     seq:
       - id: version
         type: u1
@@ -800,6 +800,11 @@ types:
       - id: board_mouse_buttons
         type: u1
         doc: Active low, D0 left, D1 right, D2 middle.
+      - id: pld_keyboard_flags
+        type: u1
+        doc: |
+          The PLD's keyboard block (KBD.TDF) decoding the wire: bit 0 KB_EXT (last byte #E0), bit 1
+          KB_OFF (last byte other than #E0 was #F0), bit 2 KB_CTRL, bit 3 KB_ALT, bit 4 KB_SH.
 
   peripheral_blob:
     doc: |

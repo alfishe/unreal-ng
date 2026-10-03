@@ -24,6 +24,7 @@ SprinterInput::SprinterInput(EmulatorContext* context, Z84Lib::Z84C15& chip, Spr
             _keyboardOverruns++;
         if (KeyboardIntEnabled())
             _intSource.LatchKeyboardInt();
+        OnWireByte(value);
     });
 
     _mouse.SetSampler([this](uint8_t& x, uint8_t& y, uint8_t& buttons) { SampleMouse(x, y, buttons); });
@@ -127,22 +128,61 @@ uint64_t SprinterInput::Now() const
 
 void SprinterInput::OnPcKey(PcKey key, bool pressed)
 {
-    // The PLD watches the same stream: Ctrl + Alt + Del resets the CPU, a bare F12 flips the turbo switch.
-    // Both act on the press, before the key's own bytes (the PLD decodes the make code)
-    if (pressed && !_keyboard.IsHeld(key))
-    {
-        const bool ctrl = _keyboard.IsHeld(PcKey::LeftCtrl) || _keyboard.IsHeld(PcKey::RightCtrl);
-        const bool alt = _keyboard.IsHeld(PcKey::LeftAlt) || _keyboard.IsHeld(PcKey::RightAlt);
-        const bool shift = _keyboard.IsHeld(PcKey::LeftShift) || _keyboard.IsHeld(PcKey::RightShift);
-        if ((key == PcKey::Delete || key == PcKey::KeypadDecimal) && ctrl && alt && _onReset)
-            _onReset();
-        else if (key == PcKey::Function12 && !ctrl && !alt && !shift && _onTurboSwitch)
-            _onTurboSwitch();
-    }
-
+    // The board's actions (reset, turbo) come from the bytes on the wire (OnWireByte), not from the host key
     _keyboard.OnPcKey(key, pressed);
     if (_onStepHookChange)
         _onStepHookChange();
+}
+
+void SprinterInput::OnWireByte(uint8_t value)
+{
+    // KBD.TDF, at the end of each 11-bit frame (KB_CT counting the idle clock down): at KB_CT 3 the modifier
+    // flags, KB_F12 and KB_RESET take the byte with the KB_OFF of the byte before; at KB_CT 1 KB_EXT takes "this
+    // was #E0" and the KB_F12 / KB_RESET preset makes the edge; at KB_CT 0 KB_OFF takes "this was #F0" unless
+    // KB_EXT. The byte patterns: KB_CTRL_X & KB_XXX = #14, KB_ALT_X & KB_XXX = #11, KB_SH_X = #12 or #59,
+    // KB_F12 = #07, KB_RESET = KB_ALT_X & #x11xxxx0x = #71
+    const uint8_t flags = _pldKeyboard;
+    const bool off = (flags & kPldOff) != 0;
+    const bool ctrl = (flags & kPldCtrl) != 0;
+    const bool alt = (flags & kPldAlt) != 0;
+    const bool f12 = value == 0x07 && !off;
+    const bool reset = value == 0x71 && !off && ctrl && alt;
+
+    uint8_t next = flags;
+    auto update = [&](uint8_t bit, bool match) {
+        if (match)
+            next = static_cast<uint8_t>(off ? (next & ~bit) : (next | bit));
+    };
+    update(kPldCtrl, value == 0x14);
+    update(kPldAlt, value == 0x11);
+    update(kPldShift, value == 0x12 || value == 0x59);
+    if (value == 0xE0)
+        next |= kPldExt;
+    else
+    {
+        next = static_cast<uint8_t>(next & ~kPldExt);
+        next = static_cast<uint8_t>(value == 0xF0 ? (next | kPldOff) : (next & ~kPldOff));
+    }
+    _pldKeyboard = next;
+
+    // TEST_SWITCH = TFF(!KB_SH & !KB_CTRL & !KB_ALT, KB_F12) -> TURBO_HAND; /RESET = KB_RESET & SOFT_RESET
+    if (f12 && !(next & (kPldShift | kPldCtrl | kPldAlt)) && _onTurboSwitch)
+        _onTurboSwitch();
+    if (reset && _onReset)
+        _onReset();
+}
+
+bool SprinterInput::PldActionPending() const
+{
+    const Ps2KeyboardStream::State& s = _keyboard.GetState();
+    for (uint8_t i = 0; i < s.count; i++)
+    {
+        const uint8_t value = s.queue[(s.head + i) % Ps2KeyboardStream::kQueueSize];
+        if (value == 0x07 || value == 0x71)
+            return true;
+    }
+    const auto repeat = static_cast<PcKey>(s.repeatKey);
+    return repeat == PcKey::Function12 || repeat == PcKey::Delete || repeat == PcKey::KeypadDecimal;
 }
 
 void SprinterInput::ReleaseAllPcKeys()
@@ -197,4 +237,5 @@ void SprinterInput::Clear()
     _keyboard.Clear();
     _mouse.Clear();
     _keyboardOverruns = 0;
+    _pldKeyboard = 0;
 }

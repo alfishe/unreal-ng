@@ -49,7 +49,8 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] Phase 7 (branch): the v5 open items, from the 5.06 netlist and the 5.0 album
   ([research-profi-v5-open-items.md](research-profi-v5-open-items.md)): the palette rule stays (DS80, A7=0, A0=0; the
   manual's "CP/M + BLOCK" sentence contradicts its own schematic); the CP/M switch holds #DFFD at #00
-  (`FrontPanelSwitch::Cpm`, `[PROFI] CpmSwitch`); `[PROFI] DffdDecode=emulators|v50|v506`
+  (`FrontPanelSwitch::Cpm`, `[PROFI] CpmSwitch`); at power-on the BIOS then starts Spectrum 128, the manual's
+  behavior (`CpmSwitchAtPowerOnStartsSpectrum128`; no other emulator models the switch); `[PROFI] DffdDecode=emulators|v50|v506`
 - [ ] The third crystal (ZQ3, 16-24 MHz) clocks the CPU only in DS80 (4-6 MHz, 8-12 in turbo): settled, not
   modeled - the hi-res frame timing is open (design 5.3)
 - [x] Emulated test programs ([test-programs.md](test-programs.md)): Tact Meter reproduces the v3.2 turbo

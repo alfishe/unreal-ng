@@ -19,6 +19,7 @@
 #include "emulator/video/sprinter/sprintervideoram.h"
 #include "emulator/video/sprinter/sprintervramregion.h"
 
+class ScreenSprinter;
 class SprinterMemory;
 class SprinterVideoRenderer;
 namespace ttd
@@ -249,6 +250,9 @@ private:
     void RefreshAccelerator();
     /// The renderer draws the beam up to now before a change to the picture
     void CatchUpScreen();
+    /// A CPU write is about to change a video RAM byte (the graphics pages, the Spectrum screen shadow, the
+    /// accelerator): the renderer draws the beam up to the moment the byte lands (ScreenSprinter::CatchUpToWrite)
+    void CatchUpScreenToWrite();
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();
@@ -264,6 +268,9 @@ private:
     SprinterPldState _pld{};
     SprinterPldConfigurationRegistry _registry;
     SprinterVideoRam _vram;
+    /// The Sprinter screen CatchUpScreenToWrite draws on (the context's screen, checked when it changes)
+    ScreenSprinter* _screen = nullptr;
+    const Screen* _screenSeen = nullptr;
     SprinterVramRegion _vramRegion{_vram};
     SprinterIntSource _intSource{_context, _vram};
     /// The standard accelerator and the one in use (hook 4)

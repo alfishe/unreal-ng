@@ -89,8 +89,23 @@ Settled in S2 against the PLD (`VIDEO2.TDF`):
   (`(dx & 1) ? low : high`) agrees. The earlier "low nibble first" of this section came from the
   manual's prose and was wrong.
 - **HOLD after power-on = `#77`** (no offset; MAME `m_hold = {0, 0}`); the BIOS sets it from CMOS `#1F`.
-- **Catch-up.** A video RAM byte that changes, an RGMOD or HOLD write and a border write draw the beam
-  up to their moment first (MAME `update_now`), so a mid-frame change shows from where the beam was.
+- **Catch-up.** A video RAM byte that changes, an RGMOD, HOLD or `#7FFD` write and a border write draw
+  the beam up to their moment first (MAME `update_now`), so a mid-frame change shows from where the beam
+  was. A video RAM byte lands at the PLD's write slot inside the CPU's 3-T write cycle (`E_WR`, `VCM`
+  state 2, every half T): about 1.5 T into it, so the beam is drawn up to 1 T before the cycle's end
+  (`ScreenSprinter::CatchUpToWrite`, 2026-10-03; before that up to the cycle's end).
+- **The fetch latch** (`VIDEO2.TDF`, 2026-10-03). Inside a 4-T square period the PLD reads the
+  attribute (`WR_COL` -> `DCOL`) in every half-T slot, but loads a text / Spectrum square's font byte
+  into the shift register once (`LD_PIC` at `CT[5..3] = 0`; twice, per 8-pixel half, in a 640 square
+  at `CT[4..2] = 0`); the mode bytes are loaded at the end of the period before. So a byte that lands
+  inside a square changes its attribute from there on and its pixels from the next square:
+  `SprinterVideoInputs::FontLatch` keeps the latched font byte for the rest of the square
+  (`ScreenSprinter::LatchFont`). Mode bytes written inside a square are not latched (no software
+  rewrites the mode table under the beam; a note in the TODO).
+- **INT to picture.** The video logic reads square `a` of a line at T `12 + 4a` (HOLD `#77`); the INT
+  edge is 2 T into the first square after the INT run (§5), so in the Spectrum mode the first Spectrum
+  square is read **17 990 T** after the INT - the Pentagon's 17 988 within the PLD's 2-T phase (MAME's
+  INT place gave 17 980: Pentagon multicolor raced 10 T late, research-zx-mode §7.1).
 - **Frame height**: codes `#2C`/`#2D` take effect at the next frame start (`config.frame` = 71 680 or
   69 888, the CPU frame, the raster); the INT list follows at once (S1).
 
@@ -123,8 +138,13 @@ for the TS-Conf setup screen, on a loaded machine (load ~100); a whole Sprinter 
 
 1. **Frame INT list.** Walk squares in beam order; a square whose `Mode0 & #FD == #FD`
    (blank + INT bit) arms; the first following square without it fires an INT at the **last line**
-   of that square row, at that square's x (MAME `update_int`, `sprinter.cpp:1278-1313`; MAN §4.6:
-   "on the eighth line of the square"). Convert each position to a base T-state.
+   of that square row (MAME `update_int`, `sprinter.cpp:1278-1313`; MAN §4.6: "on the eighth line of
+   the square"). Convert each position to a base T-state. **The edge is the PLD's, not MAME's**
+   (2026-10-03): `INTT = DFF(!(INTTX & CTV[2..0] = 7), CT5)` (`VIDEO2.TDF`) and `INT_X` is set on the
+   rising edge of `INTT` (`SP2_ACEX.TDF:744`), i.e. on `CT5` rising, 2 T into the period of the first
+   square without the pattern. MAME places it at the beam column `scr_a = a + 6`, T `24 + 4a` of the
+   line, where the renderer reads that square `a` at T `12 + 4a`: 12 T into its period instead of 2,
+   10 T late (`SprinterIntSource::kIntBeforeMameT`). The Pentagon setting is line 287 **T 182** (MAME T 192).
 2. **Recompute** only when a VRAM write changes a mode byte to or from the `#FC` pattern, when RGMOD
    bit 0 changes, or on a frame-length change (MAME `:1228`, `:861`, `:394`).
 3. **Pulse**: 32 T at 3.5 MHz (scaled by the clock ratio) (MAME `:1736`).

@@ -17,21 +17,21 @@ protected:
     }
 };
 
-// The header's worked example: row 30, squares 40-45 blank + INT, square 46 not -> T 59 120
+// The header's worked example: row 30, squares 40-45 blank + INT, square 46 not -> T 59 110 (MAME 59 120)
 TEST_F(SprinterIntSource_Test, Positions_WorkedExample)
 {
     SprinterVideoRam vram;
     SetRun(vram, 30, 40, 45, 0xFD);
     const auto positions = SprinterIntSource::ComputePositions(vram, 0, 320);
     ASSERT_EQ(positions.size(), 1u);
-    EXPECT_EQ(positions[0], 263u * 224 + 832 / 4);
-    EXPECT_EQ(positions[0], 59120u);
+    EXPECT_EQ(positions[0], 263u * 224 + 832 / 4 - SprinterIntSource::kIntBeforeMameT);
+    EXPECT_EQ(positions[0], 59110u);
 
     // The other mode page has no INT; 312 lines shift the rows (b = scr_b - 2 mod 39)
     EXPECT_TRUE(SprinterIntSource::ComputePositions(vram, 1, 320).empty());
     const auto p312 = SprinterIntSource::ComputePositions(vram, 0, 312);
     ASSERT_EQ(p312.size(), 1u);
-    EXPECT_EQ(p312[0], 59120u);
+    EXPECT_EQ(p312[0], 59110u);
 }
 
 // A run that reaches the end of the row never fires; #FC (blank, no INT) does not arm
@@ -55,18 +55,18 @@ TEST_F(SprinterIntSource_Test, Pulse_AssertAcknowledgeAndInvalidation)
     IInterruptSource* cpuSource = _z80->GetInterruptSource();
     ASSERT_NE(cpuSource, nullptr);
     ASSERT_NE(_z80->GetEngine(), nullptr) << "the Sprinter runs on the Z84C15 library";
-    EXPECT_FALSE(source.IsIntAsserted(59120));
+    EXPECT_FALSE(source.IsIntAsserted(59110));
 
     SetRun(vram, 30, 40, 45, 0xFD);
     const uint32_t ratio = _context->emulatorState.current_z80_frequency_multiplier;
-    EXPECT_FALSE(source.IsIntAsserted(59119 * ratio));
-    EXPECT_TRUE(source.IsIntAsserted(59120 * ratio));
-    EXPECT_TRUE(cpuSource->IsIntAsserted(59120 * ratio)) << "the chain passes the PLD's /INT through";
-    EXPECT_TRUE(source.IsIntAsserted((59120 + 31) * ratio));
-    EXPECT_FALSE(source.IsIntAsserted((59120 + 32) * ratio));
+    EXPECT_FALSE(source.IsIntAsserted(59109 * ratio));
+    EXPECT_TRUE(source.IsIntAsserted(59110 * ratio));
+    EXPECT_TRUE(cpuSource->IsIntAsserted(59110 * ratio)) << "the chain passes the PLD's /INT through";
+    EXPECT_TRUE(source.IsIntAsserted((59110 + 31) * ratio));
+    EXPECT_FALSE(source.IsIntAsserted((59110 + 32) * ratio));
 
-    EXPECT_EQ(source.AcknowledgeInterrupt(59125 * ratio), 0xFF);
-    EXPECT_FALSE(source.IsIntAsserted(59126 * ratio)) << "one INT per pulse";
+    EXPECT_EQ(source.AcknowledgeInterrupt(59115 * ratio), 0xFF);
+    EXPECT_FALSE(source.IsIntAsserted(59116 * ratio)) << "one INT per pulse";
 
     // RGMOD bit 0 selects the other mode page: no INT there
     source.SetModePage(1);

@@ -207,6 +207,20 @@ private:
 /// set); a 3-byte receive FIFO per channel filled by the host (Receive);
 /// transmit goes to a sink at once.
 ///
+/// Receive overrun (Zilog Z80 SIO technical manual, RR1 bit 5; Toshiba
+/// TMPZ84C015B data book §3.6 RR1 D5; MAME z80sio.cpp queue_received): a
+/// character that completes while the FIFO holds three overwrites the newest
+/// one (the third) and carries the overrun flag. RR1 shows the status of the
+/// character at the top of the FIFO: bit 5 sets when the flagged character
+/// gets there and stays set (latched) until the Error Reset command (WR0
+/// command 6). In the interrupt-on-first-character mode (WR1 bits 4-3 = 01) a
+/// read does not advance the FIFO past that character until the Error Reset
+/// (MAME data_read). Nothing in the SIO holds the sender off.
+///
+/// Worked example: #E0 #F0 #72 wait, #E0 then #72 arrive: the FIFO holds
+/// #E0 #F0 #72 (the last #72 written over the first, flagged). RR1 bit 5 = 0;
+/// two reads give #E0 #F0, now RR1 bit 5 = 1; the third gives #72.
+///
 /// Interrupts: receive only (WR1 bits 4-3: 01 the first character after
 /// "enable INT on next Rx character", 10 / 11 every character while one is
 /// waiting). Transmit and external / status interrupts are not modeled.
@@ -227,6 +241,8 @@ public:
         uint8_t fifo[kFifoDepth] = {};
         uint8_t fifoCount = 0;
         uint8_t lastData = 0xFF; ///< what a read of an empty FIFO returns
+        /// Bit 0: RR1 bit 5 (latched until Error Reset); bits 1-3: FIFO entry 0-2 was written over (the flag
+        /// that rides with the character into RR1 when it reaches the top)
         uint8_t overrun = 0;
         uint8_t rxFirstArmed = 0;  ///< WR1 mode 01: the next character interrupts
         uint8_t rxFirstIp = 0;     ///< WR1 mode 01: that character's request
@@ -235,8 +251,11 @@ public:
 
     void Reset();
 
-    /// A host-side byte arrives on channel `ch` (0 = A, 1 = B). Returns false on overrun
+    /// A host-side byte arrives on channel `ch` (0 = A, 1 = B). Returns false on overrun: the FIFO was full and
+    /// the byte replaced its newest character
     bool Receive(uint8_t ch, uint8_t value);
+    /// RR1 bit 5 as the CPU reads it (the latched overrun)
+    bool OverrunLatched(uint8_t ch) const { return (_ch[ch & 1].overrun & kOverrunLatch) != 0; }
 
     uint8_t ReadData(uint8_t ch);
     void WriteData(uint8_t ch, uint8_t value);
@@ -262,7 +281,13 @@ public:
     std::function<void()> onReturnFromInt;
 
 private:
+    static constexpr uint8_t kOverrunLatch = 0x01;
+    /// The flag of FIFO entry `index` in Channel::overrun
+    static constexpr uint8_t EntryFlag(uint8_t index) { return static_cast<uint8_t>(0x02u << index); }
+
     void ResetChannel(uint8_t ch);
+    /// The character now at the top of the FIFO was written over: RR1 bit 5 latches
+    static void LatchTopStatus(Channel& c);
 
     Channel _ch[2];
     std::function<void(uint8_t, uint8_t)> _transmit;

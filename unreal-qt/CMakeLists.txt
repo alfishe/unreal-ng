@@ -754,6 +754,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
+        # Focus out releases the held keys (physical and matrix)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/keyboardmanager_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/keyboardmanager.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
