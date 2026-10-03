@@ -744,7 +744,7 @@ uint32_t Screen::GetCurrentTstate()
     // but ULA/screen expects unscaled t-states based on base 3.5MHz clock
     // Video signal timing is independent of CPU speed
     uint32_t scaledTstate = cpu->t;
-    uint32_t unscaledTstate = scaledTstate / state.current_z80_frequency_multiplier;
+    uint32_t unscaledTstate = state.CpuToBaseT(scaledTstate);
 
     return unscaledTstate;
 }

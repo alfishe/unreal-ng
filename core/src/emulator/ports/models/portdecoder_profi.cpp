@@ -354,9 +354,8 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     {
         // Z80::t counts CPU clocks of the scaled frame (x the clock multiplier): T3 starts 2 clocks after T2
         const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1;
         if (z80)
-            result = FloatingBusV3((z80->t + 2u) / multiplier);
+            result = FloatingBusV3(_state->CpuToBaseT(z80->t + 2u));
     }
 
     disp.wasDecoded = _lastPortDecoded;

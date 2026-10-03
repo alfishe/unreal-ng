@@ -1139,6 +1139,35 @@ struct EmulatorState
                                                 // below must use this one (a mid-frame flip otherwise made
                                                 // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
                                                 // accumulator expects 882"). Never 0: 1 is the base clock
+    uint8_t hw_clock_den;                       // Denominator of the hardware clock ratio: CPU T per base T =
+                                                // hw_turbo_ratio / hw_clock_den. 1 (or 0) for every machine with a
+                                                // clock that is a whole multiple of 3.5 MHz; the Profi in hi-res runs
+                                                // at 3 / 5 MHz = 6/7, 10/7 (design-hires.md section 2). Requested by the
+                                                // decoder together with hw_turbo_ratio
+    uint8_t hw_clock_den_applied;               // hw_clock_den as composed into the running clock (see the _applied
+                                                // ratio above). Read through ClockDen()
+
+    /// Denominator of the clock in effect; 1 for every machine at a whole multiple of the base clock
+    uint32_t ClockDen() const { return hw_clock_den_applied > 1 ? hw_clock_den_applied : 1u; }
+
+    /// CPU T-states of `baseT` base (3.5 MHz) T-states at the composed clock: the frame length and the INT window
+    /// the CPU loop runs against. Host speed x hardware ratio / denominator
+    uint32_t BaseToCpuT(uint32_t baseT) const
+    {
+        const uint32_t multiplier = current_z80_frequency_multiplier ? current_z80_frequency_multiplier : 1u;
+        if (hw_clock_den_applied <= 1) [[likely]]
+            return baseT * multiplier;
+        return static_cast<uint32_t>(static_cast<uint64_t>(baseT) * multiplier / hw_clock_den_applied);
+    }
+
+    /// Base (raster) T-state of the in-frame CPU position `t`: what the ULA / video and the frame counters see
+    uint32_t CpuToBaseT(uint32_t t) const
+    {
+        const uint32_t multiplier = current_z80_frequency_multiplier ? current_z80_frequency_multiplier : 1u;
+        if (hw_clock_den_applied <= 1) [[likely]]
+            return t / multiplier;
+        return static_cast<uint32_t>(static_cast<uint64_t>(t) * hw_clock_den_applied / multiplier);
+    }
 
     /// Host speed-control multiplier alone (current = host x hw_turbo_ratio_applied).
     /// Audio sample budgeting must use THIS: the host control makes frames
@@ -1159,16 +1188,21 @@ struct EmulatorState
     /// descale Screen::GetCurrentTstate applies for the ULA
     uint32_t AudioTstate(uint32_t t) const
     {
-        if (hw_turbo_ratio_applied <= 1) [[likely]]
+        if (hw_turbo_ratio_applied <= 1 && hw_clock_den_applied <= 1) [[likely]]
             return t;
-        return t / hw_turbo_ratio_applied;
+        const uint32_t ratio = hw_turbo_ratio_applied ? hw_turbo_ratio_applied : 1u;
+        if (hw_clock_den_applied <= 1)
+            return t / ratio;
+        return static_cast<uint32_t>(static_cast<uint64_t>(t) * hw_clock_den_applied / ratio);
     }
 
     /// TTD time units per base (1x) T-state: the least common multiple of the
     /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
     /// 2; ZX-Evo 4; a 1x / 6x machine such as the Sprinter 6; ZX Next 8). One unit is the
     /// shortest T-state the model can run at. Set once from the model's port
-    /// decoder (TtdClockUnits)
+    /// decoder (TtdClockUnits). With a fractional ratio (hw_clock_den) the
+    /// numerators count: the Profi v5 in hi-res at 10/7 and 20/7 needs 20, so a
+    /// CPU T-state is 7 units at 10/7 (units x den / ratio stays whole)
     uint8_t ttd_clock_units;
 
     /// TTD time units per CPU T-state at the applied clock. The in-frame
@@ -1182,9 +1216,10 @@ struct EmulatorState
         // the model selects, so the division is exact. Machines at the base
         // clock (every machine without a turbo) never divide
         const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
-        if (hw_turbo_ratio_applied <= 1) [[likely]]
+        if (hw_turbo_ratio_applied <= 1 && hw_clock_den_applied <= 1) [[likely]]
             return units;
-        const uint32_t perT = units / hw_turbo_ratio_applied;
+        const uint32_t ratio = hw_turbo_ratio_applied ? hw_turbo_ratio_applied : 1u;
+        const uint32_t perT = units * ClockDen() / ratio;
         return perT ? perT : 1;
     }
 

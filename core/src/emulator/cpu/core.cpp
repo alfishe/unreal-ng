@@ -89,6 +89,8 @@ bool Core::Init()
     _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
     _state->hw_turbo_ratio = 1;                 // No hardware turbo engaged at power-on (model-neutral)
     _state->hw_turbo_ratio_applied = 1;
+    _state->hw_clock_den = 1;                   // A whole multiple of the base clock (the Profi's hi-res clock is not)
+    _state->hw_clock_den_applied = 1;
     _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
@@ -1038,7 +1040,7 @@ void Core::AdjustFrameCounters()
 {
     /// region <Input parameters validation>
     // Calculate scaled frame limit based on speed multiplier
-    uint32_t scaledFrame = _config->frame * _state->current_z80_frequency_multiplier;
+    uint32_t scaledFrame = _state->BaseToCpuT(_config->frame);
 
     if (_z80->t < scaledFrame)
         return;

@@ -507,12 +507,21 @@ types:
           overshoot). Restored with the checkpoint so a replayed frame runs
           with the original instruction timing. Taken from the former
           reserved tail; sessions recorded before it read 0.
+      - id: hw_clock_den
+        type: u1
+        doc: |
+          Denominator of the hardware clock ratio, queued (CPU T per base T =
+          hw_turbo_ratio / hw_clock_den). 0 means 1: only the Profi in hi-res
+          (3 / 5 MHz = 6/7, 10/7) writes a 7. Taken from the reserved tail.
+      - id: hw_clock_den_applied
+        type: u1
+        doc: The denominator as composed into the running clock; 0 means 1.
       - id: reserved
-        size: 3
+        size: 1
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
           (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above, three for cpu_t_in_frame). The C++ side copies these objects by member-wise
+          fields above, three for cpu_t_in_frame, two for the clock denominator). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 

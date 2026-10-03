@@ -215,12 +215,18 @@ struct TTDChipsetState
     /// resuming at 0 shifted every CPU event of the rest of the replay by the
     /// overshoot (e.g. every AY register write). Dumps without it read 0.
     uint8_t cpu_t_in_frame[3] = {0, 0, 0};
-    uint8_t reserved[3] = {};
+    /// The clock ratio's denominator (EmulatorState::hw_clock_den / _applied), taken from the tail padding. Stored
+    /// as 0 for the usual 1 so every existing capture and fixture keeps its bytes; only the Profi in hi-res writes
+    /// a 7 here (design-hires.md)
+    uint8_t hw_clock_den = 0;
+    uint8_t hw_clock_den_applied = 0;
+    uint8_t reserved[1] = {};
 };
 
 static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
 static_assert(offsetof(TTDChipsetState, cpu_t_in_frame) == 114, "cpu_t_in_frame must sit at former pad offset 114");
-static_assert(offsetof(TTDChipsetState, reserved) == 117, "reserved must sit at pad offset 117");
+static_assert(offsetof(TTDChipsetState, hw_clock_den) == 117, "hw_clock_den must sit at pad offset 117");
+static_assert(offsetof(TTDChipsetState, reserved) == 119, "reserved must sit at pad offset 119");
 static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
                   == sizeof(TTDChipsetState),
               "TTDChipsetState has implicit trailing padding - resize reserved[]");
