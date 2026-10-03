@@ -216,6 +216,37 @@ bool Screenshotter::ParseFormat(const std::string& text, ScreenshotFormat& forma
     return true;
 }
 
+bool Screenshotter::ParseRequestWords(const std::string& area, const std::string& mode, const std::string& format,
+                                      ScreenshotOptions& options, std::string& message)
+{
+    if (!area.empty() && !ParseArea(area, options.area))
+    {
+        message = "Unknown area '" + area + "': use full or screen";
+        return false;
+    }
+    if (!mode.empty())
+    {
+        ScreenshotArea fromMode = ScreenshotArea::Full;
+        if (!ParseArea(mode, fromMode))
+        {
+            message = "Unknown mode '" + mode + "' (deprecated, use area): use full or screen";
+            return false;
+        }
+        if (!area.empty() && fromMode != options.area)
+        {
+            message = "area=" + area + " and mode=" + mode + " disagree (mode is a deprecated alias of area)";
+            return false;
+        }
+        options.area = fromMode;
+    }
+    if (!format.empty() && !ParseFormat(format, options.format))
+    {
+        message = "Unknown format '" + format + "': use png or gif";
+        return false;
+    }
+    return true;
+}
+
 const char* Screenshotter::AreaName(ScreenshotArea area)
 {
     return area == ScreenshotArea::Full ? "full" : "screen";

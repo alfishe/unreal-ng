@@ -19,38 +19,113 @@
          ["properties"]["text"]["type"] = "string";
 
     // Capture screen endpoint
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["summary"] = "Capture screen as image";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["tags"].append("Capture");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["description"] =
-        "Capture screen as GIF or PNG image. Returns base64-encoded data.";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["name"] = "id";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["in"] = "path";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["required"] = true;
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["name"] = "format";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["in"] = "query";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("gif");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("png");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["name"] = "mode";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["in"] = "query";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["required"] = false;
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("screen");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("full");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["description"] =
-        "Screen captured successfully";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["format"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["width"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["height"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["size"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["data"]["type"] = "string";
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/capture/screen"]["get"];
+        op["summary"] = "Screenshot of the presented frame";
+        op["tags"].append("Capture");
+        op["description"] =
+            "A screenshot of what the emulator shows: the presented (finished, tear-free) frame, as PNG (default) or "
+            "GIF. `area=full` (default) is the whole frame, border included (352x288 on a Spectrum, 1024x768 for the "
+            "FT812 picture); `area=screen` cuts the working picture the frame's own geometry names (the paper of a "
+            "Spectrum, the graphics window of a TS-Conf, the whole picture of an FT812 card). On a hires mode the "
+            "working picture can be the whole frame, then both give the same image. The answer always carries the "
+            "frame's geometry (`frame`, `screen_window`) and the rectangle that was cut (`crop`), so the caller never "
+            "has to guess. The image is returned base64-encoded in `data`, or written to `path` on the server. "
+            "An unknown `area`, `mode` or `format` is 400 with the allowed words; a screen window that does not fit "
+            "the frame is 500 with the sizes. The frame lags the machine by the present delay (2 frames by default, "
+            "more with ZX DLSS); GIF has 256 colors and loses colors on true-colour pictures. "
+            "Raw pixels without encoding: /capture/framebuffer.";
+
+        struct Param
+        {
+            const char* name;
+            const char* in;
+            bool required;
+            const char* description;
+            std::vector<const char*> values;
+        };
+        const std::vector<Param> params = {
+            {"id", "path", true, "Emulator id", {}},
+            {"area", "query", false,
+             "full (default): the whole frame with its border. screen: the working picture of the frame's geometry",
+             {"full", "screen"}},
+            {"format", "query", false, "png (default, lossless) or gif (256 colors)", {"png", "gif"}},
+            {"mode", "query", false, "Deprecated alias of area (full / screen); a conflicting pair is 400",
+             {"full", "screen"}},
+            {"path", "query", false, "Save the image to this server-side path instead of returning it (folders are created)",
+             {}},
+            {"filename", "query", false, "Alias of path", {}},
+        };
+        for (const Param& param : params)
+        {
+            Json::Value p;
+            p["name"] = param.name;
+            p["in"] = param.in;
+            p["required"] = param.required;
+            p["description"] = param.description;
+            p["schema"]["type"] = "string";
+            for (const char* value : param.values)
+                p["schema"]["enum"].append(value);
+            op["parameters"].append(p);
+        }
+
+        Json::Value& ok = op["responses"]["200"];
+        ok["description"] = "Screenshot taken";
+        Json::Value& props = ok["content"]["application/json"]["schema"]["properties"];
+        props["status"]["type"] = "string";
+        props["format"]["type"] = "string";
+        props["format"]["description"] = "png or gif";
+        props["area"]["type"] = "string";
+        props["area"]["description"] = "The area that was asked for: full or screen";
+        props["width"]["type"] = "integer";
+        props["width"]["description"] = "Width of the returned image";
+        props["height"]["type"] = "integer";
+        props["height"]["description"] = "Height of the returned image";
+        props["size"]["type"] = "integer";
+        props["size"]["description"] = "Encoded size in bytes";
+        for (const char* rect : {"crop", "screen_window"})
+        {
+            props[rect]["type"] = "object";
+            props[rect]["description"] = std::string(rect) == "crop"
+                                             ? "The returned image's rectangle inside the frame, in frame pixels"
+                                             : "The working picture inside the frame, in frame pixels";
+            for (const char* field : {"x", "y", "width", "height"})
+                props[rect]["properties"][field]["type"] = "integer";
+        }
+        props["frame"]["type"] = "object";
+        props["frame"]["description"] = "The frame the image was cut from";
+        props["frame"]["properties"]["width"]["type"] = "integer";
+        props["frame"]["properties"]["height"]["type"] = "integer";
+        props["frame"]["properties"]["mode"]["type"] = "string";
+        props["frame"]["properties"]["mode"]["description"] = "Video mode name, or external for a video card's picture";
+        props["frame"]["properties"]["source"]["type"] = "string";
+        props["frame"]["properties"]["source"]["enum"].append("native");
+        props["frame"]["properties"]["source"]["enum"].append("external");
+        props["frame"]["properties"]["frame_number"]["type"] = "integer";
+        props["frame"]["properties"]["frame_number"]["description"] = "Emulated frame the pixels belong to";
+        props["data"]["type"] = "string";
+        props["data"]["description"] = "Base64 image (absent when saved to a path)";
+        props["saved"]["type"] = "boolean";
+        props["file"]["type"] = "string";
+        props["file"]["description"] = "The path the image was written to";
+
+        op["responses"]["400"]["description"] =
+            "Unknown area, mode or format (the message lists the allowed words), or area and mode disagree; "
+            "kind: bad-parameter";
+        op["responses"]["404"]["description"] = "No such emulator; kind: not-found";
+        op["responses"]["409"]["description"] = "The emulator has not presented a frame yet (try again); kind: no-frame";
+        op["responses"]["500"]["description"] =
+            "The screen window does not fit the frame (kind: bad-geometry), the encoder failed (encode-failed) or the "
+            "file could not be written (io-failed); the message has the details";
+        op["responses"]["503"]["description"] = "The emulator is shutting down";
+        for (const char* status : {"400", "404", "409", "500", "503"})
+        {
+            Json::Value& eprops = op["responses"][status]["content"]["application/json"]["schema"]["properties"];
+            eprops["error"]["type"] = "string";
+            eprops["message"]["type"] = "string";
+            eprops["kind"]["type"] = "string";
+        }
+    }
 
     // ZX DLSS plane B (binary)
     {
@@ -60,7 +135,7 @@
         fb["description"] =
             "The picture without image encoding (core FramebufferExport; CLI `framebuffer save`, Lua / Python "
             "framebuffer(), MCP capture_media framebuffer): format=rgba (default) - the presented frame, width x height "
-            "x 4 bytes R, G, B, A, border included (the screenshot's pixels); format=index - the pen of every pixel as "
+            "x 4 bytes R, G, B, A, border included (the same pixels /capture/screen returns for area=full); format=index - the pen of every pixel as "
             "little-endian uint16 where the machine names its palette (the Sprinter: 2 048 pens, 736 x 288, the state "
             "now; colors in /state/sprinter/palette), else 409. encoding=binary (default): application/octet-stream "
             "with X-Width, X-Height, X-Format, X-Encoding; encoding=base64: JSON {width, height, format, encoding, "

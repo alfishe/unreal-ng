@@ -33,7 +33,7 @@
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
-#include <emulator/video/screencapture.h>
+#include <emulator/video/screenshotter.h>
 #include <emulator/cpu/opcode_profiler.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
@@ -1933,21 +1933,70 @@ namespace PythonBindings
             .def("capture_ocr", [](Emulator& self) -> std::string {
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
-            .def("capture_screen", [](Emulator& self, const std::string& format, bool fullFramebuffer) -> py::dict {
+            .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
+                                       const std::string& path) -> py::dict {
                 py::dict result;
-                CaptureMode mode = fullFramebuffer ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
-                auto capture = ScreenCapture::captureScreen(self.GetId(), format, mode);
-                result["success"] = capture.success;
-                result["format"] = capture.format;
-                result["width"] = capture.width;
-                result["height"] = capture.height;
-                result["size"] = capture.originalSize;
-                result["data"] = capture.base64Data;
-                if (!capture.success) {
-                    result["error"] = capture.errorMessage;
+                auto fail = [&](const std::string& message, const char* kind) {
+                    result["success"] = false;
+                    result["error"] = message;
+                    result["kind"] = kind;
+                    return result;
+                };
+                ScreenshotOptions options;  // the whole frame, PNG
+                if (!Screenshotter::ParseFormat(format, options.format))
+                    return fail("Unknown format '" + format + "': use png or gif", "bad-parameter");
+                if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
+                    return fail("Unknown area '" + area + "': use full or screen", "bad-parameter");
+                if (!fullLegacy.is_none())
+                {
+                    // Deprecated: full=True is area="full", full=False is area="screen"
+                    const ScreenshotArea fromFull = fullLegacy.cast<bool>() ? ScreenshotArea::Full : ScreenshotArea::Screen;
+                    if (!area.empty() && fromFull != options.area)
+                        return fail("area and the deprecated full= disagree", "bad-parameter");
+                    options.area = fromFull;
                 }
+                options.saveTo = path;
+
+                if (!self.GetContext() || !self.GetContext()->pScreen)
+                    return fail("The emulator has no screen", "no-frame");
+                const ScreenshotResult shot = Screenshotter::TakeFrom(*self.GetContext()->pScreen, options);
+                if (!shot.ok)
+                    return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
+
+                auto rect = [](const FrameRect& r) {
+                    py::dict d;
+                    d["x"] = r.x;
+                    d["y"] = r.y;
+                    d["width"] = r.width;
+                    d["height"] = r.height;
+                    return d;
+                };
+                py::dict frame;
+                frame["width"] = shot.frame.width;
+                frame["height"] = shot.frame.height;
+                frame["mode"] = shot.frame.source == FrameSource::External ? std::string("external")
+                                                                           : Screen::GetVideoModeName(shot.frame.videoMode);
+                frame["source"] = shot.frame.source == FrameSource::External ? "external" : "native";
+                frame["frame_number"] = shot.frame.frameNumber;
+                result["success"] = true;
+                result["format"] = Screenshotter::FormatName(shot.format);
+                result["area"] = Screenshotter::AreaName(options.area);
+                result["width"] = shot.width;
+                result["height"] = shot.height;
+                result["size"] = shot.encodedSize;
+                result["crop"] = rect(shot.crop);
+                result["screen_window"] = rect(shot.frame.screenWindow);
+                result["frame"] = frame;
+                if (!shot.savedFile.empty())
+                    result["file"] = shot.savedFile;
+                else
+                    result["data"] = Screenshotter::Base64Encode(shot.bytes);
                 return result;
-            }, "Capture screen as image", py::arg("format") = "gif", py::arg("full") = false)
+            }, "Screenshot of the presented frame: the whole frame (area='full', default) or the working picture "
+               "(area='screen'), PNG (default) or GIF; returns a dict with the image base64 in 'data' (or 'file' when "
+               "path is given), the frame geometry ('frame', 'screen_window') and the rectangle cut ('crop'). "
+               "full= is a deprecated alias of area (True = 'full', False = 'screen')",
+               py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "")
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {

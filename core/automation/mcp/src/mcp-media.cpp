@@ -1,7 +1,7 @@
 // MCP smart tool: capture_media
 //
 // Actions and their WebAPI mappings:
-//   screenshot     → GET  /capture/screen?format=&mode=   (base64 stripped unless include_image)
+//   screenshot     → GET  /capture/screen?format=&area=   (base64 stripped unless include_image; mode= is a deprecated alias)
 //   screen_digest  → GET  /state/screen/digest?banks=
 //   record_start   → POST /video/record {action:start,…}
 //                    With frames:N it becomes a bounded recording; every_nth:"auto"
@@ -127,12 +127,20 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
-    schema["properties"]["format"]["description"] = "screenshot: png|gif (default gif — pass png explicitly for lossless stills). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
+    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png: lossless; gif has 256 colors). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
     schema["properties"]["mode"]["type"] = "string";
     schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["mode"]["enum"].append("screen");
     schema["properties"]["mode"]["enum"].append("full");
-    schema["properties"]["mode"]["description"] = "screenshot capture region: 256x192 screen only or full border area";
+    schema["properties"]["mode"]["description"] = "Deprecated alias of area for screenshot (screen|full)";
+    schema["properties"]["area"]["type"] = "string";
+    schema["properties"]["area"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["area"]["enum"].append("full");
+    schema["properties"]["area"]["enum"].append("screen");
+    schema["properties"]["area"]["description"] =
+        "screenshot area: full (default) = the whole frame with its border; screen = the working picture of the "
+        "frame (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture). On a hires mode "
+        "both can be the whole frame. The answer carries the frame geometry and the rectangle that was cut";
     schema["properties"]["include_image"]["type"] = "boolean";
     schema["properties"]["include_image"]["default"] = false;
     schema["properties"]["include_image"]["description"] = "Include the base64 image payload for screenshot (large; metadata only by default)";
@@ -214,15 +222,19 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         std::string query;
                         if (args.isMember("format") && args["format"].isString() && !args["format"].asString().empty())
                         {
-                            query += "format=" + args["format"].asString() + "&";
+                            query += "format=" + UrlEncodeSegment(args["format"].asString()) + "&";
+                        }
+                        if (args.isMember("area") && args["area"].isString() && !args["area"].asString().empty())
+                        {
+                            query += "area=" + UrlEncodeSegment(args["area"].asString()) + "&";
                         }
                         if (args.isMember("mode") && args["mode"].isString() && !args["mode"].asString().empty())
                         {
-                            query += "mode=" + args["mode"].asString() + "&";
+                            query += "mode=" + UrlEncodeSegment(args["mode"].asString()) + "&";
                         }
                         if (!pathArg.empty())
                         {
-                            query += "path=" + pathArg + "&";
+                            query += "path=" + UrlEncodeSegment(pathArg) + "&";
                         }
                         if (!query.empty())
                         {
@@ -239,16 +251,29 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                 return;
                             }
                             std::ostringstream out;
+                            // What the image is: the area, the frame it was cut from and where the working picture is
+                            std::ostringstream what;
+                            what << body.get("area", "").asString();
+                            if (body.isMember("frame") && body.isMember("screen_window"))
+                            {
+                                const Json::Value& frame = body["frame"];
+                                const Json::Value& window = body["screen_window"];
+                                what << " of the " << frame.get("width", 0).asUInt() << "x" << frame.get("height", 0).asUInt()
+                                     << " " << frame.get("mode", "").asString() << " frame, screen window "
+                                     << window.get("width", 0).asUInt() << "x" << window.get("height", 0).asUInt() << " at ("
+                                     << window.get("x", 0).asUInt() << "," << window.get("y", 0).asUInt() << ")";
+                            }
                             if (body.get("saved", false).asBool() && body.isMember("file"))
                             {
                                 out << "Screenshot saved to " << body["file"].asString() << " ("
                                     << body.get("width", 0).asUInt() << "x" << body.get("height", 0).asUInt() << " "
-                                    << body.get("format", "").asString() << ", " << body.get("size", 0).asUInt() << " bytes)";
+                                    << body.get("format", "").asString() << ", " << body.get("size", 0).asUInt() << " bytes; "
+                                    << what.str() << ")";
                             }
                             else
                             {
                                 out << "Screenshot " << body.get("width", 0).asUInt() << "x" << body.get("height", 0).asUInt() << " "
-                                    << body.get("format", "").asString();
+                                    << body.get("format", "").asString() << " (" << what.str() << ")";
                                 if (!includeImage && body.isMember("data"))
                                 {
                                     out << " (metadata only — " << body.get("size", 0).asUInt()
