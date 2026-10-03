@@ -17,6 +17,9 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterporttable.h"
+#include "emulator/ports/models/sprinter/sprinterzxports.h"
+#include "common/stringhelper.h"
+#include <map>
 #include "emulator/video/screen.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 
@@ -74,9 +77,16 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _z84.ctc.SetTrigger(3, {Z84Lib::Z84Ctc::TriggerKind::Cascade, 0, 2});
 
     // The AT keyboard: the host's physical keys reach SIO A (and the PLD's reset and turbo keys)
-    _input.SetResetHandler([this]() { RequestCpuReset(SprinterResetKind::SoftReset); });
+    _input.SetResetHandler([this]() {
+        if (JournalOn())
+            JournalEvent("ctrl_alt_del", CpuPc(), -1, -1, -1, "Ctrl+Alt+Del: the PLD resets the CPU (the configuration stays)");
+        RequestCpuReset(SprinterResetKind::SoftReset);
+    });
     _input.SetTurboSwitchHandler([this]() {
         _pld.turboHard ^= 1;
+        if (JournalOn())
+            JournalEvent("f12", CpuPc(), -1, _pld.turboHard, _pld.turboHard ^ 1,
+                         std::string("F12: the front-panel turbo switch ") + (_pld.turboHard ? "on (21 MHz allowed)" : "off (3.5 MHz)"));
         ApplyTurbo();
     });
     _input.SetStepHookListener([this]() { RefreshStepHook(); });
@@ -188,6 +198,14 @@ void PortDecoder_Sprinter::reset()
     if (powerOn)
         PowerOn();
 
+    // Core::Reset restarted the frame counter: a new epoch of the journal
+    _journal.NextEpoch();
+    _journalLast7ffd = _journalLast1ffd = -1;
+    _journalDecodes.clear();
+    _tableWrites = TableWrites{};
+    if (JournalOn())
+        JournalEvent("reset", 0, -1, -1, -1, powerOn ? "power on" : "RESET button: the PLD loads its configuration again");
+
     // Core::Reset has reset the Z80 already; the RESET button reloads the PLD.
     // The keyboard is not reset; the machine's clock restarted under it
     _input.Rebase();
@@ -281,6 +299,8 @@ void PortDecoder_Sprinter::ResetCpu()
 
 void PortDecoder_Sprinter::BeginLoading()
 {
+    if (JournalOn())
+        JournalEvent("pld_load", CpuPc(), -1, -1, -1, "the PLD loads a configuration: the CPU runs the ROM loader into the sink");
     SprinterPldConfig::Begin(_pld);
     _pld.configModule = static_cast<uint8_t>(SprinterPldConfigurationRegistry::kStandardIndex);
     _pld.turbo = 0;
@@ -369,7 +389,27 @@ void PortDecoder_Sprinter::FinishLoad(bool watchdog)
         index = static_cast<int>(SprinterPldConfigurationRegistry::kStandardIndex);
 
     _pld.configModule = static_cast<uint8_t>(index);
+    if (JournalOn())
+    {
+        JournalEvent("pld_configured", CpuPc(), -1, static_cast<int>(index), -1,
+                     StringHelper::Format("PLD configured: module %s (%u writes, full hash %08X, head hash %08X)%s%s",
+                                          _registry.At(static_cast<size_t>(index)).Descriptor().name, _pld.bitstreamCount,
+                                          _pld.bitstreamHashFull, _pld.bitstreamHashHead,
+                                          watchdog ? ", the load watchdog fired" : "",
+                                          _context->config.sprinter.fast_start ? ", fast start" : ""));
+    }
     RequestCpuReset(SprinterResetKind::Configured);
+}
+
+void PortDecoder_Sprinter::OnResetPageWrite()
+{
+    if (JournalOn())
+    {
+        const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        JournalEvent("reset", z80 ? z80->m1_pc : 0, -1, -1, -1,
+                     "a write to page #A0 in window 3 with #1FFD = #10: the PLD resets the CPU (the BIOS's soft restart)");
+    }
+    RequestCpuReset(SprinterResetKind::SoftReset);
 }
 
 void PortDecoder_Sprinter::RequestCpuReset(SprinterResetKind kind)
@@ -525,6 +565,9 @@ void PortDecoder_Sprinter::SyncChipClock(uint8_t multiplier)
 
 void PortDecoder_Sprinter::OnFrameEnd()
 {
+    if (_tableWrites.count)
+        FlushPortTableWrites();
+
     // The host speed control's queued multiplier takes effect at the frame start that follows (Z80::BeginFrame);
     // the CTC timers and the watchdog switch rate at this instant, the frame boundary
     const uint8_t ratio = _state->hw_turbo_ratio ? _state->hw_turbo_ratio : 1;
@@ -536,6 +579,13 @@ void PortDecoder_Sprinter::ApplyTurbo()
 {
     const uint8_t ratio = (_pld.turbo && _pld.turboHard) ? 6 : 1;
     Core* core = _context->pCore;
+    if (_state->hw_turbo_ratio != ratio && JournalOn() && _pld.configState == SprinterConfigState::Configured)
+    {
+        JournalEvent("clock", _pc, -1, ratio, _state->hw_turbo_ratio,
+                     StringHelper::Format("CPU clock %s -> %s MHz (CNF turbo request %s, F12 switch %s)",
+                                          _state->hw_turbo_ratio > 1 ? "21" : "3.5", ratio > 1 ? "21" : "3.5",
+                                          _pld.turbo ? "on" : "off", _pld.turboHard ? "on" : "off"));
+    }
     if (_state->hw_turbo_ratio != ratio)
     {
         _state->hw_turbo_ratio = ratio;
@@ -954,11 +1004,17 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::Frame312:
             // The INT list follows at once; the frame itself (ScreenSprinter: config.frame,
             // the raster) from the next frame start
+            if (JournalOn() && _pld.frameLines != (code & 1))
+                JournalEvent("frame_lines", _pc, port, (code & 1) ? 312 : 320, _pld.frameLines ? 312 : 320,
+                             (code & 1) ? "frame 312 lines (code #2D): 69888 T from the next frame"
+                                        : "frame 320 lines (code #2C): 71680 T from the next frame");
             _pld.frameLines = code & 1;
             _intSource.SetFrameLines(_pld.frameLines ? 312 : 320);
             NoteVideoLatches();
             return;
         case SprinterCode::PldReload:
+            if (JournalOn())
+                JournalEvent("pld_load", _pc, port, value, -1, "code #2E: PLD reload requested (back to the loader)");
             RequestCpuReset(SprinterResetKind::Reload);
             return;
 
@@ -985,11 +1041,23 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
 
         case SprinterCode::Port1FFD:
         case 0xC8:
+        {
+            const uint8_t before = _pld.sc;
             _pld.sc = (_pld.cnf & 0x40) ? 0 : value;  // CNF bit 6: "SC clean"
+            if (JournalOn() && (value != _journalLast1ffd || before != _pld.sc))
+            {
+                _journalLast1ffd = value;
+                JournalEvent("port_1ffd", _pc, port, value, before,
+                             StringHelper::Format("#1FFD <- #%02X via port #%04X: latch #%02X -> #%02X%s", value, port, before,
+                                                  _pld.sc, (_pld.cnf & 0x40) ? " (CNF bit 6 'SC clean': /1FFD off, the latch stays 0)" : ""));
+            }
             UpdateBanks();
             return;
+        }
         case SprinterCode::Port7FFD:
         case 0xC9:
+        {
+            const uint8_t before = _pld.pn;
             _pld.pn = value;
             if (!(_pld.cnf & 0x80))
                 _pld.pn &= 0x3F;  // CNF_PN[7..6]_CLEAN
@@ -997,12 +1065,25 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
                 _pld.pn &= 0xDF;  // CNF_PN[5]_CLEAN
             if (_pld.cnf & 0x20)
                 _pld.pn &= 0xE0;  // CNF_PN[4..0]_CLEAN
+            if (JournalOn() && (value != _journalLast7ffd || before != _pld.pn))
+            {
+                _journalLast7ffd = value;
+                JournalEvent("port_7ffd", _pc, port, value, before,
+                             StringHelper::Format("#7FFD <- #%02X via port #%04X: latch #%02X -> #%02X%s", value, port, before,
+                                                  _pld.pn, _pld.pn != value ? " (CNF clean rules dropped bits)" : ""));
+            }
             UpdateBanks();
             return;
+        }
         case SprinterCode::Border:
             Default_Port_FE_Out(port, value, _pc);
             return;
         case SprinterCode::AllMode:
+            if (JournalOn() && _pld.allMode != value)
+                JournalEvent("all_mode", _pc, port, value, _pld.allMode,
+                             StringHelper::Format("ALL_MODE #%02X -> #%02X: %s, original waits %s, keyboard INT %s", _pld.allMode,
+                                                  value, (value & 0x01) ? "Sprinter screen / PC keyboard" : "ZX screen shadow + ZX keyboard (ZX mode)",
+                                                  (value & 0x04) ? "off" : "on", (value & 0x09) == 0x09 ? "on" : "off"));
             _input.BeforeAllModeWrite();
             _pld.allMode = value;
             ApplyOrigWaits();   // bit 2: the original waits
@@ -1010,6 +1091,8 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             NoteVideoLatches();
             return;
         case SprinterCode::Hold:
+            if (JournalOn() && _pld.hold != value)
+                JournalEvent("hold", _pc, port, value, _pld.hold, StringHelper::Format("HOLD #%02X -> #%02X (picture shift)", _pld.hold, value));
             CatchUpScreen();
             _pld.hold = value;
             NoteVideoLatches();
@@ -1021,6 +1104,9 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::RgMod:
         case 0xCD:
+            if (JournalOn() && _pld.rgMod != value)
+                JournalEvent("rgmod", _pc, port, value, _pld.rgMod,
+                             StringHelper::Format("RGMOD #%02X -> #%02X (mode table page %u)", _pld.rgMod, value, value & 1));
             CatchUpScreen();
             _pld.rgMod = value;
             _intSource.SetModePage(value & 1);
@@ -1028,6 +1114,10 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         case SprinterCode::SysCnf:
         case 0xCE:
+        {
+            const uint8_t turboBefore = _pld.turbo;
+            const uint8_t cnfBefore = _pld.cnf;
+            const uint8_t arom16Before = _pld.arom16;
             _pld.ramSys = (port & 0x40) ? 0 : 1;  // #24 / #3C: 1, #74 / #7C: 0
             if (value & 0x02)
             {
@@ -1050,8 +1140,22 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
                 if (_pld.cnf & 0x20)
                     _pld.pn &= 0xE0;
             }
+            if (JournalOn() && (turboBefore != _pld.turbo || cnfBefore != _pld.cnf || arom16Before != _pld.arom16))
+            {
+                std::string text = StringHelper::Format("CNF/SYS <- #%02X via port #%04X:", value, port);
+                if (value & 0x02)
+                    text += StringHelper::Format(" turbo request %s", _pld.turbo ? "on" : "off");
+                else
+                    text += StringHelper::Format(" vROM set %u", _pld.arom16);
+                if (value & 0x04)
+                    text += StringHelper::Format("; CNF #%02X: map %u, #7FFD %s, #1FFD %s, #7FFD bits 7-6 %s", _pld.cnf,
+                                                 (_pld.cnf >> 3) & 3, (_pld.cnf & 0x20) ? "off (clean)" : "on",
+                                                 (_pld.cnf & 0x40) ? "off (clean)" : "on", (_pld.cnf & 0x80) ? "kept (512K)" : "cleaned");
+                JournalEvent("cnf", _pc, port, value, cnfBefore, std::move(text));
+            }
             UpdateBanks();
             return;
+        }
         case SprinterCode::Scale:
         case 0xCF:
             if (_activeAccelerator)
@@ -1091,6 +1195,130 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
 }
 
 /// endregion </Port access>
+
+/// region <PLD journal>
+
+uint16_t PortDecoder_Sprinter::CpuPc() const
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return z80 ? z80->pc : 0;
+}
+
+void PortDecoder_Sprinter::JournalEvent(const char* kind, uint16_t pc, int port, int value, int previous, std::string text,
+                                        std::vector<std::string> details)
+{
+    MachineEvent e;
+    e.frame = _state->frame_counter;
+    e.t = BaseTstate();
+    e.pc = pc;
+    e.port = port;
+    e.value = value;
+    e.previous = previous;
+    e.kind = kind;
+    e.text = std::move(text);
+    e.details = std::move(details);
+    _journal.Append(std::move(e));
+}
+
+void PortDecoder_Sprinter::SetPldJournalEnabled(bool on)
+{
+    _journal.SetEnabled(on);
+    _tableWrites = TableWrites{};
+    _journalDecodes.clear();
+    _journalLast7ffd = _journalLast1ffd = -1;
+    UpdateBanks();  // the port table watch follows (SprinterMemory::MapRamToBank)
+}
+
+void PortDecoder_Sprinter::OnPortTableWrite(uint16_t addr)
+{
+    if (_context->ttdReplayActive)
+        return;
+    const uint16_t offset = static_cast<uint16_t>(addr & 0x3FFF);
+    const uint16_t pc = _context->pCore && _context->pCore->GetZ80() ? _context->pCore->GetZ80()->m1_pc : 0;
+    const uint32_t t = BaseTstate();
+    if (_tableWrites.count == 0)
+    {
+        _tableWrites.firstT = t;
+        _tableWrites.firstPc = pc;
+        _tableWrites.firstOffset = offset;
+    }
+    _tableWrites.count++;
+    _tableWrites.lastT = t;
+    _tableWrites.lastPc = pc;
+    _tableWrites.lastOffset = offset;
+}
+
+std::vector<uint8_t> PortDecoder_Sprinter::KeyPortDecodes() const
+{
+    std::vector<uint8_t> out(SprinterZxPorts::kDecodeCount, 0);
+    const uint8_t* table = _memory->RAMPageAddress(SprinterMemory::kPortTablePage);
+    for (uint8_t map = 0; map < 4; map++)
+        for (int dosOff = 0; dosOff < 2; dosOff++)
+            for (int read = 0; read < 2; read++)
+                for (size_t p = 0; p < SprinterZxPorts::kKeyPortCount; p++)
+                    out[SprinterZxPorts::DecodeIndex(map, dosOff != 0, read != 0, p)] =
+                        table[SprinterPortTable::Index(map, false, dosOff != 0, read != 0, SprinterZxPorts::kKeyPorts[p].port)];
+    return out;
+}
+
+void PortDecoder_Sprinter::FlushPortTableWrites()
+{
+    const TableWrites w = _tableWrites;
+    _tableWrites = TableWrites{};
+    if (!JournalOn())
+        return;
+
+    std::map<uint16_t, std::string> names;
+    for (const PortTraceCodeName& entry : GetPortTraceCodeTable())
+        names.emplace(entry.code, entry.name);
+    auto name = [&](uint8_t code) -> std::string {
+        if (!code)
+            return "None";
+        auto it = names.find(code);
+        return StringHelper::Format("#%02X %s", code, it != names.end() ? it->second.c_str() : "?");
+    };
+
+    const std::vector<uint8_t> now = KeyPortDecodes();
+    std::vector<std::string> details;
+    size_t changed = 0;
+    for (uint8_t map = 0; map < 4; map++)
+        for (int dosOff = 0; dosOff < 2; dosOff++)
+            for (int read = 1; read >= 0; read--)
+                for (size_t p = 0; p < SprinterZxPorts::kKeyPortCount; p++)
+                {
+                    const size_t i = SprinterZxPorts::DecodeIndex(map, dosOff != 0, read != 0, p);
+                    const bool first = _journalDecodes.size() != now.size();
+                    if (!first && _journalDecodes[i] == now[i])
+                        continue;
+                    changed++;
+                    if (details.size() < 48)
+                        details.push_back(StringHelper::Format("map %u, DOS %s, %s #%04X: %s%s", map, dosOff ? "off" : "on",
+                                                               read ? "IN " : "OUT", SprinterZxPorts::kKeyPorts[p].port,
+                                                               first ? "" : (name(_journalDecodes[i]) + " -> ").c_str(),
+                                                               name(now[i]).c_str()));
+                }
+    if (changed > details.size())
+        details.push_back(StringHelper::Format("... %zu more", changed - details.size()));
+    const bool first = _journalDecodes.size() != now.size();
+    _journalDecodes = now;
+
+    MachineEvent e;
+    e.frame = _state->frame_counter;
+    e.t = w.firstT;
+    e.pc = w.firstPc;
+    e.value = static_cast<int32_t>(w.count);
+    e.kind = "port_table";
+    e.text = StringHelper::Format("port table (page #40): %u bytes written this frame, offsets #%04X..#%04X, T %u..%u, PC #%04X..#%04X; "
+                                  "%s",
+                                  w.count, w.firstOffset, w.lastOffset, w.firstT, w.lastT, w.firstPc, w.lastPc,
+                                  first ? "key ZX port decodes now (first look):"
+                                        : (changed ? StringHelper::Format("%zu key ZX port decodes changed:", changed).c_str()
+                                                   : "no key ZX port decode changed"));
+    e.details = std::move(details);
+    _journal.Append(std::move(e));
+}
+
+/// endregion </PLD journal>
 
 /// region <Surfaces>
 

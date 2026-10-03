@@ -42,6 +42,7 @@ public:
         ResetPage,   ///< page #A0 with #1FFD = #10: the write resets the CPU
         Isa,         ///< ISA view: ignored
         CblPage,     ///< page #FD: the plain store, and the Covox-Blaster sees it (accelerator copies, INT on)
+        PortTable,   ///< page #40 while the PLD journal is on: the plain store, and the journal counts it
     };
 
     /// How a CPU read from a window differs from the mapped page

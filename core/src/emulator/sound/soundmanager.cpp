@@ -1,6 +1,7 @@
 #include "soundmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "base/featuremanager.h"
@@ -1805,6 +1806,26 @@ bool SoundManager::attachToPorts()
     if (_covox && _context->pPortDecoder)
     {
         result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
+    }
+
+    // A machine without a ZX-bus (PortDecoder::ZxBusPresent: the Sprinter until its ISA
+    // ZX-bus adapter exists) cannot reach the card: the software never sees it, its
+    // Z80 would run every frame for nothing, and the NeoGS's ZX-DMA keeps the TTD port
+    // journals off. The card the constructor built from [SOUND] GSType is removed
+    // before anything registers it (the decoder exists only from here on)
+    if (_gs && _context->pPortDecoder && !_context->pPortDecoder->ZxBusPresent())
+    {
+        LOGINFO("SoundManager: no ZX-bus on this machine - the %s card ([SOUND] GSType) is not fitted",
+                generalSoundDeviceName().c_str());
+        delete _gs;
+        _gs = nullptr;
+        _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
+                                      [](const AudioDeviceInfo& d) {
+                                          return d.type == AudioSourceType::GeneralSound ||
+                                                 d.type == AudioSourceType::GeneralSoundMp3;
+                                      }),
+                       _devices.end());
+        publishGeneralSoundSlot();
     }
 
     // Attach the General Sound card to its host ports #B3/#BB/#33 (GS design
