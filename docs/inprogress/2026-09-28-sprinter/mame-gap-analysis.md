@@ -143,7 +143,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | V2 | Graphics 320 x 256 colors, 640 x 16 colors (high nibble = left pixel), low-res 2 x 2 | `draw_tile`, `:430-451` | `core/src/emulator/video/sprinter/sprintervideorenderer.cpp:40-63` | **equal** | done |
 | V3 | Text 40 / 80 columns, font, attributes | `draw_symbol`, `:453-497` | `sprintervideorenderer.cpp:65-90` | **equal** | done |
 | V4 | Border and blank squares (pen `#400`) | `:475-479` | `sprintervideorenderer.cpp:86` | **equal** | done |
-| V4a | Border write timing | `:844` `update_now()` at the port write, the new color from the CPU's I/O access on | `ScreenSprinter::CatchUpToBorderLatch`: the old color up to the I/O cycle's end, where the PLD latches `BORDER` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`), IORQ + 3 T | **ours better** (MAME draws it from the access; research-zx-mode §7.1) | done |
+| V4a | Border write timing | `:844` `update_now()` at the port write, the new color from the CPU's I/O access on | `ScreenSprinter::CatchUpToBorderLatch`: the old color up to the I/O cycle's end, where the PLD latches `BORDER` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`), IORQ + 3 T; drawn at IORQ + 4 T to match the PENTAGON picture (owner decision) | **ours better** (MAME draws it from the access; research-zx-mode §7.1) | done |
 | V5 | Flash = frame counter bit 4 | `:409` | `screensprinter.cpp:37` | **equal** | done |
 | V6 | 8 palettes x 256 pens, R, G, B in video RAM columns `#3E0-#3FF` | `:1238-1243`, `:1984` | `core/src/emulator/video/sprinter/sprintervideoram.h:42-65` | **equal** | done |
 | V7 | HOLD (picture shift, code `#CB`) | `:850-851` | `portdecoder_sprinter.cpp:822-825` (power-on `#77` = MAME's {0, 0}) | **equal** | done |

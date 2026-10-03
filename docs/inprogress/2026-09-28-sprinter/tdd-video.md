@@ -111,10 +111,12 @@ Settled in S2 against the PLD (`VIDEO2.TDF`):
   `/IORQ` ends, at T3's falling edge), 2.5 T after the callback (IORQ, T2 of the I/O cycle), and the video logic
   samples it with the attribute every half T (`VIDEO2.TDF` `DCOL <- BRD` on `LWR_COL`). In the rounding of the
   video RAM write (a byte stored 1.5 T into its cycle lands at T 2) that is the I/O cycle's end:
-  `ScreenSprinter::CatchUpToBorderLatch` draws the beam up to the callback + 3 T with the old color
-  (`kBorderLatchAfterIorqT`). Worked example: an `OUT` whose IORQ is 4 T after the beam left ZX paper column 255
-  shows the new color from ZX column 256 + 2 x (4 + 3 - 2) = 266 (the - 2: the Sprinter reads the paper 2 T later
-  after its INT than a Pentagon); the PENTAGON model draws it from 268, the Sprinter before the fix from 260
+  the PLD gives the callback + 3 T. `ScreenSprinter::CatchUpToBorderLatch` draws the beam up to the callback + 4 T
+  with the old color (`kBorderLatchAfterIorqT`): one T more than the PLD, by owner decision, so the border sits
+  against the paper exactly as on the PENTAGON model (with 3 T it was 2 ZX pixels ahead, visible in Across the
+  Edge). Worked example: an `OUT` whose IORQ is 4 T after the beam left ZX paper column 255 shows the new color
+  from ZX column 256 + 2 x (4 + 4 - 2) = 268 (the - 2: the Sprinter reads the paper 2 T later after its INT than a
+  Pentagon), as the PENTAGON model; 266 with the PLD's 3 T, 260 before the fix
   (`ScreenSprinter_Test.SpectrumScreen_BorderWrite_LatchedAtIowrLikePentagon`, research-zx-mode §7.1).
 - **Frame height**: codes `#2C`/`#2D` take effect at the next frame start (`config.frame` = 71 680 or
   69 888, the CPU frame, the raster); the INT list follows at once (S1).

@@ -280,13 +280,14 @@ ZX column 176 - 48 = 128):
 
 | | PENTAGON | Sprinter before | Sprinter now |
 |---|---|---|---|
-| test: IORQ 4 T after the paper | 268 | 260 (- 8) | 266 (- 2) |
-| Across the Edge: border edge (paper edge 176) | 176 | 168 (- 8) | 174 (- 2) |
+| test: IORQ 4 T after the paper | 268 | 260 (- 8) | 268 |
+| Across the Edge: border edge (paper edge 176) | 176 | 168 (- 8) | 176 |
 
-The 2 ZX pixels (1 T) left are not a latency of the border: the Sprinter reads the paper 2 T later after
-its INT (17 990 T) than a Pentagon (17 988 T), and its border latch is 1 T later than the PENTAGON model
-draws a border (2 T after IORQ). Closing it would need a border 4 T after IORQ, half a T to 1 T beyond the
-PLD's latch and sample; it is left as the hardware gives it (TODO).
+The PLD's latch alone (IORQ + 3 T) left 2 ZX pixels (1 T), and they were visible in Across the Edge: the
+Sprinter reads the paper 2 T later after its INT (17 990 T) than a Pentagon (17 988 T), but its border latch
+is only 1 T later than the PENTAGON model draws a border (2 T after IORQ). By owner decision (2026-10-03)
+the border is drawn from IORQ + 4 T, 1 T beyond the PLD's latch, so the picture matches the PENTAGON model
+exactly; a capture from a real board decides whether 3 is right after all (TODO).
 
 ### 7.2 Frame and INT
 

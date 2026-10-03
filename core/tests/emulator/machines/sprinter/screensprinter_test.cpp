@@ -723,9 +723,9 @@ TEST_F(ScreenSprinter_Test, SpectrumScreen_BorderWrite_LatchedAtIowrLikePentagon
         SCOPED_TRACE("ZX line " + std::to_string(k) + ", OUT " + std::to_string(4 + (k >> 1)) + " T after the paper");
         const int beam = 256 + 2 * (4 + static_cast<int>(k >> 1));  // the column the beam is at on the Pentagon
         EXPECT_EQ(pentagonColumn(k), beam + 4) << "PENTAGON: 2 T after the callback";
-        // Sprinter: + 3 T (the latch) - 2 T (its paper 2 T later): 1 T after the Pentagon's beam column
-        EXPECT_EQ(sprinterColumn(k), beam + 2) << "Sprinter P128";
-        EXPECT_LE(pentagonColumn(k) - sprinterColumn(k), 2) << "within the 1 T the machines differ by";
+        // Sprinter: + 4 T (kBorderLatchAfterIorqT) - 2 T (its paper 2 T later): the Pentagon's column
+        EXPECT_EQ(sprinterColumn(k), beam + 4) << "Sprinter P128";
+        EXPECT_EQ(sprinterColumn(k), pentagonColumn(k)) << "the border lines up with the paper as on the PENTAGON";
         EXPECT_EQ(Pixel(112 + 512, 48 + k), PenColor(SprinterVideoRenderer::kPenText | (kOld * 9u))) << "the old color first";
     }
     EmulatorTestHelper::CleanupEmulator(pentagon);

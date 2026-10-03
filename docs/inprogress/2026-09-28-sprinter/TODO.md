@@ -197,11 +197,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - [x] Spectrum mode: the border one character (8 ZX pixels) ahead of the paper (owner report 2026-10-03, Across
     the Edge in P128; branch `sprinter-zx-border-phase`): the border color was drawn from the port callback (IORQ);
     the PLD latches it on `/IOWR` rising, at the I/O cycle's end (`SP2_ACEX.TDF:310-315`), and samples it with the
-    attribute every half T. Now drawn from IORQ + 3 T (`ScreenSprinter::CatchUpToBorderLatch`): Across's split-screen
-    border edge 168 -> 174 against the paper's 176, the PENTAGON model 176 ([research-zx-mode.md](research-zx-mode.md) §7.1)
-  - [ ] Border vs paper still 2 ZX pixels (1 T) ahead of the PENTAGON model: the Sprinter's paper is 2 T later after its
-    INT (17 990 vs 17 988), its border latch only 1 T later. Matching the PENTAGON model exactly needs IORQ + 4 T,
-    beyond the PLD's latch; decide against a board (a photo / capture of Across the Edge's split screen on a Sprinter)
+    attribute every half T. Now drawn from IORQ + 4 T (`ScreenSprinter::CatchUpToBorderLatch`): Across's split-screen
+    border edge 168 -> 176 against the paper's 176, as the PENTAGON model ([research-zx-mode.md](research-zx-mode.md) §7.1).
+    The PLD sources give IORQ + 3 T (edge 174, still visibly 2 ZX pixels ahead); the owner chose the PENTAGON picture
+  - [ ] Check the border latch against a board (a photo / capture of Across the Edge's split screen on a Sprinter):
+    `kBorderLatchAfterIorqT` is 4 T by owner decision, 1 T beyond the PLD's latch; one constant if a board says 3
   - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
     border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
     change 8 lines off in the bottom border
