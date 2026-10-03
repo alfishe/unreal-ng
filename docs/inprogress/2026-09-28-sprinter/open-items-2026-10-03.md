@@ -58,5 +58,8 @@ come the ISA slots and the network cards (section 3).
   3.07 recovery disk. Owner decision: 3.07 BETA 1 stays the default, with a warning in the BIOS report
   (`known_issues`, all surfaces, Qt status bar) and the recipes. Open: send
   [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) to the BIOS author ([bios-versions.md](bios-versions.md) §5.2).
+  Checked 2026-10-03: the public upstream head (`beta` `f546c4e`) **is** the kept 3.07 BETA 1, byte for byte,
+  and still changes IY; the author's newer fixes are not pushed. Waiting for the author to push the build
+  ([bios-versions.md](bios-versions.md) §5.3).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.

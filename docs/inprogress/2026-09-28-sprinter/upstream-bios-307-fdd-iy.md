@@ -4,6 +4,11 @@
 `beta`. **Build:** `f546c4e` ("Firmware v3.07 BETA 1", 24.09.2026). **Found:** 2026-10-03, in unreal-ng, confirmed
 in MAME 0.289. Background and evidence: [bios-versions.md](bios-versions.md) §5.2.
 
+**Still present at the public head (checked 2026-10-03).** `beta` is still `f546c4e`; nothing newer is
+pushed. Every beta build since 2026-01-19 shows "Firmware v3.07 BETA 1", so "3.07 BETA 1" alone does not name
+a build: the one tested here shows "Test build! 24.09.2026" in SETUP. If your tree has newer fixes, could you
+push them?
+
 ## Symptom
 
 With DSS 1.71.57 (the system disk of the MAME pack, `sp_hdd_sys`) on BIOS 3.07 BETA 1, no program on a floppy

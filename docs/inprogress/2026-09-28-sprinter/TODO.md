@@ -311,6 +311,12 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     `Fdc_Bios307SectorReadLoop_HdSide1`, `SprinterFloppyExe_Test` (env-gated). Owner decision 2026-10-03: 3.07 BETA 1
     stays the default, unchanged; the warning is the BIOS report's `known_issues` (all surfaces, Qt status bar) and
     the recipes. Upstream: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) (to send to the BIOS author).
+  - [x] Upstream head check (2026-10-03): the public `beta` head `f546c4e` is the kept `sp2k-3.07-beta1.rom`,
+    byte for byte (every beta commit since 2026-01-19 calls itself "3.07 BETA 1"); its FDD driver still
+    changes IY. `make-bios.py` now fixes the default CMOS date (`--cmos-date`), which used to come from the
+    host clock ([bios-versions.md](bios-versions.md) §3.2, §5.3).
+  - [ ] When the BIOS author pushes the build with the newer fixes: build it, run `SprinterFloppyExe_Test` and
+    dontBlink to the end logo, then add it or replace the default (owner decides).
 - Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
   outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
   the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least

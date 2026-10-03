@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested; **3.07 BETA 1 is the shipped default since 2026-10-02** (§6.1) |
+| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested; **3.07 BETA 1 is the shipped default since 2026-10-02** (§6.1). Upstream head checked 2026-10-03: it **is** the kept 3.07 BETA 1 (§5.3) |
 | **Related** | [materials.md](materials.md) §5 (ROM provisioning), [tdd-integration.md](tdd-integration.md) §1.1 (`[ROM] SPRINTER=`), `tools/machines/sprinter/bios-build/make-bios.py`, `tools/machines/sprinter/dcp-table/dcp-table.py` |
 
 **In short.** Peters Plus stopped at BIOS 3.04 (2003). The BIOS is alive again as a community
@@ -93,9 +93,11 @@ python3 tools/machines/sprinter/bios-build/make-bios.py \
     --bitstream <59 215-byte 1K30 bitstream> --out sp2k-3.06-hf2.rom
 ```
 
-Worked example: `--commit f546c4e` (the 3.07 beta of 2026-09-24) prints
+Worked example: `--commit f546c4e --cmos-date 2026-10-02` (the 3.07 beta of 2026-09-24) prints
 `CRC32 a06a1a02 ... Firmware v3.07 BETA 1`, byte-identical to `data/rom/sprinter/sp2k-3.07-beta1.rom`.
-The beta tree carries its own bitstream, so `--bitstream` is not needed there.
+The beta tree carries its own bitstream, so `--bitstream` is not needed there. `--commit c14a8c5
+--cmos-date 2026-10-02 --bitstream <LOADER_K30.BIN of 4c5d44a without its first 256 bytes>` gives
+`sp2k-3.06-hf2.rom` (both checked 2026-10-03 with sjasmplus 1.21.1).
 
 What the tool has to work around (all inside its temporary copy of the sources):
 
@@ -110,6 +112,12 @@ What the tool has to work around (all inside its temporary copy of the sources):
   Team") and a BETA build also the date and time ("Test build! 24.09.2026, 12:00:00"). The tool
   fixes them (`--date`, default the commit's author date; `--time`, default 12:00:00) so that a
   commit always gives the same image.
+- **The default CMOS date.** SETUP's `MAIN.asm` takes the date it writes to a CMOS with a bad
+  checksum from the build host's clock (`os.date("%Y")`, `%y`, `%m`, `%d` in Lua). Until 2026-10-03
+  the tool did not fix it, so a rebuild on another day differed in one byte (page 0 `#0896`, the day).
+  `--cmos-date` (default: the build date) fixes it now. The kept 3.06 Hotfix 2 and 3.07 BETA 1 were
+  built on 2026-10-02: rebuild them with `--cmos-date 2026-10-02`. The tool stops if a tree uses
+  another `os.date` format.
 - **The bitstream.** Trees before 2026-06-26 do not carry the bitstream binary (it is compiled
   from `src/altera/acex/k30/*.TDF` with Altera MAX+plus II). The FPGA sources did not change from
   2024-08-16 (`085ef3c`) to 2026-09-24, so the 3.06 images here use the stream that the first
@@ -246,6 +254,52 @@ BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1
   Navigator 1.10; in drive B both 3.06 Hotfix 2 and 3.07 BETA 1 print "Alternative Boot from Diskette fail" and
   stop at the prompt. The DSS-floppy tests and recipe steps use 3.04 with the disk in B (selected explicitly).
 
+### 5.3 The upstream head (checked 2026-10-03)
+
+The BIOS author said the upstream head has many fixes over "3.07 BETA 1". Checked on 2026-10-03:
+
+- **The public head is the kept image.** `git ls-remote` and the zxgit API give `beta` = `f546c4e`
+  (2026-09-24, "ALL MODE port read enabled"), `master` = `32f5f8f` (2026-05-16), Shared_Includes `main` =
+  `dd760c8`; the repository was last pushed 2026-09-23 (UTC). No other branch, fork, tag or release.
+  Nothing newer exists elsewhere either: zxgit has no other BIOS repository, the GitHub user Tolik-Trek has
+  none (`sp_mame` last pushed 2026-06-20), and the MAME set still stops at 3.06. A rebuild of `f546c4e`
+  (clone in `scratch/bios-head/`) is byte-identical to `sp2k-3.07-beta1.rom` (with `--cmos-date
+  2026-10-02`, §3.2).
+- **Why the confusion is likely.** The version string has read "Firmware v3.07 BETA 1" since `e0c7051`
+  (2026-01-19, `SET_EXPID_MOD 07`), and `BETA_BUILD` / `BETA_RC` have not changed since. That covers all 31
+  commits from 2026-01-19 to 2026-09-24: the IY rewrite of the FDD driver (`67c829e`, 2026-01-24), a buffer
+  per drive (`2a4e06d`), the drive type from `FDD_5x_GET_PAR` (`684c322`), the drive A/B fix (`7346ac6`), the
+  FDD delays (`5d3a690`, `1c0d877`), `[5x] DRV_GET_NAME` (`bd90859`, `2c5d438`), the ATAPI reset fix
+  (`ee91527`), the TR-DOS `/hdd` fix (`4307490`), new DSS / FORMAT / recovery images (`2e74cde`, `314ba26`,
+  `2638bcb`), the bitstream binaries (`4c5d44a`), no ACEX.SCALE in the port table (`a2986d7`), the stackless
+  `PIC_SET_PAL` (`c891536`) and the readable ALL_MODE (`f546c4e`). An image called "3.07 BETA 1" can be
+  any of them; the one kept here is the last. Only the SETUP line "Test build! 24.09.2026, 12:00:00"
+  tells them apart.
+- **The FDD driver still changes IY at the head.** `FDD_DRIVER.asm` of `f546c4e` still has `;PUSH IY` at
+  `.Start` and the two `;POP IY` commented out, so the "Invalid EXE file" of §5.2 stays. Any fix the author
+  has is not pushed. To the author: please push it, or say which build is meant (the "Test build" line of
+  the SETUP screen).
+- **No new image is added**, and no `head` alias: it would be a second copy of the default. The results
+  of the head are therefore those of 3.07 BETA 1 (the emulator is deterministic; the same bytes give the
+  same run):
+
+| Test | 3.06 Hotfix 2 | 3.07 BETA 1 (`f546c4e`) | Upstream head (= `f546c4e`) |
+|---|---|---|---|
+| Boot to the prompt, fast and full start | yes | yes | same image |
+| DSS 1.71.57 from the MAME pack's CHD, Flex Navigator 1.15 | yes | yes | same image |
+| EXE from a floppy (`b:\netcfg.exe -i`, `SprinterFloppyExe_Test`) | runs | "Invalid EXE file" / "Bad command or file name" (IY, §5.2) | same as 3.07 BETA 1 |
+| `copy b:\file c:\` | correct copy | 0-byte file | same as 3.07 BETA 1 |
+| dontBlink (`C:\DEMOS\DNTBLINK\dntblink.exe`) | plays to the end logo | freezes at about 305-310 s (a race in the demo, branch `sprinter-dntblink-freeze`) | same as 3.07 BETA 1 |
+| DSS text scrolls at the bottom line | no (MAME too) | yes | same image |
+| ZX mode from the prompt (ESC), Spectrum 128 menu | yes | yes | same image |
+| ALL_MODE readable (stays `#FE` after the return to DSS) | no (old bitstream) | yes (§5.2) | same image |
+
+**Recommendation:** keep 3.07 BETA 1 (`f546c4e`) as the default. It is the newest public source, the
+only one that scrolls DSS text, and it boots DSS 1.71 / Flex Navigator 1.15. Keep 3.06 Hotfix 2
+selectable for floppy programs under DSS 1.71.57 and for dontBlink. Revisit when the author pushes a
+build with the IY fix: build it with `make-bios.py`, rerun `SprinterFloppyExe_Test` and the dontBlink run,
+then replace or add the image.
+
 ## 6. Picking and testing a BIOS
 
 - **Config.** `[ROM] SPRINTER=` in `data/configs/sprinter/unreal.ini` (read into
@@ -304,6 +358,8 @@ BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1
   To refresh: pull the corpus clones, build the new head with `make-bios.py`, run the probe,
   and if it is worth keeping replace `sp2k-3.07-beta1.rom` (and its row in `kBiosImages`, the
   catalog and `README-ROMS.md`).
+
+Upstream rechecked 2026-10-03 (§5.3): `beta` `f546c4e`, `master` `32f5f8f`, Shared_Includes `dd760c8`, unchanged.
 
 Corpus state used: `emulators/zxgit/Sprinter-BIOS` (`beta` `f546c4e`, `master` `32f5f8f`),
 `Shared_Includes` `dd760c8`, `zxgit/2000` `6be4f60`, `gitlab/sprinter-computer-bios` `1273243`
