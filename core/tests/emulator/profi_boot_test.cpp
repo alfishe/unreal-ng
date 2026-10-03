@@ -24,6 +24,8 @@
 
 #include "3rdparty/lodepng/lodepng.h"
 #include "emulator/video/profi/profigeometry.h"
+#include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/video/screen.h"
 
 #include "_helpers/emulatortesthelper.h"
@@ -488,9 +490,55 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     }
     const char* nameEnv = std::getenv("PROFI_NAME");
     const std::string name = nameEnv ? nameEnv : "program";
+    const bool fdcTrace = std::getenv("PROFI_FDCTRACE") != nullptr;
+    uint32_t lastFdc = 0xFFFFFFFF;
     for (int f = 1; f <= frames; f++)
     {
-        _emulator->RunNFrames(1, true);
+        if (!fdcTrace)
+            _emulator->RunNFrames(1, true);
+        else
+        {
+            // Every change of the FDC's command / track / sector registers and the head position (development aid)
+            const uint64_t startFrame = context->emulatorState.frame_counter;
+            while (context->emulatorState.frame_counter == startFrame)
+            {
+                // The OUT about to execute, when it goes to the FDC (#1F/#3F/#5F/#7F) or the system port (#FF)
+                Z80* z = context->pCore->GetZ80();
+                const uint8_t op = z->DirectRead(z->pc);
+                int port = -1, value = 0;
+                if (op == 0xD3)
+                {
+                    port = (z->a << 8) | z->DirectRead(static_cast<uint16_t>(z->pc + 1));
+                    value = z->a;
+                }
+                else if (op == 0xED)
+                {
+                    const uint8_t op2 = z->DirectRead(static_cast<uint16_t>(z->pc + 1));
+                    const uint8_t regs[8] = {z->b, z->c, z->d, z->e, z->h, z->l, 0, z->a};
+                    if ((op2 & 0xC7) == 0x41)
+                    {
+                        port = z->bc;
+                        value = regs[(op2 >> 3) & 7];
+                    }
+                }
+                const int low = port & 0xFF;
+                if (port >= 0 && (low == 0x1F || low == 0x3F || low == 0x5F || low == 0x7F || low == 0xFF))
+                    std::cout << "F" << f << std::hex << " pc=" << z->pc << " OUT " << low << "," << value << std::dec << "\n";
+                _emulator->RunSingleCPUCycle(true);
+                WD1793* fdc = context->pBetaDisk;
+                if (!fdc || !fdc->getDrive())
+                    continue;
+                const uint32_t now = (uint32_t(fdc->getCommandRegister()) << 24) | (uint32_t(fdc->getTrackRegister()) << 16) |
+                                     (uint32_t(fdc->getSectorRegister()) << 8) | uint32_t(fdc->getDrive()->getTrack()) |
+                                     (fdc->getSideUp() ? 0x80u : 0u);
+                if (now == lastFdc)
+                    continue;
+                lastFdc = now;
+                std::cout << "F" << f << std::hex << " pc=" << context->pCore->GetZ80()->pc << " cmd=" << (now >> 24)
+                          << " trk=" << ((now >> 16) & 0xFF) << " sec=" << ((now >> 8) & 0xFF) << " head=" << (now & 0x7F)
+                          << " side=" << ((now >> 7) & 1) << std::dec << "\n";
+            }
+        }
         if (keys && keysAt > 0 && (f == keysAt || (every > 0 && f > keysAt && (f - keysAt) % every == 0)))
             TapKeys(keys);
         if (std::find(shots.begin(), shots.end(), f) == shots.end() && f != frames)
@@ -499,12 +547,33 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
         const std::string file = "scratch/profi/" + name + "-" + std::to_string(f) + ".png";
         lodepng_encode32_file(file.c_str(), fb.memoryBuffer, fb.width, fb.height);
     }
+    if (const char* traceEnv = std::getenv("PROFI_TRACE"))
+    {
+        // Instruction trace after the frames (development aid): PC, the two paging latches and SP per step, until
+        // PROFI_TRACE steps or a HALT with interrupts off
+        Z80* z = context->pCore->GetZ80();
+        const int steps = std::atoi(traceEnv);
+        for (int i = 0; i < steps; i++)
+        {
+            std::cout << std::hex << "T " << z->pc << " " << int(context->emulatorState.p7FFD) << " "
+                      << int(context->emulatorState.pDFFD) << " sp=" << z->sp << " a=" << int(z->a) << std::dec << "\n";
+            if (z->halted && !z->iff1)
+                break;
+            _emulator->RunSingleCPUCycle(true);
+        }
+    }
     if (std::getenv("PROFI_DUMP"))
     {
         // Registers and the code around PC (development aid)
         Z80* z = context->pCore->GetZ80();
         std::cout << std::hex << "af=" << z->af << " bc=" << z->bc << " de=" << z->de << " hl=" << z->hl << " ix=" << z->ix
                   << " iy=" << z->iy << " sp=" << z->sp << " iff1=" << int(z->iff1) << " im=" << int(z->im) << std::dec << "\n";
+        if (const WD1793* fdc = context->pBetaDisk)
+            std::cout << std::hex << "fdc cmd=" << int(fdc->getCommandRegister()) << " trk=" << int(fdc->getTrackRegister())
+                      << " sec=" << int(fdc->getSectorRegister()) << " status=" << int(fdc->getStatusRegister())
+                      << " side=" << int(fdc->getSideUp()) << std::dec << "\n";
+        if (WD1793* fdcw = context->pBetaDisk; fdcw && fdcw->getDrive())
+            std::cout << "fdd physical track=" << int(fdcw->getDrive()->getTrack()) << " side=" << fdcw->getDrive()->getSide() << "\n";
         std::cout << "code";
         for (int i = -16; i < 48; i++)
             std::cout << " " << std::hex << int(z->DirectRead(static_cast<uint16_t>(z->pc + i)));
