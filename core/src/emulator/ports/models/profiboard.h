@@ -15,6 +15,7 @@
 /// Each field is one difference, so a port decoder arm or a renderer asks one question instead of comparing models.
 
 #include <cstdint>
+#include <functional>
 
 #include "emulator/platform.h"
 
@@ -104,3 +105,37 @@ constexpr uint32_t ProfiIntStart(const ProfiFrame& f)
 /// [PROFI] SyncProm= value; false (and `out` untouched) for an unknown one. Empty / null = Default
 bool ParseProfiSyncProm(const char* text, ProfiSyncProm& out);
 const char* ProfiSyncPromName(ProfiSyncProm prom);
+
+/// The keyboard on the Profi's keyboard connector ([PROFI] Keyboard=; design section "Keyboard",
+/// research-profi-keyboard.md). Default is the board's usual one: the PROFI-XT controller on v5, the
+/// mechanical matrix keyboard on v3
+enum class ProfiKeyboard : uint8_t
+{
+    Default = 0,
+    Matrix,     ///< "matrix": the 40-key Spectrum matrix (host keys through the ZX matrix, Shift = Caps Shift)
+    Xt,         ///< "xt": the PROFI-XT controller running its firmware on the MCS-48 core (ProfiXtKbc)
+    XtTable,    ///< "xttable": the PROFI-XT controller from its key table, no MCU (ProfiXtKbc table engine)
+};
+
+/// The keyboard `keyboard` resolves to on `model` (Default: v5 XT, v3 Matrix)
+constexpr ProfiKeyboard ProfiResolveKeyboard(ProfiKeyboard keyboard, MEM_MODEL model)
+{
+    if (keyboard != ProfiKeyboard::Default)
+        return keyboard;
+    return model == MM_PROFI ? ProfiKeyboard::Xt : ProfiKeyboard::Matrix;
+}
+
+/// [PROFI] Keyboard= value (matrix | xt | xttable | default, case-insensitive); false (and `out` untouched) for an
+/// unknown one. Empty / null = Default
+bool ParseProfiKeyboard(const char* text, ProfiKeyboard& out);
+/// The config name: "default", "matrix", "xt", "xttable"
+const char* ProfiKeyboardName(ProfiKeyboard keyboard);
+/// The create-time config override for a keyboard choice (every automation surface: WebAPI "profi": {"keyboard"},
+/// CLI --profi-keyboard, MCP profi_keyboard, Lua / Python profi_keyboard); Default = no override
+std::function<void(CONFIG&)> ProfiKeyboardOverride(ProfiKeyboard keyboard);
+
+class EmulatorContext;
+/// The keyboard a running Profi has fitted (after a fallback: no firmware image -> XtTable); Default when the
+/// machine is no Profi. The one source every automation surface reports (paging.profi_keyboard)
+ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context);
+

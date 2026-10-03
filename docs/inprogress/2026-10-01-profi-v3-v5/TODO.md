@@ -55,3 +55,12 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
   modeled - the hi-res frame timing is open (design 5.3)
 - [x] Emulated test programs ([test-programs.md](test-programs.md)): Tact Meter reproduces the v3.2 turbo
   measurement to four digits; TEST 4.30 reads the expected ports, frame and memory class
+- [x] Keyboard (branch `profi-xt-kbd`, design section 9): `[PROFI] Keyboard=Matrix|XT|XTTable` (v5 XT, v3 Matrix);
+  the MCS-48 core (`core/src/emulator/cpu/mcs48/`), `ProfiXtKbc` running the reconstructed PROFI-XT firmware
+  (`data/rom/profixt/`), the table engine (`profixtkeymap`), `pckey::XtSet1Bytes`, `#FE` bit 5 = KD5 on v5, Auto route
+  = the controller alone, the automation reverse map, TTD id 44, all automation surfaces + Qt, the 8035 simulator in
+  `tools/machines/profi/xtkbd/`. Tests: `mcs48_test.cpp`, `profixtkbc_test.cpp` (BIOS 2.0 reads F1 as 75h)
+- [ ] Keyboard: a clean re-dump of the PROFI-XT v1.27 EPROM (confirms the 5 reconstructed bytes 02Eh-032h)
+- [ ] Keyboard: the v3.2 on-board XT pads (`#FE` bit 7 + the XT clock on /INT) - not built until software for it turns up
+- [ ] Keyboard: the native v5 mechanical keyboard's EXT / MODE / GRAF keys (two-contact combinations, sheet 9)
+

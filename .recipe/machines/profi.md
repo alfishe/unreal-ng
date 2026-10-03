@@ -74,8 +74,50 @@ invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
 | TURBO front-panel switch (7 MHz; on v3 a loaded floppy head holds 3.5 MHz), recorded by TTD | implemented — see [TURBO switch](#turbo-switch) |
 | v5 video WAIT at 3.5 MHz (`[PROFI] WaitPhase` / `WaitConfig` / `RomWait`), v3 turbo waits, v5 turbo waits (approximation) | implemented (feature `contention`) |
 | v3 floating bus (pixel byte on an unanswered `IN` with A0 = 1) | implemented |
-| Extended keyboard, the 15 MHz third crystal, DS80 waits | not implemented |
+| PROFI-XT keyboard controller (`[PROFI] Keyboard=XT`, v5 default): PC keys, EXT on `#BFFE` bit 5, the Z80 wait, Ctrl + Alt + Del; `XTTable` (no firmware), `Matrix` (v3 default) | implemented — see [Keyboard](#keyboard) |
+| The native v5 matrix keyboard's EXT / MODE / GRAF keys, the v3 on-board XT pads, the 15 MHz third crystal, DS80 waits | not implemented |
 | BIOS menu entries TR-DOS, Sinclair 48 / 128 | verified on both boards; CP/M boots from a disk |
+
+### Keyboard
+
+`[PROFI] Keyboard=` (create: WebAPI `"profi": {"keyboard": "xt"|"xttable"|"matrix"}`, CLI `create PROFI
+--profi-keyboard xttable`, MCP `emulator_manage action=create model=PROFI profi_keyboard=xttable`):
+
+| Value | Keyboard |
+|:--|:--|
+| `xt` (v5 default) | the PROFI-XT controller running its firmware on the MCS-48 core. The image `rom/profixt/profi-xt-v1.27.rom` is a reconstruction: 5 bytes patched, the only dump never enables interrupts ([data/rom/profixt/README.md](../../data/rom/profixt/README.md)); `[ROM] PROFIXT=` takes a re-dump |
+| `xttable` | the same controller from its key table, without the firmware image |
+| `matrix` (v3 default) | the 40-key Spectrum matrix (host Shift = Caps Shift, no EXT) |
+
+With a controller the host keyboard goes to it alone (route `auto` = `ps2`). PC keys: Ctrl = Caps Shift, Shift =
+Symbol Shift, Alt = SS + Enter, Esc = CS + 1, Backspace = CS + 0, arrows = CS + 5..8. F1-F10 = A..J + **EXT**,
+Home / End = K / L + EXT, PgUp / PgDn = M / N + EXT, Ins / Del = O / P + EXT. EXT is `#BFFE` bit 5 (KD5 of half-row
+A14); BIOS 2.0 and CP/M collect KD5 of every half-row into `#99DA` and read bit 6. On v3 EXT lands on `#FE` bit 7,
+which no v3 software reads. While a key is held every `#FE` read waits ~92-113 us for the controller; `#00FE` reads
+all half-rows ANDed; two half-rows in A8..A11 (`#FCFE`) read "no key". Ctrl + Alt + Del resets the machine. Scroll
+Lock (or a read of `#AAFE` / `#55FE`) toggles the second mode; Num Lock turns the keypad into the cursor block.
+Automation's ZX keys arrive as Ctrl / Shift + key (TypeText `&` = Shift + 6).
+
+Verified 2026-10-03 (WebAPI, shipped `rom/profi.rom`, BIOS 2.0):
+
+```bash
+ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
+     -d '{"model": "PROFI"}' | jq -r '.id')
+sleep 3                                                     # let the BIOS boot (its keyboard scan runs from then on)
+curl -s "$BASE/emulator/$ID/keyboard/status" | jq '{host_route_effective, keyboard_controller}'
+#   {"host_route_effective": "PS2", "keyboard_controller": "PROFI-XT firmware 1.27"}
+curl -s "$BASE/emulator/$ID/state/paging" | jq -r .profi_keyboard          # xt
+curl -s "$BASE/emulator/$ID/memory/read/0x99DA?length=1" | jq -r .hexdump  # 0x99DA: 00
+curl -s -X POST "$BASE/emulator/$ID/keyboard/press" -H 'Content-Type: application/json' -d '{"key":"f1"}'
+sleep 1
+curl -s "$BASE/emulator/$ID/memory/read/0x99DA?length=1" | jq -r .hexdump  # 0x99DA: 40 - the BIOS saw EXT
+curl -s -X POST "$BASE/emulator/$ID/keyboard/release" -H 'Content-Type: application/json' -d '{"key":"f1"}'
+```
+
+The same with `{"model": "PROFI", "profi": {"keyboard": "xttable"}}` (controller `PROFI-XT table`). An unknown
+keyboard name is a 400. Lua / Python: `paging_state().profi_keyboard`, `keyboard_controller()`. The BIOS turns the
+letter + EXT into its code (F1 = `75h`, routine `127Ah`), tested in `profixtkbc_test.cpp`. TTD records the keys and
+the controller (PeripheralId ProfiXtKbc, 44).
 
 ### TURBO switch
 

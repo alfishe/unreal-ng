@@ -1,6 +1,7 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -85,6 +86,36 @@ bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONF
         (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
         return false;
     out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+/// --profi-keyboard <matrix|xt|xttable|default>: the keyboard of a new PROFI / PROFI3 ([PROFI] Keyboard=, the
+/// WebAPI's "profi": {"keyboard"}), added to `machine` (the other model options); removed from args
+bool TakeProfiOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& machine, std::string& error)
+{
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] != "--profi-keyboard")
+            continue;
+        ProfiKeyboard keyboard = ProfiKeyboard::Default;
+        if (i + 1 >= args.size() || !ParseProfiKeyboard(args[i + 1].c_str(), keyboard))
+        {
+            error = "--profi-keyboard expects matrix | xt | xttable | default";
+            return false;
+        }
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        std::function<void(CONFIG&)> profi = ProfiKeyboardOverride(keyboard);
+        if (!profi)
+            return true;
+        if (!machine)
+            machine = std::move(profi);
+        else
+            machine = [first = machine, profi](CONFIG& config) {
+                first(config);
+                profi(config);
+            };
+        return true;
+    }
     return true;
 }
 
@@ -669,7 +700,8 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
     std::function<void(CONFIG&)> sprinterOptions;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError) ||
+        !TakeProfiOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;
@@ -774,7 +806,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
     std::optional<RamPowerOn> ramPowerOn;
     std::string optionError;
     std::function<void(CONFIG&)> sprinterOptions;
-    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError))
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError) || !TakeSprinterOptions(args, sprinterOptions, optionError) ||
+        !TakeProfiOptions(args, sprinterOptions, optionError))
     {
         session.SendResponse("Error: " + optionError + NEWLINE);
         return;

@@ -587,7 +587,12 @@ types:
           REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
           43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
           u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
-          restored after 42).
+          restored after 42),
+          44 ProfiXtKbc (the Profi PROFI-XT keyboard controller: ProfiXtKbc::State - u4 version 1, u1 engine (0 firmware,
+          1 table), the output latch, WAIT flip-flop, read in progress, reset line, the time base, the MCS-48 (clock, PC,
+          A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
+          state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
+          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

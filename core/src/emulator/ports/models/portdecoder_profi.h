@@ -5,6 +5,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/profi/profiwaitoverlay.h"
+#include "emulator/io/keyboard/profixtkbc.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
@@ -48,6 +49,13 @@ public:
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+
+    /// The keyboard on the connector ([PROFI] Keyboard=, resolved for the board): Matrix, Xt or XtTable
+    ProfiKeyboard GetKeyboardKind() const { return _keyboardKind; }
+    /// The PROFI-XT controller when it is fitted (Xt / XtTable), else nullptr
+    ProfiXtKbc* GetKeyboardController() const { return _xtKbc ? _xtKbc.get() : nullptr; }
+    /// Frame end: the PROFI-XT controller runs between reads
+    void OnFrameEnd() override;
     RtcBinding GetRtcBinding() override;
     /// endregion </Interface methods>
 
@@ -128,6 +136,12 @@ protected:
     /// The board (v3 or v5), fixed by the model when the decoder is created: what differs between the two
     const ProfiBoard _board;
     Ds12887 _rtc{256};
+    /// The keyboard on X9 (v5) / KEYB (v3), fixed at power-on; the PROFI-XT controller when fitted. Every even-port
+    /// read that reaches the #FE arm is its /CSKBD (design section "Keyboard")
+    ProfiKeyboard _keyboardKind = ProfiKeyboard::Matrix;
+    std::unique_ptr<ProfiXtKbc> _xtKbc;
+    /// Fit the keyboard the config asks for (constructor)
+    void FitKeyboard();
     std::unique_ptr<ProfiWaitOverlay> _waitOverlay;
     bool _waitsInstalled = false;
     bool _switchFromConfig = false;  // [PROFI] Turbo read once, at power-on (the switch is not touched by a reset)

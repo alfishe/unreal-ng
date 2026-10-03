@@ -59,7 +59,9 @@
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/status", "get");
     paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["summary"] = "Get keyboard status";
     paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["responses"]["200"]["description"] =
-        "Keyboard status: sequence_running, host_route (as set) and host_route_effective (AUTO resolved), ps2_controller";
+        "Keyboard status: sequence_running, host_route (as set) and host_route_effective (AUTO resolved), ps2_controller, "
+        "keyboard_controller (the controller's name when it has one: Profi \"PROFI-XT firmware 1.27\" / \"PROFI-XT table\"; "
+        "empty otherwise)";
 
     // POST /api/v1/emulator/{id}/keyboard/route
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/route", "post");
@@ -68,8 +70,10 @@
     paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["description"] =
         "Where host and injected keys go: \"matrix\" (the ZX keyboard matrix), \"ps2\" (the PS/2 keyboard "
         "controller: ZX-Evo AVR, ATM Turbo 2+ keyboard controller), \"both\", or \"auto\" (both where a PS/2 "
-        "controller exists, the matrix elsewhere; [INPUT] HostKeyboard= in the machine INI). Injected ZX keys reach "
-        "the PS/2 side as the PC keys they stand for. Refused (409) while a TTD recording runs.";
+        "controller exists, the matrix elsewhere; [INPUT] HostKeyboard= in the machine INI). A controller that takes "
+        "the matrix's place - the Profi PROFI-XT on X9 - gets AUTO alone (ps2). Injected ZX keys reach "
+        "the PS/2 side as the PC keys they stand for (PROFI-XT: Caps Shift = Ctrl, Symbol Shift = Shift; F1-F10, "
+        "Home, End, PgUp, PgDn, Ins, Del are the letter + EXT keys). Refused (409) while a TTD recording runs.";
     paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
     paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["route"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/route"]["post"]["responses"]["200"]["description"] = "The route in force";
@@ -95,7 +99,7 @@
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["key"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs'), or a physical PC key name for a PS/2 machine such as the ZX-Evo ('f1', 'home', 'esc', 'pc.up')";
+         ["properties"]["key"]["description"] = "Key name (e.g., 'a', 'enter', 'cs'), or a physical PC key name for a PS/2 machine such as the ZX-Evo or the Profi with its PROFI-XT controller ('f1', 'home', 'esc', 'pc.up')";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["200"]["description"] = "Key pressed";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["400"]["description"] = "Invalid key name";
     paths["/api/v1/emulator/{id}/keyboard/press"]["post"]["responses"]["404"]["description"] = "Emulator not found";

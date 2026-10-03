@@ -2,6 +2,8 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/ports/models/profiboard.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -2951,6 +2953,10 @@ namespace PythonBindings
                     throw py::value_error(error);
                 return Keyboard::HostRouteName(keyboard->EffectiveHostRoute());
             }, py::arg("route") = "", "Where host and injected keys go: route='auto'|'matrix'|'ps2'|'both' (the ZX matrix, the PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force")
+            .def("keyboard_controller", [](Emulator& self) -> std::string {
+                Keyboard* keyboard = self.GetContext() ? self.GetContext()->pKeyboard : nullptr;
+                return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
+            }, "The PS/2 / XT keyboard controller's name ('PROFI-XT firmware 1.27', ...); '' when there is none or it has no name")
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
@@ -4280,6 +4286,14 @@ namespace PythonBindings
             ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
 
             d["model"] = Config::GetModelFullName(config.mem_model);
+            if (IsProfiModel(config.mem_model))
+            {
+                // The board, its sync PROM and the keyboard on its connector (as GET /state/paging)
+                d["profi_board"] = config.mem_model == MM_PROFI3 ? "v3" : "v5";
+                d["profi_sync_prom"] = ProfiSyncPromName(
+                    ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+                d["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+            }
             d["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             d["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 
