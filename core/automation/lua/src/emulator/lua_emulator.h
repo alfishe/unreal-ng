@@ -57,6 +57,8 @@
 #include <emulator/ports/portdecoder.h>
 #include <emulator/config.h>
 #include <emulator/io/rtc/rtcaccess.h>
+#include <emulator/io/sprinter/isa/isaaccess.h>
+#include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -931,7 +933,7 @@ public:
             if (!shot.ok) return mouseError(s, shot.errorMessage);
 
             sol::state_view view(s);
-            auto rect = [&view](const FrameRect& r) {
+            auto rect = [&view](const PictureRect& r) {
                 sol::table t = view.create_table();
                 t["x"] = r.x;
                 t["y"] = r.y;
@@ -2959,6 +2961,77 @@ public:
             sol::variadic_results results;
             results.push_back(sol::make_object(s, true));
             return results;
+        });
+
+        // ISA slots (Sprinter ISA tdd §10): the report and cycles every interface uses (DeviceState::Isa,
+        // IsaAccess). Addresses are 20-bit ISA addresses (a number, or "#30A" / "0x30A" text)
+        lua.set_function("isa_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Isa(emulator->GetContext()));
+        });
+        // Ethernet frames of the frame-level cards (EthernetAccess): the capture, a frame towards a card
+        lua.set_function("network_frames", [this](sol::this_state s, sol::optional<std::string> link, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, EthernetAccess::Frames(emulator->GetContext(), link.value_or(""), static_cast<unsigned>(last.value_or(32))));
+        });
+        lua.set_function("network_inject_frame", [this](sol::this_state s, const std::string& link, const std::string& hex) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string error;
+            if (!EthernetAccess::Inject(emulator->GetContext(), link, hex, "Lua network_inject_frame", error))
+                return mouseError(s, error);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, true));
+            return results;
+        });
+        lua.set_function("isa_journal", [this](sol::this_state s, sol::optional<int> last) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::IsaJournal(emulator->GetContext(), static_cast<unsigned>(last.value_or(64))));
+        });
+        auto isaCycle = [this](sol::this_state s, const std::string& action, int slot, sol::object address,
+                               int value) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            uint32_t addr = 0;
+            if (address.is<int>())
+                addr = static_cast<uint32_t>(address.as<int>());
+            else if (!address.is<std::string>() || !IsaAccess::ParseAddress(address.as<std::string>(), addr))
+                return mouseError(s, "address: a number or \"#..\" / \"0x..\" text");
+            StateNode result;
+            std::string error;
+            if (!IsaAccess::Execute(emulator->GetContext(), action, slot, addr, value, "Lua isa", result, error))
+                return mouseError(s, error);
+            sol::variadic_results results;
+            const StateNode* v = result.find("value");
+            if (v && (action == "io_read" || action == "mem_read" || action == "io_peek" || action == "mem_peek"))
+                results.push_back(sol::make_object(s, static_cast<int>(std::strtol(v->s.c_str() + 1, nullptr, 16))));
+            else
+                results.push_back(sol::make_object(s, true));
+            return results;
+        };
+        lua.set_function("isa_io_read", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "io_read", slot, address, -1);
+        });
+        lua.set_function("isa_io_write", [isaCycle](sol::this_state s, int slot, sol::object address, int value) {
+            return isaCycle(s, "io_write", slot, address, value);
+        });
+        lua.set_function("isa_io_peek", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "io_peek", slot, address, -1);
+        });
+        lua.set_function("isa_mem_read", [isaCycle](sol::this_state s, int slot, sol::object address) {
+            return isaCycle(s, "mem_read", slot, address, -1);
+        });
+        lua.set_function("isa_mem_write", [isaCycle](sol::this_state s, int slot, sol::object address, int value) {
+            return isaCycle(s, "mem_write", slot, address, value);
+        });
+        lua.set_function("isa_reset", [isaCycle](sol::this_state s) {
+            return isaCycle(s, "reset", 0, sol::make_object(s, 0), -1);
+        });
+        lua.set_function("isa_latch", [isaCycle](sol::this_state s, int value) {
+            return isaCycle(s, "latch", 0, sol::make_object(s, 0), value);
         });
 
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {

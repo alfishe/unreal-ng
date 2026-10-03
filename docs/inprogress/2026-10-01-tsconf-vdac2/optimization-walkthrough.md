@@ -1,6 +1,6 @@
 # VDAC2: FT812 drawing optimization walkthrough
 
-**Created:** 2026-10-03. **Status:** rounds 0-8 done; next round open.
+**Created:** 2026-10-03. **Status:** rounds 0-11 done, live profile taken. Rounds 10-11 came from the TS-Labs SDK programs and the golden cases; further rounds wait for captures of other usage patterns.
 
 How the FT812 emulation (the eve-emu library) went from drawing Zuma Deluxe at half the
 speed of the real card to twenty times faster than it. Each round records what we
@@ -297,6 +297,131 @@ loading screen 1.06 -> 0.44 ms, power-on 0.31 -> 0.05 ms. Whole capture **11.3 -
 12.9x -> 20.7x**; rtype-boot **12.5x -> 24x**. **Meaning:** what a line costs now follows what
 changes on it; Zuma's remaining drawing is the lines with a moving or fading sprite.
 
+## Round 9: rectangles, points and lines reach only the lines near them
+
+**Start.** In the recorded walk a bitmap step reaches only its own rows, but a point, line
+or rectangle step reached every line: one moving rectangle (a progress bar, a HUD element)
+made every line of the frame count as changed for round 8.
+
+**Change.** Such a step gets the range of line centers it can reach: its vertices (both for
+a line or rectangle) widened by its radius (`POINT_SIZE` / `LINE_WIDTH`) plus the
+antialiasing reach, rounded up (`ShapeReach`), the same bound `DrawPoint`, `DrawLine` and
+`DrawRect` test before drawing. Lines outside are skipped when replaying and are not part of
+the line's steps. Edge strips still reach every line (they fill to the screen edge). Test:
+a thick rectangle, a large point and a line moved by 3 pixels: picture and costs equal with
+keeping on and off, a far line kept; shrinking the reach fails eight tests.
+
+**Result.** Small on these captures: Zuma's gameplay rectangles do not move (543 000 ->
+555 000 lines kept by their steps, 1.26 -> 1.25 ms per frame). **Meaning:** a safeguard for
+games with moving shapes, not a speedup for these two.
+
+## Live profile: where unreal-qt spends its time now
+
+R-Type in unreal-qt (TSL-VDAC2, demo, 600 frames at the real frame rate, `sample` on the
+process): the emulation thread is busy about **33 % of real time** (6.8 of 20.5 ms per frame);
+the Qt main thread about 3 %, audio about 2 %. Of the emulation thread:
+
+| Part | Share | ms per frame |
+|:--|--:|--:|
+| Z80 and TS-Conf (CPU, memory, interrupts, video) | ~50 % | ~3.4 |
+| FT812 (eve-emu) | ~33 % | ~2.3 |
+| Frame end (sound: TurboSound FM, OPL4, NeoGS mixing) | ~15 % | ~1.0 |
+
+The FT812 is no longer the largest part. What remains of it in R-Type is real drawing: the
+background scrolls, so every line changes every frame and nothing can be kept.
+
+## Round 10: the TS-Labs SDK test programs
+
+**Start.** The first captures that are not Zuma or R-Type: the eight `.spg` programs of the
+TS-Labs FT812 SDK (`testdata/machines/tsconf/vdac2-sdk/`), 30 s each, recorded in unreal-qt
+without the FT81x ROM image. Five draw a still picture once (test1, test3 and test-sd do not
+touch the FT812 after that; test2, test4 and test5 cost 0.00 - 0.03 ms per frame: every line
+kept). Two were slow, and slower than the card in unreal-qt itself (test9 drew 548 FT812
+frames in 20 s instead of about 1180):
+
+| Program | What it draws | Drawing per frame | Real-time factor |
+|:--|:--|--:|--:|
+| test6 | a 1940 x 768 picture scrolled every frame, four full-screen passes | 10.2 ms | 1.59x |
+| test9 | ROM-font text, `CMD_NUMBER`, a full-screen `CMD_GRADIENT` | 21.3 ms | **0.83x** |
+
+**What was slow and why.**
+
+- test9, 89 %: `CMD_GRADIENT` draws an L8 ramp stored in the chip's ROM (address 0x200065),
+  scaled and rotated over the screen. The fast paths read layouts from graphics memory only,
+  so every pixel took the general path at 13.4 ns. Without the ROM image those bytes read as
+  zero, the picture is the same, the cost was not.
+- test9's second pass, `BLEND_FUNC(DST_ALPHA, ONE)` onto RGB, had no fast blend (its twin
+  `ONE_MINUS_DST_ALPHA, ONE` from round 2 did).
+- test6: one of its four passes is `BLEND_FUNC(ONE, ONE)` on all channels; only the alpha
+  channel alone had a fast blend.
+- Both: every pixel is multiplied by `COLOR_RGB` / `COLOR_A` (in Zuma 10 % of the pixels
+  are), and that multiplication was the last scalar loop of the fast path's tail.
+
+**Change.**
+
+- The fast paths take a layout's bytes from wherever they are contiguous: graphics memory,
+  the ROM image, or - without the image - a block of zeros, exactly as the byte-by-byte
+  reads give them (`LayoutBytes`).
+- `Simd::AddSaturate` (`ONE, ONE` on any color mask), `Simd::AddRgbTimesDstAlpha` (both
+  destination-alpha additions) and `Simd::Modulate` (the `COLOR_RGB` / `COLOR_A`
+  multiplication), each NEON, SSE2 and plain C++ with the general path's rounding.
+- Test: the fast path against the general path for a ROM layout with and without the image
+  (axis-aligned, rotated, BILINEAR), `ONE, ONE` on all and some channels, both
+  destination-alpha additions over a varied alpha, modulation; each change was broken once
+  to see the test fail (one of them first passed: the destination alpha under the pass was
+  0, which hides a wrong factor - the test now writes a varied alpha first).
+- `eve-replay --all-mismatches` lists every mismatching picture. The first test9 capture
+  differed in its first two frames: it began while the chip was still drawing the previous
+  program's frame (lines drawn before the capture started), not an emulation error - fresh
+  captures match every frame, with keeping lines on and off.
+
+**Result.** test9 **0.83x -> 3.75x**, test6 **1.59x -> 2.94x**;
+Zuma 21.1x -> 21.4x, R-Type boot 24.7x -> 26.0x. **Meaning:** both programs now run with
+room to spare in unreal-qt; text, gradients and additive full-screen passes - typical of
+menus and effects - are on the fast path.
+
+## Round 11: the ROM image, the golden cases, PALETTED8 and filled shapes
+
+**Start.** Two blind spots of every measurement so far: all captures were replayed without
+the FT81x ROM image (so ROM-font text was never drawn), and the captured programs use only a
+few of the chip's features.
+
+- **With the ROM image** (`eve-replay --rom` on the existing captures, pictures not compared):
+  nothing new. test9 draws its text through L1 / L4 glyphs on the fast path and costs 1.9 ms
+  per frame (less than without the image); Zuma's loading screen 0.11 ms.
+- **The golden cases** (113 single-frame cases from the real chip, covering almost every
+  feature): `eve-tests-profile`, the golden test on the profiling build, prints per case the
+  bitmap pixels left to the general path and the pixels blended pixel by pixel (by blend
+  setting, alpha test, stencil). 36 cases had such work:
+
+| Outside the fast paths | Cases | Weight for real programs |
+|:--|:--|:--|
+| PALETTED8 bitmaps (4-byte palette, one channel per pass), every matrix and BILINEAR | `bitmap-format-16` | high: EVE Asset Builder's usual image format |
+| rectangles, points, lines, edge strips: every pixel on its own | `rects`, `lines`, `points`, `edge-strips`, `stencil-*` | medium: user interfaces, frames, bars |
+| TEXT8X8, TEXTVGA, BARGRAPH | `format-text-*` | low |
+| stencil, alpha test, unusual blend factors | `stencil-*`, `bilinear-alpha-*`, `blend-factors` | low |
+
+**Change.**
+
+- **PALETTED8 on the fast path:** its texel is one palette byte (`PALETTE_SOURCE + 4 x
+  index`, the source's offset picking the channel byte) in every channel; the palette cache
+  of round 3 holds these 256 entries too.
+- **Filled shapes as spans:** inside a rectangle (pixel centers between its x ends) the
+  distance to the core, so the coverage, is the same along the line, and EDGE_STRIP_R / L
+  fill whole runs at full coverage: such runs go through the pipeline as one span
+  (`BlendSpan`: the default blend in SIMD, as for bitmaps); the rounded ends stay pixel by
+  pixel. `EveChip::rasterSpanFill` switches it off for tests.
+- Tests: PALETTED8 in the fast-vs-general bitmap test; filled frames equal with and
+  without span fill (odd and subpixel coordinates, line widths, a color mask, an additive
+  blend, the scissor) and the colors equal to the per-pixel probe. Each change broken once
+  to see the tests fail: a wrong edge-strip span first passed - the test's edge strips had
+  x beyond 511 with `VERTEX2II` and wrapped off the checked area (now `VERTEX2F`).
+
+**Result.** R-Type play 17.6x -> 18.5x, Zuma 20.5x -> 21.4x (their rectangles); PALETTED8
+pays where a program uses it. The golden cases now leave only the low-weight items above
+outside the fast paths. **Meaning:** the features a typical EVE program uses are all on the
+fast path; what remains is rare enough to wait for a program that needs it.
+
 ## Summary
 
 | Round | Zuma, whole capture (CPU) | Real-time factor | Loading screen per frame | Gameplay drawing per frame |
@@ -310,17 +435,27 @@ changes on it; Zuma's remaining drawing is the lines with a moving or fading spr
 | 6. opaque / transparent shortcut | 26.7 s | 5.46x | | 2.59 ms |
 | 7. unchanged lines kept | 11.0 s | 13.3x | 1.06 ms | 2.22 ms |
 | 8. lines kept by their own steps | 7.05 s | **20.7x** | 0.44 ms | 1.26 ms |
+| 9. shapes reach only nearby lines | 7.05 s | 20.7x | 0.44 ms | 1.25 ms |
+| 10. SDK programs: ROM layouts, adding blends, SIMD modulation | 6.8 s | 21.4x | | |
+| 11. PALETTED8, filled shapes as spans | 6.8 s | 21.4x | | |
 
 From 305 to 7 seconds: the same capture now needs 43 times less CPU. Picture and line
 costs are unchanged in every round (the gate above). Note: the CPU figure includes
 `eve-replay`'s own timing of every call (about 5 %); the library alone is a little faster.
 
-## Next round
+## Next round (paused)
 
-- **Rectangles, points and lines** reach every line in the recorded walk (no row test yet):
-  one moving rectangle makes every line count as changed. Their vertical extent is known.
-- **Fading sprites** (`COLOR_A` changing every frame) and moving ones: the drawing itself
-  (decoding ~0.5 ns and blending ~0.4 ns per pixel).
-- **Parts of lines**: a line changes where a ball moves, the rest of it is drawn again too.
-- **R-Type**: profile its loader and demo the same way.
-- The rest of the acceleration brief: line threads.
+The optimization is paused here: the two games measured (Zuma, R-Type) no longer show a
+single dominant cost, and choosing the next round needs captures of other usage patterns:
+other games, the TS-Labs SDK demos, programs drawing text, shapes or video. Candidates
+known so far:
+
+
+- **Parts of lines**: a line changes where a ball moves; the rest of it is drawn again too.
+  Helps Zuma's gameplay, not R-Type (its whole background scrolls).
+- **Fading and moving sprites**: the drawing itself (decoding ~0.5 ns and blending ~0.4 ns
+  per pixel), close to what scalar code does.
+- **Outside the FT812**: Z80 and TS-Conf are now half of the emulation time in the live
+  profile, the sound mixing at the frame end another 15 %.
+- The rest of the acceleration brief: line threads (less to gain now that a frame costs
+  little).

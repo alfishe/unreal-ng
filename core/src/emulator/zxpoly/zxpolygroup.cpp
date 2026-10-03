@@ -1741,8 +1741,8 @@ void ZXPolyGroup::ComposeDisplayFrame()
     geometry.width = static_cast<uint16_t>(_displayWidth);
     geometry.height = static_cast<uint16_t>(_displayHeight);
     geometry.stride = _displayWidth * 4u;
-    const FrameRect window = screen->WorkingWindow();
-    geometry.screenWindow = FrameRect{static_cast<uint16_t>(window.x * 2), static_cast<uint16_t>(window.y * 2),
+    const PictureRect window = screen->WorkingWindow();
+    geometry.screenWindow = PictureRect{static_cast<uint16_t>(window.x * 2), static_cast<uint16_t>(window.y * 2),
                                       static_cast<uint16_t>(window.width * 2), static_cast<uint16_t>(window.height * 2)};
     geometry.videoMode = screen->GetVideoMode();
     geometry.source = FrameSource::Composed;

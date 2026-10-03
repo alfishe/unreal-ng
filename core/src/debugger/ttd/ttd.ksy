@@ -564,9 +564,11 @@ types:
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
-          32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
-          S6 sound, S6b ISA, the extended pads: no blob is written under them yet; the device that lands adds
-          its blob and the other Sprinter blobs keep their layout),
+          32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
+          the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,
+          6 modem, 7 dual16552 - then each card's own bus state, none so far; a session whose kinds differ from
+          the fitted cards is refused at load), 34 SprinterPads (reserved for a Sprinter device still to come -
+          the extended pads: no blob is written under it yet),
           35 Wd1793Context (u1 version 1, then 112 bytes: the WD1793 command in flight beyond the BetaDisk
           blob - rate-retry search, byte cell, rotational delay, the sector and tracks in use and the transfer
           pointers as (drive, track, offset), the read-track noise seed, up to 4 queued command steps as tags;
@@ -592,7 +594,11 @@ types:
           1 table), the output latch, WAIT flip-flop, read in progress, reset line, the time base, the MCS-48 (clock, PC,
           A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
           state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
-          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted).
+          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted),
+          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000: u1 version 1,
+          u1 card count, per card u1 key length, the key ("isa2.eth"), then the board: u1 version 1, u1 variant
+          (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB packet RAM, 8 bytes
+          RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address; only with such a card).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

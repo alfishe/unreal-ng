@@ -89,3 +89,14 @@ std::vector<std::pair<std::string, std::string>> NetworkKbcFirmwareChoices();
 
 /// The baud rates offered for a SERIAL: peer (any other can be typed)
 std::vector<uint32_t> NetworkSerialBaudChoices();
+
+/// One expansion slot (the Sprinter's ISA slots) as the window shows it: what is plugged and what it uses, in one
+/// line ("NE2000 RTL8019AS, I/O #300-#31F, IRQ 3, MAC 02:53:50:00:00:02, cable: ethernet-gateway"), or why a
+/// configured card is not there. Built from the report's `slots` (network tdd §14)
+struct NetworkSlotRow
+{
+    std::string id;      ///< "isa2"
+    std::string label;   ///< "ISA slot 2 (J7), page #D6"
+    std::string line;
+};
+std::vector<NetworkSlotRow> NetworkSlotRows(const StateNode& network);

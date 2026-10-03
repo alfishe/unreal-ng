@@ -385,8 +385,10 @@
             "The firmware (core DeviceState::SprinterBios; CLI `state sprinter bios`, Lua / Python sprinter_bios(), MCP "
             "aspect sprinter_bios): rom_file (the configured image), loaded (the shipped image whose CRC-32 the flash "
             "has), loaded_crc32, identified (pages 8 / 0 / 12 by signature), images[] (file, alias, version, crc32, "
-            "present, loaded, selected), reload_pending (a selection waits for the next reset), options (fast_start, "
-            "accel_int_suspend) and how to select. 404 on other machines.";
+            "present, loaded, selected, known_issues), known_issues (what a user should know about the loaded image, e.g. "
+            "3.07 BETA 1's floppy driver changes IY so DSS 1.71.57 cannot start programs from a floppy; empty when "
+            "none), reload_pending (a selection waits for the next reset), options (fast_start, accel_int_suspend) and "
+            "how to select. 404 on other machines.";
         paths[kBios]["get"]["parameters"][0]["name"] = "id";
         paths[kBios]["get"]["parameters"][0]["in"] = "path";
         paths[kBios]["get"]["parameters"][0]["required"] = true;

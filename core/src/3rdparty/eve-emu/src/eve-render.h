@@ -215,6 +215,8 @@ struct LinePlanStep
 {
     bool clear;              // CLEAR, else a vertex
     bool rowTest;            // a bitmap vertex: skip when rely is outside [0, rowsSubpixel)
+    bool extentTest;         // a point, line or rectangle: skip lines outside [yFirst, yLast]
+    int64_t yFirst, yLast;   // 1/16 pixel, the line centers it can reach (a superset)
     uint8_t primitive;
     uint32_t context;        // index into LinePlan::contexts
     uint32_t vertexCount;    // since BEGIN, before this vertex
@@ -271,6 +273,10 @@ uint32_t HandleLayoutHeight(const BitmapHandle& h);
 
 // --- eve-raster.cpp: points, lines, rectangles, edge strips --------------------------------------
 
+// How far a point, line or rectangle of this radius (POINT_SIZE / LINE_WIDTH, 1/16 pixel)
+// can reach beyond its vertices, 1/16 pixel, rounded up: lines farther away are not drawn
+int64_t ShapeReach(uint32_t radius);
+
 template <LineMode Mode>
 void DrawPoint(LineRun& run, const Vertex& v);
 template <LineMode Mode>
@@ -308,6 +314,9 @@ void Shade(LineRun& run, int32_t x, uint32_t r, uint32_t g, uint32_t b, uint32_t
 // Shade a span of pixels [first, first + count) with packed RGBA texels (R in bits 31..24,
 // A in 7..0): the same per-pixel rules as Shade<Draw>, the pipeline decided once per span
 void ShadeSpan(LineRun& run, int32_t first, const uint32_t* rgba, uint32_t count);
+// A span of packed texels (R in bits 31..24, A in 7..0) through the pipeline, as Shade
+// does pixel by pixel: SIMD for the default blend, ShadeSpan for the rest (eve-bitmap.cpp)
+void BlendSpan(LineRun& run, int32_t first, const uint32_t* texels, uint32_t count);
 template <LineMode Mode>
 void ClearLine(LineRun& run, uint32_t mask);
 // Pixel range of the line inside the scissor rectangle and the line: [first, last).

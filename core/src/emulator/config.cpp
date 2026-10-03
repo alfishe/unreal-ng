@@ -16,6 +16,7 @@
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -384,6 +385,47 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.sprinter.accel_int_suspend = static_cast<uint8_t>(inimanager.GetLongValue("SPRINTER", "AccelIntSuspend", 0) ? 1 : 0);
 	config.sprinter.cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("SPRINTER", "CmosFile", nullptr), config.sprinter.cmos_path, sizeof config.sprinter.cmos_path);
+
+	// ISA section (Sprinter ISA tdd §5, network tdd §12): what the two ISA-8 slots hold. A bad value keeps
+	// the default for that key (logged); a kind this build does not have is refused later, with the reason
+	// in the slot report - the machine always starts
+	config.sprinter.isa = sprinterisa::DefaultConfig();
+	for (int n = 0; n < sprinterisa::kSlots; n++)
+	{
+		sprinterisa::SlotConfig& slot = config.sprinter.isa.slot[n];
+		const std::string prefix = "Slot" + std::to_string(n + 1);
+		if (const char* v = inimanager.GetValue("ISA", prefix.c_str(), nullptr))
+		{
+			sprinterisa::CardKind kind;
+			if (sprinterisa::ParseKind(v, kind))
+				slot.kind = static_cast<uint8_t>(kind);
+			else
+				MLOGWARNING("Config: unknown [ISA] %s=%s (NONE | ZXBUS | RAM | NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552), %s kept",
+				            prefix.c_str(), v, sprinterisa::KindName(static_cast<sprinterisa::CardKind>(slot.kind)));
+		}
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "Chip").c_str(), nullptr))
+		{
+			sprinterisa::Ne2000Chip chip;
+			if (sprinterisa::ParseChip(v, chip))
+				slot.chip = static_cast<uint8_t>(chip);
+			else
+				MLOGWARNING("Config: unknown [ISA] %sChip=%s (RTL8019AS | UM9003 | NE1000), RTL8019AS used", prefix.c_str(), v);
+		}
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "Base").c_str(), nullptr))
+		{
+			uint16_t base = 0;
+			if (sprinterisa::ParseNe2000Base(v, base))
+				slot.base = base;
+			else
+				MLOGWARNING("Config: [ISA] %sBase=%s: #200..#3E0 in steps of #20, #%03X kept", prefix.c_str(), v, slot.base);
+		}
+		slot.irq = static_cast<uint8_t>(inimanager.GetLongValue("ISA", (prefix + "Irq").c_str(), slot.irq) & 0x0F);
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "Mac").c_str(), nullptr))
+		{
+			if (!sprinterisa::ParseMac(v, slot))
+				MLOGWARNING("Config: [ISA] %sMac=%s: auto or aa:bb:cc:dd:ee:ff (a station address), auto used", prefix.c_str(), v);
+		}
+	}
 
 	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);

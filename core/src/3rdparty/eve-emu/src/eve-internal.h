@@ -519,6 +519,7 @@ struct EveChip
     uint32_t lineBudgetMargin;               // soft budget = hard budget minus this percent (host setting)
     uint32_t drawnLines;                     // lines of the current frame already drawn (catch-up)
     bool bitmapFastPath;                     // false: every bitmap pixel through the general path
+    bool rasterSpanFill = true;              // false: rectangle and edge strip fills pixel by pixel
 
     // Output.
     uint32_t* framebuffer;

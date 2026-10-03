@@ -9,10 +9,10 @@
 ---
 
 2026-10-02
-## 🟣 [Fix Proposed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
+## 🟢 [Fixed] #1: The halted Z80 fetches the HALT itself instead of the byte after it
 * **Date Opened:** 2026-10-02
-* **Date Fixed:** -
-* **Commit ID:** -
+* **Date Fixed:** 2026-10-02 (A/B checked and closed 2026-10-03)
+* **Commit ID:** `cf5b28ac1` (merged `1e5782f2f`)
 
 ### Description
 While halted, the Z80 makes an idle opcode fetch every 4 T at the address **after** the `HALT` (its program
@@ -34,8 +34,11 @@ SkoolKit fetch the HALT, like unreal-ng.
       ([design](2026-10-02-halt-fetch-address/design.md) §3-4). `Z80::HaltedM1`, branch `halt-fetch-fix`.
 - [x] `Halt2Int_Test` passes with no known deviation (48K; the 128K program finds "Early"); host tests pin the idle
       fetch address on the 48K and 128K (`Contention48K_Test` / `Contention128K_Test.HaltedFetchGoesToTheByteAfterTheHalt`).
-- [ ] No cost on the non-halted path (A/B, pending a quiet machine); unreal-z80 carries the same fix with every suite
-      green (library branch `halt-fetch`, done), as do the vendored copies (General Sound, the Sprinter's Z84C15).
+- [x] No cost on the non-halted path: A/B on 2026-10-03 (A = master with the Z80 part of the fix reverted, B = master,
+      `BM_HostFrame_{48K,Pentagon,Scorpion}_Fast`, 5 runs a side interleaved A B A B A B B A B A, load 9.5-11.9): best
+      of 5, B vs A +0.12 % / -0.03 % / -0.37 %; the means are +0.7 .. +2 % only because of one pair at load 11.3-11.9, and
+      the sign of the pairs is mixed: no cost. unreal-z80 carries the same fix with every suite green (library branch
+      `halt-fetch`, done), as do the vendored copies (General Sound, the Sprinter's Z84C15).
 
 Design: [2026-10-02-halt-fetch-address](2026-10-02-halt-fetch-address/design.md). Plan: [PLAN.md](PLAN.md) #81.
 

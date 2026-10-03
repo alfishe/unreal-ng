@@ -135,6 +135,9 @@ public:
     uint32_t GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
     bool TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, uint16_t* y);
+
+    /// After vSync + vBlank, except the Pentagon overscan: it stores 16 lines more on top (ZxGeometry::kP384ExtraTopLines)
+    uint16_t FirstStoredRasterLine() const override;
     bool TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_t* zxY);
     uint32_t GetPixelOrBorderColorForTState(uint32_t tstate);
     bool IsOnScreenByTiming(uint32_t tstate);

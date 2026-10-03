@@ -21,12 +21,30 @@ Atm2IoEsp::Atm2IoEsp(EmulatorContext* context, std::unique_ptr<ISerialPeer> peer
 {
 }
 
-uint8_t Atm2IoEsp::Read(uint8_t busAddress)
+uint8_t Atm2IoEsp::Read(uint16_t offset)
 {
-    return _com.portDeviceInMethod(busAddress & 0x07);
+    return _com.portDeviceInMethod(offset & 0x07);
 }
 
-void Atm2IoEsp::Write(uint8_t busAddress, uint8_t value)
+void Atm2IoEsp::Write(uint16_t offset, uint8_t value)
 {
-    _com.portDeviceOutMethod(busAddress & 0x07, value);
+    _com.portDeviceOutMethod(offset & 0x07, value);
+}
+
+uint8_t Atm2IoEsp::Peek(uint16_t offset) const
+{
+    // The registers as the UART shows them (the receive buffer is not popped: its byte is not in the view)
+    const Uart16550::View v = _com.Uart().GetView();
+    const bool dlab = (v.lcr & 0x80) != 0;
+    switch (offset & 0x07)
+    {
+        case 0: return dlab ? static_cast<uint8_t>(v.divisor & 0xFF) : 0xFF;
+        case 1: return dlab ? static_cast<uint8_t>(v.divisor >> 8) : v.ier;
+        case 2: return v.iir;
+        case 3: return v.lcr;
+        case 4: return v.mcr;
+        case 5: return v.lsr;
+        case 6: return v.msr;
+        default: return v.scr;
+    }
 }

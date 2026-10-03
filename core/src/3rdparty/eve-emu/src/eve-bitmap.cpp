@@ -56,6 +56,25 @@ uint32_t ReadByte(const EveChip& chip, uint32_t address)
     return 0;
 }
 
+// The bytes [start, end) as ReadByte reads them, contiguous, or nullptr: RAM_G, the ROM
+// image, or the ROM area without an image (reads 0 up to the font root word; CMD_GRADIENT
+// draws a ramp from there)
+const uint8_t* LayoutBytes(const EveChip& chip, uint64_t start, uint64_t end)
+{
+    static const uint8_t kZeros[64 * 1024] = {};
+    if (end <= start)
+        return nullptr;
+    if (end <= kRamGSize)
+        return chip.regions[RegionRamG].base + start;
+    if (start < kRomFontBase || end > kRomEnd)
+        return nullptr;
+    if (chip.romImage != nullptr)
+        return start >= chip.romBase ? chip.romImage + (start - chip.romBase) : nullptr;
+    if (end <= kRomFontRootAddress && end - start <= sizeof(kZeros))
+        return kZeros;
+    return nullptr;
+}
+
 uint32_t Read16(const EveChip& chip, uint32_t address)
 {
     return ReadByte(chip, address) | (ReadByte(chip, address + 1) << kBitsPerByte);
@@ -350,7 +369,7 @@ const uint32_t* LuminanceTableFor(uint8_t format)
 bool FastFormat(uint8_t format)
 {
     return format == kFormatArgb4 || format == kFormatRgb565 || format == kFormatArgb1555 ||
-           format == kFormatPaletted4444 || format == kFormatPaletted565 || format == kFormatL1 ||
+           format == kFormatPaletted4444 || format == kFormatPaletted565 || format == kFormatPaletted8 || format == kFormatL1 ||
            format == kFormatL2 || format == kFormatL4 || format == kFormatL8 || format == kFormatRgb332 ||
            format == kFormatArgb2;
 }
@@ -375,6 +394,23 @@ const uint32_t* LinePalette(LineRun& run, uint8_t format)
     }
     PaletteCache& cache = chip.palettes[chip.paletteNext];
     chip.paletteNext = (chip.paletteNext + 1) % kPaletteCacheEntries;
+    if (format == kFormatPaletted8)
+    {
+        // One byte per entry, 4 bytes apart (PALETTE_SOURCE's offset picks the channel
+        // byte), in every channel: Rgba{v, v, v, v} as the general path samples it
+        const bool inRamG = static_cast<uint64_t>(source) + kPalette32Bytes * (kPaletteEntries - 1) + 1 <= kRamGSize;
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+        {
+            const uint32_t v = inRamG ? chip.regions[RegionRamG].base[source + kPalette32Bytes * i]
+                                      : ReadByte(chip, source + kPalette32Bytes * i);
+            cache.entry[i] = v * 0x01010101u;
+        }
+        cache.valid = inRamG;
+        cache.source = source;
+        cache.format = format;
+        cache.ramGWrites = chip.ramGWrites;
+        return cache.entry;
+    }
     // The 16-bit decode tables hold exactly Pack(Direct(v, layout)) for every v
     const uint32_t* table = TableFor(format == kFormatPaletted565 ? kFormatRgb565 : kFormatArgb4);
     const bool inRamG = static_cast<uint64_t>(source) + kPalette16Bytes * kPaletteEntries <= kRamGSize;
@@ -492,7 +528,9 @@ void WithRowFetch(LineRun& run, const BitmapHandle& h, const uint8_t* row, Sink 
     const uint32_t* table8 = ByteTableFor(h.format);
     const uint32_t* luminance = LuminanceTableFor(h.format);
     const uint32_t* palette =
-        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565) ? LinePalette(run, h.format) : nullptr;
+        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+            ? LinePalette(run, h.format)
+            : nullptr;
     const uint32_t bpp = BitsPerPixel(h.format);
     if (table16 != nullptr)
         sink([row, table16](uint32_t u) { return table16[row[2 * u] | (static_cast<uint32_t>(row[2 * u + 1]) << kBitsPerByte)]; });
@@ -524,7 +562,9 @@ void WithLayoutFetch(LineRun& run, const BitmapHandle& h, const uint8_t* layout,
     const uint32_t* table8 = ByteTableFor(h.format);
     const uint32_t* luminance = LuminanceTableFor(h.format);
     const uint32_t* palette =
-        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565) ? LinePalette(run, h.format) : nullptr;
+        (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
+            ? LinePalette(run, h.format)
+            : nullptr;
     const uint32_t bpp = BitsPerPixel(h.format);
     if (table16 != nullptr)
         sink([layout, stride, table16](uint32_t u, uint32_t v) {
@@ -555,18 +595,18 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
 {
     const GraphicsContext& ctx = run.ctx;
     const bool modulate = ctx.colorRgb != kWhiteRgb || ctx.colorA != kChannelMax;
-    const bool simple = DefaultPipeline(ctx);
     const uint32_t colorR = (ctx.colorRgb >> kRedShift) & kChannelMax;
     const uint32_t colorG = (ctx.colorRgb >> kGreenShift) & kChannelMax;
     const uint32_t colorB = ctx.colorRgb & kChannelMax;
 #ifdef EVE_PROFILE
     Profile().finishPixels += count;
     Profile().modulatePixels += modulate ? count : 0;
-    Profile().simdBlendPixels += simple && kMultiplyRoundDiv255 ? count : 0;
+    Profile().simdBlendPixels += DefaultPipeline(ctx) && kMultiplyRoundDiv255 ? count : 0;
 #endif
-    if (modulate)
+    if (modulate && kMultiplyRoundDiv255)
+        Simd::Modulate(texels, count, colorR, colorG, colorB, ctx.colorA);
+    else if (modulate)
     {
-        // SIMD-CANDIDATE: four channels times COLOR_RGB / COLOR_A per texel.
         for (uint32_t i = 0; i < count; ++i)
         {
             const Rgba c = Unpack(texels[i]);
@@ -574,19 +614,7 @@ void FinishFastSpan(LineRun& run, int32_t first, uint32_t* texels, uint32_t coun
                                   Multiply(c.a, ctx.colorA)});
         }
     }
-    if (simple && kMultiplyRoundDiv255)
-    {
-        if (WritesTag(run))
-            std::memset(run.tag + first, ctx.tag, count);
-        Simd::BlendSrcAlpha(run.color + kChannels * static_cast<uint32_t>(first), texels, count);
-    }
-    else if (simple)
-    {
-        for (uint32_t i = 0; i < count; ++i)
-            BlendDefault(run, first + static_cast<int32_t>(i), texels[i]);
-    }
-    else
-        ShadeSpan(run, first, texels, count);
+    BlendSpan(run, first, texels, count);
 }
 
 // One layout row's texels for the columns lo .. lo + n - 1: BORDER leaves columns outside
@@ -651,9 +679,9 @@ bool DrawBitmapBilinearFast(LineRun& run, const BitmapHandle& h, uint32_t base, 
             continue;
         }
         const uint64_t rowStart = static_cast<uint64_t>(base) + static_cast<uint64_t>(r) * stride;
-        if (rowStart + rowBytes > kRamGSize)
+        const uint8_t* row = LayoutBytes(*run.chip, rowStart, rowStart + rowBytes);
+        if (row == nullptr)
             return false;
-        const uint8_t* row = run.chip->regions[RegionRamG].base + rowStart;
         WithRowFetch(run, h, row, [&](auto fetch) { DecodeColumns(columns[k], lo, n, width, wrapX, fetch); });
     }
 
@@ -696,8 +724,14 @@ bool DrawBitmapAffineFast(LineRun& run, const BitmapHandle& h, uint32_t base, ui
     const int32_t* t = run.ctx.transform;
     const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * BitsPerPixel(h.format) + kBitsPerByte - 1) / kBitsPerByte;
     const uint64_t layoutEnd = static_cast<uint64_t>(base) + static_cast<uint64_t>(layoutHeight - 1) * stride + rowBytes;
-    if (layoutEnd > kRamGSize)
+    const uint8_t* layout = LayoutBytes(*run.chip, base, layoutEnd);
+    if (layout == nullptr)
+    {
+#ifdef EVE_PROFILE
+        Profile().fastRejects["layout not contiguous in RAM_G or ROM"]++;
+#endif
         return false;
+    }
     const int64_t a = t[0], b = t[1], c = t[2], d = t[3], e = t[4], f = t[5];
     const int64_t relFirst = static_cast<int64_t>(first) * kSubpixel + kPixelCenter - vx;
     int64_t sx = ((a * relFirst + b * rely) >> kSubpixelShift) + c;
@@ -707,7 +741,6 @@ bool DrawBitmapAffineFast(LineRun& run, const BitmapHandle& h, uint32_t base, ui
     const int32_t rows = static_cast<int32_t>(layoutHeight);
     const bool wrapX = h.wrapX != 0, wrapY = h.wrapY != 0;
     uint32_t* texels = run.texels;
-    const uint8_t* layout = run.chip->regions[RegionRamG].base + base;
     WithLayoutFetch(run, h, layout, stride, [&](auto fetch) {
         for (uint32_t i = 0; i < count; ++i, sx += a, sy += d)
         {
@@ -777,14 +810,14 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
     const uint64_t rowBytes = (static_cast<uint64_t>(layoutWidth) * bpp + kBitsPerByte - 1) / kBitsPerByte;
     if (ty < 0 || ty >= layoutRows)
         return DrawTransparentSpan(run, first, last);  // BORDER: every texel transparent
-    if (rowStart + rowBytes > kRamGSize)
+    const uint8_t* row = LayoutBytes(*run.chip, rowStart, rowStart + rowBytes);
+    if (row == nullptr)
     {
 #ifdef EVE_PROFILE
-        Profile().fastRejects["row beyond RAM_G"]++;
+        Profile().fastRejects["row not contiguous in RAM_G or ROM"]++;
 #endif
         return false;
     }
-    const uint8_t* row = run.chip->regions[RegionRamG].base + rowStart;
     const int32_t width = static_cast<int32_t>(layoutWidth);
     const uint32_t count = static_cast<uint32_t>(last - first);
     uint32_t* texels = run.texels;
@@ -807,6 +840,25 @@ bool DrawBitmapFast(LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t
 }
 
 } // namespace
+
+void BlendSpan(LineRun& run, int32_t first, const uint32_t* texels, uint32_t count)
+{
+    const GraphicsContext& ctx = run.ctx;
+    const bool simple = DefaultPipeline(ctx);
+    if (simple && kMultiplyRoundDiv255)
+    {
+        if (WritesTag(run))
+            std::memset(run.tag + first, ctx.tag, count);
+        Simd::BlendSrcAlpha(run.color + kChannels * static_cast<uint32_t>(first), texels, count);
+    }
+    else if (simple)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+            BlendDefault(run, first + static_cast<int32_t>(i), texels[i]);
+    }
+    else
+        ShadeSpan(run, first, texels, count);
+}
 
 void InitBitmapTables()
 {

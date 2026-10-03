@@ -1,0 +1,92 @@
+TELNET.EXE - ANSI Telnet client with Zmodem and Ymodem
+======================================================
+
+Purpose
+-------
+  Opens an interactive ANSI/VT100 Telnet session through SprinterESP. The
+  client automatically detects Zmodem downloads/uploads and explicitly started
+  Ymodem transfers.
+
+Usage
+-----
+  TELNET.EXE host[:port]
+  TELNET.EXE host [port]
+
+  Examples:
+    TELNET.EXE 192.168.1.108:2323
+    TELNET.EXE 192.168.1.108 2323
+
+  The default port is 23 when no port is specified. Run NETUP.EXE before
+  TELNET.EXE.
+
+Controls
+--------
+  Alt+X  close the Telnet session.
+  Alt+D  start Ymodem download after the remote side runs "sb file".
+  Alt+G  start Ymodem-G download when a BBS explicitly requests that mode.
+  Alt+U  start Ymodem upload after the remote side runs "rb".
+  Esc    is sent to the remote application during normal terminal use.
+  Esc    aborts while a Zmodem or Ymodem transfer is active.
+
+Terminal compatibility
+----------------------
+  TELNET accepts both Telnet servers and standard terminal services.
+  It handles normal terminal line endings and hides terminal metadata strings.
+
+Zmodem download (remote to Sprinter)
+------------------------------------
+  Select Download in the BBS or run "sz remote-file" on the remote host.
+  TELNET detects ZRQINIT, creates the offered local filename and receives the
+  file. An existing local file with the same name is overwritten. Transfer
+  progress shows the confirmed number of kilobytes already written to disk.
+
+Zmodem upload (Sprinter to remote)
+----------------------------------
+  Select Upload in the BBS or run "rz" on the remote host. When TELNET detects
+  ZRINIT it prompts:
+
+    Local file:
+
+  Enter the DSS path of one local file and press Enter. The basename is sent
+  as the remote filename. TELNET requests binary transfer and replacement of
+  an existing destination, but the remote server may apply its own policy and
+  skip the file.
+
+Ymodem download (remote to Sprinter)
+------------------------------------
+  Run "lsb --ymodem remote-file" on a Homebrew/macOS remote host (or
+  "sb remote-file" where that command exists). The sender then waits silently
+  for its receiver. Press Alt+D in TELNET to start receiving the file. Existing
+  local files with the same name are overwritten.
+  Ymodem batch download accepts multiple files from one sender command.
+
+Ymodem-G download
+------------------
+  When a BBS says it is waiting for "Ymodem-G", press Alt+G instead of Alt+D.
+  Ymodem-G transfers in streaming mode. If an error occurs, the transfer is
+  cancelled because this mode cannot retry data.
+
+Ymodem upload (Sprinter to remote)
+----------------------------------
+  Run "lrb --ymodem" on a Homebrew/macOS remote host (or "rb" where available),
+  then press Alt+U in TELNET. At the "Local file:" prompt enter one DSS path
+  and press Enter. TELNET sends the file name and size, then transfers the file.
+
+  If upload always stops at about 14 KB, start the receiver in raw terminal
+  mode:
+
+    stty raw -echo; lrb --ymodem; stty sane
+
+Transfer behavior
+-----------------
+  TELNET checks transferred data and shows progress. On failure it prints a
+  short protocol-specific message and returns to the open terminal session.
+
+Exit status
+-----------
+  0  Session ended normally or the remote host closed it.
+  1  Invalid command line.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP/TCP communication or connection error.
+
+  A canceled or failed Zmodem/Ymodem transfer returns to the terminal session.

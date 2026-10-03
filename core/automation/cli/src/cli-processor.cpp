@@ -105,6 +105,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
+                        {"isa", &CLIProcessor::HandleIsa},   // ISA slots (Sprinter): report, cycles
                         {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
@@ -636,6 +637,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
+    oss << "  isa | state isa              - ISA slots (Sprinter): #9FBD latch, window 3, cards, counters" << NEWLINE;
+    oss << "  isa io|mem <slot> <addr> [v] - An ISA cycle (read, or write v); isa peek, isa reset, isa latch" << NEWLINE;
     oss << NEWLINE;
     oss << "Network adapters ([NETWORK] Card= ZX-Bus cards, ComPort= the machine's serial port):" << NEWLINE;
     oss << "  network | net | state network - Cards, serial port, W5300 sockets, virtual network, devices not fitted" << NEWLINE;

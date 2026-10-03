@@ -1,0 +1,32 @@
+WTERM.EXE - ESP-AT terminal
+
+Purpose
+  Opens an interactive terminal for manual ESP-AT commands through the
+  SprinterESP / Sprinter-WiFi card.
+
+Usage
+  WTERM.EXE
+
+Controls
+  Type ESP-AT commands manually.
+  Use Alt+X to exit the terminal.
+
+Typical use
+  WTERM is useful for commands that are not available as separate utilities.
+  Run NETUP.EXE first. WTERM attaches to the active NETUP session, using its
+  published baud rate and flow-control mode; it does not reset ESP or send
+  AT+UART_CUR.
+
+After use
+  Run NETRESET.EXE before automated utilities if the ESP stream looks confused
+  or if manual commands changed module state.
+
+Baud rate
+  WTERM uses NET_BAUD and NET_ESP_FLOW published by NETUP. Do not change the
+  ESP UART speed manually in WTERM unless you are prepared to recover with
+  NETRESET.EXE followed by NETUP.EXE.
+
+Exit status
+  0  Terminal exited normally.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP/UART communication error.

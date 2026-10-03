@@ -158,6 +158,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
         "'create' with model SPRINTER: true skips the PLD loader (~1.7 s emulated); default [SPRINTER] FastStart";
+    for (const char* key : {"sprinter_isa_slot1", "sprinter_isa_slot2"})
+    {
+        schema["properties"][key]["type"] = "string";
+        schema["properties"][key]["description"] =
+            "'create' with model SPRINTER: the card in ISA slot 1 / 2 - none | ne2000 | zxbus | ram | el3c509b | "
+            "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
+            "refused in the slot report /state/isa); fixed for the instance's lifetime";
+    }
     schema["properties"]["profi_keyboard"]["type"] = "string";
     schema["properties"]["profi_keyboard"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"default", "matrix", "xt", "xttable"})
@@ -285,6 +293,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["sprinter"]["bios"] = args["sprinter_bios"].asString();
                 if (args.isMember("sprinter_fast_start") && args["sprinter_fast_start"].isBool())
                     body["sprinter"]["fast_start"] = args["sprinter_fast_start"].asBool();
+                if (args.isMember("sprinter_isa_slot1") && args["sprinter_isa_slot1"].isString())
+                    body["sprinter"]["isa_slot1"] = args["sprinter_isa_slot1"].asString();
+                if (args.isMember("sprinter_isa_slot2") && args["sprinter_isa_slot2"].isString())
+                    body["sprinter"]["isa_slot2"] = args["sprinter_isa_slot2"].asString();
                 if (args.isMember("profi_keyboard") && args["profi_keyboard"].isString())
                     body["profi"]["keyboard"] = args["profi_keyboard"].asString();
                 if (args.isMember("profi_zq3_mhz") && args["profi_zq3_mhz"].isInt())
@@ -1104,7 +1116,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
@@ -1133,8 +1145,17 @@ void RegisterInspectState(ToolRegistry& registry)
         "'cdaudio' = the ATAPI CD drives' audio (disc and tracks, status playing / paused / completed / error, head as LBA / MSF / "
         "track / index, play range, page 0Eh volume and routing, mixer row; control it with invoke_api POST "
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
+        "'network' also lists the expansion slots (slots: the Sprinter's ISA NE2000 with its DP8390 registers) and the "
+        "Ethernet gateway (ethernet_gateway: leases, ARP, TCP / UDP, counters); its frame capture and frame injection go "
+        "through invoke_api GET /api/v1/emulator/{id}/network/frames?link=isa2.eth[&format=pcap] and POST "
+        "/api/v1/emulator/{id}/network/frame {link, hex}, "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
+        "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
+        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; unavailable on other machines - run an "
+        "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
+        "mem_write|mem_peek|reset|latch, slot, address, value}; the access journal - who touched which card register, "
+        "frame / T / PC - with invoke_api GET /api/v1/emulator/{id}/state/isa/journal?last=N), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
@@ -1248,7 +1269,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
@@ -1256,7 +1277,7 @@ void RegisterInspectState(ToolRegistry& registry)
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1628,6 +1649,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "isa")
+                        {
+                            // Core DeviceState::Isa via the WebAPI; 404 = no ISA slots
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/isa"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "network")
                         {
                             // Core DeviceState::Network via the WebAPI; available=false without an adapter
@@ -1943,6 +1975,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (zifi.isMember("target") ? " " + zifi["target"].asString() : std::string())
                                             << ", in " << zifi["bytes_in"].asUInt64() << " / out " << zifi["bytes_out"].asUInt64() << " bytes, dropped "
                                             << zifi["dropped"].asUInt64();
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() + ", MAC " + slot["mac"].asString()
+                                                                      : std::string());
+                                    if (value.isMember("ethernet_gateway"))
+                                    {
+                                        const Json::Value& gw = value["ethernet_gateway"];
+                                        out << "\n[network] ethernet gateway " << gw["router_ip"].asString() << ": "
+                                            << gw["tcp"].size() << " TCP, " << gw["udp"].size() << " UDP flows, frames "
+                                            << gw["counters"]["frames_from_cards"].asUInt64() << " from / "
+                                            << gw["counters"]["frames_to_cards"].asUInt64() << " to the cards";
+                                        for (const Json::Value& port : gw["ports"])
+                                            out << "; " << port["port"].asString() << " lease " << port["dhcp_lease"].asString();
+                                    }
                                     for (const Json::Value& note : value["not_fitted"])
                                         out << "\n[network] " << note.asString();
                                     const Json::Value& set = value["settings"];
@@ -1952,6 +1998,33 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
                                             << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string())
                                             << (value["machine"]["zifi"].asBool() ? ", zifi " + set["zifi"].asString() : std::string());
+                                }
+                            }
+                            else if (aspect == "isa")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[isa] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[isa] latch " << value["latch"]["value"].asString()
+                                        << (value["window"]["mapped"].asBool() ? ", window 3 = slot " + std::to_string(value["window"]["slot"].asInt()) + " " + value["window"]["space"].asString() : std::string(", window 3 not mapped"));
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "; slot " << slot["slot"].asInt() << ": " << slot["card"].asString()
+                                            << (slot.isMember("not_fitted") ? " (" + slot["configured"].asString() + " not fitted: " + slot["not_fitted"].asString() + ")" : std::string());
+                                    // What each card uses and how the Z80 reaches it; conflicts; the access journal's size
+                                    for (const Json::Value& slot : value["slots"])
+                                    {
+                                        if (!slot["enabled"].asBool())
+                                            continue;
+                                        out << "\n[isa] slot " << slot["slot"].asInt() << " " << slot["card"].asString() << ": I/O "
+                                            << slot["resources"]["io"].asString() << ", memory " << slot["resources"]["memory"].asString()
+                                            << ", IRQ " << slot["resources"]["irq"].asString() << " (" << slot["resources"]["irq_route"].asString() << ")";
+                                        if (slot["z80_access"].isMember("io"))
+                                            out << "\n[isa]   Z80: " << slot["z80_access"]["io"].asString();
+                                    }
+                                    for (const Json::Value& conflict : value["conflicts"])
+                                        out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
+                                    out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
                                 }
                             }
                             else if (aspect == "rtc")
@@ -2107,6 +2180,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& image : value["images"])
                                         out << "\n  " << image["alias"].asString() << " " << image["file"].asString()
                                             << (image["present"].asBool() ? "" : " (not installed)") << (image["loaded"].asBool() ? " [loaded]" : "");
+                                    for (const Json::Value& issue : value["known_issues"])
+                                        out << "\n  KNOWN ISSUE: " << issue.asString();
                                 }
                             }
                             else if (aspect == "sprinter_zx_mode")

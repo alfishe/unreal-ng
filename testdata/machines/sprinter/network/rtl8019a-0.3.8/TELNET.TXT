@@ -1,0 +1,74 @@
+TELNET.EXE
+
+Interactive Telnet and raw TCP terminal for the RTL8019AS card. It uses the
+native DNS, ARP and TCP stack and does not require the Wi-Fi card or a UNET
+DLL.
+
+Usage
+
+TELNET host[:port]
+TELNET host [port]
+TELNET /?
+
+The default port is 23. host may be an IPv4 address or a DNS name. Run
+NETCFG -i or IFUP first so the network environment is available.
+
+Examples:
+
+TELNET 192.168.7.1
+TELNET 192.168.7.1:2323
+TELNET bbs.example.net 23
+
+Terminal
+
+The client switches to the DSS 80x32 text mode. Rows 0..30 form an ANSI/VT100
+terminal; the bottom row shows the clock, ONLINE/IDLE/CLOSED state, idle time
+and destination. The original video mode is restored on exit.
+
+Supported Telnet negotiation includes BINARY, ECHO, SGA, terminal type ANSI,
+and NAWS 80x31. A raw TCP service that never sends IAC bytes remains usable:
+the client does not inject Telnet negotiation until the peer identifies itself
+as a Telnet server.
+
+CR resets the cursor to column zero. LF resets the column and advances one
+row, so both bare LF from a Unix PTY in BINARY mode and a CR/LF pair start the
+next line at the left edge.
+
+Keys:
+
+- Alt+X: close the connection and exit.
+- Arrow keys, Home, End, PgUp, PgDn and Del: send ANSI sequences.
+- Esc, Tab, Backspace and other ASCII control keys: send unchanged.
+- Enter: send NVT CR/LF before BINARY is accepted, otherwise send CR.
+
+File transfer
+
+Zmodem starts automatically when the remote side emits a Zmodem header.
+ZRQINIT selects download; ZRINIT prompts for a local file and selects upload.
+
+Ymodem is started explicitly:
+
+- Alt+D: Ymodem download.
+- Alt+U: Ymodem upload; enter the local DSS path when prompted.
+- Alt+G: Ymodem-G download.
+
+Transfers use CRC-16 and show progress. Esc aborts an active transfer. Local
+files use DSS paths and are created or opened by the transfer engine.
+
+Limits
+
+- One TCP session; no TLS.
+- This stand-alone client uses the compact native TCP send path; it has no
+  general retransmission timer. Zmodem/Ymodem add their own protocol retries,
+  but a very lossy network can still abort. The bounded stop-and-wait sender
+  is currently enabled in UNETRTL.DLL, not TELNET.EXE.
+- The RTL8019AS byte-mode RX ring is small. Transfer windows remain bounded.
+
+Exit codes
+
+Code  |  Meaning
+0  |  User quit or remote closed normally
+1  |  Invalid command line
+2  |  RTL8019AS not detected
+3  |  DNS, ARP, TCP connect, send or receive error
+4  |  Network configuration missing or invalid

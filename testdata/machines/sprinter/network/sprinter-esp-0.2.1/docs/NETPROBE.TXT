@@ -1,0 +1,21 @@
+NETPROBE.EXE - Low-level ESP diagnostic
+
+Purpose
+  Checks that the Sprinter-WiFi card and its firmware respond.
+
+Usage
+  NETPROBE.EXE
+
+Role
+  NETPROBE checks the card itself; it does not connect to Wi-Fi. A failed probe
+  does not necessarily mean that the Wi-Fi settings are wrong.
+
+Recommended use
+  NETRESET.EXE
+  NETPROBE.EXE
+  NETUP.EXE
+
+Exit status
+  0  Probe completed.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP communication error.

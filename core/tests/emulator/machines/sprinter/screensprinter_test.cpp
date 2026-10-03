@@ -155,7 +155,7 @@ TEST_F(ScreenSprinter_Test, Geometry_736x288_320Lines)
 
     // The frame's own geometry names the same picture, and it is the square grid the renderer draws: square
     // (0, 0) sits at its top-left corner (SquareX / SquareY are measured by the pixel tests below)
-    const FrameRect window = _screen->WorkingWindow();
+    const PictureRect window = _screen->WorkingWindow();
     EXPECT_EQ(window.x, SquareX(0));
     EXPECT_EQ(window.y, SquareY(0));
     EXPECT_EQ(window.width, 640);

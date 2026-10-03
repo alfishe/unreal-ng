@@ -306,7 +306,7 @@ TEST_F(ATMVideoModesSuite_Test, Geometry_ATMDescriptorsAndTiming)
         EXPECT_EQ(rd.screenOffsetTop, c.ot);
 
         // The frame's own geometry names the same working picture (what a screenshot cuts for area=screen)
-        const FrameRect window = _screen->WorkingWindow();
+        const PictureRect window = _screen->WorkingWindow();
         EXPECT_EQ(window.x, c.ol);
         EXPECT_EQ(window.y, c.ot);
         EXPECT_EQ(window.width, c.sw);

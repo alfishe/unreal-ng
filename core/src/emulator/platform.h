@@ -3,6 +3,7 @@
 
 #include "sysdefs.h"
 #include "common/sound/filters/filtervoicing.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -831,6 +832,8 @@ struct CONFIG
 		uint8_t accel_int_suspend = 0;
 		// DS12887A NVRAM image ([SPRINTER] CmosFile=); empty = kept for the session only
 		char cmos_path[FILENAME_MAX];
+		// The two ISA-8 slots ([ISA] section, Sprinter ISA tdd §5): read at instance creation
+		sprinterisa::IsaConfig isa;
 	} sprinter;
 
 	uint8_t use_comp_pal;
