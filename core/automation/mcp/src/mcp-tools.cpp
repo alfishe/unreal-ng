@@ -1977,8 +1977,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << zifi["dropped"].asUInt64();
                                     for (const Json::Value& slot : value["slots"])
                                         out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
-                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() + ", MAC " + slot["mac"].asString()
-                                                                      : std::string());
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
+                                                                            (slot.isMember("mac") ? ", MAC " + slot["mac"].asString() : std::string())
+                                                                      : std::string())
+                                            << (slot.isMember("esp")
+                                                    ? ", IRQ " + std::to_string(slot["irq"].asInt()) + ", UART " + std::to_string(slot["uart"]["baud"].asUInt64()) +
+                                                          " baud MCR " + slot["uart"]["mcr"].asString() + "; ESP " + slot["esp"]["firmware"].asString() + " " +
+                                                          slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
+                                                          slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
+                                                          " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string());
                                     if (value.isMember("ethernet_gateway"))
                                     {
                                         const Json::Value& gw = value["ethernet_gateway"];

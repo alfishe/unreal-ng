@@ -42,10 +42,14 @@ struct NetworkForm
     // Serial ports: the machine's own and the ZX-WiFi card's
     ComPortSpec comPort;               ///< kind None = nothing on the line
     ComPortSpec zxWifiPeer;            ///< default AT
-    std::string espChip = "ESP32";     ///< ESP32 | ESP8266
+    std::string espChip = "ESP32";     ///< ESP32 | ESP8266 | ESP8266-AT221 | ESP8266-AT222
     bool modemLines = false;
     std::string avrFirmware = "BASE2023";
     std::string kbcFirmware;           ///< [ATM] Kbc= name; empty: no controller socket
+
+    // UART cards in expansion slots (the Sprinter's SprinterESP): which slot holds one, what its 16550 is wired to
+    bool slotUart[2] = {false, false};
+    ComPortSpec slotPeer[2];            ///< default AT (the card's ESP-12F)
 
     // Virtual network
     bool hostAccess = true;
@@ -59,7 +63,8 @@ struct NetworkForm
 NetworkForm NetworkFormFromState(const StateNode& network);
 
 /// The settings that differ between two forms, as ParseChange takes them
-/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, com_modem_lines, avr_firmware, kbc_firmware,
+/// (card, com_port, zx_wifi, atm2ioesp, atm2ioesp_address, zifi, esp_chip, isa1_peer, isa2_peer, com_modem_lines,
+/// avr_firmware, kbc_firmware,
 /// host_access, dns_mode, hosts, forwards, connect_timeout_ms)
 std::vector<std::pair<std::string, std::string>> NetworkFormChanges(const NetworkForm& before, const NetworkForm& after);
 

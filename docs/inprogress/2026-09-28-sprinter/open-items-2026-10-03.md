@@ -38,7 +38,8 @@ come the ISA slots and the network cards (section 3).
 - **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
   the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
   zero-window probes, PIO IRQ lines I4; the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
-  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, **done 2026-10-03**, branch `sprinter-esp-sn3`: `[ISA] Slot1=SPRINTERESP`, the ESP kit's `NETUP` / `PING` / `WGET` / `UNETESP.DLL` end to end
+  on ESP-AT 2.2.2 and 2.2.1, TTD blobs 46 / 47; open: FTP / NTP / TELNET / TFTP / Gopher not yet run, the IRQ3 line waits for I4), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.

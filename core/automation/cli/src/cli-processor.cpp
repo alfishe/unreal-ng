@@ -645,7 +645,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  network set key=value ..     - card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off dns_mode=host|pass" << NEWLINE;
     oss << "                                 hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n" << NEWLINE;
     oss << "                                 com_port=none|loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,baud] (the machine's own port)" << NEWLINE;
-    oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off esp_chip=esp32|esp8266" << NEWLINE;
+    oss << "                                 zx_wifi=at|espnet|... (the ZX-WiFi card's ESP) com_modem_lines=on|off" << NEWLINE;
+    oss << "                                 esp_chip=esp32|esp8266|esp8266-at221|esp8266-at222 (the SprinterESP takes an ESP8266 one, else at222)" << NEWLINE;
+    oss << "                                 isa1_peer=at|loopback|tcp:..|serial:.. isa2_peer=.. (Sprinter: the SprinterESP card's 16550 line)" << NEWLINE;
     oss << "                                 avr_firmware=baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04 (ZX-Evo)" << NEWLINE;
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;

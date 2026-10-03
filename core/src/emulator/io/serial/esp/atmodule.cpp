@@ -11,6 +11,8 @@
 namespace
 {
 constexpr uint64_t kBootUs = 300000;       // RST: "ready" this long after the OK
+constexpr uint64_t kPowerOnBootUs = 400000; // the RST pin released: ROM, second stage, AT start (the ROM's log runs at
+                                            // 74880 baud and is not modeled)
 constexpr uint64_t kScanUs = 1500000;
 constexpr uint64_t kJoinFailUs = 15000000; // CWJAP to an access point that is not there
 constexpr uint64_t kPingTimeoutUs = 2000000;
@@ -108,6 +110,10 @@ std::vector<uint8_t> EchoRequest()
     return echo;
 }
 
+/// Where AtModule's 2.x settings start in the firmware state (after the SNTP server name of up to 63 bytes)
+constexpr size_t kExtraAt = 210;
+static_assert(kExtraAt + 16 <= static_cast<size_t>(netstate::kEspFirmware), "the AT state fits its blob part");
+
 std::string Upper(std::string s)
 {
     for (char& c : s)
@@ -116,16 +122,28 @@ std::string Upper(std::string s)
 }
 }  // namespace
 
-AtModule::AtModule(VirtualNetwork* network, Chip chip) : EspModule(network, chip, kLinks + 1)
+AtModule::AtModule(VirtualNetwork* network, Chip chip)
+    : AtModule(network, chip == Chip::Esp8266 ? Firmware::Esp8266NonOs174 : Firmware::Esp32At220)
+{
+}
+
+AtModule::AtModule(VirtualNetwork* network, Firmware firmware, const std::array<uint8_t, 6>* mac)
+    : EspModule(network, ChipOf(firmware), kLinks + 1, mac), _firmware(firmware)
 {
     _textLog = true;
     // Power-up: the boot banner (the ROM log runs at 74880 baud and is not
     // modeled), "ready", then the saved access point joins
     Send("\r\nready\r\n", 200000);
-    Send("WIFI CONNECTED\r\nWIFI GOT IP\r\n", 0);
+    if (GetWifi() == Wifi::GotIp)
+        Send("WIFI CONNECTED\r\nWIFI GOT IP\r\n", 0);
 }
 
-void AtModule::Boot(uint64_t afterUs)
+bool AtModule::LinkOpen(int n) const
+{
+    return n >= 0 && n < kLinks && Stack().Valid(n);
+}
+
+void AtModule::ResetSession()
 {
     // Every link closes, the radio restarts; settings that are not saved reset
     Stack().Close(-1);
@@ -142,9 +160,31 @@ void AtModule::Boot(uint64_t afterUs)
     _serverPort = 0;
     _rx.clear();
     _echoed = 0;
+    _sysStore = true;
+    _dnsManual = false;
+    _dns[0] = _dns[1] = 0;
+    _lapOptMask = 0x7FF;
+    _maxConn = 5;
+    _uartFlow = 3;
+    _op = Op::None;
+}
+
+void AtModule::Boot(uint64_t afterUs)
+{
+    ResetSession();
     Leave();
     _op = Op::Boot;
     _opDeadline = Now() + MicrosToT(afterUs);
+}
+
+void AtModule::OnHardwareReset()
+{
+    ResetSession();
+}
+
+void AtModule::OnHardwareBoot()
+{
+    Boot(kPowerOnBootUs);
 }
 
 void AtModule::BootDone()
@@ -164,6 +204,8 @@ void AtModule::BootDone()
 
 void AtModule::OnFrame()
 {
+    if (!Running())
+        return;
     EspModule::OnFrame();
     const uint64_t now = Now();
     if (_op == Op::Boot && now >= _opDeadline)
@@ -183,15 +225,23 @@ void AtModule::OnFrame()
     if (_op == Op::Scan && now >= _opDeadline)
     {
         _op = Op::None;
-        Send("+CWLAP:(3,\"" + std::string(kVirtualSsid) + "\"," + std::to_string(kVirtualRssi) +
-                 ",\"52:54:00:12:35:02\"," + std::to_string(kVirtualChannel) + ",-11,0)\r\n",
-             0);
+        // The fields AT+CWLAPOPT selects, in the firmware's order: ecn, ssid, rssi, mac, channel, freq offset,
+        // freq calibration (then cipher / bgn / wps on 2.x: not listed here)
+        const std::string fields[] = {"3", "\"" + std::string(kVirtualSsid) + "\"", std::to_string(kVirtualRssi),
+                                      "\"52:54:00:12:35:02\"", std::to_string(kVirtualChannel), "-11", "0"};
+        std::string line;
+        for (int i = 0; i < 7; ++i)
+        {
+            if (_lapOptMask & (1u << i))
+                line += (line.empty() ? "" : ",") + fields[i];
+        }
+        Send("+CWLAP:(" + line + ")\r\n", 0);
         Ok();
     }
     if (_op == Op::Ping && now >= _opDeadline)
     {
         _op = Op::None;
-        Send("+timeout\r\n\r\nERROR\r\n", 0);
+        Send(Esp8266At2() ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
     }
     if (_transparent && now >= _lastRxAt + MicrosToT(kTransparentIdleUs))
         FlushTransparent();
@@ -203,6 +253,8 @@ void AtModule::OnFrame()
 
 void AtModule::Process()
 {
+    if (!Running())
+        return;
     // Echo what arrived (the module echoes characters as it receives them)
     if (_echo && !_sending && !_transparent && _op != Op::Boot)
     {
@@ -281,17 +333,17 @@ void AtModule::HandleLine(const std::string& raw)
     const size_t eq = upper.find('=');
     const std::string cmd = eq == std::string::npos ? upper : upper.substr(0, eq);
     const std::string args = eq == std::string::npos ? std::string() : line.substr(eq + 1);
-    // _CUR / _DEF forms act like the plain one (nothing is stored in flash here)
+    // _CUR / _DEF forms act like the plain one (nothing is stored in flash here); "AT+CIPSTA_CUR?" is a query too
     std::string base = cmd;
+    const bool query = !base.empty() && base.back() == '?';
+    if (query)
+        base.pop_back();
     for (const char* suffix : {"_CUR", "_DEF"})
     {
         const size_t n = std::strlen(suffix);
         if (base.size() > n && base.compare(base.size() - n, n, suffix) == 0)
             base.erase(base.size() - n);
     }
-    const bool query = !base.empty() && base.back() == '?';
-    if (query)
-        base.pop_back();
 
     if (base == "AT")
         return Ok();
@@ -313,7 +365,13 @@ void AtModule::HandleLine(const std::string& raw)
     }
     if (base == "AT+GMR")
     {
-        if (GetChip() == Chip::Esp8266)
+        if (_firmware == Firmware::Esp8266At221)
+            Send("AT version:2.2.1.0(f6fe5ac - ESP8266 - Jun 22 2021 06:45:02)\r\nSDK version:v3.4-22-g967752e2\r\n"
+                 "compile time(6800286):Aug  4 2021 17:20:05\r\nBin version:2.2.1(ESP8266_1MB)\r\n");
+        else if (_firmware == Firmware::Esp8266At222)
+            Send("AT version:2.2.2.0(b3d4a5c - ESP8266 - Jul 28 2026 12:00:00)\r\nSDK version:v3.4-22-g967752e2\r\n"
+                 "compile time(6800286):Jul 28 2026 12:00:00\r\nBin version:2.2.2(ESP8266_2MB)\r\n");
+        else if (GetChip() == Chip::Esp8266)
             Send("AT version:1.7.4.0(May 11 2020 19:13:04)\r\nSDK version:3.0.4(9532ceb)\r\n"
                  "compile time:May 27 2020 10:12:17\r\nBin version(Wroom 02):1.7.4\r\n");
         else
@@ -328,8 +386,11 @@ void AtModule::HandleLine(const std::string& raw)
             Send("+CWMODE:" + std::to_string(_cwMode) + "\r\n");
             return Ok();
         }
-        uint32_t m = 0;
-        if (!Number(args, m, 3) || m == 0)
+        // ESP-AT 2.x: AT+CWMODE=<mode>[,<auto_connect>]
+        const std::vector<std::string> f = Fields(args);
+        uint32_t m = 0, autoConnect = 0;
+        if (f.empty() || f.size() > (At2() ? 2u : 1u) || !Number(f[0], m, 3) || m == 0 ||
+            (f.size() == 2 && !Number(f[1], autoConnect, 1)))
             return Error();
         _cwMode = static_cast<uint8_t>(m);
         return Ok();
@@ -367,8 +428,102 @@ void AtModule::HandleLine(const std::string& raw)
         _opDeadline = Now() + MicrosToT(kScanUs);
         return;
     }
+    if (base == "AT+SYSSTORE")
+    {
+        // ESP-AT 2.x; the ESP8266 2.2.1 build lacks it (the Sprinter kit tells 2.2.1 from 2.2.2 by this ERROR)
+        if (_firmware == Firmware::Esp8266NonOs174 || _firmware == Firmware::Esp8266At221)
+            return Error();
+        if (query)
+        {
+            Send("+SYSSTORE:" + std::string(_sysStore ? "1" : "0") + "\r\n");
+            return Ok();
+        }
+        uint32_t v = 0;
+        if (!Number(args, v, 1))
+            return Error();
+        _sysStore = v == 1;
+        return Ok();
+    }
+    if (base == "AT+SYSLOG")
+    {
+        if (!At2())
+            return Error();
+        if (query)
+        {
+            Send("+SYSLOG:" + std::string(_sysLog ? "1" : "0") + "\r\n");
+            return Ok();
+        }
+        uint32_t v = 0;
+        if (!Number(args, v, 1))
+            return Error();
+        _sysLog = v == 1;
+        return Ok();
+    }
+    if (base == "AT+CWLAPOPT")
+    {
+        const std::vector<std::string> f = Fields(args);
+        uint32_t sort = 0, mask = 0;
+        if (f.size() < 2 || !Number(f[0], sort, 1) || !Number(f[1], mask, 0x7FF))
+            return Error();
+        _lapOptMask = static_cast<uint16_t>(mask);
+        return Ok();
+    }
+    if (base == "AT+CIPTCPOPT")
+    {
+        if (!At2())
+            return Error();
+        if (query)
+        {
+            std::string text;
+            for (int i = 0; i < kLinks; ++i)
+                text += "+CIPTCPOPT:" + std::to_string(i) + ",-1,0,1\r\n";
+            Send(text);
+        }
+        return Ok();   // SO_LINGER / TCP_NODELAY / SO_SNDTIMEO: the virtual network's sockets do not need them
+    }
+    if (base == "AT+CIPSERVERMAXCONN")
+    {
+        if (query)
+        {
+            Send("+CIPSERVERMAXCONN:" + std::to_string(_maxConn) + "\r\n");
+            return Ok();
+        }
+        uint32_t v = 0;
+        if (!Number(args, v, kLinks) || v == 0)
+            return Error();
+        _maxConn = static_cast<uint8_t>(v);
+        return Ok();
+    }
+    if (base == "AT+CIPDNS")
+    {
+        if (query)
+        {
+            const uint32_t d0 = _dnsManual ? _dns[0] : DnsServer();
+            std::string text = (At2() ? "+CIPDNS:" + std::string(_dnsManual ? "1" : "0") + ",\"" + NetIpToString(d0) + "\""
+                                      : "+CIPDNS_CUR:" + NetIpToString(d0));
+            if (_dnsManual && _dns[1])
+                text += At2() ? ",\"" + NetIpToString(_dns[1]) + "\"" : "\r\n+CIPDNS_CUR:" + NetIpToString(_dns[1]);
+            Send(text + "\r\n");
+            return Ok();
+        }
+        const std::vector<std::string> f = Fields(args);
+        uint32_t enable = 0;
+        if (f.empty() || !Number(f[0], enable, 1))
+            return Error();
+        uint32_t d[2] = {0, 0};
+        for (size_t i = 1; i < f.size() && i <= 2; ++i)
+        {
+            if (!Ipv4(Trim(f[i]), d[i - 1]))
+                return Error();
+        }
+        // The servers are stored and reported; the virtual network answers a lookup whichever server is named
+        _dnsManual = enable == 1;
+        _dns[0] = _dnsManual ? d[0] : 0;
+        _dns[1] = _dnsManual ? d[1] : 0;
+        return Ok();
+    }
     if (base == "AT+CWDHCP" || base == "AT+CWHOSTNAME" || base == "AT+CIPSTO" || base == "AT+SLEEP" ||
-        base == "AT+CWCOUNTRY" || base == "AT+SYSSTORE" || base == "AT+CIPSSLSIZE")
+        base == "AT+CWCOUNTRY" || base == "AT+CIPSSLSIZE")
         return Ok();
     if (base == "AT+CIFSR")
     {
@@ -427,6 +582,9 @@ void AtModule::HandleLine(const std::string& raw)
         _transparentMode = v == 1;
         return Ok();
     }
+    if ((base == "AT+CIPRECVMODE" || base == "AT+CIPRECVDATA" || base == "AT+CIPRECVLEN") &&
+        _firmware == Firmware::Esp8266At221)
+        return Error();   // the ESP8266 2.2.1 build: active +IPD receive only (the Sprinter kit's 2.2.1 profile)
     if (base == "AT+CIPRECVMODE")
     {
         if (query)
@@ -506,7 +664,15 @@ void AtModule::HandleLine(const std::string& raw)
     if (base == "AT+CIPSNTPTIME")
         return DoSntpTime();
     if (base == "AT+UART")
+    {
+        if (query)
+        {
+            Send((cmd.find("_DEF") != std::string::npos ? "+UART_DEF:" : "+UART_CUR:") + std::to_string(Baud()) +
+                 ",8,1,0," + std::to_string(HonorsRts() ? _uartFlow : 0) + "\r\n");
+            return Ok();
+        }
         return DoUart(args);
+    }
     if (base == "AT+CIUPDATE")
     {
         // The cloud update needs Espressif's server: it fails as without Internet
@@ -608,7 +774,7 @@ void AtModule::OnStackDone(const EspStack::Done& done)
         _op = Op::None;
         const uint64_t t = Now() - _opStart;
         const uint64_t ms = t * 1000 / std::max<uint64_t>(1, MicrosToT(1000000));
-        return Send("+" + std::to_string(ms) + "\r\n\r\nOK\r\n", 0);
+        return Send((Esp8266At2() ? "+PING:" : "+") + std::to_string(ms) + "\r\n\r\nOK\r\n", 0);
     }
     if (done.kind == EspStack::Done::Kind::Resolve)
     {
@@ -639,7 +805,7 @@ void AtModule::OnStackDone(const EspStack::Done& done)
             if (!done.addr)
             {
                 _op = Op::None;
-                return Send("+timeout\r\n\r\nERROR\r\n", 0);
+                return Send(Esp8266At2() ? "+PING:TIMEOUT\r\n\r\nERROR\r\n" : "+timeout\r\n\r\nERROR\r\n", 0);
             }
             Stack().Ping(done.addr, EchoRequest());
             return;
@@ -881,9 +1047,13 @@ void AtModule::DoCipRecvData(const std::string& args)
         return Error();
     const std::vector<uint8_t> data = Stack().Read(link, std::min(length, kMaxSend));
     _links[link].notified = static_cast<uint32_t>(Stack().GetSlot(link).rx.size());
-    std::string head = "+CIPRECVDATA," + std::to_string(data.size()) + ":";
+    // NonOS: "+CIPRECVDATA,<len>:<data>"; the ESP8266 ESP-AT 2.2 builds: "+CIPRECVDATA:<len>,<data>"
+    const std::string head = Esp8266At2() ? "+CIPRECVDATA:" + std::to_string(data.size()) + ","
+                                          : "+CIPRECVDATA," + std::to_string(data.size()) + ":";
     Send(head);
     Send(data.data(), data.size(), 0);
+    if (Esp8266At2())
+        Send("\r\n");
     Ok();
 }
 
@@ -900,6 +1070,7 @@ void AtModule::DoUart(const std::string& args)
     // when CTS flow control (bit 1) is on
     SetBaud(baud, Now() + MicrosToT(kTurnaroundUs + 2000));
     SetFlowControl((flow & 0x02) != 0);
+    _uartFlow = static_cast<uint8_t>(flow);
 }
 
 void AtModule::DoSntpCfg(const std::string& args)
@@ -1102,6 +1273,15 @@ void AtModule::SaveFirmware(netstate::EspModuleState& out) const
     const size_t n = std::min<size_t>(_sntpServer.size(), 63);
     put8(static_cast<uint8_t>(n));
     std::memcpy(f + p, _sntpServer.data(), n);
+    // The 2.x session settings at a fixed place after the longest server name (zeros in older blobs = defaults)
+    p = kExtraAt;
+    put8(static_cast<uint8_t>((_sysStore ? 0 : 1) | (_sysLog ? 2 : 0) | (_dnsManual ? 4 : 0)));
+    put8(static_cast<uint8_t>(5 - _maxConn));
+    put8(static_cast<uint8_t>(3 - _uartFlow));
+    put8(0);
+    put16(static_cast<uint16_t>(0x7FF - _lapOptMask));
+    put32(_dns[0]);
+    put32(_dns[1]);
 }
 
 void AtModule::LoadFirmware(const netstate::EspModuleState& in)
@@ -1160,4 +1340,15 @@ void AtModule::LoadFirmware(const netstate::EspModuleState& in)
     }
     const uint8_t n = get8();
     _sntpServer.assign(reinterpret_cast<const char*>(f + p), std::min<uint8_t>(n, 63));
+    p = kExtraAt;
+    const uint8_t flags = get8();
+    _sysStore = !(flags & 1);
+    _sysLog = (flags & 2) != 0;
+    _dnsManual = (flags & 4) != 0;
+    _maxConn = static_cast<uint8_t>(5 - get8());
+    _uartFlow = static_cast<uint8_t>(3 - get8());
+    get8();
+    _lapOptMask = static_cast<uint16_t>(0x7FF - get16());
+    _dns[0] = get32();
+    _dns[1] = get32();
 }

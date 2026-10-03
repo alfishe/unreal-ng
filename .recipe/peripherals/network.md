@@ -163,7 +163,12 @@ after start closes its hello box; F1..F10 pick the divisor.
 The ESP modules sit on the virtual network: joined to the access point
 `UnrealNG` with a DHCP lease (10.0.2.15 first), DNS through the virtual
 network, every answer journaled. `EspChip=ESP32` (8 ESPNET sockets, AT 2.x
-answers) or `ESP8266` (4 sockets, NonOS AT 1.7). `com_port.recent_exchanges`
+answers), `ESP8266` (4 sockets, NonOS AT 1.7.4), `ESP8266-AT221` or
+`ESP8266-AT222` (Espressif ESP-AT 2.2.1 / 2.2.2 for the ESP8266: `AT+SYSSTORE`
+only on 2.2.2, passive receive refused on 2.2.1, `+PING:` / `+CIPRECVDATA:<len>,`
+reply forms, `CWMODE=1,0`, `CWLAPOPT`, `CIPDNS`, `SYSLOG`, `CIPTCPOPT`). The
+Sprinter's SprinterESP card (ISA slot, [sprinter-network.md](../machines/sprinter-network.md))
+takes an ESP8266 build from `EspChip`, ESP-AT 2.2.2 otherwise. `com_port.recent_exchanges`
 in the network state lists the last requests and replies (ESPNET frames by
 name, AT lines as text) - the first place to look when a program and the
 module disagree. Details: [reference-esp-modules.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-esp-modules.md).

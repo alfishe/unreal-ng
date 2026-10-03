@@ -3,6 +3,7 @@
 
 #include "emulator/io/network/atm2ioesp.h"
 #include "emulator/io/network/zifi.h"
+#include "emulator/io/network/networkmanager.h"
 
 #include <cstring>
 
@@ -115,6 +116,17 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
     if (context->pZiFi)
         guests.zifi = context->pZiFi->Line().NetGuest();
     guests.ethernet = context->pEthernetGateway;
+    if (context->pCore)
+    {
+        if (const NetworkManager* manager = context->pCore->GetNetworkManager())
+        {
+            for (int n = 0; n < 2; ++n)
+            {
+                if (const PcSerialCard* card = manager->SerialCard("isa" + std::to_string(n + 1)))
+                    guests.slotUart[n] = card->Com().NetGuest();
+            }
+        }
+    }
     return guests;
 }
 

@@ -519,7 +519,7 @@ or base waits for an instance restart in v1 (ISA Q5; this folder's Q11), and the
 | Item | Design |
 |---|---|
 | Ethernet card state | one new shared blob **`PeripheralId::EthernetNics = 39`** (the first free id on master `eecf86777`: 0-38 are taken - 32 = Sprinter Covox-Blaster, 33-35 reserved or used by the Sprinter, 36 / 37 the ATM INTERNAL bus and ATM2IOESP, 38 the ZX-Evo mouse; the enum does not catch duplicates, so the number is re-checked by hand when the phase lands): for each fitted frame card its link key (`isa2.eth`), kind, variant, version and state. NE2000: registers of all pages, remote / local DMA pointers, the 16 KB packet RAM (bytes in v1; a TTD memory region when v2 regions land for devices), EEPROM content, time of the pending transmit completion. 3C509B: ID state, window, registers, both FIFOs, EEPROM |
-| UART card state | the existing generic **`TTDSerialPort`** (constructor takes a function returning the `ComPort`, an id and a name) - one instance per UART channel under ids **40-43** (`SlotSerial0`-`3`: slot 1 channel A / B, slot 2 channel A / B; machine-neutral names so a future bus reuses them). No format copy |
+| UART card state | the existing generic **`TTDSerialPort`** (constructor takes a function returning the `ComPort`, an id and a name) - one instance per UART channel under ids **40-43** (`SlotSerial0`-`3`: slot 1 channel A / B, slot 2 channel A / B; machine-neutral names so a future bus reuses them). No format copy. *As built (§18 SN3): 40-45 were taken meanwhile; channel A of slot 1 / 2 = **46 / 47** `SlotSerial1` / `SlotSerial2`, SN4's second channels take new ids* |
 | ISA blob 33 | holds only the slot kinds and the ZX-bus adapter (ISA design §9); a load compares the kinds with blob 39 |
 | Virtual network state | the gateway's tables (ARP pairs, UDP flows, TCP connection records incl. queued host bytes and timers) join the virtual network tables of `netstate`. If those tables are saved today only with the ZXNETUSB blob, they move into their own blob saved whenever a virtual network exists (a generic fix: the ESP and gateway paths need it too) |
 | Outside inputs, NAT mode | unchanged: host answers are `NetEvent` inputs (payload in the payload store) applied at the frame boundary; `NetLinkReset` when leaving the recorded past. The frames entering the card are computed from those inputs by deterministic code, so replay needs no host and reproduces every frame byte for byte |
@@ -689,3 +689,65 @@ network cards ahead of ISA RAM if the owner agrees (Q7).
 - **Open**: host-side receive pause (a guest that stops reading is reset above 256 KB queued), zero-window probes,
   the full guest-key registry (Q10; fixed guest numbers for now), the MAME-fork captures (T-NET-16), PIO IRQ lines
   (ISA I4; the kit polls), the host-LAN bridge SN6.
+
+### SN3 (2026-10-03, branch `sprinter-esp-sn3`)
+
+- **The board, from its schematic** (SprinterESP rev 1.0.5, 2023-01-27, [romychs/SprinterESP](https://github.com/romychs/SprinterESP);
+  MAME has no SprinterESP outside the kit author's fork): TL16C550C with a 14.7456 MHz oscillator at XIN; a 74HC30 +
+  74HC27 decode **A13-A3 = `#3E8 >> 3`** - A19-A14 and **AEN are not decoded** (the card answers in every `#9FBD`
+  page and also with AEN = 1; no mirror inside the 16 KB window); INTR straight to ISA **IRQ3** (not gated by OUT2);
+  `-OUT1` through a diode to the ESP-12F's RST, `-OUT2` through a diode to GPIO0; `-RTS` / `-CTS` to the ESP through a
+  TXB0104; `-DSR`, `-DCD`, `-RI`, `-DTR` not connected; ISA RESET DRV to the 16550's MR only. These replace §8.1's
+  "OUT2 gates the IRQ" (that is the PC convention, not this card) and the 10-bit decode the ISA design assumed.
+- **`PcSerialCard`** (`core/src/emulator/io/network/pcserialcard.*`, `IIoBusDevice`): one `ComPort` with
+  `registerOf = offset & 7` (as `Atm2IoEsp`), `Chip16550` params, `uartClockHz = 14 745 600`, `ctsOnly`. Preset
+  `SPRINTERESP` only (the modem and SprinterSerial presets come with SN4). `IIoBusDevice` gained `IgnoresAen()` and
+  `DecodeNote()` (the ISA wrapper and the slot report use them). A bus reset resets the UART only: MCR 0 releases the
+  ESP's RST and it boots, as on the board.
+- **OUT1 / OUT2:** `Uart16550::onAuxLines(out1, out2)` (the pins, inactive in loopback mode; called on an MCR write and
+  on MR; not on a state restore) and `Uart16550::IntrPin()` (INTR without the OUT2 gate) - the card wires them, so
+  `ISerialPeer` needed no new method. `EspModule::SetResetPin` / `SetFlashPin`: RST held = silent, the receive buffer,
+  replies, links and the Wi-Fi association dropped; released with GPIO0 high = the firmware boots (AT: "ready" 0.4 s
+  later, factory 115 200 baud, flow control on, the session reset, the saved access point joins again); released with
+  GPIO0 low = the ROM's download mode (silent; flashing is not emulated). The ROM's 74 880-baud boot log is not
+  modeled. Pin state and the factory rate ride in `netstate::EspModuleState` (spare bytes: older blobs load as before).
+- **AT firmware presets** (shared by every ESP module, `[NETWORK] EspChip=`, `esp_chip`): `ESP32` (AT 2.2.0),
+  `ESP8266` (NonOS 1.7.4), new `ESP8266-AT221` and `ESP8266-AT222` (`EspModule::Firmware`, config values 0-3). 2.2.x:
+  their `AT+GMR` identity; `AT+SYSSTORE` / `?` on 2.2.2 only (**NonOS 1.7.4 now answers ERROR too**, as the real
+  firmware); `CIPRECVMODE` / `CIPRECVDATA` / `CIPRECVLEN` refused on 2.2.1; `+PING:<ms>` / `+PING:TIMEOUT`;
+  `+CIPRECVDATA:<len>,<data>`; `CWMODE=<mode>,<auto>`; new `SYSLOG`, `CWLAPOPT` (the `+CWLAP` fields follow the mask),
+  `CIPTCPOPT`, `CIPSERVERMAXCONN`, `CIPDNS` (stored and reported; the virtual network answers whichever server is
+  named), `UART_CUR?` / `UART_DEF?`. Fixed for every preset: `AT+X_CUR?` was not recognized as a query. The ESP32 preset
+  keeps its NonOS-style `+<ms>` / `+CIPRECVDATA,<len>:` forms (unchanged; ESP32 AT 2.x prints the 2.x forms - one-line
+  note, not in scope). The SprinterESP's ESP-12F takes an ESP8266 preset from `EspChip`, ESP-AT 2.2.2 otherwise.
+- **Config:** `[ISA] SlotN=SPRINTERESP` (base `#3E8` and IRQ 3 fixed by the board; `SlotNBase` / `SlotNIrq` do not
+  apply), `SlotNPeer=` (ComPortSpec; default `AT` = the ESP-12F; `LOOPBACK`, `TCP:host:port`, `SERIAL:device[,baud]` for
+  a real ESP on USB, `ESPNET`, `NONE`), `SlotNMac=` (auto: `5C:CF:7F:5A:<instance>:<slot>`). Create option
+  `"sprinter": {"isa_slot1": "sprinteresp"}`. Default population unchanged (slot 1 empty, slot 2 NE2000): the ESP is
+  fitted on request; slot 1 until ISA I2's ZX-bus adapter, then slot 2 instead of the NE2000 (two cards with equal
+  addresses in different slots do not collide: each slot has its own select). Runtime keys `isa1_peer` / `isa2_peer`
+  (every surface, `NetworkManager::ParseChange`) and `esp_chip`: the card is fitted again around its kept 16550
+  registers (a new ESP module boots; the NE2000 in the other slot is untouched).
+- **Network side:** guests 7 / 8 (`SerialGuests::slotUart`) for the slot UARTs' peers in the virtual network tables
+  (fixed numbers like guests 2-6; Q10's key registry still open). A UART card's peer is rebuilt on every refit (it
+  lives on the virtual network that is rebuilt); with the runtime feature `network` off the card stays and its ESP
+  sees no access point.
+- **TTD:** blobs **46 `SlotSerial1`** and **47 `SlotSerial2`** (`TTDSerialPort`, `netstate::SerialPort`: the 16550,
+  the ESP module with its stack and AT state, received bytes by journal reference); 39-45 were taken on master. A
+  second channel per slot (SN4's SprinterSerial) takes new ids. ISA blob 33 records `sprinteresp` as the slot's kind.
+- **Reports:** the card's `Describe` feeds both `state/isa` (resources `#3E8-#3EF`, IRQ 3, the Z80 path
+  "window 3 page #D4, any #9FBD AEN: CPU #C3E8-#C3EF", the access journal with 16550 register names RBR/THR, DLL, IER,
+  IIR/FCR, ... - recorded in a TTD replay too) and the `state/network` slot row: chip, clock, `peer_spec`, `uart`
+  (registers, baud, AFE / RTS / CTS, INTR, FIFO levels, byte counters, overruns), `pins` (OUT1 = ESP reset, OUT2 =
+  GPIO0 low), `peer`, `esp` (firmware, running / reset held / download mode, hardware resets, Wi-Fi, IP, MAC, baud,
+  flow control, `at_session` with the open links, the last 32 AT exchanges). MCP prints a one-line summary per slot;
+  Qt: the slot line shows UART + ESP, an editor per UART slot sets its line, the chip box offers the 2.2.x presets.
+- **Tests:** `pcserialcard_test.cpp` (decode / AEN / mirrors, reports, OUT1 reset and boot, OUT2 download mode, RESET
+  DRV to MR, IRQ3 without OUT2, runtime change keeps the UART), `atmodule_test.cpp` (+6: the 2.2.x identities and the
+  SYSSTORE probe, the commands the kit sends, 2.x passive receive, the reset / flash pins, the state round trip),
+  `networkpanelmodel_test.cpp` (the ESP slot row and its line), `sprinternetworkkit_test.cpp` (env
+  `UNREAL_SPRINTER_HDD`, BIOS 3.06 HF2, the kit on a floppy): `NETUP` (2.2.2 profile, UART_CUR flow 3, join, DHCP
+  `10.0.2.15`), `PING example.test` (DNS through the ESP, ICMP), `WGET` 5000 bytes byte-exact from the scripted HTTP
+  server, `UNETTEST example.test 80` through `UNETESP.DLL` (libman load, NETINIT, resolve, CONNECT, SEND, passive
+  RECV, CLOSE), `NETUP` on the 2.2.1 preset (the kit's 2.2.1 profile), and a TTD replay of NETUP + WGET without the
+  host: blobs 46, 20, 33, 45 equal byte for byte.

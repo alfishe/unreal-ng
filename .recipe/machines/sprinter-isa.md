@@ -28,9 +28,12 @@ population refuses to load on another).
 - Machine config `configs/sprinter/unreal.ini`, section `[ISA]`: `Slot1=` / `Slot2=` with `NONE | ZXBUS | RAM |
   NE2000 | EL3C509B | SPRINTERESP | MODEM | DUAL16552`; a network card adds `Slot2Chip=RTL8019AS`, `Slot2Base=0x300`
   (write `0x300` or `300h`: a `#` starts an INI comment), `Slot2Irq=3`, `Slot2Mac=auto`.
+  `SPRINTERESP` (the Wi-Fi card, built: `#3E8` and IRQ 3 fixed by the board) takes `SlotNPeer=AT` (its 16550's line)
+  and `SlotNMac=`; it decodes A13-A3 without AEN, so `z80_access.io` reads "any #9FBD AEN" for it
+  ([sprinter-network.md](sprinter-network.md#sprinteresp-wi-fi-with-the-sprinter-esp-network-kit)).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+- Built kinds: `NE2000`, `SPRINTERESP`. A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
 ## WebAPI (verified)
 
