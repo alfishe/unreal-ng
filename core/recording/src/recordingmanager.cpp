@@ -986,6 +986,10 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
 
 void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
 {
+    // TTD replay: the frames are history, not output (as CaptureFrame; FR-20)
+    if (_context && _context->ttdReplayActive)
+        return;
+
     // Cheap unlocked pre-check
     if (!IsRecording() || _audioTracks.empty())
     {

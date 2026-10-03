@@ -198,6 +198,13 @@ public:
     /// while the emulator is not running)
     void ApplyPending();
 
+    /// Time travel replays history (FR-20): hold every write-through medium's
+    /// host writes in memory (true), then release them to their files (false,
+    /// the state of that moment). Floppy write-through waits while held.
+    /// Emulation thread
+    void HoldHostWrites(bool hold);
+    bool HoldingHostWrites() const { return _holdHostWrites; }
+
     /// A slot's peripheral reports a guest write to its medium (emulation
     /// thread). While TTD records, the first write of each frame is a replay
     /// barrier: the medium changed, a seek must not cross it silently.
@@ -257,6 +264,7 @@ private:
     std::function<bool()> _applyNowProbe;
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
+    bool _holdHostWrites = false;
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
     mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)

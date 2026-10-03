@@ -364,6 +364,14 @@ public:
 - `ttdReplayActive` is the flag v1 already sets for every replay (TTM:1613-1671), so the gate also protects v1 from the day it lands.
 - **Test:** replay history that writes a floppy, an SD card and a hard disk; the image files, the session write maps and the flash file are byte-identical before and after (FR-20).
 
+**As built (2026-10-03).** The paths that wrote a host file during a replay, found by a code survey: the write-through IDE / SD images (`RawImage::WriteSector`, the default for IDE), floppy write-through (written at the frame boundary by `MediaManager::ApplyPending`, which a replay crosses), the VDAC2 bus capture file and the audio of a video recording (its frames were already skipped). Already safe: NeoGS flash and SD changes (refused during a replay), the virtual network, the session write maps and NVRAM (saved only on an explicit save or at shutdown). What changed:
+- every write-through block stack ends in `HostWriteHold` (emulator/io/storage/hostwritehold.h). `MediaManager::HoldHostWrites(true)` holds the guest's sector writes in memory, where the replayed program reads them back; `HoldHostWrites(false)` writes them to the file. That is the retry of a refused persist "with the state of that moment" above; the overlay is not dropped, because the machine stands at the replay's target afterwards and its disk must match it. A medium inserted while held is held;
+- floppy write-through is skipped while held, the disk stays dirty, and the next live frame writes it;
+- `Vdac2Card::CaptureLive()` and `RecordingManager::CaptureAudio` skip replayed traffic;
+- `TimeTravelManager::EnterReplayMode` / `ExitReplayMode` hold and release, so v1 is covered now; `MediaWriteGate::HostWritesAllowed` (emulator/media/mediawritegate.h) is the shared rule.
+
+Tests: `HostWriteHold_Test`, `MediaManager_Test.WriteThroughImagesAreHeldWhileReplaying`, `MediaManager_Test.FloppyWriteThroughWaitsWhileReplaying`, `TimeTravelManager_HostWrites_Test` (a guest writing a probe port sees host writes held during a v1 replay and only then). Each of the three mechanisms, removed, fails its test. Not covered: an SD card opened directly by `SdCardSpi::open` in persist mode, which only machines without a media manager do (bare test contexts).
+
 ### 4.8 Step 7 — The write journal as a derived index
 
 **Why it can be derived.** With a sealed replay (Steps 1-6), re-running a frame regenerates its writes exactly. Keeping the journal is a speed choice (D17).

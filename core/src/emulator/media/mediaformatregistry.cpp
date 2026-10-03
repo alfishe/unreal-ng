@@ -2,6 +2,8 @@
 
 #include "mediaformatregistry.h"
 
+#include "emulator/io/storage/hostwritehold.h"
+
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/io/storage/hostfolder/folderdiskbuilder.h"
@@ -22,6 +24,7 @@ std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, Acces
                                                        std::unique_ptr<IBlockDevice> base, MediaKind kind)
 {
     SessionWriteMap* session = nullptr;
+    HostWriteHold* hold = nullptr;
     std::unique_ptr<IBlockDevice> stack;
     switch (access)
     {
@@ -36,10 +39,17 @@ std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, Acces
             break;
         }
         case AccessMode::WriteThrough:
-            stack = std::move(base);
+        {
+            // Held while time travel replays history: no host write (FR-20)
+            auto held = std::make_unique<HostWriteHold>(std::move(base));
+            hold = held.get();
+            stack = std::move(held);
             break;
+        }
     }
-    return std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session, kind);
+    auto medium = std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session, kind);
+    medium->SetHostWriteHold(hold);
+    return medium;
 }
 
 /// A host folder as a FAT volume: manifest, snapshot, volume, access layer

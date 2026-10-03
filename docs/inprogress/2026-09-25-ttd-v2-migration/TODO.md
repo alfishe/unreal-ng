@@ -96,7 +96,7 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
 - [ ] Step 4 — Configuration fingerprint and media versions (the machine ROMs of every model, the Sprinter BIOS among them)
 - [ ] Step 5 — Emulated real-time clocks
-- [ ] Step 6 — No writes outside the session during replay
+- [x] Step 6 — No writes outside the session during replay (2026-10-03): write-through block media held in memory and released to their files when the replay ends (`HostWriteHold`, `MediaManager::HoldHostWrites`, engaged by v1's replay); floppy write-through waits for the next live frame; VDAC2 bus capture and the video recording's audio skip replayed frames
 - [ ] Step 7 — Write journal as a derived index with a retention policy (experiment E7 first)
 
 ## Phase 4 — The session file

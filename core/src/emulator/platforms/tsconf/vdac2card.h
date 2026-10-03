@@ -172,6 +172,9 @@ public:
     bool IsCapturing() const { return _capture.IsOpen(); }
     /// What the current or the last capture wrote
     Vdac2Capture::Stats GetCaptureStats() const { return _capture.GetStats(); }
+    /// The bus capture writes a host file: not while time travel replays
+    /// history (FR-20; that traffic was captured when it happened)
+    bool CaptureLive() const;
     /// endregion
 
     /// region <Line budget metrics (line-budget-metrics.md, line-budget-model.md)>

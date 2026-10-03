@@ -32,6 +32,7 @@
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
+#include "emulator/media/mediamanager.h"
 #include "emulator/io/ide/idecontroller.h"
 
 // Pull in the actual struct definitions for the capture call sites.
@@ -1668,6 +1669,9 @@ void TimeTravelManager::EnterReplayMode()
 
     _context->ttdReplayActive = true;
     _inReplayMode = true;
+    // Nothing the replayed machine writes reaches a host file (FR-20)
+    if (_context->pMediaManager)
+        _context->pMediaManager->HoldHostWrites(true);
 
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
@@ -1700,6 +1704,8 @@ void TimeTravelManager::ExitReplayMode()
 
     _context->ttdReplayActive = false;
     _inReplayMode = false;
+    if (_context->pMediaManager)
+        _context->pMediaManager->HoldHostWrites(false);
 
     if (Core* core = _context->pCore)
     {

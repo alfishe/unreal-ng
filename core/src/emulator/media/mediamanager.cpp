@@ -9,6 +9,8 @@
 #include <system_error>
 
 #include "common/logger.h"
+#include "emulator/io/storage/hostwritehold.h"
+#include "emulator/media/mediawritegate.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -701,6 +703,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (state.slot->IsBusy())
             return;
         state.attached = std::move(state.incoming);
+        if (HostWriteHold* hold = state.attached->Hold())
+            hold->SetHolding(_holdHostWrites);
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();
@@ -714,7 +718,10 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         state.discardRequested = false;
     }
 
-    if (state.attached && state.attached->Floppy() && state.attached->Access() == AccessMode::WriteThrough)
+    // While a replay runs nothing reaches the host (FR-20): the disk stays
+    // dirty and the next live frame writes it
+    if (state.attached && state.attached->Floppy() && state.attached->Access() == AccessMode::WriteThrough &&
+        !_holdHostWrites && (!_context || MediaWriteGate::HostWritesAllowed(*_context)))
         WriteThroughFloppy(slotId, state);
 
     // Per-frame snapshot for readers on other threads
@@ -1003,6 +1010,17 @@ uint32_t MediaManager::DelayFrames(uint32_t swapDelayMs) const
         return 0;
     const uint64_t frameUs = (_context && _context->config.frame_duration_us) ? _context->config.frame_duration_us : 20000;
     return static_cast<uint32_t>((static_cast<uint64_t>(swapDelayMs) * 1000 + frameUs - 1) / frameUs);
+}
+
+void MediaManager::HoldHostWrites(bool hold)
+{
+    _holdHostWrites = hold;
+    for (auto& [slotId, state] : _slots)
+        if (state.attached)
+            if (HostWriteHold* h = state.attached->Hold())
+                if (!h->SetHolding(hold))
+                    LOGWARNING("MediaManager: %s: a sector written during a replay could not be written to its file",
+                               slotId.c_str());
 }
 
 void MediaManager::WriteThroughFloppy(const std::string& slotId, SlotState& state)
