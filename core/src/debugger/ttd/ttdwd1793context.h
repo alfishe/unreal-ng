@@ -38,6 +38,8 @@ public:
     std::string TTDDeviceName() const override { return "Wd1793Context"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::Wd1793Context; }
     uint64_t TTDHashState() const override;
+    /// Restored after the controller's own blob, whose load empties the queue and the pointers
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     WD1793& _fdc;

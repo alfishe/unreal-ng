@@ -3248,6 +3248,18 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
             _shadowDeviceRegions.clear();
             return;
         }
+        // The device table, from the same registry v1 records from
+        std::vector<TTDDeviceEntry> devices;
+        for (const auto& [id, device] : _peripherals.Devices())
+            if (device && device->TTDStateSize() != 0)
+                devices.push_back({device->TTDDescribe(), device});
+        if (!engine.SetDevices(std::move(devices), error))
+        {
+            MLOGWARNING("TimeTravelManager: shadow engine refused the device set: %s", error.c_str());
+            engine.EndSession();
+            _shadowDeviceRegions.clear();
+            return;
+        }
         ArmShadowRegions(true);
         _shadowRescan = true;
     }

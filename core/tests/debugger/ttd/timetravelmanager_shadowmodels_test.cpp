@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -84,6 +85,17 @@ protected:
     {
         ASSERT_EQ(_engine.CheckpointCount(), _v1->GetCheckpointCount());
         ASSERT_FALSE(_engine.Regions().empty());
+
+        // The device table: v1's devices, restored in v1's order except where a
+        // device names another (the WD1793 context after the controller)
+        const ttd::TTDDeviceTable& table = _engine.Devices();
+        EXPECT_EQ(table.Entries().size(), _v1->GetPeripheralRegistry().Count());
+        std::vector<uint16_t> order;
+        for (uint32_t i : table.RestoreOrder())
+            order.push_back(static_cast<uint16_t>(table.Entries()[i].descriptor.legacyId));
+        EXPECT_TRUE(std::is_sorted(order.begin(), order.end())) << "the same order as v1 (ascending ids)";
+        if (table.Find({ttd::TTDDeviceType::BetaDisk, "betadisk"}))
+            EXPECT_NE(table.Find({ttd::TTDDeviceType::Wd1793Context, "betadisk.context"}), nullptr);
         EXPECT_EQ(_engine.Regions()[0].pieces, _v1->GetCheckpoint(0)->ramPages.size() * 4)
             << "region 0 covers the model's whole RAM";
 

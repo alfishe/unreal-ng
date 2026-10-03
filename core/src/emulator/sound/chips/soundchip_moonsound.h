@@ -183,6 +183,13 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return "MoonSound"; }
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::MoonSound; }
+    /// The wave ROM is not recorded: its content hash names it
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.firmwareFingerprint = _romHash;
+        return d;
+    }
     uint64_t TTDHashState() const override;
 
     /// Time-travel engine region (Phase 1, Step 6): the wave RAM (up to

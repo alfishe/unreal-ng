@@ -74,6 +74,7 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
 
 void TimeTravelEngine::EndSession()
 {
+    _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
     for (const PieceChange& c : _changes)

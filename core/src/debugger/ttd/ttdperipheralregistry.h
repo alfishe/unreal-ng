@@ -104,6 +104,8 @@ public:
 
     /// Count of registered peripherals.
     size_t Count() const { return _devices.size(); }
+    /// Every registered device by its v1 id
+    const std::unordered_map<uint8_t, TTDSerializable*>& Devices() const { return _devices; }
 
     /// Devices whose memory the time-travel engine records as regions
     /// (Phase 1, Step 6); v1 does not use them

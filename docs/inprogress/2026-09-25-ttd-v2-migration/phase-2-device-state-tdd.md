@@ -159,6 +159,8 @@ struct TTDDeviceKey
 - **Instances.** The three registrations of `TTDSerialPort` become one type `SerialPort` with instances `evo.uart` (today 24), `atm2ioesp.uart` (37), `zifi.uart` (39). For v1 compatibility their old ids stay valid as types: the v1 file reader maps 37 and 39 to `SerialPort` plus the instance name, and the engine stores the new form. Whether the old ids 37 and 39 are retired or kept as aliases forever is decided with file versioning (Phase 4, Step 1, V-7 in [integrity-and-versioning.md](integrity-and-versioning.md)).
 - **Slot personalities** stay separate types (TSFM is not a TurboSound, NeoGS is not a GS): a state never crosses to a different device kind.
 
+**As built (2026-10-03).** `TTDDeviceType` (u16) lists the 47 `PeripheralId`s with their numbers, one compile-time check each (`ttdserializable.h`). Instances so far: the WD1793 is `betadisk`, its command context `betadisk.context` (restored after it, the key taken from the controller's descriptor); the three 16550 serializers are one type, `SerialPort`, with instances `uart` (the machine's #xxEF port, v1 id 24), `atm2ioesp.uart` (37) and `zifi.uart` (39). Every other device keeps the default: its type is its v1 id, its instance its name in lower case. Restore ties follow v1's ascending blob id (`legacyId` in the descriptor), so the table's order equals v1's on every machine; the shadow model test checks it on the 10 large-memory models.
+
 #### 5.1.2 Descriptor
 
 Each serializer describes itself once, at registration. `TTDSerializable` (shared, SER:96-149) gains one virtual method with a default, so v1 and every existing serializer keep working unchanged:
@@ -521,7 +523,7 @@ Every new test is checked by mutation: it must fail when the mechanism it guards
 Each item lands as its own commits, and each commit passes the full gate (build with zero warnings, `core-tests`, the oracle).
 
 1. **Measurement first:** add the field-level device measurement (§10) as experiment E8 next to E1–E7, so the numbers in §5.2.3 can be rerun. No engine code. *Done 2026-10-03.*
-2. **Step 1, identity and descriptors:** `TTDDeviceType`, `TTDDescribe` with defaults, the device table, restore order equal to v1's. The engine still stores every state whole. The oracle passes.
+2. **Step 1, identity and descriptors:** `TTDDeviceType`, `TTDDescribe` with defaults, the device table, restore order equal to v1's. The engine still stores every state whole. The oracle passes. *Done 2026-10-03.*
 3. **Step 3, restore result:** `TTDRestoreResult` from the device table's checks (missing, not present, layout, size, firmware). Tests with damaged and mismatched sessions.
 4. **Step 2, history:** same as previous, then ranges / XOR, then the chain limit. Bytes drop; the oracle passes after each.
 5. **Step 2, time fields:** declared per device, one device per commit (MoonSound, NeoGS, TSFM, then the rest the measurement finds).

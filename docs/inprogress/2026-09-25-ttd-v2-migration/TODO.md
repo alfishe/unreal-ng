@@ -71,7 +71,8 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 
 Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 
-- [ ] Step 1 — Device registry: type id u16 + instance name, layout version, restore order, firmware fingerprint
+- [x] Step 1 — Device registry: type id u16 + instance name, layout version, restore order, firmware fingerprint (2026-10-03; descriptor and device table, see the TDD's as-built note)
+  - [ ] Firmware fingerprints of the GS ROM, the ATM2 keyboard controller ROM and the Sprinter BIOS (MoonSound's wave ROM done)
 - [ ] Step 2 — Unchanged state shared, changed fields only, time-derived counters
 - [ ] Step 3 — Degraded restores reported on every surface
 - [ ] Step 4 — Sound devices on the contract; device-set changes as timeline events

@@ -99,6 +99,164 @@ enum class PeripheralId : uint8_t
     Count
 };
 
+
+/// region <Device descriptor (TTD v2 engine, Phase 2)>
+
+/// Stable device kind, stored in the engine's files. The values are
+/// PeripheralId's, unchanged, so a v1 blob id maps to a type by value. Until
+/// the engine replaces v1 (Phase 5) a new device takes the next PeripheralId
+/// and the same number here; after that only a type. Slot personalities stay
+/// separate types (TSFM is not a TurboSound): a state never crosses kinds.
+/// Several instances of one kind (the UARTs) share a type and differ by
+/// instance name (TTDDeviceDescriptor::instance).
+enum class TTDDeviceType : uint16_t
+{
+    TurboSound = 0,
+    BetaDisk = 1,
+    Tape = 2,
+    Covox = 3,
+    TSFM = 4,
+    GeneralSound = 5,
+    ScorpionProfROM = 6,
+    KempstonMouse = 7,
+    AtmPaging = 8,
+    ProfiPaging = 9,
+    MoonSound = 10,
+    GeneralSoundLightweight = 11,
+    NeoGS = 12,
+    Plus3Paging = 13,
+    Upd765 = 14,
+    EvoSdCard = 15,
+    TsConfPaging = 16,
+    AtaChannel = 17,
+    Ds12887 = 18,
+    EvoPs2 = 19,
+    ZxNetUsb = 20,
+    EvoTurboCache = 21,
+    EvoFontRam = 22,
+    KempstonJoystick = 23,
+    SerialPort = 24,
+    SprinterPld = 25,
+    Atm2Kbc = 26,
+    MachineSerialPeer = 27,
+    SprinterVideoRam = 28,
+    Z84C15 = 29,
+    SprinterFastRam = 30,
+    SprinterInput = 31,
+    SprinterCovoxBlaster = 32,
+    SprinterIsa = 33,
+    SprinterPads = 34,
+    Wd1793Context = 35,
+    AtmIoBus = 36,
+    Atm2IoEsp = 37,
+    EvoMouse = 38,
+    ZiFiLine = 39,
+    ZiFi = 40,
+    CdDrive = 41,
+    Vdac2Memory = 42,
+    Vdac2 = 43,
+    Smuc = 44,
+    EvoAvrVolatile = 45,
+    KeyboardMatrix = 46
+};
+static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Tape) == static_cast<uint16_t>(PeripheralId::Tape), "TTDDeviceType::Tape must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Covox) == static_cast<uint16_t>(PeripheralId::Covox), "TTDDeviceType::Covox must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::TSFM) == static_cast<uint16_t>(PeripheralId::TSFM), "TTDDeviceType::TSFM must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::GeneralSound) == static_cast<uint16_t>(PeripheralId::GeneralSound), "TTDDeviceType::GeneralSound must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ScorpionProfROM) == static_cast<uint16_t>(PeripheralId::ScorpionProfROM), "TTDDeviceType::ScorpionProfROM must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::KempstonMouse) == static_cast<uint16_t>(PeripheralId::KempstonMouse), "TTDDeviceType::KempstonMouse must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::AtmPaging) == static_cast<uint16_t>(PeripheralId::AtmPaging), "TTDDeviceType::AtmPaging must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ProfiPaging) == static_cast<uint16_t>(PeripheralId::ProfiPaging), "TTDDeviceType::ProfiPaging must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MoonSound) == static_cast<uint16_t>(PeripheralId::MoonSound), "TTDDeviceType::MoonSound must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::GeneralSoundLightweight) == static_cast<uint16_t>(PeripheralId::GeneralSoundLightweight), "TTDDeviceType::GeneralSoundLightweight must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::NeoGS) == static_cast<uint16_t>(PeripheralId::NeoGS), "TTDDeviceType::NeoGS must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Plus3Paging) == static_cast<uint16_t>(PeripheralId::Plus3Paging), "TTDDeviceType::Plus3Paging must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Upd765) == static_cast<uint16_t>(PeripheralId::Upd765), "TTDDeviceType::Upd765 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoSdCard) == static_cast<uint16_t>(PeripheralId::EvoSdCard), "TTDDeviceType::EvoSdCard must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::TsConfPaging) == static_cast<uint16_t>(PeripheralId::TsConfPaging), "TTDDeviceType::TsConfPaging must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::AtaChannel) == static_cast<uint16_t>(PeripheralId::AtaChannel), "TTDDeviceType::AtaChannel must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Ds12887) == static_cast<uint16_t>(PeripheralId::Ds12887), "TTDDeviceType::Ds12887 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoPs2) == static_cast<uint16_t>(PeripheralId::EvoPs2), "TTDDeviceType::EvoPs2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ZxNetUsb) == static_cast<uint16_t>(PeripheralId::ZxNetUsb), "TTDDeviceType::ZxNetUsb must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoTurboCache) == static_cast<uint16_t>(PeripheralId::EvoTurboCache), "TTDDeviceType::EvoTurboCache must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFontRam) == static_cast<uint16_t>(PeripheralId::EvoFontRam), "TTDDeviceType::EvoFontRam must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::KempstonJoystick) == static_cast<uint16_t>(PeripheralId::KempstonJoystick), "TTDDeviceType::KempstonJoystick must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SerialPort) == static_cast<uint16_t>(PeripheralId::SerialPort), "TTDDeviceType::SerialPort must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterPld) == static_cast<uint16_t>(PeripheralId::SprinterPld), "TTDDeviceType::SprinterPld must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Atm2Kbc) == static_cast<uint16_t>(PeripheralId::Atm2Kbc), "TTDDeviceType::Atm2Kbc must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MachineSerialPeer) == static_cast<uint16_t>(PeripheralId::MachineSerialPeer), "TTDDeviceType::MachineSerialPeer must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterVideoRam) == static_cast<uint16_t>(PeripheralId::SprinterVideoRam), "TTDDeviceType::SprinterVideoRam must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Z84C15) == static_cast<uint16_t>(PeripheralId::Z84C15), "TTDDeviceType::Z84C15 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterFastRam) == static_cast<uint16_t>(PeripheralId::SprinterFastRam), "TTDDeviceType::SprinterFastRam must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterInput) == static_cast<uint16_t>(PeripheralId::SprinterInput), "TTDDeviceType::SprinterInput must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterCovoxBlaster) == static_cast<uint16_t>(PeripheralId::SprinterCovoxBlaster), "TTDDeviceType::SprinterCovoxBlaster must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterIsa) == static_cast<uint16_t>(PeripheralId::SprinterIsa), "TTDDeviceType::SprinterIsa must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::SprinterPads) == static_cast<uint16_t>(PeripheralId::SprinterPads), "TTDDeviceType::SprinterPads must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Wd1793Context) == static_cast<uint16_t>(PeripheralId::Wd1793Context), "TTDDeviceType::Wd1793Context must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::AtmIoBus) == static_cast<uint16_t>(PeripheralId::AtmIoBus), "TTDDeviceType::AtmIoBus must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Atm2IoEsp) == static_cast<uint16_t>(PeripheralId::Atm2IoEsp), "TTDDeviceType::Atm2IoEsp must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoMouse) == static_cast<uint16_t>(PeripheralId::EvoMouse), "TTDDeviceType::EvoMouse must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ZiFiLine) == static_cast<uint16_t>(PeripheralId::ZiFiLine), "TTDDeviceType::ZiFiLine must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::ZiFi) == static_cast<uint16_t>(PeripheralId::ZiFi), "TTDDeviceType::ZiFi must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::CdDrive) == static_cast<uint16_t>(PeripheralId::CdDrive), "TTDDeviceType::CdDrive must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Vdac2Memory) == static_cast<uint16_t>(PeripheralId::Vdac2Memory), "TTDDeviceType::Vdac2Memory must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Vdac2) == static_cast<uint16_t>(PeripheralId::Vdac2), "TTDDeviceType::Vdac2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Smuc) == static_cast<uint16_t>(PeripheralId::Smuc), "TTDDeviceType::Smuc must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoAvrVolatile) == static_cast<uint16_t>(PeripheralId::EvoAvrVolatile), "TTDDeviceType::EvoAvrVolatile must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::KeyboardMatrix) == static_cast<uint16_t>(PeripheralId::KeyboardMatrix), "TTDDeviceType::KeyboardMatrix must keep its v1 number");
+
+/// A device in the engine's device table: its kind and its instance name
+/// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)
+struct TTDDeviceKey
+{
+    TTDDeviceType type = TTDDeviceType::TurboSound;
+    std::string instance;
+
+    bool operator==(const TTDDeviceKey& o) const { return type == o.type && instance == o.instance; }
+    bool operator<(const TTDDeviceKey& o) const
+    {
+        return type != o.type ? static_cast<uint16_t>(type) < static_cast<uint16_t>(o.type) : instance < o.instance;
+    }
+};
+
+/// A counter in the state that advances with time: predicted from its last
+/// step, stored as the residual (Phase 2, §5.2.3). For state in vendored
+/// libraries; a device whose code is ours keeps an anchor instead (E8)
+struct TTDTimeField
+{
+    uint16_t offset = 0;   ///< byte offset in the state
+    uint8_t width = 0;     ///< 2, 4 or 8 bytes, little endian
+};
+
+/// What the engine needs to know about a device, given once at registration
+struct TTDDeviceDescriptor
+{
+    TTDDeviceType type = TTDDeviceType::TurboSound;
+    std::string instance;                     ///< default: TTDDeviceName() in lower case
+    PeripheralId legacyId = PeripheralId::Count;   ///< the v1 blob id (restore order ties follow v1)
+    uint16_t layoutVersion = 1;               ///< bumped when the device's bytes change meaning
+    uint32_t stateSize = 0;                   ///< TTDStateSize(): exact, or the largest when variableSize
+    bool variableSize = false;
+    uint64_t firmwareFingerprint = 0;         ///< firmware the session does not record (0 = none)
+    std::vector<TTDDeviceKey> restoreAfter;   ///< devices to load first
+    std::vector<TTDTimeField> timeFields;
+    bool runsBehindCpu = false;               ///< must be synced to the frame boundary before a capture
+
+    TTDDeviceKey Key() const { return {type, instance}; }
+};
+
+/// Passed to TTDSerializable::TTDAfterRestore
+struct TTDRestoreContext
+{
+    uint64_t frame = 0;          ///< the restored position
+    uint32_t tInFrame = 0;
+    bool replayFollows = false;  ///< a replay runs from here to a later target
+};
+
+/// endregion </Device descriptor>
+
 class TTDSerializable
 {
 public:
@@ -166,6 +324,29 @@ public:
         out.resize(TTDStateSize());
         TTDSaveState(out.data());
     }
+
+    /// The device's descriptor for the engine's device table (Phase 2, Step 1).
+    /// The default fits a single-instance device whose bytes never changed
+    /// meaning: its type is its PeripheralId, its instance its name in lower case
+    virtual TTDDeviceDescriptor TTDDescribe() const
+    {
+        TTDDeviceDescriptor d;
+        d.legacyId = TTDPeripheralId();
+        d.type = static_cast<TTDDeviceType>(d.legacyId);
+        d.instance = TTDDeviceName();
+        for (char& c : d.instance)
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        d.stateSize = static_cast<uint32_t>(TTDStateSize());
+        d.variableSize = TTDVariableSize();
+        return d;
+    }
+
+    /// Called once per device after a whole restore (CPU, chipset, every
+    /// device, banking, every memory region), in restore order: for state a
+    /// device derives from other parts of the machine. Work that already sits
+    /// in TTDLoadState stays there
+    virtual void TTDAfterRestore(const TTDRestoreContext& context) { (void)context; }
 };
 
 } // namespace ttd

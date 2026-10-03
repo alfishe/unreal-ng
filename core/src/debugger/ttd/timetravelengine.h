@@ -24,6 +24,7 @@
 #include <deque>
 #include <vector>
 
+#include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdframeinput.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdreftable.h"
@@ -145,6 +146,14 @@ public:
     bool BeginSession(const std::vector<TTDRegionDesc>& regions, std::string& error);
     /// Drop the session and everything it holds
     void EndSession();
+
+    /// The recorded machine's devices (Phase 2, Step 1): checked and put in
+    /// restore order; kept until the session ends. @return false with @p error
+    bool SetDevices(std::vector<TTDDeviceEntry> devices, std::string& error)
+    {
+        return _devices.Build(std::move(devices), error);
+    }
+    const TTDDeviceTable& Devices() const { return _devices; }
     bool IsSessionOpen() const { return _open; }
 
     const std::vector<TTDRegionDesc>& Regions() const { return _regions; }
@@ -267,6 +276,7 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
+    TTDDeviceTable _devices;
     std::vector<uint64_t> _regionPayload;
     std::vector<uint64_t> _regionVersions;
     TTDEngineCaptureWork _lastWork;
