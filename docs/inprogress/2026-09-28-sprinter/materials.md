@@ -71,7 +71,7 @@ Every known BIOS build (2.13-3.07 beta), the community builds kept in `data/rom/
 
 | File | Size | CRC32 (MAME) | Notes |
 |---|---|---|---|
-| `sp2k-3.04.rom` (default) | 262 144 | `1729cb5c` | BIOS 3.04, 17.06.2003, the last Peters Plus build; **the default** (review round 1, Q1); tests run on 3.04 and 3.06 |
+| `sp2k-3.04.rom` | 262 144 | `1729cb5c` | BIOS 3.04, 17.06.2003, the last Peters Plus build; the default until 2026-10-02 (review round 1, Q1), now selectable (the default is the community 3.07 BETA 1, [bios-versions.md](bios-versions.md) §6.1); tests run on 3.04, 3.06 and 3.07 |
 | `sp2k-3.06.rom` | 262 144 | `187f4382` | community BIOS 3.06, 25.06.2025 (Tolik-Trek); selectable |
 | `sp2k-3.05.rom`, `3.03`, `3.00`, `2.17`, `2.13` | 262 144 each | see `sprinter.cpp:2030-2047` | regression sweep |
 

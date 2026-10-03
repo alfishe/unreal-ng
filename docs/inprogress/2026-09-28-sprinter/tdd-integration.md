@@ -17,7 +17,7 @@
 | Config folder | `Config::GetConfigFolderForModel` (`core/src/emulator/config.cpp:749`) | default rule (lowercased short name) → `data/configs/sprinter/unreal.ini` |
 | Memory subclass | `Core` factory (`core/src/emulator/cpu/core.cpp:105-108`, the `ScorpionMemory` precedent) | `new SprinterMemory(context)` for `MM_SPRINTER` |
 | Screen | `VideoController::CreateScreen(model)` (PLAN #60(e), built) | `case MM_SPRINTER: return new ScreenSprinter(context);` |
-| ROM | `ROM::GetROMFilename` / `LoadROM` (`core/src/emulator/memory/rom.cpp:66`, `:137`); `[ROM]` keys (`config.cpp:236`, `:257` pattern) | `[ROM] SPRINTER=rom/sprinter/sp2k-3.04.rom`, loaded raw as 16 pages (the ATM3 "whole image, no ROMSET" pattern) |
+| ROM | `ROM::GetROMFilename` / `LoadROM` (`core/src/emulator/memory/rom.cpp:66`, `:137`); `[ROM]` keys (`config.cpp:236`, `:257` pattern) | `[ROM] SPRINTER=rom/sprinter/sp2k-3.07-beta1.rom` (3.04 until 2026-10-02, [bios-versions.md](bios-versions.md) §6.1), loaded raw as 16 pages (the ATM3 "whole image, no ROMSET" pattern) |
 | Frame timing | `ApplyModelTimingDefaults` (`config.cpp:905-1057`) | `frame = 71680`, `t_line = 224`; `intstart/intlen` unused (the interrupt source owns INT) |
 | Cache pages | `MAX_CACHE_PAGES` (`platform.h:251`) | 2 → 4 (64 KB fast RAM) |
 | Qt model list | `unreal-qt/src/menumanager.cpp:627-641` | add `SPRINTER` |
@@ -48,7 +48,7 @@ Line=224
 ;ide0.slave.device = cdrom  ; optional empty CD unit, once ATAPI exists (S7); the default is no device
 
 [ROM]
-SPRINTER=rom/sprinter/sp2k-3.04.rom
+SPRINTER=rom/sprinter/sp2k-3.07-beta1.rom   ; 3.04 until 2026-10-02 (bios-versions.md §6.1)
 ```
 
 Files follow the repo's CRLF/LF convention of the neighboring configs (new file: LF).

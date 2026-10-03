@@ -153,7 +153,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "switch_model: the current machine's mode. A ZX-Poly machine applies it to all four modules";
     schema["properties"]["sprinter_bios"]["type"] = "string";
     schema["properties"]["sprinter_bios"]["description"] =
-        "'create' with model SPRINTER: the BIOS image - 3.04 (default), 3.06, 3.07 (DSS 1.71 needs it) or a file in "
+        "'create' with model SPRINTER: the BIOS image - 3.07 (default), 3.06, 3.04 (DSS 1.71 needs 3.06+) or a file in "
         "rom/sprinter (on a running Sprinter: invoke_api POST /api/v1/emulator/{id}/sprinter/bios {bios, reset})";
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =

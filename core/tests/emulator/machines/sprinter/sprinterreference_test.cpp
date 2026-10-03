@@ -138,6 +138,7 @@ protected:
         ASSERT_NE(_decoder, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // pinned to 3.04 (shipped default: 3.07 BETA 1)
 
         _context->config.sprinter.fast_start = 1;
         _emulator->Reset();

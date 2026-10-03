@@ -353,11 +353,11 @@ per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY a
 `emulator_manage action=create model=SPRINTER` (config `data/configs/sprinter/unreal.ini`).
 
 ## BIOS and start
-Images: 3.04 (default), 3.06 (`sp2k-3.06-hf2.rom`), 3.07 (`sp2k-3.07-beta1.rom`, DSS 1.71 needs it). At create:
-`emulator_manage action=create model=SPRINTER sprinter_bios=3.07 sprinter_fast_start=false`; on a running machine:
+Images: 3.07 (`sp2k-3.07-beta1.rom`, the default), 3.06 (`sp2k-3.06-hf2.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
+3.06+). At create: `emulator_manage action=create model=SPRINTER sprinter_bios=3.04 sprinter_fast_start=false`; on a running machine:
 `invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
 `inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32). FastStart off (the
-default) runs the PLD loader (~1.9 s emulated). With no hard disk SETUP reports "None" for both IDE units at once.
+default) runs the PLD loader (~1.9 s emulated). With no hard disk SETUP reports "None" for every IDE unit at once.
 
 ## Ports
 Every port goes through the port table the BIOS writes to RAM page #40: index = map << 12 | PN5 << 11 | /DOS << 10 |
@@ -381,7 +381,8 @@ them); `video_changes` = mode / palette / frame-length / border writes with fram
 `screen_digest` hashes the video RAM.
 
 ## Software and state
-DSS boots from a 1.44 MB floppy in drive B (`load_software path=testdata/machines/sprinter/dss_1_62_92.img drive=B`)
+DSS boots from a 1.44 MB floppy in drive A on BIOS 3.06 / 3.07 (drive B on 3.04: `load_software
+path=testdata/machines/sprinter/dss_1_62_92.img drive=A`)
 or from a hard disk / CHD on `ide0.master` (recipe media/sprinter-hdd.md); Flex Navigator draws with the accelerator
 (`inspect_state aspects:["sprinter"]` accelerator: mode, length, operations). Sound: AY + Covox-Blaster (`sprinter`
 sound block, `sprinter_sound_ring`, `audio_covox`). TTD records and replays the machine (recipe analysis/sprinter-ttd.md).

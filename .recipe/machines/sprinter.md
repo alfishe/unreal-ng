@@ -42,7 +42,7 @@ Outputs below are real, from a build of branch `sprinter-automation`
 emulator_manage {"action":"list_models"}
 #   → models[] has {"name":"SPRINTER","full_name":"Sprinter 2000","creatable":true,
 #     "available_ram_sizes_kb":[4096],"default_ram_kb":4096}
-emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.04)
+emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.07 BETA 1)
 emulator_manage {"action":"create","model":"SPRINTER","sprinter_bios":"3.07","sprinter_fast_start":true}
 #   → Created and started emulator 4ff43195-...            (sprinter_bios: 3.04 | 3.06 | 3.07 | a file in rom/sprinter)
 inspect_state {"aspects":["sprinter_bios"]}
@@ -62,7 +62,8 @@ the flash is reread at the next reset (`reset: true`, the default, resets now; `
 `reload_pending: true` until the next reset). `loaded` names the image the flash holds (by CRC-32), so a
 mismatch with `rom_file` is visible. A reset stops a TTD recording and a new image invalidates its session.
 `[ROM] SPRINTER=` in `<build>/bin/configs/sprinter/unreal.ini` (macOS: `unreal-qt.app/Contents/Resources/configs/sprinter/unreal.ini`)
-remains the default for new machines. DSS 1.71 needs 3.06 or 3.07. Background:
+remains the default for new machines: shipped `rom/sprinter/sp2k-3.07-beta1.rom` (owner decision 2026-10-02;
+3.04 and 3.06 Hotfix 2 stay selectable). DSS 1.71 needs 3.06 or 3.07. Background:
 [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md).
 
 **Full start vs fast start** (`fast_start` of the selection above, default `[SPRINTER] FastStart=`):
@@ -70,13 +71,19 @@ remains the default for new machines. DSS 1.71 needs 3.06 or 3.07. Background:
 473 720 configuration writes, about 1.9 s of emulated time with a black
 screen; `1` starts with the PLD already configured (the tests use it). Either
 way `sprinter.pld` ends `"state":"configured","module":"Standard"`; the
-bitstream hashes name the image (3.04: `full_hash 0xFC0928F2`, `head_hash 0x78EDDFC6`).
+bitstream hashes name the image (3.07 BETA 1: `full_hash 0x29641AB3`, `head_hash 0x49861031`; 3.04:
+`full_hash 0xFC0928F2`, `head_hash 0x78EDDFC6`).
 
 ### 2. Boot DSS from a floppy
 
-SETUP boots the IDE master first, then the "alternative device", floppy B.
-With no hard disk both IDE units read an empty channel and SETUP prints
-"None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
+SETUP boots the IDE master first, then the "alternative device": **floppy A on
+the default BIOS 3.07 BETA 1 (and 3.06), floppy B on BIOS 3.04**. Checked live
+2026-10-02 with a blank CMOS: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on
+3.07 BETA 1 straight into Flex Navigator 1.10 (`A:\FN\`); in drive B 3.07 prints
+"Alternative Boot from Diskette fail". The steps and outputs below are BIOS 3.04
+with the disk in B: create with `"sprinter_bios":"3.04"` to follow them as they
+are, or keep the default and use drive A. With no hard disk every IDE unit reads
+an empty channel and SETUP prints "None" for each at once (no F4 needed; [sprinter-hdd.md](../media/sprinter-hdd.md)).
 
 The Sprinter has no ZX screen: read its text with the `sprinter_text` aspect; `video_text` and
 `screen_ocr` read the same cells while most of the picture is text (Spectrum mode stays a ZX screen).
@@ -238,7 +245,8 @@ Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
 
 ### 4. Spectrum mode and TR-DOS
 
-BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
+The community BIOS (3.06 / 3.07, the default) carries the ZX ROMs: ESC at its boot prompt starts the
+Spectrum 128 menu "Sprinter" directly. BIOS 3.04 has no Spectrum ROMs; DSS's `SPECTRUM.EXE` loads them from
 `A:\ZX\ROMS`. So put a second copy of the floppy in drive A **before the
 boot** (a medium cannot be in two drives; a disk inserted into A after DSS
 started was not seen by the launcher):
@@ -462,7 +470,7 @@ local t = sprinter_ports({map = 0, dos = 1, rw = "w"}); print(#t.rows)          
 local l = sprinter_port(0x21BC, {rw = "w"}); print(l.results[1].code)          -- 0x2B
 for _, line in ipairs(sprinter_text().lines) do print(line.text) end
 print(sprinter_video{squares=false}.map[1])                                      -- tttttttt... (BIOS)
-print(region_read("vram", 0x17F0, 6)[5], sprinter_bios().loaded)                -- 168  sp2k-3.04.rom
+print(region_read("vram", 0x17F0, 6)[5], sprinter_bios().loaded)                -- 168  sp2k-3.04.rom (switched to 3.04)
 local fb = framebuffer("index"); print(fb.width, fb.height, #fb.data)           -- 736 288 423936
 ```
 

@@ -4,7 +4,7 @@
 //   - TTDSprinter_Test: every Sprinter serializer round-trips its component on the synthetic
 //     fixture machine (SprinterFixture): save, scramble the live state, load, save again - the
 //     same bytes, and the live fields back;
-//   - TTDSprinterMachine_Test: the real BIOS 3.04 under a TTD recording. A recording is the
+//   - TTDSprinterMachine_Test: the real BIOS 3.04 (selected explicitly) under a TTD recording. A recording is the
 //     uninterrupted run; a seek back to a checkpoint followed by running forward must arrive at
 //     every later checkpoint with the same CPU, chipset, device blobs, RAM and picture. The
 //     checkpoints the replays start from are chosen at awkward points: in the middle of the
@@ -331,7 +331,7 @@ TEST_F(TTDSprinter_Test, Registry_EveryDeclaredIdTravels)
 
 /// region <Exact restore on the real BIOS>
 
-/// The real machine (BIOS 3.04, the shipped config) with TTD on. Not in turbo mode: the
+/// The real machine (BIOS 3.04 selected explicitly) with TTD on. Not in turbo mode: the
 /// picture of every frame is compared
 class TTDSprinterMachine_Test : public ::testing::Test
 {
@@ -362,6 +362,9 @@ protected:
         ASSERT_NE(_ttd, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        // Pinned to BIOS 3.04 (the shipped default is 3.07 BETA 1; its cold start is the corpus fixture
+        // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
+        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // PowerOn resets
 
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);

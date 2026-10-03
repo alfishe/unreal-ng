@@ -103,6 +103,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   from its INT handler and goes silent with the block on; the literal PLD `ACC_BLK` reading and MAME agree); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
   `.recipe/machines/sprinter-sound.md`
 
+- [x] Default BIOS 3.07 BETA 1 (owner decision 2026-10-02, "switch the default straight to 3.07"; replaces Q1's 3.04;
+  branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
+  config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
+  (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**

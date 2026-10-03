@@ -241,7 +241,7 @@ completeness, after S7-TTD), **S6** (sound), **S7** (Qt docks, ATAPI CD wiring, 
 | B3 | RESET button | MAME's soft reset keeps the configuration (`:1588-1600`) | reloads the PLD as on the board ([tdd-ports-memory.md](tdd-ports-memory.md) §7; `portdecoder_sprinter.cpp:155-165`) | **ours better** | done |
 | B6 | Turbo after a CPU reset (Ctrl+Alt+Del, page `#A0`) | `m_turbo` kept across every reset | preset to 21 MHz (PLD `DCP.TDF:663`, `TB_SW.prn = /RESET`; 2026-10-02): a 3.5 MHz ZX mode returns to DSS in turbo | **MAME wrong** | done (S8) |
 | B7 | BIOS 3.06 Hotfix 2: DSS text at the bottom line | does not scroll (HF2 in MAME's v3.06 slot) | does not scroll either; MAME's own 3.06 (2025) scrolls in both | **equal** (open BIOS question) | TODO |
-| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.04 (default), 3.06 Hotfix 2, 3.07 BETA 1 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
+| B4 | BIOS images | 2.13, 2.17, 3.00, 3.03, 3.04 (default), 3.05, 3.06 (`:2026-2050`) | 3.07 BETA 1 (default since 2026-10-02), 3.06 Hotfix 2, 3.04 (`data/rom/sprinter/`); 3.00 / 3.03 tried from other builds ([bios-versions.md](bios-versions.md)) | **partial** | Audit |
 | B5 | BIOS choice at run time | `-bios v3.06` | at create (`"sprinter": {"bios": "3.06"}`) and on a running machine (`POST /sprinter/bios`, loaded at the reset) on every surface; `[ROM] SPRINTER=` the default ([automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) G11) | **equal** | done |
 | B6 | BIOS flash writes (updater `UP306.EXE`) | ROM region, not writable | not modeled | **both missing** | Deferred |
 
