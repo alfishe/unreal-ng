@@ -145,12 +145,15 @@ curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/status" | jq '.session | {
 curl -s "$BASE/emulator/$EMU_ID/profiler/porttrace/events?limit=50" | jq '.events[:3]'
 ```
 
-Query params: `limit` (default 0 = all — beware multi-MB responses), `since`
-(t-state floor), `offset`/`count` (windowed retrieval).
+Query params: `limit` (default 0 = all — beware multi-MB responses) and
+`since` (t-state floor). Nothing else is accepted here.
 
-Event fields (compact numeric form): `ts` (t-state), `frame`, `raw` port,
-`dec` (decoded port), `rule` (decode-rule index), `val` (byte), `pc`,
-`dev` (device id), `flags`.
+Event fields (verbose form): `index`, `timestamp` (t-state), `frame`,
+`raw_port`, `decoded_port`, `decode_rule`, `value`, `pc`, `direction`
+(`IN`/`OUT`), `device`, flag booleans (`decoded`, `had_handler`,
+`beta128_gated`, ...) and, on decoders with codes, `code` / `code_name`.
+The compact form (`ts`, `raw`, `dec`, `val`, `dev`, `flags`) is what the
+saved JSON file and the `readfile` endpoint (with `offset`/`count`) use.
 
 ### Save and analyze
 
@@ -184,7 +187,7 @@ coverage, PC attribution ("who hammers port X").
 
 ## Pitfalls
 
-- **Feature off → 400** on the session endpoints. Enable first (the Python
+- **Feature off → 409** (`Feature Disabled`) on the session endpoints. Enable first (the Python
   tool does it unless `--no-enable`).
 - **Reconfiguring mid-run → 409**: `capacity`/`overflow`/filter changes
   belong to the "applied on Start" phase — stop, reconfigure, start.

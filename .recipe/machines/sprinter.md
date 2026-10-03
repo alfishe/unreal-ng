@@ -31,8 +31,8 @@ resource `unreal://machine/sprinter` is the one-page summary.
 > pipelines (policy: [_common/transports.md](../_common/transports.md)).
 > Shared patterns: [_common/machines.md](../_common/machines.md).
 
-Outputs below are real, from a build of branch `sprinter-automation`
-(2026-10-02), trimmed.
+Outputs below are real, from a build of the `sprinter-automation` work
+(2026-10-02, since merged to master), trimmed.
 
 ## MCP (preferred)
 
@@ -107,8 +107,9 @@ inspect_state {"aspects":["sprinter_text"]}          # poll until "B:\>"
 ```
 
 The shipped floppy's `SYSTEM.BAT` ends with `fn` (Flex Navigator, the DSS
-file manager), which does **not** run yet: it draws its logo and hangs. To get
-a usable prompt, boot a copy without that line (host-side, into `scratch/`):
+file manager), which runs (step 3a; see the status table). To stop at the
+`B:\>` prompt instead (the transcript above), boot a copy without that line
+(host-side, into `scratch/`):
 
 ```bash
 python3 - <<'EOF'
@@ -261,7 +262,7 @@ curl -s "$BASE/emulator/$EMU_ID/state/sprinter" | jq -c '.sound.covox_blaster | 
 `zero_counts` grows by one per 20.48 ms frame; `count` is the live
 down-counter. MCP: `inspect_state {"aspects":["sprinter"]}`, the same
 `z84c15.ctc` tree (CLI `state sprinter`, Lua / Python `sprinter_state`).
-Checked live 2026-10-02 (branch `sprinter-ctc-trg`).
+Checked live 2026-10-02 (the `sprinter-ctc-trg` work, since merged to master).
 
 ### 4. Spectrum mode and TR-DOS
 
@@ -529,7 +530,8 @@ and core reports as Lua.)
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
 | Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
-| ISA cards (General Sound on the ZX-bus adapter, `PROPLAY.EXE` MODs) | not yet (S6b); the ISA view reads `#FF` |
+| ISA bus: two ISA-8 slots, default slot 2 = NE2000 (RTL8019AS), Ethernet gateway | implemented ([sprinter-isa.md](sprinter-isa.md), [sprinter-network.md](sprinter-network.md)) |
+| ZX-bus adapter with General Sound / NeoGS in slot 1 (`PROPLAY.EXE` MODs) | not yet (S6b); an empty slot reads `#FF` |
 | TTD (time travel) | implemented (S7, [analysis/sprinter-ttd.md](../analysis/sprinter-ttd.md)) |
 | Automation of video modes, palettes, video RAM, the change log, BIOS selection, mixer | implemented (automation audit 2026-10-02: step 1, step 6, [sprinter-sound.md](sprinter-sound.md)) |
 

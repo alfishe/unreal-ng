@@ -99,11 +99,11 @@ Check the ports with `lsof -i :<port>` first; stop only that instance's PID.
 Runtime-authoritative list with `creatable` flags:
 
 ```bash
-curl -s http://localhost:8090/api/v1/emulator/models | jq '.[] | {id, creatable}'
+curl -s http://localhost:8090/api/v1/emulator/models | jq '.models[] | {name, creatable}'
 ```
 
-Creatable on stock builds: `PENTAGON`, `48K`, `128k`, `PLUS3`, `ATM710`,
-`ATM3`, `SCORPION`, `PROFSCORP`. A create request for a non-creatable model
+The creatable list changes as decoders land, so read it from the runtime
+list; the current table with notes is in [machines.md](machines.md). A create request for a non-creatable model
 fails with **HTTP 400 + reason** — never a silent 48K fallback.
 
 Model guidance:
@@ -158,7 +158,7 @@ Notes agents trip over:
   pause+confirm internally; only roll-your-own loops need to care.
 - `stop` freezes the instance; `destroy` deletes it. TTD history, traces and
   counters die with the instance — dump them to `scratch/` first.
-- Emulator ids are UUIDs; MCP `target` also accepts a **unique id prefix**.
+- Emulator ids are UUIDs; MCP `target` takes the full id (or `"auto"`); id prefixes are not matched.
 
 ### 6. Run control (needed by later recipes)
 
@@ -184,7 +184,8 @@ MCP: `control_execution` with actions `run`, `pause`, `resume`, `step`,
 curl -s "$BASE/emulator/$EMU_ID/capture/ocr" | jq '.text'
 
 # Deterministic content digest — great for "same frame as last run?"
-curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq '.digest'
+# (.combined is the hash to compare; also banks[], active_surface, changed, previous_digest)
+curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq '.combined'
 
 # Screen image capture of the presented frame: PNG and the whole frame with border by default
 # (area=screen = the working picture only, format=gif = 256 colors): media/agent-screenshot-view.md
@@ -193,7 +194,11 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen" | jq '{format, width, height, si
 ```
 
 MCP: `inspect_state` with `aspects: ["screen_ocr"]` /
-`["screen_digest"]` / `["screen_image"]`.
+`["screen_digest"]` / `["screen_image"]`. Read the digest from
+`structuredContent.screen_digest.combined` (the text summary line does not show it).
+To compare digests across instances, create them with `ram_power_on:"zero"`
+(see [machines.md](machines.md)) — the default random power-on noise in screen
+pages 5 and 7 makes digests differ run to run.
 
 ### 8. Teardown
 

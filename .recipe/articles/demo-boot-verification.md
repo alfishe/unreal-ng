@@ -21,7 +21,7 @@ reports, batch-verification of a disk/tape library, model-comparison
 # one boot-and-digest cycle (the verification primitive):
 load_software      {"path":"scratch/demo.trd","autostart":true}
 control_execution  {"action":"run_frames","frames":300}      # fixed frame budget — deterministic
-inspect_state      {"aspects":["screen_digest"]}             # → structuredContent digest
+inspect_state      {"aspects":["screen_digest"]}             # → structuredContent.screen_digest.combined
 # repeat the cycle and compare the two digests; compare against the stored golden
 
 # triage on failure:
@@ -29,7 +29,7 @@ inspect_state      {"aspects":["screen_ocr"]}                # what a human sees
 invoke_api         {"method":"GET","path":"/api/v1/emulator/{id}/disk/A/catalog"}   # boot died in TR-DOS?
 
 # model comparison — recreate the instance per model:
-emulator_manage    {"action":"create","model":"SCORPION"}    # → fresh id, repeat the cycle
+emulator_manage    {"action":"create","model":"SCORPION","ram_power_on":"zero"}    # → fresh id, repeat the cycle
 ```
 
 The bash function and the sweep loops below are WebAPI territory by nature
@@ -49,7 +49,7 @@ Two endpoints, two different questions:
 | `GET /state/screen/digest` | is the *rendered content* identical to run A? | byte-exact, deterministic |
 | `GET /capture/ocr` | what does a human see on screen? | fuzzy — text only |
 
-Golden pattern — digest after a fixed frame budget:
+Golden pattern — digest after a fixed frame budget. Determinism needs the instance created with `ram_power_on:"zero"` (random power-on RAM changes the digest between runs; see [machines](../_common/machines.md)). The value to compare is `.combined`:
 
 ```bash
 boot_and_digest() {   # $1 = image path, $2 = frames
@@ -62,7 +62,7 @@ boot_and_digest() {   # $1 = image path, $2 = frames
   curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" \
        -H 'Content-Type: application/json' \
        -d "{\"frames\":$FRAMES}" >/dev/null
-  curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest
+  curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .combined
 }
 ```
 
@@ -73,7 +73,7 @@ speed (turbo, machine load) irrelevant — frame 300 is frame 300.
 
 ```bash
 EMU_ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
-         -d '{"model":"PENTAGON"}' | jq -r .id)
+         -d '{"model":"PENTAGON","ram_power_on":"zero"}' | jq -r .id)
 
 D1=$(boot_and_digest scratch/demo.trd 300)
 D2=$(boot_and_digest scratch/demo.trd 300)

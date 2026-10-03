@@ -186,7 +186,7 @@ bit 0 (`#FDEF`), read `#F8EF`: the same byte.
 | Kernel | Adapter | Notes |
 |:--|:--|:--|
 | `sd_boot.$C` (NedoOS release, the ZX-Evo W5300 kernel) | ZXNETUSB | `autoexec.bat` runs `wizcfg.com`: it finds the card, gets a DHCP lease, programs the chip |
-| `sd_bootesp.$C` | ESP on the COM port | not emulated yet (network TDD step N3) |
+| `sd_bootesp.$C` | ESP on the COM port | the ESPNET module (`com_port=espnet`) answers; see the COM port section above |
 
 `bin/net.ini` `DHCP 1` (the default) takes the lease from the virtual
 network; a static `IP=` / `GW=` / `MASK=` works too (the virtual network does

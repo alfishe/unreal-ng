@@ -36,8 +36,8 @@ invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","bo
 inspect_state      {"aspects":["screen_ocr"]}                      # formatter done? menu says so
 ```
 
-The final Save As `.udi` (Path C) is a Qt UI step — no smart tool, no
-WebAPI endpoint; see the note in Path C.
+The final save as `.udi` (Path C) is automatable: `media {"action":"export","slot":"A","path":"scratch/out.udi"}`;
+see Path C.
 
 ## Path A — host-side conversion (fully automated)
 
@@ -108,17 +108,21 @@ from one imaged from real hardware:
 2. Run the original formatter / protection-installer (type it, or assemble via
    MCP `debug_code` `assemble`, or load its code snapshot).
 3. Let it format/write through the FDC at authentic speed.
-4. Save: Qt **Save As `.udi`** (Disk menu).
+4. Save: `media {"action":"export","slot":"A","path":"scratch/out.udi"}` (WebAPI
+   `POST /media/A/export` with `{"path":"scratch/out.udi"}`; the Qt **Save As** in the Disk menu
+   does the same). The extension picks the format: `.trd`, `.scl` or `.udi`. `media save` writes back
+   to the image the disk came from (`retarget` keeps a disk that no longer fits its format
+   as `.udi`); `swap` with `save` does it on the way out. See [use-media-slots.md](use-media-slots.md).
+   Export `.udi` for protection work: TRD and SCL refuse what they cannot hold.
 
-There is **no WebAPI disk-save endpoint** (`GET /disk/{drive}/image` returns a
-raw concatenated track dump, not a format file) — the save step is the one
-manual click; everything before it is automatable.
+(`GET /disk/{drive}/image` is something else: a raw concatenated track dump, not a format file.)
+Everything in Path C is automatable.
 
 ## Path D — real-hardware dumps
 
 KryoFlux/Greaseweazle flux dumps: export **SCP or HFE** (both loaders
 implemented) — these are also the only formats that carry weak bits through.
-`scratch/` them, then insert directly. The flux-bridge work (PLAN.md T2 #12)
+`scratch/` them, then insert directly with `media {"action":"insert","slot":"A","path":"scratch/dump.hfe"}` (`load_software` does not take `.hfe` / `.scp`). The flux-bridge work (PLAN.md T2 #12)
 will wire Greaseweazle capture live; loaders already read the files.
 
 ## Choosing the format (capability matrix)
