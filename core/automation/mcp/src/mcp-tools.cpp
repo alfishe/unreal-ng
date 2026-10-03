@@ -158,6 +158,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
         "'create' with model SPRINTER: true skips the PLD loader (~1.7 s emulated); default [SPRINTER] FastStart";
+    for (const char* key : {"sprinter_isa_slot1", "sprinter_isa_slot2"})
+    {
+        schema["properties"][key]["type"] = "string";
+        schema["properties"][key]["description"] =
+            "'create' with model SPRINTER: the card in ISA slot 1 / 2 - none | ne2000 | zxbus | ram | el3c509b | "
+            "sprinteresp | modem | dual16552 (default [ISA] Slot1 = none, Slot2 = ne2000; a kind not built yet is "
+            "refused in the slot report /state/isa); fixed for the instance's lifetime";
+    }
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -267,6 +275,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["sprinter"]["bios"] = args["sprinter_bios"].asString();
                 if (args.isMember("sprinter_fast_start") && args["sprinter_fast_start"].isBool())
                     body["sprinter"]["fast_start"] = args["sprinter_fast_start"].asBool();
+                if (args.isMember("sprinter_isa_slot1") && args["sprinter_isa_slot1"].isString())
+                    body["sprinter"]["isa_slot1"] = args["sprinter_isa_slot1"].asString();
+                if (args.isMember("sprinter_isa_slot2") && args["sprinter_isa_slot2"].isString())
+                    body["sprinter"]["isa_slot2"] = args["sprinter_isa_slot2"].asString();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
@@ -1080,7 +1092,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "network", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer"})
@@ -1111,6 +1123,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/cdaudio/{verb}: play track=N, pause, resume, stop, volume, mixer), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
+        "'isa' = the Sprinter's ISA-8 slots (the #9FBD latch, whether window 3 shows a slot, per slot the configured and "
+        "fitted card - an NE2000's chip, base, MAC, registers - and cycle counters; unavailable on other machines - run an "
+        "ISA cycle with invoke_api POST /api/v1/emulator/{id}/control/isa {action: io_read|io_write|io_peek|mem_read|"
+        "mem_write|mem_peek|reset|latch, slot, address, value}), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
         "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
@@ -1224,7 +1240,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
@@ -1232,7 +1248,7 @@ void RegisterInspectState(ToolRegistry& registry)
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer"));
                     return;
                 }
             }
@@ -1604,6 +1620,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "isa")
+                        {
+                            // Core DeviceState::Isa via the WebAPI; 404 = no ISA slots
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/isa"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "network")
                         {
                             // Core DeviceState::Network via the WebAPI; available=false without an adapter
@@ -1928,6 +1955,19 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << (value["machine"]["serial_port"].asString() == "evo-avr" ? ", avr_firmware " + set["avr_firmware"].asString() : std::string())
                                             << (set.isMember("kbc_firmware") ? ", kbc_firmware " + set["kbc_firmware"].asString() : std::string())
                                             << (value["machine"]["zifi"].asBool() ? ", zifi " + set["zifi"].asString() : std::string());
+                                }
+                            }
+                            else if (aspect == "isa")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[isa] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[isa] latch " << value["latch"]["value"].asString()
+                                        << (value["window"]["mapped"].asBool() ? ", window 3 = slot " + std::to_string(value["window"]["slot"].asInt()) + " " + value["window"]["space"].asString() : std::string(", window 3 not mapped"));
+                                    for (const Json::Value& slot : value["slots"])
+                                        out << "; slot " << slot["slot"].asInt() << ": " << slot["card"].asString()
+                                            << (slot.isMember("not_fitted") ? " (" + slot["configured"].asString() + " not fitted: " + slot["not_fitted"].asString() + ")" : std::string());
                                 }
                             }
                             else if (aspect == "rtc")

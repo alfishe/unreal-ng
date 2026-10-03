@@ -160,7 +160,8 @@ StateNode Window(EmulatorContext* context, PortDecoder_Sprinter& decoder, uint8_
         {
             kind = "ISA";
             writable = false;
-            note = "ISA view (#1FFD bit 4, pages #D0-#D6): no card, reads #FF, writes ignored";
+            note = "ISA view (#1FFD bit 4, pages #D0-#D6): cycles of an ISA slot (page bit 1 = slot, bit 2 = I/O), "
+                   "address #9FBD bits 5-0 << 14 | A13-A0; an empty slot reads #FF (/state/isa)";
         }
         else if (window == 0 && (pld.sc & 0x01) && pld.ramSys)
         {
@@ -916,6 +917,13 @@ StateNode Sprinter(EmulatorContext* context)
     ret["video"] = VideoSummary(*decoder, context);
     ret["accelerator"] = AcceleratorSummary(*decoder, context);
     ret["sound"] = SoundSummary(*decoder, context);
+    // The ISA slots (Sprinter ISA tdd §10): the same report as /state/isa
+    {
+        StateNode isa = Isa(context);
+        if (const StateNode* available = isa.find("available"); available && available->b)
+            isa.members.erase(isa.members.begin());
+        ret["isa"] = isa;
+    }
     ret["z84c15"] = Z84Summary(*decoder, context);
 
     // Floppy: the WD1793 behind codes #10-#17

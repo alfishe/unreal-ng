@@ -55,16 +55,18 @@ std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>&
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
 }
 
-/// --sprinter-bios <3.04|3.06|3.07|file>, --fast-start 0|1, --accel-int-suspend 0|1 (a new SPRINTER's firmware
+/// --sprinter-bios <3.04|3.06|3.07|file>, --fast-start 0|1, --accel-int-suspend 0|1, --isa-slot1 / --isa-slot2 <kind> (a new SPRINTER's firmware
 /// and start options, core SprinterBios - the WebAPI's "sprinter": {...}); removed from args
 bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONFIG&)>& out, std::string& error)
 {
-    std::string bios, fastStart, intSuspend;
+    std::string bios, fastStart, intSuspend, slot1, slot2;
     for (size_t i = 0; i < args.size(); i++)
     {
         std::string* target = args[i] == "--sprinter-bios"        ? &bios
                               : args[i] == "--fast-start"          ? &fastStart
                               : args[i] == "--accel-int-suspend"   ? &intSuspend
+                              : args[i] == "--isa-slot1"           ? &slot1
+                              : args[i] == "--isa-slot2"           ? &slot2
                                                                    : nullptr;
         if (!target)
             continue;
@@ -77,11 +79,12 @@ bool TakeSprinterOptions(std::vector<std::string>& args, std::function<void(CONF
         args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
         i--;
     }
-    if (bios.empty() && fastStart.empty() && intSuspend.empty())
+    if (bios.empty() && fastStart.empty() && intSuspend.empty() && slot1.empty() && slot2.empty())
         return true;
     SprinterBios::Options options;
     std::string path;
     if (!SprinterBios::OptionsFromStrings(bios, fastStart, intSuspend, "", options, error) ||
+        !SprinterBios::IsaSlotFromString(slot1, 0, options, error) || !SprinterBios::IsaSlotFromString(slot2, 1, options, error) ||
         (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
         return false;
     out = SprinterBios::CreateOverride(options);

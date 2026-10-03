@@ -262,6 +262,19 @@ class Emulator:
         SET around a multi-register set, as a guest does), C and D are read-only, RAM cells
         are stored. The address latch is not touched. ValueError without a clock / bad range"""
 
+    def isa_state(self) -> dict:
+        """ISA slots (Sprinter Sp2000): latch (the #9FBD byte: value, a19_a14, aen, reset), window
+        (whether window 3 shows a slot: page, slot, space), slots[] (slot 1 = J6 page #D4 / #D0,
+        2 = J7 #D6 / #D2; configured, card, not_fitted, the card's own fields, counters).
+        available=False on other machines"""
+
+    def isa_io_read(self, slot: int, address) -> int:
+        """One ISA I/O read cycle at a 20-bit ISA address (int or '#30A' text); an empty slot
+        reads 0xFF. Also isa_io_write(slot, address, value), isa_io_peek(slot, address) (no side
+        effect), isa_mem_read / isa_mem_write, isa_reset() (one RESET DRV pulse to both slots) and
+        isa_latch(value). A cycle with an effect is a tool edit while TTD records. ValueError for
+        a bad slot / address / value or on a machine without ISA slots"""
+
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).

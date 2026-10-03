@@ -555,9 +555,11 @@ types:
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
-          32 SprinterCovoxBlaster, 33 SprinterIsa, 34 SprinterPads (reserved for Sprinter devices still to come -
-          S6 sound, S6b ISA, the extended pads: no blob is written under them yet; the device that lands adds
-          its blob and the other Sprinter blobs keep their layout),
+          32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
+          the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,
+          6 modem, 7 dual16552 - then each card's own bus state, none so far; a session whose kinds differ from
+          the fitted cards is refused at load), 34 SprinterPads (reserved for a Sprinter device still to come -
+          the extended pads: no blob is written under it yet),
           35 Wd1793Context (u1 version 1, then 112 bytes: the WD1793 command in flight beyond the BetaDisk
           blob - rate-retry search, byte cell, rotational delay, the sector and tracks in use and the transfer
           pointers as (drive, track, offset), the read-track noise seed, up to 4 queued command steps as tags;

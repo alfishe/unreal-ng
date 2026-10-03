@@ -172,6 +172,9 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-03: the Sprinter fixture (`sprinter_boot`) re-recorded alone: the ISA slots' blob (id 33, `SprinterIsa`, ISA
+phase I1) joins every checkpoint; the other fixtures carry no Sprinter blob and are unchanged.
+
 2026-10-02: the Sprinter fixture (`sprinter_boot`) re-recorded alone after the Z84C15 blob (id 29) went to v2
 (the CTC counter mode, 1 + 227 bytes); the other fixtures carry no Sprinter blob and are unchanged.
 

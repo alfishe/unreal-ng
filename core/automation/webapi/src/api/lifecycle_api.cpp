@@ -64,7 +64,8 @@ std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>&
     return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
 }
 
-/// Optional "sprinter": {"bios": "3.06" | <file>, "fast_start": bool, "accel_int_suspend": bool} of a create /
+/// Optional "sprinter": {"bios": "3.06" | <file>, "fast_start": bool, "accel_int_suspend": bool, "isa_slot1": "none",
+/// "isa_slot2": "ne2000"} of a create /
 /// start body (SprinterBios, automation audit G11): the BIOS image and start options of a new SPRINTER.
 /// True when absent or valid; false with a 400 already sent
 bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
@@ -83,11 +84,13 @@ bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<
     std::string error, path;
     if (!value.isObject() ||
         !SprinterBios::OptionsFromStrings(text("bios"), text("fast_start"), text("accel_int_suspend"), "", options, error) ||
+        !SprinterBios::IsaSlotFromString(text("isa_slot1"), 0, options, error) ||
+        !SprinterBios::IsaSlotFromString(text("isa_slot2"), 1, options, error) ||
         (!options.bios.empty() && !SprinterBios::Resolve(options.bios, path, error)))
     {
         Json::Value err;
         err["error"] = "Bad Request";
-        err["message"] = error.empty() ? std::string("sprinter must be an object {bios, fast_start, accel_int_suspend}")
+        err["message"] = error.empty() ? std::string("sprinter must be an object {bios, fast_start, accel_int_suspend, isa_slot1, isa_slot2}")
                                        : "sprinter: " + error;
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

@@ -1,4 +1,6 @@
 #pragma once
+
+#include <unordered_map>
 #include "stdafx.h"
 
 #include <array>
@@ -701,6 +703,16 @@ public:
     /// the PLD resets and the loader watchdog - s7-ttd-outcome.md). Then the port journals are recorded
     /// and `/ttd/port-events` answers on the machine's recordings
     virtual bool TtdEnginesSealed() const { return false; }
+
+    /// A TTD session's baseline blobs against this machine's fixed population (expansion slots): false with
+    /// `why` refuses the session at load, as a General Sound personality mismatch does. Blobs are as stored
+    /// (TTDPeripheralRegistry::DecodeBlob opens one). Default: no slots, nothing to compare
+    virtual bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const
+    {
+        (void)blobs;
+        (void)why;
+        return true;
+    }
 
     /// TTD time units per base T-state: the least common multiple of every
     /// hardware CPU clock ratio the model can select (EmulatorState::

@@ -593,7 +593,8 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(3);
     for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
                                  ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput,
-                                 ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse})
+                                 ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse,
+                                 ttd::PeripheralId::SprinterIsa})
         EXPECT_EQ(cp->peripheralBlobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }

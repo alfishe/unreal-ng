@@ -324,6 +324,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Post);
+    // ISA slots (Sprinter; implementation: api/state_device_api.cpp, core DeviceState::Isa + IsaAccess)
+    ADD_METHOD_TO(EmulatorAPI::getStateIsa, "/api/v1/emulator/{id}/state/isa", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateIsaActive, "/api/v1/emulator/state/isa", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControlIsa, "/api/v1/emulator/{id}/control/isa", drogon::Post);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -1112,6 +1116,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postRtcCells(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIsa(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIsaActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void postControlIsa(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateContention(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateContentionActive(const drogon::HttpRequestPtr& req,

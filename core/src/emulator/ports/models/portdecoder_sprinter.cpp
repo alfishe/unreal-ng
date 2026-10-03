@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_sprinter.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 
 #include <cstring>
 
@@ -92,6 +93,13 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
         ApplyTurbo();
     });
     _input.SetStepHookListener([this]() { RefreshStepHook(); });
+
+    // The ISA slots: the population of [ISA] (network cards are fitted into it by NetworkManager), ISA cycles
+    // into the port trace while a capture runs
+    _isaBus.Configure(_context->config.sprinter.isa);
+    _isaBus.SetTracer([this](bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value) {
+        TraceIsaCycle(write, space, slot, address, value);
+    });
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_input);
 
@@ -178,6 +186,8 @@ void PortDecoder_Sprinter::PowerOn()
     _pld.configModule = 0;
     _pld.configState = SprinterConfigState::Unconfigured;
     _z84.PowerOn();
+    _pld.isaAddrExt = 0;
+    _isaBus.PowerOn();
     _input.Clear();
     _vram.Clear();
     _intSource.SetModePage(0);
@@ -259,7 +269,8 @@ void PortDecoder_Sprinter::ResetPld(SprinterResetKind kind)
     _pld.sc = 0;
     _pld.romRg = 0;
     _pld.cacheOn = 0;
-    _pld.isaAddrExt = 0;
+    // #9FBD is a 74HC374 without a reset input (Sprinter ISA research §4.3): a reset keeps A19-A14, AEN and
+    // RESET DRV; power-on starts it at 0 (PowerOn)
     GetIdeAdapter().SprinterReset();  // the primary channel (MAME machine_reset :1582)
     _pld.frameLines = 0;
     _pld.turboHard = _context->config.sprinter.turbo_allowed ? 1 : 0;
@@ -569,6 +580,7 @@ void PortDecoder_Sprinter::OnFrameEnd()
 {
     if (_tableWrites.count)
         FlushPortTableWrites();
+    _isaBus.FrameEnd();
 
     // The host speed control's queued multiplier takes effect at the frame start that follows (Z80::BeginFrame);
     // the CTC timers and the watchdog switch rate at this instant, the frame boundary
@@ -1012,7 +1024,9 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
 
         case SprinterCode::IsaControl:
+            // The #9FBD latch: A19-A14 (kept in the PLD state as well), AEN, RESET DRV to both slots
             _pld.isaAddrExt = value & 0x3F;
+            _isaBus.WriteLatch(value);
             return;
         case SprinterCode::CmosAddress:
             _rtc.WriteAddress(value);
@@ -1223,6 +1237,19 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
 
 /// region <PLD journal>
 
+void PortDecoder_Sprinter::TraceIsaCycle(bool write, SprinterIsaBus::Space space, int slot, uint32_t address,
+                                         uint8_t value)
+{
+    if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())
+        return;
+    PortDecodeDisposition disp;
+    disp.internalCode = static_cast<uint16_t>(kTraceIsaBase + (space == SprinterIsaBus::Space::Memory ? 2 : 0) + slot);
+    disp.decodedPort = static_cast<uint16_t>(address & 0xFFFF);
+    disp.wasDecoded = _isaBus.Card(slot) != nullptr;
+    disp.wasHandledInline = true;
+    RecordPortTrace(write, static_cast<uint16_t>(0xC000 | (address & 0x3FFF)), value, CpuPc(), disp);
+}
+
 uint16_t PortDecoder_Sprinter::CpuPc() const
 {
     const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
@@ -1354,12 +1381,24 @@ std::vector<ttd::PeripheralId> PortDecoder_Sprinter::GetTTDModelStateIds() const
     // serial mouse streams, the video RAM and the fast RAM (whole-array blobs until TTD v2 memory regions)
     std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887,
                                           ttd::PeripheralId::SprinterVideoRam, ttd::PeripheralId::Z84C15,
-                                          ttd::PeripheralId::SprinterInput, ttd::PeripheralId::SprinterCovoxBlaster};
+                                          ttd::PeripheralId::SprinterInput, ttd::PeripheralId::SprinterCovoxBlaster,
+                                          ttd::PeripheralId::SprinterIsa};
     if (_context->pBetaDisk)
         ids.push_back(ttd::PeripheralId::Wd1793Context);  // a restore inside a floppy command continues it
     if (_sprinterMemory)
         ids.push_back(ttd::PeripheralId::SprinterFastRam);
     return ids;
+}
+
+bool PortDecoder_Sprinter::TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+                                             std::string& why) const
+{
+    const uint8_t id = static_cast<uint8_t>(ttd::PeripheralId::SprinterIsa);
+    const auto it = blobs.find(id);
+    if (it == blobs.end() || it->second.empty())
+        return true;  // recorded before the ISA slots existed: the missing-blob report covers it
+    const std::vector<uint8_t> state = ttd::TTDPeripheralRegistry::DecodeBlob(id, it->second);
+    return _isaBus.PopulationMatches(state.data(), state.size(), why);
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateTTDSerializers() const
@@ -1371,6 +1410,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Sprinter::CreateT
     serializers.push_back(std::make_unique<ttd::TTDSprinterZ84>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterInput>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterCovoxBlaster>(self));
+    serializers.push_back(std::make_unique<ttd::TTDSprinterIsa>(self));
     serializers.push_back(std::make_unique<ttd::TTDSprinterVideoRam>(self));
     if (_sprinterMemory)
         serializers.push_back(std::make_unique<ttd::TTDSprinterFastRam>(self));
@@ -1421,6 +1461,11 @@ std::vector<PortTraceCodeName> PortDecoder_Sprinter::GetPortTraceCodeTable() con
     };
     for (const auto& z84 : kZ84)
         table.push_back({static_cast<uint16_t>(kTraceZ84Base + z84.port), z84.name});
+    // ISA cycles (memory cycles in window 3): dispositions isa_io / isa_mem with the slot
+    table.push_back({static_cast<uint16_t>(kTraceIsaBase + 0), "isa_io slot 1"});
+    table.push_back({static_cast<uint16_t>(kTraceIsaBase + 1), "isa_io slot 2"});
+    table.push_back({static_cast<uint16_t>(kTraceIsaBase + 2), "isa_mem slot 1"});
+    table.push_back({static_cast<uint16_t>(kTraceIsaBase + 3), "isa_mem slot 2"});
     return table;
 }
 

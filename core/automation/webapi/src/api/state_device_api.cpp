@@ -9,6 +9,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/rtc/ds12887.h>
 #include <emulator/io/rtc/rtcaccess.h>
+#include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/networkmanager.h>
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
@@ -16,6 +17,7 @@
 #include <json/json.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -748,6 +750,81 @@ void EmulatorAPI::postRtcCells(const HttpRequestPtr& req, std::function<void(con
 }
 
 /// endregion </CMOS clock>
+
+/// region <ISA slots>
+
+/// @brief GET /api/v1/emulator/{id}/state/isa - the ISA slots (DeviceState::Isa); 404 on a machine without them
+void EmulatorAPI::getStateIsa(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Isa(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateIsaActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/isa"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateIsa(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/isa - one ISA cycle or a RESET pulse (IsaAccess::Execute):
+/// {"action": "io_read" | "io_write" | "io_peek" | "mem_read" | "mem_write" | "mem_peek" | "reset" | "latch",
+///  "slot": 1 | 2, "address": "#30A" | 778, "value": "#21" | 33}
+void EmulatorAPI::postControlIsa(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    if (!body || !body->isObject() || !body->isMember("action"))
+        return ReplyNotFound("Body must be {\"action\": \"io_read\", \"slot\": 2, \"address\": \"#30A\"}", callback,
+                             HttpStatusCode::k400BadRequest);
+    auto number = [](const Json::Value& v, uint32_t& out) {
+        if (v.isIntegral())
+        {
+            if (v.asInt64() < 0)
+                return false;
+            out = static_cast<uint32_t>(v.asUInt64());
+            return true;
+        }
+        return v.isString() && IsaAccess::ParseAddress(v.asString(), out);
+    };
+    uint32_t address = 0;
+    uint32_t value = 0;
+    int slot = 0;
+    if (body->isMember("slot"))
+        slot = (*body)["slot"].isIntegral() ? (*body)["slot"].asInt() : std::atoi((*body)["slot"].asString().c_str());
+    if (body->isMember("address") && !number((*body)["address"], address))
+        return ReplyNotFound("address: a number or \"#..\" / \"0x..\" text", callback, HttpStatusCode::k400BadRequest);
+    if (body->isMember("value") && (!number((*body)["value"], value) || value > 0xFF))
+        return ReplyNotFound("value: 0..255", callback, HttpStatusCode::k400BadRequest);
+
+    StateNode result;
+    std::string error;
+    if (!IsaAccess::Execute(emulator->GetContext(), (*body)["action"].asString(), slot, address,
+                            body->isMember("value") ? static_cast<int>(value) : -1, "WebAPI control/isa", result, error))
+    {
+        const bool noSlots = IsaAccess::Find(emulator->GetContext()) == nullptr;
+        return ReplyNotFound(error, callback, noSlots ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    Json::Value ret = StateNodeToJson(result);
+    ret["success"] = true;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// endregion </ISA slots>
 
 }  // namespace v1
 }  // namespace api

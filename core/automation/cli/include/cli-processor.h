@@ -103,7 +103,9 @@ private:
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
     static std::string RtcReportText(EmulatorContext* context);
+    static std::string IsaReportText(EmulatorContext* context);
     void HandleNetwork(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 

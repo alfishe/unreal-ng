@@ -160,7 +160,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   5. **Owner decision 2026-10-02** (the developer-interest ranking, [peripherals-survey.md](peripherals-survey.md)
      §10, accepted; "the network definitely first"). After the demo pass:
      - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
-       and are the only new programs that need a card.
+       and are the only new programs that need a card. **ISA I1 done 2026-10-03** (branch `sprinter-isa-network`:
+       `SprinterIsaBus`, window-3 routing, the `#9FBD` latch, `[ISA]` slots, TTD blob 33, `state/isa` /
+       `control/isa` on every surface, recipe `.recipe/machines/sprinter-isa.md`; ISA tdd §14).
      - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
        the BIOS / DSS developer's main work since 2024-10.
      - The Centronics printer drops to P4.

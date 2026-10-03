@@ -7,6 +7,7 @@
 
 #include "emulator/cpu/z80.h"
 #include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/io/z84c15/z84c15engine.h"
 #include "emulator/machineeventjournal.h"
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
@@ -69,6 +70,10 @@ public:
     /// Port trace internal codes: the PLD codes #00-#FF as they are; the
     /// Z84C15's own ports as kTraceZ84Base + the low address byte
     static constexpr uint16_t kTraceZ84Base = 0x100;
+    /// Port trace internal codes of ISA cycles (they are memory cycles in window 3, shown beside the port
+    /// accesses): kTraceIsaBase + (memory ? 2 : 0) + slot index; the decoded port is the ISA address's low
+    /// 16 bits, the raw port the CPU address (Sprinter ISA tdd §10)
+    static constexpr uint16_t kTraceIsaBase = 0x200;
     /// The Z84C15's time base: the board crystal X_SP = 42 MHz, 12 ticks per base T-state (3.5 MHz = X_SP / 12)
     static constexpr uint32_t kChipTicksPerBaseT = 12;
     static constexpr uint64_t kChipClockHz = 42'000'000;
@@ -100,6 +105,8 @@ public:
     /// resets, the loader watchdog, the CTC) follow the checkpointed state and the TTD input journal only
     /// (s7-ttd-outcome.md): the port journals record on the Sprinter
     bool TtdEnginesSealed() const override { return true; }
+    /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
+    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const override;
     /// No ZX-bus until the ISA ZX-bus adapter exists (2026-10-02-sprinter-isa/tdd.md §2, phase I2): the
     /// General Sound / NeoGS of [SOUND] GSType is not fitted
     bool ZxBusPresent() const override { return false; }
@@ -153,6 +160,9 @@ public:
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
     SprinterInput& GetInput() { return _input; }
+    /// The two ISA-8 slots (Sprinter ISA tdd §4): window 3 in ISA mode reaches them, code #1B writes the latch
+    SprinterIsaBus& GetIsaBus() { return _isaBus; }
+    const SprinterIsaBus& GetIsaBus() const { return _isaBus; }
     Ds12887& GetRtc() { return _rtc; }
     SprinterPldConfigurationRegistry& GetRegistry() { return _registry; }
     SprinterPldConfiguration& ActiveModule() { return _registry.At(_pld.configModule < _registry.Count() ? _pld.configModule : 0); }
@@ -335,6 +345,10 @@ private:
 
     /// The Covox / Covox-Blaster (codes #88 / #89, page #FD), its INT through _intSource
     CovoxBlaster _cbl{_context};
+    /// The ISA-8 slots and the #9FBD latch; the population comes from [ISA] at creation
+    SprinterIsaBus _isaBus;
+    /// An ISA cycle into the port trace (only while a capture runs)
+    void TraceIsaCycle(bool write, SprinterIsaBus::Space space, int slot, uint32_t address, uint8_t value);
     uint16_t _pc = 0;             ///< PC of the I/O in progress (border writes)
     int64_t _dcpOpenedFrame = -1;
     uint16_t _dcpOpenedPc = 0;

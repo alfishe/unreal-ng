@@ -76,6 +76,12 @@ StateNode Ide(EmulatorContext* context);
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
 
+/// Expansion slots of the ISA kind (the Sprinter's two ISA-8 slots, Sprinter ISA tdd §10): the #9FBD latch
+/// (A19-A14, AEN, RESET), what window 3 shows now (mapped, slot, space, page), and per slot the configured
+/// and fitted card, why a configured card is not fitted, the card's own report and cycle counters.
+/// Unavailable ("no ISA slots on this machine") elsewhere. Built in emulator/io/sprinter/isa/isaaccess.cpp
+StateNode Isa(EmulatorContext* context);
+
 /// Network adapters (network adapters TDD §9): `Network()` the fitted card
 /// (ZXNETUSB: its ports, the W5300 held in reset or running, the chip's
 /// address registers and per socket mode / state / ports / buffers), the
