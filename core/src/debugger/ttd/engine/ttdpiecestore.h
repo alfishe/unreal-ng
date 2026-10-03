@@ -36,14 +36,22 @@ public:
     enum class Encoding : uint8_t
     {
         Full = 0,
-        Xor = 1,
+        Xor = 1,      ///< the zstd-compressed XOR with the base version
         Zero = 2,
+        Ranges = 3,   ///< the XOR's non-zero runs, uncompressed: (u16 offset, u8 length, bytes) each
     };
+
+    /// A version that stores a difference from a base (Xor or Ranges)
+    static bool IsDifference(Encoding e) { return e == Encoding::Xor || e == Encoding::Ranges; }
 
     struct Params
     {
         uint16_t chainLimit = 50;      ///< K: a version at depth K is stored Full
         uint32_t fullThreshold = 128;  ///< T: compress the full piece only when the XOR is larger
+        /// A difference whose runs take at most this many bytes is stored as
+        /// Ranges at once, without compressing anything (a few bytes changed
+        /// in a piece: a compressed XOR would cost its fixed overhead)
+        uint32_t rangesLimit = 64;
     };
 
     /// Counted work since ResetWork() (deterministic; the benchmark's capture work)
@@ -51,7 +59,7 @@ public:
     {
         uint64_t compressCalls = 0;
         uint64_t compressInputBytes = 0;
-        uint64_t linksDecoded = 0;     ///< Xor versions applied while decoding
+        uint64_t linksDecoded = 0;     ///< difference versions applied while decoding
         uint64_t versionsStored = 0;
         uint64_t forcedFull = 0;       ///< versions stored Full because the chain reached K
     };
@@ -96,6 +104,10 @@ public:
     void Clear();
 
 private:
+    /// Ranges encoding (Encoding::Ranges)
+    static size_t RangesSize(const uint8_t* diff);
+    TTDPieceId StoreRanges(TTDPieceId previous, uint32_t depth, const uint8_t* diff, size_t size, uint32_t crc);
+    static bool ApplyRanges(const uint8_t* payload, size_t size, uint8_t* out);
     struct Version
     {
         TTDArenaRef payload;

@@ -76,7 +76,7 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 - [ ] Step 2 — Unchanged state shared, changed fields only, time-derived counters
   - [x] Device states stored only when they change, as differences (device-state regions, 2026-10-03): device bytes 3-10x below v1, D33 on all 46
   - [x] Time fields (engine-side residual from a line; MoonSound, NeoGS, TSFM declare theirs): device bytes 7-28% lower, none worse (2026-10-03)
-  - [ ] Changed-ranges encoding where it beats the XOR (E8: 200 against 233 B per frame on Pentagon)
+  - [x] Changed-ranges encoding in the piece store (`Encoding::Ranges`), for memory and devices alike: totals 7-27% lower, compressions per frame 2-8x fewer, none worse (2026-10-03)
 - [x] Step 3 — Restore result in the engine: `RestoreDevices` with issues per device, the v1 oracle on 10 models (2026-10-03); surfaces in Phase 5
   - [ ] Devices implement `TTDResetToPowerOn` (decided: reset when the state is missing); none does yet
   - [ ] Damage (CRC per device version) and `CheckSession`, with the device history (Step 2)

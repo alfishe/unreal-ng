@@ -80,7 +80,7 @@ TEST(TTDPieceStore_Test, SmallChangeIsADifference_DecodedThroughItsChain)
         auto b = versions.back();
         b[i * 37] ^= 0x5A;
         id = store.Intern(ids.back(), versions.back().data(), b.data());
-        EXPECT_EQ(store.EncodingOf(id), TTDPieceStore::Encoding::Xor);
+        EXPECT_EQ(store.EncodingOf(id), TTDPieceStore::Encoding::Ranges) << "one byte changed: its run, as it is";
         EXPECT_EQ(store.DepthOf(id), i);
         EXPECT_EQ(store.BaseOf(id), ids.back()) << "a difference depends on the version before it";
         versions.push_back(b);
@@ -122,7 +122,14 @@ TEST(TTDPieceStore_Test, EncodeOnce_FullCompressedOnlyForALargeDifference)
     small[100] ^= 0xFF;
     store.ResetWork();
     store.Intern(v0, a.data(), small.data());
-    EXPECT_EQ(store.GetWork().compressCalls, 1u) << "a small difference: one compression";
+    EXPECT_EQ(store.GetWork().compressCalls, 0u) << "a few bytes changed: stored as runs, nothing compressed";
+
+    auto medium = a;
+    for (int i = 0; i < 200; ++i)
+        medium[i * 17] ^= 0x5A;   // 200 scattered bytes: runs would cost 800
+    store.ResetWork();
+    store.Intern(v0, a.data(), medium.data());
+    EXPECT_EQ(store.GetWork().compressCalls, 1u) << "a larger difference: one compression";
 
     const auto noise = Noise(7);
     store.ResetWork();
@@ -180,4 +187,48 @@ TEST(TTDPieceStore_Test, PayloadsLiveInTheArenaAtTheirExactSize)
     for (const TTDPieceId id : ids)
         store.Release(id);
     EXPECT_EQ(store.PayloadBytes(), 0u);
+}
+
+/// Ranges: a few changed bytes stored as (offset, length, XOR bytes) runs,
+/// without compression; decoded exactly at the piece's edges, across long
+/// runs, and in a chain that mixes runs and compressed differences
+TEST(TTDPieceStore_Test, RangesStoreFewChangesExactlyAndCheaply)
+{
+    TTDPieceStore store;
+    auto a = Pattern(3);
+    TTDPieceId id = store.InternFirst(a.data());
+    std::vector<std::vector<uint8_t>> versions = {a};
+    std::vector<TTDPieceId> ids = {id};
+    auto add = [&](std::vector<uint8_t> next) {
+        id = store.Intern(ids.back(), versions.back().data(), next.data());
+        versions.push_back(std::move(next));
+        ids.push_back(id);
+        return id;
+    };
+
+    auto b = a;
+    b[0] ^= 1;
+    b[kTTDPieceSize - 1] ^= 2;   // the first and the last byte
+    const TTDPieceId edges = add(b);
+    EXPECT_EQ(store.EncodingOf(edges), TTDPieceStore::Encoding::Ranges);
+    EXPECT_EQ(store.PayloadSize(edges), 2u * (3 + 1)) << "two runs of one byte, 3 bytes of header each";
+
+    auto c = versions.back();
+    for (size_t i = 1000; i < 1300; ++i)
+        c[i] ^= 0x80;   // one run of 300 bytes: split at 255
+    add(c);
+
+    add(Noise(9));   // a large difference: compressed XOR or full
+    auto d = versions.back();
+    d[2048] ^= 0xFF;
+    d[2050] ^= 0x01;   // two changes 1 byte apart: one run of 3
+    const TTDPieceId merged = add(d);
+    EXPECT_EQ(store.EncodingOf(merged), TTDPieceStore::Encoding::Ranges);
+    EXPECT_EQ(store.PayloadSize(merged), 3u + 3u);
+
+    for (size_t i = 0; i < ids.size(); ++i)
+        EXPECT_EQ(Decoded(store, ids[i]), versions[i]) << "version " << i;
+    for (size_t i = ids.size(); i-- > 0;)
+        store.Release(ids[i]);
+    EXPECT_EQ(store.LiveVersions(), 0u) << "runs hold their base like any difference";
 }
