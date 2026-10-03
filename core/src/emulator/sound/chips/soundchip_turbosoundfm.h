@@ -516,6 +516,26 @@ public:
         return ttd::PeripheralId::TSFM;
     }
 
+    /// ymfm's counters that advance with the FM clock: the envelope counter
+    /// (+4 per 3 FM clocks) and the clock count (u8), per chip. Offsets in
+    /// TTDSaveState: 50 bytes of header, then per chip 586 bytes (address,
+    /// fmClockPhase, two timers, busy, the ymfm payload's size, the payload,
+    /// the AY); in the ymfm payload the envelope counter is at +5, the clock
+    /// count at +15 (fm_engine_base::save_restore). The engine stores each as
+    /// its residual from a line
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        constexpr uint16_t kHeader = 50, kChip = 586, kYmfm = 1 + 4 + 4 + 4 + 4 + 2;
+        for (uint16_t chip = 0; chip < 2; ++chip)
+        {
+            const uint16_t ymfm = kHeader + chip * kChip + kYmfm;
+            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 5), 4});    // m_env_counter
+            d.timeFields.push_back({static_cast<uint16_t>(ymfm + 15), 1});   // m_total_clocks
+        }
+        return d;
+    }
+
     std::string TTDDeviceName() const override
     {
         return "TSFM";

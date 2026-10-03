@@ -544,6 +544,11 @@ public:
                 // Device states (Phase 2): stored only when they change, as differences
                 b.deviceBlobs += _engine.RegionPayloadBytes(r);
                 b.versions += _engine.RegionVersionCount(r);
+                // UNREAL_TTD_BENCH_DEVICE_BYTES: each device's bytes (diagnostics, stderr)
+                if (std::getenv("UNREAL_TTD_BENCH_DEVICE_BYTES"))
+                    std::fprintf(stderr, "device bytes %s: %llu in %llu versions\n", _engine.Regions()[r].name.c_str(),
+                                 static_cast<unsigned long long>(_engine.RegionPayloadBytes(r)),
+                                 static_cast<unsigned long long>(_engine.RegionVersionCount(r)));
                 continue;
             }
             b.deviceRegions += _engine.RegionPayloadBytes(r);

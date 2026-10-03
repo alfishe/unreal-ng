@@ -188,6 +188,18 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.firmwareFingerprint = _romHash;
+        // Clocks that advance with the chip time (the header, then libopl4's
+        // state at sizeof(MoonSoundTTDHeader)): the engine stores each as its
+        // residual from a line
+        constexpr uint16_t opl4 = sizeof(MoonSoundTTDHeader);
+        d.timeFields = {{16, 8},              // tstateOrigin
+                        {24, 8},              // lastChipTime
+                        {opl4 + 8, 8},        // masterPos
+                        {opl4 + 16, 8},       // hostTicks
+                        {opl4 + 48, 8},       // fmTicks
+                        {opl4 + 56, 8},       // outSteps
+                        {2695, 8},            // FM engine _egCnt
+                        {4354, 8}};           // PCM _egCnt
         return d;
     }
     uint64_t TTDHashState() const override;

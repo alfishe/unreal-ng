@@ -15,6 +15,54 @@ namespace ttd
 
 namespace
 {
+/// Bytes a time field's anchor takes at the end of its device's region
+constexpr size_t kTimeAnchorBytes = 24;
+
+uint64_t WidthMask(uint8_t width)
+{
+    return width >= 8 ? ~uint64_t(0) : (uint64_t(1) << (8 * width)) - 1;
+}
+
+uint64_t ReadLE(const uint8_t* p, uint8_t width)
+{
+    uint64_t v = 0;
+    for (uint8_t i = 0; i < width; ++i)
+        v |= uint64_t(p[i]) << (8 * i);
+    return v;
+}
+
+void WriteLE(uint8_t* p, uint8_t width, uint64_t v)
+{
+    for (uint8_t i = 0; i < width; ++i)
+        p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+
+/// A value of `width` bytes read as a signed number
+int64_t SignExtend(uint64_t v, uint8_t width)
+{
+    if (width >= 8)
+        return static_cast<int64_t>(v);
+    const uint64_t sign = uint64_t(1) << (8 * width - 1);
+    return static_cast<int64_t>((v ^ sign) - sign);
+}
+
+/// A residual kept on the line (wrapping at the field's width): within two
+/// bytes for 4- and 8-byte fields, +-2047 for 2-byte ones; a 1-byte field
+/// stays on its line whatever it does. A larger one starts a new line. Wide
+/// enough for a clock quantized to a period that does not divide the frame
+/// (NeoGS timers on a 48K frame step N or N-1 periods: +-3,200 ticks)
+bool SmallResidual(uint64_t residual, uint8_t width)
+{
+    const uint64_t limit = width >= 4 ? 32767 : width == 2 ? 2047 : ~uint64_t(0);
+    const uint64_t mask = WidthMask(width);
+    const uint64_t negative = (0 - residual) & mask;
+    return residual <= limit || negative <= limit;
+}
+}  // namespace
+
+
+namespace
+{
 uint32_t BlockPieces(const TTDRegionDesc& r)
 {
     return r.blockPieces ? r.blockPieces : TTDRefTables::DefaultBlockPieces(r.pieces);
@@ -56,7 +104,8 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
         r.id = static_cast<TTDRegionId>(static_cast<uint16_t>(TTDRegionId::DeviceStateFirst) + k);
         r.name = "device." + d.instance;
         r.ownerType = static_cast<uint16_t>(d.legacyId);
-        r.bytes = 4 + d.stateSize;
+        // Length, the state, then each time field's anchor (value, frame, step)
+        r.bytes = 4 + d.stateSize + static_cast<uint32_t>(d.timeFields.size()) * kTimeAnchorBytes;
         r.pieces = (r.bytes + kTTDPieceSize - 1) / kTTDPieceSize;
         deviceRegionOf[static_cast<uint8_t>(d.legacyId)] = static_cast<int32_t>(regions.size());
         regions.push_back(r);
@@ -94,12 +143,23 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     _devices = std::move(table);
     _deviceRegionOf = deviceRegionOf;
     _deviceScratch.assign(_regions.size(), {});
+    _timeLines.assign(_regions.size(), {});
+    _timeFields.assign(_regions.size(), {});
+    for (size_t k = 0; k < _devices.Entries().size(); ++k)
+    {
+        const TTDDeviceDescriptor& d = _devices.Entries()[k].descriptor;
+        const int32_t r = _deviceRegionOf[static_cast<uint8_t>(d.legacyId)];
+        _timeFields[static_cast<size_t>(r)] = d.timeFields;
+        _timeLines[static_cast<size_t>(r)].assign(d.timeFields.size(), {});
+    }
     _open = true;
     return true;
 }
 
 void TimeTravelEngine::EndSession()
 {
+    _timeLines.clear();
+    _timeFields.clear();
     _deviceRegionOf.fill(-1);
     _deviceScratch.clear();
     _devices.Clear();
@@ -188,10 +248,53 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
         const TTDRegionDesc& desc = _regions[static_cast<size_t>(r)];
         std::vector<uint8_t>& scratch = _deviceScratch[static_cast<size_t>(r)];
         scratch.assign(size_t(desc.pieces) * kTTDPieceSize, 0);
-        const uint32_t length = size + 4 <= desc.bytes ? static_cast<uint32_t>(size) : 0;   // does not fit: no state
+        const std::vector<TTDTimeField>& fields = _timeFields[static_cast<size_t>(r)];
+        const size_t anchors = desc.bytes - fields.size() * kTimeAnchorBytes;   // where the anchors start
+        const uint32_t length = size + 4 <= anchors ? static_cast<uint32_t>(size) : 0;   // does not fit: no state
         std::memcpy(scratch.data(), &length, 4);
         if (length)
             std::memcpy(scratch.data() + 4, bytes, length);
+        // Time fields: stored as the residual from their line
+        std::vector<TimeLine>& lines = _timeLines[static_cast<size_t>(r)];
+        for (size_t f = 0; f < fields.size(); ++f)
+        {
+            const TTDTimeField& tf = fields[f];
+            TimeLine& line = lines[f];
+            if (length && tf.offset + tf.width <= length)
+            {
+                uint8_t* at = scratch.data() + 4 + tf.offset;
+                const uint64_t mask = WidthMask(tf.width);
+                const uint64_t value = ReadLE(at, tf.width);
+                const uint64_t frame = input.position.frame;
+                uint64_t residual = (value - (line.value + (frame - line.frame) * line.step)) & mask;
+                if (!line.valid || !SmallResidual(residual, tf.width))
+                {
+                    // A new line through this value. Its step: the average
+                    // over the line it replaces (a clock whose step alternates
+                    // or has a fraction keeps a small, non-growing residual),
+                    // or the last step when that line was one frame long
+                    if (!line.valid)
+                        line.step = 0;
+                    else if (frame - line.frame > 1)
+                    {
+                        const int64_t span = static_cast<int64_t>(frame - line.frame);
+                        line.step = static_cast<uint64_t>(SignExtend((value - line.value) & mask, tf.width) / span) & mask;
+                    }
+                    else
+                        line.step = (value - line.last) & mask;
+                    line.value = value;
+                    line.frame = frame;
+                    line.valid = true;
+                    residual = 0;
+                }
+                line.last = value;
+                WriteLE(at, tf.width, residual);
+            }
+            uint8_t* anchor = scratch.data() + anchors + f * kTimeAnchorBytes;
+            std::memcpy(anchor, &line.value, 8);
+            std::memcpy(anchor + 8, &line.frame, 8);
+            std::memcpy(anchor + 16, &line.step, 8);
+        }
     };
     if (!input.deviceStates.empty())
     {
@@ -503,10 +606,27 @@ bool TimeTravelEngine::DeviceState(size_t index, uint8_t id, std::vector<uint8_t
     std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize, 0);
     if (!RestoreRegion(index, static_cast<uint32_t>(r), bytes.data()).Ok())
         return false;
+    const std::vector<TTDTimeField>& fields = _timeFields[static_cast<size_t>(r)];
+    const size_t anchors = desc.bytes - fields.size() * kTimeAnchorBytes;
     uint32_t length = 0;
     std::memcpy(&length, bytes.data(), 4);
-    if (length == 0 || length + 4 > desc.bytes)
+    if (length == 0 || length + 4 > anchors)
         return false;
+    // Time fields back from their line: anchor + (frame - anchor frame) x step + residual
+    const uint64_t frame = _checkpoints[index].position.frame;
+    for (size_t f = 0; f < fields.size(); ++f)
+    {
+        const TTDTimeField& tf = fields[f];
+        if (tf.offset + tf.width > length)
+            continue;
+        uint64_t value = 0, from = 0, step = 0;
+        const uint8_t* anchor = bytes.data() + anchors + f * kTimeAnchorBytes;
+        std::memcpy(&value, anchor, 8);
+        std::memcpy(&from, anchor + 8, 8);
+        std::memcpy(&step, anchor + 16, 8);
+        uint8_t* at = bytes.data() + 4 + tf.offset;
+        WriteLE(at, tf.width, (value + (frame - from) * step + ReadLE(at, tf.width)) & WidthMask(tf.width));
+    }
     out.assign(bytes.begin() + 4, bytes.begin() + 4 + length);
     return true;
 }

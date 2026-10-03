@@ -346,6 +346,17 @@ private:
     std::vector<TTDRefTables::Table*> _lastSnapshot;
     std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
     std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
+    /// A time field's line, kept per device region and field while recording
+    struct TimeLine
+    {
+        uint64_t value = 0;      ///< the anchor value
+        uint64_t frame = 0;      ///< its frame
+        uint64_t step = 0;       ///< per frame
+        uint64_t last = 0;       ///< the value of the previous capture
+        bool valid = false;
+    };
+    std::vector<std::vector<TimeLine>> _timeLines;      ///< per region (device regions only)
+    std::vector<std::vector<TTDTimeField>> _timeFields; ///< per region: the device's declared fields
     TTDDeviceTable _devices;
     std::vector<uint64_t> _regionPayload;
     std::vector<uint64_t> _regionVersions;

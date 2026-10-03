@@ -170,6 +170,18 @@ public:
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::NeoGS; }
+    /// The card's clocks that advance with time (offsets in serializeFixedState
+    /// and the VS10xx block): the engine stores each as its residual from a line
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.timeFields = {{89, 8},     // _timerStrobeAt
+                        {105, 8},    // _nextDacCrystal
+                        {123, 8},    // _runner.now()
+                        {232, 8},    // _nextTimerCrystal
+                        {static_cast<uint16_t>(TTD_MP3_OFFSET + 34), 8}};   // VS10xx _now
+        return d;
+    }
 
     /// Time-travel engine regions (Phase 1, Step 6): the card RAM (2-4 MB) and
     /// the flash (512 KB), recorded as changed 4 KB pieces

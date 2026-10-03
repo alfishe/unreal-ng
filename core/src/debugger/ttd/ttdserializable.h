@@ -221,13 +221,15 @@ struct TTDDeviceKey
     }
 };
 
-/// A counter in the state that advances with time: predicted from its last
-/// step, stored as the residual (Phase 2, §5.2.3). For state in vendored
-/// libraries; a device whose code is ours keeps an anchor instead (E8)
+/// A counter in the state that advances with time (a clock, a position): the
+/// engine stores it as its difference from a straight line through an anchor
+/// (value, frame, step per frame), so a counter that keeps its pace costs
+/// nothing per frame. Exact whatever the field does: a jump only costs bytes
+/// (Phase 2, §5.2.3). Arithmetic wraps at the field's width
 struct TTDTimeField
 {
     uint16_t offset = 0;   ///< byte offset in the state
-    uint8_t width = 0;     ///< 2, 4 or 8 bytes, little endian
+    uint8_t width = 0;     ///< 1, 2, 4 or 8 bytes, little endian
 };
 
 /// What the engine needs to know about a device, given once at registration

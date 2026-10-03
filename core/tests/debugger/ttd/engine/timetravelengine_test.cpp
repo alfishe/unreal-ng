@@ -415,3 +415,174 @@ TEST(TimeTravelEngine_Test, RestoringAPartialPieceStaysInsideTheRegion)
     for (size_t i = 2048; i < memory.size(); ++i)
         ASSERT_EQ(memory[i], 0xEE) << "byte " << i << " past the region was written";
 }
+
+/// Phase 2: time fields. A device declares the bytes that count time; the
+/// engine stores each as its residual from a line through an anchor. Every
+/// value comes back exactly at every checkpoint, whatever the field does; a
+/// field that keeps its pace stops costing anything
+TEST(TimeTravelEngine_TimeFields_Test, EveryValueComesBackExactly_SteadyFieldsCostNothing)
+{
+    // State: [0..7] steady +71680/frame (u64), [8..15] alternating +693633/+693634 (u64),
+    // [16] u8 +228/frame (wraps), [17..20] u32 that jumps at frame 40 (a speed change),
+    // [21..28] a "time field" that is really noise, [29..31] plain bytes
+    struct Device : TTDSerializable
+    {
+        uint8_t state[32] = {};
+        size_t TTDStateSize() const override { return sizeof(state); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+        std::string TTDDeviceName() const override { return "Clocks"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::MoonSound; }
+        TTDDeviceDescriptor TTDDescribe() const override
+        {
+            TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+            d.timeFields = {{0, 8}, {8, 8}, {16, 1}, {17, 4}, {21, 8}};
+            return d;
+        }
+    } dev;
+    auto put = [&](size_t off, uint8_t width, uint64_t v) {
+        for (uint8_t i = 0; i < width; ++i)
+            dev.state[off + i] = static_cast<uint8_t>(v >> (8 * i));
+    };
+
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const auto id = static_cast<uint8_t>(PeripheralId::MoonSound);
+
+    uint32_t noise = 12345;
+    std::vector<std::vector<uint8_t>> expected;
+    for (uint64_t f = 0; f < 80; ++f)
+    {
+        put(0, 8, 0x1234 + f * 71680);
+        put(8, 8, 0x77 + f * 693633 + f / 2);
+        put(16, 1, f * 228);
+        put(17, 4, f < 40 ? 1000 + f * 300 : 5000000 + f * 600);
+        noise = noise * 1664525u + 1013904223u;
+        put(21, 8, noise);
+        dev.state[29] = static_cast<uint8_t>(f == 60);
+        expected.emplace_back(dev.state, dev.state + sizeof(dev.state));
+
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    for (size_t i = 0; i < expected.size(); ++i)
+    {
+        std::vector<uint8_t> got;
+        ASSERT_TRUE(engine.DeviceState(i, id, got)) << "checkpoint " << i;
+        ASSERT_TRUE(got == expected[i]) << "checkpoint " << i;
+    }
+}
+
+TEST(TimeTravelEngine_TimeFields_Test, AFieldKeepingItsPaceAddsNoVersions)
+{
+    struct Device : TTDSerializable
+    {
+        uint8_t state[24] = {};
+        size_t TTDStateSize() const override { return sizeof(state); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+        std::string TTDDeviceName() const override { return "Clock"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::NeoGS; }
+        TTDDeviceDescriptor TTDDescribe() const override
+        {
+            TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+            d.timeFields = {{0, 8}, {8, 4}};
+            return d;
+        }
+    } dev;
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const auto id = static_cast<uint8_t>(PeripheralId::NeoGS);
+    size_t versions = 0;
+    for (uint64_t f = 0; f < 200; ++f)
+    {
+        const uint64_t clock = 2457600 * f + (f % 2) * 30;   // a card clock with its overshoot
+        const uint32_t timer = static_cast<uint32_t>(491520 * f);
+        std::memcpy(dev.state, &clock, 8);
+        std::memcpy(dev.state + 8, &timer, 4);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        if (f == 10)
+            versions = engine.PieceStore().LiveVersions();
+    }
+    // The overshoot alternates 0 / 30: the residual alternates too (two
+    // contents of one piece), so new versions keep coming at that rate at most;
+    // the timer, on its line, adds none
+    EXPECT_LE(engine.PieceStore().LiveVersions() - versions, 190u);
+    for (size_t i = 0; i < 200; ++i)
+    {
+        std::vector<uint8_t> got;
+        ASSERT_TRUE(engine.DeviceState(i, id, got));
+        uint64_t clock = 0;
+        uint32_t timer = 0;
+        std::memcpy(&clock, got.data(), 8);
+        std::memcpy(&timer, got.data() + 8, 4);
+        ASSERT_EQ(clock, 2457600 * i + (i % 2) * 30) << "checkpoint " << i;
+        ASSERT_EQ(timer, static_cast<uint32_t>(491520 * i)) << "checkpoint " << i;
+    }
+}
+
+TEST(TimeTravelEngine_TimeFields_Test, AnEvenPaceStoresNothingAfterTheLineIsSet)
+{
+    struct Device : TTDSerializable
+    {
+        uint8_t state[16] = {};
+        size_t TTDStateSize() const override { return sizeof(state); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+        std::string TTDDeviceName() const override { return "Origin"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::Tape; }
+        TTDDeviceDescriptor TTDDescribe() const override
+        {
+            TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+            d.timeFields = {{0, 8}};
+            return d;
+        }
+    } dev;
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    const auto id = static_cast<uint8_t>(PeripheralId::Tape);
+    size_t versionsAt5 = 0;
+    for (uint64_t f = 0; f < 100; ++f)
+    {
+        const uint64_t origin = 71680 * f;
+        std::memcpy(dev.state, &origin, 8);
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.deviceStates.push_back({id, dev.state, sizeof(dev.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        if (f == 5)
+            versionsAt5 = engine.PieceStore().LiveVersions();
+    }
+    EXPECT_EQ(engine.PieceStore().LiveVersions(), versionsAt5) << "a steady clock adds no version once its line is set";
+    std::vector<uint8_t> got;
+    ASSERT_TRUE(engine.DeviceState(99, id, got));
+    uint64_t origin = 0;
+    std::memcpy(&origin, got.data(), 8);
+    EXPECT_EQ(origin, 71680u * 99);
+}
