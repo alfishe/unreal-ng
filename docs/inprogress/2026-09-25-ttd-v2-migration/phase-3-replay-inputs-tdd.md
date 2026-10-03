@@ -39,7 +39,7 @@ A Sprinter (top clock ×6, so one 3.5 MHz T-state is 6 units; 224 T per line) re
 | Clock reading at frame 101's start | `PortDecoder::EmulatedMicroseconds` (portdecoder.cpp:237-255) = 101 × 19,968 = 2,016,768 µs, 31 ms before frame 100's start (2,048,000 µs) | from the frame table: 2,048,000 + 20,480 = **2,068,480 µs** past the session's time base |
 | The `IM2` vector of each interrupt | taken from the live device at replay (`IInterruptSource::AcknowledgeInterrupt`, z80.h:341); the port journal is refused for the machine (TTM:2077-2078) | recorded as bus data at the acknowledge; a replay reads it from the session |
 | The key press | input event, applied between instructions (TTM:1928-1945) | the same, as an event of kind `Key` in the one event stream |
-| The disk write at frame 103 | a replay barrier (`DiskWrite`, mediamanager.cpp:651-667): a seek stops before it | the checkpoint of frame 104 names the disk's new version; a seek restores it, a replay of frame 103 writes into the replay's own head, the image file is untouched |
+| The disk write at frame 103 | a replay barrier (`DiskWrite`, mediamanager.cpp:651-667): a seek stops before it | no barrier: a replay of frame 103 runs, the CPU reads from the controller what it read when recording (bus journals), the write goes into the held overlay (FR-20), the image file is untouched; the checkpoint of frame 104 names the disk's new version so the controller's own state matches too |
 | The session opened in an emulator with another audio rate | loads; a replay inside a frame silently differs | loads; status lists `audioCoreRate: recorded 44100, live 48000`, replay operations report **not bit-exact** |
 
 ## 3. How it works today
@@ -149,9 +149,9 @@ The kind ranges make the v1 mapping an identity: a v1 input kind keeps its numbe
 | `Key`, `PcKey`, mouse, `Joystick`, `FrontPanelSwitch`, `KeyboardReset` | Input | instruction boundary | — | input journal, same kind number |
 | `GSCommand`, `GSData`, `GSNmi`, `GSResetCard`, `GSReset` | Input | instruction boundary of the main CPU | — | input journal |
 | `NetEvent` (incl. `ModemLines`), `NetLinkReset` | Input | instruction boundary | received bytes | input journal + network section; `netIndex` / `journalIndex` become payload ids |
-| `TapeControl` | Input (with tape media versions) | instruction boundary | — | external event; a barrier until the tape is under media versions (Step 4) |
+| `TapeControl` | Input | instruction boundary | — | external event (the deck is part of the machine; what the CPU reads from the tape is EAR bits, bus data) |
 | `DebuggerEdit` | Input | instruction boundary | target + bytes (memory region and offset, register id, device register) | external event; a v1 edit has no data, so it imports as `Barrier` |
-| `MediaWrite` | Fact | — | slot id | external `DiskWrite`; a barrier until media versions exist (Step 4) |
+| `MediaWrite` | Fact | — | slot id | external `DiskWrite`; the replay writes again into the held overlay (FR-20) |
 | `HardwareReset` | — | — | — | not emitted: a reset ends the session (D39); the kind number stays for v1 files |
 | `SnapshotLoad`, `MediaChange`, `ConfigChange` | Cut | frame boundary | what changed | none: v1 ends or invalidates the session (D10, D26). The device set is fixed for a session (D38) |
 | `ClockChange`, `FrameLengthChange`, `InterruptFrame` | Fact | — | rate, length, RZX frame | none |
@@ -166,7 +166,9 @@ What each role means for a replay:
 - **Bus data** is consumed by the access that asks for it, in order, and checked against the access's time, port and PC (as `PlayNext` does). D24 names two points; consumption "on access" is the third, needed because an `IN` happens inside an instruction.
 - **Fact** is produced by the emulation itself. A replay regenerates it and compares; facts feed indexes (clock map, frame table, RZX frame lookup) and queries.
 - **Cut** ends the frame early and is followed by a checkpoint. A replay never executes through a cut: crossing it means restoring the checkpoint after it. Reset and snapshot load therefore stop being the end of a session.
-- **Barrier** is what is left for effects the session cannot reproduce: a v1-imported edit, `OtherMarker`, a write to a medium with no versions. A seek stops before it and says why, as today.
+- **Barrier** exists only for records read from v1 files without their data: an edit without its bytes, a v1 reset, `OtherMarker`. A seek stops before it and says why. A v2 session has none.
+
+**A replay is sealed** (owner principle, 2026-09-29, restated 2026-10-03): during a replay the machine is cut off from the outside world and fed only what the session recorded - input events, network answers, and at the CPU's boundary every value it reads from outside (the bus journals: `IN` results, interrupt vectors, DMA into memory). Disks, tapes and network adapters keep working inside the replay exactly as when recording, until the replay ends; nothing they do reaches the host (Step 6). Media versions (Step 4) are not what makes the replay exact - the CPU already reads the recorded bytes - they keep the controllers' own state (an FDC's buffer, a hard disk's cache) equal to the recording where the replay stops.
 
 **Which events are bus data, and where they are recorded.**
 
@@ -308,9 +310,9 @@ std::vector<TTDFingerprintDiff> Compare(const TTDConfigFingerprint& recorded, co
 - A media slot table in the session: slot id (`fdd.a`, `sd.zc`, `ide0.master`), kind, the source's `ContentId`, format.
 - Each checkpoint lists the version of every medium **that changed since the previous checkpoint**; the change layer cuts a version at the frame boundary after a write ("at most one per medium per frame"; the media manager already marks the first write per frame, mediamanager.cpp:655).
 - A checkpoint depends on its versions (D5): the change layer keeps them while a checkpoint refers to them.
-- A seek sets each medium's head to the checkpoint's version. A replay then reads exactly what the machine read the first time, and `MediaWrite` is a fact instead of a barrier.
+- A seek sets each medium's head to the checkpoint's version, so a controller that reads the medium during the replay sees what it saw when recording, and its state where the replay stops matches the recording.
 - Inserts and ejects are `MediaChange` cuts (WI-6, D10).
-- **Until the change layer exists** (storage manager phases H1 and H5), a version is the source's `ContentId` plus a write count. A write keeps v1's barrier, so nothing becomes less honest than v1. Once versions exist, the barrier goes away for that kind of medium.
+- **Until the change layer exists** (storage manager phases H1 and H5), a version is the source's `ContentId` plus a write count; a medium without versions is reported in the session status (the CPU still reads the recorded bytes, so the replay stays exact; only the controller's state at the stop can differ). No barrier.
 
 ```cpp
 class IMediaHistory    // implemented by the media manager's change layer
@@ -318,7 +320,7 @@ class IMediaHistory    // implemented by the media manager's change layer
 public:
     virtual uint64_t CurrentVersion(uint16_t slot) const = 0;
     virtual bool SetHead(uint16_t slot, uint64_t version) = 0;   // seek
-    virtual bool HasVersions(uint16_t slot) const = 0;           // false: writes stay barriers
+    virtual bool HasVersions(uint16_t slot) const = 0;           // false: reported in status, no barrier
 };
 ```
 
@@ -488,7 +490,7 @@ Every test is checked by mutation: it must fail when the mechanism it guards is 
 | 3 | An unchanged frame stores zero CPU residual bytes | PR-10 for CPUs |
 | 4 | Load a session with another audio rate, decimator and ROM: status lists exactly those fields; a frame-aligned restore is exact; a seek inside a frame reports `notBitExact` on every surface | fingerprint (FR-14) |
 | 4 | With media versions: write a sector in frame 103, seek to frame 102 and replay into 103: the read returns the old sector, then the new one | media versions per checkpoint |
-| 4 | Without media versions: the write is still a barrier | no regression in honesty |
+| 4 | Without media versions: a seek across a write runs (no barrier), the CPU reads the recorded bytes; status names the medium without versions | sealed replay without versions |
 | 5 | Record, save, reload a day later, replay a program that prints the RTC: the same output | one session time base |
 | 5 | Two DS12887-style chips in one session read the same instant | one base for all clocks |
 | 6 | Replay history that writes a floppy, an SD card and a hard disk: image files, session write maps and the NeoGS flash file are byte-identical. Mutation: remove the gate → fails | FR-20 |
@@ -515,7 +517,7 @@ Each item lands as its own commits and passes the full gate:
 5. **Step 5:** the session time base, on the frame table.
 6. **Step 1, part 2:** vector and DMA taps, one machine per commit (Sprinter, TSConf, NeoGS, ZX Next); reset and edit events; cuts.
 7. **Step 2:** replay sources, RZX frame facts, the parity test against `RzxKeyframeStore`.
-8. **Step 4:** fingerprint, then media versions behind `IMediaHistory`, with the barrier fallback until the storage manager's H1 / H5 land.
+8. **Step 4:** fingerprint, then media versions behind `IMediaHistory` (no barrier fallback: a medium without versions is reported until the storage manager's H1 / H5 land).
 9. **Step 7:** write index with the policy interface, coverage intervals, the default from E7.
 10. Phase check: D33 on the matrix; store the Phase 3 baseline; write the results document.
 
@@ -525,7 +527,7 @@ Each item lands as its own commits and passes the full gate:
 |---|---|---|
 | Q1 | **User decision:** the find-last latency bound L that E7 must meet (it decides how small the window can be) | E7 reports bytes per minute against p99 latency for every W; the user picks L, or the knee of that curve is taken |
 | Q2 | **User decision:** a card-CPU position inside a main-CPU instruction: inspect only (proposed), or also resume from there, which needs a resumable burst in every card emulation | Inspect only; resume from the main-CPU boundary after it |
-| Q3 | Media versions depend on the storage manager's change layer (H1, H5) | Fallback keeps v1's barrier; each kind of medium loses the barrier only when it has versions |
+| Q3 | Media versions depend on the storage manager's change layer (H1, H5) | No barrier either way (sealed replay); until a kind of medium has versions, a controller's internal state where a replay stops may differ, and status says so |
 | Q4 | **User decision:** with always-on recording (D29) the RTC runs on emulated time almost always. After a long pause it is behind the host clock. Re-anchor to the host on resume of the live end (a cut, recorded), or stay on emulated time? | Proposed: re-anchor when the live end resumes after a pause, recorded as a `ClockChange` of the time base; replay reads the recorded base |
 | Q5 | The CPU still gets recorded `IN` values in `Events` mode, so a device restore bug can hide | The mismatch counter must be zero on the corpus (test above); a non-zero count fails the phase check |
 | Q6 | A configuration whose replay is not yet sealed cannot use `Window` | Policy refused with a reason; `Ring` or `WholeHistory` until its taps land |
