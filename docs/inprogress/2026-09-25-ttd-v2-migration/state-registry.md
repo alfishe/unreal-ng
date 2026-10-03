@@ -125,7 +125,7 @@ None of these is read back by emulation. Each becomes an optional frame-boundary
 
 | Item | Machines | Stream v1 | Stream engine | Class | Size | Variability | Status | Source |
 |---|---|---|---|---|---|---|---|---|
-| VDAC2 line-budget metrics of the last frame | TSL-VDAC2 | inside id 43 | telemetry stream (planned) | T | | | to move | `EveSaveState` |
+| VDAC2 line-budget metrics of the last frame | TSL-VDAC2 | inside id 43 | stays in the chip's state (see note) | T | | | decided 2026-10-03 | `EveSaveState` |
 | IDE activity LED | IDE | — | telemetry stream | T | | | wrong after a seek | `io/ide/idecontroller.h:97` |
 | WD1793 published drive / motor state | Beta | — | telemetry stream | T | | | stale after a seek | `wd1793.cpp:4398` |
 | NeoGS DMA and MP3 activity | NeoGS | partly in id 12 | telemetry stream | T | | | one false LED pulse | `soundchip_neogs.cpp:853-856` |
@@ -143,6 +143,8 @@ None of these is read back by emulation. Each becomes an optional frame-boundary
 | Media change counters | all | — | telemetry stream | T | | | show live media | `MediaManager` |
 | RZX desyncs, drift | RZX | — | telemetry stream | T | | | | `rzx/rzxplayer.h` |
 | ESP module log | ESP | — | telemetry stream | T | | | | `EspModule::_log` |
+
+**Note on the VDAC2 metrics (2026-10-03).** Master (`14c25eca6`) shows them in the FT812 Debug window at any past position: after a frame seek the restored chip state gives the last finished FT812 frame's metrics, inside a frame the replay that composes the picture measures the lines drawn so far. They are read back at every position the window shows, so they stay inside the chip's state blob rather than in an optional stream; Phase 2 stores only the bytes that change, so they cost bytes only when an FT812 frame finishes.
 
 ## 6. Derived (rebuilt after a restore, not recorded)
 

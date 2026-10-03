@@ -305,6 +305,8 @@ What this means:
 - Most of what remains is **not** a counter that can be derived from time. It is a CPU running code (NeoGS) and synthesizer counters that wrap at register-defined periods. Deriving them would mean running the device during a restore, which costs seek time (§9, question Q1).
 - E6's "storing the XOR of a changed blob saves only a quarter" was computed on the **wrapped, compressed** v1 blobs (`model.py:214-226` XORs `raw`). XOR of the decoded state gives 233 B per frame against E6's 677 B per frame (2.03 MB per minute). The design target below uses the decoded state.
 
+**Device-side anchors first (2026-10-03).** Master's Z84C15 CTC (`6f6025e25`, Sprinter) shows the better fix where the device code is ours: the device stores the count at an anchor time and derives the live count from the clock, so its state does not change while it counts. Its blob then compares equal frame after frame with no engine rule at all, and the derivation is checked by the device's own tests. Order of preference: (1) anchors in the device, for devices in this repository (NeoGS timers and runner, MoonSound and TSFM origins, the WD1793 and tape clocks); (2) the engine-side time fields below, for state that comes from vendored libraries we do not change (ymfm, libopl4 internals). The measurement (step 1 of §8) lists which field goes which way.
+
 Each device declares its own time fields in its descriptor (offsets in its own layout). Declaring a field is safe even when the guess is wrong: a wrong prediction only costs bytes, never correctness, because the residual is always stored exactly.
 
 #### 5.2.4 Bytes target and how D33 checks it
