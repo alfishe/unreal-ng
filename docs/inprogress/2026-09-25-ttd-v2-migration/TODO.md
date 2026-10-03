@@ -41,7 +41,7 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
 
 Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fixed in v1 (it runs the emulator until Phase 5) and carried into the engine. Order follows severity.
 
-- [ ] 1 Network payload references inside checkpoints survive eviction (absolute ids, as the port journal)
+- [x] 1 Network references after eviction: v1 only, not fixed (v1 is for verification); the engine keeps referenced payloads (D24) and evicts memory to its file, not history (D28). Phase 3 test: a payload referenced by a surviving checkpoint survives a retention cut, record numbers absolute
 - [x] 2 GS lightweight: not recorded by design, named in the header (flag bit 11); region 2 stays unused
 - [ ] 3 Region-only memories restored (NeoGS, MoonSound): needs the engine restore path, or v1 blobs until Phase 5
 - [ ] 4 WD1793 command context on every Beta machine (re-record the TTD fixtures)

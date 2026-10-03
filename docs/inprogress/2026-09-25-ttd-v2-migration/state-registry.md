@@ -114,7 +114,7 @@ One row per device blob; the device's memory is in section 1.
 |---|---|---|---|---|---|---|---|---|
 | Port reads (IN values) | all except TS-Conf, Sprinter, Profi, Scorpion, NeoGS, Next | port journal (absolute indices) | event stream ([decision 24](engine-decisions.md#e-machines-and-devices)) | R | | | ok | `debugger/ttd/ttdportjournal.h:161`; switch-off reasons `timetravelmanager.cpp:2073-2108` |
 | Input events (keys, mouse, PC keys) | all | input journal | event stream | R | | | ok | `ttdinputjournal.cpp` |
-| Network payload records | network cards | input journal, renumbered on eviction | event payloads | R | | | gap 1 | `ttdinputjournal.cpp:110-134` |
+| Network payload records | network cards | input journal, renumbered on eviction | event payloads, absolute numbers, kept while a checkpoint refers to them ([decision 24](engine-decisions.md#e-machines-and-devices)) | R | | | gap 1 (v1 only) | `ttdinputjournal.cpp:110-134` |
 | Memory writes (write journal) | all | ring | derived index ([decision 17](engine-decisions.md#c-what-the-engine-provides)) | D | | | ok | |
 | Media changes, write-protect toggles, queued swaps | all with media | barrier / invalidation | events + media versions | R | | | gaps 11–13 | `mediamanager.cpp:516, 678, 959-975`; `io/fdc/floppydriveslot.cpp:13` |
 | Clock / speed changes | all | ends the session | event ([decision 20](engine-decisions.md#e-machines-and-devices)) | R | | | ok | `emulator/emulator.cpp:650, 969, 1702, 1973, 2168` |
@@ -174,7 +174,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 
 | # | Gap | Effect | Severity |
 |---|---|---|---|
-| 1 | Evicting old history renumbers network payload records, but references held inside surviving checkpoints (ZXNETUSB, COM port, ZiFi, ATM2 I/O ESP, serial peer) keep the old numbers | Wrong bytes or zeros after an eviction, silently | breaks replay |
+| 1 | *v1 only, not fixed (decided 2026-10-02):* v1's history limit (`SetHistoryLimit`) renumbers network payload records on eviction, but references held inside surviving checkpoints (ZXNETUSB, COM port, ZiFi, ATM2 I/O ESP, serial peer) keep the old numbers. The engine does not evict history from memory (decision 28: memory is a cache of the session file) and keeps every payload a checkpoint refers to (decision 24); record numbers there are absolute | Wrong bytes or zeros after a v1 eviction, with a history limit set and unread network bytes | v1 only |
 | 2 | *Closed 2026-10-02 by design:* the lightweight GS is not recorded (class N, named in the header); it runs live through seeks | — | — |
 | 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | breaks replay until the engine restores (Phase 5) |
 | 4 | WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk command ends it early on every other Beta machine | breaks replay |
