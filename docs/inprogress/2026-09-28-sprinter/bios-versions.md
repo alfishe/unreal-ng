@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-02 |
-| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested; **3.07 BETA 1 is the shipped default since 2026-10-02** (§6.1). Upstream head checked 2026-10-03: it **is** the kept 3.07 BETA 1 (§5.3) |
+| **Status** | Survey done; 3.06 Hotfix 2 and 3.07 BETA 1 built from source, kept in `data/rom/sprinter/` and tested; **3.06 Hotfix 2 is the shipped default again since 2026-10-03** (§6.1; 3.07 BETA 1 was the default 2026-10-02..03). Upstream head checked 2026-10-03: it **is** the kept 3.07 BETA 1 (§5.3) |
 | **Related** | [materials.md](materials.md) §5 (ROM provisioning), [tdd-integration.md](tdd-integration.md) §1.1 (`[ROM] SPRINTER=`), `tools/machines/sprinter/bios-build/make-bios.py`, `tools/machines/sprinter/dcp-table/dcp-table.py` |
 
 **In short.** Peters Plus stopped at BIOS 3.04 (2003). The BIOS is alive again as a community
@@ -294,24 +294,23 @@ The BIOS author said the upstream head has many fixes over "3.07 BETA 1". Checke
 | ZX mode from the prompt (ESC), Spectrum 128 menu | yes | yes | same image |
 | ALL_MODE readable (stays `#FE` after the return to DSS) | no (old bitstream) | yes (§5.2) | same image |
 
-**Recommendation:** keep 3.07 BETA 1 (`f546c4e`) as the default. It is the newest public source, the
-only one that scrolls DSS text, and it boots DSS 1.71 / Flex Navigator 1.15. Keep 3.06 Hotfix 2
-selectable for floppy programs under DSS 1.71.57 and for dontBlink. Revisit when the author pushes a
+**Decision (owner, 2026-10-03):** the default goes back to 3.06 Hotfix 2 until the author publishes his
+fixed head (§6.1). 3.07 BETA 1 stays selectable with its `known_issues` warning. When the author pushes a
 build with the IY fix: build it with `make-bios.py`, rerun `SprinterFloppyExe_Test` and the dontBlink run,
-then replace or add the image.
+then add the image or replace the beta.
 
 ## 6. Picking and testing a BIOS
 
 - **Config.** `[ROM] SPRINTER=` in `data/configs/sprinter/unreal.ini` (read into
   `config.sprinter_rom_path`, loaded raw as 16 pages; tdd-integration §1.1). The shipped default is
-  `rom/sprinter/sp2k-3.07-beta1.rom` (§6.1); `rom/sprinter/sp2k-3.04.rom` and
-  `rom/sprinter/sp2k-3.06-hf2.rom` stay selectable here, at create (`"sprinter": {"bios": "3.04"}`) and
+  `rom/sprinter/sp2k-3.06-hf2.rom` (§6.1); `rom/sprinter/sp2k-3.04.rom` and
+  `rom/sprinter/sp2k-3.07-beta1.rom` stay selectable here, at create (`"sprinter": {"bios": "3.04"}`) and
   on a running machine (`POST /sprinter/bios`, every automation surface).
 - **Tests.** Tests pinned to one BIOS select it explicitly (`SprinterFixture::SelectBios`): the 3.04
   suites (`SprinterBoot_Test`, `SprinterInputBoot_Test`, `SprinterReference_Test`, `SprinterVideoBoot_Test`,
   `TTDSprinterMachine_Test`) select `sp2k-3.04.rom`; `SprinterBiosReload_Test` checks that the shipped config
-  loads 3.07 BETA 1; the TTD corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` is the cold start of the
-  shipped config, so it records 3.07 BETA 1. `SprinterBiosVersions_Test` boots each kept community image with the fast start to
+  loads 3.06 Hotfix 2 (and the 3.07 BETA 1 warning after a switch); the TTD corpus fixture
+  `testdata/machines/sprinter/ttd/boot.ttd` is the cold start of the shipped config, so it records 3.06 Hotfix 2. `SprinterBiosVersions_Test` boots each kept community image with the fast start to
   the boot prompt (banner, memory, port-table CRC, bitstream hash) and with the full start through
   its own loader.
 - **A new build.** Put 256 KB images in a folder and run
@@ -326,7 +325,8 @@ then replace or add the image.
 | Date | Decision | Why |
 |---|---|---|
 | 2026-09-28 | 3.04 by default, 3.06 selectable (review round 1, Q1, [roadmap-and-plan.md](roadmap-and-plan.md) §5) | the last Peters Plus release, the one MAME and every capture used |
-| 2026-10-02 | **Owner: switch the default straight to 3.07** (3.07 BETA 1, `sp2k-3.07-beta1.rom`); 3.04 and 3.06 Hotfix 2 stay selectable. Replaces Q1, and an intermediate decision of the same day for 3.06 Hotfix 2 | the main path is now DSS 1.71 from a hard disk, which needs 3.06 or newer (§5.1); 3.06 Hotfix 2 has the bottom-line scroll quirk (§5.2); 3.07 BETA 1 boots the MAME pack's DSS 1.71 / Flex Navigator 1.15 |
+| 2026-10-02 | Owner: switch the default straight to 3.07 (3.07 BETA 1, `sp2k-3.07-beta1.rom`); 3.04 and 3.06 Hotfix 2 stay selectable. Replaces Q1, and an intermediate decision of the same day for 3.06 Hotfix 2 | the main path is now DSS 1.71 from a hard disk, which needs 3.06 or newer (§5.1); 3.06 Hotfix 2 has the bottom-line scroll quirk (§5.2); 3.07 BETA 1 boots the MAME pack's DSS 1.71 / Flex Navigator 1.15 |
+| 2026-10-03 | **Owner: back to 3.06 Hotfix 2** (`sp2k-3.06-hf2.rom`) until the BIOS author publishes his fixed head; 3.07 BETA 1 and 3.04 stay selectable | the upstream head is the kept 3.07 BETA 1 and still changes IY in the floppy driver: DSS 1.71.57 cannot start programs from a floppy (§5.2, §5.3). 3.06 Hotfix 2 runs them and plays dontBlink to the end; its only known quirk is the bottom-line scroll (§5.2) |
 
 ## 7. Who develops it, and how to follow new builds
 

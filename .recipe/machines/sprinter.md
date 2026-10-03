@@ -42,7 +42,7 @@ Outputs below are real, from a build of branch `sprinter-automation`
 emulator_manage {"action":"list_models"}
 #   → models[] has {"name":"SPRINTER","full_name":"Sprinter 2000","creatable":true,
 #     "available_ram_sizes_kb":[4096],"default_ram_kb":4096}
-emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.07 BETA 1)
+emulator_manage {"action":"create","model":"SPRINTER"}                     # BIOS from [ROM] SPRINTER= (3.06 Hotfix 2)
 emulator_manage {"action":"create","model":"SPRINTER","sprinter_bios":"3.07","sprinter_fast_start":true}
 #   → Created and started emulator 4ff43195-...            (sprinter_bios: 3.04 | 3.06 | 3.07 | a file in rom/sprinter)
 inspect_state {"aspects":["sprinter_bios"]}
@@ -62,10 +62,11 @@ the flash is reread at the next reset (`reset: true`, the default, resets now; `
 `reload_pending: true` until the next reset). `loaded` names the image the flash holds (by CRC-32), so a
 mismatch with `rom_file` is visible. A reset stops a TTD recording and a new image invalidates its session.
 `[ROM] SPRINTER=` in `<build>/bin/configs/sprinter/unreal.ini` (macOS: `unreal-qt.app/Contents/Resources/configs/sprinter/unreal.ini`)
-remains the default for new machines: shipped `rom/sprinter/sp2k-3.07-beta1.rom` (owner decision 2026-10-02;
-3.04 and 3.06 Hotfix 2 stay selectable). DSS 1.71 needs 3.06 or 3.07. **Warning:** on 3.07 BETA 1, DSS 1.71.57
-(the MAME pack's disk) cannot start programs from a floppy or copy files off it (`known_issues` in the BIOS report;
-the beta's floppy driver changes IY): for floppy work select 3.06 Hotfix 2. Background:
+remains the default for new machines: shipped `rom/sprinter/sp2k-3.06-hf2.rom` (owner decision 2026-10-03, back
+from 3.07 BETA 1 until the BIOS author publishes his fixed build; 3.04 and 3.07 BETA 1 stay selectable). DSS 1.71
+needs 3.06 or 3.07. **Warning:** on 3.07 BETA 1, DSS 1.71.57 (the MAME pack's disk) cannot start programs from a
+floppy or copy files off it (`known_issues` in the BIOS report; the beta's floppy driver changes IY). On 3.06
+Hotfix 2 DSS text does not scroll at the bottom line (firmware, MAME too). Background:
 [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md).
 
 **Full start vs fast start** (`fast_start` of the selection above, default `[SPRINTER] FastStart=`):
@@ -79,7 +80,7 @@ bitstream hashes name the image (3.07 BETA 1: `full_hash 0x29641AB3`, `head_hash
 ### 2. Boot DSS from a floppy
 
 SETUP boots the IDE master first, then the "alternative device": **floppy A on
-the default BIOS 3.07 BETA 1 (and 3.06), floppy B on BIOS 3.04**. Checked live
+the default BIOS 3.06 Hotfix 2 (and 3.07), floppy B on BIOS 3.04**. Checked live
 2026-10-02 with a blank CMOS: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on
 3.07 BETA 1 straight into Flex Navigator 1.10 (`A:\FN\`); in drive B 3.07 prints
 "Alternative Boot from Diskette fail". The steps and outputs below are BIOS 3.04

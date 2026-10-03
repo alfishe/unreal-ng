@@ -107,6 +107,10 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
   config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
   (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+- [x] Default BIOS back to 3.06 Hotfix 2 (owner decision 2026-10-03, branch `sprinter-bios-head`;
+  [bios-versions.md](bios-versions.md) §6.1): the upstream head is the kept 3.07 BETA 1 and still has the floppy
+  IY bug; 3.07 BETA 1 stays selectable with its `known_issues` warning. `[ROM] SPRINTER=`, catalog labels,
+  automation texts, recipes, AGENTS.md; `boot.ttd` re-recorded on 3.06 Hotfix 2
 - [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
   [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
   window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A

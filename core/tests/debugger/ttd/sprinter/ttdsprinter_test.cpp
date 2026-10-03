@@ -367,7 +367,7 @@ protected:
         ASSERT_NE(_ttd, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-        // Pinned to BIOS 3.04 (the shipped default is 3.07 BETA 1; its cold start is the corpus fixture
+        // Pinned to BIOS 3.04 (the shipped default is 3.06 Hotfix 2; its cold start is the corpus fixture
         // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
         ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // PowerOn resets
 

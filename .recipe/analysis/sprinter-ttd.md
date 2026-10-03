@@ -89,7 +89,7 @@ tools/verification/ttd-analyzer/run.sh validate scratch/sprinter.ttd
 ```
 
 The corpus fixture `testdata/machines/sprinter/ttd/boot.ttd` (the cold full start: PLD load, BIOS
-POST of the shipped default, 3.07 BETA 1 since 2026-10-02) is re-recorded with `record_fixtures.py --only sprinter_boot` ([testdata/ttd/README.md](../../testdata/ttd/README.md)).
+POST of the shipped default, 3.06 Hotfix 2 since 2026-10-03) is re-recorded with `record_fixtures.py --only sprinter_boot` ([testdata/ttd/README.md](../../testdata/ttd/README.md)).
 
 Ground truth: [debugger/ttd/sprinter/ttdsprinter.h](../../core/src/debugger/ttd/sprinter/ttdsprinter.h),
 [s7-ttd-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s7-ttd-outcome.md).

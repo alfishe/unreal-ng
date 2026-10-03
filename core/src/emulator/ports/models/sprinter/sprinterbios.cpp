@@ -18,9 +18,9 @@ const std::vector<Image>& Known()
 {
     static const std::vector<Image> kKnown = {
         {"sp2k-3.04.rom", "3.04", "Sprinter BIOS 3.04 (Peters Plus, 17.06.2003; DSS 1.62, not 1.71)", 0x1729CB5Cu, nullptr},
-        {"sp2k-3.06-hf2.rom", "3.06", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026; the MAME pack's firmware)", 0x9AA7BB29u,
+        {"sp2k-3.06-hf2.rom", "3.06", "Firmware v3.06 Hotfix 2 (community build, 19.01.2026; the MAME pack's firmware; the default)", 0x9AA7BB29u,
          nullptr},
-        {"sp2k-3.07-beta1.rom", "3.07", "Firmware v3.07 BETA 1 (community build, 24.09.2026; the default)", 0xA06A1A02u,
+        {"sp2k-3.07-beta1.rom", "3.07", "Firmware v3.07 BETA 1 (community build, 24.09.2026)", 0xA06A1A02u,
          "the floppy driver returns with IY changed (FDD_DRIVER.asm, BIOS-TT f546c4e); DSS 1.71.57 (MAME-pack disk) "
          "then cannot start programs from a floppy ('Invalid EXE file' / 'Bad command or file name'); use the DSS "
          "from the 3.07 recovery disk or BIOS 3.06 Hotfix 2 (docs/inprogress/2026-09-28-sprinter/bios-versions.md "

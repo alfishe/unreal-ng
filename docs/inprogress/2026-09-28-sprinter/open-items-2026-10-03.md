@@ -56,11 +56,12 @@ come the ISA slots and the network cards (section 3).
 ## 4. Small and deferred
 
 - BIOS 3.06 Hotfix 2 does not scroll DSS text at the bottom line (MAME too): a question for the BIOS author.
-- BIOS 3.07 BETA 1 (the default) with DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file" /
+- BIOS 3.07 BETA 1 (the default until 2026-10-03; now 3.06 Hotfix 2) with DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file" /
   "Bad command or file name") and `copy` from the floppy writes 0 bytes. Firmware, not emulation (found 2026-10-03):
   the beta's FDD driver returns with IY changed; MAME agrees; a 3.07 build saving IY works, as does the DSS of the
-  3.07 recovery disk. Owner decision: 3.07 BETA 1 stays the default, with a warning in the BIOS report
-  (`known_issues`, all surfaces, Qt status bar) and the recipes. Open: send
+  3.07 recovery disk. Owner decision 2026-10-03: the default goes back to 3.06 Hotfix 2 until the author publishes
+  his fixed build; 3.07 BETA 1 stays selectable with a warning in the BIOS report (`known_issues`, all surfaces,
+  Qt status bar) and the recipes. Open: send
   [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) to the BIOS author ([bios-versions.md](bios-versions.md) §5.2).
   Checked 2026-10-03: the public upstream head (`beta` `f546c4e`) **is** the kept 3.07 BETA 1, byte for byte,
   and still changes IY; the author's newer fixes are not pushed. Waiting for the author to push the build
