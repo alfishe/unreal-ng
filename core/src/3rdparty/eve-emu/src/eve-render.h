@@ -130,6 +130,9 @@ constexpr int32_t kFixedOneTransform = 256; // 1.0 in 8.8
 constexpr uint32_t kContextStackDepth = 4;  // SAVE_CONTEXT levels [PG §4.39]
 constexpr uint32_t kCallStackDepth = 4;     // CALL levels [PG §4.19]
 constexpr uint32_t kMaxLineWidth = 4096;    // HSIZE is 12 bits
+constexpr uint32_t kBilinearColumns = kMaxLineWidth + 2; // texel columns a BILINEAR fast span may sample
+// BILINEAR scratch: two column rows, four gathered taps per pixel, the x fractions (bytes)
+constexpr uint32_t kBilinearScratch = 2 * kBilinearColumns + 4 * kMaxLineWidth + kMaxLineWidth / 4;
 constexpr uint32_t kMaxLines = 4096;        // VSIZE is 12 bits
 static_assert(kMaxLines == kMetricsLines, "the metrics block holds one cost per line");
 constexpr uint32_t kChannels = 4;           // line buffer: R, G, B, A
@@ -172,6 +175,7 @@ struct LineRun
     uint8_t* stencil;
     uint8_t* tag;
     uint32_t* texels;      // scratch: a span's decoded texels (kMaxLineWidth)
+    uint32_t* bilinear;    // scratch of a BILINEAR span (kBilinearScratch)
     GraphicsContext ctx;
     GraphicsContext saved[kContextStackDepth];
     uint32_t savedCount;
