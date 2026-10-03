@@ -48,6 +48,7 @@ public:
     /// The route as set ("AUTO" .. "BOTH"), the route in force, and whether a PS/2 controller is fitted
     void setHostKeyboardRoute(const QString& route, const QString& effective, bool ps2Controller);
     void setNetworkWindowChecked(bool checked);
+    void setFt812DebugChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
@@ -148,6 +149,7 @@ signals:
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
+    void ft812DebugToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
@@ -237,6 +239,7 @@ private:
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
     QAction* _networkWindowAction = nullptr;
+    QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
     std::vector<QAction*> _scaleActions;

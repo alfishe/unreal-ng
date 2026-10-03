@@ -618,6 +618,10 @@ void CatchUp(EveChip& chip)
     const uint32_t due = LinesDue(chip);
     if (!chip.drawing || !ScanRunning(chip))
     {
+        // Lines passed without drawing are not measured: their costs from an earlier
+        // frame must not count for this one (the frame's metrics block, the in-flight view)
+        for (uint32_t line = chip.drawnLines; line < due && line < kMaxLines; ++line)
+            chip.lineCosts[line].valid = 0;
         if (chip.drawnLines < due)
             chip.drawnLines = due;
         return;
@@ -690,6 +694,11 @@ void FoldFrameMetrics(EveChip& chip)
     if (lines < kMetricsLines)
         std::memset(&m.lineClocks[lines], 0, (kMetricsLines - lines) * sizeof(m.lineClocks[0]));
     m.valid = valid ? 1 : 0;
+}
+
+uint32_t FrameLinesDue(const EveChip& chip)
+{
+    return chip.drawnLines;
 }
 
 void GetLineCost(const EveChip& chip, uint32_t line, EveLineCost& out)

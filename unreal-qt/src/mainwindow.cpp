@@ -173,6 +173,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
+    // Windows that show the same moment as the screen refresh with it
+    connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
+        if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
+            _ft812DebugWindow->refresh();
+    });
 
     // Forward drag/drop from GPU window to main window
     // The slot chooser, drop zones and refusal over the screen (media-drop-targets M4)
@@ -314,6 +319,31 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
 
+    // FT812 Debug (line-budget-metrics.md §3.3): hidden by default, Debug -> FT812 Debug,
+    // offered only while the machine has the VDAC2 card
+    _ft812DebugWindow = new Ft812DebugWindow();
+    _ft812DebugWindow->setBinding(m_binding);
+    _ft812DebugWindow->setPictureGeometry(
+        [this](QRect& global, double& firstRow, double& rows) {
+            if (!_screenWrapper)
+                return false;
+            global = _screenWrapper->pictureGlobalRect();
+            const QRectF source = _screenWrapper->pictureSourceRect();
+            firstRow = source.top();
+            rows = source.height();
+            return !global.isEmpty() && rows > 0;
+        },
+        this);
+    // A native child on macOS: it rides with the main window without lagging
+    _dockingManager->addDockableWindow(_ft812DebugWindow, Qt::RightEdge, /*useNativeChildWindow=*/true);
+    // Queued: the main window's own resize handling refits the picture first
+    connect(_ft812DebugWindow, &Ft812DebugWindow::pictureGeometryChanged, this, [this]() { placeFt812DebugWindow(false); },
+            Qt::QueuedConnection);
+    connect(_ft812DebugWindow, &Ft812DebugWindow::visibilityChanged, this, [this](bool visible) {
+        if (visible)  // after the layout settled
+            QTimer::singleShot(0, this, [this]() { placeFt812DebugWindow(true); });
+    });
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -373,6 +403,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
+    connect(_menuManager, &MenuManager::ft812DebugToggled, this, &MainWindow::handleFt812DebugToggled);
+    connect(_ft812DebugWindow, &Ft812DebugWindow::visibilityChanged, _menuManager, &MenuManager::setFt812DebugChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -629,6 +661,14 @@ MainWindow::~MainWindow()
         delete networkWindow;
     }
 
+    if (_ft812DebugWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(_ft812DebugWindow);
+        _ft812DebugWindow->hide();
+        delete _ft812DebugWindow;
+        _ft812DebugWindow = nullptr;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -822,6 +862,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         networkWindow->hide();
         delete networkWindow;
         networkWindow = nullptr;
+    }
+    if (_ft812DebugWindow)
+    {
+        _dockingManager->removeDockableWindow(_ft812DebugWindow);
+        _ft812DebugWindow->hide();
+        delete _ft812DebugWindow;
+        _ft812DebugWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -3248,6 +3295,31 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::placeFt812DebugWindow(bool opening)
+{
+    // Right of the main window, its chart level with the picture: each bar beside
+    // its screen line; the height follows the picture. A window the user dragged
+    // away stays where it is until it is opened again
+    if (!_ft812DebugWindow || !_ft812DebugWindow->isVisible() || !_screenWrapper || !_dockingManager)
+        return;
+    if (!opening && !_dockingManager->isDocked(_ft812DebugWindow))
+        return;
+    const QRect picture = _screenWrapper->pictureGlobalRect();
+    if (picture.isEmpty())
+        return;
+    const int headroom = Ft812LineChart::kLabelHeadroom;
+    _ft812DebugWindow->resize(_ft812DebugWindow->width(),
+                              picture.height() + headroom + _ft812DebugWindow->HeightAroundChart());
+    const int frameTop = picture.top() - headroom - _ft812DebugWindow->ChartTopInFrame();
+    _dockingManager->dockAt(_ft812DebugWindow, Qt::RightEdge, frameTop - geometry().top());
+}
+
+void MainWindow::handleFt812DebugToggled(bool visible)
+{
+    if (_ft812DebugWindow)
+        _ft812DebugWindow->setVisible(visible && _emulator && Ft812DebugWindow::Offered(_emulator->GetContext()));
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -3785,6 +3857,10 @@ void MainWindow::updateMenuStates()
         // Menu will query emulator directly - no state duplication!
         _menuManager->updateMenuStates(_emulator);
     }
+    // The FT812 Debug window exists only for a machine with the VDAC2 card
+    if (_ft812DebugWindow && _ft812DebugWindow->isVisible() &&
+        !(_emulator && Ft812DebugWindow::Offered(_emulator->GetContext())))
+        _ft812DebugWindow->hide();
     if (_toolBarManager)
     {
         // Toolbar mirrors the same emulator state (after menus, so viewport enablement is current)
@@ -3858,6 +3934,10 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
+        if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
+            _ft812DebugWindow->refresh();
+    });
     if (_toolBarManager)
         _toolBarManager->setMouseCapture(_screenWrapper->mouseCapture());  // the gate carries over
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());

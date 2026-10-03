@@ -2,9 +2,13 @@
 
 #include "vdac2control.h"
 
+#include <algorithm>
+
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/platforms/tsconf/vdac2card.h"
+
 
 namespace Vdac2Control
 {
@@ -84,6 +88,57 @@ bool GetCaptureStatus(EmulatorContext* context, CaptureStatus& status, std::stri
     status.frames = stats.frames;
     status.startClock = stats.startClock;
     status.lastClock = stats.lastClock;
+    return true;
+}
+
+bool GetFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, bool withLines, bool inFlight, std::string* error)
+{
+    Vdac2Card* card = FindCard(context, error);
+    if (!card)
+        return false;
+    // The frame in flight moves the chip to the machine's position: only on a
+    // stopped machine, where nothing else drives the card
+    Emulator* emulator = context->pEmulator;
+    const bool stopped = !emulator || emulator->IsPaused() || !emulator->IsRunning();
+    card->ReadFrameMetrics(metrics, withLines, inFlight && stopped);
+    return true;
+}
+
+bool GetPresentedFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, std::string* error)
+{
+    Vdac2Card* card = FindCard(context, error);
+    if (!card)
+        return false;
+    if (!card->PresentedFrameMetrics(metrics))
+    {
+        if (error)
+            *error = "the monitor does not show an FT812 picture with metrics (the Evo is shown, or measure-always is off)";
+        return false;
+    }
+    return true;
+}
+
+bool SetLineBudgetMargin(EmulatorContext* context, uint32_t percent, std::string* error)
+{
+    if (percent > 50)
+    {
+        if (error)
+            *error = "the margin is a percent from 0 to 50";
+        return false;
+    }
+    Vdac2Card* card = FindCard(context, error);
+    if (!card)
+        return false;
+    card->SetLineBudgetMargin(percent);
+    return true;
+}
+
+bool SetMeasureAlways(EmulatorContext* context, bool on, std::string* error)
+{
+    Vdac2Card* card = FindCard(context, error);
+    if (!card)
+        return false;
+    card->SetMeasureAlways(on);
     return true;
 }
 

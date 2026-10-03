@@ -209,6 +209,11 @@ size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* l
     return count;
 }
 
+uint32_t EveFrameLinesPassed(const EveChip* chip)
+{
+    return FrameLinesDue(*chip);
+}
+
 void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent)
 {
     chip->lineBudgetMargin = percent > 50 ? 50 : percent;

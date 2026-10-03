@@ -27,6 +27,9 @@ signals:
     void filesDropped(const QStringList& paths);
     void dragEntered(const QString& filePath);
     void dragLeft();
+    /// After every refresh(): windows that must show the same moment as the
+    /// screen (FT812 Debug) refresh with it
+    void refreshed();
 
 public:
 
@@ -99,6 +102,12 @@ public:
 
     /// @brief Get the underlying widget for layout purposes
     QWidget* widget() const { return _widget; }
+
+    /// @brief Where the picture is drawn, in global screen coordinates (letterbox
+    /// excluded), and which framebuffer area it shows: windows drawn in the
+    /// screen's scale (FT812 Debug) line their rows up with it
+    QRect pictureGlobalRect() const;
+    QRectF pictureSourceRect() const;
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }

@@ -61,15 +61,18 @@
 /// where it replaces the line interrupt; deciding that is the interrupt
 /// controller's job (ITsConfLineSource). The card reports every edge.
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "debugger/ttd/ttddisplayparticipant.h"
 #include "emulator/io/spi/spidevice.h"
 #include "emulator/platforms/tsconf/vdac2capture.h"
+#include "emulator/platforms/tsconf/vdac2control.h"
 #include "emulator/platform.h"
 
 class EmulatorContext;
@@ -171,6 +174,30 @@ public:
     Vdac2Capture::Stats GetCaptureStats() const { return _capture.GetStats(); }
     /// endregion
 
+    /// region <Line budget metrics (line-budget-metrics.md, line-budget-model.md)>
+    /// The soft budget: percent below the line period (0..50; [VDAC2] LineBudgetMargin).
+    /// Any thread; frames finished from the next one on use it
+    void SetLineBudgetMargin(uint32_t percent);
+    uint32_t LineBudgetMargin() const { return _lineBudgetMargin.load(); }
+    /// Draw (and so measure) every FT812 frame, also while the monitor shows the
+    /// Evo or turbo skips frames. Off: only shown, drawn frames have metrics.
+    /// Nothing the guest sees depends on it; it costs the drawing time. Any
+    /// thread; takes effect at the card's next advance
+    void SetMeasureAlways(bool on);
+    bool MeasureAlways() const { return _measureAlways.load(); }
+    /// The metrics now: the last finished frame's block, its lines if asked, and
+    /// the frame in flight if asked (that one brings the chip up to the machine's
+    /// position: emulation thread or a stopped machine only)
+    void ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool withLines, bool inFlight);
+    /// The metrics of the picture the monitor shows now (line-budget-metrics.md
+    /// §3.3): kept when the card publishes a picture - an FT812 frame latched to
+    /// the Screen (while measure-always is on), a TTD-composed picture (a frame
+    /// target: the frame that finished last; a moment inside a frame: plus the
+    /// lines of the frame in flight drawn so far). False while the monitor shows
+    /// the Evo or before the first one. Any thread
+    bool PresentedFrameMetrics(Vdac2Control::FrameMetrics& out) const;
+    /// endregion
+
     /// Falling edges of INT_N up to raster tact `rasterInFrame` of the
     /// current frame, oldest first, as tacts of the current frame (an edge
     /// carried over from the frame before reads as 0). Advances the chip
@@ -256,4 +283,16 @@ private:
     // [VDAC2] CaptureFile: the bus traffic as an .evr replay stream; while
     // capturing, the chip draws every frame so the stream carries frame hashes
     Vdac2Capture _capture;
+
+    // Set from any thread (automation, the debugger window); the emulation thread
+    // applies them: the margin at the next FT812 frame end, the drawing switch at
+    // the next advance
+    std::atomic<uint32_t> _lineBudgetMargin{10};
+    std::atomic<bool> _measureAlways{false};
+
+    /// What PresentedFrameMetrics answers; written on the emulation thread
+    void KeepPresentedMetrics(bool withInFlight);
+    mutable std::mutex _presentedLock;
+    Vdac2Control::FrameMetrics _presented;
+    bool _presentedKnown = false;
 };

@@ -1348,6 +1348,63 @@ TEST_F(McpTools_Test, AnalyzePerformance_FrameCost_GetsEndpoint)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/frame_cost"));
 }
 
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudget_GetsMetricsAndSummarizes)
+{
+    Json::Value reply;
+    reply["valid"] = true;
+    reply["frame"] = 1234;
+    reply["lines"] = 768;
+    reply["hard_budget"] = 1344;
+    reply["soft_budget"] = 1209;
+    reply["worst_line"] = 402;
+    reply["worst_clocks"] = 1247;
+    reply["lines_over_soft"] = 12;
+    reply["lines_over_hard"] = 0;
+    reply["margin"] = 10;
+    reply["measure_always"] = false;
+    reply["in_flight"]["known"] = false;
+    reply["in_flight"]["reason"] = "the machine is running: pause it to read the frame in flight";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac2/metrics?lines=1&in_flight=1"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget";
+    args["lines"] = true;
+    args["in_flight"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("worst line 402 = 1247 of 1344"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12 line(s) over soft"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("pause it"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
+{
+    Json::Value reply;
+    reply["valid"] = false;
+    reply["measure_always"] = true;
+    _caller->routes["PUT /api/v1/emulator/emu-1/vdac2/metrics"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "vdac2_line_budget_set";
+    args["measure_always"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "analyze_performance", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/vdac2/metrics");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["measure_always"].asBool());
+    EXPECT_FALSE(call->body.isMember("margin"));
+    EXPECT_NE(result.text.find("not measured"), std::string::npos) << result.text;
+
+    Json::Value bad;
+    bad["action"] = "vdac2_line_budget_set";
+    bad["margin"] = 60;
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", bad, *_caller).isError);
+    Json::Value empty;
+    empty["action"] = "vdac2_line_budget_set";
+    EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/labels"] = {200, Json::Value(Json::objectValue)};

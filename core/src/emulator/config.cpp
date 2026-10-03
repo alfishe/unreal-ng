@@ -906,6 +906,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// a missing file only leaves the ROM fonts blank
 	CopyStringValue(inimanager.GetValue(vdac2, "RomImage", "rom/ft81x.rom"), config.vdac2_rom_path,
 	                sizeof config.vdac2_rom_path);
+	// [VDAC2] LineBudgetMargin: the FT812 line metrics' soft budget, percent below
+	// the line period (line-budget-model.md §2); 0..50, default 10
+	config.vdac2_line_budget_margin =
+		static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac2, "LineBudgetMargin", 10), 0, 50));
 	// [VDAC2] CaptureFile: a debug capture of everything on the FT812's bus, for
 	// replaying the chip alone (vdac2-test-corpus.md §4); empty = off
 	CopyStringValue(inimanager.GetValue(vdac2, "CaptureFile", ""), config.vdac2_capture_path,

@@ -183,6 +183,12 @@ void EveGetLineCost(const EveChip* chip, uint32_t line, EveLineCost* out);
 /* The metrics of the last completed frame; lineClocks (may be NULL) receives the cost of up to
  * maxLines lines, saturated at 65535. Returns the number of line costs written. */
 size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* lineClocks, size_t maxLines);
+/* The frame in flight: visible lines the scan has passed so far, as of the last catch-up
+ * (EveSetOutput catches up). Lines 0..n-1 of EveGetLineCost belong to this frame: valid
+ * when drawn and measured, not valid when passed without drawing; lines from n on still
+ * hold the previous frame's costs. 0 at a frame start and after a state restore; after the
+ * last visible line, all of them until the next frame starts. */
+uint32_t EveFrameLinesPassed(const EveChip* chip);
 /* The soft budget: the hard budget minus `percent` (0..50, default 10). Host configuration,
  * not chip state: every frame block records the threshold it was measured with. */
 void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent);
