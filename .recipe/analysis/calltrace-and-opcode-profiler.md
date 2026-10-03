@@ -54,9 +54,8 @@ invoke_api {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/calltrace/ent
 Notes on the MCP forms (from `mcp-analysis.cpp`):
 
 - `debug_code trace` and `profile_report` append `?limit=` to the calltrace
-  `entries` request, but that handler reads the query parameter `count`
-  (see [Pitfalls](#pitfalls)). To control the entry count use `invoke_api`
-  with `count`.
+  `entries` request; the handler accepts `limit` as a synonym of `count`
+  (see [Pitfalls](#pitfalls)).
 - `profile_start` / `profile_stop` / `profile_status` map to
   `POST /profiler/start`, `POST /profiler/stop`, `GET /profiler/status`.
   There is no MCP action for the unified `pause`, `resume` or `clear`; use
@@ -204,14 +203,17 @@ actually computed.
 
 ## Pitfalls
 
-- **The legacy `GET /emulator/{id}/calltrace` is a stub.** Its handler
-  returns `calltrace_enabled`, a `message`, and an always-empty `entries`
-  array (the source carries a TODO for real entries). Use
-  `profiler/calltrace/entries`.
+- **The legacy `GET /emulator/{id}/calltrace` reads the same buffer.** With the
+  `calltrace` feature on it returns `calltrace_enabled`, `limit` (default 50,
+  max 1000), `total_count` and `entries` (`type`, `from_address`,
+  `to_address`, `sp`, `loop_count`), like `profiler/calltrace/entries`. The
+  buffer only fills during a calltrace profiler session, so start one first;
+  `profiler/calltrace/entries` stays the primary route.
 - **`limit` versus `count`.** The calltrace `entries` handler reads `count`
-  only, so the `limit` that `debug_code trace` and `profile_report` send is
-  not applied to it (default 100 entries). The opcode `counters` endpoint
-  reads `limit`; the opcode `trace` endpoint reads `count`.
+  and accepts `limit` as a synonym (`count` wins when both are given; default
+  100 entries), so the `limit` that `debug_code trace` and `profile_report`
+  send applies. The opcode `counters` endpoint reads `limit`; the opcode
+  `trace` endpoint reads `count` only.
 - **Stop before reading calltrace.** `calltrace/stop` flushes pinned hot
   (tight-loop) events into the buffer that `entries` reads; reading while
   `capturing` can miss them.
