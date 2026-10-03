@@ -27,6 +27,26 @@
 
 namespace ttd
 {
+
+namespace
+{
+/// Memory the engine records and v1 does not at all (D33 exception)
+bool V1Lacks(TTDRegionId id)
+{
+    switch (id)
+    {
+        case TTDRegionId::MoonSoundWaveMemory:
+        case TTDRegionId::NeoGSRam:
+        case TTDRegionId::NeoGSFlash:
+        case TTDRegionId::EvoAvrEeprom:
+        case TTDRegionId::SmucEeprom:
+            return true;
+        default:
+            return false;
+    }
+}
+}  // namespace
+
 namespace bench
 {
 
@@ -295,6 +315,7 @@ public:
         w.pagesVisited = t.pagesVisited;
         w.deltaBaseBytes = t.deltaBaseBytes;
         w.deviceBlobBytes = t.deviceBlobBytes;
+        w.deviceStateBytes = t.deviceStateBytes;
         w.bytesScanned = t.bytesScanned;
         w.compressCalls = t.compressCalls;
         w.compressInputBytes = t.compressInputBytes;
@@ -471,6 +492,11 @@ public:
         w.compressCalls = e.compressCalls;
         w.compressInputBytes = e.compressInputBytes;
         w.deviceBlobBytes = e.deviceBlobBytes;
+        w.deviceStateBytes = e.deviceStateBytes;
+        w.bytesScannedRam = uint64_t(_engine.LastPiecesOffered(0)) * kTTDPieceSize;
+        for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+            if (V1Lacks(_engine.Regions()[r].id))
+                w.bytesScannedV1Lacks += uint64_t(_engine.LastPiecesOffered(r)) * kTTDPieceSize;
         return w;
     }
     size_t Checkpoints() const override { return _engine.CheckpointCount(); }
@@ -482,8 +508,17 @@ public:
     {
         StreamBytes b;
         b.ramPayload = _engine.RegionPayloadBytes(0);   // machine RAM, as v1's ramPayload
+        b.versions = _engine.RegionVersionCount(0);
         for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
+        {
             b.deviceRegions += _engine.RegionPayloadBytes(r);
+            if (V1Lacks(_engine.Regions()[r].id))
+            {
+                b.deviceRegionsV1Lacks += _engine.RegionPayloadBytes(r);
+                b.versionsV1Lacks += _engine.RegionVersionCount(r);
+            }
+            b.versions += _engine.RegionVersionCount(r);
+        }
         b.pageRefs = _engine.ReferenceBytes();
         for (size_t i = 0; i < _engine.CheckpointCount(); i++)
         {
@@ -787,6 +822,9 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
             m["bm2_work_pages_visited_opf"] = static_cast<double>(work.pagesVisited) * perFrame;
             m["bm2_work_delta_base_bpf"] = static_cast<double>(work.deltaBaseBytes) * perFrame;
             m["bm2_work_device_blobs_bpf"] = static_cast<double>(work.deviceBlobBytes) * perFrame;
+            m["bm2_work_device_state_bpf"] = static_cast<double>(work.deviceStateBytes) * perFrame;
+            m["bm2_work_scanned_v1_lacks_bpf"] = static_cast<double>(work.bytesScannedV1Lacks) * perFrame;
+            m["bm2_work_scanned_ram_bpf"] = static_cast<double>(work.bytesScannedRam) * perFrame;
             m["bm2_work_scanned_bpf"] = static_cast<double>(work.bytesScanned) * perFrame;
             m["bm2_work_compress_calls_opf"] = static_cast<double>(work.compressCalls) * perFrame;
             m["bm2_work_compress_input_bpf"] = static_cast<double>(work.compressInputBytes) * perFrame;
@@ -804,6 +842,8 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         m["bm3_input_journal_bpf"] = static_cast<double>(b.inputJournal) / n;
         m["bm3_coverage_bpf"] = static_cast<double>(b.coverage) / n;
         m["bm3_device_regions_bpf"] = static_cast<double>(b.deviceRegions) / n;
+        m["bm3_device_regions_v1_lacks_bpf"] = static_cast<double>(b.deviceRegionsV1Lacks) / n;
+        m["bm3_versions_v1_lacks_share"] = b.versions ? static_cast<double>(b.versionsV1Lacks) / b.versions : 0.0;
         m["bm3_total_bpf"] = static_cast<double>(b.Total()) / n;
         // Writes per frame over the whole session: the journal's bytes above
         // stop growing once its ring is full, this count does not

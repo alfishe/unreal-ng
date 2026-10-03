@@ -1046,6 +1046,7 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     _peripherals.CaptureAll(out.peripheralBlobs);
     for (const auto& blob : out.peripheralBlobs)
         _captureWork.deviceBlobBytes += blob.second.size();
+    _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
 
     // --- Port-read journal position: the reads before it happened before
     // this point, so a replay from here starts handing out records at it ---
@@ -3262,6 +3263,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // gives the engine its state without that memory
     std::unordered_map<uint8_t, std::vector<uint8_t>> engineBlobs;
     std::vector<uint8_t> stripped;
+    in.deviceStateBytes = _peripherals.LastCaptureStateBytes();
     for (ITTDRegionSource* source : _peripherals.RegionSources())
     {
         uint8_t id = 0;
@@ -3273,6 +3275,8 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
             in.deviceBlobs = &engineBlobs;
         }
         engineBlobs[id] = TTDPeripheralRegistry::EncodeBlob(id, stripped.data(), stripped.size());
+        // The engine serializes the state without the region memory
+        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.size();
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);

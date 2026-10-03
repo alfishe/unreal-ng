@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <deque>
 #include <vector>
 
 #include "debugger/ttd/engine/ttdframeinput.h"
@@ -116,6 +117,7 @@ struct TTDEngineCaptureWork
     uint64_t compressCalls = 0;
     uint64_t compressInputBytes = 0;
     uint64_t deviceBlobBytes = 0;     ///< device state copied into the checkpoint
+    uint64_t deviceStateBytes = 0;    ///< device state serialized for it (raw; TTDFrameInput)
 };
 
 class TimeTravelEngine
@@ -217,9 +219,20 @@ public:
 
     /// Compressed bytes stored for region @p region's new versions so far (a
     /// stream size: what this region adds to the recording)
+    /// Pieces of @p region the last capture was handed (counted work)
+    uint32_t LastPiecesOffered(uint32_t region) const
+    {
+        return region < _offeredByRegion.size() ? _offeredByRegion[region] : 0;
+    }
+
     uint64_t RegionPayloadBytes(uint32_t region) const
     {
         return region < _regionPayload.size() ? _regionPayload[region] : 0;
+    }
+    /// New versions stored for region @p region so far
+    uint64_t RegionVersionCount(uint32_t region) const
+    {
+        return region < _regionVersions.size() ? _regionVersions[region] : 0;
     }
 
 private:
@@ -255,6 +268,7 @@ private:
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
     std::vector<uint64_t> _regionPayload;
+    std::vector<uint64_t> _regionVersions;
     TTDEngineCaptureWork _lastWork;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
@@ -263,7 +277,10 @@ private:
     std::vector<std::vector<uint8_t>> _deltaBase;
     TTDFrameTable _frames;
     TTDStreamRegistry _streams;
-    std::vector<TTDEngineCheckpoint> _checkpoints;
+    /// A deque: no growth reserve (a vector held up to twice the records), and
+    /// records never move
+    std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region
+    std::deque<TTDEngineCheckpoint> _checkpoints;
 };
 
 }  // namespace ttd

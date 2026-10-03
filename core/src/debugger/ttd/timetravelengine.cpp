@@ -67,6 +67,7 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
     }
     _lastSnapshot.assign(_regions.size(), nullptr);
     _regionPayload.assign(_regions.size(), 0);
+    _regionVersions.assign(_regions.size(), 0);
     _open = true;
     return true;
 }
@@ -93,9 +94,10 @@ void TimeTravelEngine::EndSession()
     _sinceSnapshotFlag.clear();
     _lastSnapshot.clear();
     _regionPayload.clear();
+    _regionVersions.clear();
     _frames.Clear();
     _checkpoints.clear();
-    _checkpoints.shrink_to_fit();
+    _checkpoints.shrink_to_fit();   // a deque returns its blocks
 }
 
 /// endregion </Session>
@@ -130,6 +132,11 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     _store->ResetWork();
     _lastWork = TTDEngineCaptureWork{};
     _lastWork.piecesOffered = input.changed.size();
+    _lastWork.deviceStateBytes = input.deviceStateBytes;
+    _offeredByRegion.assign(_regions.size(), 0);   // no allocation once sized
+    for (const TTDChangedPiece& c : input.changed)
+        if (c.region < _offeredByRegion.size())
+            ++_offeredByRegion[c.region];
 
     TTDEngineCheckpoint cp;
     cp.position = input.position;
@@ -179,6 +186,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             }
             _changes.push_back({c.piece, next});   // the record takes the reference
             _regionPayload[r] += _store->PayloadSize(next);
+            ++_regionVersions[r];
             _live[r][c.piece] = next;
             if (!_sinceSnapshotFlag[r][c.piece])
             {
@@ -389,7 +397,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     for (size_t r = 0; r < _live.size(); ++r)
         h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
                              _sinceSnapshotFlag[r].capacity();
-    h.checkpoints = _checkpoints.capacity() * sizeof(TTDEngineCheckpoint);
+    h.checkpoints = _checkpoints.size() * sizeof(TTDEngineCheckpoint);
     for (const TTDEngineCheckpoint& cp : _checkpoints)
     {
         h.checkpoints += cp.regions.capacity() * sizeof(cp.regions[0]);

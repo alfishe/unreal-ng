@@ -121,3 +121,23 @@ for set in ci turbo full; do
         testdata/ttd/bench/v1-$set.json
 done
 ```
+
+## The engine's quality bar (`ttd_engine_d33.py`)
+
+Checks a run of the matrix with both engines against engine decision 33
+(`docs/inprogress/2026-09-25-ttd-v2-migration/engine-decisions.md`, section G):
+recorded bytes, memory and counted capture work per frame, the engine never
+above v1, with the decision's exceptions applied (memory v1 does not record at
+all; the engine's fixed delta base and arena slack printed apart). Exit status
+1 when a condition fails. `--timings` adds the capture and memory-restore
+timings, which are not judged (run on an idle host, load < 12, twice).
+
+```bash
+UNREAL_TTD_BENCH_ENGINE=all UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_FRAMES=600 UNREAL_TTD_BENCH_SEEKS=0 \
+    ./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter='TTDMatrix/' \
+    --benchmark_format=json --benchmark_out=scratch/engine-full.json
+python3 tools/verification/ttd-bench/ttd_engine_d33.py scratch/engine-full.json
+```
+
+The Phase 1 baseline is `testdata/ttd/bench/engine-phase1-full.json`.
+

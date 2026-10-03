@@ -141,6 +141,13 @@ struct StreamBytes
     /// Device memory recorded as regions (the time-travel engine; v1 keeps
     /// the General Sound RAM inside deviceBlobs and the rest not at all)
     uint64_t deviceRegions = 0;
+    /// The part of deviceRegions v1 does not record at all (NeoGS RAM and
+    /// flash, MoonSound wave RAM, the EEPROMs): D33's "memory v1 does not
+    /// record" exception. Not added to Total() a second time
+    uint64_t deviceRegionsV1Lacks = 0;
+    /// Piece versions stored, in all and for memory v1 does not record
+    uint64_t versions = 0;
+    uint64_t versionsV1Lacks = 0;
     /// Memory writes recorded since the session started, including those the
     /// write journal's ring has already dropped (not part of Total())
     uint64_t journalWritesTotal = 0;
@@ -178,9 +185,18 @@ struct CaptureWork
     uint64_t compressCalls = 0;
     uint64_t compressInputBytes = 0;
     uint64_t slotsDecoded = 0;
+    /// Raw device-state bytes serialized (both engines read them every frame)
+    uint64_t deviceStateBytes = 0;
+    /// Part of bytesScanned spent on memory v1 does not record (NeoGS,
+    /// MoonSound wave RAM, the EEPROMs; engine only): D33's exception
+    uint64_t bytesScannedV1Lacks = 0;
+    uint64_t bytesScannedRam = 0;   ///< part of bytesScanned spent on machine RAM (engine only)
 
     CaptureWork& operator+=(const CaptureWork& o)
     {
+        bytesScannedRam += o.bytesScannedRam;
+        deviceStateBytes += o.deviceStateBytes;
+        bytesScannedV1Lacks += o.bytesScannedV1Lacks;
         pagesVisited += o.pagesVisited;
         deltaBaseBytes += o.deltaBaseBytes;
         deviceBlobBytes += o.deviceBlobBytes;

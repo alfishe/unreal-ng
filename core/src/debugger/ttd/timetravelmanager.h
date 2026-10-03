@@ -132,6 +132,7 @@ struct TTDCaptureWork
     uint64_t pagesVisited = 0;        ///< RAM pages the capture walked
     uint64_t deltaBaseBytes = 0;      ///< bytes copied into the delta base (_prevPageCache)
     uint64_t deviceBlobBytes = 0;     ///< device-state bytes stored
+    uint64_t deviceStateBytes = 0;    ///< device-state bytes serialized (raw, before compression)
     uint64_t bytesScanned = 0;        ///< page store: bytes XOR'd and zero-checked
     uint64_t compressCalls = 0;       ///< page store: zstd calls
     uint64_t compressInputBytes = 0;  ///< page store: bytes handed to zstd

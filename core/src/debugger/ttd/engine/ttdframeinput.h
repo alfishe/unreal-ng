@@ -36,6 +36,9 @@ struct TTDFrameInput
     /// (Phase 2 replaces this with the device registry)
     const std::unordered_map<uint8_t, std::vector<uint8_t>>* deviceBlobs = nullptr;
     std::vector<TTDChangedPiece> changed;
+    /// Raw device-state bytes the capture serialized for the blobs above
+    /// (counted work only; the engine does not read them)
+    uint64_t deviceStateBytes = 0;
 };
 
 }  // namespace ttd

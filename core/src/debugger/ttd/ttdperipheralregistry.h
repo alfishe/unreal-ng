@@ -17,6 +17,7 @@
 /// Performance target: <1ms for capture, <2ms for restore (well within
 /// the 5-6ms per-frame restoration budget).
 
+#include <array>
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
@@ -123,6 +124,11 @@ public:
     }
     uint64_t NotRecordedMask() const { return _notRecorded; }
 
+    /// Raw device-state bytes the last CaptureAll serialized, in all and for
+    /// one device (before compression: the work of reading the state)
+    uint64_t LastCaptureStateBytes() const { return _lastStateTotal; }
+    uint32_t LastCaptureStateBytes(uint8_t id) const { return id < _lastStateBytes.size() ? _lastStateBytes[id] : 0; }
+
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
 
@@ -153,6 +159,8 @@ private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
     std::vector<ITTDRegionSource*> _regionSources;
     uint64_t _notRecorded = 0;
+    mutable std::array<uint32_t, 64> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id
+    mutable uint64_t _lastStateTotal = 0;
 
 
 

@@ -3,7 +3,7 @@
 /// @file ttdarena.h
 /// @brief Where the engine's compressed pieces live.
 ///
-/// Payloads are carved from 1 MB chunks by bumping a pointer, at their exact
+/// Payloads are carved from chunks by bumping a pointer, at their exact
 /// size, so a 60-byte piece costs 60 bytes and no heap header of its own
 /// (median stored pieces are 39-93 bytes). A chunk counts its live bytes and
 /// is returned when the last payload in it is released. A payload is named
@@ -32,6 +32,9 @@ struct TTDArenaRef
 class TTDArena
 {
 public:
+    /// Chunks grow from kFirstChunkBytes, doubling, to kChunkBytes: a short
+    /// session does not pay for a 1 MB chunk it barely uses
+    static constexpr uint32_t kFirstChunkBytes = 64u << 10;
     static constexpr uint32_t kChunkBytes = 1u << 20;
 
     /// Copy @p size bytes into the arena. Payloads larger than a chunk get a
@@ -63,6 +66,7 @@ private:
     std::vector<std::unique_ptr<Chunk>> _chunks;   ///< null when returned
     std::vector<uint32_t> _freeIndices;            ///< returned chunk slots to reuse
     uint32_t _current = TTDArenaRef::kNone;        ///< chunk being filled
+    uint32_t _nextChunkBytes = kFirstChunkBytes;   ///< size of the next new chunk
     size_t _liveBytes = 0;
 };
 

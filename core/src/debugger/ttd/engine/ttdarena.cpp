@@ -17,7 +17,9 @@ TTDArenaRef TTDArena::Store(const uint8_t* bytes, uint32_t size)
     if (!fits)
     {
         auto chunk = std::make_unique<Chunk>();
-        chunk->capacity = size > kChunkBytes ? size : kChunkBytes;
+        chunk->capacity = size > _nextChunkBytes ? size : _nextChunkBytes;
+        if (size <= kChunkBytes && _nextChunkBytes < kChunkBytes)
+            _nextChunkBytes *= 2;
         chunk->bytes.reset(new uint8_t[chunk->capacity]);
         uint32_t index;
         if (!_freeIndices.empty())
@@ -101,6 +103,7 @@ void TTDArena::Clear()
     _freeIndices.clear();
     _current = TTDArenaRef::kNone;
     _liveBytes = 0;
+    _nextChunkBytes = kFirstChunkBytes;
 }
 
 }  // namespace ttd

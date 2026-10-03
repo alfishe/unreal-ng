@@ -99,6 +99,8 @@ void TTDPeripheralRegistry::CaptureAll(
     std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const
 {
     outBlobs.clear();
+    _lastStateBytes.fill(0);
+    _lastStateTotal = 0;
 
     for (const auto& [id, device] : _devices)
     {
@@ -116,6 +118,9 @@ void TTDPeripheralRegistry::CaptureAll(
             continue;
 
         outBlobs[id] = EncodeBlob(id, currentState.data(), currentState.size());
+        if (id < _lastStateBytes.size())
+            _lastStateBytes[id] = static_cast<uint32_t>(currentState.size());
+        _lastStateTotal += currentState.size();
     }
 }
 
