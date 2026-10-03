@@ -73,6 +73,13 @@ std::string FormatRecordedMachine(const ttd::TTDRecordedMachine& m)
     for (size_t i = 0; i < m.peripherals.size(); ++i)
         ss << (i ? ", " : "") << m.peripherals[i];
     ss << CLIProcessor::NEWLINE;
+    if (!m.notRecorded.empty())
+    {
+        ss << "  Not recorded:           ";
+        for (size_t i = 0; i < m.notRecorded.size(); ++i)
+            ss << (i ? ", " : "") << m.notRecorded[i];
+        ss << " (fitted, run live through seeks)" << CLIProcessor::NEWLINE;
+    }
     return ss.str();
 }
 

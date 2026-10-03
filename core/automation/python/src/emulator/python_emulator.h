@@ -121,6 +121,10 @@ inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
     for (const std::string& name : m.peripherals)
         list.append(name);
     d["peripherals"] = list;
+    py::list notRecorded;
+    for (const std::string& name : m.notRecorded)
+        notRecorded.append(name);
+    d["not_recorded"] = notRecorded;
     d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
     d["turbo_sound"] = py::cast(m.turboSound);
     return d;

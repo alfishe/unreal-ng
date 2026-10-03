@@ -972,7 +972,7 @@ status = emu.ttd_status()
 #   'model_id': 0,
 #   'model_ram_pages': 8,             # BOUND, not a count (48K reports 6)
 #   'machine': {'model': 'PENTAGON', 'model_id': 1, 'ram_page_bound': 8, 'rom_signature': '0x...',
-#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...],
+#               'peripheral_mask': ..., 'peripherals': ['betadisk', ...], 'not_recorded': [] or ['gs-lw'],
 #               'general_sound': 'none'|'z80'|'lw'|'ngs', 'turbo_sound': 'none'|'turbosound'|'tsfm'},
 #                                     # the recorded machine; None while there is no session
 #   'recorded_by': None,              # the instance that recorded a loaded file

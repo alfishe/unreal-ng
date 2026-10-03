@@ -190,7 +190,9 @@ types:
           u8 status, u32 addr, u16 port, u32 payload_offset,
           u32 payload_length; then u32 payload_size and the payload bytes
           (what the machine received from the host network).
-          Bits 11-15 reserved (must be 0).
+          Bit 11 (0x0800) = the header continues with `not_recorded_mask`
+          (devices fitted but deliberately not recorded); only when that mask
+          is not zero. Bits 12-15 reserved (must be 0).
       - id: model_id
         type: u1
         doc: eModel enum value (which machine model was active).
@@ -270,6 +272,13 @@ types:
           state blob in the first checkpoint - the recorded machine's device
           set, readable without walking to the checkpoints. Without bit 9:
           zero (formerly reserved).
+      - id: not_recorded_mask
+        type: u8
+        if: (flags & 0x0800) != 0
+        doc: |
+          Bit N set = peripheral id N was fitted but time travel does not
+          record it (no blob in any checkpoint; it runs live through seeks):
+          the lightweight General Sound (11). A loader fits the same card.
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:

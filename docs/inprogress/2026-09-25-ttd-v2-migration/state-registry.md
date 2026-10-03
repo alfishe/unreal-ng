@@ -11,7 +11,7 @@ First filled 2026-10-02 from a code audit of branch `ttd-engine`. A change that 
 | Item | One piece of state as the code holds it |
 | Machines | Where it exists |
 | Stream | Where it is recorded: **v1** (the current `TimeTravelManager` checkpoint) and **engine** (`TimeTravelEngine`). `—` means not recorded |
-| Class | **R** required, **D** derived, **T** telemetry, **H** host-facing (not recorded by design); see [decision 34](engine-decisions.md#h-classes-of-recorded-data) |
+| Class | **R** required, **D** derived, **T** telemetry, **H** host-facing (not recorded by design), **N** a device not recorded by design, named in the header; see [decision 34](engine-decisions.md#h-classes-of-recorded-data) |
 | Size | *Reserved.* Fixed size in bytes, or a range `min–max` |
 | Variability | *Reserved.* How often it changes and how much: for example "every frame, whole", "rare, a few bytes", "only on media load" |
 | Status | `ok`, or the gap number from [Gaps](#gaps) |
@@ -28,7 +28,7 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | Machine RAM, 16 KB pages | all | page store (dirty pages, XOR deltas) | region 0 `MachineRam`, 4 KB pieces | R | | | ok | `timetravelmanager.cpp` capture; engine `timetravelengine.cpp` |
 | ROM pages | all | — (fixed, fingerprinted) | — | R (constant) | | | ok | ROM reload ends the session |
 | General Sound RAM | GS classic | inside the GS blob (id 5) | region 1 `GeneralSoundRam` | R | | | ok | `sound/chips/soundchip_gs.cpp` |
-| GS lightweight upload store | GS lightweight | inside the blob (id 11), variable size | region 2 `GeneralSoundUploadStore` (planned) | R | | | gap 2 | `soundchip_gslw.cpp:1311-1335` |
+| GS lightweight upload store | GS lightweight | not recorded (the card is class N) | — | N | | | ok | `debugger/ttd/ttdmachineperipherals.cpp` |
 | MoonSound wave SRAM (RAM after the ROM) | MoonSound | — | region 3 `MoonSoundWaveMemory` | R | | | gap 3 | `soundchip_moonsound.cpp` |
 | NeoGS RAM | NeoGS | — | region 4 `NeoGSRam` | R | | | gap 3 | `soundchip_neogs.cpp:1392-1398` |
 | NeoGS flash | NeoGS | — | region 5 `NeoGSFlash` | R | | | gap 3 | `flash29f040b.cpp` |
@@ -73,7 +73,7 @@ One row per device blob; the device's memory is in section 1.
 | ATM paging, palettes, AVR volatile bytes | ATM450, ATM710, ATM3 | id 8 | blob | R | | | ok | `debugger/ttd/atm/ttdatmpaging.cpp:35-36` |
 | Profi paging, palette | Profi | id 9 | blob | R | | | ok | |
 | MoonSound latches + OPL4 state | MoonSound | id 10 | blob | R | | | ok | `soundchip_moonsound.cpp:486/509` |
-| GS lightweight interpreter, mod player | GS lightweight | id 11 | blob | R | | | gap 2 | `soundchip_gslw.cpp:1313` |
+| GS lightweight card (interpreter, mod player, store) | GS lightweight | not recorded; header `not_recorded_mask` bit 11 (flag bit 11). Its blob code stays for machine state transfer | same | N | | | ok | `debugger/ttd/ttdmachineperipherals.cpp`; `ttddumpformat.h` `kFlagsHasNotRecordedMask` |
 | NeoGS registers, Z80, DMA, VS10xx, SPI, flash command state, SD | NeoGS | id 12 | blob | R | | | ok | `soundchip_neogs.cpp:1392-1406` |
 | +3 paging (1FFD) | +2A, +3 | id 13 | blob | R | | | ok | |
 | uPD765 | +3 | id 14 | blob | R | | | ok | `io/fdc/upd765.cpp:1381/1427` |
@@ -175,7 +175,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | # | Gap | Effect | Severity |
 |---|---|---|---|
 | 1 | Evicting old history renumbers network payload records, but references held inside surviving checkpoints (ZXNETUSB, COM port, ZiFi, ATM2 I/O ESP, serial peer) keep the old numbers | Wrong bytes or zeros after an eviction, silently | breaks replay |
-| 2 | GS lightweight blob changes size with its store but is treated as fixed-size; the registry's exact-size check skips it | The whole card stays live after a seek across an upload | breaks replay |
+| 2 | *Closed 2026-10-02 by design:* the lightweight GS is not recorded (class N, named in the header); it runs live through seeks | — | — |
 | 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | breaks replay until the engine restores (Phase 5) |
 | 4 | WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk command ends it early on every other Beta machine | breaks replay |
 | 5 | *Fixed 2026-10-02:* ZX keyboard matrix in no checkpoint | Machines without the port journal read the live matrix in replay; stuck or missing keys after seek + resume | breaks replay |

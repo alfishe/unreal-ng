@@ -143,6 +143,10 @@ Json::Value RecordedMachineJson(const ttd::TTDRecordedMachine& m)
     for (const std::string& name : m.peripherals)
         list.append(name);
     v["peripherals"] = list;
+    Json::Value notRecorded(Json::arrayValue);
+    for (const std::string& name : m.notRecorded)
+        notRecorded.append(name);
+    v["not_recorded"] = notRecorded;
     v["general_sound"] = ttd::GeneralSoundName(m.generalSound);
     v["turbo_sound"] = m.turboSound;
     return v;

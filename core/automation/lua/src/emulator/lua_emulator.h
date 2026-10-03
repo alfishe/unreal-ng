@@ -146,6 +146,10 @@ inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRe
     for (size_t i = 0; i < m.peripherals.size(); ++i)
         list[i + 1] = m.peripherals[i];
     t["peripherals"] = list;
+    sol::table notRecorded = lua.create_table();
+    for (size_t i = 0; i < m.notRecorded.size(); ++i)
+        notRecorded[i + 1] = m.notRecorded[i];
+    t["not_recorded"] = notRecorded;
     t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
     t["turbo_sound"] = m.turboSound;
     return t;

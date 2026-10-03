@@ -1593,12 +1593,20 @@ public:
     {
         if (oldId != newId)
             _peripherals.Unregister(oldId);
-        _peripherals.Register(newId, device);
+        // The lightweight GS is fitted but not recorded (state registry)
+        if (newId == PeripheralId::GeneralSoundLightweight)
+            _peripherals.MarkNotRecorded(newId);
+        else
+            _peripherals.Register(newId, device);
     }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
+
+    /// Devices fitted but deliberately not recorded (bit = PeripheralId): the
+    /// loaded file's when the session came from one, else the live registry's
+    uint64_t NotRecordedMask() const { return _loadedFromFile ? _loadedNotRecordedMask : _peripherals.NotRecordedMask(); }
 
 private:
     // -----------------------------------------------------------------------
@@ -1976,6 +1984,7 @@ private:
     uint64_t    _capturedAtUnixMs = 0;
     uint8_t     _sessionModelId = 0;
     uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
+    uint64_t    _loadedNotRecordedMask = 0;  ///< The loaded file's not-recorded mask (kFlagsHasNotRecordedMask)
     std::string _loadedRecordedBy;        ///< The loaded file's emulator_id
 
     /// Per-frame coverage sets backing reverse-search frame skipping.

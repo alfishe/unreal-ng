@@ -75,7 +75,7 @@ public:
     void Register(PeripheralId id, TTDSerializable* device);
 
     /// Unregister a peripheral (called when device disconnected).
-    void Unregister(PeripheralId id);
+    void Unregister(PeripheralId id);   ///< also drops a not-recorded mark
 
     /// Drop every registration. Used when a session ends: most registered
     /// devices are owned by the emulator, so there is no local list to walk.
@@ -113,6 +113,16 @@ public:
     }
     const std::vector<ITTDRegionSource*>& RegionSources() const { return _regionSources; }
 
+    /// A device fitted on this machine that time travel deliberately does not
+    /// record (the lightweight General Sound): no blob, no restore, no missing
+    /// report; the session file names it (kFlagsHasNotRecordedMask)
+    void MarkNotRecorded(PeripheralId id)
+    {
+        Unregister(id);
+        _notRecorded |= uint64_t(1) << static_cast<uint8_t>(id);
+    }
+    uint64_t NotRecordedMask() const { return _notRecorded; }
+
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
 
@@ -142,6 +152,7 @@ public:
 private:
     std::unordered_map<uint8_t, TTDSerializable*> _devices;
     std::vector<ITTDRegionSource*> _regionSources;
+    uint64_t _notRecorded = 0;
 
 
 

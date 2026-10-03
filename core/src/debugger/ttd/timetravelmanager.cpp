@@ -329,6 +329,7 @@ bool TimeTravelManager::StartRecording()
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
+    _loadedNotRecordedMask = 0;
     _loadedRecordedBy.clear();
 
     MLOGINFO("TimeTravelManager::StartRecording — baseline captured: modelRamPages=%u, timeline=1, pageStoreBytes=%zu, debugMemIf=%s",
@@ -479,6 +480,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _loadedRomSignature = 0;
+    _loadedNotRecordedMask = 0;
     _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
@@ -669,6 +671,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         for (const auto& blob : _timeline.front().peripheralBlobs)
             if (blob.first < 64)
                 info.machine.peripheralMask |= uint64_t(1) << blob.first;
+        info.machine.notRecordedMask = NotRecordedMask();
         ttd::DescribeRecordedMachine(info.machine);
     }
     info.recordedBy = _loadedFromFile ? _loadedRecordedBy : std::string();
@@ -3891,6 +3894,11 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // network adapter stay byte-identical to the older layout
     if (!_inputJournal.NetInputs().empty())
         flags |= ttd::dump::kFlagsHasNetInputs;
+    // Devices fitted but deliberately not recorded (the lightweight GS): named
+    // in the header, only when there are any
+    const uint64_t notRecordedMask = NotRecordedMask();
+    if (notRecordedMask != 0)
+        flags |= ttd::dump::kFlagsHasNotRecordedMask;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -3931,6 +3939,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
                   "sub-page size mismatch between format and codec page store");
     // Formerly 8 reserved bytes: the peripheral mask (kFlagsHasPeripheralMask)
     if (!WritePod(out, peripheralMask, err)) return false;
+    if (notRecordedMask != 0 && !WritePod(out, notRecordedMask, err)) return false;
 
     // --- Write page store (only live slots, in remapped order) ---
     //
@@ -4350,6 +4359,8 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     uint64_t peripheralMask = 0;
     if (!ReadPod(in, peripheralMask, err)) return false;
     (void)peripheralMask;
+    uint64_t notRecordedMask = 0;
+    if ((flags & ttd::dump::kFlagsHasNotRecordedMask) && !ReadPod(in, notRecordedMask, err)) return false;
 
     // --- Staging ---
     // The file replaces the current session only once it has been read in
@@ -4608,7 +4619,9 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
             PeripheralId recordedId = PeripheralId::Count;
             for (const auto& slot : kGsSlot)
             {
-                if (blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
+                // A card fitted but not recorded (the lightweight GS) is named by the header, not by a blob
+                const bool notRecorded = (notRecordedMask >> static_cast<uint8_t>(slot.id)) & 1u;
+                if (notRecorded || blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
                 {
                     recorded = slot.name;
                     recordedId = slot.id;
@@ -4882,6 +4895,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _capturedAtUnixMs = capturedAtMs;
     _sessionModelId   = modelId;
     _loadedRomSignature = romSignature;
+    _loadedNotRecordedMask = notRecordedMask;
     _loadedRecordedBy = emulatorId;
 
     // --- Finalize state ---

@@ -162,6 +162,14 @@ constexpr uint16_t kFlagsHasPeripheralMask = 0x0200;
 /// payload store). Every event's payload range lies inside the store.
 constexpr uint16_t kFlagsHasNetInputs = 0x0400;
 
+/// Bit 11 of header.flags - the header continues, right after the peripheral
+/// mask, with a u64 not-recorded mask: bit i set when peripheral id i was
+/// fitted but is deliberately not recorded (state registry, class "not
+/// recorded": the lightweight General Sound). Its state runs live through
+/// seeks. Written only when the mask is not zero, so every other session keeps
+/// the older layout byte for byte.
+constexpr uint16_t kFlagsHasNotRecordedMask = 0x0800;
+
 /// Bytes per network-input record (the layout above)
 constexpr uint32_t kNetInputRecordSize = 4 + 2 + 1 + 1 + 4 + 2 + 4 + 4;
 

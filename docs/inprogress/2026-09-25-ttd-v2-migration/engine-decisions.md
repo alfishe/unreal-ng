@@ -141,6 +141,8 @@ Which chain a key reaches (the machine's routing, for example ZX key or PC key o
 
 **How a device decides.** If the emulation of any later instruction can read a value, directly or through a computation, it is *required*. If it can be recomputed from required state at any moment, it is *derived*. Only what neither applies to is *telemetry*. When in doubt, required: a wrong "telemetry" label breaks replay, a wrong "required" label only costs bytes.
 
+**Not recorded by design.** A device may be declared not recorded: it has no state in any checkpoint and runs live through seeks, and the session header names it as fitted (v1: header flag bit 11, `not_recorded_mask`), so a loader fits the same configuration and refuses another. It is no restore error and no missing state. The one case: the lightweight General Sound (a mod player standing in for the card; use the classic or NeoGS card to time-travel through GS code). Decided 2026-10-02.
+
 **Host-facing state is none of the three.** The audio ring, the host framebuffer, open host files of disk images, network sockets and host timers are not recorded. A restore reconnects them to the restored state (the picture is composed by replay, `ttddisplayparticipant.h`; media are versions per decision 25; network input comes from the event journal, decision 24).
 
 **Existing items to reclassify.** The VDAC2 card blob (`Vdac2`, id 43) carries the line-budget metrics of the last finished frame next to the chip's control state. If emulation does not read them back they move to a telemetry stream when the device blobs move to the engine (Phase 2). The registry marks every such case.

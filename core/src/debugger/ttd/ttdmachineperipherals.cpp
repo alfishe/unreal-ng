@@ -69,9 +69,18 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         // restore into another.
         if (GeneralSoundCard* gs = context->pSoundManager->getGeneralSound())
         {
-            registry.Register(gs->TTDPeripheralId(), gs);
-            // Card memory recorded as engine regions (NeoGS RAM and flash)
-            registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(gs));
+            // The lightweight card (a mod player, no coprocessor) is not recorded:
+            // it runs live through seeks, and the session file names it as fitted
+            if (gs->TTDPeripheralId() == PeripheralId::GeneralSoundLightweight)
+            {
+                registry.MarkNotRecorded(PeripheralId::GeneralSoundLightweight);
+            }
+            else
+            {
+                registry.Register(gs->TTDPeripheralId(), gs);
+                // Card memory recorded as engine regions (NeoGS RAM and flash)
+                registry.RegisterRegionSource(dynamic_cast<ITTDRegionSource*>(gs));
+            }
         }
 #ifdef UNREALNG_HAVE_OPL4
         // MoonSound registers only when the config flag built it; a null

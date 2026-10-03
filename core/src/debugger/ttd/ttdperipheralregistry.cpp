@@ -19,12 +19,14 @@ void TTDPeripheralRegistry::Register(PeripheralId id, TTDSerializable* device)
 void TTDPeripheralRegistry::Unregister(PeripheralId id)
 {
     _devices.erase(static_cast<uint8_t>(id));
+    _notRecorded &= ~(uint64_t(1) << static_cast<uint8_t>(id));
 }
 
 void TTDPeripheralRegistry::Clear()
 {
     _devices.clear();
     _regionSources.clear();
+    _notRecorded = 0;
 }
 
 bool TTDPeripheralRegistry::IsRegistered(PeripheralId id) const

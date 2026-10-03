@@ -818,7 +818,7 @@ local status = ttd_status()
 -- status.model_id              = 0
 -- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
 -- status.machine               = { model = "PENTAGON", model_id, ram_page_bound, rom_signature = "0x...",
---                                  peripheral_mask, peripherals = { "betadisk", ... },
+--                                  peripheral_mask, peripherals = { "betadisk", ... }, not_recorded = { "gs-lw" } or {},
 --                                  general_sound = "none"|"z80"|"lw"|"ngs", turbo_sound = "none"|"turbosound"|"tsfm" }
 --                                  -- the recorded machine; nil while there is no session
 -- status.recorded_by           = "emu-..."  -- the instance that recorded a loaded file; nil for a live one
