@@ -103,6 +103,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   from its INT handler and goes silent with the block on; the literal PLD `ACC_BLK` reading and MAME agree); PT3PLAY and WAVPLAY against MAME (pitch, tempo, rates equal; MAME swaps 16-bit stereo); recipe
   `.recipe/machines/sprinter-sound.md`
 
+- [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
+  [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
+  window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
+  window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
+  (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
+
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**

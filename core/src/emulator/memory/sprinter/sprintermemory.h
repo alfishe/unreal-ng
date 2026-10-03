@@ -120,6 +120,9 @@ public:
 
 protected:
     bool UpdateModelBanks() override;
+    /// Tool reads (debugger, WebAPI, Lua/Python) see the read redirect as the CPU does: graphics
+    /// pages from the video address, the ISA view #FF, the loader's fast RAM above CS0
+    uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override { return Redirect(addr, normal); }
 
 private:
     /// Write-only overlay over the whole address space (tdd-ports-memory §5.3):

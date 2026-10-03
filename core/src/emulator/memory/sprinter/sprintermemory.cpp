@@ -169,6 +169,7 @@ void SprinterMemory::FinishBanks()
     _anyRedirect = false;
     for (uint8_t bank = 0; bank < 4; bank++)
         _anyRedirect |= _redirect[bank] != ReadRedirect::None;
+    _toolReadRedirect = _anyRedirect;
 
     if (_decoder)
         _decoder->OnBanksChanged();
