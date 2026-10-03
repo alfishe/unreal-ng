@@ -752,3 +752,84 @@ TEST(TimeTravelEngine_Damage_Test, DeviceDamageAndMissingStateAreNamedWithTheirF
     EXPECT_EQ(check.issues[1].firstFrame, 8u);
     EXPECT_EQ(check.issues[1].lastFrame, 9u);
 }
+
+/// Phase 3, Step 4: the session's settings. The first entry is the session's;
+/// a change adds an entry and a ConfigChange cut at its frame; equal settings
+/// add nothing. A checkpoint is checked against the settings it was recorded
+/// with: for a replay every difference is NotBitExact, for a restore only the
+/// model / RAM size count (Degraded)
+TEST(TimeTravelEngine_Config_Test, SettingsAreKeptPerFrame_AndCheckedAgainstTheLiveMachine)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({Region(TTDRegionId::MachineRam, "ram", 1)}, err));
+    TTDConfigFingerprint a;
+    a.Add("machine.model", 3, true);
+    a.Add("sound.decimator_high_fidelity", 0);
+    TTDConfigFingerprint b = a;
+    b.fields[1].value = 1;
+
+    for (uint64_t f = 10; f < 16; ++f)
+    {
+        ASSERT_TRUE(engine.CaptureFrame(Frame(f), err)) << err;
+        ASSERT_TRUE(engine.SetConfiguration(f, f < 13 ? a : b));
+    }
+    ASSERT_EQ(engine.Configurations().size(), 2u) << "equal settings add no entry";
+    EXPECT_EQ(engine.Configurations()[1].frame, 13u);
+    size_t cuts = 0;
+    for (const TTDEvent& ev : engine.Events().Events())
+        if (ev.kind == TTDEventKind::ConfigChange)
+        {
+            ++cuts;
+            EXPECT_EQ(ev.machineTime, 13u * 71680) << "at the frame's start";
+            uint32_t entry = 0;
+            std::memcpy(&entry, ev.args, sizeof(entry));
+            EXPECT_EQ(entry, 1u);
+        }
+    EXPECT_EQ(cuts, 1u);
+    EXPECT_TRUE(*engine.ConfigurationAt(2) == a) << "frame 12";
+    EXPECT_TRUE(*engine.ConfigurationAt(3) == b) << "frame 13";
+
+    // A live machine set like a: frames 10-12 match, frames 13-15 differ in one setting
+    EXPECT_EQ(engine.CheckConfiguration(1, a, true).status, TTDRestoreStatus::Exact);
+    const TTDRestoreResult replay = engine.CheckConfiguration(4, a, true);
+    EXPECT_EQ(replay.status, TTDRestoreStatus::NotBitExact);
+    ASSERT_EQ(replay.issues.size(), 1u);
+    EXPECT_EQ(replay.issues[0].kind, TTDRestoreIssueKind::ConfigurationDiffers);
+    EXPECT_NE(replay.issues[0].detail.find("sound.decimator_high_fidelity"), std::string::npos);
+    EXPECT_EQ(engine.CheckConfiguration(4, a, false).status, TTDRestoreStatus::Exact)
+        << "a restore does not depend on the decimator";
+
+    TTDConfigFingerprint otherModel = a;
+    otherModel.fields[0].value = 4;
+    EXPECT_EQ(engine.CheckConfiguration(1, otherModel, false).status, TTDRestoreStatus::Degraded);
+}
+
+/// Phase 3, Step 4: media versions. A version is kept with the checkpoint of
+/// the frame it was noted in, only when it changed; a checkpoint's version is
+/// the latest one at or before it
+TEST(TimeTravelEngine_Config_Test, MediaVersionsAreKeptWhenTheyChange)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    ASSERT_TRUE(engine.BeginSession({Region(TTDRegionId::MachineRam, "ram", 1)}, err));
+    const TTDMediaVersion v0{0xAB, 0}, v1{0xAB, 1};
+    for (uint64_t f = 0; f < 6; ++f)
+    {
+        engine.NoteMediaVersion("sd.zc", "img", false, f < 3 ? v0 : v1);
+        ASSERT_TRUE(engine.CaptureFrame(Frame(f), err)) << err;
+    }
+    ASSERT_EQ(engine.MediaSlots().size(), 1u);
+    const TTDMediaSlot& slot = engine.MediaSlots()[0];
+    EXPECT_EQ(slot.slot, "sd.zc");
+    EXPECT_FALSE(slot.hasVersions);
+    ASSERT_EQ(slot.changes.size(), 2u) << "one entry per change, not per frame";
+    TTDMediaVersion at;
+    ASSERT_TRUE(engine.MediaVersionAt(2, 0, at));
+    EXPECT_TRUE(at == v0);
+    ASSERT_TRUE(engine.MediaVersionAt(3, 0, at));
+    EXPECT_TRUE(at == v1);
+    ASSERT_TRUE(engine.MediaVersionAt(5, 0, at));
+    EXPECT_TRUE(at == v1);
+    EXPECT_FALSE(engine.MediaVersionAt(0, 1, at)) << "no such slot";
+}

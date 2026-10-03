@@ -25,6 +25,7 @@
 #include <deque>
 #include <vector>
 
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
 #include "debugger/ttd/engine/ttdmediajournal.h"
@@ -33,76 +34,13 @@
 #include "debugger/ttd/engine/ttdframeinput.h"
 #include "debugger/ttd/engine/ttdpiecestore.h"
 #include "debugger/ttd/engine/ttdreftable.h"
+#include "debugger/ttd/engine/ttdrestoreresult.h"
 #include "debugger/ttd/engine/ttdregion.h"
 #include "debugger/ttd/engine/ttdstreamregistry.h"
 #include "debugger/ttd/engine/ttdtime.h"
 
 namespace ttd
 {
-
-/// How exact a restore was (engine decision D7). Phase 1 restores are always
-/// exact or damaged; "not bit-exact" and "degraded" come with Phases 2-3
-enum class TTDRestoreStatus : uint8_t
-{
-    Exact = 0,
-    NotBitExact = 1,   ///< state restored, but the session was recorded with other settings
-    Degraded = 2,      ///< some items could not be restored; see the message
-    Damaged = 3,       ///< stored data failed its integrity check
-};
-
-/// What one item of a restore lacked (Phase 2, Step 3; FR-7)
-enum class TTDRestoreIssueKind : uint8_t
-{
-    DeviceMissingState,   ///< the device exists here, the checkpoint has no state for it
-    DeviceNotPresent,     ///< the checkpoint has state for a device this machine lacks
-    LayoutUnsupported,
-    SizeMismatch,
-    DeviceSetDiffers,
-    FirmwareDiffers,      ///< restored exactly, but a replay may differ
-    ConfigurationDiffers,
-    DataDamaged,
-    AfterRestoreFailed,
-};
-
-/// What a device not restored holds now
-enum class TTDLiveStateAction : uint8_t
-{
-    NotApplicable,
-    KeptLive,         ///< what it held before the restore (D38: within a session every checkpoint holds
-                      ///< every device; this happens only on a machine whose devices differ, or on damage)
-};
-
-struct TTDRestoreIssue
-{
-    TTDRestoreIssueKind kind = TTDRestoreIssueKind::DeviceMissingState;
-    TTDRestoreStatus severity = TTDRestoreStatus::Degraded;
-    TTDDeviceKey device;   ///< empty instance for machine-wide issues
-    TTDLiveStateAction action = TTDLiveStateAction::NotApplicable;
-    std::string detail;
-    /// DataDamaged, DeviceMissingState in CheckSession: the frames the issue
-    /// reaches (a damaged version: from the change that stored it to the
-    /// piece's next change that does not depend on it)
-    uint64_t firstFrame = 0;
-    uint64_t lastFrame = 0;
-};
-
-struct TTDRestoreResult
-{
-    TTDRestoreStatus status = TTDRestoreStatus::Exact;   ///< the worst issue
-    std::string message;
-    std::vector<TTDRestoreIssue> issues;
-    bool Ok() const { return status == TTDRestoreStatus::Exact || status == TTDRestoreStatus::NotBitExact; }
-
-    void Add(TTDRestoreIssue issue)
-    {
-        if (static_cast<uint8_t>(issue.severity) > static_cast<uint8_t>(status))
-            status = issue.severity;
-        if (!message.empty())
-            message += "; ";
-        message += issue.device.instance.empty() ? issue.detail : issue.device.instance + ": " + issue.detail;
-        issues.push_back(std::move(issue));
-    }
-};
 
 /// A capture at which a device that runs behind the CPU was not synced to the
 /// frame boundary (TTDSerializable::TTDSyncedTime, FR-19)
@@ -145,6 +83,32 @@ struct TTDEngineCheckpoint
         uint32_t changeCount = 0;
     };
     std::vector<RegionRefs> regions;   ///< sorted by region
+};
+
+/// The settings in force from a frame on (Phase 3, Step 4): the session's
+/// first entry, then one per ConfigChange cut
+struct TTDConfigEntry
+{
+    uint64_t frame = 0;
+    TTDConfigFingerprint fingerprint;
+};
+
+/// A removable or writable medium as the session knows it (Phase 3, Step 4)
+struct TTDMediaVersion
+{
+    uint64_t contentId = 0;   ///< the source's identity (0: no medium)
+    uint64_t version = 0;     ///< the media layer's version; until it keeps versions, its write count
+    bool operator==(const TTDMediaVersion& o) const { return contentId == o.contentId && version == o.version; }
+    bool operator!=(const TTDMediaVersion& o) const { return !(*this == o); }
+};
+
+struct TTDMediaSlot
+{
+    std::string slot;      ///< "fdd.a", "sd.zc", "ide0.master"
+    std::string format;    ///< as the media manager reports it ("trd", "img", ...)
+    bool hasVersions = false;   ///< the media layer can set its head to a recorded version
+    /// The checkpoints at which its version changed, and the version from there on
+    std::vector<std::pair<uint32_t, TTDMediaVersion>> changes;
 };
 
 /// Where the engine's memory goes (FR-16; mirrors the benchmark's bm4_heap split)
@@ -270,6 +234,33 @@ public:
     const TTDPayloadStore& Payloads() const { return _payloads; }
     /// The position of machine time @p t (frame, offset); false before the first frame
     bool PositionOf(TTDMachineTime t, TTDPosition& out) const;
+
+    /// region <Configuration and media (Phase 3, Step 4)>
+
+    /// The settings in force from @p frame on. The first call of a session
+    /// sets its configuration; a later one that differs from the last adds an
+    /// entry and a ConfigChange cut at the frame's start (args: the entry
+    /// index, u32). Equal settings change nothing. False without a session
+    bool SetConfiguration(uint64_t frame, TTDConfigFingerprint fingerprint);
+    const std::vector<TTDConfigEntry>& Configurations() const { return _configs; }
+    /// The settings checkpoint @p index was recorded with (null: none set)
+    const TTDConfigFingerprint* ConfigurationAt(size_t index) const;
+    /// Compare checkpoint @p index's settings with @p live: one
+    /// ConfigurationDiffers issue per setting that differs. For a replay
+    /// (@p forReplay) every difference makes the result NotBitExact; for a
+    /// restore only those that change what a checkpoint restores (the model,
+    /// the RAM size: Degraded) count. The session stays open for inspection
+    TTDRestoreResult CheckConfiguration(size_t index, const TTDConfigFingerprint& live, bool forReplay) const;
+
+    /// A medium's version now (called before the capture of the frame it
+    /// belongs to): kept with the next checkpoint when it differs from the
+    /// slot's last one. A new slot joins the session's media table
+    void NoteMediaVersion(const std::string& slot, const std::string& format, bool hasVersions,
+                          const TTDMediaVersion& version);
+    const std::vector<TTDMediaSlot>& MediaSlots() const { return _mediaSlots; }
+    /// Slot @p slot's version at checkpoint @p index; false before its first
+    /// recorded version
+    bool MediaVersionAt(size_t index, size_t slot, TTDMediaVersion& out) const;
 
     /// Bind a session that was not recorded from this machine (fed from a v1
     /// file; Phase 4: read from its own file) to the live machine it restores
@@ -499,6 +490,9 @@ private:
     /// records never move
     std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region
     std::deque<TTDEngineCheckpoint> _checkpoints;
+    std::vector<TTDConfigEntry> _configs;
+    std::vector<TTDMediaSlot> _mediaSlots;
+    std::vector<std::pair<uint32_t, TTDMediaVersion>> _pendingMedia;   ///< slot, version: for the next checkpoint
 };
 
 }  // namespace ttd

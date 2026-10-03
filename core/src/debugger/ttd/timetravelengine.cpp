@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <unordered_set>
 
 #include "debugger/ttd/ttdcompression.h"
@@ -163,6 +164,90 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     return true;
 }
 
+bool TimeTravelEngine::SetConfiguration(uint64_t frame, TTDConfigFingerprint fingerprint)
+{
+    if (!_open)
+        return false;
+    if (!_configs.empty() && _configs.back().fingerprint == fingerprint)
+        return true;
+    _configs.push_back({frame, std::move(fingerprint)});
+    if (_configs.size() == 1)
+        return true;
+    TTDEvent cut;
+    cut.kind = TTDEventKind::ConfigChange;
+    const uint32_t entry = static_cast<uint32_t>(_configs.size() - 1);
+    std::memcpy(cut.args, &entry, sizeof(entry));
+    return AppendEvent(frame, 0, cut);
+}
+
+const TTDConfigFingerprint* TimeTravelEngine::ConfigurationAt(size_t index) const
+{
+    const TTDEngineCheckpoint* cp = Checkpoint(index);
+    if (!cp)
+        return nullptr;
+    const TTDConfigFingerprint* found = nullptr;
+    for (const TTDConfigEntry& e : _configs)
+        if (e.frame <= cp->position.frame)
+            found = &e.fingerprint;
+    return found;
+}
+
+TTDRestoreResult TimeTravelEngine::CheckConfiguration(size_t index, const TTDConfigFingerprint& live,
+                                                      bool forReplay) const
+{
+    TTDRestoreResult result;
+    const TTDConfigFingerprint* recorded = ConfigurationAt(index);
+    if (!recorded)
+        return result;
+    for (const TTDFingerprintDiff& d : Compare(*recorded, live))
+    {
+        if (!forReplay && !d.affectsRestore)
+            continue;
+        TTDRestoreIssue issue;
+        issue.kind = TTDRestoreIssueKind::ConfigurationDiffers;
+        issue.severity = d.affectsRestore ? TTDRestoreStatus::Degraded : TTDRestoreStatus::NotBitExact;
+        issue.detail = d.field + ": recorded " + d.recorded + ", this machine " + d.live;
+        result.Add(std::move(issue));
+    }
+    return result;
+}
+
+void TimeTravelEngine::NoteMediaVersion(const std::string& slot, const std::string& format, bool hasVersions,
+                                        const TTDMediaVersion& version)
+{
+    if (!_open)
+        return;
+    size_t i = 0;
+    while (i < _mediaSlots.size() && _mediaSlots[i].slot != slot)
+        ++i;
+    if (i == _mediaSlots.size())
+        _mediaSlots.push_back({slot, format, hasVersions, {}});
+    TTDMediaSlot& s = _mediaSlots[i];
+    s.format = format;
+    s.hasVersions = hasVersions;
+    for (auto& pending : _pendingMedia)
+        if (pending.first == i)
+        {
+            pending.second = version;
+            return;
+        }
+    if (s.changes.empty() || s.changes.back().second != version)
+        _pendingMedia.emplace_back(static_cast<uint32_t>(i), version);
+}
+
+bool TimeTravelEngine::MediaVersionAt(size_t index, size_t slot, TTDMediaVersion& out) const
+{
+    if (slot >= _mediaSlots.size())
+        return false;
+    const auto& changes = _mediaSlots[slot].changes;
+    auto it = std::upper_bound(changes.begin(), changes.end(), static_cast<uint32_t>(index),
+                               [](uint32_t i, const std::pair<uint32_t, TTDMediaVersion>& c) { return i < c.first; });
+    if (it == changes.begin())
+        return false;
+    out = std::prev(it)->second;
+    return true;
+}
+
 bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent ev)
 {
     TTDMachineTime start = 0;
@@ -247,6 +332,9 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 
 void TimeTravelEngine::EndSession()
 {
+    _configs.clear();
+    _mediaSlots.clear();
+    _pendingMedia.clear();
     _events.Clear();
     _payloads.Clear();
     _busReads.Clear();
@@ -512,6 +600,10 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             _lastWork.deviceBlobBytes += _regionPayload[r];
     _lastWork.deviceBlobBytes -= devicePayloadBefore;
 
+    const uint32_t cpIndex = static_cast<uint32_t>(_checkpoints.size());
+    for (const auto& [slot, version] : _pendingMedia)
+        _mediaSlots[slot].changes.emplace_back(cpIndex, version);
+    _pendingMedia.clear();
     _checkpoints.push_back(std::move(cp));
     _streams.CaptureEnabled(input.position);
 

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_sprinter.h"
 
@@ -1177,3 +1178,10 @@ PortDecoder::RtcBinding PortDecoder_Sprinter::GetRtcBinding()
 }
 
 /// endregion </Surfaces>
+
+void PortDecoder_Sprinter::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    fp.Add("sprinter.fast_start", _context->config.sprinter.fast_start);
+    fp.Add("sprinter.turbo_allowed", _context->config.sprinter.turbo_allowed);
+    fp.Add("sprinter.accel_int_suspend", _context->config.sprinter.accel_int_suspend);
+}

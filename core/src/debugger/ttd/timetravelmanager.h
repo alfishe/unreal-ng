@@ -61,6 +61,7 @@
 #include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdv1events.h"
+#include "engine/ttdrestoreresult.h"
 #include "emulator/media/mediareadjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
@@ -549,6 +550,13 @@ public:
     /// into one). The replay itself runs as v1's does
     void SetReplaySource(TimeTravelEngine* engine);
     TimeTravelEngine* GetReplaySource() const { return _replayEngine; }
+    /// The settings and media check of the last restore from the replay
+    /// engine (Phase 3, Step 4; FR-14): ConfigurationDiffers for each setting
+    /// the session was recorded with that this machine lacks (a replay:
+    /// NotBitExact; the model or RAM size: Degraded), MediaVersionDiffers for
+    /// a medium that changed since the checkpoint and cannot go back. Exact
+    /// when everything matches. The restore and the replay run either way
+    const TTDRestoreResult& LastEngineCheck() const { return _lastEngineCheck; }
 
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
@@ -1968,6 +1976,9 @@ private:
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
+    uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session
+    uint64_t _shadowMediaStamp = 0;        ///< IMediaHistory::VersionStamp at the last capture
+    bool _shadowMediaKnown = false;        ///< _shadowMediaStamp is valid for this session
     uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
@@ -2077,6 +2088,11 @@ private:
     /// recorded history (armed by a navigation restore, see ArmInputPlayback)
     size_t _inputCursor = 0;
     size_t _engineEventCursor = 0;          ///< the replay engine's event log (SetReplaySource)
+    uint64_t _replayRomSignature = 0;       ///< this machine's ROM set (SetReplaySource)
+    TTDRestoreResult _lastEngineCheck;      ///< LastEngineCheck
+    /// Settings and media of the replay engine's checkpoint @p index against
+    /// this machine (into _lastEngineCheck)
+    void CheckEngineCheckpoint(size_t index, bool forReplay);
     TimeTravelEngine* _replayEngine = nullptr;
     bool _inputPlaybackArmed = false;
 

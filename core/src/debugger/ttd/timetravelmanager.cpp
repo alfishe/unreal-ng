@@ -33,6 +33,7 @@
 #include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
 #include "emulator/io/rtc/ds12887.h"
+#include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/ide/idecontroller.h"
 
@@ -1564,6 +1565,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     {
         // Every region (machine RAM, device memories) first, then the devices
         _replayEngine->ForgetMemory();
+        CheckEngineCheckpoint(size_t(engineIndex), false);
         const TTDRestoreResult memory = _replayEngine->RestoreToMemory(size_t(engineIndex));
         const TTDRestoreResult result = _replayEngine->RestoreDevices(
             size_t(engineIndex), TTDRestoreContext{engineCp->position.frame, 0, true});
@@ -2824,6 +2826,13 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // The engine's data: a sealed replay has no barrier but a v1 record without its data
     if (_replayEngine && target.tInFrame > restoredTInFrame)
     {
+        // A replay: every setting and medium counts (Phase 3, Step 4); after
+        // the replay, which restores the checkpoint again
+        const int64_t engineIndex = _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0});
+        auto checkForReplay = [&]() {
+            if (engineIndex >= 0)
+                CheckEngineCheckpoint(size_t(engineIndex), true);
+        };
         TTDMachineTime start = 0;
         _replayEngine->Frames().Start(cp.time.frame, start);
         if (const TTDEvent* barrier = _replayEngine->Events().FirstBarrierIn(start, start + target.tInFrame))
@@ -2831,6 +2840,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
             const uint32_t at = static_cast<uint32_t>(barrier->machineTime - start);
             if (at > 0)
                 ReplayWithinFrame(cp.time.frame, at);
+            checkForReplay();
             SetState(TTDSessionState::Detached);
             if (outResult)
             {
@@ -2841,6 +2851,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
             return false;
         }
         ReplayWithinFrame(cp.time.frame, target.tInFrame);
+        checkForReplay();
     }
     else if (target.tInFrame > restoredTInFrame)
     {
@@ -3090,7 +3101,11 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
 void TimeTravelManager::PresentPosition(bool frameTarget)
 {
     const auto start = std::chrono::steady_clock::now();
+    // Composing the picture restores neighboring checkpoints; the position's
+    // own settings and media check stays the seek's
+    const TTDRestoreResult seekCheck = _lastEngineCheck;
     ComposeDisplay(frameTarget);
+    _lastEngineCheck = seekCheck;
     PublishSeekedFrame();
     _perf.lastPresentNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
@@ -3551,11 +3566,51 @@ std::vector<TTDRegionDesc> TimeTravelManager::LiveRegions() const
     return regions;
 }
 
+void TimeTravelManager::CheckEngineCheckpoint(size_t index, bool forReplay)
+{
+    _lastEngineCheck = _replayEngine->CheckConfiguration(
+        index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
+    if (!forReplay)
+        return;
+    // A medium that changed since this checkpoint: set back to its recorded
+    // version, or, without versions, reported (the CPU still reads the
+    // recorded sectors; the controller's state where the replay stops may differ)
+    IMediaHistory* media = _context->pMediaManager;
+    if (!media)
+        return;
+    std::vector<MediaVersionInfo> live;
+    media->CurrentVersions(live);
+    const std::vector<TTDMediaSlot>& slots = _replayEngine->MediaSlots();
+    for (size_t s = 0; s < slots.size(); ++s)
+    {
+        TTDMediaVersion recorded;
+        if (!_replayEngine->MediaVersionAt(index, s, recorded))
+            continue;
+        const auto it = std::find_if(live.begin(), live.end(),
+                                     [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
+        const TTDMediaVersion now = it == live.end() ? TTDMediaVersion{} : TTDMediaVersion{it->contentId, it->version};
+        if (now == recorded)
+            continue;
+        if (now.contentId == recorded.contentId && media->SetHead(slots[s].slot, recorded.version))
+            continue;
+        TTDRestoreIssue issue;
+        issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;
+        issue.severity = TTDRestoreStatus::NotBitExact;
+        issue.detail = slots[s].slot +
+                       (now.contentId != recorded.contentId ? ": another medium than the recording's"
+                                                            : ": written since this point, no versions to go back to") +
+                       " (the replay reads the recorded sectors; the controller's state where it stops may differ)";
+        _lastEngineCheck.Add(std::move(issue));
+    }
+}
+
 void TimeTravelManager::SetReplaySource(TimeTravelEngine* engine)
 {
     _replayEngine = engine;
+    _lastEngineCheck = {};
     if (!engine)
         return;
+    _replayRomSignature = ComputeRomSignature();
     // A session fed from a file holds no live pointers: bind it to this machine
     std::string unbound;
     if (engine->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
@@ -3602,7 +3657,26 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
         _shadowLastLength = 0;
+        _shadowRomSignature = ComputeRomSignature();   // the ROM set does not change within a session (D39)
+        _shadowMediaKnown = false;
         SyncMediaReadJournal();   // sector reads go into the engine from here
+    }
+
+    // Media versions before the capture: a version that changed goes with
+    // this frame's checkpoint (Phase 3, Step 4). Read only when the media
+    // layer's stamp moved (an insert, an eject, a frame that wrote)
+    if (IMediaHistory* media = _context->pMediaManager)
+    {
+        const uint64_t stamp = media->VersionStamp();
+        if (!_shadowMediaKnown || stamp != _shadowMediaStamp)
+        {
+            std::vector<MediaVersionInfo> versions;
+            media->CurrentVersions(versions);
+            for (const MediaVersionInfo& v : versions)
+                engine.NoteMediaVersion(v.slot, v.format, v.hasVersions, {v.contentId, v.version});
+            _shadowMediaStamp = stamp;
+            _shadowMediaKnown = true;
+        }
     }
 
     TTDFrameInput in;
@@ -3724,6 +3798,9 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     }
     if (!freshShadow)
         _shadowLastLength = closedLength;
+    // The settings this frame runs with: the session's first, or a
+    // ConfigChange cut at this boundary when they changed (Phase 3, Step 4)
+    engine.SetConfiguration(out.time.frame, CaptureConfigFingerprint(*_context, _shadowRomSignature));
     _shadowLastStart = in.start;
     _shadowLastBase = baseNow;
 }

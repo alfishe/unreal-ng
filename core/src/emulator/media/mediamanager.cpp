@@ -665,6 +665,8 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     if (it == _slots.end() || it->second.writeMarkedThisFrame)
         return;
     it->second.writeMarkedThisFrame = true;
+    ++it->second.writtenFrames;
+    ++_writeStamp;
 
     ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
     if (ttd && ttd->IsRecording())
@@ -674,6 +676,33 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
             reason += std::string(": ") + detail;
         ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, reason.c_str());
     }
+}
+
+void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    out.clear();
+    for (const auto& [id, state] : _slots)
+    {
+        MediaVersionInfo info;
+        info.slot = id;
+        if (state.attached)
+        {
+            info.format = state.attached->Format();
+            info.contentId = state.attached->ContentId();
+        }
+        info.version = state.writtenFrames;
+        out.push_back(std::move(info));
+    }
+}
+
+bool MediaManager::SetHead(const std::string& slotId, uint64_t version)
+{
+    // No change layer yet (storage manager H1 / H5): only the version the
+    // medium holds now can be "set"
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    return it != _slots.end() && it->second.writtenFrames == version;
 }
 
 Medium* MediaManager::GetMedium(const std::string& slotId)

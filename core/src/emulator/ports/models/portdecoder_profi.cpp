@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
 
@@ -777,4 +778,16 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
     // DS80 selects the 512x240 hi-res raster (Screen::DetectModeProfi)
     if (changed & 0x80)
         _context->pScreen->InitRaster();
+}
+
+void PortDecoder_Profi::AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const
+{
+    const CONFIG& c = _context->config;
+    fp.Add("profi.sync_prom", c.profi_sync_prom);
+    fp.Add("profi.wait_phase", c.profi_wait_phase);
+    fp.Add("profi.wait_pentagon", c.profi_wait_pentagon);
+    fp.Add("profi.rom_wait", c.profi_rom_wait);
+    fp.Add("profi.turbo", c.profi_turbo);
+    fp.Add("profi.cpm", c.profi_cpm);
+    fp.Add("profi.dffd_decode", c.profi_dffd_decode);
 }

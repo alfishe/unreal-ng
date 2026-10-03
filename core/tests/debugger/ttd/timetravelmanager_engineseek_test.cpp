@@ -434,6 +434,143 @@ TEST_F(TimeTravelManager_EngineSeek_Test, InterruptVectorsAreRecordedAndPlayedBa
     EXPECT_GT(_engine.BusVectors().Cursor(), 0u) << "the replays took their vectors from the engine";
 }
 
+/// Phase 3, Step 4 (FR-14): the session keeps the settings it was recorded
+/// with. Seeking on a machine set differently - another decimator, another
+/// ROM set - is not refused: a frame-aligned restore is exact, a seek inside a
+/// frame (a replay) runs and reports NotBitExact naming exactly those settings
+TEST_F(TimeTravelManager_EngineSeek_Test, AnotherConfigurationIsReportedNotRefused)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("PENTAGON", GSTypeKind::Z80, false));
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(8, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    ASSERT_EQ(_engine.Configurations().size(), 1u) << "the settings did not change while recording";
+    const ttd::TTDConfigFingerprint& recorded = _engine.Configurations()[0].fingerprint;
+    ASSERT_NE(recorded.Find("rom.signature"), nullptr);
+    ASSERT_NE(recorded.Find("timing.frame"), nullptr);
+
+    const uint64_t frame = _v1->GetCheckpoint(3)->time.frame;
+    const uint32_t mid = static_cast<uint32_t>(_v1->FrameSpan() / 2);
+
+    // The same settings: nothing to report
+    _v1->SetReplaySource(&_engine);
+    ASSERT_TRUE(_v1->SeekTo({frame, mid}));
+    EXPECT_EQ(_v1->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact) << _v1->LastEngineCheck().message;
+    _v1->SetReplaySource(nullptr);
+
+    // Another decimator, and one byte of the ROM set changed (past the pages
+    // the machine runs: the replay itself stays the same)
+    CONFIG& config = _context->config;
+    config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+    uint8_t* romEnd = _context->pMemory->ROMBase() + size_t(MAX_ROM_PAGES) * PAGE_SIZE - 1;
+    *romEnd ^= 0xFF;
+
+    _v1->SetReplaySource(&_engine);
+    ASSERT_TRUE(_v1->SeekTo({frame, mid})) << "a replay runs on other settings";
+    const ttd::TTDRestoreResult check = _v1->LastEngineCheck();
+    _v1->SetReplaySource(&_engine);
+    ttd::TimeTravelManager::TTDSeekResult aligned;
+    ASSERT_TRUE(_v1->SeekTo(_v1->GetCheckpoint(3)->time, &aligned));   // the checkpoint itself: a restore
+    const ttd::TTDRestoreResult alignedCheck = _v1->LastEngineCheck();
+    _v1->SetReplaySource(nullptr);
+    *romEnd ^= 0xFF;
+    config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+
+    EXPECT_EQ(check.status, ttd::TTDRestoreStatus::NotBitExact) << check.message;
+    std::vector<std::string> named;
+    for (const ttd::TTDRestoreIssue& issue : check.issues)
+    {
+        EXPECT_EQ(issue.kind, ttd::TTDRestoreIssueKind::ConfigurationDiffers);
+        named.push_back(issue.detail.substr(0, issue.detail.find(':')));
+    }
+    EXPECT_EQ(named, (std::vector<std::string>{"sound.decimator_high_fidelity", "rom.signature"}))
+        << "exactly the settings that differ";
+    EXPECT_EQ(alignedCheck.status, ttd::TTDRestoreStatus::Exact)
+        << "a frame-aligned restore does not depend on them: " << alignedCheck.message;
+}
+
+/// Phase 3, Step 4: a setting changed while recording is a ConfigChange cut
+/// at the next frame boundary, with the new settings from there on
+TEST_F(TimeTravelManager_EngineSeek_Test, ASettingChangedWhileRecordingIsACut)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("PENTAGON", GSTypeKind::Z80, false));
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    CONFIG& config = _context->config;
+    config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+
+    ASSERT_EQ(_engine.Configurations().size(), 2u);
+    const auto diffs = ttd::Compare(_engine.Configurations()[0].fingerprint, _engine.Configurations()[1].fingerprint);
+    ASSERT_EQ(diffs.size(), 1u);
+    EXPECT_EQ(diffs[0].field, "sound.decimator_high_fidelity");
+    size_t cuts = 0;
+    for (const ttd::TTDEvent& ev : _engine.Events().Events())
+        cuts += ev.kind == ttd::TTDEventKind::ConfigChange ? 1 : 0;
+    EXPECT_EQ(cuts, 1u);
+    const uint64_t changedAt = _engine.Configurations()[1].frame;
+    for (size_t i = 0; i < _engine.CheckpointCount(); ++i)
+        EXPECT_TRUE(*_engine.ConfigurationAt(i) ==
+                    _engine.Configurations()[_engine.Checkpoint(i)->position.frame < changedAt ? 0 : 1].fingerprint)
+            << "checkpoint " << i;
+}
+
+/// Phase 3, Step 4: media versions. A medium written after a checkpoint
+/// cannot go back yet (no change layer): a replay from before the write runs,
+/// reads the recorded sectors, and the session names the medium; from after
+/// the write nothing differs
+TEST_F(TimeTravelManager_EngineSeek_Test, AMediumWrittenSinceTheCheckpointIsReported)
+{
+    ASSERT_NO_FATAL_FAILURE(StartMachine("ATM3", GSTypeKind::Z80, true));
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("ttd-media-versions.img");
+    {
+        std::ofstream out(image, std::ios::binary | std::ios::trunc);
+        out << std::string(64 * 512, '\0');
+    }
+    ASSERT_TRUE(decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session, false));
+
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    // The card's controller writes the medium in frame 5 (what a sector write reports)
+    std::string slot;
+    for (const ttd::TTDMediaSlot& s : _engine.MediaSlots())
+    {
+        ttd::TTDMediaVersion v;
+        if (_engine.MediaVersionAt(0, &s - _engine.MediaSlots().data(), v) && v.contentId != 0)
+            slot = s.slot;
+    }
+    ASSERT_FALSE(slot.empty()) << "the inserted card is in the session's media table";
+    _context->pMediaManager->NoteWrite(slot, "test write");
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+
+    const uint32_t mid = static_cast<uint32_t>(_v1->FrameSpan() / 2);
+    _v1->SetReplaySource(&_engine);
+    ASSERT_TRUE(_v1->SeekTo({_v1->GetCheckpoint(1)->time.frame, mid})) << "no barrier at the write";
+    const ttd::TTDRestoreResult before = _v1->LastEngineCheck();
+    _v1->SetReplaySource(&_engine);
+    ASSERT_TRUE(_v1->SeekTo({_v1->GetCheckpoint(_v1->GetCheckpointCount() - 2)->time.frame, mid}));
+    const ttd::TTDRestoreResult after = _v1->LastEngineCheck();
+    _v1->SetReplaySource(nullptr);
+
+    EXPECT_EQ(before.status, ttd::TTDRestoreStatus::NotBitExact) << before.message;
+    ASSERT_EQ(before.issues.size(), 1u) << before.message;
+    EXPECT_EQ(before.issues[0].kind, ttd::TTDRestoreIssueKind::MediaVersionDiffers);
+    EXPECT_EQ(before.issues[0].detail.rfind(slot, 0), 0u) << "names the medium: " << before.issues[0].detail;
+    EXPECT_EQ(after.status, ttd::TTDRestoreStatus::Exact) << after.message;
+    std::remove(image.c_str());
+}
+
 INSTANTIATE_TEST_SUITE_P(Machines, TimeTravelManager_EngineSeekModels_Test,
                          ::testing::Values("PENTAGON", "TSL", "SPRINTER", "SCORPION", "PROFI", "ATM3"),
                          [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });

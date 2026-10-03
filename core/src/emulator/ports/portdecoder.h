@@ -19,6 +19,7 @@
 namespace ttd
 {
 class ITTDRegionSource;
+struct TTDConfigFingerprint;
 }
 
 // Opaque declaration (defined in emulator/memory/memory.h): the base decoder
@@ -751,6 +752,11 @@ public:
     {
         return {};
     }
+
+    /// The board options of this model that change timing or decoding (TTD
+    /// configuration fingerprint, Phase 3, Step 4): "<model>.<option>" fields
+    /// added to @p fp. A replay on other options is reported, not refused
+    virtual void AddTTDBoardSettings(ttd::TTDConfigFingerprint& fp) const { (void)fp; }
 
     /// Model devices whose memory the time-travel engine records as regions
     /// but that are no serializer of their own (the ZX-Evo AVR EEPROM, the

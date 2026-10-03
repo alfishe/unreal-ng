@@ -17,6 +17,7 @@
 /// machine (dirty, changed units) is a per-frame snapshot taken in
 /// ApplyPending, so automation never reads a medium the guest is writing.
 
+#include "emulator/media/mediahistory.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -122,7 +123,7 @@ struct SlotInfo
 };
 
 class IMediaReadJournal;
-class MediaManager
+class MediaManager : public IMediaHistory
 {
 public:
     explicit MediaManager(EmulatorContext* context);
@@ -217,6 +218,12 @@ public:
     /// `detail` (the controller's command) goes into the marker's text
     void NoteWrite(const std::string& slotId, const char* detail = nullptr);
 
+    /// IMediaHistory (TTD Phase 3, Step 4). No change layer yet: a version is
+    /// the count of frames that wrote the medium, and no slot goes back
+    uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
+    void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
+    bool SetHead(const std::string& slotId, uint64_t version) override;
+
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
     Medium* GetMedium(const std::string& slotId);
@@ -239,6 +246,7 @@ private:
         std::string changes;               ///< per-frame snapshot of attached->DescribeChanges()
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
         bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
+        uint64_t writtenFrames = 0;           ///< frames that wrote the medium (its version, IMediaHistory)
     };
 
     bool CanApplyNow() const;
@@ -274,6 +282,7 @@ private:
     IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
+    std::atomic<uint64_t> _writeStamp{0};        ///< moves with every writtenFrames
     mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)
     std::condition_variable_any _applied;  ///< signalled after every ApplyPending
 };

@@ -336,6 +336,28 @@ public:
 };
 ```
 
+**As built (2026-10-03).**
+
+- **Fingerprint as named fields.** `TTDConfigFingerprint` (`engine/ttdconfigfingerprint.h`) is a list of named values instead of a fixed struct, so a model adds its board options without a format change and `Compare` names each difference with both values. `CaptureConfigFingerprint` (`ttdconfigcapture.h`) reads:
+  - `machine.model`, `machine.ram_kb` (these two change what a restore gives: Degraded);
+  - `timing.frame`, `.line`, `.int_start`, `.int_length`, `.frame_duration_us`, `.clock_units`;
+  - `sound.core_rate`, `.decimator_high_fidelity`, `.gs_ram_kb`, `render.sound_hq`, `.screen_hq`;
+  - `fdc.turbo_vg`; the board options from the model's own decoder (`PortDecoder::AddTTDBoardSettings`: the Sprinter's `fast_start` / `turbo_allowed` / `accel_int_suspend`, the Profi board switches), so shared code names no model (Sprinter isolation rule);
+  - `rom.signature`: FNV-1a of the whole ROM region, every model's ROM set, the Sprinter BIOS flash among them; hashed once per session (the ROM set cannot change within one, D39).
+  The device set and its firmware are not repeated: the device table compares them on every restore (Phase 2).
+- **Fingerprint table.** `TimeTravelEngine::SetConfiguration(frame, fp)` keeps the session's first entry; a capture whose settings differ adds an entry and a `ConfigChange` cut at that frame's start (args: entry index). `ConfigurationAt(checkpoint)` gives the settings a checkpoint was recorded with.
+- **Check, never refuse.** `CheckConfiguration(checkpoint, live, forReplay)` gives one `ConfigurationDiffers` issue per difference: for a replay every difference is `NotBitExact`; for a frame-aligned restore only the model and RAM size count. `TimeTravelManager::LastEngineCheck()` holds the check of the last seek from the replay engine: the restore check for every seek, the replay check when the seek replays inside the frame (kept across the display's own restores). v1's load still refuses another ROM set; that refusal goes with v1.
+- **Media versions, interim.** `IMediaHistory` (`emulator/media/mediahistory.h`) is implemented by `MediaManager`. A version is the source's `ContentId` plus the count of frames that wrote the medium (`NoteWrite`, at most one per frame); `SetHead` can only "set" the version the medium holds now. The engine keeps a media slot table (slot, format, has-versions, the checkpoints at which the version changed); the shadow capture reads the versions only when the media layer's stamp moved. A replay from a checkpoint whose medium has changed since then runs without a barrier; it reads the recorded sectors and reports `MediaVersionDiffers` naming the slot. When the storage manager's change layer (H1 / H5) lands, `SetHead` goes back and the report disappears for media that keep versions.
+- **Surfaces.** The check is a core API on the engine path only (shadow mode, A/B tests). WebAPI, MCP, CLI, Lua, Python and Qt show it when v2 becomes the user path (Phase 5); until then users see v1, which refuses another ROM set on load.
+- **Tests.**
+  - `TTDConfigFingerprint_Test`: 4 tests; `TTDConfigCapture_Test`: board options come from the model's decoder only.
+  - `TimeTravelEngine_Config_Test`: the settings table with its cut and both severities; media versions stored on change only.
+  - `TimeTravelManager_EngineSeek_Test`:
+    - `AnotherConfigurationIsReportedNotRefused`: another decimator and another ROM byte. The seek inside a frame runs and names exactly those two settings; a seek to the checkpoint itself is exact.
+    - `ASettingChangedWhileRecordingIsACut`.
+    - `AMediumWrittenSinceTheCheckpointIsReported`: ATM3 SD.
+  - Six compilable mutants, each caught.
+
 ### 4.6 Step 5 — Real-time clocks on an emulated time base
 
 v1 already runs every DS12887 user on emulated time during a recording (§3.2). What is left:
