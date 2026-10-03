@@ -154,6 +154,7 @@ private slots:
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();
+    void handleSaveScreenshotRequested();
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
     void handleGpuAccelerationToggled(bool enabled);

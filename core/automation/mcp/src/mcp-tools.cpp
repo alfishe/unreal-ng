@@ -2968,31 +2968,6 @@ static std::string MakeSparkline(const std::vector<uint32_t>& values)
     return spark;
 }
 
-/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
-/// literal). Labels are free-form text ("umt entry"), so they must not be
-/// spliced raw into a URL path.
-std::string UrlEncodeSegment(const std::string& text)
-{
-    static const char* kHex = "0123456789ABCDEF";
-    std::string encoded;
-    encoded.reserve(text.size());
-    for (char c : text)
-    {
-        const unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
-        {
-            encoded += c;
-        }
-        else
-        {
-            encoded += '%';
-            encoded += kHex[uc >> 4];
-            encoded += kHex[uc & 0xF];
-        }
-    }
-    return encoded;
-}
-
 /// Formats a TTD time point ({frame, tinframe}) as "frame F" or "frame F t=T".
 std::string FormatTimePoint(const Json::Value& frame, const Json::Value& tinframe)
 {

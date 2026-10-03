@@ -212,6 +212,12 @@ class Emulator:
     def framebuffer(self, format="rgba") -> dict:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
 
+    def capture_screen(self, format="png", full=None, area="", path="") -> dict:
+        """Screenshot of the presented frame. area="full" (default, the whole frame with border) or "screen" (the
+        working picture); format "png" (default) or "gif"; path writes the file on the machine running the
+        emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
+        | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""
+
     def audio_mixer(self) -> dict: ...
     def audio_mixer_set(self, source, muted=None, solo=None, volume=None, gain_db=None) -> dict: ...
     # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
