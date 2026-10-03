@@ -55,6 +55,14 @@ namespace
     }
 
     uint16_t Nine(uint8_t low, uint8_t high) { return static_cast<uint16_t>(low | ((high & 1u) << 8)); }
+
+    /// A DMA address as its three registers hold it (AL word bits 6:0 in bits 7:1, AH word bits 12:7,
+    /// AX word bits 20:13; TsConfDma::WriteAddress), as a byte address
+    uint32_t DmaAddress(uint8_t low, uint8_t high, uint8_t page)
+    {
+        const uint32_t word = (static_cast<uint32_t>(page) << 13) | (static_cast<uint32_t>(high & 0x3F) << 7) | (low >> 1);
+        return word * 2;
+    }
 }  // namespace
 
 namespace DeviceState
@@ -101,6 +109,7 @@ StateNode TsConf(EmulatorContext* context)
         m["fdd_virt"] = int(r[TsConfReg::FddVirt]);
         m["cache_config"] = int(r[TsConfReg::CacheConfig]);
         m["fm_window"] = ts.FmEnabled() ? int(ts.FmBase()) : -1;
+        m["fm_maps"] = int(r[TsConfReg::FMaps]);  // raw: bit 4 FM_EN, bits 3:0 the window's address A15:12
         ret["memory"] = m;
     }
 
@@ -148,6 +157,10 @@ StateNode TsConf(EmulatorContext* context)
         line["row"] = int(set.cntRow);
         line["dram_video"] = int(set.videoCost);
         line["dram_tsu"] = int(set.tsuCost);
+        // The tile graphics pages the line is drawn with: copies of T0_G_PAGE / T1_G_PAGE taken at the
+        // line start, so a write shows from the next line on (tsu.tile0_page / tile1_page: the registers)
+        line["t0_gpage"] = int(ts.latT0GPage);
+        line["t1_gpage"] = int(ts.latT1GPage);
         v["line"] = line;
         ret["video"] = v;
     }
@@ -179,6 +192,19 @@ StateNode TsConf(EmulatorContext* context)
         d["destination"] = static_cast<uint64_t>(ts.dmaDst) * 2;
         d["words_per_block"] = int(r[TsConfReg::DmaLen]) + 1;
         d["blocks"] = int(r[TsConfReg::DmaNum]) + 1;
+        // As the CPU last wrote them (source / destination above are the live counters)
+        d["programmed_source"] = static_cast<uint64_t>(DmaAddress(r[TsConfReg::DmaSAl], r[TsConfReg::DmaSAh], r[TsConfReg::DmaSAx]));
+        d["programmed_destination"] =
+            static_cast<uint64_t>(DmaAddress(r[TsConfReg::DmaDAl], r[TsConfReg::DmaDAh], r[TsConfReg::DmaDAx]));
+        const uint8_t ctrl = r[TsConfReg::DmaCtrl];
+        StateNode c = StateNode::Object();
+        c["raw"] = int(ctrl);
+        c["device"] = int(((ctrl >> 4) & 0x08) | (ctrl & 0x07));  // DDEV: {bit 7, bits 2:0}
+        c["opt"] = (ctrl & 0x40) != 0;                              // BLT2 saturation
+        c["s_align"] = (ctrl & 0x20) != 0;
+        c["d_align"] = (ctrl & 0x10) != 0;
+        c["a_sz"] = (ctrl & 0x08) != 0;                             // 512-byte blocks
+        d["ctrl"] = c;
         if (busy)
         {
             d["words_left_in_block"] = int(ts.dmaBurst) + 1;
@@ -191,10 +217,21 @@ StateNode TsConf(EmulatorContext* context)
     {
         static const char* const kClock[4] = {"3.5 MHz", "7 MHz", "14 MHz", "14 MHz"};
         ret["cpu_clock"] = kClock[r[TsConfReg::SysConfig] & 0x03];
+        ret["sys_config"] = int(r[TsConfReg::SysConfig]);
+        ret["cache_en"] = (r[TsConfReg::SysConfig] & 0x04) != 0;
         StateNode sd = StateNode::Object();
         sd["present"] = decoder->GetSdCard().present();
         sd["selected"] = decoder->GetZController().IsSelected();
         ret["sd"] = sd;
+    }
+
+    // The register file as the CPU last wrote it (#00-#47, register = port #xxAF's high byte): the
+    // write-only registers have no other way out, and a debugger board shows them raw
+    {
+        StateNode regs = StateNode::Array();
+        for (size_t i = 0; i < TsConfReg::kCount; i++)
+            regs.push(int(r[i]));
+        ret["regs"] = regs;
     }
     return ret;
 }

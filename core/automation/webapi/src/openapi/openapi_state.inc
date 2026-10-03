@@ -172,11 +172,16 @@
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["description"] =
         "The TS-Conf machine (model TSL): build (the emulated firmware: vdac, vdac_ver = STATUS VDAC_VER, blt2; "
         "[MISC] TS_VDAC), memory (MEM_CONFIG decoded, the four window pages, LCK128 mode, lock48, DOS, "
-        "virtual TR-DOS, cache, the FM window), video (V_CONFIG decoded: mode ZX / 16C / 256C / TXT, geometry, NOGFX / "
-        "NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and active sprite count; the raster "
-        "line the engine is on with its latched registers and DRAM use), interrupts (mask, pending sources, frame "
-        "position), DMA (busy, task, live byte addresses, block counters), the CPU clock and the SD card. 404 on other "
-        "machines.";
+        "virtual TR-DOS, cache, the FM window and fm_maps = FM_MAPS raw), video (V_CONFIG decoded: mode ZX / 16C / "
+        "256C / TXT, geometry, NOGFX / NOTSU / GFXOVR; V_PAGE, PAL_SEL, BORDER, offsets; the TSU enables, pages and "
+        "active sprite count; line = the raster line the engine is on with its latched registers, DRAM use and "
+        "t0_gpage / t1_gpage, the tile graphics pages it is drawn with - copies taken at the line start, so a "
+        "T0_G_PAGE / T1_G_PAGE write shows from the next line), interrupts (mask, pending sources, frame position), "
+        "DMA (busy, task, source / destination = the live byte addresses, programmed_source / programmed_destination "
+        "= the byte addresses as the CPU last wrote them, block counters, ctrl = DMA_CTRL as last written: raw, "
+        "device = DDEV {bit 7, bits 2:0}, opt, s_align, d_align, a_sz), cpu_clock, sys_config (raw) with cache_en "
+        "(bit 2), the SD card, and regs[72] = the register file #00-#47 as the CPU last wrote it (register = port "
+        "#xxAF's high byte; the write-only registers have no other way out). 404 on other machines.";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/tsconf"]["get"]["parameters"][0]["required"] = true;
@@ -788,7 +793,9 @@
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["summary"] = "Write memory";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["description"] =
-        "Write one or more bytes to the Z80 address space.";
+        "Write one or more bytes to the Z80 address space (a debugger poke). It is NOT subject to the ROM "
+        "write protection flag: bytes written to an address that is mapped to ROM change the ROM. The flag "
+        "(see /memory/rom/protect) only guards writes to ROM pages through /memory/page/rom/{page}.";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["required"] = true;
@@ -861,7 +868,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled.";
+        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
+        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
+        "instances.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;

@@ -10,6 +10,7 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
+#include "emulator/sound/soundmanager.h"
 #include "common/filehelper.h"
 #include <atomic>
 #include <cctype>
@@ -748,3 +749,79 @@ TEST(Emulator_DirectRunBreakpoint_Test, StepFromABreakpointPauseNeverParksTheCal
 }
 
 /// endregion </Breakpoints during a direct run>
+
+/// region <Host audio during direct runs>
+
+/// API run_frames and every other direct run go at full host speed: on every machine, nothing reaches the host
+/// audio callback for their duration (SoundManager::holdHostOutput), and delivery resumes once they return.
+/// Turbo mode holds it the same way, once however often it is enabled
+class EmulatorHostAudio_Test : public ::testing::TestWithParam<const char*>
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    size_t _calls = 0;
+
+    static void Count(void* obj, int16_t*, size_t) { ++*static_cast<size_t*>(obj); }
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << "Failed to create " << GetParam();
+        _context = _emulator->GetContext();
+        ASSERT_NE(_context->pSoundManager, nullptr);
+        _context->pAudioManagerObj.store(&_calls, std::memory_order_release);
+        _context->pAudioCallback.store(&Count, std::memory_order_release);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _context->pAudioCallback.store(nullptr, std::memory_order_release);
+            _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+};
+
+INSTANTIATE_TEST_SUITE_P(Models, EmulatorHostAudio_Test, ::testing::Values("48K", "PENTAGON", "TSL", "SPRINTER"),
+                         [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
+
+TEST_P(EmulatorHostAudio_Test, DirectRunsHoldHostOutput)
+{
+    SoundManager* sound = _context->pSoundManager;
+    const uint64_t heldBefore = sound->hostFramesHeld();
+
+    _emulator->RunNFrames(3);
+    EXPECT_EQ(_calls, 0u) << "run_frames handed audio to the host";
+    EXPECT_GE(sound->hostFramesHeld() - heldBefore, 3u) << "run_frames frames did not pass the host boundary held";
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "the hold outlived run_frames";
+
+    _emulator->RunTStates(_context->config.frame + 100);
+    _emulator->RunUntilScanline(10);
+    _emulator->RunSingleCPUCycle();
+    EXPECT_EQ(_calls, 0u) << "a direct run handed audio to the host";
+    EXPECT_FALSE(sound->isHostOutputHeld());
+
+    // Control: a frame end outside a direct run (the paced main loop) is delivered
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    EXPECT_EQ(_calls, 1u) << "delivery did not resume after the direct runs";
+}
+
+TEST_P(EmulatorHostAudio_Test, TurboHoldsHostOutputOnce)
+{
+    SoundManager* sound = _context->pSoundManager;
+    _emulator->EnableTurboMode();
+    _emulator->EnableTurboMode();  // a repeated enable must not stack a second hold
+    EXPECT_TRUE(sound->isHostOutputHeld());
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld()) << "turbo left the host output held";
+    EXPECT_FALSE(sound->isMuted());
+    _emulator->DisableTurboMode();
+    EXPECT_FALSE(sound->isHostOutputHeld());
+}
+
+/// endregion </Host audio during direct runs>

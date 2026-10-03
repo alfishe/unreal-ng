@@ -1,5 +1,8 @@
 #include "breakpointmanager.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 
 #include "common/collectionhelper.h"
@@ -193,6 +196,7 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     info.active = bp->active;
     info.note = bp->note;
     info.group = bp->group;
+    info.page = PageSpecName(*bp);
 
     // Breakpoint type
     switch (bp->type)
@@ -506,6 +510,80 @@ uint16_t BreakpointManager::AddCombinedMemoryBreakpointInPage(uint16_t z80addres
     return result;
 }
 
+bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType,
+                                      std::string& error)
+{
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const size_t colon = lower.find(':');
+    const std::string kind = lower.substr(0, colon);
+    if (colon == std::string::npos || (kind != "ram" && kind != "rom" && kind != "cache"))
+    {
+        error = "page must be ram:N, rom:N or cache:N, got '" + text + "'";
+        return false;
+    }
+    std::string number = lower.substr(colon + 1);
+    int base = 10;
+    if (number.rfind("0x", 0) == 0)
+        number = number.substr(2), base = 16;
+    else if (!number.empty() && (number[0] == '#' || number[0] == '$'))
+        number = number.substr(1), base = 16;
+    char* end = nullptr;
+    const unsigned long value = number.empty() ? 256 : std::strtoul(number.c_str(), &end, base);
+    if (number.empty() || *end != '\0' || value > 0xFF)
+    {
+        error = "page number must be 0..255, got '" + text + "'";
+        return false;
+    }
+    page = static_cast<uint8_t>(value);
+    pageType = kind == "ram" ? BANK_RAM : (kind == "rom" ? BANK_ROM : BANK_CACHE);
+    return true;
+}
+
+std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoint)
+{
+    if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
+        return {};
+    const char* kind = breakpoint.pageType == BANK_ROM ? "rom" : (breakpoint.pageType == BANK_CACHE ? "cache" : "ram");
+    return std::string(kind) + ":" + std::to_string(breakpoint.page);
+}
+
+bool BreakpointManager::HasPage(uint8_t page, MemoryBankModeEnum pageType) const
+{
+    switch (pageType)
+    {
+        case BANK_RAM:
+        {
+            const uint32_t ramKb = _context ? _context->config.ramsize : 0;
+            const uint32_t pages = ramKb ? ramKb / 16 : MAX_RAM_PAGES;
+            return page < pages;
+        }
+        case BANK_ROM:
+            return page < MAX_ROM_PAGES;
+        case BANK_CACHE:
+            return page < MAX_CACHE_PAGES;
+        default:
+            return false;
+    }
+}
+
+uint16_t BreakpointManager::AddMemoryBreakpointInPageSpec(uint16_t z80address, uint8_t memoryType,
+                                                         const std::string& pageSpec, std::string& error)
+{
+    if (pageSpec.empty())
+        return AddCombinedMemoryBreakpoint(z80address, memoryType);
+    uint8_t page = 0;
+    MemoryBankModeEnum pageType = BANK_RAM;
+    if (!ParsePageSpec(pageSpec, page, pageType, error))
+        return BRK_INVALID;
+    if (!HasPage(page, pageType))
+    {
+        error = "this machine has no page " + pageSpec;
+        return BRK_INVALID;
+    }
+    return AddCombinedMemoryBreakpointInPage(z80address, memoryType, page, pageType);
+}
+
 // Breakpoint listing
 
 // Retrieves a reference to the map containing all breakpoints
@@ -597,6 +675,10 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 
         // Format status - exactly matching header width
         oss << " " << std::setw(8) << std::left << (bp->active ? "Active" : "Inactive");
+
+        // A breakpoint bound to a page fires only while that page is mapped at the address
+        if (bp->matchType == BRK_MATCH_BANK_ADDR)
+            oss << " in " << PageSpecName(*bp);
 
         // Format note if available
         if (!bp->note.empty())

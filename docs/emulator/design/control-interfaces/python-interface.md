@@ -148,9 +148,12 @@ class Emulator:
 
     def tsconf_state(self) -> dict:
         """TS-Conf machine report: memory (mem_config decoded, pages, lck128,
-        lock48, dos, vdos, cache, fm_window), video (mode, geometry, nogfx /
-        notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
-        line), interrupts, dma, cpu_clock, sd. available=False on other machines"""
+        lock48, dos, vdos, cache, fm_window, fm_maps raw), video (mode, geometry,
+        nogfx / notsu / gfxovr, v_page, pal_sel, border, offsets, tsu, the engine's
+        line with t0_gpage / t1_gpage - the tile pages it is drawn with), interrupts,
+        dma (live and programmed_source / programmed_destination, ctrl decoded),
+        cpu_clock, sys_config, cache_en, sd, regs (the register file #00-#47 as last
+        written). available=False on other machines"""
 
     def sprinter_state(self) -> dict:
         """Sprinter Sp2000 report: pld (state, module, bitstream hashes), decoder (CNF
@@ -329,6 +332,18 @@ class Emulator:
         
     def steps(self, count: int, skip_breakpoints: bool = False) -> dict:
         """Execute up to N instructions; a breakpoint ends the run early. Returns the same dict"""
+
+    def get_registers(self) -> dict:
+        """pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr im iff1 iff2 halted t frame
+        (r with bit 7 as last written; memptr = the internal WZ latch; t = CPU T-states since
+        the frame's start; frame = the frame number)"""
+
+    def get_register(self, name: str) -> int | None:
+        """Any name of the register table (a, hl, af', ir, memptr / wz, im, iff1, iff2, ...)"""
+
+    def set_register(self, name: str, value: int) -> bool:
+        """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
+        8-bit registers take the low byte"""
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -703,41 +718,23 @@ info = emu.memory_info()
 
 **Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
-### BreakpointManager Class
+### Breakpoints
+
+Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where:
+[.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/analysis/breakpoints-and-events.md)).
 
 ```python
-class BreakpointManager:
-    """Breakpoint and watchpoint management"""
-    
-    def add_execution_breakpoint(self, address: int) -> int:
-        """Set execution breakpoint, return ID"""
-        
-    def add_memory_read_breakpoint(self, address: int) -> int:
-        """Set memory read watchpoint"""
-        
-    def add_memory_write_breakpoint(self, address: int) -> int:
-        """Set memory write watchpoint"""
-        
-    def add_port_in_breakpoint(self, port: int) -> int:
-        """Set port IN breakpoint"""
-        
-    def add_port_out_breakpoint(self, port: int) -> int:
-        """Set port OUT breakpoint"""
-        
-    def remove_breakpoint(self, bp_id: int) -> bool:
-        """Remove breakpoint by ID"""
-        
-    def clear_breakpoints(self):
-        """Remove all breakpoints"""
-        
-    def activate_breakpoint(self, bp_id: int) -> bool:
-        """Enable breakpoint"""
-        
-    def deactivate_breakpoint(self, bp_id: int) -> bool:
-        """Disable breakpoint"""
-        
-    def get_breakpoints(self) -> list:
-        """Get list of all breakpoints"""
+id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 on failure)
+id = emu.bp(0xC000, page="ram:32")  # only while RAM page 32 is mapped at #C000 ("rom:3", "cache:0"; -1: no such page)
+id = emu.bp_read(0x4000)            # memory read; page= as for bp
+id = emu.bp_write(0x5C00)           # memory write; page= as for bp
+id = emu.bp_port_in(0xFE)
+id = emu.bp_port_out(0xFE)
+emu.bp_remove(id); emu.bp_clear()
+emu.bp_enable(id); emu.bp_disable(id)
+emu.bp_count()
+print(emu.bp_list())                # the text table; a page breakpoint ends "in ram:32"
+emu.bp_status()                     # the last hit, see below; 'page' when it is bound to one
 ```
 
 ### DebugManager Class

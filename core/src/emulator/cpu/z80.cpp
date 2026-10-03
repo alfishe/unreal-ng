@@ -2000,7 +2000,9 @@ static const Z80::RegisterInfo s_registers[] = {
     {"L", false, false, [](const Z80State* s) -> uint16_t { return s->l; }, [](Z80State* s, uint16_t v) { s->l = static_cast<uint8_t>(v); }},
     {"F", false, false, [](const Z80State* s) -> uint16_t { return s->f; }, [](Z80State* s, uint16_t v) { s->f = static_cast<uint8_t>(v); }},
     {"I", false, false, [](const Z80State* s) -> uint16_t { return s->i; }, [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v); }},
-    {"R", false, false, [](const Z80State* s) -> uint16_t { return s->r_low; }, [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); }},
+    // R: bit 7 is kept apart (r_hi) from the counting bits 6:0 (LD R,A / LD A,R)
+    {"R", false, false, [](const Z80State* s) -> uint16_t { return Z80::RegisterR(s); },
+     [](Z80State* s, uint16_t v) { s->r_low = static_cast<uint8_t>(v); s->r_hi = static_cast<uint8_t>(v & 0x80); }},
     // 8-bit alternate registers
     {"A'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.a; }, [](Z80State* s, uint16_t v) { s->alt.a = static_cast<uint8_t>(v); }},
     {"B'", false, true, [](const Z80State* s) -> uint16_t { return s->alt.b; }, [](Z80State* s, uint16_t v) { s->alt.b = static_cast<uint8_t>(v); }},
@@ -2024,7 +2026,14 @@ static const Z80::RegisterInfo s_registers[] = {
     {"IY", true, false, [](const Z80State* s) -> uint16_t { return s->iy; }, [](Z80State* s, uint16_t v) { s->iy = v; }},
     {"SP", true, false, [](const Z80State* s) -> uint16_t { return s->sp; }, [](Z80State* s, uint16_t v) { s->sp = v; }},
     {"PC", true, false, [](const Z80State* s) -> uint16_t { return s->pc; }, [](Z80State* s, uint16_t v) { s->pc = v; }},
-    {"IR", true, false, [](const Z80State* s) -> uint16_t { return s->ir_; }, [](Z80State* s, uint16_t v) { s->ir_ = v; }},
+    {"IR", true, false, [](const Z80State* s) -> uint16_t { return static_cast<uint16_t>((s->i << 8) | Z80::RegisterR(s)); },
+     [](Z80State* s, uint16_t v) { s->i = static_cast<uint8_t>(v >> 8); s->r_low = static_cast<uint8_t>(v); s->r_hi = static_cast<uint8_t>(v & 0x80); }},
+    // Internal: MEMPTR (WZ), the address latch behind the undocumented flags of BIT n,(HL)
+    {"MEMPTR", true, false, [](const Z80State* s) -> uint16_t { return s->memptr; }, [](Z80State* s, uint16_t v) { s->memptr = v; }},
+    // Interrupt state: mode 0-2 and the two enable flip-flops
+    {"IM", false, false, [](const Z80State* s) -> uint16_t { return s->im; }, [](Z80State* s, uint16_t v) { s->im = static_cast<uint8_t>(v); }, 2},
+    {"IFF1", false, false, [](const Z80State* s) -> uint16_t { return s->iff1 ? 1 : 0; }, [](Z80State* s, uint16_t v) { s->iff1 = static_cast<uint8_t>(v); }, 1},
+    {"IFF2", false, false, [](const Z80State* s) -> uint16_t { return s->iff2 ? 1 : 0; }, [](Z80State* s, uint16_t v) { s->iff2 = static_cast<uint8_t>(v); }, 1},
     // 16-bit alternate registers
     {"AF'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.af; }, [](Z80State* s, uint16_t v) { s->alt.af = v; }},
     {"BC'", true, true, [](const Z80State* s) -> uint16_t { return s->alt.bc; }, [](Z80State* s, uint16_t v) { s->alt.bc = v; }},
@@ -2060,6 +2069,7 @@ const Z80::RegisterInfo* Z80::FindRegister(const std::string& name)
     if (normalized == "XL") return FindRegister("IXL");
     if (normalized == "YH") return FindRegister("IYH");
     if (normalized == "YL") return FindRegister("IYL");
+    if (normalized == "WZ") return FindRegister("MEMPTR");
 
     return nullptr;
 }
@@ -2078,9 +2088,15 @@ bool Z80::SetRegisterValue(Z80State* state, const std::string& name, uint16_t va
 {
     const RegisterInfo* info = FindRegister(name);
     if (!info) return false;
+    if (info->maxValue && value > info->maxValue) return false;  // IM 3 is no mode; 8-bit registers truncate
 
     info->setter(state, value);
     return true;
+}
+
+uint8_t Z80::RegisterR(const Z80Registers* state)
+{
+    return static_cast<uint8_t>((state->r_low & 0x7F) | (state->r_hi & 0x80));
 }
 
 /// endregion </Register Access API>

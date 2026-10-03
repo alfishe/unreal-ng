@@ -557,7 +557,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["drive"]["type"] = "string";
     schema["properties"]["drive"]["default"] = "A";
-    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A or B)";
+    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A-D or 0-3; autostart needs A)";
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
@@ -761,6 +761,10 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["page"]["type"] = "string";
+    schema["properties"]["page"]["description"] =
+        "Optional for bp_add of execution / read / write: 'ram:32', 'rom:3' or 'cache:0' - the breakpoint fires only while "
+        "that page is mapped at the address (e.g. code in RAM page 32 at #C000, not whatever else is paged in there)";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable";
     schema["required"].append("action");
@@ -848,6 +852,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     Json::Value body;
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
+                    if (args.isMember("page"))
+                        body["page"] = args["page"];
                     ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
                     return;
                 }
@@ -1906,9 +1912,9 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 out << "\n[breakpoints] " << value["count"].asUInt() << " active";
                             }
-                            else if (aspect == "screen_digest" && value.isMember("digest"))
+                            else if (aspect == "screen_digest" && value.isMember("combined"))
                             {
-                                out << "\n[screen_digest] " << value["digest"].asString();
+                                out << "\n[screen_digest] " << value["combined"].asString();
                             }
                             else if (aspect == "contention")
                             {
