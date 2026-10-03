@@ -75,7 +75,7 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 | Step 1 | Device registry: a stable type id (u16) plus an instance name, a layout version, restore-order dependencies, a firmware fingerprint, an after-restore call (D23) |
 | Step 2 | Unchanged device state shared between checkpoints; changed state stored as the fields that changed; counters that advance with time derived from time, not stored (D18) |
 | Step 3 | A restore that could not be exact is reported with its reason, on every surface (FR-7) |
-| Step 4 | Sound devices on the same contract; a change of the device set is an event on the timeline (D26, FR-4) |
+| Step 4 | Sound devices on the same contract, synced at every frame boundary; the device set fixed for a session (D38, FR-4) |
 
 **Why.** v1 writes every device's whole state into every checkpoint: 2–7 MB per minute even at an idle prompt (E5), most of it the timers of cards that play nothing (E6). The layouts carry no version, the one-byte device id is nearly full and already collides between designs, and a device that could not be restored is only logged.
 

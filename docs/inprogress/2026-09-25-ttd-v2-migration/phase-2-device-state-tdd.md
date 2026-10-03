@@ -20,7 +20,7 @@ The engine is `ttd::TimeTravelEngine`. Parts only the engine has live in `core/s
 | Instance name | Names one device of a type in a machine, as a dotted path: `zifi.uart`, `isa2.uart0`. Two UARTs share a type id and differ by name |
 | Layout version | Which arrangement of bytes a device's state uses. A device that adds a field gets a new layout version |
 | Device table | The list of device instances in a session: type, name, layout version, size, firmware fingerprint, dependencies |
-| Device set | Which devices the machine has at a given position. It can change during a session (a General Sound card personality switch) |
+| Device set | Which devices the machine has. Fixed for a session (D38): changing it starts a new session |
 | Version (of a device state) | One stored state of one device. A new version is stored only when the state changed |
 | Same as previous | A checkpoint stores nothing for a device whose state did not change; it inherits the previous version |
 | Changed ranges | A new version stored as the byte ranges that differ from the previous one: offset, length, new bytes |
@@ -122,11 +122,11 @@ FR-19 holds by call order only: `MainLoop::OnFrameEnd` (mainloop.cpp:431, 595) r
  └───────┴──────────────┴────────┴───────┴─────────────┴────────────┘
 
  device history (per instance): versions, each Full | Ranges | Xor, chained
- checkpoint N:   device set v1, changed: [2: Ranges 5 ranges, 57 B]
- checkpoint N+1: device set v1, changed: []          ← idle frame: 0 entries
+ checkpoint N:   changed: [2: Ranges 5 ranges, 57 B]
+ checkpoint N+1: changed: []          ← idle frame: 0 entries
 ```
 
-- **One device table per device-set version.** A checkpoint refers to its set by version number, shared until the set changes.
+- **One device table per session.** The device set is fixed for a session (D38).
 - **One history per device instance**, like a memory piece in Phase 1: a version is stored only when the state changed, as a difference from the previous version, with a chain length limit.
 - **One restore result** for the whole restore: CPU, devices, regions, and later configuration.
 
@@ -268,9 +268,7 @@ private:
 };
 ```
 
-A checkpoint holds, for devices, only:
-- the device-set version (u32, the same as the previous checkpoint's in almost every frame);
-- the list of (device index, version) pairs **for devices that changed**.
+A checkpoint holds, for devices, only the list of (device index, version) pairs **for devices that changed**.
 
 A checkpoint finds the version of an unchanged device by walking back to the last checkpoint that changed it. To keep a seek constant-time, the engine also keeps a copy-on-write "current versions" array per checkpoint, shared between checkpoints exactly like Phase 1's reference blocks (one pointer per checkpoint when nothing changed).
 
@@ -423,7 +421,7 @@ Phase 2 builds and tests the engine API. Users are on v1 until Phase 5 ([phase-5
 
 The automation contract test (`ttdautomationcontract_test.cpp`) gains a case per surface.
 
-### 5.4 Step 4 — Sound devices on the contract; device set as a timeline event (D26, FR-4)
+### 5.4 Step 4 — Sound devices on the contract (FR-19); the device set fixed for a session (D38, FR-4)
 
 #### 5.4.1 Every device under the declare / implement check
 
@@ -444,28 +442,12 @@ Today the sound devices (TurboSound slot, Covox, GS / NeoGS, MoonSound) register
 - *Sync (FR-19).* `TTDSerializable::TTDSyncedTime(offset)` answers whether a device's own clock stands where a frame boundary needs it; the offset is in the device's own units, for the report, so no device converts its clock into CPU T-states. TSFM: the core at the CPU's T-state (or adopting it at the next sync). MoonSound: the chip at or after the frame's start on its axis and not past the CPU. GS and NeoGS: the card at or after its frame base and less than a frame past it. Their descriptors set `runsBehindCpu`. The engine asks at every capture (a miss is counted in `SyncMissCount` / `SyncMisses`, the frame still recorded) and after `RestoreDevices`' after-restore calls (`AfterRestoreFailed`, device named). The capture already sees the next frame's start (the checkpoint convention), so the rule checked is "after the frame end and the next frame's start" rather than "at the frame end".
 - *Tests.* `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` (16 models x GS / NeoGS, MoonSound, TSFM where the helper fits it); `ADeviceNotMatchingItsDescriptorIsRefusedByName`; `TimeTravelManager_ShadowCards_Test` (Pentagon with TSFM, MoonSound and GS or NeoGS: no miss at any capture, every frame as v1, restores exact); `TimeTravelEngine_Sync_Test`. Mutations: capturing before the cards' frame start fails the cards test (TSFM 71,683 T-states from the frame start); dropping the table build from the registration check fails the refusal test.
 
-#### 5.4.3 A change of the device set is an event
+#### 5.4.3 The device set is fixed for a session (D38)
 
-```cpp
-struct TTDDeviceSetChange           // payload of the event kind DeviceSetChanged (Phase 3, Step 1)
-{
-    uint32_t fromSetVersion;
-    uint32_t toSetVersion;
-    std::vector<TTDDeviceKey> removed;
-    std::vector<TTDDeviceDescriptor> added;   // each with a Full first version
-};
-
-class ITTDDeviceSetProvider          // implemented by the emulator side (SoundManager, later the bus slots)
-{
-public:
-    virtual bool ApplyDeviceSet(const TTDDeviceTable& target, std::string* reason) = 0;
-};
-```
-
-- **When it happens.** A device-set change takes effect at a frame boundary. The engine closes frame N with the old set and records a `DeviceSetChanged` event at the start of frame N + 1, with the new table version and a `Full` first version of each added device. The event kind and its point of application belong to the event stream of Phase 3, Step 1 ([phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md)); Phase 2 defines its payload and what a seek does with it.
-- **Seek across it.** When the target's set version differs from the live one, the engine calls `ApplyDeviceSet` before restoring devices. The provider rebuilds the set (for the GS card: switch the personality, re-register ports) or says why it cannot. Failure is `DeviceSetDiffers` per device, and the devices that do exist are still restored.
-- **The first user: the GS personality switch.** In the engine it is recorded, not refused. v1 keeps refusing it (`SwitchGsCard`) until Phase 5 removes the guard together with v1.
-- **Not a device-set change:** a model switch. It starts a new session linked to its parent (D26), owned by Phase 5.
+*Changed 2026-10-03, owner decision.* This section first made a device-set change an event on the timeline (`DeviceSetChanged`, device-set versions, `ITTDDeviceSetProvider::ApplyDeviceSet`), with the GS personality switch as its first user. Dropped: with machine bus slots the machine declares its slots and the cards in them, and no one swaps a card while a session records. The set is therefore part of the machine:
+- a change of the set while recording is refused, as v1 does today (`TTDGuardedAction::SwitchGsCard`);
+- outside a recording it starts a new session linked to its parent, as a model switch does (Phase 5);
+- a session restored on a machine whose set differs reports `DeviceSetDiffers` or `DeviceNotPresent` per device (the generic rule of §5.4.1 replaces v1's two slot guards on load).
 
 ### 5.5 Built in now, used later
 
@@ -473,7 +455,6 @@ public:
 |---|---|
 | `TTDUpgradeState` slot in the descriptor | Phase 4, Step 1 decides whether layouts are upgraded or refused |
 | `ConfigurationDiffers`, `DataDamaged`, `damagedRange` | Phase 3, Step 4 (configuration fingerprint), Phase 4 (file integrity) |
-| Device-set versions and `ApplyDeviceSet` | Machine bus slots and hot-plugged cards; ZX-Poly groups (D22) |
 | Device-history versions with dependencies | Phase 4 eviction rebuilds a chain that reaches past the new start as `Full` (D5), as for pieces |
 | `TTDSyncedTime` in machine time | Phase 3, Step 3: several CPUs, a position on a card CPU (D20) |
 | Instance names | Several IDE channels, UARTs, ISA cards (Sprinter ISA, network) |
@@ -481,10 +462,9 @@ public:
 ### 5.6 File-format consequences (serialized in Phase 4)
 
 Phase 2 changes the in-memory model only. [phase-4-session-file-tdd.md](phase-4-session-file-tdd.md) must serialize:
-- **Device tables**, one per set version: per entry type u16, instance (u8 length + bytes), layout version u16, state size u32, firmware fingerprint u64, dependency count u8 + indices u16, time-field count u8 + (offset u16, width u8), flags u8 (`runsBehindCpu`). Every width checked against its largest value before the format is fixed.
-- **Per checkpoint:** a set-version change (rare), then a count of changed devices (u16, zero on an idle frame) and per changed device: table index u16, encoding u8, depth u16, payload length u32, payload, CRC32C.
+- **The device table**, one per session: per entry type u16, instance (u8 length + bytes), layout version u16, state size u32, firmware fingerprint u64, dependency count u8 + indices u16, time-field count u8 + (offset u16, width u8), flags u8 (`runsBehindCpu`). Every width checked against its largest value before the format is fixed.
+- **Per checkpoint:** a count of changed devices (u16, zero on an idle frame) and per changed device: table index u16, encoding u8, depth u16, payload length u32, payload, CRC32C.
 - **No 64-bit mask** of device ids: the device table replaces it, so the limit of 64 ids goes away.
-- **The `DeviceSetChanged` event** in the event stream.
 - `ttd.ksy` and the Python analyzer gain these structures in Phase 4, Step 6.
 
 v1's format does not change in Phases 1–4.
@@ -497,7 +477,7 @@ v1's format does not change in Phases 1–4.
 | `memcmp` with the delta base | per frame, per device | state size: about 35 KB per frame on Pentagon with cards, mostly NeoGS's 21.5 KB |
 | Time-field prediction | per frame, per declared field | a few integer additions (about a dozen fields on Pentagon with cards) |
 | Ranges / XOR + zstd | per frame, per **changed** device | 3–4 devices on idle cards; v1 compresses all 9 |
-| Topological sort | per device-set change | once |
+| Topological sort | per session | once |
 | Restore: decode a version | per seek, per device | at most K − 1 range applications; restore time `bm6_restore_devices_us_p50` within PR-5 |
 | After-restore calls, sync check | per seek | one call per device |
 
@@ -528,8 +508,6 @@ Every new test is checked by mutation: it must fail when the mechanism it guards
 | 3 | `CheckSession` reports the same issues as a seek, without changing the machine | up-front report |
 | 4 | Every creatable model: every registered device has a descriptor that matches the live device (extends `ttdmodelstatecontract_test.cpp`) | all devices under the contract |
 | 4 | Every `runsBehindCpu` device reports the frame boundary at capture; mutation: capture before the sound frame end → test fails | FR-19 is a tested rule |
-| 4 | Record, switch the GS personality, record, seek back across the switch: device set and state of the target restored (FR-3, extends `ttdgeneralsoundswitch_test.cpp` and `ttdstatecompleteness_test.cpp`) | device-set change as an event |
-| 4 | Provider refuses the switch → `DeviceSetDiffers`, other devices restored | partial device sets are reported |
 | All | **D33 oracle:** every frame of the fixture corpus, the matrix sessions and the E6 sessions restores each device byte for byte as v1 | correctness against v1 |
 | All | **D33 matrix:** `bm3_device_blobs_bpf`, `bm2_work_device_blobs_bpf`, `bm2_work_compress_calls_opf`, `bm4_heap_device_blobs_bpf` not larger than v1 on any case; seek within PR-5 | the quality bar |
 
@@ -543,7 +521,7 @@ Each item lands as its own commits, and each commit passes the full gate (build 
 4. **Step 2, history:** same as previous, then ranges / XOR, then the chain limit. Bytes drop; the oracle passes after each.
 5. **Step 2, time fields:** declared per device, one device per commit (MoonSound, NeoGS, TSFM, then the rest the measurement finds).
 6. **Step 4, contract and sync:** all devices through descriptors; `TTDSyncedTime` and its check.
-7. **Step 4, device-set events:** `DeviceSetChanged`, `ApplyDeviceSet`, the GS switch test.
+7. ~~**Step 4, device-set events**~~ — dropped 2026-10-03: the device set is fixed for a session (D38).
 8. Run the full matrix, store it as the Phase 2 baseline, write the results document.
 
 Step 3 comes before Step 2 so that every history change after it is checked by the same result reporting.
@@ -559,7 +537,7 @@ Step 3 comes before Step 2 so that every history change after it is checked by t
 | R1 | Enforcing the restore result exposes silent failures that exist today as visible errors | Land with the contract tests; triage each new report (migration-trajectory risk table) | — |
 | R2 | A declared time field that is not one costs bytes | Only bytes, never correctness; E8 lists the fields with their measured steps | — |
 | R3 | The time-field gain is a lower bound: residuals are not always zero (rational clocks: 72–504 of 3,000 frames) | The target in §5.2.4 has a margin above the lower bound; BM-3 decides | — |
-| R4 | Two personalities of a slot both register when the set changes inside a frame | A set change applies only at a frame boundary (§5.4.3); test with the GS switch | — |
+| R4 (moot, D38) | Two personalities of a slot both register when the set changes inside a frame | A set change applies only at a frame boundary (§5.4.3); test with the GS switch | — |
 | R5 | Device-history numbers come from v1 files fed to a model, not from the engine | The engine reproduces them through the v1 file reader; the matrix checks them | — |
 
 **Conflict with the decisions document, for the record:** D18's reason "idle cards cost 2 MB per minute" is the E6 model, which XORed the compressed v1 blobs. On the decoded state the same sessions give 0.66 MB per minute before any time-field rule. D18's conclusion stands, but the "2 MB" figure overstated what Phase 2 starts from. *Resolved 2026-10-02:* E6 now models the decoded state (0.8–0.9 MB per minute with a compressed XOR of the whole blob, the method of the model; this design's changed byte ranges give the 0.66 above), and D18 cites the corrected figures. D23's "`PeripheralId` is 0–41 full" means "taken": the hard limit is the 64-bit device mask in v1's file header (ids ≥ 64 dropped), not the byte.

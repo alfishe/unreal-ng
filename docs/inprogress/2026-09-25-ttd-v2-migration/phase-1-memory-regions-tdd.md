@@ -211,7 +211,7 @@ struct TTDRegionDesc
 };
 ```
 
-The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed in Phase 1; Phase 2 makes device-set changes timeline events (D26).
+The unused tail of a partial last piece is treated as zero and never read from or written to device memory. The region set of a session is fixed, as is its device set (D38).
 
 **The reference table: change records and periodic full tables** (as built, 2026-10-02; replaces the copy-on-write-only design below, see the measurement).
 

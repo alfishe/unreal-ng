@@ -80,9 +80,9 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 - [x] Step 3 — Restore result in the engine: `RestoreDevices` with issues per device, the v1 oracle on 10 models (2026-10-03); surfaces in Phase 5
   - [ ] Devices implement `TTDResetToPowerOn` (decided: reset when the state is missing); none does yet
   - [ ] Damage (CRC per device version) and `CheckSession`, with the device history (Step 2)
-- [ ] Step 4 — Sound devices on the contract; device-set changes as timeline events
+- [x] Step 4 — Sound devices on the contract; the device set fixed for a session (D38)
   - [x] Every device checked against its descriptor and the engine's device table built at registration (refused by name); `TTDSyncedTime` on TSFM, MoonSound, GS and NeoGS, checked at every capture and after every restore (2026-10-03)
-  - [ ] Device-set change as an event: `ApplyDeviceSet`, the GS personality switch recorded and sought across
+  - [x] ~~Device-set change as an event~~ — dropped 2026-10-03: the device set is fixed for a session (D38); a change while recording stays refused
 
 ## Phase 3 — Everything a replay needs
 

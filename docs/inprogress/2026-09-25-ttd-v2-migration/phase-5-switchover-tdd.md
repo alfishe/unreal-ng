@@ -318,7 +318,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 |---|---|---|
 | Snapshot load, RZX snapshot | `snapshot-load`, `rzx-snapshot` | `OnLoad`: an event, followed at once by a checkpoint of the loaded state. A seek before it replays up to it; a seek after it restores from that checkpoint; it is not a replay barrier |
 | Tape load, disk load, disk create, media change | `tape-load`, `disk-load`, `disk-create`, `media-change` | `OnLoad`: an event that switches the medium version the next checkpoints refer to (D25) |
-| GS card switch | `gs-card-switch` | `OnConfigurationChange`: a device-set change, restored by a seek (D26, FR-4, Phase 2, Step 4) |
+| GS card switch | `gs-card-switch` | The device set is fixed for a session (D38): refused while recording; otherwise a new session linked to its parent, as a model transfer |
 | ROM reload, model transfer | `rom-reload`, `state-transfer` | `OnModelTransfer`: a new session linked to its parent (D26). The parent stays openable |
 | Host speed multiplier change | `speed-multiplier-change` | An event, if Phase 3's configuration fingerprint shows the speed affects replay; otherwise nothing at all (open question 5) |
 | Reset | Stops the recording | An event; the recording goes on (Phase 3 reset marker) |
@@ -341,7 +341,7 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 | `Invalidate` | Still refused while capturing (allowed while paused or stopped) |
 | `DisableTimeTravel`, `DisableDebugMode` | Allowed: clean stop (§4.2.7) |
 | `ChangeWriteJournal` | Removed: journal window (D17) |
-| `SwitchGsCard` | Allowed: device-set event, once Phase 2, Step 4 restores across it |
+| `SwitchGsCard` | Still refused while recording: the device set is fixed for a session (D38) |
 | `CdFrontPanel` | Allowed only if Phase 3 journals the front-panel action as an event; otherwise still refused |
 
 The acceleration lock (host speed 1x, turbo and fast loaders off while recording or detached, [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-session-rules)) is not changed by this step; its interaction with the black box is open question 1.

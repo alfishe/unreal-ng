@@ -47,14 +47,15 @@ written justification; **MAY** = allowed, not required.
 - **FR-3 (MUST)** A generic **state-completeness test** per creatable model: for
   every port the model's decoder handles, write a non-default value after a
   checkpoint, seek back, and require that paging, memory map, device state and
-  a full machine hash equal the recording. The same test covers **devices
-  attached, detached or replaced at runtime** (FR-4): record with a device, change
-  the device set after a checkpoint, seek back, and require the recorded device
-  set and state.
-- **FR-4 (MUST)** Devices can be attached, detached or replaced at runtime (GS
-  card personality switch, sound device change); the change is recorded and a
-  seek across it restores the device set of the target position, or reports
-  that it cannot.
+  a full machine hash equal the recording. The same test covers **the
+  fixed device set** (FR-4): a device-set change while recording is refused, and
+  a session restored where the set differs reports each device.
+- **FR-4 (MUST)** The device set is fixed for a session (D38, 2026-10-03): the
+  machine's bus slots and the cards in them do not change while a session
+  records. A change of the set (GS card personality switch, sound device
+  change) is refused while recording and otherwise starts a new session linked
+  to its parent. A session restored on a machine whose device set differs
+  reports each device that differs; it never restores silently.
 - **FR-5 (MUST)** Memory regions of any size, with no fixed cap per region:
   at least 4 MB machine RAM, and each device region as large as its device
   needs (NeoGS RAM and flash: about 4.5 MB), with no per-page-index limitation

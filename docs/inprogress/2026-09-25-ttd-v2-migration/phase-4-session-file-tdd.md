@@ -159,7 +159,7 @@ v1 files keep `schemaVersion = 1` and stay readable only by the schema-1 reader 
 | 3 | Checkpoints: per frame, CPU, chipset, region block-table changes, device-state references | required | 1, 2 |
 | 4 | Device state versions | required | 2 |
 | 5 | Events with payloads (input, external events, markers, bus data, network), and `IN` values in RZX mode | required | 3 |
-| 6 | Configuration, device-set and media-version changes | required | 3 |
+| 6 | Configuration and media-version changes (the device set is fixed for a session, D38) | required | 3 |
 | 7 | Write journal | ancillary (derived, D17) | 3 |
 | 8–10 | Coverage: executed, written, read | ancillary (derived) | v1 format, carried over |
 | 11 | Port journal index | ancillary (derived) | 3 |
