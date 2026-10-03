@@ -17,6 +17,8 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
+#include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
@@ -73,9 +75,9 @@ protected:
     ttd::TimeTravelManager* _v1 = nullptr;
     ttd::TimeTravelEngine _engine;
 
-    void Start(const char* model)
+    void Start(const char* model, Emulator* emulator = nullptr)
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        _emulator = emulator ? emulator : EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr) << model;
         EmulatorContext* context = _emulator->GetContext();
         _v1 = context->pTimeTravelManager;
@@ -102,6 +104,14 @@ protected:
             EXPECT_NE(table.Find({ttd::TTDDeviceType::Wd1793Context, "betadisk.context"}), nullptr);
         EXPECT_EQ(_engine.Regions()[0].pieces, _v1->GetCheckpoint(0)->ramPages.size() * 4)
             << "region 0 covers the model's whole RAM";
+
+        // FR-19: every device that runs behind the CPU (the sound cards) was
+        // at the frame boundary at every capture
+        EXPECT_EQ(_engine.SyncMissCount(), 0u)
+            << (_engine.SyncMisses().empty() ? std::string()
+                                             : _engine.SyncMisses()[0].device.instance + " at frame " +
+                                                   std::to_string(_engine.SyncMisses()[0].frame) + ", offset " +
+                                                   std::to_string(_engine.SyncMisses()[0].offset));
 
         std::vector<uint8_t> v1Ram, v1Present, engineRam, enginePresent;
         std::string err;
@@ -222,6 +232,62 @@ TEST_P(TimeTravelManager_ShadowModels_Test, EngineRestoresEveryDeviceAsV1)
             EXPECT_TRUE(restored.at(id) == bytes) << "device " << int(id);
     }
 }
+
+/// FR-19 with every card that runs its own clock fitted (TSFM, MoonSound, and
+/// the GS or NeoGS card): at every capture each one stood at the frame
+/// boundary, every frame restores as v1's, and after the engine restores a
+/// checkpoint every card's clock is at that boundary again
+class TimeTravelManager_ShadowCards_Test : public TimeTravelManager_ShadowModels_Fixture,
+                                          public ::testing::WithParamInterface<GSTypeKind>
+{
+protected:
+    SoundCardScope _cards{TestSound::All};
+};
+
+TEST_P(TimeTravelManager_ShadowCards_Test, CardsAreAtTheFrameBoundaryAtEveryCaptureAndRestore)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("PENTAGON", TurboSoundKind::FM);
+    ASSERT_NE(emulator, nullptr);
+    ASSERT_TRUE(FitGeneralSoundCard(emulator->GetContext()->pSoundManager, GetParam()));
+    ASSERT_NO_FATAL_FAILURE(Start("PENTAGON", emulator));
+    EmulatorContext* context = _emulator->GetContext();
+
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(60, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+
+    std::vector<std::string> behind;
+    for (const ttd::TTDDeviceEntry& e : _engine.Devices().Entries())
+        if (e.descriptor.runsBehindCpu)
+            behind.push_back(e.descriptor.instance);
+#ifdef UNREALNG_HAVE_OPL4
+    EXPECT_EQ(behind.size(), 3u) << "TSFM, MoonSound and the GS card";
+#else
+    EXPECT_EQ(behind.size(), 2u) << "TSFM and the GS card";
+#endif
+    ASSERT_NO_FATAL_FAILURE(CheckEveryCheckpoint());
+
+    for (size_t i : {size_t(10), size_t(40)})
+    {
+        SCOPED_TRACE("checkpoint " + std::to_string(i));
+        _emulator->RunNFrames(3, /*skipBreakpoints=*/true);   // the machine moves on
+        const ttd::TTDEngineCheckpoint* cp = _engine.Checkpoint(i);
+        ttd::RestoreCpuState(cp->cpu, static_cast<Z80State*>(context->pCore->GetZ80()));
+        ttd::RestoreChipsetState(cp->chipset, &context->emulatorState);
+        _engine.ForgetMemory();
+        ASSERT_TRUE(_engine.RestoreToMemory(i).Ok());
+        const ttd::TTDRestoreResult r = _engine.RestoreDevices(i, ttd::TTDRestoreContext{cp->position.frame, 0, false});
+        EXPECT_EQ(r.status, ttd::TTDRestoreStatus::Exact) << r.message;
+        context->pMemory->UpdateZ80Banks();
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Cards, TimeTravelManager_ShadowCards_Test, ::testing::Values(GSTypeKind::Z80, GSTypeKind::NGS),
+                         [](const ::testing::TestParamInfo<GSTypeKind>& info) {
+                             return info.param == GSTypeKind::NGS ? std::string("NeoGS") : std::string("GeneralSound");
+                         });
 
 INSTANTIATE_TEST_SUITE_P(LargeMemoryModels, TimeTravelManager_ShadowModels_Test,
                          ::testing::Values("PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710", "ATM450", "ATM3",

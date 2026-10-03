@@ -1,5 +1,6 @@
 #include "ttdperipheralregistry.h"
 #include "ttdcompression.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 #include <algorithm>
 #include <cassert>
@@ -14,6 +15,60 @@ void TTDPeripheralRegistry::Register(PeripheralId id, TTDSerializable* device)
     {
         _devices[static_cast<uint8_t>(id)] = device;
     }
+}
+
+std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
+{
+    std::vector<TTDDeviceEntry> devices;
+    for (const auto& [id, device] : _devices)
+        if (device && device->TTDStateSize() != 0)
+            devices.push_back({device->TTDDescribe(), device, nullptr});
+    for (ITTDRegionSource* source : _regionSources)
+    {
+        uint8_t id = 0;
+        std::vector<uint8_t> probe;
+        if (!source->TTDStateWithoutRegions(id, probe))
+            continue;
+        for (TTDDeviceEntry& e : devices)
+            if (static_cast<uint8_t>(e.descriptor.legacyId) == id)
+            {
+                e.withoutRegions = source;
+                e.descriptor.stateSize = static_cast<uint32_t>(probe.size());
+                e.descriptor.variableSize = false;
+            }
+    }
+    return devices;
+}
+
+bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
+{
+    for (const auto& [id, device] : _devices)
+    {
+        if (!device)
+            continue;
+        const std::string name = device->TTDDeviceName();
+        if (static_cast<uint8_t>(device->TTDPeripheralId()) != id)
+        {
+            error = "device " + name + " is registered as id " + std::to_string(id) + " but names itself id " +
+                    std::to_string(static_cast<unsigned>(device->TTDPeripheralId()));
+            return false;
+        }
+        const TTDDeviceDescriptor d = device->TTDDescribe();
+        if (static_cast<uint8_t>(d.legacyId) != id)
+        {
+            error = "device " + name + " describes itself as id " + std::to_string(static_cast<unsigned>(d.legacyId)) +
+                    ", registered as id " + std::to_string(id);
+            return false;
+        }
+        if (!d.variableSize && d.stateSize != device->TTDStateSize())
+        {
+            error = "device " + name + " describes " + std::to_string(d.stateSize) + " bytes of state but saves " +
+                    std::to_string(device->TTDStateSize());
+            return false;
+        }
+    }
+    TTDDeviceTable table;
+    return table.Build(DeviceEntries(), error);
 }
 
 void TTDPeripheralRegistry::Unregister(PeripheralId id)

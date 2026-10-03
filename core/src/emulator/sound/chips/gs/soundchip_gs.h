@@ -228,6 +228,20 @@ public:
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::GeneralSound; }
+    ttd::TTDDeviceDescriptor TTDDescribe() const override
+    {
+        ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
+        return d;
+    }
+    /// Synced: as NeoGS - the card at or after its frame base (where its CPU
+    /// stood at the frame start, after the frame end ran it through the
+    /// frame) and less than a frame past it
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = totalGsCycles() - _frameStartGsCycles;
+        return offset >= 0 && (_frameGsCycles <= 0 || offset < _frameGsCycles);
+    }
     std::string TTDDeviceName() const override { return "GeneralSound"; }
     uint64_t TTDHashState() const override;
     /// endregion </TTDSerializable interface>

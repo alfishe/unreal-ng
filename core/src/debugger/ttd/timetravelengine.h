@@ -95,6 +95,15 @@ struct TTDRestoreResult
     }
 };
 
+/// A capture at which a device that runs behind the CPU was not synced to the
+/// frame boundary (TTDSerializable::TTDSyncedTime, FR-19)
+struct TTDSyncMiss
+{
+    uint64_t frame = 0;
+    TTDDeviceKey device;
+    int64_t offset = 0;   ///< the device's distance from the frame start, in its own units
+};
+
 /// One recorded frame boundary
 struct TTDEngineCheckpoint
 {
@@ -239,6 +248,11 @@ public:
 
     /// Work and time of the last CaptureFrame
     const TTDEngineCaptureWork& LastCaptureWork() const { return _lastWork; }
+
+    /// Captures at which a device that runs behind the CPU was not at the
+    /// frame boundary, this session: the count, and the first ones (up to 16)
+    uint64_t SyncMissCount() const { return _syncMissCount; }
+    const std::vector<TTDSyncMiss>& SyncMisses() const { return _syncMisses; }
     uint64_t LastCaptureNs() const { return _lastCaptureNs; }
 
     /// endregion </Capture>
@@ -361,6 +375,8 @@ private:
     std::vector<uint64_t> _regionPayload;
     std::vector<uint64_t> _regionVersions;
     TTDEngineCaptureWork _lastWork;
+    uint64_t _syncMissCount = 0;
+    std::vector<TTDSyncMiss> _syncMisses;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
     /// Per region: its latest contents (allocated when the region's first

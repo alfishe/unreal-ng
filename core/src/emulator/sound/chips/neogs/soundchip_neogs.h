@@ -175,12 +175,21 @@ public:
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
         d.timeFields = {{89, 8},     // _timerStrobeAt
                         {105, 8},    // _nextDacCrystal
                         {123, 8},    // _runner.now()
                         {232, 8},    // _nextTimerCrystal
                         {static_cast<uint16_t>(TTD_MP3_OFFSET + 34), 8}};   // VS10xx _now
         return d;
+    }
+    /// Synced: the card's frame base is where its CPU stood at the frame
+    /// start, after the frame end ran it through the frame; the card is at or
+    /// after that base and less than a frame past it
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = _runner.now() - _frameStartTicks;
+        return offset >= 0 && (_frameTicks <= 0 || offset < _frameTicks);
     }
 
     /// Time-travel engine regions (Phase 1, Step 6): the card RAM (2-4 MB) and

@@ -526,6 +526,7 @@ public:
     ttd::TTDDeviceDescriptor TTDDescribe() const override
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
+        d.runsBehindCpu = true;
         constexpr uint16_t kHeader = 50, kChip = 586, kYmfm = 1 + 4 + 4 + 4 + 4 + 2;
         for (uint16_t chip = 0; chip < 2; ++chip)
         {
@@ -534,6 +535,15 @@ public:
             d.timeFields.push_back({static_cast<uint16_t>(ymfm + 15), 1});   // m_total_clocks
         }
         return d;
+    }
+
+    /// Synced: the core has been advanced to the CPU's T-state (the frame end
+    /// syncs it, the next frame's start moves it to the new frame's axis), or
+    /// it adopts the CPU's position at its next sync (after a reset or restore)
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = static_cast<int64_t>(_syncedT);
+        return _adoptCpuClock || _syncedT == nowT();
     }
 
     std::string TTDDeviceName() const override

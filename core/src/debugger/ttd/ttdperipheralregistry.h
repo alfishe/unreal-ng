@@ -17,6 +17,7 @@
 /// Performance target: <1ms for capture, <2ms for restore (well within
 /// the 5-6ms per-frame restoration budget).
 
+#include "debugger/ttd/engine/ttddevicetable.h"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -106,6 +107,18 @@ public:
     size_t Count() const { return _devices.size(); }
     /// Every registered device by its v1 id
     const std::unordered_map<uint8_t, TTDSerializable*>& Devices() const { return _devices; }
+
+    /// The time-travel engine's device table entries for the registered
+    /// devices with state; a device whose memory the engine keeps as regions
+    /// (TTDStateWithoutRegions) is entered with its state without that memory
+    std::vector<TTDDeviceEntry> DeviceEntries() const;
+
+    /// Every registered device against its own descriptor (the id it is
+    /// registered under, its state size), then the engine's device table built
+    /// from them (dependencies present, no cycle, time fields inside the
+    /// state). False with the reason: recording would otherwise start and the
+    /// engine refuse the session silently
+    bool CheckDeviceTable(std::string& error) const;
 
     /// Devices whose memory the time-travel engine records as regions
     /// (Phase 1, Step 6); v1 does not use them

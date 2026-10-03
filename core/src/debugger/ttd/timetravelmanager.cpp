@@ -3243,28 +3243,9 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
 
-        // The device table, from the same registry v1 records from
-        std::vector<TTDDeviceEntry> devices;
-        for (const auto& [id, device] : _peripherals.Devices())
-            if (device && device->TTDStateSize() != 0)
-                devices.push_back({device->TTDDescribe(), device, nullptr});
-        // A device the engine stores without its region memory loads through
-        // its region source, and its state is that smaller one
-        for (ITTDRegionSource* source : _peripherals.RegionSources())
-        {
-            uint8_t id = 0;
-            std::vector<uint8_t> probe;
-            if (!source->TTDStateWithoutRegions(id, probe))
-                continue;
-            for (TTDDeviceEntry& e : devices)
-                if (static_cast<uint8_t>(e.descriptor.legacyId) == id)
-                {
-                    e.withoutRegions = source;
-                    e.descriptor.stateSize = static_cast<uint32_t>(probe.size());
-                    e.descriptor.variableSize = false;
-                }
-        }
-        if (!engine.BeginSession(regions, std::move(devices), error))
+        // The device table, from the same registry v1 records from (checked
+        // when recording started: CheckDeviceTable)
+        if (!engine.BeginSession(regions, _peripherals.DeviceEntries(), error))
         {
             MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());
             _shadowDeviceRegions.clear();

@@ -188,6 +188,7 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.firmwareFingerprint = _romHash;
+        d.runsBehindCpu = true;
         // Clocks that advance with the chip time (the header, then libopl4's
         // state at sizeof(MoonSoundTTDHeader)): the engine stores each as its
         // residual from a line
@@ -201,6 +202,14 @@ public:
                         {2695, 8},            // FM engine _egCnt
                         {4354, 8}};           // PCM _egCnt
         return d;
+    }
+
+    /// Synced: the chip has run to the current frame's start (the frame end
+    /// runs it there and folds the frame into the axis) and not past the CPU
+    bool TTDSyncedTime(int64_t& offset) const override
+    {
+        offset = static_cast<int64_t>(_lastChipTime - _tstateOrigin);
+        return _lastChipTime >= _tstateOrigin && _lastChipTime <= currentChipTime();
     }
     uint64_t TTDHashState() const override;
 

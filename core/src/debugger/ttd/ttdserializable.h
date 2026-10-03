@@ -354,6 +354,18 @@ public:
     /// has no state for it (the same restore then always gives the same
     /// machine). False: the device cannot, it keeps its live state
     virtual bool TTDResetToPowerOn() { return false; }
+
+    /// A device that runs its own clock behind the CPU (runsBehindCpu: a card
+    /// CPU, a sound chip synced lazily): is that clock where a frame boundary
+    /// needs it - caught up to the current frame's start, and not past the
+    /// CPU? Asked at every capture (after the frame end and the next frame's
+    /// start ran) and after every restore. offset: the clock's distance from
+    /// the frame start in the device's own units, for the report (FR-19)
+    virtual bool TTDSyncedTime(int64_t& offset) const
+    {
+        offset = 0;
+        return true;
+    }
 };
 
 } // namespace ttd

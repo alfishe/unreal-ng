@@ -214,6 +214,22 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         return false;
     }
 
+    // The engine's device table from the same devices: a device that does not
+    // match its own descriptor, a dependency on a device this machine lacks
+    // or a time field outside the state refuses recording here, named,
+    // instead of the engine refusing its session later without a word
+    std::string tableError;
+    if (!registry.CheckDeviceTable(tableError))
+    {
+        const std::string message = "device table: " + tableError;
+        MLOGERROR("RegisterMachinePeripherals - %s", message.c_str());
+        if (error)
+            *error = message;
+        registry.Clear();
+        ownedSerializers.clear();
+        return false;
+    }
+
     if (registry.Count() > 0)
     {
         MLOGINFO("RegisterMachinePeripherals - %zu serializer(s) registered for mem_model=%u", registry.Count(),

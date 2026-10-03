@@ -586,3 +586,65 @@ TEST(TimeTravelEngine_TimeFields_Test, AnEvenPaceStoresNothingAfterTheLineIsSet)
     std::memcpy(&origin, got.data(), 8);
     EXPECT_EQ(origin, 71680u * 99);
 }
+
+/// FR-19: a device that runs behind the CPU and is not at the frame boundary
+/// is reported at the capture (the frame is still recorded) and, after a
+/// restore leaves it there, as AfterRestoreFailed; a synced one is not
+TEST(TimeTravelEngine_Sync_Test, ADeviceNotAtTheBoundaryIsReportedAtCaptureAndRestore)
+{
+    struct Card : TTDSerializable
+    {
+        uint8_t state[8] = {};
+        bool synced = true;
+        int64_t offset = 0;
+        size_t TTDStateSize() const override { return sizeof(state); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, sizeof(state)); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, sizeof(state)); }
+        std::string TTDDeviceName() const override { return "Card"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::NeoGS; }
+        TTDDeviceDescriptor TTDDescribe() const override
+        {
+            TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+            d.runsBehindCpu = true;
+            return d;
+        }
+        bool TTDSyncedTime(int64_t& o) const override
+        {
+            o = offset;
+            return synced;
+        }
+    } card;
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{card.TTDDescribe(), &card, nullptr}}, err)) << err;
+    const auto id = static_cast<uint8_t>(PeripheralId::NeoGS);
+    for (uint64_t f = 0; f < 4; ++f)
+    {
+        card.synced = f != 2;
+        card.offset = f == 2 ? -700 : 0;
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.deviceStates.push_back({id, card.state, sizeof(card.state)});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    EXPECT_EQ(engine.CheckpointCount(), 4u) << "a miss is reported, the frame still recorded";
+    ASSERT_EQ(engine.SyncMissCount(), 1u);
+    EXPECT_EQ(engine.SyncMisses()[0].frame, 2u);
+    EXPECT_EQ(engine.SyncMisses()[0].device.instance, "card");
+    EXPECT_EQ(engine.SyncMisses()[0].offset, -700);
+
+    card.synced = true;
+    EXPECT_EQ(engine.RestoreDevices(1, {}).status, TTDRestoreStatus::Exact);
+    card.synced = false;
+    const TTDRestoreResult result = engine.RestoreDevices(1, {});
+    ASSERT_EQ(result.issues.size(), 1u);
+    EXPECT_EQ(result.issues[0].kind, TTDRestoreIssueKind::AfterRestoreFailed);
+    EXPECT_EQ(result.issues[0].device.instance, "card");
+    EXPECT_FALSE(result.Ok());
+}

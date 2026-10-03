@@ -152,6 +152,8 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
         _timeFields[static_cast<size_t>(r)] = d.timeFields;
         _timeLines[static_cast<size_t>(r)].assign(d.timeFields.size(), {});
     }
+    _syncMissCount = 0;
+    _syncMisses.clear();
     _open = true;
     return true;
 }
@@ -226,6 +228,19 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     for (const TTDChangedPiece& c : input.changed)
         if (c.region < _offeredByRegion.size())
             ++_offeredByRegion[c.region];
+
+    // FR-19: every device that runs behind the CPU has caught up to this
+    // boundary (one call per such device; a miss is reported, the frame is
+    // still recorded as it is)
+    for (const TTDDeviceEntry& e : _devices.Entries())
+    {
+        int64_t offset = 0;
+        if (!e.descriptor.runsBehindCpu || !e.device || e.device->TTDSyncedTime(offset))
+            continue;
+        if (_syncMisses.size() < 16)
+            _syncMisses.push_back({input.position.frame, e.descriptor.Key(), offset});
+        ++_syncMissCount;
+    }
 
     TTDEngineCheckpoint cp;
     cp.position = input.position;
@@ -706,6 +721,21 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
     for (uint32_t i : _devices.RestoreOrder())
         if (entries[i].device)
             entries[i].device->TTDAfterRestore(context);
+    // FR-19 after a restore: a device that runs behind the CPU stands at the
+    // restored boundary once its after-restore work is done
+    for (uint32_t i : _devices.RestoreOrder())
+    {
+        const TTDDeviceEntry& e = entries[i];
+        int64_t offset = 0;
+        if (!e.descriptor.runsBehindCpu || !e.device || e.device->TTDSyncedTime(offset))
+            continue;
+        TTDRestoreIssue issue;
+        issue.kind = TTDRestoreIssueKind::AfterRestoreFailed;
+        issue.device = e.descriptor.Key();
+        issue.detail = "its clock is not at the restored frame boundary (" + std::to_string(offset) +
+                       " from the frame start)";
+        result.Add(issue);
+    }
     return result;
 }
 

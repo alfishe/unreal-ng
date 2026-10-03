@@ -81,6 +81,8 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
   - [ ] Devices implement `TTDResetToPowerOn` (decided: reset when the state is missing); none does yet
   - [ ] Damage (CRC per device version) and `CheckSession`, with the device history (Step 2)
 - [ ] Step 4 — Sound devices on the contract; device-set changes as timeline events
+  - [x] Every device checked against its descriptor and the engine's device table built at registration (refused by name); `TTDSyncedTime` on TSFM, MoonSound, GS and NeoGS, checked at every capture and after every restore (2026-10-03)
+  - [ ] Device-set change as an event: `ApplyDeviceSet`, the GS personality switch recorded and sought across
 
 ## Phase 3 — Everything a replay needs
 

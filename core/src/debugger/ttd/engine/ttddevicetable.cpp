@@ -34,6 +34,15 @@ bool TTDDeviceTable::Build(std::vector<TTDDeviceEntry> entries, std::string& err
             error = "device " + Describe(d.Key()) + " declares no state";
             return false;
         }
+        for (const TTDTimeField& tf : d.timeFields)
+            if ((tf.width != 1 && tf.width != 2 && tf.width != 4 && tf.width != 8) ||
+                size_t(tf.offset) + tf.width > d.stateSize)
+            {
+                error = "device " + Describe(d.Key()) + " declares a time field (offset " + std::to_string(tf.offset) +
+                        ", " + std::to_string(tf.width) + " bytes) outside its " + std::to_string(d.stateSize) +
+                        " bytes of state";
+                return false;
+            }
         for (size_t j = 0; j < i; ++j)
             if (entries[j].descriptor.Key() == d.Key())
             {
