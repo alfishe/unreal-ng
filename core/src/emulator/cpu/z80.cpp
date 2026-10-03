@@ -1153,7 +1153,7 @@ void Z80::NotifyInstructionStart()
         {
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
-            _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+            _context->ttdProbe.RecordHit(tp, m1_pc, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
     }

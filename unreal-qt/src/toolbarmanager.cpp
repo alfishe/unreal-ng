@@ -493,7 +493,9 @@ void ToolBarManager::updateActiveTooltips()
     if (_ttdRecordingActive && _ttdAction && context->pTimeTravelManager)
     {
         auto* ttd = context->pTimeTravelManager;
-        ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+        // Every 200 ms while recording: the summary of a recent frame, without
+        // waiting for the emulation thread
+        ttd::TTDSessionInfo info = ttd->GetLatestSessionInfo();
         const uint64_t startFrame = info.sessionStartFrame;
         const uint64_t curFrame = info.currentEndFrame;
         const uint64_t totalFrames = (curFrame >= startFrame) ? (curFrame - startFrame) : 0;

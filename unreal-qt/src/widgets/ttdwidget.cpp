@@ -390,7 +390,9 @@ void TtdWidget::updateTelemetry()
     }
 
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-    ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+    // A periodic refresh: while recording, a recent frame's summary without
+    // waiting for the emulation thread
+    ttd::TTDSessionInfo info = ttd->GetLatestSessionInfo();
     ttd::TTDTimePoint currentPos = ttd->CurrentPosition();
 
     // Not available for this machine at all (a ZX-Poly member): say why

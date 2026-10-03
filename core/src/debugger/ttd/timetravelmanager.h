@@ -41,6 +41,7 @@
 ///   public API.
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstddef>
 #include <functional>
@@ -51,6 +52,7 @@
 #include <optional>
 #include <vector>
 #include <string>
+#include <thread>
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
@@ -519,7 +521,26 @@ public:
     ///        flows. Idempotent (no-op when not in DebuggerLive).
     void EndDebuggerLiveHistory();
 
+    /// @brief The session summary. Safe from any thread (the toolbar's
+    /// tooltip, CLI / Lua / Python / gdb / WebAPI threads): while a recording
+    /// runs on the emulation thread, the timeline, page store and journals
+    /// change every frame, so a caller on another thread asks that thread to
+    /// compute the summary at its next frame boundary and waits for it; on the
+    /// emulation thread itself, or with the machine parked, it is computed
+    /// at once.
     TTDSessionInfo GetSessionInfo() const;
+    /// @brief The same summary without waiting, for periodic displays (the
+    /// toolbar's tooltip): while a recording runs on another thread, the one
+    /// published at a recent frame boundary (and a fresh one is asked for);
+    /// otherwise GetSessionInfo()
+    TTDSessionInfo GetLatestSessionInfo() const;
+    /// Summaries the recording thread computed for callers on other threads
+    /// (diagnostics: shows that cross-thread reads go through the frame boundary)
+    uint64_t SessionInfoPublications() const
+    {
+        std::lock_guard<std::mutex> lock(_infoMutex);
+        return _infoSerial;
+    }
 
     /// @brief History limit: while recording, the oldest checkpoints are
     /// released once the timeline holds more than `maxFrames` checkpoints or
@@ -588,6 +609,14 @@ public:
     /// session frees the pre-allocated journal.
     bool SetEnableWriteJournal(bool enable);
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
+
+    /// @brief The write journal ring's size in bytes (0: the default, 64 MB,
+    /// 8,388,608 records). Memory is committed as the ring fills, so a large
+    /// ring costs only what it holds. Takes effect at the next recording;
+    /// refused (false) while a session exists (recorded or loaded). Experiments that need a session's
+    /// whole write history (E7) record with a ring that does not wrap
+    bool SetWriteJournalCapacity(size_t bytes);
+    size_t GetWriteJournalCapacity() const { return _writeJournalBytes; }
 
     // -----------------------------------------------------------------------
     // Session serialization (.ttd format) — universal capability
@@ -1381,6 +1410,16 @@ public:
         TTDExternalEvent* outBlockingMarker = nullptr,
         TTDSearchWindow* outWindow = nullptr);
 
+    /// @brief Regenerate one recorded frame's memory writes by replaying it
+    /// (TTD v2 Phase 3, Step 7: the write journal as an index derived from a
+    /// sealed replay). Restores the frame's checkpoint and replays the whole
+    /// frame with every memory write collected, in execution order (time,
+    /// address, value, PC, physical page), as the write journal recorded
+    /// them. The machine is left at the frame's end.
+    /// @return false when the session has no checkpoint of @p frame or none
+    ///         after it, while recording, or when a v1 marker lies in the frame
+    bool RegenerateFrameWrites(uint64_t frame, std::vector<TTDSearchResult>& out);
+
     /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
     TTDCoverageProbeResult QueryCoverageProbe(
         uint64_t frame,
@@ -1921,7 +1960,8 @@ private:
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
-    TTDSessionState _state = TTDSessionState::Idle;
+    /// Read from any thread (IsRecording, GetSessionInfo); written by the session's owner
+    std::atomic<TTDSessionState> _state{TTDSessionState::Idle};
 
     /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
     TTDRecordMode _recordMode = TTDRecordMode::Session;
@@ -2171,7 +2211,21 @@ private:
     /// Whether to capture write journal entries. When false, journal is empty
     /// and reverse-watchpoint queries fall back to checkpoint replay.
     /// Set via SetEnableWriteJournal() before StartRecording().
+    /// region <Session summary across threads (GetSessionInfo)>
+    TTDSessionInfo ComputeSessionInfo() const;   ///< the recording thread, or a parked machine
+    bool MachineQuiet() const;                   ///< no frame can run concurrently with the caller
+    void PublishSessionInfo();                   ///< at a frame boundary: serve a pending request
+    mutable std::mutex _infoMutex;
+    mutable std::condition_variable _infoCv;
+    mutable bool _infoRequested = false;
+    mutable uint64_t _infoSerial = 0;            ///< counts publications
+    TTDSessionInfo _infoPublished;
+    std::atomic<std::thread::id> _captureThread{};   ///< the thread that captured the last frame
+    /// endregion
+
     bool _enableWriteJournal = true;
+    static constexpr size_t kDefaultWriteJournalBytes = 64u * 1024 * 1024;
+    size_t _writeJournalBytes = kDefaultWriteJournalBytes;   ///< SetWriteJournalCapacity
 
     /// True while the journal holds every write of the session since its start
     /// (journaling on at StartRecording, never switched, no unrecorded run

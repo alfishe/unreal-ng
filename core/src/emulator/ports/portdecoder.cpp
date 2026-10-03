@@ -482,7 +482,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             // A port has no RAM page; the journal path reports the same.
-            _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,
+            _context->ttdProbe.RecordHit(tp, port, pc, value, ttd::kPhysPageNone,
                                           ttd::TTDAccessType::Io);
         }
     }

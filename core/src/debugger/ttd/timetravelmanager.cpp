@@ -272,7 +272,7 @@ bool TimeTravelManager::StartRecording()
     // Use async allocation to avoid blocking the emulator thread.
     if (_enableWriteJournal && !_writeJournal)
     {
-        _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, true);
+        _writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
     }
 
     // Wait for journal allocation to complete before proceeding.
@@ -654,7 +654,7 @@ void TimeTravelManager::UpdateFeatureCache()
     if (ttdEnabled && _enableWriteJournal && !_writeJournal)
     {
         MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD enabled, pre-allocating write journal (async)");
-        _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, true);
+        _writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
     }
 
     // When TimeTravel feature is disabled and we're not recording,
@@ -667,6 +667,69 @@ void TimeTravelManager::UpdateFeatureCache()
 }
 
 TTDSessionInfo TimeTravelManager::GetSessionInfo() const
+{
+    // Outside a recording nothing changes the session between API calls; on
+    // the recording thread, or with the machine parked, nothing runs alongside
+    if (_state != TTDSessionState::Recording || _captureThread.load() == std::this_thread::get_id() ||
+        MachineQuiet())
+        return ComputeSessionInfo();
+
+    // A recording runs on another thread: it computes the summary at its next
+    // frame boundary. A machine that parks meanwhile is computed here
+    std::unique_lock<std::mutex> lock(_infoMutex);
+    const uint64_t seen = _infoSerial;
+    _infoRequested = true;
+    for (int slice = 0; slice < 25; ++slice)   // up to 0.5 s: frames are 20 ms
+    {
+        if (_infoCv.wait_for(lock, std::chrono::milliseconds(20), [&]() { return _infoSerial != seen; }))
+            return _infoPublished;
+        if (_state != TTDSessionState::Recording || MachineQuiet())
+        {
+            _infoRequested = false;
+            lock.unlock();
+            return ComputeSessionInfo();
+        }
+    }
+    return _infoPublished;   // the machine neither reached a frame end nor parked: the last summary
+}
+
+TTDSessionInfo TimeTravelManager::GetLatestSessionInfo() const
+{
+    if (_state != TTDSessionState::Recording || _captureThread.load() == std::this_thread::get_id() ||
+        MachineQuiet())
+        return ComputeSessionInfo();
+    {
+        std::lock_guard<std::mutex> lock(_infoMutex);
+        _infoRequested = true;
+        if (_infoSerial != 0 && _infoPublished.state == TTDSessionState::Recording)
+            return _infoPublished;
+    }
+    return GetSessionInfo();   // nothing published for this recording yet
+}
+
+bool TimeTravelManager::MachineQuiet() const
+{
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    if (!emu)
+        return true;
+    // Not running asynchronously (frames are driven by the caller), or paused
+    // and confirmed parked
+    return (!emu->IsRunning() || emu->IsPaused()) && emu->WaitForPauseConfirmation(0);
+}
+
+void TimeTravelManager::PublishSessionInfo()
+{
+    _captureThread.store(std::this_thread::get_id());
+    std::lock_guard<std::mutex> lock(_infoMutex);
+    if (!_infoRequested)
+        return;
+    _infoPublished = ComputeSessionInfo();
+    _infoRequested = false;
+    ++_infoSerial;
+    _infoCv.notify_all();
+}
+
+TTDSessionInfo TimeTravelManager::ComputeSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
@@ -777,6 +840,20 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.journalGapAt = _journalGapAt;
 
     return info;
+}
+
+bool TimeTravelManager::SetWriteJournalCapacity(size_t bytes)
+{
+    // Only without a session: the ring holds the session's writes
+    if (_state != TTDSessionState::Idle || !_timeline.empty())
+        return false;
+    const size_t wanted = bytes ? bytes : kDefaultWriteJournalBytes;
+    if (wanted != _writeJournalBytes)
+    {
+        _writeJournalBytes = wanted;
+        _writeJournal.reset();   // allocated again, at this size, when a recording starts
+    }
+    return true;
 }
 
 bool TimeTravelManager::SetEnableWriteJournal(bool enable)
@@ -1001,6 +1078,7 @@ void TimeTravelManager::OnFrameBoundary()
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
+        PublishSessionInfo();   // a summary another thread asked for, consistent with this frame
         return;
     }
 
@@ -4395,7 +4473,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         if (!out) { err = "stream write failed (emulator_id)"; return false; }
     }
 
-    const uint8_t sessionState = static_cast<uint8_t>(_state);
+    const uint8_t sessionState = static_cast<uint8_t>(_state.load());
     if (!WritePod(out, sessionState, err)) return false;
 
     const uint64_t sessionStart = _timeline.empty() ? 0 : _timeline.front().time.frame;
@@ -5121,10 +5199,12 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     {
         // Its own ring (sync allocation - needed immediately): the live one
         // keeps the current session's records until the commit
-        stagedJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, false);
-
         uint64_t journalCount = 0;
         if (!ReadPod(in, journalCount, err)) return false;
+        // Large enough for every record the file holds (a session recorded
+        // with a larger ring than this machine's)
+        stagedJournal = std::make_unique<TTDWriteJournal>(
+            std::max<size_t>(_writeJournalBytes, static_cast<size_t>(journalCount) * sizeof(TTDWriteRecord)), false);
         if (!stagedJournal->Deserialize(in, journalCount))
         {
             err = "stream read failed (write journal section)";
@@ -5541,6 +5621,34 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
     rec.physPage = 0;  // IO writes don't have a physical RAM page
 
     _writeJournal->Append(rec);
+}
+
+bool TimeTravelManager::RegenerateFrameWrites(uint64_t frame, std::vector<TTDSearchResult>& out)
+{
+    out.clear();
+    if (!_context || _state == TTDSessionState::Recording)
+        return false;
+    const auto it = std::lower_bound(_timeline.begin(), _timeline.end(), frame,
+                                     [](const TTDCheckpoint& cp, uint64_t f) { return cp.time.frame < f; });
+    if (it == _timeline.end() || it->time.frame != frame || std::next(it) == _timeline.end())
+        return false;
+    const uint32_t frameT = FrameSpan();
+    if (_externalEvents.FirstMarkerInInterval(it->time, TTDTimePoint{frame, frameT}))
+        return false;
+
+    RestoreCheckpointForReplay(*it);
+    TTDSearchQuery all;
+    all.access = TTDAccessType::Write;
+    all.addrFrom = 0;
+    all.addrTo = 0xFFFF;
+    _context->ttdProbe.Reset();
+    _context->ttdProbe.Arm(all);
+    EnterReplayMode();
+    ReplayWithinFrame(frame, frameT);
+    ExitReplayMode();
+    out = _context->ttdProbe.ExtractHits();
+    _context->ttdProbe.Disarm();
+    return true;
 }
 
 std::optional<TTDSearchResult>

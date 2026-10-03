@@ -57,7 +57,7 @@ TEST(TTDAccessProbe_Test, Reset_ClearsEverything)
 
     // Record a hit
     TTDTimePoint t{1, 100};
-    probe.RecordHit(t, 0x2000, 0xAB, 1, TTDAccessType::Write);
+    probe.RecordHit(t, 0x8000, 0x2000, 0xAB, 1, TTDAccessType::Write);
     ASSERT_EQ(probe.Hits().size(), 1u);
 
     probe.Reset();
@@ -274,8 +274,8 @@ TEST(TTDAccessProbe_Test, RecordHit_AppendsToHits)
     TTDTimePoint t1{1, 100};
     TTDTimePoint t2{1, 200};
 
-    probe.RecordHit(t1, 0x2000, 0x01, 1, TTDAccessType::Write);
-    probe.RecordHit(t2, 0x2100, 0x02, 2, TTDAccessType::Write);
+    probe.RecordHit(t1, 0x8000, 0x2000, 0x01, 1, TTDAccessType::Write);
+    probe.RecordHit(t2, 0x8001, 0x2100, 0x02, 2, TTDAccessType::Write);
 
     const auto& hits = probe.Hits();
     ASSERT_EQ(hits.size(), 2u);
@@ -283,6 +283,8 @@ TEST(TTDAccessProbe_Test, RecordHit_AppendsToHits)
     EXPECT_EQ(hits[0].value, 0x01u);
     EXPECT_EQ(hits[1].pc, 0x2100u);
     EXPECT_EQ(hits[1].value, 0x02u);
+    EXPECT_EQ(hits[0].addr, 0x8000u) << "a hit names its address";
+    EXPECT_EQ(hits[1].addr, 0x8001u);
 }
 
 TEST(TTDAccessProbe_Test, ExtractHits_ReturnsAndClears)
@@ -293,7 +295,7 @@ TEST(TTDAccessProbe_Test, ExtractHits_ReturnsAndClears)
     probe.Arm(q);
 
     TTDTimePoint t{1, 100};
-    probe.RecordHit(t, 0x2000, 0x42, 5, TTDAccessType::Write);
+    probe.RecordHit(t, 0x8000, 0x2000, 0x42, 5, TTDAccessType::Write);
     ASSERT_EQ(probe.Hits().size(), 1u);
 
     auto hits = probe.ExtractHits();
@@ -309,7 +311,7 @@ TEST(TTDAccessProbe_Test, Arm_ClearsPreviousHits)
     probe.Arm(q);
 
     TTDTimePoint t{1, 100};
-    probe.RecordHit(t, 0x2000, 0x42, 5, TTDAccessType::Write);
+    probe.RecordHit(t, 0x8000, 0x2000, 0x42, 5, TTDAccessType::Write);
     ASSERT_EQ(probe.Hits().size(), 1u);
 
     // Re-arm — previous hits should be cleared

@@ -355,7 +355,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
             // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
+            _context->ttdProbe.RecordHit(tp, addr, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
         }
     }
@@ -469,7 +469,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
                 // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
                 const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
                 const ttd::TTDTimePoint t{st.frame_counter, tin};
-                _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
+                _context->ttdProbe.RecordHit(t, addr, pc, value, physPage, ttd::TTDAccessType::Write);
             }
         }
     }
