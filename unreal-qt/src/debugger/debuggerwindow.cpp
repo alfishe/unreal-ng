@@ -869,7 +869,9 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
         // For IM2, we might hit a vector table read breakpoint first
         if (breakpoint->type == BRK_MEMORY && (breakpoint->memoryType & BRK_MEM_READ))
         {
-            EmulatorContext* context = _emulator->GetContext();
+            EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+            if (!context || !context->pCore)
+                return;
             Memory* memory = context->pMemory;
             Z80* z80 = context->pCore->GetZ80();
 
@@ -1143,7 +1145,7 @@ void DebuggerWindow::waitInterrupt()
     clearInterruptBreakpoints();
 
     EmulatorContext* context = _emulator->GetContext();
-    Z80* cpu = context->pCore->GetZ80();
+    Z80* cpu = context && context->pCore ? context->pCore->GetZ80() : nullptr;
     if (!cpu)
     {
         qWarning() << "No CPU instance";

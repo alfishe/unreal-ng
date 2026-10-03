@@ -683,6 +683,14 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
     // the context is alive, so wait for the queue to drain before freeing
     // anything. The wait happens before _emulatorsMutex is taken - a handler
     // that re-enters EmulatorManager would otherwise deadlock on our lock.
+    //
+    // Context leases (Emulator::LeaseContext): refuse new ones before anyone
+    // hears about the removal, then - after the drain, with no lock held -
+    // wait for the live ones. A UI thread reading the context (adopting the
+    // instance, opening a menu) finishes before the context is freed.
+    std::shared_ptr<Emulator> retiring = GetEmulator(emulatorId);
+    if (retiring)
+        retiring->BeginRetirement();
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, new SimpleTextPayload(emulatorId), true);
@@ -691,6 +699,8 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
             LOGWARNING("EmulatorManager::RemoveEmulator - Message queue drain timed out for '%s'; observers may race the instance free", emulatorId.c_str());
         }
     }
+    if (retiring)
+        retiring->WaitForContextLeases();
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
@@ -1130,14 +1140,22 @@ bool EmulatorManager::SetSelectedEmulatorId(const std::string& emulatorId)
 void EmulatorManager::ShutdownAllEmulators()
 {
     std::vector<std::string> ids;
+    std::vector<std::shared_ptr<Emulator>> retiring;
     {
         std::lock_guard<std::mutex> lock(_emulatorsMutex);
         ids.reserve(_emulators.size());
+        retiring.reserve(_emulators.size());
         for (const auto& [uuid, emulator] : _emulators)
         {
             ids.push_back(uuid);
+            retiring.push_back(emulator);
         }
     }
+
+    // Context leases: refuse new ones, wait for the live ones after the drain
+    // (see RemoveEmulatorInstance())
+    for (const auto& emulator : retiring)
+        emulator->BeginRetirement();
 
     if (ids.empty())
     {
@@ -1162,6 +1180,9 @@ void EmulatorManager::ShutdownAllEmulators()
             LOGWARNING("EmulatorManager::ShutdownAllEmulators - Message queue drain timed out; observers may race the instances free");
         }
     }
+    for (const auto& emulator : retiring)
+        emulator->WaitForContextLeases();
+    retiring.clear();
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 

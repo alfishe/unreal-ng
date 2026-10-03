@@ -390,6 +390,13 @@ private:
     /// refuses these instead of binding the UI to a released instance
     std::mutex _destroyedEmulatorIdsMutex;
     std::unordered_set<std::string> _destroyedEmulatorIds;
+    /// Id of the instance the UI finished adopting (guarded by the mutex above).
+    /// The destroy notice runs on the MessageCenter worker and reads this, never
+    /// _emulator (written by the UI thread); adoptEmulator() commits it under the
+    /// same lock it checks the destroyed set with, so a removal racing an
+    /// adoption is seen by exactly one side
+    std::string _adoptedEmulatorId;
+    void setAdoptedEmulatorId(const std::string& id);
     bool isEmulatorGone(const std::shared_ptr<Emulator>& emulator);
     uint32_t _lastFrameCount = 0;
     /// model: a ZX-Poly configuration name or a base model; empty asks. An empty

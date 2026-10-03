@@ -279,11 +279,3 @@ TEST_F(MouseCaptureController_Test, WarpBackendMeasuresTravelFromTheCenter)
     EXPECT_EQ(sumX, 10) << "20 host pixels at 2x";
     EXPECT_EQ(sumY, 5) << "10 up on screen = 5 up for the mouse";
 }
-
-int main(int argc, char** argv)
-{
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-    QApplication app(argc, argv);
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

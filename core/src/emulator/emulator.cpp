@@ -430,6 +430,12 @@ bool Emulator::Init()
 
 void Emulator::Release()
 {
+    // No context lease outlives the context, whoever releases. EmulatorManager
+    // has already waited for the leases (with no lock held), so there this
+    // never blocks
+    BeginRetirement();
+    std::unique_lock<std::shared_mutex> leaseLock(_leaseMutex);
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
@@ -722,6 +728,37 @@ bool Emulator::IsTurboMode() const
 EmulatorContext* Emulator::GetContext()
 {
     return _context;
+}
+
+Emulator::ContextLease Emulator::LeaseContext()
+{
+    // Never block: a writer exists only once _retiring is set (the removal sets
+    // it before WaitForContextLeases() / Release() take the lock exclusively),
+    // and a blocking shared lock behind a waiting writer would deadlock a thread
+    // that already holds a lease (rwlocks may prefer writers). try_lock_shared
+    // may fail spuriously, so retry until it succeeds or the removal shows up
+    std::shared_lock<std::shared_mutex> lock(_leaseMutex, std::defer_lock);
+    while (!lock.try_lock())
+    {
+        if (_retiring.load())
+            return {};
+        std::this_thread::yield();
+    }
+    // Checked under the shared lock: a lease that passes is one the removal
+    // waits for; one taken after BeginRetirement() is refused
+    if (_retiring.load() || _isReleased || _context == nullptr)
+        return {};
+    return ContextLease(std::move(lock), _context);
+}
+
+void Emulator::BeginRetirement()
+{
+    _retiring.store(true);
+}
+
+void Emulator::WaitForContextLeases()
+{
+    std::unique_lock<std::shared_mutex> lock(_leaseMutex);
 }
 
 ModuleLogger* Emulator::GetLogger()

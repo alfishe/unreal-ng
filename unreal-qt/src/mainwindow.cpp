@@ -48,6 +48,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/hostkeyboardmenu.h"
 #include "emulator/keyboardmanager.h"
 #include "emulator/soundcharacterpreferences.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -346,23 +347,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     connect(_menuManager, &MenuManager::frontPanelTurboToggled, this, &MainWindow::handleFrontPanelTurboToggled);
     connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
+    // The bound instance can be removed by automation at any moment (the UI
+    // unbinds one queued event later): both handlers go through a context lease
     connect(_menuManager, &MenuManager::machineMenuAboutToShow, this, [this] {
-        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
-        if (keyboard)
-            _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
-                                               Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+        if (const auto view = HostKeyboardMenu::Read(m_binding))
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
     });
     connect(_menuManager, &MenuManager::hostKeyboardRouteRequested, this, [this](const QString& route) {
-        Emulator* emulator = m_binding && m_binding->isBound() ? m_binding->emulator() : nullptr;
-        Keyboard* keyboard = emulator ? emulator->GetContext()->pKeyboard : nullptr;
-        if (!keyboard)
-            return;
         std::string error;
-        if (!keyboard->RequestHostRoute(route.toStdString(), error))
+        const auto view = HostKeyboardMenu::Request(m_binding, route, error);
+        if (!error.empty())
             statusBar()->showMessage(tr("Host keyboard: %1").arg(QString::fromStdString(error)), 5000);
-        _menuManager->setHostKeyboardRoute(Keyboard::HostRouteName(keyboard->GetHostRoute()),
-                                           Keyboard::HostRouteName(keyboard->EffectiveHostRoute()), keyboard->HasPs2Sink());
+        if (view)
+            _menuManager->setHostKeyboardRoute(view->route, view->effective, view->ps2Controller);
     });
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
@@ -1401,11 +1398,15 @@ void MainWindow::toggleEmulatorStartStop()
                 qDebug("%s", dumpSettings.c_str());
 
                 // Mute I/O outs to frequently used ports
-                PortDecoder& portDecoder = *newEmulator->GetContext()->pPortDecoder;
-                portDecoder.MuteLoggingForPort(0x00FE);
-                portDecoder.MuteLoggingForPort(0x7FFD);
-                portDecoder.MuteLoggingForPort(0xFFFD);
-                portDecoder.MuteLoggingForPort(0xBFFD);
+                EmulatorContext* newContext = newEmulator->GetContext();
+                if (newContext && newContext->pPortDecoder)
+                {
+                    PortDecoder& portDecoder = *newContext->pPortDecoder;
+                    portDecoder.MuteLoggingForPort(0x00FE);
+                    portDecoder.MuteLoggingForPort(0x7FFD);
+                    portDecoder.MuteLoggingForPort(0xFFFD);
+                    portDecoder.MuteLoggingForPort(0xBFFD);
+                }
 
                 // NOTE: Disabled debug code that redirects logger output to LogWindow.
                 // The pointer-to-member cast triggers MSVC C4407 warning due to multiple inheritance.
@@ -2293,7 +2294,10 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                const CONFIG& running = _emulator->GetContext()->config;
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                const CONFIG& running = runningContext->config;
                 if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
                 {
                     const TMemModel* target = Config::FindModelByEnum(machine.model);
@@ -2313,7 +2317,10 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                if (_emulator->GetContext()->config.mem_model != MM_TSL)
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                if (runningContext->config.mem_model != MM_TSL)
                 {
                     qInfo() << "SPG program - replacing the running machine by TS-Conf";
                     if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
@@ -3515,7 +3522,10 @@ bool MainWindow::playRzxFile(const std::string& file)
         QMessageBox::warning(this, tr("Play RZX"), QString::fromStdString(resolve.message));
         return false;
     }
-    const CONFIG& running = _emulator->GetContext()->config;
+    EmulatorContext* runningContext = _emulator ? _emulator->GetContext() : nullptr;
+    if (!runningContext)
+        return false;  // removed by automation; the queued unbind follows
+    const CONFIG& running = runningContext->config;
     if (!rzx::MachineMatches(start.machine, running.mem_model, running.ramsize))
     {
         const TMemModel* target = Config::FindModelByEnum(start.machine.model);
@@ -3951,9 +3961,10 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
         _screenWrapper->setTemporalBlendingEnabled(enabled);
     }
     // One temporal effect at a time: blending a de-flickered picture again smears it
-    if (enabled && m_binding && m_binding->emulator() && m_binding->emulator()->GetContext()->pScreen)
+    EmulatorContext* context = enabled && m_binding && m_binding->emulator() ? m_binding->emulator()->GetContext() : nullptr;
+    if (context && context->pScreen)
     {
-        m_binding->emulator()->GetContext()->pScreen->SetTemporalAlgorithm("");
+        context->pScreen->SetTemporalAlgorithm("");
     }
 }
 
@@ -4090,14 +4101,17 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
         {
             std::string destroyedId = payload->_payloadText;
 
-            // Remember the removal for adoptions still queued for this instance
+            // Remember the removal for adoptions still queued for this instance,
+            // and check under the same lock whether the UI has adopted it: an
+            // adoption in flight either sees the id here (and backs out itself)
+            // or has committed _adoptedEmulatorId before this check (see
+            // adoptEmulator()). _emulator belongs to the UI thread - not read here
+            bool wasOurEmulator = false;
             {
                 std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
                 _destroyedEmulatorIds.insert(destroyedId);
+                wasOurEmulator = (_adoptedEmulatorId == destroyedId);
             }
-
-            // Check if this was our active emulator
-            bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
 
             if (wasOurEmulator)
             {
@@ -4160,6 +4174,7 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         unsubscribeFromPerEmulatorEvents();
                         // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
                         _emulator = nullptr;
+                        setAdoptedEmulatorId({});
 
                         updateMenuStates();
 
@@ -4195,28 +4210,10 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
                 return;
             }
 
-            // Check if this is the emulator we already have adopted
-            if (_emulator && _emulator->GetId() == createdId)
-            {
-                qDebug() << "MainWindow: This is our already-adopted emulator, ignoring notification";
-                return;
-            }
-
-            // Only try to adopt if we don't currently have an adopted emulator
-            // This prevents switching to new emulators when we already have one adopted
-            if (!_emulator)
-            {
-                qDebug() << "MainWindow: No adopted emulator - trying to adopt the new one";
-
-                // Try to adopt the newly created emulator
-                // Must be called on main thread since it may modify UI menus
-                QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
-            }
-            else
-            {
-                qDebug() << "MainWindow: Already have adopted emulator" << QString::fromStdString(_emulator->GetId())
-                         << "- new emulator" << QString::fromStdString(createdId) << "remains headless";
-            }
+            // _emulator belongs to the UI thread (this runs on the MessageCenter
+            // worker): decide there. tryAdoptRemainingEmulator() adopts only
+            // while the UI has no instance - a new one otherwise stays headless
+            QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
         }
     }
 }
@@ -4248,15 +4245,10 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
             auto newEmulator = _emulatorManager->GetEmulator(newId);
             if (newEmulator)
             {
-                // Skip if this is already our emulator
-                if (_emulator && _emulator->GetId() == newId)
-                {
-                    qDebug() << "MainWindow: Selection is already our emulator, ignoring";
-                    return;
-                }
-
-                // Use canonical adoption flow on main thread
+                // Use canonical adoption flow on main thread (it ignores the
+                // instance already adopted and refuses one removed meanwhile).
                 // This handles: release old emulator, bind(), setEmulator(), etc.
+                // _emulator belongs to the UI thread: not read here
                 QMetaObject::invokeMethod(
                     this,
                     [this, newEmulator]() {
@@ -4434,7 +4426,7 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
 /// widget and the next unbind calling into a context that is gone
 bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
 {
-    if (!emulator || emulator->IsReleased())
+    if (!emulator || emulator->IsReleased() || emulator->IsRetiring())
         return true;
     {
         std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
@@ -4442,6 +4434,12 @@ bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
             return true;
     }
     return _emulatorManager && !_emulatorManager->GetEmulator(emulator->GetId());
+}
+
+void MainWindow::setAdoptedEmulatorId(const std::string& id)
+{
+    std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+    _adoptedEmulatorId = id;
 }
 
 void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin)
@@ -4452,10 +4450,16 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         return;
     }
 
+    // Automation can remove the instance while this runs (a WebAPI DELETE on
+    // its own thread). The lease keeps the context alive until we return: the
+    // removal waits for it before it frees anything. It is refused once the
+    // removal has begun.
+    const Emulator::ContextLease lease = emulator->LeaseContext();
+
     // An adoption queued (selection change, creation) before the instance was
     // removed can run after the removal: refuse it rather than bind a released
     // instance
-    if (isEmulatorGone(emulator))
+    if (!lease || isEmulatorGone(emulator))
     {
         qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(emulator->GetId())
                  << "was removed before the adoption ran; skipping";
@@ -4619,6 +4623,29 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _ttdWidget->updateState(_emulator);
     }
 
+    // Commit the adoption against a removal that began while we were binding.
+    // Either the destroy notice (MessageCenter worker) already recorded the id -
+    // it did not see us as its owner, so back out here, while the lease still
+    // keeps the context alive - or it runs after this point and finds
+    // _adoptedEmulatorId, cuts the paint path and queues the unbind
+    bool removedMeanwhile = false;
+    {
+        std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+        removedMeanwhile = _destroyedEmulatorIds.count(_emulator->GetId()) > 0;
+        if (!removedMeanwhile)
+            _adoptedEmulatorId = _emulator->GetId();
+    }
+    if (removedMeanwhile)
+    {
+        qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(_emulator->GetId())
+                 << "was removed while being adopted; backing out";
+        unbindFromEmulator();
+        updateMenuStates();
+        // Queued: the removed instance may still be listed until its removal ends
+        QMetaObject::invokeMethod(this, "tryAdoptRemainingEmulator", Qt::QueuedConnection);
+        return;
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -4688,6 +4715,7 @@ void MainWindow::unbindFromEmulator()
 
     // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
+    setAdoptedEmulatorId({});
 
     qDebug() << "MainWindow::unbindFromEmulator() - Emulator unbound (still running headless)";
 }
@@ -4930,7 +4958,8 @@ void MainWindow::tryAdoptRemainingEmulator()
     for (const auto& candidateId : emulatorIds)
     {
         auto candidateEmulator = emulatorManager->GetEmulator(candidateId);
-        if (candidateEmulator && candidateEmulator->IsRunning())
+        // A retiring instance is still listed until its removal ends
+        if (candidateEmulator && candidateEmulator->IsRunning() && !candidateEmulator->IsRetiring())
         {
             auto creationTime = candidateEmulator->GetCreationTime();
             if (!latestRunningEmulator || creationTime > latestCreationTime)

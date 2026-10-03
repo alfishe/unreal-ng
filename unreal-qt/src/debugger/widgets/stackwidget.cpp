@@ -44,12 +44,15 @@ Emulator* StackWidget::getEmulator()
 
 EmulatorContext* StackWidget::getEmulatorContext()
 {
-    return m_debuggerWindow->getEmulator()->GetContext();
+    Emulator* emulator = m_debuggerWindow->getEmulator();
+    return emulator ? emulator->GetContext() : nullptr;
 }
 
 Memory* StackWidget::getMemory()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+    Emulator* emulator = m_debuggerWindow->getEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context ? context->pMemory : nullptr;
 }
 
 void StackWidget::setupContextMenus()
@@ -218,7 +221,10 @@ void StackWidget::readStackIntoArray(uint16_t* outArray, uint16_t depth)
         return;
 
     Memory* memory = getMemory();
-    Z80State* z80 = getEmulatorContext()->pCore->GetZ80();
+    EmulatorContext* context = getEmulatorContext();
+    if (!memory || !context || !context->pCore)
+        return;
+    Z80State* z80 = context->pCore->GetZ80();
     uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp);
 
     for (unsigned long i = 0; i < depth; i++)

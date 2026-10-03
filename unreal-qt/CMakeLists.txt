@@ -734,9 +734,16 @@ if (TESTS)
     # unreal-qt-tests: front-end classes that need Qt (offscreen platform, real Qt events).
     # First: the host mouse capture's release key and gate (mouse-manager design §3.3)
     set(UNREAL_QT_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/qttestmain.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
+        # The Machine menu's host keyboard state against an instance automation removes
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/hostkeyboardmenu_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/emulatorbinding.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
@@ -754,6 +761,7 @@ if (TESTS)
         "${ROOT_DIR}/core/src"
         "${ROOT_DIR}/core/src/common"
         "${ROOT_DIR}/core/src/emulator"
+        "${ROOT_DIR}/core/tests"
     )
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
