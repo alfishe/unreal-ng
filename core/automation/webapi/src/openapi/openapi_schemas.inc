@@ -70,6 +70,17 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
         "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
 
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["type"] = "object";
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";
+    for (const char* value : {"default", "matrix", "xt", "xttable"})
+        schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["enum"].append(value);
+    schemas["CreateEmulatorRequest"]["properties"]["profi"]["description"] =
+        "A PROFI / PROFI3's keyboard ([PROFI] Keyboard=): matrix (the 40-key Spectrum matrix), xt (the PROFI-XT "
+        "controller running its reconstructed firmware on the MCS-48 core: PC keys, F1-F10 / Home / End / PgUp / PgDn / "
+        "Ins / Del as a letter + EXT on #BFFE bit 5, a Z80 wait per read while a key is held), xttable (the same "
+        "controller from its key table, no MCU), default (the board's own: v5 xt, v3 matrix). The machine reports it as "
+        "paging.profi_keyboard and GET .../keyboard keyboard_controller. 400 on an unknown name";
+
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";
     schemas["SettingsResponse"]["description"] = "List of emulator settings";

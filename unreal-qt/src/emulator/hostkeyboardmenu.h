@@ -12,6 +12,7 @@ struct HostKeyboardMenuState
     QString route;               ///< the requested route (Keyboard::HostRouteName)
     QString effective;           ///< the route in effect
     bool ps2Controller = false;  ///< the machine has a PS/2 keyboard controller
+    QString controller;          ///< its name when it has one ("PROFI-XT firmware 1.27"), else empty
 };
 
 /// Reads and changes the host keyboard route from the UI thread (MainWindow,

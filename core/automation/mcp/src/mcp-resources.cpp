@@ -262,9 +262,9 @@ framebuffer. Both use the 312-line x 224 T raster; the frame length and INT posi
 `inspect_state aspects:["video"]` reports `video_mode` = PROFI or PROFIHR with resolution.
 
 ## State
-`inspect_state aspects:["paging"]` reports `profi_board` (v3 / v5), `profi_sync_prom` and the tagged latches: p7FFD and pDFFD with
+`inspect_state aspects:["paging"]` reports `profi_board` (v3 / v5), `profi_sync_prom`, `profi_keyboard` and the tagged latches: p7FFD and pDFFD with
 decoded fields `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and
-palette as PeripheralId ProfiPaging (9); v5 adds the clock (Ds12887).
+palette as PeripheralId ProfiPaging (9); v5 adds the clock (Ds12887); a fitted PROFI-XT controller adds ProfiXtKbc (44).
 
 ## Peripherals
 Covox DAC (8255): #5F left, #3F right while the disk interface is off the bus; on v5, #C7 left / #A7 right in the
@@ -279,6 +279,25 @@ it at power-on). TTD records a flip like a key. 7 MHz while on; on the v3 a load
 `[PROFI] CpmSwitch`): while it is on, #DFFD is held at #00 and writes to it are lost. `[PROFI] DffdDecode=` picks
 the #DFFD decode: `emulators` (A15=1, A13=0, A1=0, default), `v50` (A13=0, A1=0), `v506` (high byte #DF, not from
 `OUT (n),A`).
+
+## Keyboard (`[PROFI] Keyboard=`)
+| Value | Keyboard |
+|:--|:--|
+| `xt` (v5 default) | the PROFI-XT controller: an 8035 running its firmware on the MCS-48 core. The image `rom/profixt/profi-xt-v1.27.rom` is a reconstruction (5 bytes patched: the only dump never enables interrupts; `data/rom/profixt/README.md`) |
+| `xttable` | the same controller from its key table, no MCU |
+| `matrix` (v3 default) | the 40-key Spectrum matrix (host Shift = Caps Shift) |
+
+At create: `emulator_manage action=create model=PROFI profi_keyboard=xttable`. `inspect_state aspects:["paging"]`
+reports `profi_keyboard`; the keyboard status (`invoke_api GET /api/v1/emulator/{id}/keyboard/status`) reports
+`keyboard_controller`. With a controller the host keyboard goes to it alone (route `auto` = `ps2`).
+PC keys: Ctrl = Caps Shift, Shift = Symbol Shift, Alt = SS + Enter, Esc = Caps Shift + 1, arrows = Caps Shift + 5..8.
+F1-F10 = A..J + EXT, Home / End = K / L + EXT, PgUp / PgDn = M / N + EXT, Ins / Del = O / P + EXT, where EXT is
+`#BFFE` bit 5 (KD5 of half-row A14; v5 only - on v3 it lands on bit 7). BIOS 2.0 / CP/M read EXT. Press one with
+`type_input` / `invoke_api POST .../keyboard/tap {"key":"f1"}`. While a key is held every #FE read waits
+~50-110 us for the controller; `#00FE` (all half-rows) ANDs them; two half-rows in A8..A11 (e.g. `#FCFE`) read
+"no key". Ctrl + Alt + Del resets the machine. Scroll Lock (or a read of `#AAFE` / `#55FE`) toggles the second mode
+(Left Shift becomes the key at `#7FFE` bit 5); Num Lock turns the keypad into the cursor block. TTD: PeripheralId
+ProfiXtKbc (44).
 
 ## Wait states and the floating bus (feature `contention`)
 | Board, clock | Waits |

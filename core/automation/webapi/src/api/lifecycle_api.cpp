@@ -1,6 +1,7 @@
 // WebAPI Emulator Lifecycle Management Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include <emulator/ports/models/profiboard.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
 
@@ -96,6 +97,32 @@ bool ParseSprinterField(const std::shared_ptr<Json::Value>& json, std::function<
         return false;
     }
     out = SprinterBios::CreateOverride(options);
+    return true;
+}
+
+/// Optional "profi": {"keyboard": "matrix" | "xt" | "xttable" | "default"} of a create / start body: the keyboard on
+/// a new Profi's keyboard connector ([PROFI] Keyboard=, ProfiKeyboardOverride). True when absent or valid; false with
+/// a 400 already sent
+bool ParseProfiField(const std::shared_ptr<Json::Value>& json, std::function<void(CONFIG&)>& out,
+                     const std::function<void(const HttpResponsePtr&)>& callback)
+{
+    if (!json || !json->isMember("profi"))
+        return true;
+    const Json::Value& value = (*json)["profi"];
+    ProfiKeyboard keyboard = ProfiKeyboard::Default;
+    if (!value.isObject() || (value.isMember("keyboard") && !value["keyboard"].isString()) ||
+        !ParseProfiKeyboard(value.get("keyboard", "").asString().c_str(), keyboard))
+    {
+        Json::Value err;
+        err["error"] = "Bad Request";
+        err["message"] = "profi must be an object {keyboard: matrix | xt | xttable | default}";
+        auto resp = HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return false;
+    }
+    out = ProfiKeyboardOverride(keyboard);
     return true;
 }
 
@@ -427,7 +454,11 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> sprinterOverride;
     if (!ParseSprinterField(json, sprinterOverride, callback))
         return;
-    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
+    std::function<void(CONFIG&)> profiOverride;
+    if (!ParseProfiField(json, profiOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride =
+        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
 
     try
     {
@@ -626,7 +657,11 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     std::function<void(CONFIG&)> sprinterOverride;
     if (!ParseSprinterField(json, sprinterOverride, callback))
         return;
-    const std::function<void(CONFIG&)> createOverride = Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride);
+    std::function<void(CONFIG&)> profiOverride;
+    if (!ParseProfiField(json, profiOverride, callback))
+        return;
+    const std::function<void(CONFIG&)> createOverride =
+        Combine(Combine(RamPowerOnOverride(ramPowerOn), sprinterOverride), profiOverride);
 
     // ZX-Poly: "zxpoly": true or {"file": "<.zxp | .prom | disk image>"}
     const bool zxpoly = json && json->isMember("zxpoly") &&

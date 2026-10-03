@@ -186,6 +186,8 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
             paging["profi_board"] = (config.mem_model == MM_PROFI3) ? "v3" : "v5";
             paging["profi_sync_prom"] = ProfiSyncPromName(
                 ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+            // The keyboard on the connector: matrix, xt (the PROFI-XT firmware), xttable (its key table)
+            paging["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
             paging["port_dffd"] = static_cast<int>(state.pDFFD);
             paging["port_dffd_hex"] = StringHelper::Format("0x%02X", state.pDFFD);
 
@@ -1498,6 +1500,14 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
     Json::Value ret;
 
     ret["model"] = Config::GetModelFullName(config.mem_model);
+    // The Profi board, its sync PROM and the keyboard on its connector (as GET /state/memory reports them)
+    if (IsProfiModel(config.mem_model))
+    {
+        ret["profi_board"] = (config.mem_model == MM_PROFI3) ? "v3" : "v5";
+        ret["profi_sync_prom"] =
+            ProfiSyncPromName(ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+        ret["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+    }
 
     // Latches array - from tagged port registry
     Json::Value latches = Json::arrayValue;

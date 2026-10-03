@@ -474,6 +474,7 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
                 ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model);
             ss << "  Profi board:      " << (config.mem_model == MM_PROFI3 ? "v3" : "v5") << " (sync PROM "
                << ProfiSyncPromName(prom) << ")" << NEWLINE;
+            ss << "  Profi keyboard:   " << ProfiKeyboardName(ProfiKeyboardInForce(context)) << NEWLINE;
             ss << "  Port 0xDFFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.pDFFD
                << std::dec << NEWLINE;
             ss << "  RAM High Bits:    " << (int)(state.pDFFD & 0x07) << NEWLINE;

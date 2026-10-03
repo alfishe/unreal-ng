@@ -158,6 +158,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["sprinter_fast_start"]["type"] = "boolean";
     schema["properties"]["sprinter_fast_start"]["description"] =
         "'create' with model SPRINTER: true skips the PLD loader (~1.7 s emulated); default [SPRINTER] FastStart";
+    schema["properties"]["profi_keyboard"]["type"] = "string";
+    schema["properties"]["profi_keyboard"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* value : {"default", "matrix", "xt", "xttable"})
+        schema["properties"]["profi_keyboard"]["enum"].append(value);
+    schema["properties"]["profi_keyboard"]["description"] =
+        "'create' with model PROFI / PROFI3: the keyboard on the board's connector - xt (the PROFI-XT controller on its "
+        "reconstructed firmware: PC keys, F1-F10 / Home / End / PgUp / PgDn / Ins / Del as letter + EXT), xttable (the "
+        "same from its key table), matrix (the Spectrum matrix), default (v5 xt, v3 matrix). See unreal://machine/profi";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -267,6 +275,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["sprinter"]["bios"] = args["sprinter_bios"].asString();
                 if (args.isMember("sprinter_fast_start") && args["sprinter_fast_start"].isBool())
                     body["sprinter"]["fast_start"] = args["sprinter_fast_start"].asBool();
+                if (args.isMember("profi_keyboard") && args["profi_keyboard"].isString())
+                    body["profi"]["keyboard"] = args["profi_keyboard"].asString();
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {

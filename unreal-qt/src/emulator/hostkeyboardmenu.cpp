@@ -4,6 +4,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/keyboard/pckey.h"
 
 namespace
 {
@@ -19,6 +20,8 @@ HostKeyboardMenuState StateOf(const Keyboard& keyboard)
     state.route = QString::fromLatin1(Keyboard::HostRouteName(keyboard.GetHostRoute()));
     state.effective = QString::fromLatin1(Keyboard::HostRouteName(keyboard.EffectiveHostRoute()));
     state.ps2Controller = keyboard.HasPs2Sink();
+    if (keyboard.HasPs2Sink())
+        state.controller = QString::fromStdString(keyboard.GetPs2Sink()->ControllerName());
     return state;
 }
 }  // namespace

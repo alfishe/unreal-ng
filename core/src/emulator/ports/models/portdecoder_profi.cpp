@@ -6,6 +6,7 @@
 #include "portdecoder_profi.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
+#include "debugger/ttd/profi/ttdprofixtkbc.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -41,10 +42,49 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    FitKeyboard();
+}
+
+void PortDecoder_Profi::FitKeyboard()
+{
+    const CONFIG& config = _context->config;
+    _keyboardKind = ProfiResolveKeyboard(static_cast<ProfiKeyboard>(config.profi_keyboard), config.mem_model);
+    if (_keyboardKind == ProfiKeyboard::Matrix)
+        return;
+
+    // The PROFI-XT controller (research-profi-keyboard.md sections 2, 5). The firmware image is a reconstruction:
+    // the only known dump (CRC 9A8E2686) has no EN I and never calls its get-byte routine, so it receives no key;
+    // rom/profixt/profi-xt-v1.27.rom has the 5 bytes at 02Eh..032h replaced by 05 14 5F 00 00 (EN I; CALL 05Fh;
+    // NOP; NOP) - data/rom/profixt/README.md. [ROM] PROFIXT= takes a clean re-dump when one turns up
+    _xtKbc = std::make_unique<ProfiXtKbc>(_context);
+    std::string error;
+    const ProfiXtKbc::Engine engine =
+        _keyboardKind == ProfiKeyboard::XtTable ? ProfiXtKbc::Engine::Table : ProfiXtKbc::Engine::Firmware;
+    if (!_xtKbc->Load(engine, config.profi_xt_rom_path, error))
+    {
+        // No image: the controller's key table keeps the extra keys working
+        MLOGWARNING("PortDecoder_Profi: %s - the PROFI-XT key table is used instead", error.c_str());
+        _keyboardKind = ProfiKeyboard::XtTable;
+        _xtKbc->Load(ProfiXtKbc::Engine::Table, "", error);
+    }
+    if (!_xtKbc->ImageNote().empty())
+        MLOGWARNING("PortDecoder_Profi: %s", _xtKbc->ImageNote().c_str());
+    // X9 takes one keyboard: the host's keys reach the controller alone (Auto route, IPs2KeySink::ReplacesMatrix)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(_xtKbc.get());
+}
+
+void PortDecoder_Profi::OnFrameEnd()
+{
+    if (_xtKbc)
+        _xtKbc->OnFrameEnd();
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
 {
+    if (_xtKbc && _context->pKeyboard && _context->pKeyboard->GetPs2Sink() == _xtKbc.get())
+        _context->pKeyboard->SetPs2Sink(nullptr);
+
     Core* core = _context->pCore;
     if (core && core->GetZ80() && core->GetZ80()->GetMachineStepHook() == this)
         core->GetZ80()->SetMachineStepHook(nullptr);
@@ -313,6 +353,20 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     else if (IsFEPort(port))
     {
         result = Default_Port_FE_In(port, pc);
+        // The PROFI-XT controller answers on the keyboard lines (and holds the Z80 while it does)
+        if (_xtKbc)
+        {
+            const uint8_t lines = _xtKbc->ReadPort(port);
+            if (_board.palette)
+                result &= static_cast<uint8_t>(lines | 0xC0);   // v5 X9: KD0..KD5, KD5 = bit 5 (pull-up R10)
+            else
+            {
+                // v3 KEYB: KD0..KD4; no KD5 line (bit 5 reads 1), the controller's DK5 lands on pin 2 = bit 7
+                result &= static_cast<uint8_t>(lines | 0xE0);
+                if (!(lines & 0x20))
+                    result &= 0x7F;
+            }
+        }
         // GX0 (bit 7): "palette exists" detector read by Profi 5.xx software (UniCopy).
         // Default_Port_FE_In leaves bit 7 = 1 (keyboard/tape never touch it), so only
         // override it in DS80, and only on the v5 board: the v3 has no palette, bit 7 reads 1
@@ -600,10 +654,13 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
 
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
-    // The clock is on the v5 board only
-    if (!_board.extendedPorts)
-        return {ttd::PeripheralId::ProfiPaging};
-    return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};
+    // The clock is on the v5 board only; the PROFI-XT controller when fitted
+    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging};
+    if (_board.extendedPorts)
+        ids.push_back(ttd::PeripheralId::Ds12887);
+    if (_xtKbc)
+        ids.push_back(ttd::PeripheralId::ProfiXtKbc);
+    return ids;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDSerializers() const
@@ -612,6 +669,8 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Profi::CreateTTDS
     serializers.push_back(std::make_unique<ttd::TTDProfiPaging>(_context));
     if (_board.extendedPorts)
         serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<Ds12887&>(_rtc)));
+    if (_xtKbc)
+        serializers.push_back(std::make_unique<ttd::TTDProfiXtKbc>(*_xtKbc));
     return serializers;
 }
 
@@ -777,3 +836,10 @@ void PortDecoder_Profi::ApplyDffd(uint8_t value)
     if (changed & 0x80)
         _context->pScreen->InitRaster();
 }
+
+ProfiKeyboard ProfiKeyboardInForce(const EmulatorContext* context)
+{
+    const auto* decoder = context ? dynamic_cast<const PortDecoder_Profi*>(context->pPortDecoder) : nullptr;
+    return decoder ? decoder->GetKeyboardKind() : ProfiKeyboard::Default;
+}
+

@@ -3,6 +3,8 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -1320,6 +1322,15 @@ public:
             }
             out.push_back(sol::make_object(s, std::string(Keyboard::HostRouteName(keyboard->EffectiveHostRoute()))));
             return out;
+        });
+
+        // keyboard_controller() -> the PS/2 / XT keyboard controller's name ("PROFI-XT firmware 1.27", ...), "" when the
+        // machine has none or it has no name (GET .../keyboard/status keyboard_controller)
+        lua.set_function("keyboard_controller", [this]() -> std::string {
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+            Keyboard* keyboard = ctx ? ctx->pKeyboard : nullptr;
+            return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
@@ -4491,6 +4502,14 @@ public:
             ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
 
             result["model"] = Config::GetModelFullName(config.mem_model);
+            if (IsProfiModel(config.mem_model))
+            {
+                // The board, its sync PROM and the keyboard on its connector (as GET /state/paging)
+                result["profi_board"] = config.mem_model == MM_PROFI3 ? "v3" : "v5";
+                result["profi_sync_prom"] = ProfiSyncPromName(
+                    ProfiResolveSyncProm(static_cast<ProfiSyncProm>(config.profi_sync_prom), config.mem_model));
+                result["profi_keyboard"] = ProfiKeyboardName(ProfiKeyboardInForce(context));
+            }
             result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
             result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 
