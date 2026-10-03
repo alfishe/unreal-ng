@@ -148,6 +148,23 @@ constexpr uint8_t ProfiTtdClockUnits(bool v5, uint8_t zq3MHz)
     return static_cast<uint8_t>(ProfiHiresClockNum(v5, zq3MHz, true));
 }
 
+/// Hi-res video timing in ns from the frame start (design-hires.md phase H3, research-profi-hires-timing.md 3-4). The
+/// generator counts 12 MHz clocks: a tick is 16 of them (1333.3 ns), a video request every half tick (666.7 ns). The
+/// fetch window of paper line L is 32 ticks and leads the displayed dots by one tick, as in Spectrum mode
+constexpr double kProfiBaseTNs = 2000.0 / 7.0;            ///< one base T (3.5 MHz)
+constexpr double kProfiLineNs = 64000.0;                  ///< 224 base T
+constexpr double kProfiHiresTickNs = 4000.0 / 3.0;
+constexpr double kProfiHiresRequestNs = kProfiHiresTickNs / 2.0;
+constexpr uint32_t kProfiHiresTicksPerWindow = 32;
+constexpr uint32_t kProfiHiresPaperLines = 240;
+/// The start of paper line `line`'s fetch window
+constexpr double ProfiHiresWindowStartNs(uint32_t line)
+{
+    return (static_cast<double>(kProfiHiresPaperStartT) + 224.0 * line) * kProfiBaseTNs - kProfiHiresTickNs;
+}
+/// CPU clock period in ns for a hi-res clock numerator (num / 7 of 3.5 MHz = num / 2 MHz)
+constexpr double ProfiHiresCpuPeriodNs(uint32_t num) { return num ? 2000.0 / num : 0.0; }
+
 /// [PROFI] ZQ3MHz: the v5's third crystal, 16-24 MHz (the 5.0 album's table), even values only (the clock is half of
 /// it in sevenths); default 20 (the 5.06 parts list: C12 = 27 pF is the 20 MHz entry)
 constexpr uint8_t kProfiZq3DefaultMHz = 20;

@@ -68,7 +68,9 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] H2a: hi-res CPU clock (v3 3 MHz, v5 ZQ3 / 4, `[PROFI] ZQ3MHz`), frame and INT from the sync PROM's upper half,
   switched at the #DFFD write; the Profi TTD time grid (`TtdClockUnits`) - it was 1, so turbo halves were lost
 - [ ] H2b: AY clock 1.5 MHz in hi-res (`[PROFI] AyClock`, parsed; the AY engine's clock is a compile-time constant)
-- [ ] H3: hi-res waits (v5 model rule, v3 turbo) and the v3 hi-res floating bus
+- [x] H3: hi-res waits (v5: 0-1 T around each video request at ZQ3/4, 1-3 T in turbo, ROM one-shot; #7FFD bit 5
+  runs the requests all line long; v3: none at 3 MHz, the 2/3 rule in turbo) and the v3 hi-res floating bus (the
+  cell's two bytes by tick half; which latch holds which page is open)
 - [ ] H4: automation surfaces for ZQ3MHz / AyClock and the hi-res clock in state; recipes; checks against the forum's
   speed-test figures and the CP/M disk
 - [ ] A/B of H1 (the screen descale gained a branch)

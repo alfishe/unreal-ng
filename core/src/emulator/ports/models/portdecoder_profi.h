@@ -111,6 +111,8 @@ public:
     /// The v3 floating bus (research-profi-v3-turbo-floatbus.md B): what an IN that no device answers reads when
     /// its T3 starts at frame T `t3` - the pixel byte the video latched, #FF outside the read window
     uint8_t FloatingBusV3(uint32_t t3) const;
+    /// The v3 floating bus in hi-res, at T3 given in ns from the frame start (design-hires.md H3)
+    uint8_t FloatingBusV3Hires(double t3Ns) const;
 
     /// IMachineStepHook: on v3 with the switch pressed, follows the HLD pin
     void OnMachineStep(uint32_t t) override;

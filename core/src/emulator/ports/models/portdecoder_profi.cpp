@@ -14,6 +14,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/profi/profigeometry.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -252,7 +253,9 @@ void PortDecoder_Profi::SyncWaits()
     // v5: the video WAIT at 3.5 MHz (unless SB8 is in its PENTAGON position) and the turbo waits; v3: turbo only
     const CONFIG& config = _context->config;
     const bool pressed = _state->profi_turbo_switch != 0;
-    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed) : pressed;
+    // In hi-res the v5 arbiter waits whatever SB8 says (design-hires.md H3)
+    const bool hires = (_state->pDFFD & 0x80) != 0;
+    const bool wanted = _board.palette ? (!config.profi_wait_pentagon || pressed || hires) : pressed;
     if (wanted == _waitsInstalled)
         return;
 
@@ -264,6 +267,7 @@ void PortDecoder_Profi::SyncWaits()
         setup.pentagonJumper = config.profi_wait_pentagon != 0;
         setup.romWait = config.profi_rom_wait != 0;
         setup.paperStartT = kProfiPaperStartT;
+        setup.zq3MHz = ProfiClampZq3(config.profi_zq3_mhz);
         _waitOverlay = std::make_unique<ProfiWaitOverlay>(core, core->GetZ80(), _context->pMemory, _state, setup);
         _waitsInstalled = core->AddBusOverlay(_waitOverlay.get());
         if (!_waitsInstalled)
@@ -274,6 +278,28 @@ void PortDecoder_Profi::SyncWaits()
         core->RemoveBusOverlay(_waitOverlay.get());
         _waitsInstalled = false;
     }
+}
+
+uint8_t PortDecoder_Profi::FloatingBusV3Hires(double t3Ns) const
+{
+    // research-profi-hires-timing.md 4.1: in hi-res U9 and U10 take turns on the bus within each tick of the fetch
+    // window (FLD1), which leads the displayed dots by one tick: the first half of a tick U10 (the cell's second
+    // fetch), the second half U9 (its first fetch); #FF outside FLD1. Which page each latch holds is not traced (O):
+    // this returns the pixel bytes of the cell the window is fetching (M)
+    const double rel0 = t3Ns - ProfiHiresWindowStartNs(0);
+    if (rel0 < 0)
+        return 0xFF;
+    const uint32_t line = static_cast<uint32_t>(rel0 / kProfiLineNs);
+    if (line >= kProfiHiresPaperLines)
+        return 0xFF;
+    const double rel = t3Ns - ProfiHiresWindowStartNs(line);
+    const uint32_t tick = static_cast<uint32_t>(rel / kProfiHiresTickNs);
+    if (tick >= kProfiHiresTicksPerWindow)
+        return 0xFF;
+    const bool firstHalf = (rel - tick * kProfiHiresTickNs) < kProfiHiresRequestNs;
+    const uint32_t byteIndex = tick * 2 + (firstHalf ? 1u : 0u);   // ByteOffset: even = the cell's first byte
+    const uint16_t offset = ProfiGeometry::ByteOffset(line, byteIndex);
+    return _context->pMemory->RAMPageAddress(ProfiGeometry::PixelPage(_state->p7FFD))[offset];
 }
 
 uint8_t PortDecoder_Profi::FloatingBusV3(uint32_t t3) const
@@ -444,12 +470,19 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     }
     // The v3 board's floating bus: an IN (A0 = 1) that no device answers reads the video's pixel latch in the
     // Spectrum raster. The lookup runs at T2 of the I/O cycle; the Z80 takes the data at T3, one T later at 3.5 MHz
-    if (!_lastPortDecoded && !_board.palette && (port & 0x0001) && !(_state->pDFFD & 0x80))
+    if (!_lastPortDecoded && !_board.palette && (port & 0x0001))
     {
         // Z80::t counts CPU clocks of the scaled frame (x the clock multiplier): T3 starts 2 clocks after T2
         const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        if (z80)
+        if (z80 && !(_state->pDFFD & 0x80))
             result = FloatingBusV3(_state->CpuToBaseT(z80->t + 2u));
+        else if (z80)
+        {
+            // Hi-res: the instant in ns at the hi-res clock (num / 7 of 3.5 MHz, host speed stripped)
+            const uint32_t num = _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1u;
+            const uint32_t host = _state->HostSpeedMultiplier() ? _state->HostSpeedMultiplier() : 1u;
+            result = FloatingBusV3Hires(static_cast<double>((z80->t + 2u) / host) * ProfiHiresCpuPeriodNs(num));
+        }
     }
 
     disp.wasDecoded = _lastPortDecoded;

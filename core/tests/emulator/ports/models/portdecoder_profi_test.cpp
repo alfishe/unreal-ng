@@ -6,6 +6,7 @@
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/profifixture.h"
+#include "emulator/video/profi/profigeometry.h"
 
 #include <fstream>
 #include <iterator>
@@ -856,3 +857,23 @@ TEST_F(ProfiPortDecoder_Test, TtdUnitsCoverTheHiresClock)
 }
 
 /// endregion </Hi-res timing>
+
+/// v3 hi-res floating bus (design-hires.md H3): in the fetch window the first half of each 1333 ns tick reads the
+/// cell's second byte, the second half its first byte; #FF outside. Line 0's window starts at 3 077 524 ns; at 3 MHz
+/// (333 ns clocks) T3 = t + 2
+TEST_F(ProfiV3PortDecoder_Test, HiresFloatingBusAlternatesTheCellBytes)
+{
+    DosLatchOff();
+    WritePort(0xDFFD, 0x80);
+    ASSERT_EQ(State().current_z80_frequency, 3'000'000u);
+    uint8_t* page = _memory->RAMPageAddress(ProfiGeometry::PixelPage(State().p7FFD));
+    page[ProfiGeometry::ByteOffset(0, 1)] = 0x5A;   // the cell's second byte
+    page[ProfiGeometry::ByteOffset(0, 0)] = 0xA5;   // its first byte (+#2000)
+    Z80* z80 = _core->GetZ80();
+    z80->t = 9233 - 2;   // T3 at 3 077 667 ns: 143 ns into the tick
+    EXPECT_EQ(ReadPort(0x00FF), 0x5A);
+    z80->t = 9235 - 2;   // 810 ns: the second half
+    EXPECT_EQ(ReadPort(0x00FF), 0xA5);
+    z80->t = 100;
+    EXPECT_EQ(ReadPort(0x00FF), 0xFF) << "top border";
+}
