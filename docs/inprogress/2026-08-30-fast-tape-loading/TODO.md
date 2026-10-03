@@ -110,8 +110,15 @@ The single-cause hypothesis below was only partly right:
      The 48K cases now run the tape to its end or past block 4 (cursor 4-6 of 6 instead of stuck at 2). The screen stays
      black there: blocks 4 and 5 (41216 and 16384 bytes) do not fit a 48K, so this is most likely a 128K-only release like
      ALEX_S (not proven: the loader's 48K / 128K check was not read).
-   - **O1 KID__DR, Pentagon: still open.** Cursor stays at 2 of 6 (red screen) in every mode; the 48K cause does not apply
-     (the tape is not restarting there as far as measured); not investigated further.
+   - **O1 KID__DR, Pentagon: still open, measured 2026-10-03.** Cursor stays at 2 of 6 (red screen) in every mode, also with
+     Y held (so not a key-timing artifact of the sweep). The tape is not the problem here: block 2 is read in full
+     (cursor 2, tape paused by the "no loader listening" rule) and then the CPU runs away: PC wanders through #75D2-#7A66,
+     memory #75C0-#7AFF is filled with byte #15 (`dec d`, a sled), SP = #1511 (the stack is in ROM), interrupts off, port
+     #7FFD never written (stays #10, ROM 1). On 48K the same block leads to the Y / N prompt loop at #5EA2. The loader
+     decrypts its own code with the R register (`xor a / ld r,a / ld a,a / ld a,r` ... `xor e` ... at #5D97 on 48K), so the
+     leading hypothesis is that the decryption (or a machine check before it) differs on Pentagon and the jump lands in a
+     filled area. Next step: trace the first divergence between the 48K and the Pentagon run (R value read by `ld a,r`,
+     the first `jp` after block 2) with a breakpoint on the entry of the decrypted code.
    - **O2 TIMOFEY, 48K:** unchanged (back to BASIC with the tape at block 2 of 5; blocks 3-5 hold 45568 bytes, more than a
      48K takes, and it runs on Pentagon); very likely 128K-only, not proven.
    - **O3 HACKER_SHURIK, Pentagon, fast off:** no longer reproduces: all Pentagon cases reach the end of the tape. The one
