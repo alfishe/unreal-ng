@@ -1,5 +1,8 @@
 #include "timetravelengine.h"
 
+#include "debugger/ttd/engine/ttdregiontracker.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -348,7 +351,11 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
                 local.piecesSkipped++;
                 continue;
             }
-            uint8_t* dst = desc.restorePiece ? piece : desc.memory + size_t(p) * kTTDPieceSize;
+            // The last piece of a region whose size is no multiple of 4 KB (the
+            // SMUC EEPROM, 2 KB) is decoded aside: only its real bytes reach memory
+            const size_t offset = size_t(p) * kTTDPieceSize;
+            const bool partial = offset + kTTDPieceSize > desc.bytes;
+            uint8_t* dst = (desc.restorePiece || partial) ? piece : desc.memory + offset;
             if (!_store->Decode(target, dst))
             {
                 result.status = TTDRestoreStatus::Damaged;
@@ -358,6 +365,8 @@ TTDRestoreResult TimeTravelEngine::RestoreToMemory(size_t index, const TTDWritte
             }
             if (desc.restorePiece)
                 desc.restorePiece(p, piece);
+            else if (partial)
+                std::memcpy(desc.memory + offset, piece, desc.bytes - offset);
             _inMemory[r][p] = target;
             local.piecesDecoded++;
         }
@@ -407,6 +416,85 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     }
     h.frameTable = _frames.HeapBytes();
     return h;
+}
+
+TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestoreContext& context)
+{
+    TTDRestoreResult result;
+    const TTDEngineCheckpoint* cp = Checkpoint(index);
+    if (!cp)
+    {
+        result.status = TTDRestoreStatus::Degraded;
+        result.message = "no checkpoint " + std::to_string(index);
+        return result;
+    }
+    const std::vector<TTDDeviceEntry>& entries = _devices.Entries();
+    std::vector<bool> claimed(256, false);
+    for (uint32_t i : _devices.RestoreOrder())
+    {
+        const TTDDeviceEntry& e = entries[i];
+        const TTDDeviceDescriptor& d = e.descriptor;
+        const auto id = static_cast<uint8_t>(d.legacyId);
+        claimed[id] = true;
+        if (!e.device)
+            continue;
+        TTDRestoreIssue issue;
+        issue.device = d.Key();
+        const auto blob = cp->deviceBlobs.find(id);
+        if (blob == cp->deviceBlobs.end() || blob->second.empty())
+        {
+            issue.kind = TTDRestoreIssueKind::DeviceMissingState;
+            issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
+                                                         : TTDLiveStateAction::KeptLive;
+            issue.detail = issue.action == TTDLiveStateAction::ResetToPowerOn
+                               ? "no state at this position, reset to power-on"
+                               : "no state at this position, kept its live state";
+            result.Add(issue);
+            continue;
+        }
+        const std::vector<uint8_t> state = TTDPeripheralRegistry::DecodeBlob(id, blob->second);
+        bool loaded = false;
+        if (e.withoutRegions)
+            loaded = !state.empty() && e.withoutRegions->TTDLoadStateWithoutRegions(state.data(), state.size());
+        else if (d.variableSize ? (!state.empty() && state.size() <= d.stateSize) : state.size() == d.stateSize)
+        {
+            e.device->TTDLoadState(state.data());
+            loaded = true;
+        }
+        if (!loaded)
+        {
+            issue.kind = TTDRestoreIssueKind::SizeMismatch;
+            issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
+                                                         : TTDLiveStateAction::KeptLive;
+            issue.detail = "stored state of " + std::to_string(state.size()) + " bytes does not fit (" +
+                           std::to_string(d.stateSize) + ")";
+            result.Add(issue);
+            continue;
+        }
+        // Restored exactly; a replay from here may still differ when the firmware does
+        const uint64_t live = e.device->TTDDescribe().firmwareFingerprint;
+        if (live != d.firmwareFingerprint)
+        {
+            issue.kind = TTDRestoreIssueKind::FirmwareDiffers;
+            issue.severity = TTDRestoreStatus::NotBitExact;
+            issue.detail = "recorded with another firmware image";
+            result.Add(issue);
+        }
+    }
+    for (const auto& [id, blob] : cp->deviceBlobs)
+        if (!claimed[id])
+        {
+            TTDRestoreIssue issue;
+            issue.kind = TTDRestoreIssueKind::DeviceNotPresent;
+            issue.device.type = static_cast<TTDDeviceType>(id);
+            issue.device.instance = "device " + std::to_string(id);
+            issue.detail = "state recorded for a device this machine does not have";
+            result.Add(issue);
+        }
+    for (uint32_t i : _devices.RestoreOrder())
+        if (entries[i].device)
+            entries[i].device->TTDAfterRestore(context);
+    return result;
 }
 
 }  // namespace ttd

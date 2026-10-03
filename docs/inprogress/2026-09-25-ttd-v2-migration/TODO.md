@@ -74,7 +74,9 @@ Design: [phase-2-device-state-tdd.md](phase-2-device-state-tdd.md).
 - [x] Step 1 — Device registry: type id u16 + instance name, layout version, restore order, firmware fingerprint (2026-10-03; descriptor and device table, see the TDD's as-built note)
   - [ ] Firmware fingerprints of the GS ROM, the ATM2 keyboard controller ROM and the Sprinter BIOS (MoonSound's wave ROM done)
 - [ ] Step 2 — Unchanged state shared, changed fields only, time-derived counters
-- [ ] Step 3 — Degraded restores reported on every surface
+- [x] Step 3 — Restore result in the engine: `RestoreDevices` with issues per device, the v1 oracle on 10 models (2026-10-03); surfaces in Phase 5
+  - [ ] Devices implement `TTDResetToPowerOn` (decided: reset when the state is missing); none does yet
+  - [ ] Damage (CRC per device version) and `CheckSession`, with the device history (Step 2)
 - [ ] Step 4 — Sound devices on the contract; device-set changes as timeline events
 
 ## Phase 3 — Everything a replay needs

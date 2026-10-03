@@ -106,6 +106,14 @@ public:
         (void)state;
         return false;
     }
+    /// Load a state saved by TTDStateWithoutRegions; the regions are restored
+    /// by the engine. False: the state is not one this device wrote
+    virtual bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+    {
+        (void)state;
+        (void)size;
+        return false;
+    }
 };
 
 }  // namespace ttd

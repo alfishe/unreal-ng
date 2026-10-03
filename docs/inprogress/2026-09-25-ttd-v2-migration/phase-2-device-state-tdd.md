@@ -383,6 +383,10 @@ struct TTDRestoreResult
 - **Damaged range.** A damaged device version spoils every later version that chains from it, up to the next `Full`. The engine knows the dependencies (D5), so it reports the exact range. Phase 2 detects damage with the CRC32C per version (§5.2.1); Phase 4 adds the file-level checks and fills the same field.
 - **Branches (D7).** Resuming from a position starts a branch, and the branch's first checkpoint is captured from the live machine. If the restore was `Degraded`, that checkpoint would carry the unrestored device into the new history. The result is therefore available before a resume, and a resume from a degraded position is flagged on the branch's first checkpoint (the flag is part of the model now; the branch UI is PLAN #76).
 
+**As built (2026-10-03).** The engine's `TTDRestoreResult` carries the issues (`TTDRestoreIssue`: kind, severity, device key, what the device holds now, detail); its status is the worst. `TimeTravelEngine::RestoreDevices(index, context)` restores every device of the table in restore order after the memory regions, then calls each `TTDAfterRestore`. It reports a device without state (reset to power-on through `TTDResetToPowerOn` when the device can, else kept live), state for a device this machine lacks, a state that does not fit, and a different firmware (`NotBitExact`). A device whose state the engine keeps without its region memory (General Sound, Sprinter video and fast RAM, the VDAC2 memory) loads through `ITTDRegionSource::TTDLoadStateWithoutRegions`. The oracle: on the 10 large-memory models, v1 restores a checkpoint, the machine runs on, the engine restores the same checkpoint, and every device saves the same bytes as after v1's restore. Writing it found an engine bug: a region smaller than a piece (the SMUC EEPROM, 2 KB) was restored as a whole 4 KB piece, writing past the device's memory; the last partial piece is now decoded aside. Damage and `CheckSession` come with the device history (Step 2); the surfaces in Phase 5.
+
+**Q2 decided (2026-10-03):** a device without state resets to its power-on state when it can, so the same restore always gives the same machine; configurations are not touched. No device implements `TTDResetToPowerOn` yet (each keeps its live state and is reported); see the TODO.
+
 #### 5.3.2 Engine interface
 
 ```cpp
@@ -524,7 +528,7 @@ Each item lands as its own commits, and each commit passes the full gate (build 
 
 1. **Measurement first:** add the field-level device measurement (§10) as experiment E8 next to E1–E7, so the numbers in §5.2.3 can be rerun. No engine code. *Done 2026-10-03.*
 2. **Step 1, identity and descriptors:** `TTDDeviceType`, `TTDDescribe` with defaults, the device table, restore order equal to v1's. The engine still stores every state whole. The oracle passes. *Done 2026-10-03.*
-3. **Step 3, restore result:** `TTDRestoreResult` from the device table's checks (missing, not present, layout, size, firmware). Tests with damaged and mismatched sessions.
+3. **Step 3, restore result:** `TTDRestoreResult` from the device table's checks (missing, not present, layout, size, firmware). Tests with damaged and mismatched sessions. *Done 2026-10-03, damage with Step 2.*
 4. **Step 2, history:** same as previous, then ranges / XOR, then the chain limit. Bytes drop; the oracle passes after each.
 5. **Step 2, time fields:** declared per device, one device per commit (MoonSound, NeoGS, TSFM, then the rest the measurement finds).
 6. **Step 4, contract and sync:** all devices through descriptors; `TTDSyncedTime` and its check.
@@ -538,7 +542,7 @@ Step 3 comes before Step 2 so that every history change after it is checked by t
 | # | Risk / question | Plan | Needs the user's decision |
 |---|---|---|---|
 | Q1 | **PR-10 and running cards.** PR-10 asks ≤ 64 B for "a frame in which nothing changed, regardless of configuration". With NeoGS fitted, its Z80 runs its idle loop and something changes every frame (§5.2.3). Phase 2 meets PR-10 for device state only where no device runs by itself. Deriving a card's state by re-running it during a restore would remove the cost but add up to K frames of card emulation to a seek | Read PR-10 as "≤ 64 B plus the state that devices running their own code really change", and report that part per configuration | **yes** (recommendation: accept this reading) |
-| Q2 | A device without state at the target: reset it to power-on or keep the live state? | Reset when the device supports it (repeatable), keep live otherwise; both reported | **yes** (recommendation: reset) |
+| Q2 | A device without state at the target: reset it to power-on or keep the live state? | Reset when the device supports it (repeatable), keep live otherwise; both reported | *Decided 2026-10-03: reset* |
 | Q3 | Old ids 37 (`Atm2IoEsp`) and 39 (`ZiFiLine`) become instances of `SerialPort`: retire the numbers or keep them as aliases forever? | Decided with V-7 in Phase 4, Step 1 | yes, in Phase 4 |
 | Q4 | Store small firmware images (GS ROM 32 KB, keyboard controller ROM) in the session, so its replay is exact anywhere? | Phase 2 records the fingerprint only; storing images is a region question for Phase 4 | yes, in Phase 4 |
 | R1 | Enforcing the restore result exposes silent failures that exist today as visible errors | Land with the contract tests; triage each new report (migration-trajectory risk table) | — |

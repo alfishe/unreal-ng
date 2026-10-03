@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #include "debugger/ttd/timetravelengine.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 
 using namespace ttd;
 
@@ -271,4 +273,144 @@ TEST(TimeTravelEngine_Test, FullTablesShareUnchangedBlocks_AndRestoresCrossThem)
         }
         EXPECT_EQ(static_cast<size_t>(std::count(present.begin(), present.end(), uint8_t(1))), f + 1);
     }
+}
+
+namespace
+{
+/// A 4-byte device for the restore-result tests
+class FakeDevice : public TTDSerializable
+{
+public:
+    FakeDevice(PeripheralId id, bool canReset) : _id(id), _canReset(canReset) {}
+    size_t TTDStateSize() const override { return 4; }
+    void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state, 4); }
+    void TTDLoadState(const uint8_t* src) override { std::memcpy(state, src, 4); }
+    std::string TTDDeviceName() const override { return "Fake" + std::to_string(static_cast<int>(_id)); }
+    PeripheralId TTDPeripheralId() const override { return _id; }
+    bool TTDResetToPowerOn() override
+    {
+        if (!_canReset)
+            return false;
+        std::memset(state, 0, 4);
+        return true;
+    }
+    TTDDeviceDescriptor TTDDescribe() const override
+    {
+        TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+        d.firmwareFingerprint = firmware;
+        return d;
+    }
+    void TTDAfterRestore(const TTDRestoreContext&) override { ++afterRestore; }
+
+    uint8_t state[4] = {1, 2, 3, 4};
+    uint64_t firmware = 0;
+    int afterRestore = 0;
+
+private:
+    PeripheralId _id;
+    bool _canReset;
+};
+
+std::vector<uint8_t> Blob(PeripheralId id, std::vector<uint8_t> state)
+{
+    return TTDPeripheralRegistry::EncodeBlob(static_cast<uint8_t>(id), state.data(), state.size());
+}
+}  // namespace
+
+/// Phase 2, Step 3: every device problem of a restore is an issue naming the
+/// device and what it holds now; the worst sets the result
+TEST(TimeTravelEngine_RestoreDevices_Test, EachProblemIsReportedWithTheDevice)
+{
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, err)) << err;
+
+    FakeDevice tape(PeripheralId::Tape, true);        // no state at the checkpoint, can reset
+    FakeDevice covox(PeripheralId::Covox, false);     // no state, cannot reset
+    FakeDevice mouse(PeripheralId::KempstonMouse, false);   // state of the wrong size
+    FakeDevice beta(PeripheralId::BetaDisk, false);   // restored, firmware changed since
+    beta.firmware = 0x1111;
+    ASSERT_TRUE(engine.SetDevices({{tape.TTDDescribe(), &tape, nullptr}, {covox.TTDDescribe(), &covox, nullptr},
+                                   {mouse.TTDDescribe(), &mouse, nullptr}, {beta.TTDDescribe(), &beta, nullptr}},
+                                  err))
+        << err;
+    beta.firmware = 0x2222;
+
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+    blobs[static_cast<uint8_t>(PeripheralId::KempstonMouse)] = Blob(PeripheralId::KempstonMouse, {9, 9});
+    blobs[static_cast<uint8_t>(PeripheralId::BetaDisk)] = Blob(PeripheralId::BetaDisk, {7, 7, 7, 7});
+    blobs[static_cast<uint8_t>(PeripheralId::NeoGS)] = Blob(PeripheralId::NeoGS, {1});   // no such device here
+    TTDFrameInput in;
+    in.position = {0, 1, 0};
+    in.deviceBlobs = &blobs;
+    in.changed.push_back({0, 0, ram.data()});
+    ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+
+    const TTDRestoreResult result = engine.RestoreDevices(0, TTDRestoreContext{1, 0, false});
+    EXPECT_EQ(result.status, TTDRestoreStatus::Degraded);
+    auto find = [&](TTDRestoreIssueKind kind, const std::string& instance) -> const TTDRestoreIssue* {
+        for (const TTDRestoreIssue& i : result.issues)
+            if (i.kind == kind && i.device.instance == instance)
+                return &i;
+        return nullptr;
+    };
+    const TTDRestoreIssue* t = find(TTDRestoreIssueKind::DeviceMissingState, "fake2");
+    ASSERT_NE(t, nullptr) << result.message;
+    EXPECT_EQ(t->action, TTDLiveStateAction::ResetToPowerOn);
+    EXPECT_EQ(tape.state[0], 0) << "reset to power-on";
+    const TTDRestoreIssue* c = find(TTDRestoreIssueKind::DeviceMissingState, "fake3");
+    ASSERT_NE(c, nullptr) << result.message;
+    EXPECT_EQ(c->action, TTDLiveStateAction::KeptLive);
+    EXPECT_EQ(covox.state[0], 1) << "kept its live state";
+    ASSERT_NE(find(TTDRestoreIssueKind::SizeMismatch, "fake7"), nullptr) << result.message;
+    EXPECT_EQ(mouse.state[0], 1) << "a state that does not fit is not loaded";
+    const TTDRestoreIssue* f = find(TTDRestoreIssueKind::FirmwareDiffers, "fake1");
+    ASSERT_NE(f, nullptr) << result.message;
+    EXPECT_EQ(f->severity, TTDRestoreStatus::NotBitExact);
+    EXPECT_EQ(beta.state[0], 7) << "restored all the same";
+    bool notPresent = false;
+    for (const TTDRestoreIssue& i : result.issues)
+        notPresent |= i.kind == TTDRestoreIssueKind::DeviceNotPresent;
+    EXPECT_TRUE(notPresent) << result.message;
+    EXPECT_EQ(tape.afterRestore + covox.afterRestore + mouse.afterRestore + beta.afterRestore, 4)
+        << "every device's after-restore call, once";
+}
+
+/// A region smaller than a piece (the SMUC EEPROM, 2 KB): restoring it writes
+/// its real bytes only, never past the device's memory
+TEST(TimeTravelEngine_Test, RestoringAPartialPieceStaysInsideTheRegion)
+{
+    std::vector<uint8_t> memory(2048 + 64, 0xEE);   // the region, then guard bytes
+    TimeTravelEngine engine;
+    std::string err;
+    TTDRegionDesc r;
+    r.name = "eeprom";
+    r.memory = memory.data();
+    r.pieces = 1;
+    r.bytes = 2048;
+    ASSERT_TRUE(engine.BeginSession({r}, err)) << err;
+
+    std::vector<uint8_t> padded(kTTDPieceSize, 0);
+    for (int f = 1; f <= 2; ++f)
+    {
+        std::fill(memory.begin(), memory.begin() + 2048, static_cast<uint8_t>(f));
+        std::copy(memory.begin(), memory.begin() + 2048, padded.begin());
+        TTDFrameInput in;
+        in.position = {0, static_cast<uint64_t>(f), 0};
+        in.changed.push_back({0, 0, padded.data()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+    }
+    std::fill(memory.begin(), memory.begin() + 2048, 0x77);
+    engine.ForgetMemory();
+    ASSERT_TRUE(engine.RestoreToMemory(0).Ok());
+    EXPECT_EQ(memory[0], 1);
+    EXPECT_EQ(memory[2047], 1);
+    for (size_t i = 2048; i < memory.size(); ++i)
+        ASSERT_EQ(memory[i], 0xEE) << "byte " << i << " past the region was written";
 }

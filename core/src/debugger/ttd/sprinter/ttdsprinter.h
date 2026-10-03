@@ -135,6 +135,7 @@ public:
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
     bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
     PortDecoder_Sprinter& _decoder;
@@ -161,6 +162,7 @@ public:
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
     bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
     PortDecoder_Sprinter& _decoder;

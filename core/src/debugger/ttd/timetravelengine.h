@@ -45,11 +45,53 @@ enum class TTDRestoreStatus : uint8_t
     Damaged = 3,       ///< stored data failed its integrity check
 };
 
+/// What one item of a restore lacked (Phase 2, Step 3; FR-7)
+enum class TTDRestoreIssueKind : uint8_t
+{
+    DeviceMissingState,   ///< the device exists here, the checkpoint has no state for it
+    DeviceNotPresent,     ///< the checkpoint has state for a device this machine lacks
+    LayoutUnsupported,
+    SizeMismatch,
+    DeviceSetDiffers,
+    FirmwareDiffers,      ///< restored exactly, but a replay may differ
+    ConfigurationDiffers,
+    DataDamaged,
+    AfterRestoreFailed,
+};
+
+/// What a device not restored holds now
+enum class TTDLiveStateAction : uint8_t
+{
+    NotApplicable,
+    KeptLive,         ///< the device cannot reset itself: what it held before the restore
+    ResetToPowerOn,   ///< the same restore always gives the same machine
+};
+
+struct TTDRestoreIssue
+{
+    TTDRestoreIssueKind kind = TTDRestoreIssueKind::DeviceMissingState;
+    TTDRestoreStatus severity = TTDRestoreStatus::Degraded;
+    TTDDeviceKey device;   ///< empty instance for machine-wide issues
+    TTDLiveStateAction action = TTDLiveStateAction::NotApplicable;
+    std::string detail;
+};
+
 struct TTDRestoreResult
 {
-    TTDRestoreStatus status = TTDRestoreStatus::Exact;
+    TTDRestoreStatus status = TTDRestoreStatus::Exact;   ///< the worst issue
     std::string message;
+    std::vector<TTDRestoreIssue> issues;
     bool Ok() const { return status == TTDRestoreStatus::Exact || status == TTDRestoreStatus::NotBitExact; }
+
+    void Add(TTDRestoreIssue issue)
+    {
+        if (static_cast<uint8_t>(issue.severity) > static_cast<uint8_t>(status))
+            status = issue.severity;
+        if (!message.empty())
+            message += "; ";
+        message += issue.device.instance.empty() ? issue.detail : issue.device.instance + ": " + issue.detail;
+        issues.push_back(std::move(issue));
+    }
 };
 
 /// One recorded frame boundary
@@ -154,6 +196,16 @@ public:
         return _devices.Build(std::move(devices), error);
     }
     const TTDDeviceTable& Devices() const { return _devices; }
+
+    /// Restore every device of the table from checkpoint @p index, in restore
+    /// order, then call their after-restore hooks. Run after the memory regions
+    /// are restored (RestoreToMemory): a device whose state the engine keeps
+    /// without its region memory loads only that state. A device without state
+    /// in the checkpoint resets to power-on when it can (else keeps its live
+    /// state); state for a device this machine lacks, a state of the wrong size
+    /// and a different firmware are reported. Each problem is an issue of the
+    /// result, naming the device and what it holds now
+    TTDRestoreResult RestoreDevices(size_t index, const TTDRestoreContext& context);
     bool IsSessionOpen() const { return _open; }
 
     const std::vector<TTDRegionDesc>& Regions() const { return _regions; }

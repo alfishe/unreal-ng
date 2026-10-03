@@ -849,6 +849,25 @@ void SoundChip_GeneralSound::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
 {
+    loadFixedState(src);
+    memcpy(_ram.data(), src + TTD_FIXED_STATE_SIZE, _ram.size());
+    if (_ramTrackerArmed)
+        _ramTrackerArmed->MarkAll();
+    finishLoad(src);
+}
+
+bool SoundChip_GeneralSound::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    // The time-travel engine restored the RAM as its region already
+    if (size != TTD_FIXED_STATE_SIZE)
+        return false;
+    loadFixedState(state);
+    finishLoad(state);
+    return true;
+}
+
+void SoundChip_GeneralSound::loadFixedState(const uint8_t* src)
+{
     _mb.status = src[0];
     _mb.dataFromHost = src[1];
     _mb.dataToHost = src[2];
@@ -890,10 +909,10 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     Z80CpuSetRegisters(_cpu, &regs);
 
     // src[59..94]: queue-era slots, ignored
+}
 
-    memcpy(_ram.data(), src + TTD_FIXED_STATE_SIZE, _ram.size());
-    if (_ramTrackerArmed)
-        _ramTrackerArmed->MarkAll();
+void SoundChip_GeneralSound::finishLoad(const uint8_t* src)
+{
     applyBanking();
 
     // Host-side pipeline follows the restored levels without emitting a

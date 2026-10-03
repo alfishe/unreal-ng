@@ -240,8 +240,12 @@ public:
     void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool on) override { _ramTrackerArmed = on ? &_ramTracker : nullptr; }
     bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
+    /// TTD load, split around the RAM the engine restores as a region
+    void loadFixedState(const uint8_t* src);
+    void finishLoad(const uint8_t* src);
     // Shared catch-up loop and module replay drive the card through the
     // private hooks below (gscardrunner.h, gsmodulereplay.h)
     friend class GSCardRunner<SoundChip_GeneralSound>;

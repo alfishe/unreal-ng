@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,10 @@
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -172,6 +176,52 @@ TEST_P(TimeTravelManager_ShadowModels_Test, EveryFrameRestoresAsV1)
     _v1->SetShadowEngine(nullptr);
 
     CheckEveryCheckpoint();
+}
+
+/// The engine restores every device as v1 does (Phase 2, Step 3): v1 restores
+/// a checkpoint and every device's state is saved as the reference; the machine
+/// runs on; then the engine restores the same checkpoint (CPU, chipset, memory
+/// regions, devices, banking) and every device saves the same bytes again
+TEST_P(TimeTravelManager_ShadowModels_Test, EngineRestoresEveryDeviceAsV1)
+{
+    ASSERT_NO_FATAL_FAILURE(Start(GetParam()));
+    _v1->SetShadowEngine(&_engine);
+    ASSERT_TRUE(_v1->StartRecording());
+    _emulator->RunNFrames(40, /*skipBreakpoints=*/true);
+    _v1->StopRecording();
+    _v1->SetShadowEngine(nullptr);
+    ASSERT_EQ(_engine.CheckpointCount(), _v1->GetCheckpointCount());
+
+    EmulatorContext* context = _emulator->GetContext();
+    const ttd::TTDPeripheralRegistry& registry = _v1->GetPeripheralRegistry();
+    auto states = [&]() {
+        std::map<uint8_t, std::vector<uint8_t>> out;
+        for (const auto& [id, device] : registry.Devices())
+            if (device && device->TTDStateSize() != 0)
+                device->TTDSaveStateTo(out[id]);
+        return out;
+    };
+    for (size_t i : {size_t(5), size_t(20), _engine.CheckpointCount() - 1})
+    {
+        SCOPED_TRACE("checkpoint " + std::to_string(i));
+        ASSERT_TRUE(_v1->RestoreCheckpointForTesting(i));
+        const auto reference = states();
+
+        _emulator->RunNFrames(3, /*skipBreakpoints=*/true);   // the machine moves on
+
+        const ttd::TTDEngineCheckpoint* cp = _engine.Checkpoint(i);
+        ttd::RestoreCpuState(cp->cpu, static_cast<Z80State*>(context->pCore->GetZ80()));
+        ttd::RestoreChipsetState(cp->chipset, &context->emulatorState);
+        _engine.ForgetMemory();
+        ASSERT_TRUE(_engine.RestoreToMemory(i).Ok());
+        const ttd::TTDRestoreResult r = _engine.RestoreDevices(i, ttd::TTDRestoreContext{cp->position.frame, 0, false});
+        EXPECT_EQ(r.status, ttd::TTDRestoreStatus::Exact) << r.message;
+        context->pMemory->UpdateZ80Banks();
+
+        const auto restored = states();
+        for (const auto& [id, bytes] : reference)
+            EXPECT_TRUE(restored.at(id) == bytes) << "device " << int(id);
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(LargeMemoryModels, TimeTravelManager_ShadowModels_Test,

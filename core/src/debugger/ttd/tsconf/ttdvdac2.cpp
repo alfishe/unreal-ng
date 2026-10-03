@@ -111,6 +111,12 @@ bool TTDVdac2Memory::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<u
     return true;
 }
 
+bool TTDVdac2Memory::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    // The blob header only: the chip's memory is the engine's regions (EveMemoryRestored follows)
+    return size == 8 && _regionCount != 0 && state != nullptr;
+}
+
 /// endregion </Time-travel engine regions>
 
 size_t TTDVdac2::TTDStateSize() const { return _card.TtdStateSize(); }

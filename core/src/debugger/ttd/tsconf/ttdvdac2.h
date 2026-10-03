@@ -47,6 +47,7 @@ public:
     /// The engine keeps the whole blob in its regions: the state left is the
     /// blob's header with no tokens (magic, 0 bytes)
     bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
     static constexpr size_t kMaxRegions = 7;   ///< RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT

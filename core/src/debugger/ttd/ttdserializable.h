@@ -347,6 +347,11 @@ public:
     /// device derives from other parts of the machine. Work that already sits
     /// in TTDLoadState stays there
     virtual void TTDAfterRestore(const TTDRestoreContext& context) { (void)context; }
+
+    /// Put the device in its power-on state, for a restore whose checkpoint
+    /// has no state for it (the same restore then always gives the same
+    /// machine). False: the device cannot, it keeps its live state
+    virtual bool TTDResetToPowerOn() { return false; }
 };
 
 } // namespace ttd

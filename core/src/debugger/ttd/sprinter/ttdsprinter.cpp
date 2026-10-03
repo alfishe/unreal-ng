@@ -432,6 +432,12 @@ bool TTDSprinterVideoRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vec
     return true;
 }
 
+bool TTDSprinterVideoRam::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    // The version byte only: the memory is the engine's region, its onRestored rebuilds the caches
+    return size == 1 && state[0] == kVersion;
+}
+
 /// endregion </TTDSprinterVideoRam>
 
 /// region <TTDSprinterFastRam>
@@ -485,6 +491,11 @@ bool TTDSprinterFastRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vect
     peripheralId = static_cast<uint8_t>(PeripheralId::SprinterFastRam);
     state.assign(1, kVersion);
     return true;
+}
+
+bool TTDSprinterFastRam::TTDLoadStateWithoutRegions(const uint8_t* state, size_t size)
+{
+    return size == 1 && state[0] == kVersion;
 }
 
 /// endregion </TTDSprinterFastRam>

@@ -21,10 +21,15 @@
 namespace ttd
 {
 
+class ITTDRegionSource;
+
 struct TTDDeviceEntry
 {
     TTDDeviceDescriptor descriptor;
     TTDSerializable* device = nullptr;   ///< the live device; null for a table read from a file
+    /// Set when the engine keeps this device's state without its region
+    /// memory (TTDStateWithoutRegions): the restore loads it through here
+    ITTDRegionSource* withoutRegions = nullptr;
 };
 
 class TTDDeviceTable
