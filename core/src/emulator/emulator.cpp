@@ -2486,6 +2486,11 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
 Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
 {
+    if (_emulator._context && _emulator._context->pSoundManager)
+    {
+        _heldSound = _emulator._context->pSoundManager;
+        _heldSound->holdHostOutput();
+    }
     if (_emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0)
     {
         // A new direct run: no breakpoint stop yet; its first instruction may leave the execution
@@ -2499,6 +2504,8 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
 
 Emulator::DirectStepScope::~DirectStepScope()
 {
+    if (_heldSound)
+        _heldSound->releaseHostOutput();
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
     {
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
