@@ -172,6 +172,15 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
     clears RGMOD / PORT_Y (PLD), BIOS 3.07 BETA 1 reads ALL_MODE back; MAME gap B8
   - [ ] Owner's report (b), "Disk Error after the catalog" from a RAM-disk TRD: not reproduced on 11 images; ask for
     the image. The "comdos" catalog was TWIX's disk (finding 4)
+  - [x] Temporal effects in the Spectrum mode (2026-10-03, branch `sprinter-temporal-effects`; owner report "ZX DLSS
+    does not work on the Sprinter"): the ZX DLSS input came only from the ZX per-T renderer's plane B; now the
+    Sprinter renderer writes plane B too (`DrawSpanPlaneB`), `ScreenSprinter::TemporalInput` hands over the 352 x 288
+    ZX frame of the Spectrum squares and the output goes back two pixels wide; native modes report "not applicable".
+    Across the Edge: paper plane B identical to a Pentagon on the same frames
+    ([temporal-effects-manager.md](../2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md) §7 "Machine support")
+  - [ ] Border in the Spectrum mode against a Pentagon (seen with Across the Edge, 2026-10-03): 8 ZX pixels less
+    border at each side (blank squares in the launcher's table - check against MAME / a board) and a border color
+    change 8 lines off in the bottom border
   - [ ] Z4 (S-M) `SprinterZxMode` state on all five surfaces (after the automation audit P1 branch)
   - [ ] Z5 (M) snapshots into the ZX mode through the cell table; **bug found**: today the SNA / Z80 loaders
     write physical pages 0-7 on the Sprinter (system pages) and nothing refuses (goals FR-51). Q4 decided

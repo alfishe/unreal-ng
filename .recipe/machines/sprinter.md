@@ -538,6 +538,24 @@ and core reports as Lua.)
 - **Uploads**: MCP `load_software` uploads a file that exists on the MCP host;
   floppies up to 4 MB are accepted (1.44 MB PC images included).
 
+### ZX DLSS de-flicker in the Spectrum mode
+
+Verified 2026-10-03 (WebAPI on a spare port, BIOS 3.06, the MAME-pack disk): in Flex Navigator type
+`\zx\spectrum.exe \zx\p128.zx \trd\across\0.trd`, ENTER, ENTER on TR-DOS, `R` ENTER, ENTER on ACROSS.
+
+```bash
+curl -s -X PUT $BASE/emulator/$EMU/video/temporal -H 'Content-Type: application/json' -d '{"algorithm":"mod-tpgwafsd"}' |
+  jq -c '{active, applicable, inactive_reason, video_delay_frames}'
+#   Spectrum mode → {"active":true,"applicable":true,"inactive_reason":"","video_delay_frames":7}
+#   Flex Navigator → {"active":false,"applicable":false,
+#                     "inactive_reason":"not applicable: Sprinter native mode (640x256 16c): ZX DLSS works in the Spectrum mode only", ...}
+```
+
+The processed picture is `GET /capture/framebuffer?format=rgba` (the presented frame; `/capture/screen` is the raw
+one). `/capture/planeb` is the Sprinter's 736 x 288 plane B: the ZX frame the algorithm gets is every second pixel
+of its 704 x 288 window at (16, 0). CLI `video temporal`, MCP `capture_media` `temporal_status`, Lua / Python
+`video_temporal()` report the same fields. Design: `docs/inprogress/2026-09-27-zxdlss-gigascreen/temporal-effects-manager.md` §7.
+
 ### ZX-mode timing: the zxtime program
 
 Verified 2026-10-02 on a GUI build (WebAPI on a spare port, BIOS 3.06 HF2, the MAME-pack disk as a CHD with

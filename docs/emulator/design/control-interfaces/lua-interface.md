@@ -1064,7 +1064,7 @@ emu.video_pixel_at(t)                -- the same for the point under the beam at
 emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
 emu.video_address_in(space, offset [, page]) -- "ram", "sprite_ram" (attribute word, byte offset) or "palette" (cell, byte offset)
 emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
-emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason,
+emu.video_temporal()                 -- ZX DLSS de-flicker status: { algorithm ("" = off), active, inactive_reason, applicable,
                                      --   video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
                                      --   correcting, showing_processed, corrected_frames, written, shown_raw, late, restarts,
                                      --   last_ms, average_ms, shown_frame / last_frame = {pattern, period2..period5,
