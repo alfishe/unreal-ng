@@ -116,6 +116,11 @@
 
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["summary"] = "Run N complete video frames";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/run_frames"]["post"]["description"] =
+        "Runs at full host speed and leaves the emulator paused. Host audio is held for the run (as for every "
+        "direct run: run_frame, run_tstates, run_to_*, step): every sound device still computes its samples "
+        "(captures and recordings get them), the speakers get nothing; resume restores sound. GET /audio/mixer "
+        "host_output shows it.";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/run_frames"]["post"]["parameters"][0]["required"] = true;

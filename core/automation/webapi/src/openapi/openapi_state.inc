@@ -793,7 +793,9 @@
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["summary"] = "Write memory";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["description"] =
-        "Write one or more bytes to the Z80 address space.";
+        "Write one or more bytes to the Z80 address space (a debugger poke). It is NOT subject to the ROM "
+        "write protection flag: bytes written to an address that is mapped to ROM change the ROM. The flag "
+        "(see /memory/rom/protect) only guards writes to ROM pages through /memory/page/rom/{page}.";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/write"]["post"]["parameters"][0]["required"] = true;
@@ -866,7 +868,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled.";
+        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
+        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
+        "instances.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;

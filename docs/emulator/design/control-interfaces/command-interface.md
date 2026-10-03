@@ -446,6 +446,13 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 - Uses a persistent target position to prevent cumulative drift
 - Resets target when other stepping commands are used
 
+**Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
+audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
+The machine computes the same samples as at normal speed (TTD determinism; captures and recordings still get
+them). TTD seek / replay and turbo mode hold the output the same way; `resume` restores sound. The mixer
+(`mixer`, `GET /audio/mixer`) reports it under `host_output`: `held`, `frames_delivered`, `frames_audible`,
+`frames_held`.
+
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision
 - Frequent stepping may impact overall emulation performance

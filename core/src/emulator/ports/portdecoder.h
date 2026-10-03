@@ -908,11 +908,17 @@ public:
             uint16_t base = 0;
             uint8_t irq = 0;
             std::array<uint8_t, 6> mac{};
-            std::string portKey;              ///< "isa2.eth"
+            std::string portKey;              ///< "isa2.eth" (a UART card: "isa1.uart0")
+            bool macAuto = true;              ///< the MAC is the automatic one (a card picks its own family's form)
+            uint8_t instance = 0;             ///< the emulator instance number in automatic MACs
+            std::string peer;                 ///< UART cards: ComPortSpec text of the line's other end ("" = AT)
             /// Plug the device in (nullptr pulls it); false with the reason when the slot refuses it
             std::function<bool(IIoBusDevice* device, std::string& why)> fit;
             /// Why a configured card is not there (shown in the machine's own slot report)
             std::function<void(const std::string& why)> notFitted;
+            /// A runtime change of a UART card's line (automation's isaN_peer): the machine keeps it as the slot's
+            /// configured peer
+            std::function<void(const std::string& peer)> setPeer;
         };
         std::vector<Slot> expansionSlots;   ///< not "slots": a Qt macro, and the GUI includes this header
     };

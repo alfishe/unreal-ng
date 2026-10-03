@@ -200,6 +200,20 @@ TEST_F(TTD_ReplayMode_Test, ExitReplayMode_RestoresUnmutedState)
         << "ExitReplayMode must restore the pre-replay unmuted state";
 }
 
+TEST_F(TTD_ReplayMode_Test, ReplayHoldsHostOutputOnceAndReleasesIt)
+{
+    // Replay runs at host speed: nothing - not even silence - reaches the host audio callback
+    ASSERT_NE(_context->pSoundManager, nullptr);
+    ASSERT_FALSE(_context->pSoundManager->isHostOutputHeld());
+
+    _ttd->EnterReplayMode();
+    _ttd->EnterReplayMode();  // nested enter takes no second hold
+    EXPECT_TRUE(_context->pSoundManager->isHostOutputHeld());
+
+    _ttd->ExitReplayMode();
+    EXPECT_FALSE(_context->pSoundManager->isHostOutputHeld()) << "the replay left the host output held";
+}
+
 TEST_F(TTD_ReplayMode_Test, ExitReplayMode_PreservesPreExistingMute)
 {
     // User had audio muted before the seek — exit replay must keep it muted.

@@ -48,7 +48,7 @@ surface - WebAPI `settings/<name>`, CLI `setting <name>`, Lua / Python
 
 | Setting | Values (default first) | Notes |
 |---|---|---|
-| `ay_voicing` | `headphones` \| `classic` \| `flat` \| `warm` \| `tv` \| `small_speaker` | Tonal balance of the AY / SSG output, HQ and LQ. `flat` for analysis; also `[SOUND] AYVoicing=` in `unreal.ini` |
+| `ay_voicing` | `headphones` \| `classic` (alias `legacy`) \| `flat` \| `warm` \| `tv` \| `small_speaker` | Tonal balance of the AY / SSG output, HQ and LQ. `flat` for analysis; also `[SOUND] AYVoicing=` in `unreal.ini` |
 | `ay_punch` | `on` \| `off` | AY transient enhancement, Sound HQ only |
 | `ay_room` | `9db` \| `off` \| `15db` ... `1db` | Headphone crossfeed level, Sound HQ only |
 | `beeper_punch` | `off` \| `on` | Beeper attack enhancement, Sound HQ only |
@@ -59,10 +59,10 @@ What each profile sounds like, its curve and when to pick it:
 ## WebAPI
 
 ```bash
-# AY pair overview (chip list), one chip, one decoded register
+# AY pair overview (chip list), one chip, one decoded register (/ay/{chip}/register/{reg})
 curl -s "$BASE/emulator/$EMU_ID/state/audio/ay" | jq .
 curl -s "$BASE/emulator/$EMU_ID/state/audio/ay/0" | jq '.registers'
-curl -s "$BASE/emulator/$EMU_ID/state/audio/ay/register/0" | jq .
+curl -s "$BASE/emulator/$EMU_ID/state/audio/ay/0/register/0" | jq .
 #   register decode includes frequency_hz computed at the 1.75 MHz AY clock
 #   (tone: 1750000/(16*(tp+1)), noise: 1750000/(16*(np+1)),
 #    envelope: 1750000/(256*(ep+1)))

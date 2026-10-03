@@ -1,5 +1,7 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -286,6 +288,14 @@ protected:
     /// `soundhq` feature state; clearing the override restores the previous quality
     bool _turboLowQualityOverride = false;
 
+    /// Host output holds (holdHostOutput / releaseHostOutput). A depth, not a flag: an API fast run and a
+    /// TTD replay may nest. Separate from _mute (the user's master mute) so neither overwrites the other
+    std::atomic<int> _hostOutputHolds{0};
+    /// Host output counters, in emulated frames (lifetime; read by the audio mixer state)
+    std::atomic<uint64_t> _hostFramesDelivered{0};
+    std::atomic<uint64_t> _hostFramesAudible{0};
+    std::atomic<uint64_t> _hostFramesHeld{0};
+
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
 
@@ -320,6 +330,26 @@ public:
     /// devices() directly (audiosettingswidget) sees it immediately, and
     /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
+
+    /// Host output hold: while at least one hold is active, handleFrameEnd hands nothing to the host audio
+    /// callback - the frontend's ring sees exactly what it sees while the emulator is paused. For runs that are
+    /// not paced to real time (API run_frames / run_tstates / run_until / step, TTD seek and replay): their
+    /// frames would otherwise reach the speakers sped up. Only the host boundary changes: every device still
+    /// renders its samples (TTD determinism), and the recording / analyzer taps still get the real mix.
+    /// Holds nest; every holdHostOutput needs one releaseHostOutput. Any thread
+    void holdHostOutput() { _hostOutputHolds.fetch_add(1, std::memory_order_acq_rel); }
+    void releaseHostOutput()
+    {
+        int holds = _hostOutputHolds.load(std::memory_order_acquire);
+        while (holds > 0 && !_hostOutputHolds.compare_exchange_weak(holds, holds - 1, std::memory_order_acq_rel))
+        {
+        }
+    }
+    bool isHostOutputHeld() const { return _hostOutputHolds.load(std::memory_order_acquire) > 0; }
+    /// Emulated frames handed to the host audio callback / of those, with any non-zero sample / withheld by a hold
+    uint64_t hostFramesDelivered() const { return _hostFramesDelivered.load(std::memory_order_relaxed); }
+    uint64_t hostFramesAudible() const { return _hostFramesAudible.load(std::memory_order_relaxed); }
+    uint64_t hostFramesHeld() const { return _hostFramesHeld.load(std::memory_order_relaxed); }
 
     /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`

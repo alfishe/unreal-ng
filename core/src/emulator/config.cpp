@@ -16,6 +16,7 @@
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/serial/uart16550.h"
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include <cassert>
 #include <array>
@@ -424,6 +425,16 @@ bool Config::ParseConfig(IniFile& inimanager)
 		{
 			if (!sprinterisa::ParseMac(v, slot))
 				MLOGWARNING("Config: [ISA] %sMac=%s: auto or aa:bb:cc:dd:ee:ff (a station address), auto used", prefix.c_str(), v);
+		}
+		// A UART card's line (SPRINTERESP: what its 16550 is wired to; ComPortSpec, default AT = the ESP-12F)
+		if (const char* v = inimanager.GetValue("ISA", (prefix + "Peer").c_str(), nullptr))
+		{
+			ComPortSpec spec;
+			std::string error;
+			if (ComPortSpec::Parse(v, spec, error) && spec.ToString().size() < sizeof(slot.peer))
+				std::snprintf(slot.peer, sizeof(slot.peer), "%s", spec.ToString().c_str());
+			else
+				MLOGWARNING("Config: [ISA] %sPeer=%s: %s - AT used", prefix.c_str(), v, error.c_str());
 		}
 	}
 
@@ -1016,9 +1027,12 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
 	netValue[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "EspChip", nullptr), netValue, sizeof netValue);
-	config.network.espChip = (StringHelper::CompareCaseInsensitive(netValue, "ESP8266", strlen("ESP8266")) == 0) ? 1 : 0;
-	if (netValue[0] != '\0' && config.network.espChip == 0 && StringHelper::CompareCaseInsensitive(netValue, "ESP32", strlen("ESP32")) != 0)
-		MLOGWARNING("Config: unknown [NETWORK] EspChip=%s, ESP32 used (ESP32 | ESP8266)", netValue);
+	{
+		EspModule::Firmware firmware = EspModule::Firmware::Esp32At220;
+		if (netValue[0] != '\0' && !EspModule::ParseFirmware(netValue, firmware))
+			MLOGWARNING("Config: unknown [NETWORK] EspChip=%s, ESP32 used (ESP32 | ESP8266 | ESP8266-AT221 | ESP8266-AT222)", netValue);
+		config.network.espChip = static_cast<uint8_t>(firmware);
+	}
 	config.network.zxWifi[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "ZxWifi", nullptr), config.network.zxWifi, sizeof config.network.zxWifi);
 	{

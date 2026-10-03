@@ -276,6 +276,17 @@ void NetworkWindow::buildUi()
     _slots->setToolTip(tr("The population comes from [ISA] Slot1= / Slot2= of the machine config (or the create "
                           "options) and stays for the instance's lifetime; the Status tab shows each card's registers"));
     slotsLayout->addWidget(_slots);
+    for (int n = 0; n < 2; ++n)
+    {
+        // A UART card's line (SprinterESP: AT = its own ESP-12F; LOOPBACK, TCP, a real ESP on a USB adapter)
+        _slotPeerRow[n] = new QWidget(_slotsBox);
+        auto* rowForm = new QFormLayout(_slotPeerRow[n]);
+        rowForm->setContentsMargins(0, 0, 0, 0);
+        _slotPeer[n] = new SerialPeerEditor(_slotPeerRow[n]);
+        rowForm->addRow(tr("Slot %1 SprinterESP: its 16550 is wired to").arg(n + 1), _slotPeer[n]);
+        _slotPeerRow[n]->setVisible(false);
+        slotsLayout->addWidget(_slotPeerRow[n]);
+    }
     _slotsBox->setVisible(false);
     page->addWidget(_slotsBox);
 
@@ -366,6 +377,10 @@ void NetworkWindow::buildUi()
     _espChip = new QComboBox(esp);
     _espChip->addItem(tr("ESP32 (8 sockets, AT 2.x)"), QStringLiteral("ESP32"));
     _espChip->addItem(tr("ESP8266 (4 sockets, AT NonOS 1.7)"), QStringLiteral("ESP8266"));
+    _espChip->addItem(tr("ESP8266, ESP-AT 2.2.1"), QStringLiteral("ESP8266-AT221"));
+    _espChip->addItem(tr("ESP8266, ESP-AT 2.2.2 (Sprinter ESP Network Kit)"), QStringLiteral("ESP8266-AT222"));
+    _espChip->setToolTip(tr("The firmware of an emulated ESP module. The SprinterESP card's ESP-12F is an ESP8266: it "
+                            "takes an ESP8266 entry from here, ESP-AT 2.2.2 otherwise"));
     espForm->addRow(tr("Emulated chip"), _espChip);
     _modemLines = new QCheckBox(tr("Pass RTS / DTR to a host serial device, report CTS / DSR / RI / DCD"), esp);
     _modemLines->setToolTip(tr("Off by default: USB ESP boards wire RTS / DTR to reset / boot"));
@@ -436,6 +451,8 @@ void NetworkWindow::buildUi()
     connect(_comPort, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zxWifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_atm2IoEspPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
+    for (SerialPeerEditor* editor : _slotPeer)
+        connect(editor, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
     connect(_zifiPeer, &SerialPeerEditor::edited, this, &NetworkWindow::onEdited);
 }
 
@@ -502,6 +519,8 @@ void NetworkWindow::refresh()
     _comPort->setDevices(devices);
     _zxWifiPeer->setDevices(devices);
     _atm2IoEspPeer->setDevices(devices);
+    for (SerialPeerEditor* editor : _slotPeer)
+        editor->setDevices(devices);
     _zifiPeer->setDevices(devices);
 
     if (!_dirty)
@@ -516,6 +535,11 @@ void NetworkWindow::refresh()
         _applied.kbcFirmware = form.kbcFirmware;
         _applied.internalIo = form.internalIo;
         _applied.zifiMachine = form.zifiMachine;
+        for (int n = 0; n < 2; ++n)
+        {
+            _applied.slotUart[n] = form.slotUart[n];
+            _slotPeerRow[n]->setVisible(form.slotUart[n]);
+        }
     }
     updateAvailability();
     updateStatusTree(network);
@@ -536,6 +560,11 @@ void NetworkWindow::loadForm(const NetworkForm& form)
     _zxWifiPeer->setSpec(form.zxWifiPeer);
     _atm2IoEsp->setChecked(form.atm2IoEsp);
     _atm2IoEspPeer->setSpec(form.atm2IoEspPeer);
+    for (int n = 0; n < 2; ++n)
+    {
+        _slotPeer[n]->setSpec(form.slotPeer[n]);
+        _slotPeerRow[n]->setVisible(form.slotUart[n]);
+    }
     _atm2IoEspAddress->setCurrentIndex(std::max(0, _atm2IoEspAddress->findData(form.atm2IoEspAddress)));
     _zifiPeer->setSpec(form.zifiPeer);
     _comPort->setSpec(form.comPort);
@@ -561,6 +590,11 @@ NetworkForm NetworkWindow::readForm() const
     form.zxWifiPeer = _zxWifiPeer->spec();
     form.atm2IoEsp = _atm2IoEsp->isChecked();
     form.atm2IoEspPeer = _atm2IoEspPeer->spec();
+    for (int n = 0; n < 2; ++n)
+    {
+        if (form.slotUart[n])
+            form.slotPeer[n] = _slotPeer[n]->spec();
+    }
     form.atm2IoEspAddress = _atm2IoEspAddress->currentData().toUInt();
     form.zifiPeer = _zifiPeer->spec();
     form.comPort = _comPort->spec();
@@ -610,7 +644,9 @@ void NetworkWindow::updateAvailability()
     if (!a.kbcFirmware && !a.avrFirmware)
         _avrWhy->setText(Q(a.avrFirmwareWhy + " " + a.kbcFirmwareWhy));
     const bool esp = NetworkPeerIsEsp(form.comPort) || (form.zxWifi && NetworkPeerIsEsp(form.zxWifiPeer)) ||
-                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer)) || NetworkPeerIsEsp(form.zifiPeer);
+                     (form.atm2IoEsp && NetworkPeerIsEsp(form.atm2IoEspPeer)) || NetworkPeerIsEsp(form.zifiPeer) ||
+                     (form.slotUart[0] && NetworkPeerIsEsp(form.slotPeer[0])) ||
+                     (form.slotUart[1] && NetworkPeerIsEsp(form.slotPeer[1]));
     _espChip->setEnabled(esp);
     const bool serial = form.comPort.kind == ComPortSpec::Kind::Serial ||
                         (form.zxWifi && form.zxWifiPeer.kind == ComPortSpec::Kind::Serial) ||

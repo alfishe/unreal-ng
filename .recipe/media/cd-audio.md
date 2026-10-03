@@ -120,7 +120,8 @@ slot is an audio CD anyway; `media targets <folder>` offers the CD drive first.
 ## Assert on
 
 - `drives[].audio.status`: `idle` (15h), `playing` (11h), `paused` (12h), `completed` (13h: the play
-  reached its end; the guest's next READ SUB-CHANNEL reports it once). `status_code` is the byte
+  reached its end; the guest's next READ SUB-CHANNEL reports it once), `error` (14h: the play ended
+  in an error). `status_code` is the byte
   READ SUB-CHANNEL returns.
 - `drives[].disc.sessions` and `tracks[].session`: 2 on an Enhanced CD; `tracks[].title`: the file
   of an audio CD built from a folder.

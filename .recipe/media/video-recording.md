@@ -51,6 +51,13 @@ capture_media {"action":"record_stop"}        # -> Recorded N frame(s) + S s of 
 capture_media {"action":"record_start","format":"gif","frames":100,"filename":"/abs/path/scratch/clip.gif"}
 ```
 
+```text
+capture_media {"action":"record_pause"}       # stop adding frames and audio; the file stays open
+capture_media {"action":"record_resume"}      # continue (WebAPI: POST /video/record {"action":"pause"} / {"action":"resume"})
+```
+
+`record_pause` without an active recording, and `record_resume` when not paused, answer 409.
+
 Without `frames` the session stays open until `record_stop`; let the emulator run (or drive it
 with `type_input` / `mouse_input`) in between.
 

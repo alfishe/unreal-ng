@@ -165,6 +165,12 @@ void SprinterIsaBus::Configure(const sprinterisa::IsaConfig& config)
     }
 }
 
+void SprinterIsaBus::SetConfiguredPeer(int slot, const std::string& peer)
+{
+    sprinterisa::SlotConfig& c = _slots[slot & 1].config;
+    std::snprintf(c.peer, sizeof(c.peer), "%s", peer.c_str());
+}
+
 void SprinterIsaBus::Fit(int slot, std::unique_ptr<IIsaCard> card)
 {
     Slot& s = _slots[slot & 1];
@@ -221,12 +227,16 @@ StateNode SprinterIsaBus::Describe() const
             resources["io"] = Hex(first, 3) + "-" + Hex(last, 3);
             // The Z80 reaches the range through window 3 (#C000-#FFFF): #1FFD bit 4 and the slot's I/O page; an I/O
             // card decodes ISA A9-A0 only, so every #400 of the window and any #9FBD value mirror it (AEN must be 0)
-            access["io"] = "#1FFD bit 4 set, window 3 page " + Hex(SlotPage(Space::Io, n), 2) + ", #9FBD AEN = 0: CPU " +
-                           Hex(0xC000 | (first & 0x3FF), 4) + "-" + Hex(0xC000 | (last & 0x3FF), 4) +
-                           " (A9-A0 decoded: mirrored every #400 of the window, any A19-A14)";
-            access["io_now"] = (_latch & kLatchAen) ? "no: #9FBD AEN = 1, an I/O card ignores the cycles"
-                               : (_latch & kLatchReset) ? "no: #9FBD RESET DRV held"
-                                                        : "yes";
+            const std::string note = s.card->DecodeNote();
+            const bool aenBlind = s.card->IgnoresAen();
+            access["io"] = "#1FFD bit 4 set, window 3 page " + Hex(SlotPage(Space::Io, n), 2) +
+                           (aenBlind ? std::string(", any #9FBD AEN: CPU ") : std::string(", #9FBD AEN = 0: CPU ")) +
+                           Hex(0xC000 | (first & 0x3FFF), 4) + "-" + Hex(0xC000 | (last & 0x3FFF), 4) +
+                           (note.empty() ? std::string(" (A9-A0 decoded: mirrored every #400 of the window, any A19-A14)")
+                                         : " (" + note + ")");
+            access["io_now"] = (_latch & kLatchReset) ? "no: #9FBD RESET DRV held"
+                               : ((_latch & kLatchAen) && !aenBlind) ? "no: #9FBD AEN = 1, an I/O card ignores the cycles"
+                                                                    : "yes";
         }
         else
             resources["io"] = "none";

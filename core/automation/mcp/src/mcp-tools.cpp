@@ -557,7 +557,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["drive"]["type"] = "string";
     schema["properties"]["drive"]["default"] = "A";
-    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A or B)";
+    schema["properties"]["drive"]["description"] = "Floppy drive for disk images (A-D or 0-3; autostart needs A)";
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
@@ -1912,9 +1912,9 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 out << "\n[breakpoints] " << value["count"].asUInt() << " active";
                             }
-                            else if (aspect == "screen_digest" && value.isMember("digest"))
+                            else if (aspect == "screen_digest" && value.isMember("combined"))
                             {
-                                out << "\n[screen_digest] " << value["digest"].asString();
+                                out << "\n[screen_digest] " << value["combined"].asString();
                             }
                             else if (aspect == "contention")
                             {
@@ -1994,8 +1994,16 @@ void RegisterInspectState(ToolRegistry& registry)
                                             << zifi["dropped"].asUInt64();
                                     for (const Json::Value& slot : value["slots"])
                                         out << "\n[network] " << slot["label"].asString() << ": " << slot["card"].asString()
-                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() + ", MAC " + slot["mac"].asString()
-                                                                      : std::string());
+                                            << (slot.isMember("chip") ? " " + slot["chip"].asString() + " at " + slot["base"].asString() +
+                                                                            (slot.isMember("mac") ? ", MAC " + slot["mac"].asString() : std::string())
+                                                                      : std::string())
+                                            << (slot.isMember("esp")
+                                                    ? ", IRQ " + std::to_string(slot["irq"].asInt()) + ", UART " + std::to_string(slot["uart"]["baud"].asUInt64()) +
+                                                          " baud MCR " + slot["uart"]["mcr"].asString() + "; ESP " + slot["esp"]["firmware"].asString() + " " +
+                                                          slot["esp"]["state"].asString() + ", Wi-Fi " + slot["esp"]["wifi"].asString() + " " +
+                                                          slot["esp"]["ip"].asString() + ", " + std::to_string(slot["esp"]["at_session"]["links"].size()) +
+                                                          " links, " + std::to_string(slot["esp"]["requests"].asUInt64()) + " AT requests"
+                                                    : std::string());
                                     if (value.isMember("ethernet_gateway"))
                                     {
                                         const Json::Value& gw = value["ethernet_gateway"];
