@@ -200,13 +200,22 @@ TEST_F(TimeTravelManager_EngineSeek_Test, LiveRecordingWithKeys_EngineSeeksLandO
 TEST_F(TimeTravelManager_EngineSeek_Test, RecordedFixtures_EngineSeeksLandOnV1sMachine)
 {
     const fs::path root = TestPathHelper::FindProjectRoot() / "testdata/ttd/port-journals";
-    for (const char* name : {"dizzyx.ttd", "greenberet-load.ttd"})
+    struct Fixture
     {
+        const char* name;
+        const char* tape;   ///< the medium the session played (a session does not carry it)
+    };
+    for (const Fixture& fixture : {Fixture{"dizzyx.ttd", nullptr}, Fixture{"greenberet-load.ttd", "greenberet.tap"}})
+    {
+        const char* name = fixture.name;
         SCOPED_TRACE(name);
         ttd::TTDFileInfo info;
         std::string err;
         ASSERT_TRUE(ttd::ReadTTDFileInfo((root / name).string(), info, err)) << err;
         ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound, true));
+        if (fixture.tape)
+            ASSERT_TRUE(_emulator->LoadTape(
+                (TestPathHelper::FindProjectRoot() / "testdata/loaders/tap" / fixture.tape).string()));
         std::ifstream in(root / name, std::ios::binary);
         ASSERT_TRUE(_v1->DeserializeSession(in, err)) << err;
         ASSERT_TRUE(ttd::bench::FeedV1Session(*_v1, _engine, err)) << err;
@@ -215,6 +224,11 @@ TEST_F(TimeTravelManager_EngineSeek_Test, RecordedFixtures_EngineSeeksLandOnV1sM
         for (const ttd::TTDTimePoint& target : Targets(2))
             ASSERT_NO_FATAL_FAILURE(ExpectSameSeek(target));
         EXPECT_GT(_busPlayed, 0u) << "the replays read the engine's IN journal";
+        // With the session's medium in the deck the live devices answer as
+        // recorded: a tape restored mid-block plays on from there (it was
+        // restored empty, or from the block's start)
+        EXPECT_EQ(_v1->GetPortReadJournal().ValueMismatches(), 0u) << "v1's replays";
+        EXPECT_EQ(_engine.BusReads().ValueMismatches(), 0u) << "the engine's replays";
 
         _v1->SetReplaySource(nullptr);
         EmulatorTestHelper::CleanupEmulator(_emulator);
