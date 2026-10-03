@@ -706,7 +706,7 @@ void PortDecoder_Sprinter::CatchUpScreen()
         _context->pScreen->UpdateScreen();
 }
 
-void PortDecoder_Sprinter::CatchUpScreenToWrite()
+ScreenSprinter* PortDecoder_Sprinter::SprinterScreen()
 {
     // The screen is created before the decoder and replaced on a model switch
     if (_context->pScreen != _screenSeen)
@@ -714,8 +714,19 @@ void PortDecoder_Sprinter::CatchUpScreenToWrite()
         _screenSeen = _context->pScreen;
         _screen = dynamic_cast<ScreenSprinter*>(_context->pScreen);
     }
-    if (_screen && _context->pCore && _context->pCore->GetZ80())
-        _screen->CatchUpToWrite();
+    return (_screen && _context->pCore && _context->pCore->GetZ80()) ? _screen : nullptr;
+}
+
+void PortDecoder_Sprinter::CatchUpScreenToWrite()
+{
+    if (ScreenSprinter* screen = SprinterScreen())
+        screen->CatchUpToWrite();
+}
+
+void PortDecoder_Sprinter::CatchUpScreenToBorderLatch()
+{
+    if (ScreenSprinter* screen = SprinterScreen())
+        screen->CatchUpToBorderLatch();
 }
 
 /// endregion </Hooks>
@@ -1091,6 +1102,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
             return;
         }
         case SprinterCode::Border:
+            CatchUpScreenToBorderLatch();  // the old color up to /IOWR rising (ScreenSprinter::CatchUpToBorderLatch)
             Default_Port_FE_Out(port, value, _pc);
             return;
         case SprinterCode::AllMode:

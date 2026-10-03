@@ -106,6 +106,16 @@ Settled in S2 against the PLD (`VIDEO2.TDF`):
   edge is 2 T into the first square after the INT run (§5), so in the Spectrum mode the first Spectrum
   square is read **17 990 T** after the INT - the Pentagon's 17 988 within the PLD's 2-T phase (MAME's
   INT place gave 17 980: Pentagon multicolor raced 10 T late, research-zx-mode §7.1).
+- **Border latch.** A border write (`#FE`, code `#C2`) is drawn from the moment the PLD latches it, not from the
+  port callback: `BORDER` is clocked by `/IOWR` rising (`SP2_ACEX.TDF:310-315`; `/IOWR` is preset as soon as
+  `/IORQ` ends, at T3's falling edge), 2.5 T after the callback (IORQ, T2 of the I/O cycle), and the video logic
+  samples it with the attribute every half T (`VIDEO2.TDF` `DCOL <- BRD` on `LWR_COL`). In the rounding of the
+  video RAM write (a byte stored 1.5 T into its cycle lands at T 2) that is the I/O cycle's end:
+  `ScreenSprinter::CatchUpToBorderLatch` draws the beam up to the callback + 3 T with the old color
+  (`kBorderLatchAfterIorqT`). Worked example: an `OUT` whose IORQ is 4 T after the beam left ZX paper column 255
+  shows the new color from ZX column 256 + 2 x (4 + 3 - 2) = 266 (the - 2: the Sprinter reads the paper 2 T later
+  after its INT than a Pentagon); the PENTAGON model draws it from 268, the Sprinter before the fix from 260
+  (`ScreenSprinter_Test.SpectrumScreen_BorderWrite_LatchedAtIowrLikePentagon`, research-zx-mode §7.1).
 - **Frame height**: codes `#2C`/`#2D` take effect at the next frame start (`config.frame` = 71 680 or
   69 888, the CPU frame, the raster); the INT list follows at once (S1).
 

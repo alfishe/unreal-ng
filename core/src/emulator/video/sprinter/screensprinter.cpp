@@ -206,6 +206,15 @@ void ScreenSprinter::CatchUpToWrite()
         LatchFont(landed);
 }
 
+void ScreenSprinter::CatchUpToBorderLatch()
+{
+    // In base T-states, as CatchUpToWrite. The rest of the OUT is internal: no write changes the picture
+    // before the latch, so the beam is drawn ahead to it now and the next catch-up goes on from there
+    const Z80* cpu = _context->pCore->GetZ80();
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    DrawTo((cpu->t + kBorderLatchAfterIorqT) / multiplier);
+}
+
 void ScreenSprinter::LatchFont(uint32_t t)
 {
     const uint32_t line = t / kLineTStates;

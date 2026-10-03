@@ -100,6 +100,17 @@ public:
     void CatchUpToWrite();
     static constexpr uint32_t kWriteLandsBeforeEndT = 1;
 
+    /// A border write (#FE, code #C2) is about to change the border color: draw the beam up to the moment the
+    /// PLD latches it, with the old color. The port callback runs at IORQ (T2 of the 4-T I/O cycle, op_D3);
+    /// the PLD clocks BORDER on /IOWR rising (SP2_ACEX.TDF:310-315: /IOWR = /WR or /IO, preset when /IO
+    /// goes high), i.e. when /IORQ ends at T3's falling edge, 2.5 T after the callback, and the video logic
+    /// samples it every half T with the attribute (VIDEO2.TDF DCOL <- BRD on LWR_COL). In the rounding of
+    /// kWriteLandsBeforeEndT (a byte stored 1.5 T into its cycle lands at T 2) that is the I/O cycle's end,
+    /// kBorderLatchAfterIorqT after the callback: drawn at the callback, the border ran 3 T (6 ZX pixels)
+    /// ahead of the paper of a Pentagon-timed program (Across the Edge in P128 mode)
+    void CatchUpToBorderLatch();
+    static constexpr uint32_t kBorderLatchAfterIorqT = 3;
+
 private:
     /// Draw [_prevTstate, end) - every beam position before `end` - with the state of now
     void DrawTo(uint32_t end);

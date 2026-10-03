@@ -281,6 +281,10 @@ private:
     /// A CPU write is about to change a video RAM byte (the graphics pages, the Spectrum screen shadow, the
     /// accelerator): the renderer draws the beam up to the moment the byte lands (ScreenSprinter::CatchUpToWrite)
     void CatchUpScreenToWrite();
+    /// A border write: the renderer draws the beam up to the moment the PLD latches it (ScreenSprinter::CatchUpToBorderLatch)
+    void CatchUpScreenToBorderLatch();
+    /// The context's screen as a ScreenSprinter while a CPU runs it, else null
+    ScreenSprinter* SprinterScreen();
     /// A video latch changed (RGMOD, HOLD, PORT_Y, ALL_MODE, frame height): the video change log notes it
     void NoteVideoLatches();
     void LoadFastRamImage();

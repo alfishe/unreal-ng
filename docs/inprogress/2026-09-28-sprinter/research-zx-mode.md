@@ -262,6 +262,32 @@ writes while the beam passes (the two machines differ by 2 T there); MAME has th
 `scroller.trd`. Why MAME matches with its later INT place was not analysed (its CPU timing in the P128
 mode is the candidate).
 
+**Border against the paper** (owner report 2026-10-03, Across the Edge `\trd\across\0.trd` in P128: "the
+border is one character ahead of the paper"). The INT move above shifts paper and border alike; what was
+wrong is the border's own latency. The PLD clocks `BORDER[]` on `/IOWR` rising (`SP2_ACEX.TDF:310-315`:
+`/IOWR = DFF(/WR or /IO)`, preset while `/IO` is high), i.e. when `/IORQ` ends at the falling edge of T3,
+2.5 T after IORQ goes low; the video logic loads `DCOL` with `BRD = DIR_PORT[7..5] = BORDER[2..0]`
+(`SP2_ACEX.TDF:1022`) in a border square every half T, in the same slot as an attribute
+(`VIDEO2.TDF` `DCOL`), so border and attribute share the path to the screen. unreal-ng called the
+renderer at the port callback (IORQ) and drew the new color from there: 3 T early against the PLD,
+1 T early against an attribute. Now the beam is drawn with the old color up to the I/O cycle's end
+(IORQ + 3 T, the same 0.5 T rounding as the video RAM write: `ScreenSprinter::CatchUpToBorderLatch`).
+
+Measured, the same Pentagon-timed `OUT` on both machines (unit test, IORQ 4-7 T after the beam left the
+paper; ZX column of the first new-color pixel) and Across the Edge's split screen (WebAPI captures, every
+4th of 2 400 frames from the disk menu; the column where the top border turns grey/black, the paper edge at
+ZX column 176 - 48 = 128):
+
+| | PENTAGON | Sprinter before | Sprinter now |
+|---|---|---|---|
+| test: IORQ 4 T after the paper | 268 | 260 (- 8) | 266 (- 2) |
+| Across the Edge: border edge (paper edge 176) | 176 | 168 (- 8) | 174 (- 2) |
+
+The 2 ZX pixels (1 T) left are not a latency of the border: the Sprinter reads the paper 2 T later after
+its INT (17 990 T) than a Pentagon (17 988 T), and its border latch is 1 T later than the PENTAGON model
+draws a border (2 T after IORQ). Closing it would need a border 4 T after IORQ, half a T to 1 T beyond the
+PLD's latch and sample; it is left as the hardware gives it (TODO).
+
 ### 7.2 Frame and INT
 
 | Mode | Lines | T per frame (3.5 MHz) | INT position (MAME, FN_SYNC; unreal-ng's PLD edge is 10 T earlier, §7.1) |
