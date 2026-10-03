@@ -1043,7 +1043,7 @@ void Screen::ResizePresentSlotsLocked(size_t size)
 
 /// region <Frame geometry>
 
-VideoFrameRect Screen::WorkingWindow() const
+PictureRect Screen::WorkingWindow() const
 {
     const uint16_t width = _framebuffer.width;
     const uint16_t height = _framebuffer.height;
@@ -1055,10 +1055,10 @@ VideoFrameRect Screen::WorkingWindow() const
                           static_cast<uint32_t>(rd.screenOffsetLeft) + rd.screenWidth <= width &&
                           static_cast<uint32_t>(rd.screenOffsetTop) + rd.screenHeight <= height;
         if (fits)
-            return VideoFrameRect{rd.screenOffsetLeft, rd.screenOffsetTop, rd.screenWidth, rd.screenHeight};
+            return PictureRect{rd.screenOffsetLeft, rd.screenOffsetTop, rd.screenWidth, rd.screenHeight};
     }
     // No descriptor row (or one that does not fit the frame): the whole frame is the picture
-    return VideoFrameRect{0, 0, width, height};
+    return PictureRect{0, 0, width, height};
 }
 
 PictureGeometry Screen::DescribeNativeFrame() const
@@ -1080,7 +1080,7 @@ PictureGeometry Screen::DescribeExternalFrame() const
     g.width = _external.width;
     g.height = _external.height;
     g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
-    g.screenWindow = VideoFrameRect{0, 0, g.width, g.height};  // the card's picture has no border: all of it is the picture
+    g.screenWindow = PictureRect{0, 0, g.width, g.height};  // the card's picture has no border: all of it is the picture
     g.videoMode = M_NUL;
     g.source = FrameSource::External;
     g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;

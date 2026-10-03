@@ -201,7 +201,7 @@ void EmulatorAPI::capturePlaneB(const HttpRequestPtr& req, std::function<void(co
 
 namespace
 {
-Json::Value RectJson(const VideoFrameRect& r)
+Json::Value RectJson(const PictureRect& r)
 {
     Json::Value v;
     v["x"] = r.x;

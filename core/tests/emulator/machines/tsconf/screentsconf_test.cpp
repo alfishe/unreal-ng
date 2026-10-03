@@ -486,7 +486,7 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
     struct Case
     {
         uint8_t vConfig;
-        VideoFrameRect expected;
+        PictureRect expected;
     };
     // Windows of hardware-spec §4.1, in frame pixels: x = (dot - 88) * 2, y = line - 32, width = dots * 2
     const Case cases[] = {
@@ -500,7 +500,7 @@ TEST_F(ScreenTSConf_Test, GEOM1_WorkingWindowFollowsVConfig)
         SCOPED_TRACE(testing::Message() << "V_CONFIG " << int(c.vConfig));
         Reg(TsConfReg::VConfig, c.vConfig);
         PixelAfterFrame(0, 0);  // a whole frame with these registers
-        const VideoFrameRect w = Screen()->WorkingWindow();
+        const PictureRect w = Screen()->WorkingWindow();
         EXPECT_EQ(w.x, c.expected.x);
         EXPECT_EQ(w.y, c.expected.y);
         EXPECT_EQ(w.width, c.expected.width);

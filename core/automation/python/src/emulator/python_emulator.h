@@ -1988,7 +1988,7 @@ namespace PythonBindings
                 if (!shot.ok)
                     return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
 
-                auto rect = [](const VideoFrameRect& r) {
+                auto rect = [](const PictureRect& r) {
                     py::dict d;
                     d["x"] = r.x;
                     d["y"] = r.y;
