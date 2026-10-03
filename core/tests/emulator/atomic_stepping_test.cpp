@@ -53,6 +53,32 @@ protected:
     }
 };
 
+/// region <Direct stepping flag>
+
+/// A GUI must not read the machine while automation steps it on another thread: the flag is up for the
+/// whole call (seen from the predicate, on the stepping thread) and down again after it
+TEST_F(AtomicStepping_Test, IsDirectSteppingIsUpOnlyDuringTheStepping)
+{
+    EXPECT_FALSE(_emulator->IsDirectStepping());
+
+    int calls = 0;
+    bool duringRunUntilCondition = false;
+    _emulator->RunUntilCondition(
+        [&](const Z80State&) {
+            duringRunUntilCondition = _emulator->IsDirectStepping();
+            return ++calls >= 10;
+        },
+        100000, false);
+    EXPECT_EQ(calls, 10);
+    EXPECT_TRUE(duringRunUntilCondition);
+    EXPECT_FALSE(_emulator->IsDirectStepping());
+
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(_emulator->IsDirectStepping()) << "also after a call that ran to its end";
+}
+
+/// endregion </Direct stepping flag>
+
 /// region <RunTStates tests>
 
 TEST_F(AtomicStepping_Test, RunTStates_SingleTState)

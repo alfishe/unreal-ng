@@ -2423,8 +2423,20 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
+Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
+{
+    _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+Emulator::DirectStepScope::~DirectStepScope()
+{
+    if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);  // the GUI's one refresh, now it may read
+}
+
 void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2447,6 +2459,7 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 
 void Emulator::RunFrame(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     ResetLineStepAnchor();
 
@@ -2505,6 +2518,7 @@ void Emulator::RunFrame(bool skipBreakpoints)
 
 void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2572,6 +2586,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
 void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2625,6 +2640,7 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2663,6 +2679,7 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 
 void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2736,6 +2753,7 @@ void Emulator::ResetLineStepAnchor()
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2774,6 +2792,7 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 
 void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2820,6 +2839,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates,
                                  bool notifyDebugger)
 {
+    DirectStepScope directStep(*this);
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 

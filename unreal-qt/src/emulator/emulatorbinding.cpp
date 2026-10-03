@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <QThread>
+#include <QTimer>
 
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
@@ -162,6 +163,17 @@ uint16_t EmulatorBinding::pc() const
     return m_cachedPC;
 }
 
+void EmulatorBinding::emitCpuStepComplete()
+{
+    // Only with a bound emulator that is paused and not being stepped directly by automation on another
+    // thread (its memory map changes under a reader); the end of that stepping posts one more event
+    if (!m_emulator || !m_emulator->IsPaused() || m_emulator->IsDirectStepping())
+        return;
+    m_lastStepEmit.restart();
+    cacheEmulatorState();
+    emit cpuStepComplete();
+}
+
 void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
 {
     Q_UNUSED(id);
@@ -176,14 +188,27 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
     // When the payload is null, this is a step event
     if (!message->obj)
     {
+        if (m_stepEventPending.exchange(true))
+            return;  // one is waiting in the GUI's queue already: it will see the latest state
         QMetaObject::invokeMethod(
             this,
             [this]() {
-                // Only emit if we have a bound emulator that's paused
-                if (m_emulator && m_emulator->IsPaused())
+                m_stepEventPending = false;
+                if (!m_emulator)
+                    return;
+                const qint64 since = m_lastStepEmit.isValid() ? m_lastStepEmit.elapsed() : kStepEventMinMs;
+                if (since >= kStepEventMinMs)
                 {
-                    cacheEmulatorState();
-                    emit cpuStepComplete();
+                    emitCpuStepComplete();
+                }
+                else if (!m_stepTrailArmed)
+                {
+                    // Too soon: the last of a burst still goes out, after the interval
+                    m_stepTrailArmed = true;
+                    QTimer::singleShot(static_cast<int>(kStepEventMinMs - since), this, [this]() {
+                        m_stepTrailArmed = false;
+                        emitCpuStepComplete();
+                    });
                 }
             },
             Qt::QueuedConnection);
@@ -230,7 +255,9 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
         [this, newState, isFrameRefresh, isStateChange, tapeSnapshot, hasTapeSnapshot]() {
             if (isFrameRefresh)
             {
-                emit frameRefresh();
+                // Widgets read the machine on frameRefresh: not while automation steps it on another thread
+                if (!m_emulator || !m_emulator->IsDirectStepping())
+                    emit frameRefresh();
                 if (hasTapeSnapshot)
                 {
                     emit tapeStateChanged(tapeSnapshot);

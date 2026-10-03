@@ -12,8 +12,10 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 
+#include <QElapsedTimer>
 #include <QMutex>
 #include <QObject>
 
@@ -255,6 +257,8 @@ private slots:
 private:
     void updateReadyState();
     void cacheEmulatorState();
+    /// cpuStepComplete, if the emulator is paused and nobody is stepping it directly right now
+    void emitCpuStepComplete();
     void subscribeToMessageCenter();
     void unsubscribeFromMessageCenter();
 
@@ -277,6 +281,13 @@ private:
 
     Z80State m_cachedZ80State{};
     uint16_t m_cachedPC = 0;
+
+    // Step events: automation steps frames far faster than a GUI can draw. One event waits in the queue at
+    // a time, and one reaches the widgets per kStepEventMinMs at most, the last one always (trailing edge)
+    static constexpr qint64 kStepEventMinMs = 66;
+    std::atomic<bool> m_stepEventPending{false};
+    bool m_stepTrailArmed = false;
+    QElapsedTimer m_lastStepEmit;
 
     mutable QMutex m_mutex;
 };
