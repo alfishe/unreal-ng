@@ -396,7 +396,7 @@ ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ]
 zx = sprinter_zx_mode()           -- the ZX mode: active, config.best_match.file ("SP.ZX"), options, clock, frame.int, rom, ports; sprinter_zx_mode(false) skips the RAM search
 j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who changed the PLD setup: events {frame, t, pc, kind, port, value, text}; source="ttd": the recording
 sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
-bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected), loaded, reload_pending, options
+bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options
 r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
 regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter
 bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write("vram", 0x17F0, "0000A8") / {0,0,0xA8}

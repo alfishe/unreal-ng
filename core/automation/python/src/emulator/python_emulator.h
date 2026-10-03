@@ -2179,7 +2179,7 @@ namespace PythonBindings
                "Sprinter palettes from video RAM: pens (n, rgb '#RRGGBB' = R, G, B as stored, vram address); k 0-7, 'all' or 'used' (default)")
             .def("sprinter_bios", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::SprinterBios(self.GetContext()));
-            }, "Sprinter BIOS images (file, alias, version, CRC-32, present, loaded, selected), reload_pending, start options; available=False on other machines")
+            }, "Sprinter BIOS images (file, alias, version, CRC-32, present, loaded, selected, known_issues), known_issues of the loaded image, reload_pending, start options; available=False on other machines")
             .def("sprinter_bios_select", [](Emulator& self, py::object bios, py::object fastStart, py::object accelIntSuspend, bool reset) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
                     if (value.is_none())

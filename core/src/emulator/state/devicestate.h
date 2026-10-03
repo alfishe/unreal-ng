@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "emulator/state/statenode.h"
 
@@ -196,10 +197,13 @@ StateNode SprinterPalette(EmulatorContext* context, int palette);
 bool SprinterPaletteFromString(const std::string& text, int& palette, std::string& error);
 /// The BIOS images and start options (`SprinterBios()`, /state/sprinter/bios): the shipped images
 /// (file, alias, version, CRC-32, present, loaded = the flash's CRC matches, selected = the config
-/// names it), reload_pending, options fast_start / accel_int_suspend. `SprinterBiosSelect()` writes
+/// names it), known_issues (of the loaded image; SprinterBios::KnownIssues), reload_pending, options fast_start / accel_int_suspend. `SprinterBiosSelect()` writes
 /// the selection into this instance's configuration, the new image loads at the next reset, which
 /// `options.reset` makes now (sprinterbios.h); unavailable with the reason on a bad name
 StateNode SprinterBios(EmulatorContext* context);
+/// The known issues of the loaded flash image (SprinterBios::KnownIssues; the same list as `known_issues` of
+/// SprinterBios()); empty on other machines. Hashes the 256 KB flash: for a UI, call it now and then, not per frame
+std::vector<std::string> SprinterBiosKnownIssues(EmulatorContext* context);
 StateNode SprinterBiosSelect(EmulatorContext* context, const SprinterBios::Options& options);
 /// The Covox-Blaster ring (`SprinterSoundRing()`, /state/sprinter/sound/ring): 256 words with the
 /// play and write index marked

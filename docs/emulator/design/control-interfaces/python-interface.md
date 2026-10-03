@@ -192,7 +192,7 @@ class Emulator:
         """Switch or clear the PLD journal"""
 
     def sprinter_bios(self) -> dict:
-        """BIOS images, the one loaded (CRC-32), the configured one, start options"""
+        """BIOS images, the one loaded (CRC-32), its known_issues, the configured one, start options"""
 
     def sprinter_bios_select(self, bios=None, fast_start=None, accel_int_suspend=None, reset=True) -> dict:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""

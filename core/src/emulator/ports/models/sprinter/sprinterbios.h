@@ -31,10 +31,16 @@ struct Image
     const char* alias;    ///< short version name
     const char* version;  ///< what it is
     uint32_t crc32;       ///< of the 256 KB file
+    const char* knownIssue;  ///< firmware behavior a user should know before relying on the image; nullptr = none
 };
 
 /// The shipped images (docs/inprogress/2026-09-28-sprinter/bios-versions.md)
 const std::vector<Image>& Known();
+
+/// The known issues of the image with this CRC-32 (empty for an image without any, or one that is not shipped).
+/// Worked example: 3.07 BETA 1 (#A06A1A02) -> one entry, the floppy driver's IY change that stops DSS 1.71.57
+/// from starting programs on a floppy (bios-versions.md §5.2)
+std::vector<std::string> KnownIssues(uint32_t crc32);
 
 /// A name -> the path [ROM] SPRINTER takes ("rom/sprinter/sp2k-3.06-hf2.rom" or the given path);
 /// false with `error` when nothing matches or the file is missing

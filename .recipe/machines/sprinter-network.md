@@ -30,6 +30,14 @@ The kit numbers the slots 0 / 1: the emulator's slot 2 is the kit's `RTL_HW=1/#3
 
 ## Prepare a disk with the kit
 
+> **BIOS 3.07 BETA 1 (the default) cannot run the kit from the floppy on this disk.** Its floppy driver returns
+> with IY changed, and DSS 1.71.57 (the MAME pack's system disk) then fails every program on a floppy ("Invalid
+> EXE file" in Flex Navigator, "Bad command or file name" at the prompt). Copying does not help inside the
+> machine: `copy b:\netcfg.exe c:\` on 3.07 BETA 1 leaves a 0-byte file on C: (checked 2026-10-03; the same copy on
+> 3.06 Hotfix 2 is byte-identical). So either select BIOS 3.06 Hotfix 2 (as below), or put the kit on C: from the
+> host before the boot (`mcopy -i scratch/sp-net.img@@32256 $K/*.EXE $K/*.DLL scratch/NET.CFG ::`) and run it from
+> C:. The firmware side and the upstream note: [bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md) §5.2.
+
 ```bash
 # A 1.44 MB floppy with the kit and a NET.CFG (drive B: on the Sprinter)
 K=testdata/machines/sprinter/network/rtl8019a-0.3.8

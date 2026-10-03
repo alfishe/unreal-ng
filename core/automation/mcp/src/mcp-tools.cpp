@@ -2180,6 +2180,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& image : value["images"])
                                         out << "\n  " << image["alias"].asString() << " " << image["file"].asString()
                                             << (image["present"].asBool() ? "" : " (not installed)") << (image["loaded"].asBool() ? " [loaded]" : "");
+                                    for (const Json::Value& issue : value["known_issues"])
+                                        out << "\n  KNOWN ISSUE: " << issue.asString();
                                 }
                             }
                             else if (aspect == "sprinter_zx_mode")

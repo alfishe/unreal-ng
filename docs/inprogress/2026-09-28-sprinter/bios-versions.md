@@ -236,7 +236,11 @@ BIOS function DSS 1.71 needs is open (the public DSS sources end at 1.70). DSS 1
     `UNREAL_SPRINTER_HDD`; at the DSS prompt 3.06 Hotfix 2 runs `b:\bin\type.exe b:\install.bat` from the DSS 1.62.92
     test floppy, 3.07 BETA 1 prints "Bad command or file name", the shell's word for the failed EXEC; with
     `UNREAL_SPRINTER_ZX_BIOS` pointing at the IY build the 3.07 case prints the file).
+  Copying does not help either: `copy b:\netcfg.exe c:\` on 3.07 BETA 1 writes a 0-byte file (byte-identical on 3.06).
   Workaround: BIOS 3.06 Hotfix 2 for DSS 1.71.57, or update the system disk to the DSS of the 3.07 recovery disk.
+  The default stays 3.07 BETA 1 (owner decision 2026-10-03, faithful firmware); the BIOS report lists the issue
+  under `known_issues` on every surface, unreal-qt's status bar shows "BIOS: known issue". Note for the BIOS author
+  with the fix: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md).
 - **The alternative boot device is floppy A on 3.06 / 3.07, floppy B on 3.04** (blank CMOS, SETUP defaults).
   Checked live 2026-10-02 on unreal-ng: `dss_1_62_92.img` in drive A boots DSS 1.62.92 on 3.07 BETA 1 into Flex
   Navigator 1.10; in drive B both 3.06 Hotfix 2 and 3.07 BETA 1 print "Alternative Boot from Diskette fail" and

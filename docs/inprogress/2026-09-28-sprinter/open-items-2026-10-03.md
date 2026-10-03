@@ -37,7 +37,8 @@ come the ISA slots and the network cards (section 3).
 
 - **Network first:** ISA slots (I1, **done 2026-10-03**, branch `sprinter-isa-network`), then NE2000 Ethernet and
   the gateway (SN0-SN2, **done 2026-10-03**: the RTL8019AS kit runs end to end; open: host-side receive pause, TCP
-  zero-window probes, PIO IRQ lines I4), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  zero-window probes, PIO IRQ lines I4; the kit runs from a floppy only on BIOS 3.06 Hotfix 2, or from C: copied
+  on the host - see §4, BIOS 3.07 BETA 1), SprinterESP (SN3, must be supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
   ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
 - Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
   through the shared MouseManager.
@@ -49,5 +50,11 @@ come the ISA slots and the network cards (section 3).
 ## 4. Small and deferred
 
 - BIOS 3.06 Hotfix 2 does not scroll DSS text at the bottom line (MAME too): a question for the BIOS author.
+- BIOS 3.07 BETA 1 (the default) with DSS 1.71.57: programs on a floppy do not start ("Invalid EXE file" /
+  "Bad command or file name") and `copy` from the floppy writes 0 bytes. Firmware, not emulation (found 2026-10-03):
+  the beta's FDD driver returns with IY changed; MAME agrees; a 3.07 build saving IY works, as does the DSS of the
+  3.07 recovery disk. Owner decision: 3.07 BETA 1 stays the default, with a warning in the BIOS report
+  (`known_issues`, all surfaces, Qt status bar) and the recipes. Open: send
+  [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) to the BIOS author ([bios-versions.md](bios-versions.md) §5.2).
 - Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
 - Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.

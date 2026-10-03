@@ -615,12 +615,21 @@ StateNode Bios(EmulatorContext* context)
         n["loaded"] = loadedCrc == known.crc32;
         n["selected"] = selectedName == known.file;
         n["active"] = loadedCrc == known.crc32;  // kept for older clients: the image that runs
+        StateNode issues = StateNode::Array();
+        for (const std::string& issue : SprinterBios::KnownIssues(known.crc32))
+            issues.push(issue);
+        n["known_issues"] = issues;
         if (loadedCrc == known.crc32)
             loadedName = known.file;
         images.push(n);
     }
     b["images"] = images;
     b["loaded"] = loadedName.empty() ? std::string("not a shipped image (") + selectedName + ")" : loadedName;
+    // What a user should know about the image that runs (bios-versions.md §5.2); empty for the others
+    StateNode loadedIssues = StateNode::Array();
+    for (const std::string& issue : SprinterBios::KnownIssues(loadedCrc))
+        loadedIssues.push(issue);
+    b["known_issues"] = loadedIssues;
     b["reload_pending"] = context->pEmulator && context->pEmulator->RomReloadPending();
     StateNode options = StateNode::Object();
     options["fast_start"] = context->config.sprinter.fast_start != 0;
@@ -1052,6 +1061,13 @@ StateNode SprinterText(EmulatorContext* context)
     ret["picture_is_text"] = !spectrumScreen && textSquares * 2 > kPictureColumns * kPictureRows;
     ret["lines"] = lines;
     return ret;
+}
+
+std::vector<std::string> SprinterBiosKnownIssues(EmulatorContext* context)
+{
+    if (!SprinterDecoder(context) || !context->pMemory || !context->pMemory->ROMBase())
+        return {};
+    return SprinterBios::KnownIssues(SprinterBios::Crc32(context->pMemory->ROMBase(), 16 * 0x4000));
 }
 
 StateNode SprinterBios(EmulatorContext* context)

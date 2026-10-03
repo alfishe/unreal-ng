@@ -828,6 +828,7 @@ TEST_F(McpTools_Test, InspectState_RegionChangesMixerBios_ReadTheirEndpoints)
     bios["loaded"] = "sp2k-3.04.rom";
     bios["rom_file"] = "rom/sprinter/sp2k-3.04.rom";
     bios["reload_pending"] = false;
+    bios["known_issues"].append("the floppy driver returns with IY changed");
     bios["options"]["fast_start"] = false;
     bios["options"]["accel_int_suspend"] = false;
     _caller->routes["GET /api/v1/emulator/emu-1/state/sprinter/bios"] = {200, bios};
@@ -846,6 +847,7 @@ TEST_F(McpTools_Test, InspectState_RegionChangesMixerBios_ReadTheirEndpoints)
     EXPECT_NE(result.text.find("PC 0x8123: rgmod 0x00 -> 0x01"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("covox (COVOX): muted"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[sprinter_bios] loaded sp2k-3.04.rom"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("KNOWN ISSUE: the floppy driver returns with IY changed"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_SprinterAspect_OtherMachineIsUnavailable)
