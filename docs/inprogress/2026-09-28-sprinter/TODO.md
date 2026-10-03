@@ -131,6 +131,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 
 ## Remaining
 
+Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.md](open-items-2026-10-03.md).
+
 - **Next (owner order, 2026-10-02):**
   1. ~~Automation audit P1 + P2~~ **done** (2026-10-02, branch `sprinter-automation`; status per gap in
      [automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4, outcome in

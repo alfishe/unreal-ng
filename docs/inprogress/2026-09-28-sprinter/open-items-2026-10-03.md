@@ -1,0 +1,52 @@
+# Open Sprinter items - snapshot of 2026-10-03
+
+A full list of what is still open on the Sprinter, taken on 2026-10-03 after the Spectrum-mode timing work
+(INT at the PLD edge, border latch, PS/2 keyboard, ZX mode report) landed on master. [TODO.md](TODO.md) stays
+the working list; this page is the owner-approved overview to come back to. Owner decision the same day: next
+come the ISA slots and the network cards (section 3).
+
+## 1. Demos from the MAME-pack hard disk (`DEMOS/`, 21 items)
+
+- Checked with the demo runner ([tools/machines/sprinter/demo-runner](../../../tools/machines/sprinter/demo-runner/README.md)):
+  15 of 21 run. No verdict yet for STARWAY and the ones after it, GAME_00, KOSAREW, LDCONF, NU, SDK, XENON2.
+- To re-check after the CTC fix (counter mode, TRG inputs): FBIRD, NOTHENG.
+- scroller.trd: the switch to 21 MHz in the middle of the demo (seen in one owner window with CNF `#07` and
+  a SIO A overrun) is postponed; it may be gone with the PS/2 keyboard fix (SIO overrun per the data sheet,
+  F12 decoded from the wire). Re-check.
+
+## 2. Spectrum (ZX) mode
+
+- Border against a Pentagon: 8 ZX pixels less border at each side (blank squares in the launcher's mode
+  table? check against MAME) and a border color change 8 lines off in the bottom border.
+- Flex Navigator: Enter on a `.trd` ran `C:\ZX\spectrum.exe sp.zx ...` although `C:\FN\FN.EXT` on the
+  same disk says `p128.zx`; the same command line typed by hand starts P128 correctly. Find where Flex
+  Navigator really takes its associations from.
+- Z5: snapshots (SNA / Z80) into the Spectrum mode through the cell table. Known bug: today the loaders write
+  the Sprinter's physical pages 0-7 (system pages). Waits for the shared snapshot pipeline (PLAN #84).
+- Z6: a `zx run` macro on all five automation surfaces, a recipe, a TTD replay test.
+- The launchers parse `int-sc`, not the `/sc-int` that `SC256.ZX` and `SCORPION.ZX` carry, so the Scorpion
+  INT is never applied. A bug in the launcher or the mode files: report upstream.
+- Owner reports not reproduced: `/ret-fn` into the 128 menu on the second Ctrl+Alt+Del; "Disk Error after
+  the catalog" from a RAM-disk TRD (needs the image).
+- Against a real board: the border latch (4 T after IORQ by owner decision, the PLD sources give 3 T) and the
+  CT phase (zxtime reports only the average).
+- Keyboard: a TTD replay that hands input back while the host holds other keys than the journal left held
+  is not reconciled; the PLD's own ZX matrix decoder (code `#40` from the wire) is still the host's matrix keys.
+
+## 3. Devices, in the owner's order of 2026-10-02
+
+- **Network first:** ISA slots (I1), then NE2000 Ethernet and the gateway (SN0-SN2), SprinterESP (SN3, must be
+  supported), modem / SprinterSerial (SN4, needs ISA I4), 3C509B (SN5)
+  ([ISA](../2026-10-02-sprinter-isa/TODO.md), [network](../2026-10-02-sprinter-network/TODO.md)).
+- Then: NeoGS behind the ZX-bus adapter in an ISA slot (S6b, ProPlay MOD playback); the mouse in the GUI
+  through the shared MouseManager.
+- P2: ATAPI CD on the Sprinter's IDE (media change, eject, ATAPI boot); the CompactFlash identity check;
+  LDConf (reloading the PLD configuration at run time).
+- Lower: two Sega-style pads, serial mouse variants, tape input (`#FE` bit 6), Centronics printer, SIO B
+  as a COM port, the sp2000-light and sp2022d board profiles, the Wild Sound ISA card.
+
+## 4. Small and deferred
+
+- BIOS 3.06 Hotfix 2 does not scroll DSS text at the bottom line (MAME too): a question for the BIOS author.
+- Automation audit leftovers G16-G21: per-frame wait totals, a Qt view of the mode map / palettes / video RAM.
+- Floppy leftovers: the WD1793 turbo time base on the other turbo machines, the FDC off bit.
