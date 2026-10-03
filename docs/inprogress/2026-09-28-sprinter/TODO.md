@@ -297,6 +297,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - FDC off bit (density write data bit 1, MAME) unverified in the PLD;
   - a MAME reference for the floppy boot time needs a MAME whose WD1793 PLL follows `set_clock_scale`
     during a command (0.289 does not).
+  - [x] 3.07 BETA 1 "Invalid EXE file" for programs on a floppy (2026-10-03): firmware, not emulation - the
+    beta's FDD driver returns with IY changed and DSS 1.71.57 relies on it; MAME shows the same; the DSS of
+    the beta's recovery disk works ([bios-versions.md](bios-versions.md) §5.2). Tests:
+    `Fdc_Bios307SectorReadLoop_HdSide1`, `SprinterFloppyExe_Test` (env-gated). Owner decision open: keep 3.07
+    BETA 1 as the default with DSS 1.71.57 disks, or ship a note / switch for floppy users.
 - Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
   outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
   the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least

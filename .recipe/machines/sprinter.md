@@ -520,7 +520,7 @@ and core reports as Lua.)
 | AT keyboard and serial mouse on the Z84C15 SIO; `type_input`, key taps and combos | implemented |
 | DS12887A CMOS (`[SPRINTER] CmosFile=` keeps it) | implemented |
 | Flex Navigator (DSS's `fn`): FN 1.10 from the DSS 1.62 floppy, FN 1.15 on DSS 1.71 (HDD, BIOS 3.06) | runs; keys and mouse work through the automation (step 3a). From the floppy the BIOS RESTORE is still too slow at 21 MHz (the S5 tests work around it) |
-| DSS 1.71 | runs from the hard disk with BIOS 3.06 / 3.07 (MAME pack `sp_hdd_sys.chd`: Flex Navigator 1.15, verified 2026-10-02); the floppy `dss171u.img` **stops** with "Fatal error! Press RESET to restart." on BIOS 3.04 |
+| DSS 1.71 | runs from the hard disk with BIOS 3.06 / 3.07 (MAME pack `sp_hdd_sys.chd`: Flex Navigator 1.15, verified 2026-10-02); the floppy `dss171u.img` **stops** with "Fatal error! Press RESET to restart." on BIOS 3.04. On BIOS 3.07 BETA 1, DSS 1.71.57 cannot start programs from a floppy ("Invalid EXE file"; the beta's FDD driver changes IY, MAME agrees): use BIOS 3.06 (`POST /sprinter/bios {"bios":"3.06"}` + reset) or the DSS of the 3.07 recovery disk ([bios-versions.md](../../docs/inprogress/2026-09-28-sprinter/bios-versions.md) §5.2) |
 | IDE hard disks | implemented (two channels, [sprinter-hdd.md](../media/sprinter-hdd.md)); an empty channel reads `#7F`, so the BIOS reports "None" without waiting |
 | Sound: one AY at 1.75 MHz (ABC), beeper, Covox, Covox-Blaster (ring, rates, INT, 16-bit stereo) | implemented (S6, [sprinter-sound.md](sprinter-sound.md)) |
 | Accelerator | implemented (S5, [sprinter-accelerator.md](sprinter-accelerator.md)) |
