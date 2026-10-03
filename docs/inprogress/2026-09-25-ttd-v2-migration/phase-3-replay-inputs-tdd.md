@@ -283,6 +283,8 @@ computed with exact integer arithmetic (128-bit intermediate), in both direction
 
 Everything that turned a frame number into time - `GlobalT`, `EmulatedMicroseconds`, the write journal's `globalT` - uses the frame table instead.
 
+**As built (2026-10-03), the engine's frame table.** In shadow mode each frame's start is the last captured frame's start plus that frame's measured length: the base T-states the machine ran since (`emulatorState.t_states` grows by each closed frame) times `ttd_clock_units`, not the frame number times the current length. When a frame's length differs from the one before, a `FrameLengthChange` fact goes into the event log at the boundary (args: the closed frame's length in units, u32). `TimeTravelManager_FrameTable_Test` switches a Sprinter to 312 lines and back mid-recording: every frame is one of the two measured lengths and machine time never goes back; v1's frame x length fails it. v1's own `GlobalT` (its write journal, find-last) and `EmulatedMicroseconds` (the RTC) are unchanged; the RTC moves to the frame table with the session time base (Step 5).
+
 **File consequences.** A CPU table in the header; clock changes in the event log; per checkpoint, the CPU counter residuals (zero in nearly every frame).
 
 ### 4.5 Step 4 — Configuration fingerprint and media versions

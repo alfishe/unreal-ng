@@ -103,6 +103,9 @@ Design: [phase-3-replay-inputs-tdd.md](phase-3-replay-inputs-tdd.md).
   - [x] Port journals recorded on every machine (the engine's bus data); v1's gate now only decides whether v1's own replay plays them (`_portJournalRecorded` / `_portJournalValid`). A/B on Pentagon + NeoGS, TS-Conf, Sprinter, Scorpion, Profi, ZX-Evo: engine seeks land on v1's machine. Cost: v1's memory grows on the formerly gated machines (Pentagon + NeoGS idle 1,487 → 1,979 B per frame, TS-Conf 6,433 → 9,081), the engine's stays below v1's
 - [ ] Step 2 — Replay modes: input events, `IN` values (RZX)
 - [ ] Step 3 — Several CPUs: own cycle counters, clock-change events, positions on any CPU
+  - [x] Machine time from the frame table (2026-10-03): in shadow mode a frame starts where the last one started plus its measured length (`emulatorState.t_states` x `ttd_clock_units`), not frame x the current length; a change of length is a `FrameLengthChange` fact. Sprinter 320 / 312 lines: machine time never goes back
+  - [ ] CPU table, clock map (`ClockChange` facts), per-checkpoint CPU counter residuals
+  - [ ] Positions on a card CPU (seek, reverse step in card instructions)
 - [ ] Step 4 — Configuration fingerprint and media versions (the machine ROMs of every model, the Sprinter BIOS among them)
 - [ ] Step 5 — Emulated real-time clocks
 - [x] Step 6 — No writes outside the session during replay (2026-10-03): write-through block media held in memory and released to their files when the replay ends (`HostWriteHold`, `MediaManager::HoldHostWrites`, engaged by v1's replay); floppy write-through waits for the next live frame; VDAC2 bus capture and the video recording's audio skip replayed frames

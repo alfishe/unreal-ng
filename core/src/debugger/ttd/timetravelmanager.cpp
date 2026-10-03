@@ -3593,12 +3593,22 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         _shadowEvents.external = _externalEvents.Size();
         _shadowBusReads = _portReads.Size();
         _shadowBusWrites = _portWrites.Size();
+        _shadowLastLength = 0;
         SyncMediaReadJournal();   // sector reads go into the engine from here
     }
 
     TTDFrameInput in;
     in.position.frame = out.time.frame;
-    in.start = GlobalT(out.time);
+    // Machine time from the frame table (Phase 3, Step 3): a frame starts where
+    // the last captured one started plus its measured length - the base
+    // T-states the machine ran since (emulatorState.t_states grows by each
+    // closed frame) in TTD units. frame x the current length (v1's GlobalT)
+    // goes backwards when a frame's length changes (Sprinter 320 / 312 lines)
+    const bool freshShadow = engine.CheckpointCount() == 0;
+    const uint64_t baseNow = _context->emulatorState.t_states;
+    const uint8_t clockUnits = _context->emulatorState.ttd_clock_units ? _context->emulatorState.ttd_clock_units : 1;
+    const TTDMachineTime closedLength = freshShadow ? 0 : (baseNow - _shadowLastBase) * clockUnits;
+    in.start = freshShadow ? GlobalT(out.time) : _shadowLastStart + closedLength;
     in.cpu = out.cpu;
     in.chipset = out.chipset;
     // Device states, raw, as the capture serialized them; a device whose
@@ -3694,6 +3704,20 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     }
     // What v1 journaled up to this boundary: input, network, markers (Phase 3, Step 1)
     FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads);
+    // A frame of another length than the one before it: a fact at this
+    // boundary, the closed frame's length in TTD units (args, u32)
+    if (!freshShadow && _shadowLastLength != 0 && closedLength != _shadowLastLength)
+    {
+        TTDEvent change;
+        change.kind = TTDEventKind::FrameLengthChange;
+        const uint32_t length = static_cast<uint32_t>(closedLength);
+        std::memcpy(change.args, &length, sizeof(length));
+        engine.AppendEvent(out.time.frame, 0, change);
+    }
+    if (!freshShadow)
+        _shadowLastLength = closedLength;
+    _shadowLastStart = in.start;
+    _shadowLastBase = baseNow;
 }
 
 void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)

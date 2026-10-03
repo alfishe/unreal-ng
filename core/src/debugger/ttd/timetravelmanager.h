@@ -1965,6 +1965,9 @@ private:
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
     uint64_t _shadowBusReads = 0;     ///< ... and v1's port journals
+    uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
+    uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
+    uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
     uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine

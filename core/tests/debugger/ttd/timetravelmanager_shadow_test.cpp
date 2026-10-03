@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_sprinter.h"
 
 class TimeTravelManager_Shadow_Test : public ::testing::Test
 {
@@ -250,4 +252,59 @@ TEST_F(TimeTravelManager_Shadow_Test, EveryJournaledEventReachesTheEngineAtItsTi
     EXPECT_EQ(_engine.Events().FirstBarrierIn(0, ~ttd::TTDMachineTime(0)), nullptr) << "a tape command is input";
     ASSERT_GT(_v1->GetPortReadJournal().Size(), 1000u) << "the program reads the keyboard";
     ASSERT_NO_FATAL_FAILURE(ttdtest::ExpectBusEqualV1(_engine, *_v1));
+}
+
+/// Phase 3, Step 3: machine time comes from the frame table. The Sprinter
+/// switches between 320- and 312-line frames at a frame start (#2C / #2D;
+/// here through its PLD state, which the screen applies at the next frame
+/// start, as after the port write). Each frame starts where the last one
+/// started plus its measured length, so machine time never goes back -
+/// frame x the current length (v1's GlobalT) would - and each change of
+/// length is a fact in the event log
+TEST(TimeTravelManager_FrameTable_Test, FrameStartsFollowTheMeasuredFrameLengths)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("SPRINTER", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    auto* sprinter = dynamic_cast<PortDecoder_Sprinter*>(context->pPortDecoder);
+    ASSERT_NE(sprinter, nullptr);
+    ttd::TimeTravelManager* v1 = context->pTimeTravelManager;
+    ttd::TimeTravelEngine engine;
+
+    v1->SetShadowEngine(&engine);
+    ASSERT_TRUE(v1->StartRecording());
+    emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    sprinter->GetPldState().frameLines = 1;   // 312 lines from the next frame start
+    emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    sprinter->GetPldState().frameLines = 0;   // 320 again
+    emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    v1->StopRecording();
+    v1->SetShadowEngine(nullptr);
+
+    const ttd::TTDFrameTable& frames = engine.Frames();
+    ASSERT_GE(frames.Count(), 13u);
+    const uint64_t units = context->emulatorState.ttd_clock_units ? context->emulatorState.ttd_clock_units : 1;
+    const uint64_t full = 320ull * 224 * units, shorter = 312ull * 224 * units;
+    std::vector<uint64_t> lengths;
+    for (uint64_t f = frames.FirstFrame(); f < frames.LastFrame(); ++f)
+    {
+        ttd::TTDMachineTime a = 0, b = 0;
+        ASSERT_TRUE(frames.Start(f, a));
+        ASSERT_TRUE(frames.Start(f + 1, b));
+        ASSERT_GT(b, a) << "machine time goes forward, frame " << f;
+        lengths.push_back(b - a);
+    }
+    const auto count = [&](uint64_t length) { return std::count(lengths.begin(), lengths.end(), length); };
+    EXPECT_GE(count(shorter), 4) << "the 312-line frames, measured";
+    EXPECT_GE(count(full), 6) << "the 320-line ones";
+    EXPECT_EQ(count(shorter) + count(full), static_cast<long>(lengths.size())) << "every frame is one or the other";
+
+    size_t changes = 0;
+    for (const ttd::TTDEvent& e : engine.Events().Events())
+        changes += e.kind == ttd::TTDEventKind::FrameLengthChange ? 1 : 0;
+    EXPECT_EQ(changes, 2u) << "to 312 lines and back";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
