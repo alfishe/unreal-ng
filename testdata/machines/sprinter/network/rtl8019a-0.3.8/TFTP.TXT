@@ -1,0 +1,79 @@
+TFTP.EXE
+
+TFTP client, octet mode (RFC 1350) with RFC 2348 blksize
+option negotiation.  Both GET (download) and PUT (upload)
+are supported by the current package.
+
+Usage
+
+TFTP host[:port] GET remote-file [-o local-name] [-y|-f]
+TFTP host[:port] PUT local-file  [-o remote-name]
+TFTP /?
+
+Option  |  Meaning
+host[:port]  |  TFTP server IPv4 or hostname; request port
+  |  defaults to 69 (TFTP srv:6969 GET a.bin).
+GET / PUT  |  Direction of transfer
+filename  |  Remote name (GET) or local name (PUT).  Local
+  |  side supports directory prefix per "Output paths"
+  |  in HOWTO.TXT.
+-o name  |  Override the OTHER side's name: local output for
+  |  GET, remote name on the server for PUT.  Defaults
+  |  (no -o):
+  |  GET: local = basename of the remote path
+  |  (GET pub/foo.bin saves as foo.bin).
+  |  PUT: wire = basename of the local path
+  |  (PUT C:\docs\a.txt uploads as a.txt).
+-y, -f  |  Overwrite local file without prompt (GET only)
+
+The RRQ asks for blksize=1428 (Ethernet MTU minus the IP /
+UDP / TFTP headers); a server that ignores the option falls
+back to RFC 1350 512-byte blocks transparently.  Bigger
+blocks reduce the round-trip count by ~2.8x on large files.
+
+Disk I/O is buffered: TFTP coalesces incoming blocks into an
+8 KB buffer and writes that to disk in one DSS_WRITE,
+printing one . per buffer flush as a progress indicator.
+
+Examples
+
+Download:
+
+RTL8019AS TFTP v0.2.16
+
+GET IM2.TXT from 192.168.7.1
+.................................................
+Done. 389579 bytes received.
+  389579 bytes in 5 sec, 76 KB/s
+RESULT OK
+
+Upload (one dot per sent block):
+
+TFTP 192.168.7.1 PUT BOOT.BIN -o /tmp/boot.bin
+RTL8019AS TFTP v0.2.16
+
+PUT BOOT.BIN to 192.168.7.1
+.....
+Done. 32768 bytes sent.
+  32768 bytes in 1 sec, 32 KB/s
+RESULT OK
+
+Cancelling with Esc/Ctrl+C closes the partial input/output
+file.
+
+A windowsize option (RFC 7440) for further speed-up is
+tracked as a follow-up.
+
+Exit codes
+
+Code  |  Meaning
+0  |  OK
+1  |  Usage (including bad GET/PUT verb)
+2  |  RTL8019AS not detected
+3  |  Network unreachable (ARP / TFTP timeout, no link,
+  |  DNS resolution failure)
+4  |  Config (NET_DNS1 / NET_GW missing for hostnames)
+5  |  Local file create / write / close failure
+6  |  Server replied OP_ERROR (e.g. file not found, access
+  |  violation)
+7  |  Cancelled by user (Esc / Ctrl+C)

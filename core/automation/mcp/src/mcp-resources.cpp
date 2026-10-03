@@ -382,7 +382,9 @@ per 8 x 8 square from the mode table in video RAM), a block accelerator, an AY a
 Images: 3.07 (`sp2k-3.07-beta1.rom`, the default), 3.06 (`sp2k-3.06-hf2.rom`), 3.04 (`sp2k-3.04.rom`; DSS 1.71 needs
 3.06+). At create: `emulator_manage action=create model=SPRINTER sprinter_bios=3.04 sprinter_fast_start=false`; on a running machine:
 `invoke_api POST /api/v1/emulator/{id}/sprinter/bios {"bios":"3.06","reset":true}` (the image loads at the reset).
-`inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32). FastStart off (the
+`inspect_state aspects:["sprinter_bios"]` lists the images and which one is loaded (by CRC-32), with its known issues
+("KNOWN ISSUE:" lines; 3.07 BETA 1: DSS 1.71.57 cannot start programs from a floppy, use 3.06 or the DSS of the 3.07
+recovery disk). FastStart off (the
 default) runs the PLD loader (~1.9 s emulated). With no hard disk SETUP reports "None" for every IDE unit at once.
 
 ## Ports

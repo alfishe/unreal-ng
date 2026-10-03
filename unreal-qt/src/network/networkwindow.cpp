@@ -267,6 +267,18 @@ void NetworkWindow::buildUi()
         return label;
     };
 
+    // Expansion slots (the Sprinter's ISA slots): fitted when the machine is created, from [ISA] in its config
+    _slotsBox = new QGroupBox(tr("Expansion slots"), _settingsPage);
+    auto* slotsLayout = new QVBoxLayout(_slotsBox);
+    _slots = new QLabel(_slotsBox);
+    _slots->setWordWrap(true);
+    _slots->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    _slots->setToolTip(tr("The population comes from [ISA] Slot1= / Slot2= of the machine config (or the create "
+                          "options) and stays for the instance's lifetime; the Status tab shows each card's registers"));
+    slotsLayout->addWidget(_slots);
+    _slotsBox->setVisible(false);
+    page->addWidget(_slotsBox);
+
     // ZX-Bus cards
     auto* cards = new QGroupBox(tr("ZX-Bus cards"), _settingsPage);
     auto* cardsLayout = new QVBoxLayout(cards);
@@ -507,6 +519,13 @@ void NetworkWindow::refresh()
     }
     updateAvailability();
     updateStatusTree(network);
+
+    const std::vector<NetworkSlotRow> rows = NetworkSlotRows(network);
+    QStringList lines;
+    for (const NetworkSlotRow& row : rows)
+        lines << QStringLiteral("<b>%1</b>: %2").arg(Q(row.label).toHtmlEscaped(), Q(row.line).toHtmlEscaped());
+    _slots->setText(lines.join(QStringLiteral("<br>")));
+    _slotsBox->setVisible(!rows.empty());
 }
 
 void NetworkWindow::loadForm(const NetworkForm& form)

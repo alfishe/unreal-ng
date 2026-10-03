@@ -67,8 +67,10 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["bios"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["fast_start"]["type"] = "boolean";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["accel_int_suspend"]["type"] = "boolean";
+    schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot1"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot2"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
-        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
+        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
 
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";

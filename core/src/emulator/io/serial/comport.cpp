@@ -1,4 +1,5 @@
 #include "emulator/io/serial/comport.h"
+#include "emulator/io/network/vnet/ethernetgateway.h"
 
 #include "emulator/io/network/atm2ioesp.h"
 #include "emulator/io/network/zifi.h"
@@ -113,6 +114,7 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
         guests.atmIo = context->pAtm2IoEsp->Com().NetGuest();
     if (context->pZiFi)
         guests.zifi = context->pZiFi->Line().NetGuest();
+    guests.ethernet = context->pEthernetGateway;
     return guests;
 }
 

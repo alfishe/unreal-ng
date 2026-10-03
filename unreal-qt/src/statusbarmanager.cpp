@@ -122,12 +122,18 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _zxMode->setStyleSheet("padding-top: 1px;");
     _zxMode->hide();
 
+    _biosIssues = new QLabel(_statusBar);
+    _biosIssues->setFont(fpsFont);
+    _biosIssues->setStyleSheet("padding-top: 1px; color: #c07000;");
+    _biosIssues->hide();
+
     auto* separator2 = new QFrame(_statusBar);
     separator2->setFrameShape(QFrame::VLine);
     separator2->setFrameShadow(QFrame::Plain);
     separator2->setFixedHeight(13);
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
+    _statusBar->addPermanentWidget(_biosIssues);
     _statusBar->addPermanentWidget(_zxMode);
     _statusBar->addPermanentWidget(_videoMode);
     _statusBar->addPermanentWidget(_rzx);
@@ -415,6 +421,7 @@ void StatusBarManager::refresh()
     updateTtd(context);
     updateVideoMode(context);
     updateZxMode(context);
+    updateBiosIssues(context);
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
@@ -697,6 +704,29 @@ void StatusBarManager::updateVideoMode(EmulatorContext* context)
     _videoMode->setText(mode.text);
     _videoMode->setToolTip(mode.toolTip);
     _videoMode->show();
+}
+
+void StatusBarManager::updateBiosIssues(EmulatorContext* context)
+{
+    // Checked when the machine changes and then every 25 ticks (5 s): a BIOS selected at runtime loads at the next
+    // reset, so the label follows within seconds
+    if (context == _biosIssuesContext && _biosIssuesTicks++ % 25 != 0)
+        return;
+    if (context != _biosIssuesContext)
+        _biosIssuesTicks = 1;
+    _biosIssuesContext = context;
+    const std::vector<std::string> issues = DeviceState::SprinterBiosKnownIssues(context);
+    if (issues.empty())
+    {
+        _biosIssues->hide();
+        return;
+    }
+    QStringList lines;
+    for (const std::string& issue : issues)
+        lines << QStringLiteral("- ") + QString::fromStdString(issue).toHtmlEscaped();
+    _biosIssues->setText(tr("BIOS: known issue"));
+    _biosIssues->setToolTip(tr("<b>Known issue of the loaded Sprinter BIOS image</b><br>%1").arg(lines.join(QStringLiteral("<br>"))));
+    _biosIssues->show();
 }
 
 void StatusBarManager::updateZxMode(EmulatorContext* context)

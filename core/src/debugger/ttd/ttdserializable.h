@@ -77,10 +77,10 @@ enum class PeripheralId : uint8_t
     SprinterFastRam = 30, // Sprinter fast RAM (the four 16 KB cache pages), 64 KB whole (a TTD v2 memory region once those exist)
     SprinterInput = 31,   // Sprinter AT keyboard byte stream (SIO A) and Microsoft serial mouse packet generator (SIO B)
     SprinterCovoxBlaster = 32, // Sprinter Covox / Covox-Blaster: ring, indices, rate phase, INT request, DAC words (S6)
-    // Reserved for Sprinter devices that do not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
+    SprinterIsa = 33,     // Sprinter ISA slots: the #9FBD latch, the card kind in each slot, the cards' bus state (ISA phase I1)
+    // Reserved for a Sprinter device that does not exist yet (Sprinter s7-ttd-outcome.md "Reserved"): no serializer,
     // never declared. The device that lands takes its id, declares it and adds its blob - the existing Sprinter
     // blobs keep their layout, so a checkpoint only gains a blob
-    SprinterIsa = 33,     // reserved (S6b): ISA I/O window latches, ZX-bus adapter
     SprinterPads = 34,    // reserved (input extras): the two extended joystick pads and their select counters
     Wd1793Context = 35,   // WD1793 command in flight beyond the BetaDisk blob: queued steps, transfer pointers (ttdwd1793context.h)
     AtmIoBus = 36,        // ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch
@@ -94,6 +94,7 @@ enum class PeripheralId : uint8_t
     Vdac2 = 43,           // TS-Conf VDAC2 card: card time, INT edges, monitor source, FT812 control state (EveSaveState, metrics)
     ProfiXtKbc = 44,      // Profi PROFI-XT keyboard controller: the MCS-48 (RAM, registers, ports, timer), output latch, WAIT
                           // flip-flop, the XT keyboard's wire, time base; the table engine's matrix (ProfiXtKbc::State)
+    EthernetNics = 45,    // frame-level network cards in expansion slots (the Sprinter's NE2000): DP8390, packet RAM, EEPROM (network tdd §13)
     // Future: SAA1099, GS512, etc.
     Count
 };

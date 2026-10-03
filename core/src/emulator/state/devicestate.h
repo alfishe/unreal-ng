@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "emulator/state/statenode.h"
 
@@ -75,6 +76,16 @@ StateNode Ide(EmulatorContext* context);
 /// hex dump. Peeked: reading never clears register C. Unavailable, with the
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
+
+/// Expansion slots of the ISA kind (the Sprinter's two ISA-8 slots, Sprinter ISA tdd §10): the #9FBD latch
+/// (A19-A14, AEN, RESET), what window 3 shows now (mapped, slot, space, page), and per slot the configured
+/// and fitted card, why a configured card is not fitted, the card's own report and cycle counters.
+/// Unavailable ("no ISA slots on this machine") elsewhere. Built in emulator/io/sprinter/isa/isaaccess.cpp
+StateNode Isa(EmulatorContext* context);
+/// The ISA access journal (`IsaJournal()`, /state/isa/journal): the last `last` card accesses and bus events, oldest
+/// first - frame, base T, PC, slot, io / memory, read / write, ISA address, the CPU address, value, the card
+/// register ("ISR", "data port") or the event (RESET DRV, a stall). Recorded live and while a TTD recording replays
+StateNode IsaJournal(EmulatorContext* context, unsigned last);
 
 /// Network adapters (network adapters TDD §9): `Network()` the fitted card
 /// (ZXNETUSB: its ports, the W5300 held in reset or running, the chip's
@@ -186,10 +197,13 @@ StateNode SprinterPalette(EmulatorContext* context, int palette);
 bool SprinterPaletteFromString(const std::string& text, int& palette, std::string& error);
 /// The BIOS images and start options (`SprinterBios()`, /state/sprinter/bios): the shipped images
 /// (file, alias, version, CRC-32, present, loaded = the flash's CRC matches, selected = the config
-/// names it), reload_pending, options fast_start / accel_int_suspend. `SprinterBiosSelect()` writes
+/// names it), known_issues (of the loaded image; SprinterBios::KnownIssues), reload_pending, options fast_start / accel_int_suspend. `SprinterBiosSelect()` writes
 /// the selection into this instance's configuration, the new image loads at the next reset, which
 /// `options.reset` makes now (sprinterbios.h); unavailable with the reason on a bad name
 StateNode SprinterBios(EmulatorContext* context);
+/// The known issues of the loaded flash image (SprinterBios::KnownIssues; the same list as `known_issues` of
+/// SprinterBios()); empty on other machines. Hashes the 256 KB flash: for a UI, call it now and then, not per frame
+std::vector<std::string> SprinterBiosKnownIssues(EmulatorContext* context);
 StateNode SprinterBiosSelect(EmulatorContext* context, const SprinterBios::Options& options);
 /// The Covox-Blaster ring (`SprinterSoundRing()`, /state/sprinter/sound/ring): 256 words with the
 /// play and write index marked

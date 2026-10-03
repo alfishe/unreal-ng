@@ -513,4 +513,36 @@ uint64_t TTDSprinterCovoxBlaster::TTDHashState() const
 
 /// endregion </TTDSprinterCovoxBlaster>
 
+/// region <TTDSprinterIsa>
+
+size_t TTDSprinterIsa::TTDStateSize() const
+{
+    return _decoder.GetIsaBus().StateSize();
+}
+
+void TTDSprinterIsa::TTDSaveState(uint8_t* dst) const
+{
+    if (dst)
+        _decoder.GetIsaBus().SaveState(dst);
+}
+
+void TTDSprinterIsa::TTDLoadState(const uint8_t* src)
+{
+    if (!src)
+        return;
+    std::string why;
+    SprinterIsaBus& bus = _decoder.GetIsaBus();
+    if (!bus.LoadState(src, bus.StateSize(), why))
+        return;  // another population: the session guard refuses such a recording at load
+    // The PLD keeps A19-A14 too (blob 25, layout unchanged): both hold the same latch
+    _decoder.GetPldState().isaAddrExt = static_cast<uint8_t>(bus.Latch() & SprinterIsaBus::kLatchAddressMask);
+}
+
+uint64_t TTDSprinterIsa::TTDHashState() const
+{
+    return HashOf(*this);
+}
+
+/// endregion </TTDSprinterIsa>
+
 }  // namespace ttd

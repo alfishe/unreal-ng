@@ -62,6 +62,19 @@ class SprinterBiosReport_Test : public SprinterFixture
 {
 };
 
+// Known issues by image: only 3.07 BETA 1 has one, the floppy driver's IY change (bios-versions.md §5.2)
+TEST(SprinterBios_Test, KnownIssuesByImage)
+{
+    const std::vector<std::string> beta = SprinterBios::KnownIssues(0xA06A1A02u);
+    ASSERT_EQ(beta.size(), 1u);
+    EXPECT_NE(beta[0].find("IY changed"), std::string::npos) << beta[0];
+    EXPECT_NE(beta[0].find("DSS 1.71.57"), std::string::npos) << beta[0];
+    EXPECT_NE(beta[0].find("3.06 Hotfix 2"), std::string::npos) << beta[0];
+    EXPECT_TRUE(SprinterBios::KnownIssues(0x9AA7BB29u).empty()) << "3.06 Hotfix 2";
+    EXPECT_TRUE(SprinterBios::KnownIssues(0x1729CB5Cu).empty()) << "3.04";
+    EXPECT_TRUE(SprinterBios::KnownIssues(0x12345678u).empty()) << "not a shipped image";
+}
+
 // The fixture's tagged flash is no shipped image; a selection without an emulator changes the configuration
 TEST_F(SprinterBiosReport_Test, ReportAndSelectionWithoutReset)
 {
@@ -94,6 +107,11 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
     EmulatorContext* context = emulator->GetContext();
     // The shipped config's default (owner decision 2026-10-02, bios-versions.md §6)
     EXPECT_EQ(LoadedFile(DeviceState::SprinterBios(context)), "sp2k-3.07-beta1.rom");
+    // 3.07 BETA 1 carries its floppy-driver warning (bios-versions.md §5.2) in the report and the brief
+    const StateNode beta = DeviceState::SprinterBios(context);
+    ASSERT_EQ(Find(beta, "known_issues")->items.size(), 1u) << DeviceState::ToText(beta);
+    EXPECT_NE(Find(beta, "known_issues")->items[0].s.find("IY"), std::string::npos);
+    EXPECT_EQ(DeviceState::SprinterBiosKnownIssues(context).size(), 1u);
 
     SprinterBios::Options options;
     std::string error;
@@ -107,6 +125,27 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
     report = DeviceState::SprinterBios(context);
     EXPECT_EQ(LoadedFile(report), "sp2k-3.06-hf2.rom");
     EXPECT_FALSE(Find(report, "reload_pending")->b);
+    EXPECT_TRUE(Find(report, "known_issues")->items.empty()) << "3.06 Hotfix 2 has none";
+    EXPECT_TRUE(DeviceState::SprinterBiosKnownIssues(context).empty());
 
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The ISA slot population at create (Sprinter ISA tdd §5): isa_slot1 / isa_slot2 into [ISA] SlotN of the new config
+TEST(SprinterBiosOptions_Test, IsaSlotsAtCreate)
+{
+    SprinterBios::Options options;
+    std::string error;
+    ASSERT_TRUE(SprinterBios::IsaSlotFromString("NONE", 1, options, error)) << error;
+    ASSERT_TRUE(SprinterBios::IsaSlotFromString("", 0, options, error)) << "empty keeps the configured kind";
+    EXPECT_EQ(options.isaSlot[0], -1);
+    EXPECT_EQ(options.isaSlot[1], 0);
+    EXPECT_FALSE(SprinterBios::IsaSlotFromString("ne3000", 0, options, error));
+    EXPECT_NE(error.find("isa_slot1"), std::string::npos) << error;
+
+    CONFIG config{};
+    config.sprinter.isa = sprinterisa::DefaultConfig();
+    ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
+    EXPECT_EQ(config.sprinter.isa.slot[1].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
 }

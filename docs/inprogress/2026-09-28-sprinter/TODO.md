@@ -131,6 +131,8 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
 
 ## Remaining
 
+Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.md](open-items-2026-10-03.md).
+
 - **Next (owner order, 2026-10-02):**
   1. ~~Automation audit P1 + P2~~ **done** (2026-10-02, branch `sprinter-automation`; status per gap in
      [automation-audit-2026-10-02.md](automation-audit-2026-10-02.md) §4, outcome in
@@ -158,7 +160,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   5. **Owner decision 2026-10-02** (the developer-interest ranking, [peripherals-survey.md](peripherals-survey.md)
      §10, accepted; "the network definitely first"). After the demo pass:
      - ISA I1 and network SN1-SN3 **before** the NeoGS (S6b). The network kits had about 340 commits in 2026
-       and are the only new programs that need a card.
+       and are the only new programs that need a card. **ISA I1 done 2026-10-03** (branch `sprinter-isa-network`:
+       `SprinterIsaBus`, window-3 routing, the `#9FBD` latch, `[ISA]` slots, TTD blob 33, `state/isa` /
+       `control/isa` on every surface, recipe `.recipe/machines/sprinter-isa.md`; ISA tdd §14). **Network SN0-SN2 done
+       2026-10-03** (same branch): NE2000 RTL8019AS in ISA slot 2 by default, the Ethernet gateway, the RTL8019AS kit
+       end to end, TTD blob 45; recipe `.recipe/machines/sprinter-network.md`, network tdd §18.
      - The ATAPI CD (with media change, eject, ATAPI boot) and the CF identity check, raised to P2. They are
        the BIOS / DSS developer's main work since 2024-10.
      - The Centronics printer drops to P4.
@@ -297,6 +303,12 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   - FDC off bit (density write data bit 1, MAME) unverified in the PLD;
   - a MAME reference for the floppy boot time needs a MAME whose WD1793 PLL follows `set_clock_scale`
     during a command (0.289 does not).
+  - [x] 3.07 BETA 1 "Invalid EXE file" for programs on a floppy (2026-10-03): firmware, not emulation - the
+    beta's FDD driver returns with IY changed and DSS 1.71.57 relies on it; MAME shows the same; the DSS of
+    the beta's recovery disk works ([bios-versions.md](bios-versions.md) §5.2). Tests:
+    `Fdc_Bios307SectorReadLoop_HdSide1`, `SprinterFloppyExe_Test` (env-gated). Owner decision 2026-10-03: 3.07 BETA 1
+    stays the default, unchanged; the warning is the BIOS report's `known_issues` (all surfaces, Qt status bar) and
+    the recipes. Upstream: [upstream-bios-307-fdd-iy.md](upstream-bios-307-fdd-iy.md) (to send to the BIOS author).
 - Flex Navigator (ACC-8, S4) stops after its splash: the BIOS `RESETD` RESTORE from track 71 (213 ms)
   outlasts the BIOS `WREST` wait (65 536 polls, ~184 ms here), the BIOS zeroes the track register and
   the RESTORE ends at track 9 ([roadmap-and-plan.md](roadmap-and-plan.md) §8). The wait needs at least

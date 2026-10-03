@@ -1,0 +1,72 @@
+NETUP.EXE - Bring the network up
+
+Purpose
+  Applies NET.CFG settings and connects SprinterESP / Sprinter-WiFi to Wi-Fi.
+
+Usage
+  NETUP.EXE
+
+Before running
+  Run NETCFG.EXE /W first and save a valid NET.CFG with SSID and PASS.
+
+Typical sequence
+  NETCFG.EXE /W
+  NETUP.EXE
+  PING.EXE example.com
+
+Behavior
+  NETUP loads NET.CFG from the directory that contains NETUP.EXE. This also
+  works when NETUP.EXE is started through PATH while another directory is
+  current. Keep the runtime configuration beside NETUP.EXE.
+
+  DHCP is enabled when DHCP=1. Static IP, gateway and netmask are applied when
+  DHCP=0.
+
+  BAUD controls the UART speed used by automated tools. Supported values are
+  230400, 115200, 57600, 38400, 19200 and 9600. Use 57600 or 38400 if 115200
+  loses bytes on your setup.
+
+  At every speed, including the 115200 default, NETUP configures the ESP as
+  AT+UART_CUR=<baud>,8,1,0,3 and the TL16C550 with RTS/CTS auto-flow. It does
+  fall back to a matched flow=0/manual-RTS mode only when the hardware CTS path
+  cannot be verified; NET_ESP_FLOW tells later utilities which mode was used.
+
+  After a successful connection, the package utilities can use the current
+  network settings until DSS is restarted.
+
+  NETUP publishes NET_* only after AT+CIFSR reports a non-zero station IP and
+  the profile-selected AT+CIPSTA query succeeds. If joining or either check
+  fails, NETUP exits with status 3 and clears NET_* left by a previous run, so
+  another program cannot treat a stale NET=WIFI marker as a live connection.
+
+Firmware profiles and session settings
+  NETUP probes AT+SYSSTORE? once after the initial AT handshake:
+
+  - OK selects the 2.2.2 ESP-AT profile. NETUP sends AT+SYSSTORE=0 before
+    applying network settings, so AT+CWMODE=1,0, AT+CWDHCP=1,1,
+    AT+CWJAP=..., and static IP/DNS commands affect only this ESP session.
+    AT+SYSLOG=1 is also requested for firmware diagnostics; it is optional.
+  - ERROR selects the 2.2.1-compatible profile. NETUP uses the corresponding
+    _CUR station, DHCP, join, static-IP and DNS commands, which are also
+    session-only.
+
+  The selected profile is printed as "ESP firmware profile: 2.2.1" or
+  "ESP firmware profile: 2.2.2" and is published as NET_ESP_FW. Programs
+  must not use AT+CIPRECVMODE=1 when NET_ESP_FW=2.2.1; 2.2.2 is the profile
+  intended for software that needs that command.
+
+  NETUP also publishes NET_ESP_FLOW=3 when hardware RTS/CTS was negotiated,
+  or NET_ESP_FLOW=0 after the speed-only fallback. Other utilities use this
+  value to initialize their local UART without changing the live ESP session.
+
+  NETUP does not try a second command dialect for every setting. If a required
+  command fails, it prints the response collected from the ESP before the
+  local communication-error number (including a partial response on timeout).
+  This distinguishes a literal ERROR from a UART timeout or other transport
+  error.
+
+Exit status
+  0  Network bring-up completed.
+  2  Sprinter-WiFi hardware was not found.
+  3  ESP communication error or Wi-Fi connection was not verified.
+  4  NET.CFG is missing, unreadable or incomplete.

@@ -19,22 +19,30 @@
 #include <memory>
 
 #include "emulator/io/serial/comport.h"
-#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/io/iiobusdevice.h"
 
 class EmulatorContext;
 class ISerialPeer;
 
-class Atm2IoEsp final : public IAtmIoDevice
+class Atm2IoEsp final : public IIoBusDevice
 {
 public:
     static constexpr uint8_t kDefaultAddress = 0xF0;   ///< Rev 1.5 / 2.0 (Rev 1.0: #F8)
 
     Atm2IoEsp(EmulatorContext* context, std::unique_ptr<ISerialPeer> peer, uint8_t baseAddress);
 
-    // IAtmIoDevice
-    bool Matches(uint8_t busAddress) const override { return (busAddress & 0xF8) == _base; }
-    uint8_t Read(uint8_t busAddress) override;
-    void Write(uint8_t busAddress, uint8_t value) override;
+    // IIoBusDevice: the #FB latch value is the bus address, CT2..CT0 the 16550 register
+    const char* Kind() const override { return "atm2ioesp"; }
+    bool Decodes(uint32_t busAddress, uint16_t& offset) const override
+    {
+        if ((busAddress & 0xF8) != _base)
+            return false;
+        offset = static_cast<uint16_t>(busAddress & 0x07);
+        return true;
+    }
+    uint8_t Read(uint16_t offset) override;
+    void Write(uint16_t offset, uint8_t value) override;
+    uint8_t Peek(uint16_t offset) const override;
     void Reset() override { _com.Reset(); }
 
     uint8_t Address() const { return _base; }
@@ -42,7 +50,7 @@ public:
     const ComPort& Com() const { return _com; }
 
     /// Frame boundary (machine thread): the UART catches up, the peer flushes
-    void OnFrame() { _com.OnFrame(); }
+    void OnFrame() override { _com.OnFrame(); }
 
 private:
     uint8_t _base = kDefaultAddress;

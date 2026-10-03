@@ -106,6 +106,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state sprinter zx                     - Which Spectrum mode runs (SP.ZX / P128.ZX ...) and its options" << NEWLINE;
         ss << "  state sprinter journal kinds=cnf,port_1ffd - Who turned turbo on / wrote #1FFD (source=ttd: the recording)" << NEWLINE;
         ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
+        ss << "  state isa            - Show the ISA slots (Sprinter; also: isa)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
@@ -244,6 +245,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else if (subsystem == "rtc" || subsystem == "cmos")
     {
         session.SendResponse(RtcReportText(context));
+        return;
+    }
+    else if (subsystem == "isa")
+    {
+        session.SendResponse(IsaReportText(context));
         return;
     }
     else if (subsystem == "contention")
