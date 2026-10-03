@@ -48,3 +48,31 @@ bool GSHostClock::targetUnits(const EmulatorContext* context, double unitsPerSec
              static_cast<int64_t>(std::llround(static_cast<double>(relative) * unitsPerZxTact(context, unitsPerSecond)));
     return true;
 }
+
+int64_t GSHostClock::zxElapsedSince(const EmulatorContext* context, uint64_t anchorZxTacts)
+{
+    const uint64_t now = currentZxTacts(context, anchorZxTacts);
+    return now < anchorZxTacts ? -1 : static_cast<int64_t>(now - anchorZxTacts);
+}
+
+int64_t GSHostClock::nextFrameBase(int64_t previousBase, int64_t previousFrameUnits, int64_t cardNow,
+                                   int64_t zxElapsed, double unitsPerZxTact)
+{
+    if (previousFrameUnits <= 0)
+        return cardNow; // first frame: nothing nominal to follow
+
+    const int64_t nominalEnd = previousBase + previousFrameUnits;
+    if (cardNow >= nominalEnd)
+    {
+        // Ran to the end: the distance past it is the overshoot, never a whole frame
+        return cardNow - nominalEnd < previousFrameUnits ? nominalEnd : cardNow;
+    }
+
+    // Short of the nominal end: the frame is abandoned or started again. Keep the
+    // card's lead over the host, as measured at the host's current tact
+    if (zxElapsed < 0)
+        return cardNow;
+    const int64_t target = previousBase + static_cast<int64_t>(std::llround(static_cast<double>(zxElapsed) * unitsPerZxTact));
+    const int64_t lead = cardNow - target;
+    return (lead > -previousFrameUnits && lead < previousFrameUnits) ? target : cardNow;
+}

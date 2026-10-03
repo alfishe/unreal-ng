@@ -211,6 +211,10 @@ struct Digests
     uint64_t audio, trace, state, counters;
 };
 
+// Re-recorded 2026-10-03 (card frame base): a frame now starts on the nominal
+// timeline, so the card's instruction overshoot is paid back by the next frame
+// instead of added to it. The card's time (event trace, DAC positions, TTD
+// state) moved by that overshoot; the firmware's behavior did not change.
 // When the pinned values need re-recording (a deliberate behaviour change),
 // run with GS_GOLDEN_PRINT=1 and paste the printed values
 void check(const char* name, const Digests& got, const Digests& want)
@@ -258,7 +262,7 @@ TEST(SoundChip_GeneralSound_Golden, BootUploadPlayResetNmi)
 
     EXPECT_GT(h.nonSilentSamples, 10000u) << "the scenario must actually play";
     check("BootUploadPlayResetNmi", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xea0ddb3e02932de2ull, 0xa45e8dfaf7ee07cfull, 0xc2ce10e377b16e60ull, 0x520ff92dc262e2c5ull});
+          {0xa7dc0245f27e0bb3ull, 0x35d0e96ed5a5a3afull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
 }
 
 TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
@@ -272,5 +276,5 @@ TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
 
     EXPECT_GT(h.nonSilentSamples, 1000u) << "the replayed module must play";
     check("ModuleReplayOntoFreshCard", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xdcfb25d66fe02eb2ull, 0x9ce33a7772a420b8ull, 0xa8214a9045e28767ull, 0xe1b4c967605dc9afull});
+          {0xa3f89720af874f35ull, 0x0d4ba9ae77680ce7ull, 0x6d1cb0799e73d1fdull, 0x18326fcab465ea49ull});
 }

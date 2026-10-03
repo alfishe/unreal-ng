@@ -825,8 +825,13 @@ void SoundChip_NeoGS::flush()
 void SoundChip_NeoGS::handleFrameStart()
 {
     _frameHadActivity = false;
+    // Nominal base, not the card's actual time: the card ends a frame up to one
+    // instruction past it, and that overshoot must not pile up frame after frame.
+    // Taken against the previous ZX anchor, so before the anchor moves
+    _frameStartTicks = GSHostClock::nextFrameBase(_frameStartTicks, _frameTicks, _runner.now(),
+                                                  GSHostClock::zxElapsedSince(_context, _frameStartZxTacts),
+                                                  GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND));
     _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
-    _frameStartTicks = _runner.now();
     _frameTicks = GSHostClock::frameUnits(_context, TICKS_PER_SECOND);
 }
 

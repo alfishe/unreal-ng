@@ -169,10 +169,12 @@ protected:
         e->RunNFrames(3);
     }
 
-    /// NeoGS blob bytes 147-154: _frameStartZxTacts and _frameTicks, the card's anchor to the ZX frame. After a
-    /// transfer to a model with another frame length the target re-anchors the card to its own frame (the card's
-    /// own time, CPU, devices and memory are unchanged), so these bytes legitimately differ
-    static constexpr size_t NEOGS_ZX_FRAME_ANCHOR_BEGIN = 147;
+    /// NeoGS blob bytes 139-154: the card's anchor to the ZX frame - how far the card stands past its frame base
+    /// (139-146, the overshoot of its last instruction, kept from frame to frame), _frameStartZxTacts and _frameTicks
+    /// (147-154). After a transfer to a model with another frame length the target re-anchors the card to its own
+    /// frame and host clock (the card's own time, CPU, devices and memory are unchanged), so these bytes
+    /// legitimately differ; with the same frame geometry they must match
+    static constexpr size_t NEOGS_ZX_FRAME_ANCHOR_BEGIN = 139;
     static constexpr size_t NEOGS_ZX_FRAME_ANCHOR_END = 155;
 
     static void ExpectCardsFollowed(EmulatorContext& src, EmulatorContext& dst)
