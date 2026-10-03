@@ -58,6 +58,21 @@ struct SprinterVideoInputs
     int32_t holdY = 0;                 ///< lines, from HOLD
     uint16_t lines = 320;              ///< frame height: 320 or 312
 
+    /// The pixel byte of one text / Spectrum square the video logic has already latched while the CPU
+    /// rewrote it in video RAM. The PLD loads a symbol square's font byte into its shift register once,
+    /// at the start of the square - of each 8-pixel half in a 640 square (VIDEO2.TDF LD_PIC at CT[5..3] = 0,
+    /// or CT[4..2] = 0) - while it reads the attribute again every half T (DCOL, WR_COL). So a write that
+    /// lands inside a square changes its attribute from there on, its pixels only from the next square.
+    /// Visible pixels [x0, x1) of visible line `line` show `font`; line ~0: none (ScreenSprinter keeps it)
+    struct FontLatch
+    {
+        uint32_t line = ~0u;
+        uint32_t x0 = 0;
+        uint32_t x1 = 0;
+        uint8_t font = 0;
+    };
+    FontLatch fontLatch;
+
     /// HOLD (code #CB) as picture offsets (MAME m_hold)
     void SetHold(uint8_t hold)
     {
@@ -234,8 +249,10 @@ public:
 
     /// Pen of a graphics square (Line1 bytes `mode`) at square pixel (sub 0..15, row 0..7)
     static uint32_t GraphicsPen(const SprinterVideoInputs& in, const uint8_t* mode, uint32_t sub, uint32_t row);
-    /// Pen of a text / border / blank square at square pixel (sub, row); `line1` = the Line1 bytes
-    static uint32_t SymbolPen(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t sub, uint32_t row);
+    /// Pen of a text / border / blank square at square pixel (sub, row); `line1` = the Line1 bytes;
+    /// `latchedFont` >= 0: the font byte the video logic latched (SprinterVideoInputs::FontLatch)
+    static uint32_t SymbolPen(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t sub, uint32_t row,
+                              int latchedFont = -1);
     /// The mode bytes a text pixel uses: Line2 for the right half of a 640 text square
     static const uint8_t* SymbolMode(const uint8_t* line1, uint32_t sub)
     {

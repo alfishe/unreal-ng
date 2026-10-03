@@ -338,6 +338,12 @@ joystick (MAN §9 p. 21, §10). MAME implements the rewrite on the operand fetch
   320-line frame, at the same horizontal position (pixel 768 of 896, T 192 of the line) and on MAME
   screen line 271 (Scorpion, also the cold-start default of 3.04), 287 (Pentagon, 16 lines later) or
   295 (Spectrum, 8 lines after Pentagon); MAME's paper is lines 16-271.
+- **The PLD's edge is 10 T before MAME's place** (2026-10-03): `INTT = DFF(!(INTTX & CTV[2..0] = 7), CT5)`
+  (`VIDEO2.TDF`) changes on `CT5` rising, 2 T into the 4-T period of the square the video logic is reading,
+  and `INT_X` above is clocked by `INTT` rising - the first square after the INT run. That square is read at
+  T `12 + 4a` of the line in MAME's (and unreal-ng's) picture coordinates, so the edge is at T `14 + 4a`;
+  MAME's `scr_a = a + 6` gives T `24 + 4a`. In the Spectrum mode the PLD's edge makes INT to the first
+  Spectrum cell 17 990 T, the Pentagon's 17 988 within 2 T (research-zx-mode §7.1).
 - HOLD register (`#CB`) shifts the picture by up to 7 squares horizontally (2-pixel steps) and 7 lines
   vertically (MAME `sprinter.cpp:850-852`).
 

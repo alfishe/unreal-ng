@@ -363,14 +363,17 @@ TEST_F(SprinterReference_Test, Bios304_LogoPaletteMatchesMame)
     EXPECT_EQ(mame.at(60), 302548u);
 
     // The INT the BIOS sets up for the logo: the Scorpion position (BIOS 3.04 cold start), int.csv "booted"
+    // (MAME's 60 896 less the PLD's kIntBeforeMameT, SprinterIntSource)
     const std::vector<uint32_t>& positions = _decoder->GetIntSource().Positions();
     ASSERT_EQ(positions.size(), 1u);
-    EXPECT_EQ(positions[0], 60896u);
+    EXPECT_EQ(positions[0], 60896u - SprinterIntSource::kIntBeforeMameT);
 }
 
 // int.csv: FN_SYNC (#F2) puts the INT at MAME's line 271 / 287 / 295, x 768 for Scorpion /
 // Pentagon / Spectrum (60 896 / 64 480 / 66 272 T), and the interrupt routine starts
 // 6-11 T after it in MAME (the instruction in progress at 21 MHz plus the acknowledge).
+// unreal-ng's edge is the PLD's, kIntBeforeMameT = 10 T earlier on the same square (SprinterIntSource);
+// the acknowledge is measured from it.
 // Boot-bound (~60 frames to the logo, where the BIOS runs in IM 2): the turbo mode is on
 TEST_F(SprinterReference_Test, Bios304_FnSyncIntPositionsMatchMame)
 {
@@ -385,7 +388,8 @@ TEST_F(SprinterReference_Test, Bios304_FnSyncIntPositionsMatchMame)
         uint8_t a;
         uint32_t position;
     };
-    for (const Mode mode : {Mode{1, 60896}, Mode{2, 64480}, Mode{3, 66272}, Mode{0, 66272}})
+    constexpr uint32_t kEdge = SprinterIntSource::kIntBeforeMameT;
+    for (const Mode mode : {Mode{1, 60896 - kEdge}, Mode{2, 64480 - kEdge}, Mode{3, 66272 - kEdge}, Mode{0, 66272 - kEdge}})
     {
         ASSERT_TRUE(CallFnSync(mode.a)) << "FN_SYNC A=" << int(mode.a) << " did not return";
         EmulatorTestHelper::RunFramesFast(_emulator.get(), 1);

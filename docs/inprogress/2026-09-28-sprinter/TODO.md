@@ -113,6 +113,15 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
   (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
 
+- [x] Spectrum mode: attributes lagged behind the pixels in Pentagon multicolor demos (owner report 2026-10-03,
+  `scroller.trd`, `atarin.trd` in P128; branch `sprinter-zx-shadow-squares`; [research-zx-mode.md](research-zx-mode.md)
+  §7.1): the frame INT sat at MAME's place, 10 T after the PLD's edge (`CT5` rising 2 T into the first square
+  after the INT run), so the Sprinter read each cell 17 980 T after the INT where a Pentagon reads it after
+  17 988; now 17 990. With it: a video RAM byte lands 1 T before the write cycle's end, a `#7FFD` write catches
+  the beam up (bit 3 picks the screen), and a text / Spectrum square keeps the font byte latched at its start
+  (the attribute is read every half T). The shadow copy was right: the same conditions and address as MAME, the
+  address as the PLD's `VXA` (`VIDEO2.TDF`), and both demos' pixels equal the PENTAGON model's frame for frame. Open: mode bytes written inside a square are not latched (no known program needs it)
+
 ## Remaining
 
 - **Next (owner order, 2026-10-02):**

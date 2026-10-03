@@ -182,7 +182,8 @@ uint32_t SprinterVideoRenderer::AttrAddress(const SprinterVideoInputs& in, const
            (static_cast<uint32_t>(in.textPage & 1) << 5) | 0x18u | static_cast<uint32_t>(mode[0] >> 6);
 }
 
-uint32_t SprinterVideoRenderer::SymbolPen(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t sub, uint32_t row)
+uint32_t SprinterVideoRenderer::SymbolPen(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t sub, uint32_t row,
+                                          int latchedFont)
 {
     // MAME draw_symbol (sprinter.cpp:453-497): a 640 square's right half takes
     // every byte from Line2 (its own Mode0 included)
@@ -193,7 +194,7 @@ uint32_t SprinterVideoRenderer::SymbolPen(const SprinterVideoInputs& in, const u
     if (SprinterSquare::IsBorder(m0))
         return kPenText | (static_cast<uint32_t>(in.border & 7) * 9u);  // border
     const uint8_t attr = in.vram[AttrAddress(in, mode)];
-    const uint8_t symbol = in.vram[FontAddress(in, mode, row)];
+    const uint8_t symbol = latchedFont >= 0 ? static_cast<uint8_t>(latchedFont) : in.vram[FontAddress(in, mode, row)];
     const uint32_t bit = 1u << (7 - ((sub >> ((m0 >> 5) & 1)) & 7));
     return kPenText + attr + ((symbol & bit) ? 0x100u : 0u) + (in.flash ? 0x200u : 0u);
 }
@@ -221,9 +222,12 @@ void SprinterVideoRenderer::DrawSpan(const SprinterVideoInputs& in, uint32_t y, 
         const uint32_t end = std::min(x1, x + (16 - sub0));
         const uint8_t* mode = ModeBytes(in, a16, b8);
         const bool symbol = SprinterSquare::IsSymbol(mode[0]);
+        const SprinterVideoInputs::FontLatch& latch = in.fontLatch;
+        const bool latched = symbol && latch.line == y && x < latch.x1 && end > latch.x0;
         for (uint32_t sub = sub0; x < end; x++, sub++)
         {
-            const uint32_t pen = symbol ? SymbolPen(in, mode, sub, row) : GraphicsPen(in, mode, sub, row);
+            const int font = (latched && x >= latch.x0 && x < latch.x1) ? latch.font : -1;
+            const uint32_t pen = symbol ? SymbolPen(in, mode, sub, row, font) : GraphicsPen(in, mode, sub, row);
             *out++ = in.palette[pen & (SprinterVideoRam::kPens - 1)];
         }
     }

@@ -148,7 +148,7 @@ at the same frame count after the load (the frame is 71 680 T in both).
 | Item | Value | Changes |
 |---|---|---|
 | Frame | 71 680 T (320 lines) or 69 888 T (312) | none (S1) |
-| INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) | none (S1) |
+| INT | the mode table's blank + INT squares (`FN_SYNC`): line 287 T 192 (320 lines), line 295 T 192 (`/origin /lines312`) in MAME; the PLD's edge, which unreal-ng uses since 2026-10-03, is 10 T earlier (T 182; research-zx-mode §7.1) | none (S1) |
 | Contention | none | — |
 | "Original waits" | §3.3: 4-T CT5 period, phase placeholder | new: on with ALL_MODE bit 2 = 0 at 3.5 MHz |
 | 21 MHz | memory and port waits as built | none |
