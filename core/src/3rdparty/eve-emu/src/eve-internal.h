@@ -576,6 +576,7 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 // --- Drawing (eve-dl.cpp) ----------------------------------------------------------------------
 
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
+uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
 void DisplayListSwapped(EveChip& chip);       // a new active list

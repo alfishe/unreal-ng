@@ -39,6 +39,7 @@ surface calls), design in
 
   [VDAC2]
   RomImage=rom/ft81x.rom    ; the FT812's ROM fonts (optional: without it ROM text is blank)
+  LineBudgetMargin=10       ; line metrics: the soft budget, percent below the line period (0..50)
   CaptureFile=              ; optional: capture the bus from the machine's creation
   ```
 
@@ -68,6 +69,11 @@ capture_media   {"action":"screenshot","format":"png"}      # the FT812 picture 
 capture_media   {"action":"vdac2_capture_start","filename":"scratch/rtype.evr"}
 capture_media   {"action":"vdac2_capture_status"}
 capture_media   {"action":"vdac2_capture_stop"}
+
+# Line budget: what each FT812 line cost against the clocks it has (last finished frame)
+analyze_performance {"action":"vdac2_line_budget"}
+analyze_performance {"action":"vdac2_line_budget","lines":true,"in_flight":true}   # in_flight: pause first
+analyze_performance {"action":"vdac2_line_budget_set","margin":10,"measure_always":true}
 ```
 
 ## WebAPI
@@ -86,6 +92,15 @@ curl -s "$BASE/emulator/$EMU/vdac2/capture/status" | jq .
 #   → {"capturing":true,"path":"/tmp/rtype.evr","bytes":...,"selects":...,"exchanges":...,
 #      "frames":...,"start_clock":...,"last_clock":...,"format":"evr"}
 curl -s -X POST "$BASE/emulator/$EMU/vdac2/capture/stop" | jq .
+
+# Line budget metrics of the last finished FT812 frame
+curl -s "$BASE/emulator/$EMU/vdac2/metrics" | jq .
+#   → {"valid":true,"frame":1234,"lines":768,"hard_budget":1344,"soft_budget":1209,
+#      "worst_line":402,"worst_clocks":1247,"total_clocks":...,"lines_over_soft":12,
+#      "lines_over_hard":0,"margin":10,"measure_always":false}
+curl -s "$BASE/emulator/$EMU/vdac2/metrics?lines=1&in_flight=1" | jq '.line_clocks | max, .in_flight'
+curl -s -X PUT "$BASE/emulator/$EMU/vdac2/metrics" -H 'Content-Type: application/json' \
+     -d '{"margin":10,"measure_always":true}' | jq .
 ```
 
 ## CLI / Lua / Python
@@ -94,18 +109,28 @@ curl -s -X POST "$BASE/emulator/$EMU/vdac2/capture/stop" | jq .
 vdac2 capture start /tmp/rtype.evr
 vdac2 capture status
 vdac2 capture stop
+vdac2 metrics                 # worst line, lines over soft / hard
+vdac2 metrics lines inflight  # every line's cost; the frame in flight (paused machine)
+vdac2 metrics margin 10
+vdac2 metrics always on
 ```
 
 ```lua
 local ok, err = vdac2_capture_start("/tmp/rtype.evr")
 print(vdac2_capture_status().frames)
 vdac2_capture_stop()
+local m = vdac2_metrics()            -- vdac2_metrics(true, true): line_clocks, in_flight
+print(m.worst_line, m.worst_clocks, m.lines_over_hard)
+vdac2_metrics_set(10, true)          -- margin, measure_always (each may be nil)
 ```
 
 ```python
 emu.vdac2_capture_start("/tmp/rtype.evr")   # RuntimeError with the reason on failure
 print(emu.vdac2_capture_status()["frames"])
 emu.vdac2_capture_stop()
+m = emu.vdac2_metrics(lines=True)    # in_flight=True adds the frame in flight (paused machine)
+print(m["worst_clocks"], m["lines_over_hard"], max(m["line_clocks"]))
+emu.vdac2_metrics_set(margin=10, measure_always=True)
 ```
 
 ## What a capture holds
@@ -120,6 +145,29 @@ emu.vdac2_capture_stop()
 - About 0.5 MB per second of game. Replaying it drives the `eve-emu` library alone
   (byte answers and frame hashes must match): the reference workload for the
   library's tests and performance work.
+
+## Line budget metrics
+
+The FT812 draws every screen line from the display list within the line period:
+1344 clocks in the 1024 x 768 mode. Each display list command costs a clock on
+**every** line, and filled pixels cost by format and filter; a line that needs more
+than it has comes out broken on a real card. The model, the worked examples and what
+an overflow looks like: [line-budget-model.md](../../docs/inprogress/2026-10-01-tsconf-vdac2/line-budget-model.md).
+
+- **The block is the last finished FT812 frame**, replaced at each FT812 frame end. It
+  is part of the chip state: after a TTD seek (`time_travel` seek) it reads as at that
+  moment, without drawing the frame again.
+- **`valid: false`** = the frame was not drawn: the monitor showed the Evo (`V_CONFIG`
+  bit 2 clear) or turbo skipped the frame. `measure_always` draws and measures every
+  frame (costs host time, changes nothing the program sees); a bus capture or a TTD
+  replay draws every frame anyway.
+- **`lines_over_hard` > 0** = lines broken on a real card. **`lines_over_soft`** =
+  lines inside the last `margin` percent: risky (developers keep about 10 % free).
+- **`in_flight`** (the frame being scanned now: the lines passed so far, each with its
+  cost, -1 for a line passed without drawing) is read only on a paused machine; on a
+  running one it answers `known: false`.
+- The cost model's absolute numbers are TO VERIFY on a card (line overhead, bilinear
+  and primitive fill rates): right for comparing frames and finding heavy lines.
 
 ## Pitfalls
 

@@ -64,6 +64,8 @@ Vdac2Card::Vdac2Card(EmulatorContext* context, std::function<uint32_t()> rasterI
     else
     {
         _chipFrames = EveCompletedFrames(_chip);
+        SetLineBudgetMargin(_context ? _context->config.vdac2_line_budget_margin : 10);
+        EveSetLineBudgetMargin(_chip, _lineBudgetMargin.load());
         const char* capture = _context ? _context->config.vdac2_capture_path : "";
         if (capture[0] != '\0')
         {
@@ -179,7 +181,7 @@ void Vdac2Card::AdvanceTo(uint64_t absoluteRaster)
         _time.position = absoluteRaster;
         return;
     }
-    // A TTD replay starts or ends: while it runs the chip draws every frame
+    // Drawing() changed: a TTD replay started or ended, a capture, measure-always
     if (_drawing != Drawing())
         ConfigureOutput();
 
@@ -331,6 +333,8 @@ bool Vdac2Card::Drawing() const
     // (all timing runs either way: nothing the guest sees depends on drawing)
     if (_capture.IsOpen())
         return true;  // a capture hashes every frame
+    if (_measureAlways)
+        return true;  // line metrics for every frame
     if (_context && _context->ttdReplayActive)
         return true;  // a TTD replay composes the position's picture from what is drawn
     const Screen* screen = _context ? _context->pScreen : nullptr;
@@ -340,6 +344,7 @@ bool Vdac2Card::Drawing() const
 void Vdac2Card::OnChipFrame()
 {
     _chipFrames = EveCompletedFrames(_chip);
+    EveSetLineBudgetMargin(_chip, _lineBudgetMargin.load());  // for the frame now starting
     if (_capture.IsOpen())
         _capture.Frame(EveTotalClocks(_chip), _chipFrames, _drawing, _pictureWidth, _pictureHeight,
                        _drawing ? Vdac2Capture::HashPicture(_chipFrame.data(), _chipFrame.size()) : 0);
@@ -366,6 +371,8 @@ void Vdac2Card::OnChipFrame()
     if (Screen* screen = _context ? _context->pScreen : nullptr)
         screen->LatchExternalFrame();
     _latchedFrames++;
+    if (_measureAlways.load())
+        KeepPresentedMetrics(false);  // the FT812 Debug window shows what the monitor shows
 }
 
 void Vdac2Card::ConvertFrameToPicture()
@@ -382,6 +389,80 @@ void Vdac2Card::ConvertFrameToPicture()
         out[i * 4 + 2] = static_cast<uint8_t>(argb);
         out[i * 4 + 3] = 0xFF;
     }
+}
+
+void Vdac2Card::SetLineBudgetMargin(uint32_t percent)
+{
+    _lineBudgetMargin.store(std::min<uint32_t>(percent, 50));
+}
+
+void Vdac2Card::SetMeasureAlways(bool on)
+{
+    _measureAlways.store(on);  // AdvanceTo reconfigures the output when Drawing() changes
+}
+
+void Vdac2Card::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool withLines, bool inFlight)
+{
+    out = Vdac2Control::FrameMetrics{};
+    out.margin = _lineBudgetMargin.load();
+    out.measureAlways = _measureAlways.load();
+    if (!_chip)
+        return;
+    EveFrameMetrics block{};
+    std::vector<uint16_t> lines;
+    if (withLines)
+        lines.resize(4096);
+    lines.resize(EveGetFrameMetrics(_chip, &block, withLines ? lines.data() : nullptr, lines.size()));
+    out.valid = block.valid != 0;
+    out.frame = block.frame;
+    out.lines = block.lines;
+    out.hardBudget = block.hardBudget;
+    out.softBudget = block.softBudget;
+    out.worstLine = block.worstLine;
+    out.worstClocks = block.worstClocks;
+    out.totalClocks = block.totalClocks;
+    out.linesOverSoft = block.linesOverSoft;
+    out.linesOverHard = block.linesOverHard;
+    out.lineClocks = std::move(lines);
+    if (!inFlight)
+        return;
+    Synchronize();
+    ConfigureOutput();  // EveSetOutput catches the drawing up to the chip's position
+    out.inFlightKnown = true;
+    out.inFlightLinesPassed = EveFrameLinesPassed(_chip);
+    if (withLines)
+    {
+        const uint32_t passed = std::min<uint32_t>(out.inFlightLinesPassed, 4096);
+        out.inFlightLineClocks.resize(passed);
+        for (uint32_t line = 0; line < passed; ++line)
+        {
+            EveLineCost cost{};
+            EveGetLineCost(_chip, line, &cost);
+            out.inFlightLineClocks[line] = cost.valid ? static_cast<int32_t>(cost.totalClocks) : -1;
+        }
+    }
+}
+
+void Vdac2Card::KeepPresentedMetrics(bool withInFlight)
+{
+    Vdac2Control::FrameMetrics metrics;
+    ReadFrameMetrics(metrics, true, withInFlight);
+    std::lock_guard<std::mutex> lock(_presentedLock);
+    _presented = std::move(metrics);
+    _presentedKnown = true;
+}
+
+bool Vdac2Card::PresentedFrameMetrics(Vdac2Control::FrameMetrics& out) const
+{
+    if (!_showing)
+        return false;
+    std::lock_guard<std::mutex> lock(_presentedLock);
+    if (!_presentedKnown)
+        return false;
+    out = _presented;
+    out.margin = _lineBudgetMargin.load();
+    out.measureAlways = _measureAlways.load();
+    return true;
 }
 
 bool Vdac2Card::StartCapture(const std::string& path, std::string* error)
@@ -680,8 +761,13 @@ void Vdac2Card::TTDPrepareComposedPicture(bool frameTarget)
         return;
     // The chip brought up to the position (it runs behind the CPU until it is asked)
     Synchronize();
-    if (frameTarget || !_showing)
-        return;  // a frame boundary shows the FT812 frame that finished last: _picture already
+    if (!_showing)
+        return;
+    if (frameTarget)
+    {
+        KeepPresentedMetrics(false);  // the FT812 frame that finished last: _picture already
+        return;
+    }
 
     // Inside a frame: the FT812 frame in flight, drawn up to the position over its
     // previous frame. The library draws lines lazily (at a frame end or before a
@@ -689,6 +775,7 @@ void Vdac2Card::TTDPrepareComposedPicture(bool frameTarget)
     ConfigureOutput();
     if (_chipFrame.size() * 4 == _picture.size())
         ConvertFrameToPicture();
+    KeepPresentedMetrics(true);  // with the lines of the frame in flight drawn so far
 }
 
 /// endregion
@@ -752,6 +839,10 @@ bool Vdac2Card::StartCapture(const std::string&, std::string* error)
     return false;
 }
 bool Vdac2Card::StopCapture() { return false; }
+void Vdac2Card::SetLineBudgetMargin(uint32_t percent) { _lineBudgetMargin.store(percent > 50 ? 50 : percent); }
+void Vdac2Card::SetMeasureAlways(bool on) { _measureAlways.store(on); }
+void Vdac2Card::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool, bool) { out = Vdac2Control::FrameMetrics{}; }
+bool Vdac2Card::PresentedFrameMetrics(Vdac2Control::FrameMetrics&) const { return false; }
 void Vdac2Card::select(bool) {}
 uint8_t Vdac2Card::exchange(uint8_t) { return 0xFF; }
 size_t Vdac2Card::TtdStateSize() const { return 0; }

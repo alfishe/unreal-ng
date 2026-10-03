@@ -20,7 +20,7 @@ worked examples and what is still assumed.
 | Display list (DL) | the program of up to 2048 commands the FT812 runs for **every** screen line to draw it |
 | Line cost | the system clocks one line needs: its display list commands plus its pixel filling |
 | Hard budget | the clocks a line has: `HCYCLE x PCLK` (1344 in the 1024 x 768 mode) |
-| Soft budget | the warning line below the hard budget: hard budget minus a margin, 10 % by default (1210 clocks) |
+| Soft budget | the warning line below the hard budget: hard budget minus a margin, 10 % by default (1209 clocks: 90 % of 1344, rounded down) |
 | Overflow | a line whose cost is above the hard budget; on the card it comes out broken (§5) |
 
 ## 2. The budget of one line
@@ -38,7 +38,7 @@ The VDAC2 modes the software uses:
 
 | Mode | System clock | PCLK | HCYCLE x VCYCLE | Frame rate | Line period | Hard budget | Soft budget (10 %) |
 |:--|:--|:--|:--|:--|:--|:--|:--|
-| 1024 x 768 (mode 7: R-Type, Zuma, `ftview`) | 64 MHz | 1 | 1344 x 806 | 59.08 Hz | 21.0 us | **1344** | 1210 |
+| 1024 x 768 (mode 7: R-Type, Zuma, `ftview`) | 64 MHz | 1 | 1344 x 806 | 59.08 Hz | 21.0 us | **1344** | 1209 |
 | 640 x 480 (HMM2) | per the program | 1 | per the program | 74 Hz | | `HCYCLE` | 90 % of it |
 
 The Programmers Guide adds that the time "is never less than 2048 internal clock cycles"
@@ -50,8 +50,8 @@ pixel clocks on small panels), so on VDAC2 the budget is the line period (TO VER
 The practical number: developers of VDAC2 software keep about **10 % below** the theoretical
 1344. R-Type, the most demanding program measured, puts its usable ceiling "around 1300"
 and its worst line at 1247 by its own cost tool, with no broken lines on the card since
-then. The 10 % margin is the soft budget's default (eve-emu `EveSetLineBudgetMargin`, 0..50;
-the `[VDAC2] LineBudgetMargin` setting comes with phase L2).
+then. The 10 % margin is the soft budget's default (`[VDAC2] LineBudgetMargin`, 0..50, also
+set at run time from every automation surface).
 
 ## 3. What a line costs
 
@@ -96,7 +96,7 @@ cost the same as opaque ones.
 The emulator adds the fill in 1/16 clock steps per span and rounds the line's total up, so a
 13-pixel NEAREST span costs 13/16 clock, not a whole one.
 
-### 3.3 Worked examples (1024 x 768, hard 1344, soft 1210)
+### 3.3 Worked examples (1024 x 768, hard 1344, soft 1209)
 
 | Line content | Commands | Fill | Line cost | Verdict |
 |:--|:--|:--|:--|:--|
@@ -174,9 +174,10 @@ overflow cost less visible content.
   a non-paletted format where memory allows (2x); no full-screen transparent overlays.
 - **Less overlap per line.** Spread objects vertically; use the scissor so a primitive's span
   does not run past where it is visible (the scissor cuts the fill, not the command).
-- **Measure.** The FT812 Debug window (Debug menu, `TSL-VDAC2` only; phase L3) and every
-  automation surface (phase L2) give the worst line and the per-line costs of the frame on screen, also when going
-  back in time.
+- **Measure.** Every automation surface (`vdac2 metrics`, `/vdac2/metrics`, recipe
+  `.recipe/machines/tsconf-vdac2.md`) and the FT812 Debug window (Debug menu, `TSL-VDAC2`
+  only; phase L3) give the worst line and the per-line costs of the frame on screen, also
+  when going back in time.
 
 ## 7. What is assumed and how to check it
 

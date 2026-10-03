@@ -283,6 +283,23 @@ TEST_F(ProfiBoot_Test, MenuEntriesStartWhatTheyName)
     }
 }
 
+/// @brief The CP/M switch at power-on: the board holds #DFFD at #00 (research-profi-v5-open-items.md Q6), so the
+///        BIOS cannot raise its hi-res menu and goes straight to Spectrum 128 - what the v5.0 manual says the switch
+///        does ("pressed = Spectrum 128"). No other emulator models the switch; the behavior comes from the BIOS alone
+TEST_F(ProfiBoot_Test, CpmSwitchAtPowerOnStartsSpectrum128)
+{
+    // Slower than the 50 ms guideline on purpose: the real BIOS has to run to its decision
+    EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_emulator->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, true));
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(300, true);
+
+    EXPECT_EQ(context->emulatorState.pDFFD, 0) << "the switch holds #DFFD cleared";
+    EXPECT_NE(context->pScreen->GetVideoMode(), M_PROFIHR) << "no hi-res BIOS menu";
+    EXPECT_EQ(context->pMemory->GetROMPage(), 2) << "the 128 ROM page (the STS / Power of Sound menu)";
+    EXPECT_EQ(context->emulatorState.flags & CF_TRDOS, 0) << "the SYS session is over";
+}
+
 /// @brief Development probe (disabled): reach the BIOS menu, tap PROFI_PROBE_KEYS (see TapKeys), print the standard
 ///        screen and dump the framebuffer to scratch/profi/keys.png
 TEST_F(ProfiBoot_Test, DISABLED_ProbeMenuKeys)
@@ -303,7 +320,7 @@ TEST_F(ProfiBoot_Test, DISABLED_ProbeMenuKeys)
 
 /// @brief Development probe (disabled): run a program as a user would and save screenshots.
 ///        PROFI_PROGRAM = a .tap / .tzx (Sinclair 48 + LOAD "") or a .trd (TR-DOS + RUN); PROFI_MODEL = PROFI / PROFI3;
-///        PROFI_TURBO=1 presses the TURBO switch; PROFI_CONTENTION=0 turns the waits off; PROFI_FRAMES = frames to run after the load starts (default 1500);
+///        PROFI_TURBO=1 / PROFI_CPM=1 press the TURBO / CP/M switch (PROFI_PROGRAM=none: the BIOS only); PROFI_CONTENTION=0 turns the waits off; PROFI_FRAMES = frames to run after the load starts (default 1500);
 ///        PROFI_SHOTS = comma list of frame numbers to save as scratch/profi/<PROFI_NAME>-<frame>.png; PROFI_KEYS =
 ///        keys to tap after the load (TapKeys format), at frame PROFI_KEYS_AT (default: at once) and again every
 ///        PROFI_KEYS_EVERY frames. The emulated test programs of
@@ -313,6 +330,7 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     const char* program = std::getenv("PROFI_PROGRAM");
     if (!program)
         GTEST_SKIP() << "PROFI_PROGRAM not set";
+    const bool bootOnly = std::string(program) == "none";   // PROFI_PROGRAM=none: only the BIOS, with the switches
     const char* model = std::getenv("PROFI_MODEL");
     if (model && std::string(model) != "PROFI")
     {
@@ -325,6 +343,8 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     EmulatorContext* context = _emulator->GetContext();
     if (const char* contention = std::getenv("PROFI_CONTENTION"); contention && contention[0] == '0')
         context->pFeatureManager->setFeature(Features::kContention, false);
+    if (const char* cpm = std::getenv("PROFI_CPM"); cpm && cpm[0] == '1')
+        _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Cpm, true);
     if (const char* turbo = std::getenv("PROFI_TURBO"); turbo && turbo[0] == '1')
         _emulator->SetFrontPanelSwitch(FrontPanelSwitch::Turbo, true);
     const std::string path(program);
@@ -341,7 +361,7 @@ TEST_F(ProfiBoot_Test, DISABLED_RunProgram)
     else
         _emulator->RunNFrames(600, true);   // the BIOS menu
     const bool disk = path.size() > 4 && (path.substr(path.size() - 4) == ".trd" || path.substr(path.size() - 4) == ".TRD");
-    if (!profi)
+    if (!profi || bootOnly)
     {
     }
     else if (disk)
