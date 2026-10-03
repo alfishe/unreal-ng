@@ -11,7 +11,11 @@ come the ISA slots and the network cards (section 3).
   fixed demo runner (the earlier "15 of 21 run" came from a runner bug that called every program running). They run,
   except: GAME_00 (3 programs) and LDConf's `START.BAT` need the "Game" PLD configuration (V10, deferred);
   BUYAN/20X20 stops with interrupts off (open, compare with MAME); WILDSND needs the ISA Wild Sound card;
-  DNTBLINK is investigated separately. FBIRD and NOTHENG run after the CTC fix.
+  FBIRD and NOTHENG run after the CTC fix.
+- dontBlink freezes at 5:05-5:10 (the "flowers" part) with BIOS 3.07: a race in the demo, not an emulation fault
+  ([tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2). An interrupt between `LD SP,#3F74` and
+  `LD HL,(#031D)` makes its SP-repair loop overwrite its own return address. MAME misses the 35-T window by 566
+  clocks. With BIOS 3.06 Hotfix 2 (the default again since 2026-10-03) the emulator plays it to the end.
 - scroller.trd in P128: 60 s at 3.5 MHz with no CNF / turbo change in the PLD journal; the 21 MHz jump does not
   reproduce (likely cured by the PS/2 overrun fix).
 

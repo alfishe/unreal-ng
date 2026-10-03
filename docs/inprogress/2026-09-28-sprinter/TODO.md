@@ -153,6 +153,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
      Known facts per demo (from the authors, via the owner, 2026-10-02): deMarche "dontBlink" does not use the
      GS - it plays through the Covox-Blaster with the data streamed from disk in the interrupt handler (standard
      Sprinter hardware only), so no sound there points at CBL / IDE-in-INT timing, not at the missing ISA.
+     dontBlink's picture freeze at ~5:10 (2026-10-03): a race in the demo's SP-repair log (an INT between
+     `#0D1E LD SP,#3F74` and `#0D25 LD HL,(#031D)` overwrites its return address). Timing luck at clock level, MAME
+     misses it by 566 clocks; analysis [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §2.2. On BIOS 3.06 Hotfix 2 (the default
+     again since 2026-10-03) it plays to the end. The owner checks it on a real board.
   3. Mouse in the GUI through the shared MouseManager (branch `sprinter-mouse` on `mouse-manager`), then S6b
      (ISA / ZX-bus / NeoGS: PROPLAY MOD playback), the S7 remainder (Qt docks, CD).
   4. Designs in progress (2026-10-02): ISA slots ([2026-10-02-sprinter-isa](../2026-10-02-sprinter-isa/tdd.md), owner
