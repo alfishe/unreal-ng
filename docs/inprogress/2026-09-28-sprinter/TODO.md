@@ -107,6 +107,11 @@ parity. Details: [README.md](README.md), [goals-and-requirements.md](goals-and-r
   branch `sprinter-default-bios-306`; [bios-versions.md](bios-versions.md) §6.1): `[ROM] SPRINTER=` in the shipped
   config, catalog labels, automation texts, recipes; 3.04-pinned tests select 3.04 explicitly
   (`SprinterFixture::SelectBios`); the TTD corpus fixture `boot.ttd` re-recorded on 3.07 BETA 1
+- [x] Debugger crash at address 0 during a Sprinter reset (2026-10-02, branch `sprinter-debugger-null-bank`;
+  [crash-debugger-null-window.md](crash-debugger-null-window.md)): `Memory::Reset` put the null 48K ROM role into
+  window 0 until the decoder's reset mapped the Sprinter layout, and the debugger read it from the UI thread. A
+  window is never null now, and tool reads (`DirectReadFromZ80Memory`) follow the Sprinter's read redirect
+  (graphics pages, ISA `#FF`, loader fast RAM) like the CPU does
 
 ## Remaining
 
