@@ -30,7 +30,7 @@ A cell names the tests that print `failed`. What they mean (fusetest README, "Wh
 | `0xbffd read` | port `#BFFD` on the +2A / +3 does not read the selected sound chip register |
 
 unreal-ng passes on all five since the defects fusetest found were fixed
-([2026-09-30-fusetest-core-defects](../../../../docs/inprogress/2026-09-30-fusetest-core-defects/TODO.md)).
+([2026-09-30-fusetest-core-defects](../../../../docs/inprogress/2026-09-30-fusetest-core-defects/DONE.md)).
 Its first run here failed `0xbffd read` on the +2A / +3 because the harness's unreal-ng runner booted every
 machine without its sound chip (the test runner leaves that slot empty); the runner now fits the AY on every
 machine but the 48K.

@@ -1,6 +1,8 @@
 # TODO — VDAC2 (FT812) for TS-Conf
 
-Status 2026-10-01: research done, design written, nothing implemented.
+Status 2026-10-03: implemented on master: the VDAC2 card with the vendored eve-emu FT812 library (`core/src/3rdparty/eve-emu`, vendored, not a submodule), the `TSL-VDAC2` machine, TTD, line-budget metrics with an FT812 Debug window, bus capture, every automation surface, tests and the recipe `.recipe/machines/tsconf-vdac2.md`. Left: L4 calibration on a real card, the TS-Conf per-step A/B benchmark, TTD v2 changed-pages `Vdac2Memory`, further renderer acceleration (paused), integration phases I3-I5 and the design verification list; the older checklist below predates the implementation (its "own repository + submodule" items became "vendored"). PLAN #41 / #40.
+
+History (2026-10-01): research done, design written, nothing implemented.
 
 - Design: [vdac2-tdd.md](vdac2-tdd.md).
 - Games for testing (untracked): `testdata/machines/tsconf/vdac2/` (R-Type 1.01, Zuma 1.1,

@@ -1,6 +1,6 @@
 # TODO — emulator debugger survey (2026-09-28)
 
-**Status:** research. All 21 surveys written; the IDA Pro answers for the two
+**Status:** research. All 21 surveys and the 44 IDA questions are written (2026-09-28); the IDA answers for the two closed-source emulators (Spectaculator, ZXSpin) are not in the repository yet. Input of the [debugger family](../2026-09-28-debugger-family/TODO.md); checked against master 2026-10-03.
 closed-source emulators are pending.
 
 Index: [README.md](README.md). Consumer: [debugger family](../2026-09-28-debugger-family/TODO.md).
