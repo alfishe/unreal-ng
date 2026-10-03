@@ -1,5 +1,6 @@
 #include "ttdv1feeder.h"
 
+#include <array>
 #include <cstring>
 #include <unordered_map>
 
@@ -120,7 +121,35 @@ bool FeedV1Session(const TimeTravelManager& v1, TimeTravelEngine& engine, std::s
         gs.bytes = static_cast<uint32_t>(gsRam.size());
         regions.push_back(gs);
     }
-    if (!engine.BeginSession(regions, error))
+    // The device table from the file: every device that has a blob, sized by
+    // its largest state (the General Sound card without its RAM)
+    std::array<uint32_t, 256> stateSize{};
+    std::array<bool, 256> variable{};
+    for (size_t i = 0; i < count; ++i)
+        for (const auto& [id, blob] : v1.GetCheckpoint(i)->peripheralBlobs)
+        {
+            uint32_t size = 0;
+            if (id == gsId && hasGs && SplitV1GeneralSound(blob, gsFixed, gsRam))
+                size = static_cast<uint32_t>(gsFixed.size());
+            else
+                size = static_cast<uint32_t>(TTDPeripheralRegistry::DecodeBlob(id, blob).size());
+            if (stateSize[id] != 0 && stateSize[id] != size)
+                variable[id] = true;
+            stateSize[id] = std::max(stateSize[id], size);
+        }
+    std::vector<TTDDeviceEntry> devices;
+    for (uint32_t id = 0; id < 256; ++id)
+        if (stateSize[id] != 0)
+        {
+            TTDDeviceEntry e;
+            e.descriptor.legacyId = static_cast<PeripheralId>(id);
+            e.descriptor.type = static_cast<TTDDeviceType>(id);
+            e.descriptor.instance = "id" + std::to_string(id);
+            e.descriptor.stateSize = stateSize[id];
+            e.descriptor.variableSize = variable[id];
+            devices.push_back(e);
+        }
+    if (!engine.BeginSession(regions, std::move(devices), error))
         return false;
 
     std::vector<uint8_t> image(size_t(pieces) * kTTDPieceSize, 0);

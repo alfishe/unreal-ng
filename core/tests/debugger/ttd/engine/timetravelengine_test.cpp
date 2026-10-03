@@ -329,16 +329,17 @@ TEST(TimeTravelEngine_RestoreDevices_Test, EachProblemIsReportedWithTheDevice)
     r.memory = ram.data();
     r.pieces = 1;
     r.bytes = kTTDPieceSize;
-    ASSERT_TRUE(engine.BeginSession({r}, err)) << err;
-
     FakeDevice tape(PeripheralId::Tape, true);        // no state at the checkpoint, can reset
     FakeDevice covox(PeripheralId::Covox, false);     // no state, cannot reset
     FakeDevice mouse(PeripheralId::KempstonMouse, false);   // state of the wrong size
     FakeDevice beta(PeripheralId::BetaDisk, false);   // restored, firmware changed since
     beta.firmware = 0x1111;
-    ASSERT_TRUE(engine.SetDevices({{tape.TTDDescribe(), &tape, nullptr}, {covox.TTDDescribe(), &covox, nullptr},
-                                   {mouse.TTDDescribe(), &mouse, nullptr}, {beta.TTDDescribe(), &beta, nullptr}},
-                                  err))
+    ASSERT_TRUE(engine.BeginSession({r},
+                                    {{tape.TTDDescribe(), &tape, nullptr},
+                                     {covox.TTDDescribe(), &covox, nullptr},
+                                     {mouse.TTDDescribe(), &mouse, nullptr},
+                                     {beta.TTDDescribe(), &beta, nullptr}},
+                                    err))
         << err;
     beta.firmware = 0x2222;
 

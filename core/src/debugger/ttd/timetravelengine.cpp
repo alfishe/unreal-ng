@@ -34,12 +34,32 @@ TimeTravelEngine::~TimeTravelEngine()
 
 /// region <Session>
 
-bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, std::string& error)
+bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegions,
+                                    std::vector<TTDDeviceEntry> devices, std::string& error)
 {
-    if (regions.empty())
+    if (memoryRegions.empty())
     {
         error = "a session needs at least one region";
         return false;
+    }
+    TTDDeviceTable table;
+    if (!table.Build(std::move(devices), error))
+        return false;
+    // Each device's state as a region of its own: 4 bytes of length, then the state
+    std::vector<TTDRegionDesc> regions = memoryRegions;
+    std::array<int32_t, 256> deviceRegionOf;
+    deviceRegionOf.fill(-1);
+    for (size_t k = 0; k < table.Entries().size(); ++k)
+    {
+        const TTDDeviceDescriptor& d = table.Entries()[k].descriptor;
+        TTDRegionDesc r;
+        r.id = static_cast<TTDRegionId>(static_cast<uint16_t>(TTDRegionId::DeviceStateFirst) + k);
+        r.name = "device." + d.instance;
+        r.ownerType = static_cast<uint16_t>(d.legacyId);
+        r.bytes = 4 + d.stateSize;
+        r.pieces = (r.bytes + kTTDPieceSize - 1) / kTTDPieceSize;
+        deviceRegionOf[static_cast<uint8_t>(d.legacyId)] = static_cast<int32_t>(regions.size());
+        regions.push_back(r);
     }
     std::unordered_set<uint16_t> ids;
     for (const TTDRegionDesc& r : regions)
@@ -71,12 +91,17 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& regions, s
     _lastSnapshot.assign(_regions.size(), nullptr);
     _regionPayload.assign(_regions.size(), 0);
     _regionVersions.assign(_regions.size(), 0);
+    _devices = std::move(table);
+    _deviceRegionOf = deviceRegionOf;
+    _deviceScratch.assign(_regions.size(), {});
     _open = true;
     return true;
 }
 
 void TimeTravelEngine::EndSession()
 {
+    _deviceRegionOf.fill(-1);
+    _deviceScratch.clear();
     _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
@@ -147,12 +172,57 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.start = input.start;
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
-    if (input.deviceBlobs)
+
+    // Device states: each laid out in its region (length, state, zero padding)
+    // and offered whole; the comparison below keeps only the pieces that changed
+    std::vector<TTDChangedPiece> devicePieces;
+    std::array<bool, 256> seen{};
+    auto layDevice = [&](uint8_t id, const uint8_t* bytes, size_t size) {
+        seen[id] = true;
+        const int32_t r = _deviceRegionOf[id];
+        if (r < 0)
+        {
+            cp.unclaimedDevices.push_back(id);
+            return;
+        }
+        const TTDRegionDesc& desc = _regions[static_cast<size_t>(r)];
+        std::vector<uint8_t>& scratch = _deviceScratch[static_cast<size_t>(r)];
+        scratch.assign(size_t(desc.pieces) * kTTDPieceSize, 0);
+        const uint32_t length = size + 4 <= desc.bytes ? static_cast<uint32_t>(size) : 0;   // does not fit: no state
+        std::memcpy(scratch.data(), &length, 4);
+        if (length)
+            std::memcpy(scratch.data() + 4, bytes, length);
+    };
+    if (!input.deviceStates.empty())
     {
-        cp.deviceBlobs = *input.deviceBlobs;
-        for (const auto& blob : cp.deviceBlobs)
-            _lastWork.deviceBlobBytes += blob.second.size();
+        for (const TTDDeviceStateInput& d : input.deviceStates)
+            layDevice(d.id, d.bytes, d.size);
     }
+    else if (input.deviceBlobs)
+    {
+        for (const auto& [id, blob] : *input.deviceBlobs)
+        {
+            const std::vector<uint8_t> state = TTDPeripheralRegistry::DecodeBlob(id, blob);
+            layDevice(id, state.data(), state.size());
+        }
+    }
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+    {
+        if (!IsDeviceStateRegion(r))
+            continue;
+        std::vector<uint8_t>& scratch = _deviceScratch[r];
+        if (!seen[static_cast<uint8_t>(_regions[r].ownerType)])
+            scratch.assign(size_t(_regions[r].pieces) * kTTDPieceSize, 0);   // no state this frame: length 0
+        for (uint32_t p = 0; p < _regions[r].pieces; ++p)
+            devicePieces.push_back({r, p, scratch.data() + size_t(p) * kTTDPieceSize});
+    }
+    const uint64_t devicePayloadBefore = [&] {
+        uint64_t sum = 0;
+        for (uint32_t r = 0; r < _regions.size(); ++r)
+            if (IsDeviceStateRegion(r))
+                sum += _regionPayload[r];
+        return sum;
+    }();
     const size_t index = _checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
     const bool snapshot = index % _snapshotInterval == 0;
@@ -162,7 +232,8 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
         TTDEngineCheckpoint::RegionRefs refs;
         refs.region = r;
         refs.firstChange = static_cast<uint32_t>(_changes.size());
-        for (const TTDChangedPiece& c : input.changed)
+        const std::vector<TTDChangedPiece>& pieces = IsDeviceStateRegion(r) ? devicePieces : input.changed;
+        for (const TTDChangedPiece& c : pieces)
         {
             if (c.region != r)
                 continue;
@@ -220,6 +291,11 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
         if (refs.changeCount > 0 || refs.snapshot)
             cp.regions.push_back(refs);
     }
+
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+        if (IsDeviceStateRegion(r))
+            _lastWork.deviceBlobBytes += _regionPayload[r];
+    _lastWork.deviceBlobBytes -= devicePayloadBefore;
 
     _checkpoints.push_back(std::move(cp));
     _streams.CaptureEnabled(input.position);
@@ -411,11 +487,28 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     for (const TTDEngineCheckpoint& cp : _checkpoints)
     {
         h.checkpoints += cp.regions.capacity() * sizeof(cp.regions[0]);
-        for (const auto& [id, blob] : cp.deviceBlobs)
-            h.deviceBlobs += blob.capacity();
+        h.deviceBlobs += cp.unclaimedDevices.capacity();
     }
     h.frameTable = _frames.HeapBytes();
     return h;
+}
+
+bool TimeTravelEngine::DeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out) const
+{
+    out.clear();
+    const int32_t r = _deviceRegionOf[id];
+    if (r < 0 || index >= _checkpoints.size())
+        return false;
+    const TTDRegionDesc& desc = _regions[static_cast<size_t>(r)];
+    std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize, 0);
+    if (!RestoreRegion(index, static_cast<uint32_t>(r), bytes.data()).Ok())
+        return false;
+    uint32_t length = 0;
+    std::memcpy(&length, bytes.data(), 4);
+    if (length == 0 || length + 4 > desc.bytes)
+        return false;
+    out.assign(bytes.begin() + 4, bytes.begin() + 4 + length);
+    return true;
 }
 
 TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestoreContext& context)
@@ -440,8 +533,8 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             continue;
         TTDRestoreIssue issue;
         issue.device = d.Key();
-        const auto blob = cp->deviceBlobs.find(id);
-        if (blob == cp->deviceBlobs.end() || blob->second.empty())
+        std::vector<uint8_t> state;
+        if (!DeviceState(index, id, state) || state.empty())
         {
             issue.kind = TTDRestoreIssueKind::DeviceMissingState;
             issue.action = e.device->TTDResetToPowerOn() ? TTDLiveStateAction::ResetToPowerOn
@@ -452,7 +545,6 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             result.Add(issue);
             continue;
         }
-        const std::vector<uint8_t> state = TTDPeripheralRegistry::DecodeBlob(id, blob->second);
         bool loaded = false;
         if (e.withoutRegions)
             loaded = !state.empty() && e.withoutRegions->TTDLoadStateWithoutRegions(state.data(), state.size());
@@ -481,7 +573,7 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             result.Add(issue);
         }
     }
-    for (const auto& [id, blob] : cp->deviceBlobs)
+    for (const uint8_t id : cp->unclaimedDevices)
         if (!claimed[id])
         {
             TTDRestoreIssue issue;

@@ -130,6 +130,12 @@ public:
     /// one device (before compression: the work of reading the state)
     uint64_t LastCaptureStateBytes() const { return _lastStateTotal; }
     uint32_t LastCaptureStateBytes(uint8_t id) const { return id < _lastStateBytes.size() ? _lastStateBytes[id] : 0; }
+    /// The raw state the last CaptureAll serialized for device @p id (empty when none)
+    const std::vector<uint8_t>& LastCaptureState(uint8_t id) const
+    {
+        static const std::vector<uint8_t> none;
+        return id < _lastStates.size() ? _lastStates[id] : none;
+    }
 
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
@@ -162,6 +168,7 @@ private:
     std::vector<ITTDRegionSource*> _regionSources;
     uint64_t _notRecorded = 0;
     mutable std::array<uint32_t, 64> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id
+    mutable std::array<std::vector<uint8_t>, 64> _lastStates;   ///< the raw states of the last CaptureAll, by id
     mutable uint64_t _lastStateTotal = 0;
 
 

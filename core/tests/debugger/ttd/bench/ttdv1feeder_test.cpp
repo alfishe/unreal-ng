@@ -139,20 +139,20 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
             // Device state: identical blobs, except General Sound, whose RAM the
             // engine keeps as a region (its blob holds the registers only)
             constexpr uint8_t gsId = static_cast<uint8_t>(ttd::PeripheralId::GeneralSound);
-            ASSERT_EQ(got->deviceBlobs.size(), want->peripheralBlobs.size()) << "checkpoint " << i;
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
-                ASSERT_TRUE(got->deviceBlobs.count(id)) << "device " << int(id) << " at checkpoint " << i;
+                std::vector<uint8_t> state;
+                ASSERT_TRUE(engine.DeviceState(i, id, state)) << "device " << int(id) << " at checkpoint " << i;
                 if (id != gsId)
                 {
-                    EXPECT_EQ(got->deviceBlobs.at(id), blob) << "device " << int(id) << " at checkpoint " << i;
+                    EXPECT_TRUE(state == ttd::TTDPeripheralRegistry::DecodeBlob(id, blob))
+                        << "device " << int(id) << " at checkpoint " << i;
                     continue;
                 }
                 std::vector<uint8_t> fixed, gsRam, engineGsRam, present;
                 ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(blob, fixed, gsRam));
-                EXPECT_EQ(ttd::TTDPeripheralRegistry::DecodeBlob(gsId, got->deviceBlobs.at(id)), fixed)
-                    << "General Sound registers at checkpoint " << i;
-                ASSERT_EQ(engine.Regions().size(), 2u);
+                EXPECT_EQ(state, fixed) << "General Sound registers at checkpoint " << i;
+                ASSERT_EQ(engine.Regions()[1].name, "gs.ram");
                 engineGsRam.assign(gsRam.size(), 0);
                 ASSERT_TRUE(engine.RestoreRegion(i, 1, engineGsRam.data(), &present).Ok());
                 ASSERT_TRUE(engineGsRam == gsRam) << "General Sound RAM at checkpoint " << i;

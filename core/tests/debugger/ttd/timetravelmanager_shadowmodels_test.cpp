@@ -114,14 +114,13 @@ protected:
             EXPECT_EQ(std::memcmp(&got->chipset, &want->chipset, sizeof(want->chipset)), 0) << "chipset, checkpoint " << i;
             // Device state: identical blobs, except a device whose memory the engine
             // keeps as a region - then v1's state = the engine's state + that region
-            ASSERT_EQ(got->deviceBlobs.size(), want->peripheralBlobs.size()) << "checkpoint " << i;
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
-                ASSERT_TRUE(got->deviceBlobs.count(id)) << "device " << int(id) << ", checkpoint " << i;
-                if (got->deviceBlobs.at(id) == blob)
-                    continue;
+                std::vector<uint8_t> rebuilt;
+                ASSERT_TRUE(_engine.DeviceState(i, id, rebuilt)) << "device " << int(id) << ", checkpoint " << i;
                 std::vector<uint8_t> full = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
-                std::vector<uint8_t> rebuilt = ttd::TTDPeripheralRegistry::DecodeBlob(id, got->deviceBlobs.at(id));
+                if (rebuilt == full)
+                    continue;
                 if (id == static_cast<uint8_t>(ttd::PeripheralId::Vdac2Memory))
                 {
                     // Zero runs dropped in v1's blob; the engine's is the header alone
@@ -133,7 +132,7 @@ protected:
                 }
                 bool found = false;
                 for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
-                    if (_engine.Regions()[r].ownerType == id)
+                    if (_engine.Regions()[r].ownerType == id && !_engine.IsDeviceStateRegion(r))
                     {
                         std::vector<uint8_t> mem(size_t(_engine.Regions()[r].pieces) * ttd::kTTDPieceSize, 0);
                         ASSERT_TRUE(_engine.RestoreRegion(i, r, mem.data()).Ok());
@@ -286,8 +285,9 @@ TEST_F(TimeTravelManager_ShadowModels_Fixture, Vdac2MemoryWrittenWhileRecording)
     _v1->SetShadowEngine(nullptr);
 
     size_t vdac2Regions = 0;
-    for (const ttd::TTDRegionDesc& r : _engine.Regions())
-        vdac2Regions += r.ownerType == static_cast<uint16_t>(ttd::PeripheralId::Vdac2Memory);
+    for (uint32_t r = 0; r < _engine.Regions().size(); ++r)
+        vdac2Regions += _engine.Regions()[r].ownerType == static_cast<uint16_t>(ttd::PeripheralId::Vdac2Memory) &&
+                        !_engine.IsDeviceStateRegion(r);
     ASSERT_EQ(vdac2Regions, 7u) << "RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT";
     uint32_t ramG = 0;
     while (_engine.Regions()[ramG].name != "vdac2.RAM_G")

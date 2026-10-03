@@ -264,13 +264,14 @@ TEST(TimeTravelManagerGeneralSound_ShadowRegions_Test, CardRamIsARegion_Register
     for (size_t i = 0; i < engine.CheckpointCount(); ++i)
     {
         const ttd::TTDCheckpoint* want = v1->GetCheckpoint(i);
-        const ttd::TTDEngineCheckpoint* got = engine.Checkpoint(i);
         ASSERT_TRUE(ttd::bench::SplitV1GeneralSound(want->peripheralBlobs.at(gsId), fixed, ram));
-        EXPECT_EQ(ttd::TTDPeripheralRegistry::DecodeBlob(gsId, got->deviceBlobs.at(gsId)), fixed) << "registers, checkpoint " << i;
+        std::vector<uint8_t> state;
+        ASSERT_TRUE(engine.DeviceState(i, gsId, state)) << "checkpoint " << i;
+        EXPECT_EQ(state, fixed) << "registers, checkpoint " << i;
         engineRam.assign(ram.size(), 0);
         ASSERT_TRUE(engine.RestoreRegion(i, static_cast<uint32_t>(region), engineRam.data()).Ok());
         ASSERT_TRUE(engineRam == ram) << "card RAM, checkpoint " << i;
-        engineBlobBytes += got->deviceBlobs.at(gsId).size();
+        engineBlobBytes += state.size();
         v1BlobBytes += want->peripheralBlobs.at(gsId).size();
     }
     EXPECT_LT(engineBlobBytes * 4, v1BlobBytes) << "the engine's blob carries the registers, not the RAM";

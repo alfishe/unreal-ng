@@ -19,6 +19,7 @@
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -75,7 +76,13 @@ protected:
             ASSERT_GE(v, 0) << "v1 has no checkpoint of frame " << got->position.frame;
             const ttd::TTDCheckpoint* want = _v1->GetCheckpoint(static_cast<size_t>(v));
             EXPECT_EQ(std::memcmp(&got->cpu, &want->cpu, sizeof(want->cpu)), 0) << "CPU, frame " << got->position.frame;
-            EXPECT_EQ(got->deviceBlobs, want->peripheralBlobs) << "devices, frame " << got->position.frame;
+            for (const auto& [id, blob] : want->peripheralBlobs)
+            {
+                std::vector<uint8_t> state;
+                ASSERT_TRUE(_engine.DeviceState(i, id, state)) << "device " << int(id) << ", frame " << got->position.frame;
+                EXPECT_TRUE(state == ttd::TTDPeripheralRegistry::DecodeBlob(id, blob))
+                    << "device " << int(id) << ", frame " << got->position.frame;
+            }
             ASSERT_TRUE(ttd::bench::DecodeV1Ram(*_v1, static_cast<size_t>(v), v1Ram, v1Present, err)) << err;
             engineRam.assign(v1Ram.size(), 0);
             ASSERT_TRUE(_engine.RestoreRegion(i, 0, engineRam.data(), &enginePresent).Ok());
@@ -104,8 +111,13 @@ TEST_F(TimeTravelManager_Shadow_Test, EveryRecordedFrameMatchesV1_AndTheLastMatc
                   0)
             << "page " << page;
 
-    // The engine stored only real changes: far fewer versions than v1's key frames re-store
-    EXPECT_LT(_engine.PieceStore().LiveVersions(), _v1->GetPageStore().GetUsedSlots());
+    // The engine stored only real changes: far fewer memory versions than v1's
+    // key frames re-store (device states, which v1 keeps as blobs, not counted)
+    uint64_t memoryVersions = 0;
+    for (uint32_t r = 0; r < _engine.Regions().size(); ++r)
+        if (!_engine.IsDeviceStateRegion(r))
+            memoryVersions += _engine.RegionVersionCount(r);
+    EXPECT_LT(memoryVersions, _v1->GetPageStore().GetUsedSlots());
 }
 
 TEST_F(TimeTravelManager_Shadow_Test, ResumeFromThePastStartsANewEngineSession)

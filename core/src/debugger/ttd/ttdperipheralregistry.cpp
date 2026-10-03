@@ -101,6 +101,8 @@ void TTDPeripheralRegistry::CaptureAll(
     outBlobs.clear();
     _lastStateBytes.fill(0);
     _lastStateTotal = 0;
+    for (std::vector<uint8_t>& s : _lastStates)
+        s.clear();   // keeps the capacity: no allocation per frame
 
     for (const auto& [id, device] : _devices)
     {
@@ -119,7 +121,10 @@ void TTDPeripheralRegistry::CaptureAll(
 
         outBlobs[id] = EncodeBlob(id, currentState.data(), currentState.size());
         if (id < _lastStateBytes.size())
+        {
             _lastStateBytes[id] = static_cast<uint32_t>(currentState.size());
+            _lastStates[id].assign(currentState.begin(), currentState.end());
+        }
         _lastStateTotal += currentState.size();
     }
 }

@@ -539,6 +539,13 @@ public:
         b.versions = _engine.RegionVersionCount(0);
         for (uint32_t r = 1; r < _engine.Regions().size(); ++r)
         {
+            if (_engine.IsDeviceStateRegion(r))
+            {
+                // Device states (Phase 2): stored only when they change, as differences
+                b.deviceBlobs += _engine.RegionPayloadBytes(r);
+                b.versions += _engine.RegionVersionCount(r);
+                continue;
+            }
             b.deviceRegions += _engine.RegionPayloadBytes(r);
             if (V1Lacks(_engine.Regions()[r].id))
             {
@@ -550,9 +557,6 @@ public:
         b.pageRefs = _engine.ReferenceBytes();
         for (size_t i = 0; i < _engine.CheckpointCount(); i++)
         {
-            const TTDEngineCheckpoint* cp = _engine.Checkpoint(i);
-            for (const auto& blob : cp->deviceBlobs)
-                b.deviceBlobs += blob.second.size();
             b.checkpointCore += sizeof(TTDCpuState) + sizeof(TTDChipsetState);
         }
         return b;

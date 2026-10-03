@@ -16,6 +16,7 @@
 /// as copy-on-write blocks shared with the previous one. A restore starts
 /// from the nearest full table and applies the recorded changes forward.
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -104,7 +105,9 @@ struct TTDEngineCheckpoint
     uint32_t parent = kNoParent;   ///< the checkpoint this one continues (branches share their parent's past)
     TTDCpuState cpu;
     TTDChipsetState chipset;
-    std::unordered_map<uint8_t, std::vector<uint8_t>> deviceBlobs;
+    /// v1 ids of device states this frame offered for devices the table
+    /// does not have (reported as DeviceNotPresent on restore); usually empty
+    std::vector<uint8_t> unclaimedDevices;
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -185,17 +188,30 @@ public:
     /// region <Session>
 
     /// Start a session over @p regions (fixed for the session in Phase 1)
-    bool BeginSession(const std::vector<TTDRegionDesc>& regions, std::string& error);
+    bool BeginSession(const std::vector<TTDRegionDesc>& regions, std::string& error)
+    {
+        return BeginSession(regions, {}, error);
+    }
+    /// A session with memory @p regions and @p devices (Phase 2): the device
+    /// table is checked and put in restore order, and each device gets a
+    /// region of its own holding its state (4 bytes of length, then the
+    /// state), stored like memory: only when it changes, as a difference
+    bool BeginSession(const std::vector<TTDRegionDesc>& regions, std::vector<TTDDeviceEntry> devices,
+                      std::string& error);
     /// Drop the session and everything it holds
     void EndSession();
 
-    /// The recorded machine's devices (Phase 2, Step 1): checked and put in
-    /// restore order; kept until the session ends. @return false with @p error
-    bool SetDevices(std::vector<TTDDeviceEntry> devices, std::string& error)
-    {
-        return _devices.Build(std::move(devices), error);
-    }
+    /// The recorded machine's devices (Phase 2), in restore order
     const TTDDeviceTable& Devices() const { return _devices; }
+    /// The state of the device with v1 id @p id at checkpoint @p index; false
+    /// when the device is not in the table or had no state there
+    bool DeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out) const;
+    /// Whether region @p region holds a device's state (not memory)
+    bool IsDeviceStateRegion(uint32_t region) const
+    {
+        return region < _regions.size() && static_cast<uint16_t>(_regions[region].id) >=
+                                               static_cast<uint16_t>(TTDRegionId::DeviceStateFirst);
+    }
 
     /// Restore every device of the table from checkpoint @p index, in restore
     /// order, then call their after-restore hooks. Run after the memory regions
@@ -328,6 +344,8 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
+    std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
+    std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
     TTDDeviceTable _devices;
     std::vector<uint64_t> _regionPayload;
     std::vector<uint64_t> _regionVersions;

@@ -12,6 +12,7 @@
 
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <cassert>
 #include <chrono>
@@ -3242,18 +3243,13 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
 
-        if (!engine.BeginSession(regions, error))
-        {
-            MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());
-            _shadowDeviceRegions.clear();
-            return;
-        }
         // The device table, from the same registry v1 records from
         std::vector<TTDDeviceEntry> devices;
         for (const auto& [id, device] : _peripherals.Devices())
             if (device && device->TTDStateSize() != 0)
                 devices.push_back({device->TTDDescribe(), device, nullptr});
-        // A device the engine stores without its region memory loads through its region source
+        // A device the engine stores without its region memory loads through
+        // its region source, and its state is that smaller one
         for (ITTDRegionSource* source : _peripherals.RegionSources())
         {
             uint8_t id = 0;
@@ -3262,12 +3258,15 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
                 continue;
             for (TTDDeviceEntry& e : devices)
                 if (static_cast<uint8_t>(e.descriptor.legacyId) == id)
+                {
                     e.withoutRegions = source;
+                    e.descriptor.stateSize = static_cast<uint32_t>(probe.size());
+                    e.descriptor.variableSize = false;
+                }
         }
-        if (!engine.SetDevices(std::move(devices), error))
+        if (!engine.BeginSession(regions, std::move(devices), error))
         {
-            MLOGWARNING("TimeTravelManager: shadow engine refused the device set: %s", error.c_str());
-            engine.EndSession();
+            MLOGWARNING("TimeTravelManager: shadow engine refused the session: %s", error.c_str());
             _shadowDeviceRegions.clear();
             return;
         }
@@ -3280,26 +3279,29 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     in.start = GlobalT(out.time);
     in.cpu = out.cpu;
     in.chipset = out.chipset;
-    in.deviceBlobs = &out.peripheralBlobs;
-
-    // A device whose blob also carries its region memory (General Sound)
-    // gives the engine its state without that memory
-    std::unordered_map<uint8_t, std::vector<uint8_t>> engineBlobs;
-    std::vector<uint8_t> stripped;
+    // Device states, raw, as the capture serialized them; a device whose
+    // state also carries its region memory (General Sound) gives the engine
+    // its state without that memory
+    std::deque<std::vector<uint8_t>> stripped;   // stable addresses while it grows
     in.deviceStateBytes = _peripherals.LastCaptureStateBytes();
+    std::array<const std::vector<uint8_t>*, 256> without{};
     for (ITTDRegionSource* source : _peripherals.RegionSources())
     {
         uint8_t id = 0;
-        if (!source->TTDStateWithoutRegions(id, stripped) || !out.peripheralBlobs.count(id))
-            continue;
-        if (in.deviceBlobs != &engineBlobs)
+        stripped.emplace_back();
+        if (!source->TTDStateWithoutRegions(id, stripped.back()) || !out.peripheralBlobs.count(id))
         {
-            engineBlobs = out.peripheralBlobs;
-            in.deviceBlobs = &engineBlobs;
+            stripped.pop_back();
+            continue;
         }
-        engineBlobs[id] = TTDPeripheralRegistry::EncodeBlob(id, stripped.data(), stripped.size());
+        without[id] = &stripped.back();
         // The engine serializes the state without the region memory
-        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.size();
+        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.back().size();
+    }
+    for (const auto& [id, blob] : out.peripheralBlobs)
+    {
+        const std::vector<uint8_t>& raw = without[id] ? *without[id] : _peripherals.LastCaptureState(id);
+        in.deviceStates.push_back({id, raw.data(), raw.size()});
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);
