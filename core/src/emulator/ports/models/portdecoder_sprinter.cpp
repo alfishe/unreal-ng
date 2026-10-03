@@ -21,6 +21,7 @@
 #include "common/stringhelper.h"
 #include <map>
 #include "emulator/video/screen.h"
+#include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/video/sprinter/sprintervideorenderer.h"
 
 namespace
@@ -55,8 +56,9 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     _intSource.SetCovoxBlaster(&_cbl);
     if (_context->pSoundManager)
         _context->pSoundManager->attachModelAudioSource(&_cbl);
-    // A video RAM byte that changes the picture: the beam is drawn up to now with the old one first
-    _vram.SetBeforeChangeListener([this]() { CatchUpScreen(); });
+    // A video RAM byte that changes the picture: the beam is drawn up to the moment the byte lands with the
+    // old one first, and the font byte of a square the beam is in stays latched (ScreenSprinter::CatchUpToWrite)
+    _vram.SetBeforeChangeListener([this]() { CatchUpScreenToWrite(); });
     // Mode table and palette writes: counted per frame by the video change log (/video/changes)
     _vram.SetTableWriteListener([this](uint32_t address, bool palette) {
         if (_context->pScreen)
@@ -704,6 +706,18 @@ void PortDecoder_Sprinter::CatchUpScreen()
         _context->pScreen->UpdateScreen();
 }
 
+void PortDecoder_Sprinter::CatchUpScreenToWrite()
+{
+    // The screen is created before the decoder and replaced on a model switch
+    if (_context->pScreen != _screenSeen)
+    {
+        _screenSeen = _context->pScreen;
+        _screen = dynamic_cast<ScreenSprinter*>(_context->pScreen);
+    }
+    if (_screen && _context->pCore && _context->pCore->GetZ80())
+        _screen->CatchUpToWrite();
+}
+
 /// endregion </Hooks>
 
 /// region <Port table>
@@ -1057,6 +1071,7 @@ void PortDecoder_Sprinter::StandardWriteCode(uint8_t code, uint16_t port, uint8_
         case SprinterCode::Port7FFD:
         case 0xC9:
         {
+            CatchUpScreen();  // bit 3: the Spectrum screen (font / attribute block) the beam reads
             const uint8_t before = _pld.pn;
             _pld.pn = value;
             if (!(_pld.cnf & 0x80))

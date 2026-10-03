@@ -92,7 +92,20 @@ public:
     /// The inputs the picture is drawn with now (tests, the debug mapper)
     SprinterVideoInputs CurrentInputs() const;
 
+    /// A CPU (or accelerator) write is about to change video RAM: draw the beam up to the moment the byte
+    /// lands, with the old contents. The callback runs at the end of the 3-T write cycle (cpu->t); the
+    /// PLD stores the byte in its next write slot after /WR (VIDEO2.TDF E_WR, VCM state 2: every half T),
+    /// about 1.5 T into the cycle, so the beam positions before the cycle's end - kWriteLandsBeforeEndT
+    /// still read the old byte (MAME's update_now in ram_w / vram_w; ScreenZX does the same for #FE)
+    void CatchUpToWrite();
+    static constexpr uint32_t kWriteLandsBeforeEndT = 1;
+
 private:
+    /// Draw [_prevTstate, end) - every beam position before `end` - with the state of now
+    void DrawTo(uint32_t end);
+    /// Before a write lands at base T `t`: if the beam is inside a text / Spectrum square there, keep the
+    /// font byte the video logic latched at the square's start (SprinterVideoInputs::FontLatch)
+    void LatchFont(uint32_t t);
     PortDecoder_Sprinter* Decoder() const;
     /// Apply the PLD's frame height (codes #2C / #2D) at a frame start
     void ApplyFrameLines();
@@ -102,5 +115,9 @@ private:
     mutable PortDecoder_Sprinter* _decoder = nullptr;
     mutable SprinterVideoView _view;
     uint16_t _frameLines = 320;
+    SprinterVideoInputs::FontLatch _fontLatch;
+    uint64_t _fontLatchFrame = 0;  ///< the frame _fontLatch belongs to (frame_counter)
+    uint32_t _fontLatchCheckedT = ~0u;  ///< the last moment LatchFont looked at, and its frame
+    uint64_t _fontLatchCheckedFrame = 0;
     std::vector<uint16_t> _zxPlaneB;  // the ZX frame's plane B for the temporal effect (only while it runs)
 };
