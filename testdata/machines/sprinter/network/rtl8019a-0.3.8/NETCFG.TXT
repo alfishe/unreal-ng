@@ -1,0 +1,67 @@
+NETCFG.EXE
+
+Reads NET.CFG and publishes parsed values into DSS environment
+variables, or displays them.  See HOWTO.TXT for the full list of
+recognised NET.CFG keys and the resulting env vars.
+
+Usage
+
+NETCFG          show current NET_* env values
+NETCFG -i       init: load NET.CFG into NET_* env vars
+NETCFG -c       check NET.CFG syntax (no env writes)
+NETCFG -d       delete all NET_* env vars
+NETCFG /?       help (-? -h also accepted)
+
+The MAC address
+
+With no RTL_MAC= line in NET.CFG, NETCFG -i reads the address out of
+the card's own PROM and publishes it as NET_MAC.  That probe needs to
+find the card, so -i publishes NET_RTL_HW and NET_RTL_RESET to the
+environment before touching the hardware -- the driver reads both while
+locating the chip.
+
+If the address cannot be obtained, NETCFG -i fails: without
+NET_MAC nothing downstream can run, so leaving the environment in that
+state and reporting success would only move the error somewhere less
+informative.  The reason decides the exit code:
+
+[E2] card not found; check RTL_HW in NET.CFG
+[E3] card found but PROM read failed
+[E4] no MAC in card PROM; add RTL_MAC= to NET.CFG
+
+The remaining variables are still published, so a plain NETCFG
+afterwards shows how far the configuration got.  The fix is either to
+make the card reachable (check RTL_HW) or to state the address by hand
+with RTL_MAC=.
+
+-i also settles how the card may be reset.  With no RTL_RESET= line
+the driver reads the chip ID and pulses the board reset port at
+BASE+0x1F only for a genuine Realtek; a clone gets the soft path and
+
+[W03] non-Realtek clone: board reset port skipped
+
+NETCFG -i then publishes NET_RTL_RESET=SOFT so later utilities and
+UNETRTL.DLL inherit the answer instead of re-probing.  After a Realtek
+the variable is deliberately left unset, so replacing the card with a
+clone cannot carry a stale HARD over into a machine freeze.
+
+The status is returned through DSS_EXIT, so a batch flow that can test
+it should stop before IFUP.  Note that every .BAT shipped with this
+kit and with the sibling Wi-Fi kit is a flat command sequence -- whether
+the DSS batch interpreter supports IF ERRORLEVEL / GOTO has not been
+verified here.
+
+NETCFG.EXE is the only utility in the kit that opens NET.CFG.
+All other utilities read from environment variables only. The file is
+resolved beside the running NETCFG.EXE through DSS APPINFO, not
+relative to the caller's current directory. -i and -c print
+[C0] CFG=<resolved path> before opening it.
+
+Exit codes
+
+Code  |  Meaning
+0  |  OK
+1  |  Usage
+2  |  Card not found (-i, no MAC obtainable)
+3  |  Card found but its PROM could not be read (-i)
+4  |  Config error: bad/missing NET.CFG, or no MAC in PROM

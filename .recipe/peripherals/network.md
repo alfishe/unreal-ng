@@ -19,6 +19,12 @@ instance:
 Everything the host answers is a TTD input: a recorded session replays with
 the network unplugged.
 
+Frame-level cards (the Sprinter's NE2000 in ISA slot 2) reach the same
+virtual network through the **Ethernet gateway** (a switch + router at
+`10.0.2.2`, MAC `52:55:0A:00:02:02`): `state/network` lists them under
+`slots` and `ethernet_gateway`, and `GET /network/frames` captures their
+frames. Recipe: [machines/sprinter-network.md](../machines/sprinter-network.md).
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).

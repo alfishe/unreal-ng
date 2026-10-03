@@ -1,0 +1,41 @@
+TFTP.EXE - TFTP client
+
+Purpose
+  Downloads or uploads one file through a TFTP server.
+
+Usage
+  TFTP.EXE host[:port] GET remote-file [-o local-name] [-y|-f]
+  TFTP.EXE host[:port] PUT local-file  [-o remote-name]
+  TFTP.EXE /?
+
+Flags
+  -o name   local name (GET) / remote name (PUT).
+  -y, -f    overwrite an existing local file without asking.
+  (TFTP is a lockstep protocol with no resume, so there is no -r flag.)
+
+Examples
+  TFTP.EXE 192.168.1.36 GET test.bin -o TEST.BIN -y
+  TFTP.EXE 192.168.1.36:69 GET boot/screen.scr -o SCREEN.SCR
+  TFTP.EXE 192.168.1.36 PUT TEST.BIN -o upload.bin
+
+Typical sequence
+  NETUP.EXE
+  TFTP.EXE 192.168.1.36 GET test.bin -o TEST.BIN -y
+
+Notes
+  Without -o, GET saves to the basename of remote-file and PUT sends the
+  basename of local-file as the remote filename. If GET output already exists,
+  TFTP asks for overwrite confirmation. Use -y (or -f) to overwrite without
+  prompting.
+
+  Current limitations:
+  - octet mode only;
+  - no blksize/timeout/tsize options yet;
+  - no directory listing; TFTP is file-only.
+
+Exit status
+  0  Transfer completed.
+  1  Invalid command line.
+  2  Sprinter-WiFi hardware was not found.
+  3  Network, ESP or TFTP protocol error.
+  5  Local DSS file error.

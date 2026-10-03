@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "sprinterbios.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 
 #include <algorithm>
 #include <array>
@@ -116,6 +117,26 @@ bool ApplyToConfig(CONFIG& config, const Options& options, std::string& error)
         config.sprinter.fast_start = static_cast<uint8_t>(options.fastStart);
     if (options.accelIntSuspend >= 0)
         config.sprinter.accel_int_suspend = static_cast<uint8_t>(options.accelIntSuspend);
+    for (int n = 0; n < 2; n++)
+    {
+        if (options.isaSlot[n] >= 0)
+            config.sprinter.isa.slot[n].kind = static_cast<uint8_t>(options.isaSlot[n]);
+    }
+    return true;
+}
+
+bool IsaSlotFromString(const std::string& text, int slot, Options& options, std::string& error)
+{
+    if (text.empty())
+        return true;
+    sprinterisa::CardKind kind = sprinterisa::CardKind::None;
+    if (slot < 0 || slot > 1 || !sprinterisa::ParseKind(text, kind))
+    {
+        error = "isa_slot" + std::to_string(slot + 1) +
+                ": none | zxbus | ram | ne2000 | el3c509b | sprinteresp | modem | dual16552";
+        return false;
+    }
+    options.isaSlot[slot] = static_cast<int>(kind);
     return true;
 }
 

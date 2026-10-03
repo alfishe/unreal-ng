@@ -110,3 +110,22 @@ TEST(SprinterBiosReload_Test, ResetLoadsTheSelectedImage)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+// The ISA slot population at create (Sprinter ISA tdd §5): isa_slot1 / isa_slot2 into [ISA] SlotN of the new config
+TEST(SprinterBiosOptions_Test, IsaSlotsAtCreate)
+{
+    SprinterBios::Options options;
+    std::string error;
+    ASSERT_TRUE(SprinterBios::IsaSlotFromString("NONE", 1, options, error)) << error;
+    ASSERT_TRUE(SprinterBios::IsaSlotFromString("", 0, options, error)) << "empty keeps the configured kind";
+    EXPECT_EQ(options.isaSlot[0], -1);
+    EXPECT_EQ(options.isaSlot[1], 0);
+    EXPECT_FALSE(SprinterBios::IsaSlotFromString("ne3000", 0, options, error));
+    EXPECT_NE(error.find("isa_slot1"), std::string::npos) << error;
+
+    CONFIG config{};
+    config.sprinter.isa = sprinterisa::DefaultConfig();
+    ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
+    EXPECT_EQ(config.sprinter.isa.slot[1].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+    EXPECT_EQ(config.sprinter.isa.slot[0].kind, static_cast<uint8_t>(sprinterisa::CardKind::None));
+}

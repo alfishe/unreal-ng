@@ -47,7 +47,14 @@ struct Options
     int fastStart = -1;        ///< [SPRINTER] FastStart: 1 skips the PLD loader
     int accelIntSuspend = -1;  ///< [SPRINTER] AccelIntSuspend: an INT acknowledge blocks accelerator operations
     bool reset = true;         ///< runtime: reset now (else at the next reset)
+    /// [ISA] Slot1= / Slot2= at create (sprinterisa::CardKind; -1 = as configured). The population is fixed
+    /// for the instance's lifetime (ISA design Q5 = A): runtime selections refuse it
+    int isaSlot[2] = {-1, -1};
 };
+
+/// "none" | "zxbus" | "ram" | "ne2000" | ... (the [ISA] SlotN= names, any case) into options.isaSlot[slot]
+/// (0-based); empty = keep. False with `error`
+bool IsaSlotFromString(const std::string& text, int slot, Options& options, std::string& error);
 
 /// bios / fast_start / accel_int_suspend / reset as text ("1" / "0", on / off, true / false; empty = keep)
 bool OptionsFromStrings(const std::string& bios, const std::string& fastStart, const std::string& accelIntSuspend,

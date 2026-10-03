@@ -1,0 +1,1 @@
+TFTP.EXE 192.168.1.36 PUT FILE.TXT -o upload.bin

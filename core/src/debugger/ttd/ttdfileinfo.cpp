@@ -145,6 +145,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::Vdac2Memory: return "vdac2-memory";
         case PeripheralId::Vdac2: return "vdac2";
         case PeripheralId::ProfiXtKbc: return "profi-xt-kbc";
+        case PeripheralId::EthernetNics: return "ethernet-nics";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
