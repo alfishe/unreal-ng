@@ -93,10 +93,10 @@ TurboSound device that the machine sets at run time:
 - The v5 DS80 wait rule is a model (M); the forum's speed-test figures fit it but do not prove it.
 - 5.0-5.02 unmodified boards select ZQ3 with the CP/M button, not with DS80; two-crystal 5.0/5.01 builds stay at
   3.5 MHz in DS80. Board variants for these come later if anyone needs them.
-- The AY clock reaches only the plain AY / TurboSound slot. The shipped Profi configs fit `TurboSound=FM` (TSFM),
-  which stays at 1.75 MHz in hi-res: H2b is audible with `TurboSound=AY` (or `Single`) until the TSFM follows the
-  socket clock (its YM2203 timers would change with it, and those are CPU-visible).
+- The AY clock reaches the AY / TurboSound slot. The shipped Profi configs fit `TurboSound=Single`, the boards' one
+  AY-3-8910 / 8912 (they had TSFM before); TSFM, if chosen, stays at 1.75 MHz in hi-res until it follows the socket
+  clock (its YM2203 timers would change with it, and those are CPU-visible).
 - The native-rate DSD capture tap assumes 218.75 kHz; in hi-res the AY feeds it at 187.5 kHz.
-- TTD across a v3 hi-res switch: the same driver on `PROFI3` (the switch also changes the frame to 320 lines) does
-  not replay exactly - the CPU itself diverges, with or without the AY clock (found while building H2b; the v5,
-  whose frame stays 312 lines, replays exactly). Part of H4's "TTD round trip of a DS80 switch".
+- TTD across a v3 hi-res switch replays exactly (`V3HiresFrameSwitchesReplayExactly`). What first looked like a
+  divergence was the test stopping on z80.t, which a v3 entering hi-res rescales down by 6/7: positions inside a
+  frame compare in TTD units (`EmulatorState::TtdTInFrame`), never in CPU T.

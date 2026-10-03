@@ -453,7 +453,8 @@ AyReplayPoint ObserveAyReplay(EmulatorContext* context)
     const Z80* z80 = context->pCore->GetZ80();
     AyReplayPoint point;
     point.frame = context->emulatorState.frame_counter;
-    point.tInFrame = z80->t;
+    // TTD time units: monotonic through a clock switch, where z80.t is rescaled (down by 6/7 when a v3 enters hi-res)
+    point.tInFrame = context->emulatorState.TtdTInFrame(z80->t);
     point.cpu = ttd::CaptureCpuState(*static_cast<const Z80State*>(z80));
     point.ramHash = ttd::HashBytes(context->pMemory->RAMBase(), static_cast<size_t>(context->config.ramsize) * 1024u);
     ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
@@ -510,8 +511,9 @@ void RunAyClockReplay(const char* model, bool flipHires, bool ayClockNew, int* h
         const EmulatorState* state = &context->emulatorState;
         const uint64_t frame = recorded.frame;
         const uint32_t t = recorded.tInFrame;
-        emulator->RunUntilCondition([state, frame, t](const Z80State& cpu)
-                                    { return state->frame_counter > frame || (state->frame_counter == frame && cpu.t >= t); });
+        emulator->RunUntilCondition([state, frame, t](const Z80State& cpu) {
+            return state->frame_counter > frame || (state->frame_counter == frame && state->TtdTInFrame(cpu.t) >= t);
+        });
         const AyReplayPoint replayed = ObserveAyReplay(context);
         EXPECT_EQ(replayed.frame, recorded.frame);
         EXPECT_EQ(replayed.tInFrame, recorded.tInFrame);
@@ -528,14 +530,22 @@ void RunAyClockReplay(const char* model, bool flipHires, bool ayClockNew, int* h
 /// 1.75 and 1.5 MHz - several times a frame replays byte for byte from the session start, a per-frame checkpoint and
 /// a mid-frame seek: the clock, the cursor's fraction and any switch still queued at a checkpoint come back with the
 /// TurboSound blob, and the machine re-derives the same clock from #DFFD after the restore.
-/// (The v3 is not used: its hi-res switch also changes the frame to 320 lines, and a recording across that switch
-/// does not replay exactly yet, with or without the AY - design-hires.md phase H4)
 TEST(TTD_AyClock_Replay_Test, HiresAyClockSwitchesReplayExactly)
 {
     int hiresFrames = 0;
     RunAyClockReplay("PROFI", true, false, &hiresFrames);
     EXPECT_GT(hiresFrames, 0) << "the AY must have run at 1.5 MHz";
     EXPECT_LT(hiresFrames, 24) << "and at 1.75 MHz";
+}
+
+/// The v3: its hi-res switch also changes the frame (the 0a1d PROM's upper half: 320 lines) and runs the CPU at
+/// 3 MHz; a recording across it replays exactly too
+TEST(TTD_AyClock_Replay_Test, V3HiresFrameSwitchesReplayExactly)
+{
+    int hiresFrames = 0;
+    RunAyClockReplay("PROFI3", true, false, &hiresFrames);
+    EXPECT_GT(hiresFrames, 0);
+    EXPECT_LT(hiresFrames, 24);
 }
 
 /// endregion </AY clock switch replay>

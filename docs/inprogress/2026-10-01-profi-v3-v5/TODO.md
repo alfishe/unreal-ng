@@ -70,10 +70,11 @@ Profi v3 and v5 as two machines (`PROFI3` new, `PROFI` = v5). Phases 1-7 impleme
 - [x] H2b (branch `profi-ay-clock`): AY clock 1.5 MHz in hi-res (v3 always, v5 unless `[PROFI] AyClock=new`): a
   run-time AY clock on the TurboSound device, switched at its T-state, TTD-exact without new bytes, `psg_clock_hz`
   in the AY state ([design-hires.md](design-hires.md) 3.1)
-- [ ] H2b follow-up: the TSFM (the shipped Profi configs' `TurboSound=FM`) keeps 1.75 MHz in hi-res; the DSD
-  native tap assumes 218.75 kHz
-- [ ] H4: TTD across a v3 hi-res switch (320-line frame) diverges in the CPU on replay (the v5 replays exactly);
-  found by the H2b replay test
+- [x] The shipped Profi configs fit `TurboSound=Single` (the boards' one AY) instead of TSFM, so the hi-res AY clock
+  is what users hear
+- [ ] TSFM, if chosen, keeps 1.75 MHz in hi-res; the DSD native tap assumes 218.75 kHz
+- [x] TTD across a v3 hi-res switch replays exactly: the "divergence" was the test's stop condition on z80.t, which
+  a v3 entering hi-res rescales down (6/7); positions compare in TTD units (`V3HiresFrameSwitchesReplayExactly`)
 - [x] H3: hi-res waits (v5: 0-1 T around each video request at ZQ3/4, 1-3 T in turbo, ROM one-shot; #7FFD bit 5
   runs the requests all line long; v3: none at 3 MHz, the 2/3 rule in turbo) and the v3 hi-res floating bus (the
   cell's two bytes by tick half; which latch holds which page is open)
